@@ -13,7 +13,7 @@ export const COMPUTER_TOOLS = Object.freeze({
 });
 export const COMPUTER_DENY = Object.freeze(Object.fromEntries(Object.keys(COMPUTER_TOOLS).map((name) => [name, false])));
 export const COMPUTER_PROTOCOL = "openwork.computer-use/1";
-export const COMPUTER_STOP_GUIDANCE = "Computer session revocation could not be confirmed. Use Stop in the native Computer Use panel or the selected remote computer's session controls before continuing.";
+export const COMPUTER_STOP_GUIDANCE = "Computer session revocation could not be confirmed. Use Stop in the native Computer Use menu or the selected remote computer's session controls before continuing.";
 const remoteReason = "A compatible remote service is not connected.";
 const remote = Object.freeze({ id: "remote", label: "Remote computer", placement: "cloud", protocol: COMPUTER_PROTOCOL,
   readiness: async () => ({ readiness: "unavailable", detail: remoteReason }),
@@ -29,7 +29,14 @@ const withHandoff = (result, status) => {
   return { ...result, isError: result.isError === true || !continued,
     content: [...result.content, { type: "text", text: JSON.stringify({ handoff: state, next: continued ? "observe" : "human_takeover", fresh_observation_required: true, actions_replayed: false }) }] };
 };
+const withPostObservation = (receipt, status, content = []) => ({ ...receipt, content: [...receipt.content,
+  { type: "text", text: JSON.stringify({ post_observation: status, actions_replayed: false,
+    ...(!status.ok ? { next: status.next, fresh_observation_required: true } : {}) }) }, ...content] });
+const postWarning = (receipt, code, next = "observe") => withPostObservation(receipt, { ok: false, code, next,
+  message: "The fresh observation is unavailable. The original receipt is unchanged; do not replay the input. Review the current control state before observing again." });
 const keyFor = (slug, threadId) => JSON.stringify([slug, threadId]);
+const uiText = (value, limit) => typeof value === "string" && value.length <= limit;
+const uiNumber = (value, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= 0 && value <= max;
 
 export function assertPrivateComputerDiscussion({ slug, threadId, savedIds, workerIds, workers, groups, assignments, owners }) {
   if (!savedIds.includes(threadId) || workerIds.includes(threadId)
@@ -117,13 +124,14 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     tail = result.then(() => undefined, () => undefined);
     return result;
   };
-  async function grantFor(slug, threadId) {
+  async function grantFor(slug, threadId, assertAdmission = () => {}) {
     if (closed || resetting) throw new Error("Computer control is stopping.");
     if (typeof slug !== "string" || !slug || typeof threadId !== "string" || !threadId) throw new Error("A coworker and saved discussion are required.");
     const started = epoch;
     let scope;
     try { scope = await discussionFor(slug, threadId); }
-    catch (error) { await api.revoke({ slug, threadId }); throw error; }
+    catch (error) { assertAdmission(); await api.revoke({ slug, threadId }); throw error; }
+    assertAdmission();
     if (closed || resetting || epoch !== started) throw new Error("Computer control is stopping or restarted.");
     const key = keyFor(slug, threadId);
     let grant = grants.get(key);
@@ -152,6 +160,123 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== grant.revision) throw new Error("Computer settings changed. Refresh this discussion before trying again.");
     return ++grant.revision;
   }
+  function clearPresentation(current) {
+    current.presentation = null;
+    current.watchUntil = 0;
+    current.frameSequence = -1;
+    current.inputSequence = -1;
+  }
+  function assertUiActive(current) {
+    if (lease !== current || current.closing || current.uiEnded || !current.grant.enabled
+      || current.controller.signal.aborted || (current.expiresAt !== undefined && now() >= current.expiresAt)) {
+      throw new Error("This computer presentation ended. Refresh the discussion; sensitive actions still require your authorization.");
+    }
+    current.assertActive();
+  }
+  function postStillOwned(call) {
+    const { current, generation, sessionId } = call.post;
+    try { assertUiActive(current); } catch { return false; }
+    return call.grant.revision === call.revision && current.sessionId === sessionId && current.handoffGeneration === generation
+      && current.session?.state !== "paused" && current.presentation?.phase !== "paused";
+  }
+  async function validateUiOwner(current, opening) {
+    assertUiActive(current);
+    const { grant } = current;
+    const scope = await discussionFor(grant.slug, grant.threadId);
+    assertUiActive(current);
+    if (scope.workspaceId !== grant.workspaceId || scope.directory !== grant.directory) throw new Error("The original computer workspace changed.");
+    if (opening) {
+      if (current.opening !== opening) throw new Error("This app request is no longer opening.");
+      opening.signal.throwIfAborted();
+      const owner = await resolveContext(grant.slug, opening.context, { name: "coworker_computer_open", args: opening.args });
+      owner.assertActive(); assertUiActive(current); opening.signal.throwIfAborted();
+      if (current.opening !== opening || owner.entry.id !== current.executionId || owner.entry.workspaceId !== grant.workspaceId
+        || (owner.origin?.threadId ?? opening.context.sessionID) !== grant.threadId) throw new Error("The admitted app request changed.");
+    }
+  }
+  function matchesOpening(current, value) {
+    const opening = current.opening;
+    return opening && !opening.signal.aborted && value.appID === opening.args.app_id
+      && (opening.args.pid === undefined || value.pid === opening.args.pid)
+      && value.mode === opening.args.mode && value.task === opening.args.purpose;
+  }
+  async function approveWindow(current, presentation, windowId) {
+    const opening = current.opening;
+    if (!opening || opening.decisionSent) throw new Error("This app request already has a decision. Do not retry it.");
+    // Reserve the decision before any await so duplicate notifications cannot approve twice.
+    opening.decisionSent = true;
+    await validateUiOwner(current, opening);
+    if (current.presentation !== presentation || presentation.phase !== "approval"
+      || !presentation.windows.some((window) => window.id === windowId)) throw new Error("The native window choice changed. Review it again.");
+    await current.transport.notifyUi({ id: presentation.id, action: "approve", windowId });
+  }
+  function receiveUi(current, value) {
+    try { assertUiActive(current); } catch { clearPresentation(current); return; }
+    if (!value || !uiText(value.id, 128) || !value.id || !["state", "frame", "input"].includes(value.kind)) return;
+    const presentation = current.presentation;
+    if (value.kind === "state") {
+      if (!["approval", "working", "paused", "closed"].includes(value.phase)) return;
+      // Only the exact admitted open can introduce an identity. Never adopt a
+      // different native ID on this lease, even if a late notification looks valid.
+      if (current.uiId && value.id !== current.uiId) {
+        clearPresentation(current); current.uiEnded = true;
+        disable(current.grant); void cleanup(current);
+        return;
+      }
+      if (!current.uiId && (value.phase !== "approval" || !matchesOpening(current, value))) return;
+      if (value.phase === "closed") {
+        clearPresentation(current); current.uiEnded = true;
+        if (!current.expectedClose) { disable(current.grant); void cleanup(current); }
+        return;
+      }
+      for (const [key, limit] of [["appName", 512], ["appID", 512], ["windowTitle", 2048], ["task", 500], ["mode", 32], ["status", 2048]]) {
+        if (value[key] !== undefined && !uiText(value[key], limit)) return;
+      }
+      if (value.pid !== undefined && (!uiNumber(value.pid, 0x7fffffff) || value.pid === 0)) return;
+      if (value.canContinue !== undefined && typeof value.canContinue !== "boolean") return;
+      if (value.windows !== undefined && (!Array.isArray(value.windows) || value.windows.length > 128
+        || value.windows.some((window) => !window || !uiNumber(window.id, 0xffffffff) || !window.id || !uiText(window.title, 2048))
+        || new Set(value.windows.map((window) => window.id)).size !== value.windows.length)) return;
+      if (value.phase === "approval" && (!matchesOpening(current, value) || !Array.isArray(value.windows) || !value.windows.length)) return;
+      if (!current.uiId) { clearPresentation(current); current.uiId = value.id; }
+      const next = { id: value.id, phase: value.phase, inputs: presentation?.inputs ?? [] };
+      for (const key of ["appName", "windowTitle", "task", "mode", "status", "canContinue"]) if (value[key] !== undefined) next[key] = value[key];
+      if (value.windows) next.windows = value.windows.map(({ id, title }) => ({ id, title }));
+      if (value.phase === "working" && presentation?.frame) next.frame = presentation.frame;
+      if (value.phase === "paused") {
+        if (presentation?.phase !== "paused") current.handoffGeneration++;
+        current.needsObservation = true; next.inputs = [];
+      }
+      if (value.phase === "approval" && isDeepStrictEqual(presentation, next)) return;
+      current.presentation = next;
+      if (value.phase === "approval" && value.windows.length === 1 && !current.opening.decisionSent) {
+        void approveWindow(current, next, value.windows[0].id).catch(() => {
+          // An uncertain decision is never resent or converted into a new request.
+          if (lease === current && !current.closing) { disable(current.grant); void cleanup(current); }
+        });
+      }
+      return;
+    }
+    if (!presentation || value.id !== presentation.id || presentation.phase !== "working" || current.watchUntil <= now()) return;
+    if (!uiNumber(value.sequence)) return;
+    if (value.kind === "frame") {
+      if (value.sequence <= current.frameSequence || !uiNumber(value.capturedAt)
+        || !uiNumber(value.width, 8192) || !value.width || !uiNumber(value.height, 8192) || !value.height || value.width * value.height > 16_777_216
+        || value.mimeType !== "image/png" || !uiText(value.data, 4 * 1024 * 1024) || !value.data.startsWith("iVBORw0KGgo")
+        || value.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value.data)) return;
+      current.frameSequence = value.sequence;
+      presentation.frame = { sequence: value.sequence, capturedAt: value.capturedAt, width: value.width, height: value.height, mimeType: "image/png", data: value.data };
+    } else {
+      if (value.sequence <= current.inputSequence || !uiNumber(value.at)
+        || !["move", "click", "double_click", "drag", "scroll", "key", "type", "press", "set_value"].includes(value.action)
+        || !["move", "down", "up", "dispatched", "uncertain"].includes(value.phase)
+        || [value.x, value.y].some((position) => position !== undefined && (!Number.isFinite(position) || position < 0 || position > 1))) return;
+      current.inputSequence = value.sequence;
+      presentation.inputs.push({ sequence: value.sequence, at: value.at, action: value.action, phase: value.phase,
+        ...(value.x !== undefined ? { x: value.x } : {}), ...(value.y !== undefined ? { y: value.y } : {}) });
+      if (presentation.inputs.length > 64) presentation.inputs.shift();
+    }
+  }
   function updateSession(current, result, purpose) {
     const state = stateOf(result);
     if (!state) return;
@@ -159,6 +284,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     if (paused && current.sessionId) current.needsObservation = true;
     if ((result.isError || state.ok !== true) && !paused) return;
     const opening = current.session?.state === "opening";
+    if (Number.isFinite(state.expires_in_seconds)) current.expiresAt = now() + Math.max(0, state.expires_in_seconds) * 1000;
     current.session = {
       ...current.session,
       state: paused ? "paused" : state.state ?? current.session?.state ?? "active",
@@ -179,6 +305,8 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
   }
   async function cleanup(current) {
     current.closing = true;
+    clearPresentation(current);
+    current.opening = null;
     current.controller.abort(new Error("Computer control stopped."));
     current.cleanupPending = true;
     if (!current.cleanup) {
@@ -246,6 +374,81 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     };
   }
   const api = {
+    async presentation(input) {
+      if (!input || typeof input.visible !== "boolean" || Object.keys(input).some((key) => !["slug", "threadId", "visible"].includes(key))) throw new Error("A discussion and explicit monitor visibility are required.");
+      const grant = grants.get(keyFor(input.slug, input.threadId));
+      const current = lease;
+      if (!grant || current?.grant !== grant || !current.transport?.notifyUi) return null;
+      try { assertUiActive(current); } catch { clearPresentation(current); return null; }
+      if (!current.presentation) return null;
+      const id = current.presentation.id;
+      if (!input.visible || current.watchUntil <= now()) { delete current.presentation.frame; current.presentation.inputs = []; }
+      current.watchUntil = input.visible ? now() + 1500 : 0;
+      try {
+        await current.transport.notifyUi({ id, action: "watch", visible: input.visible });
+        assertUiActive(current);
+      } catch {
+        clearPresentation(current);
+        if (lease === current && !current.closing) { disable(grant); void cleanup(current); }
+        return null;
+      }
+      return current.presentation?.id === id ? structuredClone(current.presentation) : null;
+    },
+    async interact(input) {
+      if (!input || !["approve", "deny", "takeover", "resume"].includes(input.action) || !uiText(input.id, 128) || !input.id
+        || Object.keys(input).some((key) => !["slug", "threadId", "id", "action", "windowId"].includes(key))
+        || (input.action === "approve" ? !uiNumber(input.windowId, 0xffffffff) || !input.windowId : input.windowId !== undefined)) throw new Error("Choose an explicit action for this native presentation. Sensitive actions still require your authorization.");
+      const current = lease;
+      if (!current || current.grant !== grants.get(keyFor(input.slug, input.threadId)) || !current.transport?.notifyUi) throw new Error("This discussion does not own an active computer session.");
+      assertUiActive(current);
+      const presentation = current.presentation;
+      if (!presentation || presentation.id !== input.id) throw new Error("This native presentation is stale. Refresh before acting.");
+      if (["approve", "deny"].includes(input.action) ? presentation.phase !== "approval"
+        : !current.sessionId || (input.action === "resume" ? presentation.phase !== "paused" || presentation.canContinue !== true : !["working", "paused"].includes(presentation.phase))) throw new Error("This control is not available in the current native phase.");
+      if (input.action === "approve" && !presentation.windows.some((window) => window.id === input.windowId)) throw new Error("Choose a window from the current native request.");
+      if (input.action === "deny") {
+        disable(current.grant);
+        const denied = current.transport.notifyUi({ id: input.id, action: "deny" });
+        clearPresentation(current);
+        try { await denied; } finally { if (!await cleanup(current)) throw new Error(COMPUTER_STOP_GUIDANCE); }
+        return;
+      }
+      if (input.action === "takeover") {
+        current.needsObservation = true;
+        current.handoffGeneration++;
+        if (presentation.phase === "paused") return;
+        // Reducing authority must not wait for disk/engine lookups or a pending resume.
+        try { await current.transport.notifyUi({ id: input.id, action: "takeover" }); }
+        catch (error) {
+          if (lease === current && !current.closing) { disable(current.grant); await cleanup(current); }
+          throw error;
+        }
+        return;
+      }
+      if (current.uiControlPending || (input.action === "approve" && current.opening?.decisionSent)) throw new Error("A native control decision is already pending. Wait for its current state; do not retry it.");
+      current.uiControlPending = true;
+      const generation = current.handoffGeneration;
+      try {
+        try {
+          if (input.action === "approve") { await approveWindow(current, presentation, input.windowId); return; }
+          await validateUiOwner(current);
+        } catch (error) {
+          if (lease === current && !current.closing) { disable(current.grant); await cleanup(current); }
+          throw error;
+        }
+        const live = current.presentation;
+        if (live?.id !== input.id || live.phase !== "paused" || live.canContinue !== true || current.handoffGeneration !== generation) {
+          throw new Error("The native controls changed before Continue. Review their current state; no control was resumed.");
+        }
+        current.needsObservation = true;
+        current.handoffGeneration++;
+        try { await current.transport.notifyUi({ id: input.id, action: "resume" }); }
+        catch (error) {
+          if (lease === current && !current.closing) { disable(current.grant); await cleanup(current); }
+          throw error;
+        }
+      } finally { current.uiControlPending = false; }
+    },
     async delegationScope({ slug, threadId }) {
       const grant = await grantFor(slug, threadId);
       if (lease || !grant.enabled) throw new Error("Allow computer access in the original discussion and finish its current native session before approving this Worker.");
@@ -297,28 +500,43 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
     },
     async execute(slug, { name, args, context, cancel = false }) {
       if (!Object.hasOwn(COMPUTER_TOOLS, name) || !context?.sessionID || !context.messageID || !context.callID || !context.directory) throw new Error("A trusted native computer tool context is required.");
+      const admissionEpoch = epoch;
+      // A Worker's origin is not known until resolution. Pin only already-enabled
+      // grants now, without letting unrelated permission changes cancel active work.
+      const admissionRevisions = new Map([...grants.values()].filter((grant) => grant.slug === slug && grant.enabled).map((grant) => [grant, grant.revision]));
       const key = JSON.stringify([slug, context.directory, context.sessionID, context.messageID, context.callID]);
       if (cancel) {
         // A native abort may beat the original HTTP request's admission.
         // Remember that exact call so a delayed request cannot start afterwards.
-        if (!calls.has(key)) await resolveContext(slug, context, { name, args });
+        const owner = !calls.has(key) ? await resolveContext(slug, context, { name, args }) : null;
         const call = calls.get(key);
         if (call && (!call.active || call.name !== name || !isDeepStrictEqual(call.args, args))) throw new Error("No matching admitted computer call can be cancelled.");
         if (cancelledCalls.size >= 4096) throw new Error("The computer cancellation limit was reached. Stop control in the native panel.");
         cancelledCalls.add(key);
-        const grant = call?.grant ?? grants.get(keyFor(slug, context.sessionID));
-        if (grant) disable(grant);
-        if (lease && lease.grant === grant) await cleanup(lease);
+        const grant = call?.grant ?? grants.get(keyFor(slug, owner?.origin?.threadId ?? context.sessionID));
+        if (grant && epoch === admissionEpoch && grant.revision === (call?.revision ?? admissionRevisions.get(grant))) {
+          disable(grant);
+          if (lease?.grant === grant) await cleanup(lease);
+        }
         return failure("cancelled", "Computer control stopped.");
       }
       if (cancelledCalls.has(key)) throw new Error("This native computer call was cancelled before admission.");
       const trusted = await resolveContext(slug, context, { name, args });
       const originThreadId = trusted.origin?.threadId ?? context.sessionID;
-      const grant = await grantFor(slug, originThreadId);
+      const admittedGrant = grants.get(keyFor(slug, originThreadId));
+      const revision = admissionRevisions.get(admittedGrant);
+      const assertAdmission = () => {
+        if (closed || resetting || epoch !== admissionEpoch || revision === undefined || !admittedGrant.enabled
+          || admittedGrant.revision !== revision || grants.get(keyFor(slug, originThreadId)) !== admittedGrant) {
+          throw new Error("Computer control was disabled, revoked, or restarted before this call could be admitted.");
+        }
+      };
+      assertAdmission();
+      const grant = await grantFor(slug, originThreadId, assertAdmission);
       if (path.resolve(context.directory) !== path.resolve(grant.directory)) throw new Error("This native call belongs to another workspace.");
-      const revision = grant.revision;
       const selectedAdapter = grant.adapter;
       const check = () => {
+        assertAdmission();
         trusted.assertActive();
         if (closed || resetting || cancelledCalls.has(key) || !grant.enabled || grant.adapter !== selectedAdapter || grant.revision !== revision || trusted.entry.workspaceId !== grant.workspaceId) throw new Error("Computer control is disabled, revoked, or belongs to another workspace.");
       };
@@ -329,10 +547,12 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       if (previous) {
         if (previous.name !== name || !isDeepStrictEqual(previous.args, args) || previous.grant !== grant) throw new Error("This native call identity was already used for different input.");
         if (previous.adapter !== selectedAdapter) throw new Error("This native call identity was already used for another computer.");
-        return previous.result;
+        const result = await previous.result;
+        return previous.post?.captured && !postStillOwned(previous)
+          ? postWarning(previous.post.receipt, "observation_withheld", "human_takeover") : result;
       }
       if (calls.size >= 4096) throw new Error("This app launch reached its computer receipt limit. Stop computer control and restart the app.");
-      const call = { name, args: structuredClone(args), grant, adapter: selectedAdapter, active: true };
+      const call = { name, args: structuredClone(args), grant, revision, adapter: selectedAdapter, active: true };
       calls.set(key, call);
       call.result = serial(async () => {
         check();
@@ -341,17 +561,27 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         await discussionFor(slug, originThreadId).then((scope) => { if (scope.workspaceId !== grant.workspaceId || scope.directory !== grant.directory) throw new Error("The original discussion workspace is unavailable."); });
         check();
         if (lease && (lease.grant !== grant || lease.adapter !== selectedAdapter || lease.closing || lease.executionId !== trusted.entry.id)) throw new Error("Another discussion or an earlier turn still owns this computer.");
-        lease ??= { grant, adapter: selectedAdapter, executionId: trusted.entry.id, messageId: trusted.entry.messageId, controller: new AbortController(), sessionId: null, session: null, busy: false };
+        lease ??= { grant, adapter: selectedAdapter, executionId: trusted.entry.id, messageId: trusted.entry.messageId, controller: new AbortController(), sessionId: null, session: null, busy: false, handoffGeneration: 0 };
         const current = lease;
+        current.assertActive = check;
         current.busy = true;
         const abort = () => { disable(grant); void cleanup(current); };
         trusted.signal.addEventListener("abort", abort, { once: true });
         const signal = AbortSignal.any([trusted.signal, current.controller.signal, AbortSignal.timeout(operationMs)]);
         let nativeResult;
         let handoff = false;
+        let postReadFailed = false;
         current.work = Promise.resolve().then(async () => {
           if (!current.transport) {
-            try { current.transport = await current.adapter.connect(); }
+            try {
+              current.transport = await current.adapter.connect({
+                onUi: (value) => receiveUi(current, value),
+                onClose: () => {
+                  clearPresentation(current); current.uiEnded = true;
+                  if (lease === current && !current.closing && !current.expectedClose) { disable(grant); void cleanup(current); }
+                },
+              });
+            }
             catch (error) {
               // The adapter combines setup and shutdown errors when it could
               // not confirm termination and cannot return a usable handle.
@@ -366,13 +596,19 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           signal.throwIfAborted(); check();
           if (name === "coworker_computer_open" && current.sessionId) throw new Error("Close the approved session before requesting another app or mode.");
           if (!["coworker_computer_discover", "coworker_computer_open"].includes(name) && !current.sessionId) throw new Error("Open an approved app session first.");
-          if (name === "coworker_computer_open") current.session = { state: "opening", purpose: args.purpose, phase: "native-approval" };
+          if (name === "coworker_computer_open") {
+            current.session = { state: "opening", purpose: args.purpose, phase: "native-approval" };
+            current.opening = { args: call.args, context, signal, decisionSent: false };
+          }
+          current.expectedClose = name === "coworker_computer_close";
           const nativeArgs = { ...args, ...(current.sessionId && name !== "coworker_computer_discover" ? { session_id: current.sessionId } : {}),
             ...(name === "coworker_computer_act" ? { request_id: createHash("sha256").update(key).digest("hex") } : {}) };
+          const generation = current.handoffGeneration;
           const result = name === "coworker_computer_act" && current.needsObservation
             ? failure("observation_required", "Native control paused or continued. Make a fresh observation before any action; no action was dispatched.", current.session?.state === "paused" ? { state: "paused", next: "human_takeover" } : {})
             : (nativeResult = await current.transport.callTool(COMPUTER_TOOLS[name], nativeArgs, { signal }));
           const state = stateOf(result);
+          if (name === "coworker_computer_open") current.opening = null;
           if (name === "coworker_computer_open" && typeof state?.session_id === "string") current.sessionId = state.session_id;
           if (!state || typeof state.ok !== "boolean") throw new Error("The native computer response was unreadable; its outcome is uncertain.");
           if (name === "coworker_computer_open" && state.ok && !current.sessionId) throw new Error("The native approval returned no session identity.");
@@ -380,6 +616,42 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           if (name !== "coworker_computer_discover") updateSession(current, result, name === "coworker_computer_open" ? args.purpose : undefined);
           if (!current.sessionId || name === "coworker_computer_close" || (!needsPerson(result) && current.session?.state !== "paused")) {
             if (name === "coworker_computer_observe" && !result.isError && state.ok && typeof state.observation_id === "string") current.needsObservation = false;
+            if (!result.isError && state.ok && current.sessionId && (name === "coworker_computer_open" && state.state === "active"
+              || name === "coworker_computer_act" && state.status === "dispatched")) {
+              call.post = { current, generation, sessionId: current.sessionId, receipt: result, captured: false };
+              try {
+                check(); signal.throwIfAborted(); assertUiActive(current);
+                if (!postStillOwned(call) || current.needsObservation) return postWarning(result, "handoff_required", "human_takeover");
+                const [owner, scope] = await Promise.all([
+                  resolveContext(slug, context, { name, args: call.args }), discussionFor(slug, originThreadId),
+                ]);
+                owner.assertActive(); check(); signal.throwIfAborted(); assertUiActive(current);
+                if (owner.entry.id !== current.executionId || owner.entry.workspaceId !== grant.workspaceId
+                  || (owner.origin?.threadId ?? context.sessionID) !== originThreadId
+                  || scope.workspaceId !== grant.workspaceId || scope.directory !== grant.directory) throw new Error("The original observation context changed.");
+                if (!postStillOwned(call) || current.needsObservation) return postWarning(result, "handoff_required", "human_takeover");
+                // One read in this exact tool call, never a repeated input or a
+                // continuation across a person takeover. Watch frames are unrelated.
+                const observation = await current.transport.callTool("computer_observe", { session_id: current.sessionId, include_image: true }, { signal });
+                check(); signal.throwIfAborted(); assertUiActive(current);
+                if (!postStillOwned(call)) return postWarning(result, "observation_withheld", "human_takeover");
+                const observed = stateOf(observation);
+                if (observation.isError || observed?.ok !== true || typeof observed.observation_id !== "string" || !observed.observation_id || needsPerson(observation)) {
+                  current.needsObservation = true;
+                  nativeStopped(current, observation); updateSession(current, observation);
+                  const code = typeof observed?.code === "string" && /^[a-z0-9_]{1,80}$/.test(observed.code) ? observed.code : "post_observation_failed";
+                  return postWarning(result, code, needsPerson(observation) ? "human_takeover" : "observe");
+                }
+                updateSession(current, observation);
+                current.needsObservation = false;
+                call.post.captured = true;
+                return withPostObservation(result, { ok: true }, observation.content);
+              } catch {
+                current.needsObservation = true;
+                postReadFailed = true;
+                return postWarning(result, "post_observation_failed", "human_takeover");
+              }
+            }
             return result;
           }
           // Keep the original native tool active while the person decides.
@@ -407,18 +679,20 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         });
         try {
           const result = await bounded(current.work, operationMs);
-          if (name === "coworker_computer_close" || current.nativeStopped || current.handoffFailed || (name === "coworker_computer_open" && result.isError)) {
+          if (name === "coworker_computer_close" || current.nativeStopped || current.handoffFailed || postReadFailed || (name === "coworker_computer_open" && result.isError)) {
             if (name !== "coworker_computer_close") disable(grant);
             if (stateOf(result)?.ok === true && name === "coworker_computer_close") current.sessionId = null;
             await cleanup(current);
           }
+          if (call.post?.captured && !postStillOwned(call)) return postWarning(call.post.receipt, "observation_withheld", "human_takeover");
           if (result.isError) return result;
           // Preserve a dispatched or uncertain native receipt even when Stop raced it.
-          if (current.closing && name !== "coworker_computer_act" && name !== "coworker_computer_close") return failure("revoked", "Computer control stopped before this result could be delivered.");
+          if (current.closing && !call.post && name !== "coworker_computer_act" && name !== "coworker_computer_close") return failure("revoked", "Computer control stopped before this result could be delivered.");
           return result;
         } catch (error) {
           disable(grant);
           await cleanup(current);
+          if (call.post) return postWarning(call.post.receipt, "post_observation_failed", "human_takeover");
           const interrupted = failure(handoff ? "handoff_interrupted" : name === "coworker_computer_act" ? "dispatch_uncertain" : "operation_interrupted", `${error.message} Do not replay this call; inspect the native computer controls before continuing.`);
           return nativeResult && (name === "coworker_computer_act" || nativeResult.isError) ? withHandoff(nativeResult, interrupted) : interrupted;
         } finally {
@@ -427,16 +701,17 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         }
       }).then((result) => {
         call.active = false;
-        // Only action receipts need replayable results. Do not retain captured
-        // images in this launch's deduplication table after delivery.
-        if (name !== "coworker_computer_act") call.result = Promise.resolve(failure("already_completed", "This native call already completed. Use a new tool call for a new observation; do not replay actions."));
+        if (call.post?.captured && !postStillOwned(call)) result = postWarning(call.post.receipt, "observation_withheld", "human_takeover");
+        // Open/action duplicates reuse the whole paired result while its lease is
+        // still valid. Standalone observation reads are not retained for replay.
+        if (!["coworker_computer_act", "coworker_computer_open"].includes(name)) call.result = Promise.resolve(failure("already_completed", "This native call already completed. Use a new tool call for a new observation; do not replay actions."));
         return result;
       }, (error) => { call.active = false; throw error; });
       return call.result;
     },
     async endTurn(entry) {
       // Handoffs wait inside their tool, never by borrowing the next turn.
-      // An idle lease is revoked here; a later turn needs new native approval.
+      // An idle lease is revoked here; later opens must match their own admitted task.
       if (lease?.executionId !== entry.id) return;
       if (entry.state === "cancelled" && lease.grant.enabled) disable(lease.grant);
       if (!await cleanup(lease)) throw new Error(COMPUTER_STOP_GUIDANCE);

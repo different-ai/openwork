@@ -5,7 +5,7 @@ import { Button, ErrorNote } from "@/ui/kit";
 
 const permissions: Array<{ id: ComputerPermission; title: string; purpose: string; path: string }> = [
   { id: "accessibility", title: "Accessibility", purpose: "Read app controls and use the mouse and keyboard in an approved session.", path: "Privacy & Security > Accessibility" },
-  { id: "screenRecording", title: "Screen Recording", purpose: "See the window you approve. Window observations can be sent to the AI model handling your request.", path: "Privacy & Security > Screen Recording (or Screen & System Audio Recording)" },
+  { id: "screenRecording", title: "Screen Recording", purpose: "See the selected app window. Its content can be sent to the AI model provider handling your request.", path: "Privacy & Security > Screen Recording (or Screen & System Audio Recording)" },
 ];
 
 /** Guidance never grants access. Every status comes from the native helper probe. */
@@ -96,21 +96,23 @@ export function ComputerSetup({ snapshot, readError, actionError, refreshing, bu
             </li>
             <li className="flex gap-3">
               <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-xs">2</span>
-              <div className="min-w-0"><h3 className="font-semibold text-snow">Allow this discussion {allowed ? <span className="ml-1 font-normal text-ready">Allowed</span> : null}</h3>
-                <p className="mt-1 text-xs">Off by default; enabling does not start a task. Other discussions, groups and schedules do not inherit access. Each Worker needs a separate approval for its named task.</p></div>
+              <div className="min-w-0"><h3 className="font-semibold text-snow">Enable app access for this discussion {allowed ? <span className="ml-1 font-normal text-ready">Enabled</span> : null}</h3>
+                <p className="mt-1 text-xs">Enabling authorizes your coworker to see and control supported apps for tasks you request here. App window content can be sent to your selected AI model provider. Off by default; enabling alone does not start work.</p>
+                <p className="mt-1 text-xs">Other discussions, groups and schedules do not inherit access. Each Worker needs separate approval for its named task.</p></div>
             </li>
             <li className="flex gap-3">
               <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-xs">3</span>
-              <div className="min-w-0"><h3 className="font-semibold text-snow">Approve the native app/window</h3>
-                <p className="mt-1 text-xs">A separate native approval appears when the coworker requests a session. Review its purpose and scope. This is not an OS sandbox or blanket approval for purchases, messages or other consequential actions.</p></div>
+              <div className="min-w-0"><h3 className="font-semibold text-snow">Work in the Computer view</h3>
+                <p className="mt-1 text-xs">When you request an app task, a single eligible window opens automatically in the floating Computer view. If several windows are available, choose one there. Watch the app, take over, or stop without leaving the discussion.</p>
+                <p className="mt-1 text-xs">App access is not an OS sandbox or approval for purchases, sending messages, deleting files, or other sensitive actions. Those need separate authorization.</p></div>
             </li>
           </ol>
-          {allowed ? <p role="status" className="rounded-lg border border-ready/25 bg-ready/5 px-3 py-2 text-snow" data-testid="coworker-computer-setup-ready">Discussion access allowed. Return to the conversation to request a task or review a Worker's access request. Native window approval still comes next.</p> : null}
+          {allowed ? <p role="status" className="rounded-lg border border-ready/25 bg-ready/5 px-3 py-2 text-snow" data-testid="coworker-computer-setup-ready">App access is enabled for this discussion. No task has been started by enabling it. Return to the conversation to request a task or review a Worker's access request.</p> : null}
           <details className="rounded-xl border border-line bg-panel px-3 py-2 text-xs">
             <summary className="cursor-pointer font-medium text-snow">Take over, stop and privacy</summary>
-            <p className="mt-2">This is foreground control on your Mac; human input pauses it. No live computer video is shown in chat.</p>
-            <p>Use <strong className="font-medium text-snow">Take over</strong> in the native task panel to pause control; <strong className="font-medium text-snow">Continue</strong> there hands it back. <strong className="font-medium text-snow">Stop &amp; revoke</strong> in Coworker disables this discussion and waits for session release. If cleanup is pending, stopping is not yet confirmed.</p>
-            <p className="mt-2">Closing this guide or switching discussions does not stop work. macOS permissions stay on until you turn them off in System Settings.</p>
+            <p className="mt-2">This controls apps on your Mac; human input pauses it. The floating view is watch only and never forwards your clicks or typing to the app.</p>
+            <p>Use <strong className="font-medium text-snow">Take over</strong> in the Computer view to pause control; <strong className="font-medium text-snow">Continue</strong> explicitly hands it back. <strong className="font-medium text-snow">Stop</strong> there, or <strong className="font-medium text-snow">Stop &amp; revoke</strong> in settings, disables discussion access and waits for session release. If cleanup is pending, stopping is not yet confirmed.</p>
+            <p className="mt-2">Minimizing the view, hiding Coworker, or switching discussions stops preview capture, not work or access. Closing this guide also leaves access unchanged. macOS permissions stay on until you turn them off in System Settings.</p>
           </details>
           {canStop ? <p className="text-xs text-amber">{snapshot?.cleanupPending ? "Native cleanup is pending. Use Stop & revoke to check release again." : "Access is already allowed or a session still exists. Stop & revoke before changing macOS permissions here."}</p> : null}
           {actionError ? <div role="alert"><ErrorNote>{actionError}</ErrorNote></div> : null}
@@ -119,7 +121,7 @@ export function ComputerSetup({ snapshot, readError, actionError, refreshing, bu
           <Button type="button" variant="ghost" className="text-xs" disabled={refreshing || busy !== null} aria-busy={refreshing} onClick={onRefresh}>Check permissions</Button>
           {canStop ? <Button type="button" variant="ghost" className="text-xs text-rose" disabled={busy !== null} aria-busy={busy === "stop"} onClick={onStop}>Stop &amp; revoke</Button> : null}
           {ready || allowed ? <Button type="button" variant={allowed ? "primary" : "ghost"} className="text-xs" onClick={() => { close(); onBackToConversation?.(); }}>Back to conversation</Button> : null}
-          {ready && !canStop ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || refreshing || busy !== null} aria-busy={busy === "allow"} onClick={onAllow}>Allow for this discussion</Button> : null}
+          {ready && !canStop ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || refreshing || busy !== null} aria-busy={busy === "allow"} onClick={onAllow}>Enable for this discussion</Button> : null}
         </footer>
       </div>
     </dialog>, document.body,

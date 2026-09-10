@@ -11,12 +11,21 @@ import { assertComputerToolContext, assertPrivateComputerDiscussion, COMPUTER_DE
 
 const result = (state, isError = false) => ({ isError, content: [{ type: "text", text: JSON.stringify(state) }] });
 const payload = (value) => JSON.parse(value.content.find((part) => part.type === "text").text);
+const observationResult = (id = "observation") => ({ ...result({ ok: true, observation_id: id }),
+  content: [...result({ ok: true, observation_id: id }).content, { type: "image", mimeType: "image/png", data: "IMAGE_DATA" }] });
+const postStatus = (value) => value.content.filter((part) => part.type === "text").map((part) => JSON.parse(part.text)).find((part) => part.post_observation)?.post_observation;
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const openArgs = { app_id: "com.example.editor", mode: "assist", purpose: "Edit the requested document" };
+const approvalState = (patch = {}) => ({ kind: "state", id: "native-ui", phase: "approval", appName: "Editor", appID: openArgs.app_id,
+  pid: 123, task: openArgs.purpose, mode: openArgs.mode, windows: [{ id: 12, title: "Document" }], ...patch });
+const watchFrame = (patch = {}) => ({ kind: "frame", id: "native-ui", sequence: 1, capturedAt: 1000,
+  width: 1, height: 1, mimeType: "image/png", data: "iVBORw0KGgoAAA==", ...patch });
 
 function fixture(overrides = {}) {
   const sent = [];
+  const channels = [];
+  const notifications = [];
   const discussions = new Map(["scout:one", "scout:two", "editor:one"].map((key) => [key, true]));
   const controller = new AbortController();
   let connects = 0;
@@ -27,28 +36,35 @@ function fixture(overrides = {}) {
   let workspace = "workspace-scout";
   let executionId;
   let messageId = "user";
+  let directory = "/workspace/scout";
+  let readinessReads = 0;
+  let discussionReads = 0;
   const transport = {
+    async notifyUi(value) { notifications.push(value); await overrides.notifyUi?.(value); },
     async callTool(name, args, options) {
       sent.push({ name, args, options });
       if (overrides.callTool) return overrides.callTool(name, args, options);
       if (name === "computer_open_session") return result({ ok: true, session_id: "native-session", state: "active", window_title: "Document", expires_in_seconds: 900 });
       if (name === "computer_close_session") return result({ ok: true, state: "closed" });
-      if (name === "computer_observe") return { ...result({ ok: true, observation_id: "observation", window_title: "Document" }), content: [...result({ ok: true, observation_id: "observation" }).content, { type: "image", mimeType: "image/png", data: "IMAGE_DATA" }] };
+      if (name === "computer_observe") return observationResult();
       return result({ ok: true, state: "active", purpose: openArgs.purpose });
     },
     async close() { closes++; await overrides.close?.(); },
   };
   const adapter = { id: "this-mac", label: "This Mac", placement: "desktop", protocol: COMPUTER_PROTOCOL,
-    readiness: async () => ({ readiness: "ready", detail: "Native service ready.", permissions: { accessibility: true, screenRecording: true } }), setup: async () => { setups++; },
-    connect: async () => { connects++; if (overrides.connect) await overrides.connect(); return transport; } };
+    readiness: async () => { readinessReads++; return { readiness: "ready", detail: "Native service ready.", permissions: { accessibility: true, screenRecording: true } }; }, setup: async () => { setups++; },
+    connect: async (channel) => { connects++; channels.push(channel); if (overrides.connect) await overrides.connect(); return transport; } };
   const broker = createComputerControl({ adapters: [adapter, ...(overrides.adapters ?? [])], cleanupMs: 20, operationMs: overrides.operationMs ?? 1000, pollMs: 2,
     onRevoke: overrides.onRevoke,
+    now: overrides.now,
     discussionFor: async (slug, threadId) => {
-      await overrides.discussionFor?.();
+      discussionReads++;
+      await overrides.discussionFor?.(slug, threadId);
       if (!discussions.get(`${slug}:${threadId}`)) throw new Error("Not a saved private discussion.");
-      return { workspaceId: slug === "scout" ? workspace : `workspace-${slug}`, directory: `/workspace/${slug}` };
+      return { workspaceId: slug === "scout" ? workspace : `workspace-${slug}`, directory: slug === "scout" ? directory : `/workspace/${slug}` };
     },
-    resolveContext: async (slug, context) => {
+    resolveContext: async (slug, context, expected) => {
+      await overrides.resolveContext?.(slug, context, expected);
       const assertActive = () => { if (!active || controller.signal.aborted) throw new Error("Native call stopped."); };
       assertActive();
       return { entry: { id: executionId ?? `execution-${slug}-${context.sessionID}`, messageId, workspaceId: `workspace-${slug}` }, ...(context.sessionID === "worker" && overrides.delegatedOrigin ? { origin: { threadId: overrides.delegatedOrigin } } : {}), signal: controller.signal, assertActive };
@@ -59,7 +75,9 @@ function fixture(overrides = {}) {
   const enable = async (targetId = "this-mac", selected = scope) => broker.configure({ ...selected, expectedRevision: (await broker.snapshot(selected)).revision, enabled: true, targetId });
   const request = (name, args = {}, selected = scope) => ({ name: `coworker_computer_${name}`, args, context: { sessionID: selected.threadId, messageID: "assistant", callID: `call-${++sequence}`, directory: `/workspace/${selected.slug}` } });
   const execute = (name, args = {}, selected = scope) => broker.execute(selected.slug, request(name, args, selected));
-  return { broker, adapter, sent, scope, snapshot, enable, request, execute, controller, discussions,
+  return { broker, adapter, sent, scope, snapshot, enable, request, execute, controller, discussions, notifications,
+    emit: (value, index = channels.length - 1) => channels[index].onUi(value), disconnect: () => channels.at(-1).onClose(),
+    reads: () => ({ readinessReads, discussionReads }), changeDirectory: () => { directory = "/replacement"; },
     setExecution: (id, message) => { executionId = id; messageId = message; },
     setActive: (value) => { active = value; }, changeWorkspace: () => { workspace = "replacement"; }, counts: () => ({ connects, closes, setups }) };
 }
@@ -75,6 +93,7 @@ function cloudFixture({ id = "remote-fixture", readiness = async () => ({ readin
       return { callTool: async (name, args) => {
         sent.push({ name, args });
         if (name === "computer_open_session") return result({ ok: true, session_id: "remote-session", state: "active" });
+        if (name === "computer_observe") return observationResult();
         return result({ ok: true, state: name === "computer_close_session" ? "closed" : "active" });
       }, close: async () => { closes++; } };
     } };
@@ -144,6 +163,50 @@ test("native context must match the exact active tool, input, workspace, message
   for (const mutate of mutations) { const changed = structuredClone(input); changed.args = structuredClone(openArgs); mutate(changed); assert.throws(() => assertComputerToolContext(changed), /exact running tool/); }
 });
 
+test("calls waiting in the first ownership lookup or grant lookup cannot inherit Stop and re-enable, even for a Worker", async () => {
+  for (const worker of [false, true]) for (const lookup of ["resolve", "discussion"]) {
+    const entered = deferred(); const released = deferred();
+    let hold = false;
+    const wait = async (stage) => {
+      if (hold && lookup === stage) { hold = false; entered.resolve(); await released.promise; }
+    };
+    const f = fixture({ delegatedOrigin: worker ? "one" : undefined,
+      resolveContext: () => wait("resolve"), discussionFor: () => wait("discussion") });
+    const enabled = await f.enable();
+    hold = true;
+    const call = f.request("open", openArgs, worker ? { slug: "scout", threadId: "worker" } : f.scope);
+    const opening = f.broker.execute("scout", call);
+    const rejected = assert.rejects(opening, /revoked.*admitted/);
+    await entered.promise;
+    await f.broker.stop({ ...f.scope, expectedRevision: enabled.revision });
+    await f.enable();
+    released.resolve(); await rejected;
+    assert.equal(f.counts().connects, 0); assert.deepEqual(f.notifications, []);
+    assert.equal((await f.snapshot()).enabled, true, "the stale request must not revoke the new grant");
+    await f.broker.reset(true);
+  }
+});
+
+test("permission changes in another discussion do not abort an admitted active computer call", async () => {
+  const entered = deferred(); const released = deferred();
+  let hold = false;
+  const f = fixture({ callTool: async (name) => {
+    if (name === "computer_open_session") return result({ ok: true, state: "active", session_id: "native-session" });
+    if (hold && name === "computer_observe") { entered.resolve(); await released.promise; }
+    return result({ ok: true, observation_id: "fresh", state: name === "computer_close_session" ? "closed" : "active" });
+  } });
+  await f.enable();
+  const other = { slug: "scout", threadId: "two" };
+  const otherGrant = await f.enable("this-mac", other);
+  await f.execute("open", openArgs);
+  hold = true; const observing = f.execute("observe"); await entered.promise;
+  await f.broker.stop({ ...other, expectedRevision: otherGrant.revision });
+  released.resolve();
+  assert.equal(payload(await observing).ok, true);
+  assert.equal(f.counts().closes, 0); assert.equal((await f.snapshot()).enabled, true);
+  await f.broker.reset(true);
+});
+
 test("computer IPC accepts only the actual main window at the expected renderer URL", () => {
   const contents = { mainFrame: { url: "http://localhost:5173/#discussion" } };
   const event = { sender: contents, senderFrame: contents.mainFrame };
@@ -151,6 +214,260 @@ test("computer IPC accepts only the actual main window at the expected renderer 
   assert.equal(trustedComputerSender(event, { mainFrame: contents.mainFrame }, "http://localhost:5173/"), false);
   assert.equal(trustedComputerSender({ ...event, senderFrame: { url: contents.mainFrame.url } }, contents, "http://localhost:5173/"), false);
   for (const url of ["http://localhost:9999/", "https://example.test/", "http://localhost:5173/other", "file:///other/index.html"]) assert.equal(trustedComputerSender(event, contents, url), false);
+});
+
+test("discussion opt-in approves only a matching single-window admitted open, including an explicitly delegated Worker", async () => {
+  for (const worker of [false, true]) {
+    const opened = deferred();
+    const f = fixture({ delegatedOrigin: worker ? "one" : undefined,
+      callTool: async (name) => {
+        if (name === "computer_observe") return observationResult();
+        if (name !== "computer_open_session") return result({ ok: true, state: "closed" });
+        f.emit(approvalState()); f.emit(approvalState());
+        return opened.promise;
+      },
+      notifyUi: async (value) => {
+        if (value.action !== "approve") return;
+        f.emit(approvalState({ phase: "working", windowTitle: "Document", canContinue: true }));
+        opened.resolve(result({ ok: true, state: "active", session_id: "native-session" }));
+      },
+    });
+    await f.enable();
+    const native = await f.execute("open", { ...openArgs, pid: 123 }, worker ? { slug: "scout", threadId: "worker" } : f.scope);
+    assert.equal(payload(native).ok, true);
+    assert.deepEqual(f.notifications, [{ id: "native-ui", action: "approve", windowId: 12 }]);
+    const presentation = await f.broker.presentation({ ...f.scope, visible: true });
+    assert.equal(presentation.id, "native-ui");
+    assert.equal(presentation.phase, "working");
+    assert.equal(presentation.appID, undefined);
+    assert.equal(presentation.pid, undefined);
+    assert.equal(JSON.stringify(native).includes("native-ui"), false);
+    await assert.rejects(f.execute("open", { ...openArgs, skipConsent: true }), /broker/);
+    await f.broker.reset(true);
+  }
+});
+
+test("autoapproval rejects mismatched, malformed, expired, revoked and replaced opening contexts", async () => {
+  for (const scenario of ["app", "pid", "mode", "purpose", "windows", "duplicates", "inactive", "abort", "timeout", "workspace", "directory", "execution", "revoked"]) {
+    const opened = deferred(); const entered = deferred();
+    const f = fixture({ operationMs: scenario === "timeout" ? 10 : 1000, callTool: async (name) => {
+      if (name === "computer_open_session") { entered.resolve(); return opened.promise; }
+      return result({ ok: true, state: "closed" });
+    } });
+    await f.enable();
+    const opening = f.execute("open", { ...openArgs, pid: 123 });
+    await entered.promise;
+    const patches = { app: { appID: "com.example.other" }, pid: { pid: 456 }, mode: { mode: "control" }, purpose: { task: "Another task" },
+      windows: { windows: [{ id: 12, title: "One" }, { id: 13, title: "Two" }] }, duplicates: { windows: [{ id: 12, title: "One" }, { id: 12, title: "One" }] } };
+    if (scenario === "inactive") f.setActive(false);
+    if (scenario === "abort") f.controller.abort();
+    if (scenario === "timeout") await new Promise((resolve) => setTimeout(resolve, 15));
+    if (scenario === "workspace") f.changeWorkspace();
+    if (scenario === "directory") f.changeDirectory();
+    if (scenario === "execution") f.setExecution("replacement", "replacement-message");
+    const revoking = scenario === "revoked" ? f.broker.revoke(f.scope) : null;
+    f.emit(approvalState(patches[scenario]));
+    await tick(); await tick();
+    assert.equal(f.notifications.some((value) => value.action === "approve"), false, scenario);
+    opened.resolve(result({ ok: true, state: "active", session_id: "native-session" }));
+    await opening; await revoking;
+    await f.broker.reset(true);
+  }
+  const f = fixture(); await f.enable(); await f.execute("discover");
+  f.emit(approvalState());
+  assert.equal(await f.broker.presentation({ ...f.scope, visible: true }), null, "discovery cannot introduce an approval");
+  assert.deepEqual(f.notifications, []);
+  await f.broker.reset(true);
+});
+
+test("the in-app chooser uses the native ID and offered window, never renderer session identity or the first of many", async () => {
+  const opened = deferred(); const entered = deferred();
+  const f = fixture({ callTool: async (name) => {
+    if (name === "computer_observe") return observationResult();
+    if (name === "computer_open_session") { entered.resolve(); return opened.promise; }
+    return result({ ok: true, state: "closed" });
+  }, notifyUi: async (value) => {
+    if (value.action === "approve") {
+      f.emit(approvalState({ phase: "working", canContinue: true }));
+      opened.resolve(result({ ok: true, state: "active", session_id: "native-session" }));
+    }
+  } });
+  await f.enable(); const opening = f.execute("open", openArgs); await entered.promise;
+  f.emit(approvalState({ windows: [{ id: 12, title: "One" }, { id: 13, title: "Two", secret: "DROP" }] }));
+  const read = { ...f.scope, visible: true };
+  assert.deepEqual((await f.broker.presentation(read)).windows, [{ id: 12, title: "One" }, { id: 13, title: "Two" }]);
+  assert.equal(f.notifications.some((value) => value.action === "approve"), false);
+  for (const patch of [{ id: "stale" }, { windowId: 999 }, { sessionId: "native-session" }, { threadId: "two" }]) {
+    await assert.rejects(f.broker.interact({ ...f.scope, id: "native-ui", action: "approve", windowId: 13, ...patch }));
+  }
+  assert.equal(f.notifications.some((value) => value.action === "approve"), false);
+  await f.broker.interact({ ...f.scope, id: "native-ui", action: "approve", windowId: 13 });
+  await opening;
+  assert.deepEqual(f.notifications.filter((value) => value.action === "approve"), [{ id: "native-ui", action: "approve", windowId: 13 }]);
+  await f.broker.interact({ ...f.scope, id: "native-ui", action: "takeover" });
+  f.emit(approvalState({ phase: "paused", canContinue: false }));
+  await assert.rejects(f.broker.interact({ ...f.scope, id: "native-ui", action: "resume" }), /native phase/);
+  f.emit(approvalState({ phase: "paused", canContinue: true }));
+  await f.broker.interact({ ...f.scope, id: "native-ui", action: "resume" });
+  assert.deepEqual(f.notifications.filter((value) => ["takeover", "resume"].includes(value.action)).map((value) => value.action), ["takeover", "resume"]);
+  await f.broker.reset(true);
+});
+
+test("takeover dispatches promptly and resume tolerates ordinary state replacements without revoking on harmless phase changes", async () => {
+  for (const changed of ["status", "working", "cannot-continue", "takeover"]) {
+    const entered = deferred(); const released = deferred();
+    let hold = false;
+    const f = fixture({ discussionFor: async () => {
+      if (hold) { hold = false; entered.resolve(); await released.promise; }
+    }, callTool: async (name) => {
+      if (name === "computer_open_session") {
+        f.emit(approvalState({ windows: [{ id: 12, title: "One" }, { id: 13, title: "Two" }] }));
+        f.emit(approvalState({ phase: "working", canContinue: true }));
+        return result({ ok: true, state: "active", session_id: "native-session" });
+      }
+      return result({ ok: true, observation_id: "fresh", state: name === "computer_close_session" ? "closed" : "active" });
+    } });
+    await f.enable(); await f.execute("open", openArgs);
+    const reads = f.reads();
+    hold = true;
+    const taking = f.broker.interact({ ...f.scope, id: "native-ui", action: "takeover" });
+    assert.equal(f.notifications.at(-1).action, "takeover", "takeover does not await an ownership lookup");
+    f.emit(approvalState({ phase: "paused", canContinue: true, status: "The person took over." }));
+    await taking;
+    assert.deepEqual(f.reads(), reads);
+    const taken = f.notifications.length;
+    await f.broker.interact({ ...f.scope, id: "native-ui", action: "takeover" });
+    assert.equal(f.notifications.length, taken, "already paused satisfies takeover");
+    const resuming = f.broker.interact({ ...f.scope, id: "native-ui", action: "resume" });
+    const done = changed === "status" ? resuming : assert.rejects(resuming, /no control was resumed/);
+    await entered.promise;
+    f.emit(approvalState({ phase: changed === "working" ? "working" : "paused", canContinue: changed !== "cannot-continue", status: "Ordinary native update" }));
+    if (changed === "takeover") await f.broker.interact({ ...f.scope, id: "native-ui", action: "takeover" });
+    released.resolve(); await done;
+    assert.equal(f.notifications.filter((value) => value.action === "resume").length, changed === "status" ? 1 : 0);
+    assert.equal(f.counts().closes, 0); assert.equal((await f.snapshot()).enabled, true);
+    await f.broker.reset(true);
+  }
+});
+
+test("presentation polls never probe, enter the tool queue or expose watch frames to the model; storage is bounded and scoped", async () => {
+  let clock = 1000;
+  let hold = false;
+  const observed = deferred(); const observing = deferred();
+  const f = fixture({ now: () => clock, callTool: async (name) => {
+    if (name === "computer_open_session") {
+      f.emit(approvalState({ windows: [{ id: 12, title: "One" }, { id: 13, title: "Two" }] }));
+      f.emit(approvalState({ phase: "working" }));
+      return result({ ok: true, state: "active", session_id: "native-session", expires_in_seconds: 900 });
+    }
+    if (name === "computer_observe") {
+      if (!hold) return observationResult();
+      observing.resolve(); return observed.promise;
+    }
+    return result({ ok: true, state: "closed" });
+  } });
+  await f.enable(); await f.execute("open", openArgs);
+  hold = true;
+  const observation = f.execute("observe"); await observing.promise;
+  const reads = f.reads(); const count = f.sent.length;
+  const input = { ...f.scope, visible: true };
+  await f.broker.presentation(input);
+  f.emit(watchFrame());
+  for (let sequence = 1; sequence <= 70; sequence++) f.emit({ kind: "input", id: "native-ui", sequence, at: clock, action: "click", phase: "dispatched", x: 0.5, y: 0.25, text: "DO_NOT_EXPOSE", key: "secret" });
+  const view = await f.broker.presentation(input);
+  assert.deepEqual(view.frame, { sequence: 1, capturedAt: 1000, width: 1, height: 1, mimeType: "image/png", data: watchFrame().data });
+  assert.equal(view.inputs.length, 64); assert.equal(view.inputs[0].sequence, 7);
+  assert.equal(JSON.stringify(view).includes("DO_NOT_EXPOSE"), false);
+  view.inputs.length = 0; view.frame.data = "RENDERER_MUTATION";
+  for (const patch of [{ id: "foreign" }, { sequence: 0 }, { sequence: 2, data: "not a png" }, { sequence: 2, width: 9000 },
+    { sequence: 2, data: `iVBORw0KGgo${"A".repeat(4 * 1024 * 1024)}` }, { sequence: 2, capturedAt: Infinity }]) f.emit(watchFrame(patch));
+  f.emit({ kind: "input", id: "native-ui", sequence: 71, at: clock, action: "click", phase: "dispatched", x: 1.1 });
+  const unchanged = await f.broker.presentation(input);
+  assert.equal(unchanged.frame.sequence, 1); assert.equal(unchanged.inputs.length, 64);
+  assert.equal(await f.broker.presentation({ slug: "scout", threadId: "two", visible: true }), null);
+  assert.equal(f.sent.length, count); assert.deepEqual(f.reads(), reads);
+  assert.ok(f.notifications.every((value) => value.action === "watch"));
+  clock += 1501;
+  f.emit(watchFrame({ sequence: 2 }));
+  assert.equal((await f.broker.presentation(input)).frame, undefined, "heartbeat expiry drops the last frame before watching again");
+  f.emit(watchFrame({ sequence: 3 }));
+  assert.equal((await f.broker.presentation({ ...input, visible: false })).frame, undefined);
+  f.emit(watchFrame({ sequence: 4 }));
+  assert.equal((await f.broker.presentation(input)).frame, undefined, "hidden capture cannot reappear");
+  observed.resolve(result({ ok: true, observation_id: "model-observation" }));
+  assert.equal(JSON.stringify(await observation).includes(watchFrame().data), false);
+  f.emit(approvalState({ phase: "paused", canContinue: true }));
+  f.emit(watchFrame({ sequence: 5 }));
+  assert.equal((await f.broker.presentation(input)).frame, undefined);
+  f.emit(approvalState({ phase: "closed" }));
+  assert.equal(await f.broker.presentation(input), null);
+  f.emit(watchFrame({ sequence: 6 }));
+  await tick();
+  await f.broker.reset(true);
+});
+
+test("denial clears UI data, revokes the discussion and never auto-retries; old helper IDs cannot leak into a later discussion", async () => {
+  const opened = deferred(); const entered = deferred();
+  const f = fixture({ callTool: async (name) => {
+    if (name === "computer_open_session") { entered.resolve(); return opened.promise; }
+    return result({ ok: true, state: "closed" });
+  }, notifyUi: async (value) => {
+    if (value.action === "deny") opened.resolve(result({ ok: false, code: "access_denied", next: "human_takeover" }, true));
+  } });
+  await f.enable(); const opening = f.execute("open", openArgs); await entered.promise;
+  f.emit(approvalState({ windows: [{ id: 12, title: "One" }, { id: 13, title: "Two" }] }));
+  await f.broker.interact({ ...f.scope, id: "native-ui", action: "deny" });
+  assert.equal((await opening).isError, true);
+  assert.equal((await f.snapshot()).enabled, false);
+  assert.equal(await f.broker.presentation({ ...f.scope, visible: true }), null);
+  await assert.rejects(f.execute("open", openArgs), /disabled/);
+  const other = { slug: "scout", threadId: "two" };
+  await f.enable("this-mac", other); await f.execute("discover", {}, other);
+  f.emit(approvalState(), 0); f.emit(watchFrame(), 0);
+  assert.equal(await f.broker.presentation({ ...other, visible: true }), null);
+  assert.deepEqual(f.notifications, [{ id: "native-ui", action: "deny" }]);
+  await f.broker.reset(true);
+});
+
+test("changed identities, helper exit and expiry clear presentation; pending or uncertain UI actions never replay", async () => {
+  for (const stop of ["identity", "exit", "expiry", "uncertain"]) {
+    let clock = 1000;
+    const entered = deferred(); const continuing = deferred();
+    const f = fixture({ now: () => clock, callTool: async (name) => {
+      if (name === "computer_open_session") {
+        f.emit(approvalState({ windows: [{ id: 12, title: "One" }, { id: 13, title: "Two" }] }));
+        f.emit(approvalState({ phase: "working" }));
+        return result({ ok: true, state: "active", session_id: "native-session", expires_in_seconds: 1 });
+      }
+      if (name === "computer_observe") return observationResult();
+      return result({ ok: true, state: "closed" });
+    }, notifyUi: async (value) => {
+      if (value.action !== "resume") return;
+      entered.resolve(); await continuing.promise; throw new Error("Notification delivery is uncertain.");
+    } });
+    await f.enable(); await f.execute("open", openArgs);
+    const read = { ...f.scope, visible: true };
+    await f.broker.presentation(read); f.emit(watchFrame());
+    assert.equal((await f.broker.presentation(read)).frame.sequence, 1);
+    if (stop === "identity") f.emit(approvalState({ id: "replacement-ui", phase: "working" }));
+    if (stop === "exit") f.disconnect();
+    if (stop === "expiry") clock += 1000;
+    if (stop === "uncertain") {
+      f.emit(approvalState({ phase: "paused", canContinue: true }));
+      const input = { ...f.scope, id: "native-ui", action: "resume" };
+      const resuming = f.broker.interact(input);
+      await entered.promise;
+      await assert.rejects(f.broker.interact(input), /already pending/);
+      continuing.resolve();
+      await assert.rejects(resuming, /uncertain/);
+      assert.equal(f.notifications.filter((value) => value.action === "resume").length, 1);
+    }
+    assert.equal(await f.broker.presentation(read), null, stop);
+    await assert.rejects(f.broker.interact({ ...f.scope, id: "native-ui", action: "takeover" }));
+    f.emit(watchFrame({ sequence: 99 }));
+    assert.equal(await f.broker.presentation(read), null, stop);
+    await f.broker.reset(true);
+  }
 });
 
 test("voice microphone grants are audio-only and belong to the exact app main frame", async () => {
@@ -435,6 +752,7 @@ test("takeover observed between calls waits in the next tool without replaying a
   let continued = false;
   const f = fixture({ callTool: async (name) => {
     if (name === "computer_open_session") return result({ ok: true, session_id: "native-session", state: "active" });
+    if (name === "computer_observe") return observationResult();
     if (name === "computer_session_status") {
       return result({ ok: true, state: continued ? "active" : "paused", next: continued ? "observe" : "human_takeover" });
     }
@@ -460,6 +778,7 @@ test("Continue and cancellation after an action preserve its receipt without red
     const receipt = result({ ok: false, code: "input_uncertain", state: "paused", next: "human_takeover", receipt: { status: "uncertain", dispatched: true } }, true);
     const f = fixture({ callTool: async (name) => {
       if (name === "computer_open_session") return result({ ok: true, session_id: "native-session", state: "active" });
+      if (name === "computer_observe") return observationResult();
       if (name === "computer_act") return receipt;
       if (name === "computer_session_status") {
         polling.resolve();
@@ -498,7 +817,10 @@ test("stop revokes immediately, serializes a late open, and retains uncertain cl
   assert.equal(stopped.enabled, false); assert.equal(stopped.cleanupPending, true);
   await assert.rejects(f.execute("discover"), /disabled/);
   opened.resolve(result({ ok: true, session_id: "late-session", state: "active" }));
-  assert.equal(payload(await opening).code, "revoked");
+  const late = await opening;
+  assert.equal(payload(late).session_id, "late-session", "the native open receipt remains intact");
+  assert.equal(postStatus(late).ok, false);
+  assert.equal(f.sent.some((item) => item.name === "computer_observe"), false);
   await tick();
   assert.equal((await f.snapshot()).session, null);
   assert.ok(f.counts().closes >= 1);
@@ -530,7 +852,7 @@ test("unconfirmed helper shutdown during connection setup never claims to releas
 
 test("native errors and uncertain dispatch receipts are preserved and never replayed", async () => {
   const uncertain = result({ ok: false, code: "input_failed", receipt: { status: "uncertain", dispatched: true }, next: "observe" }, true);
-  const f = fixture({ callTool: async (name) => name === "computer_open_session" ? result({ ok: true, session_id: "native-session", state: "active" }) : name === "computer_act" ? uncertain : result({ ok: true, state: "closed" }) });
+  const f = fixture({ callTool: async (name) => name === "computer_open_session" ? result({ ok: true, session_id: "native-session", state: "active" }) : name === "computer_act" ? uncertain : name === "computer_observe" ? observationResult() : result({ ok: true, state: "closed" }) });
   await f.enable(); await f.execute("open", openArgs);
   const call = f.request("act", { observation_id: "observed", action: { type: "press", ref: "ref" } });
   assert.deepEqual(await f.broker.execute("scout", call), uncertain);
@@ -547,13 +869,18 @@ test("native errors and uncertain dispatch receipts are preserved and never repl
 test("native operations serialize and another enabled discussion cannot borrow the connection", async () => {
   const observing = deferred();
   const observed = deferred();
+  let hold = false;
   const f = fixture({ callTool: async (name) => {
     if (name === "computer_open_session") return result({ ok: true, session_id: "native-session", state: "active" });
-    if (name === "computer_observe") { observing.resolve(); return observed.promise; }
+    if (name === "computer_observe") {
+      if (!hold) return observationResult();
+      observing.resolve(); return observed.promise;
+    }
     return result({ ok: true, state: "active" });
   } });
   const other = { slug: "scout", threadId: "two" };
   await f.enable(); await f.enable("this-mac", other); await f.execute("open", openArgs);
+  hold = true;
   const observation = f.execute("observe");
   await observing.promise;
   const action = f.execute("act", { observation_id: "observed", action: { type: "press", ref: "button" } });
@@ -562,7 +889,7 @@ test("native operations serialize and another enabled discussion cannot borrow t
   assert.equal(f.sent.filter((item) => item.name === "computer_act").length, 0);
   observed.resolve(result({ ok: true, observation_id: "observed" }));
   await Promise.all([observation, action, rejected]);
-  assert.deepEqual(f.sent.map((item) => item.name), ["computer_open_session", "computer_observe", "computer_act"]);
+  assert.deepEqual(f.sent.map((item) => item.name), ["computer_open_session", "computer_observe", "computer_observe", "computer_act"]);
   assert.equal(f.counts().connects, 1);
   await f.broker.reset(true);
 });
@@ -597,7 +924,7 @@ test("native cancellation can beat HTTP admission and prevents a delayed call fr
 
 test("native Stop observed in status revokes opt-in rather than reopening a session", async () => {
   const stopped = result({ ok: false, code: "session_unavailable", message: "Stopped by the person." }, true);
-  const f = fixture({ callTool: async (name) => name === "computer_open_session" ? result({ ok: true, session_id: "native-session", state: "active" }) : stopped });
+  const f = fixture({ callTool: async (name) => name === "computer_open_session" ? result({ ok: true, session_id: "native-session", state: "active" }) : name === "computer_observe" ? observationResult() : stopped });
   await f.enable(); await f.execute("open", openArgs);
   const snapshot = await f.snapshot();
   assert.equal(snapshot.enabled, false); assert.equal(snapshot.session, null);
@@ -608,6 +935,7 @@ test("native Stop observed in status revokes opt-in rather than reopening a sess
 test("transport failure during act is uncertain, disables the grant, and cannot replay", async () => {
   const f = fixture({ callTool: async (name) => {
     if (name === "computer_open_session") return result({ ok: true, session_id: "native-session", state: "active" });
+    if (name === "computer_observe") return observationResult();
     if (name === "computer_act") throw new Error("Lost the response after dispatch");
     return result({ ok: true, state: "closed" });
   } });
@@ -651,7 +979,7 @@ test("native Stop before a status poll revokes opt-in when cleanup or the close 
   for (const viaTool of [false, true]) {
     const f = fixture({ callTool: async (name) => name === "computer_open_session"
       ? result({ ok: true, session_id: "native-session", state: "active" })
-      : result({ ok: false, code: "session_unavailable", next: "open_session" }, true) });
+      : name === "computer_observe" ? observationResult() : result({ ok: false, code: "session_unavailable", next: "open_session" }, true) });
     await f.enable(); await f.execute("open", openArgs);
     if (viaTool) assert.equal(payload(await f.execute("close")).code, "session_unavailable");
     else await f.broker.endTurn({ id: "execution-scout-one" });
@@ -753,7 +1081,7 @@ test("restart denies admission throughout replacement and invalidates pre-restar
   await reading.promise;
   await f.broker.reset(false, async () => {
     await assert.rejects(f.snapshot(), /stopping/);
-    await assert.rejects(f.execute("discover"), /stopping/);
+    await assert.rejects(f.execute("discover"), /stopping|restarted/);
   });
   hold = false; read.resolve();
   await assert.rejects(stale, /restarted/);

@@ -18,6 +18,8 @@ function fixture(options = {}) {
   const spawned = [];
   const connections = [];
   const calls = [];
+  const clients = [];
+  const notifications = [];
   const children = [];
   let clientInfo;
   let clientOptions;
@@ -52,8 +54,11 @@ function fixture(options = {}) {
       return child;
     },
     mcp: async () => ({
+      uiNotificationSchema: { fixture: "openwork/ui" },
       Client: class {
-        constructor(info, config) { clientInfo = info; clientOptions = config; }
+        constructor(info, config) { clientInfo = info; clientOptions = config; clients.push(this); }
+        setNotificationHandler(schema, handler) { assert.deepEqual(schema, { fixture: "openwork/ui" }); this.onUi = handler; }
+        async notification(value) { notifications.push(value); await options.notification?.(value); }
         async connect(transport, requestOptions) {
           this.transport = transport;
           transport.handshakeOptions = requestOptions;
@@ -84,7 +89,8 @@ function fixture(options = {}) {
     }),
     ...options.dependencies,
   });
-  return { adapter, spawned, children, connections, calls, info: () => ({ clientInfo, clientOptions }) };
+  return { adapter, spawned, children, connections, calls, notifications,
+    emit: (params, index = 0) => clients[index].onUi({ params }), info: () => ({ clientInfo, clientOptions }) };
 }
 
 test("readiness is a fresh read-only protocol/permission probe with no private metadata", async () => {
@@ -188,7 +194,7 @@ test("connections are dedicated, allowlist-bound and return raw MCP results only
   assert.equal(f.connections.length, 2);
   assert.deepEqual(f.info().clientOptions, { capabilities: {}, enforceStrictCapabilities: true });
   for (const transport of f.connections) {
-    assert.deepEqual(transport.params.args, ["mcp-coworker"]);
+    assert.deepEqual(transport.params.args, ["mcp-coworker-hosted"]);
     assert.equal(transport.params.command, f.spawned[0].command);
     assert.equal(transport.params.stderr, "ignore");
     assert.equal(transport.handshakeOptions.resetTimeoutOnProgress, false);
@@ -209,6 +215,40 @@ test("connections are dedicated, allowlist-bound and return raw MCP results only
   assert.equal(f.calls[1].transport, f.connections[1]);
   await first.close();
   await second.close();
+});
+
+test("host notifications stay out of tool results and work during a pending tool without probing or retry", async () => {
+  let complete;
+  const raw = { content: [{ type: "text", text: '{"ok":true}' }] };
+  const f = fixture({ call: () => new Promise((resolve) => { complete = resolve; }) });
+  const received = [];
+  let closed = 0;
+  const connection = await f.adapter.connect({ onUi: (value) => received.push(value), onClose: () => { closed++; } });
+  const opening = connection.callTool("computer_open_session", { app_id: "fixture", mode: "observe", purpose: "Fixture" });
+  await delay(1);
+  f.emit({ kind: "state", id: "native-ui", phase: "approval" });
+  f.emit({ kind: "frame", id: "native-ui", data: "WATCH_ONLY" });
+  for (const params of [{ id: "native-ui", action: "watch", visible: true }, { id: "native-ui", action: "approve", windowId: 12 }]) await connection.notifyUi(params);
+  assert.deepEqual(f.notifications, [
+    { method: "openwork/ui", params: { id: "native-ui", action: "watch", visible: true } },
+    { method: "openwork/ui", params: { id: "native-ui", action: "approve", windowId: 12 } },
+  ]);
+  assert.equal(f.spawned.length, 1);
+  assert.equal(f.calls.length, 1);
+  assert.equal(received.length, 2);
+  for (const params of [
+    { id: "native-ui", action: "approve" }, { id: "native-ui", action: "watch" },
+    { id: "native-ui", action: "resume", session_id: "spoofed" }, { id: "native-ui", action: "click" },
+    { id: "native-ui", action: "approve", windowId: Infinity }, { id: "native-ui", action: "resume", windowId: 12 },
+  ]) await assert.rejects(connection.notifyUi(params), /scoped native/);
+  complete(raw);
+  assert.deepEqual(await opening, raw);
+  assert.equal(f.notifications.length, 2);
+  await connection.close();
+  f.emit({ kind: "frame", id: "native-ui", data: "LATE_FRAME" });
+  assert.equal(received.length, 2);
+  assert.equal(closed, 1);
+  await assert.rejects(connection.notifyUi({ id: "native-ui", action: "watch", visible: true }), /closed/);
 });
 
 test("handshake rejects unknown implementations, changed tool surfaces and partial startup", async () => {

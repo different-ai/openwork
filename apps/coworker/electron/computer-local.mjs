@@ -17,11 +17,12 @@ const toolNames = new Set([
 ]);
 
 async function loadMcp() {
-  const [{ Client }, { StdioClientTransport }] = await Promise.all([
+  const [{ Client }, { StdioClientTransport }, { z }] = await Promise.all([
     import("@modelcontextprotocol/sdk/client/index.js"),
     import("@modelcontextprotocol/sdk/client/stdio.js"),
+    import("zod"),
   ]);
-  return { Client, StdioClientTransport };
+  return { Client, StdioClientTransport, uiNotificationSchema: z.object({ method: z.literal("openwork/ui"), params: z.unknown() }) };
 }
 
 async function bounded(work, timeoutMs, signal) {
@@ -119,7 +120,7 @@ export function createLocalComputerAdapter({
         return { binary, permissions, readiness: "setup-required", detail: `Computer Use needs ${missing.join(" and ")} permission. Open setup to review access.` };
       }
       if (!state.ok) throw new Error("Helper is not ready.");
-      return { binary, permissions, readiness: "ready", detail: "Computer Use is ready. Each app session still requires your approval." };
+      return { binary, permissions, readiness: "ready", detail: "Computer Use is ready. Allow this discussion to use supported apps for its task. Sensitive actions still require your authorization." };
     } catch {
       return { readiness: "unavailable", detail: "The Computer Use helper could not report a valid permission status. Rebuild or reinstall Coworker." };
     }
@@ -164,19 +165,26 @@ export function createLocalComputerAdapter({
       })().finally(() => { setupPending = null; setupPermission = null; });
       return setupPending;
     },
-    async connect() {
+    async connect({ onUi = () => {}, onClose = () => {} } = {}) {
       const state = await inspect();
       if (state.readiness !== "ready") throw new Error(state.detail);
-      const { Client, StdioClientTransport } = await mcp();
+      const { Client, StdioClientTransport, uiNotificationSchema } = await mcp();
       const client = new Client({ name: "open-coworker-computer", version: "1.0.0" }, { capabilities: {}, enforceStrictCapabilities: true });
-      // Visual native controls, with standalone consent and human-only Continue.
-      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-coworker"], env, stderr: "ignore" });
+      // Only this trusted host gets embedded presentation; Continue stays human-only.
+      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-coworker-hosted"], env, stderr: "ignore" });
       let closed = false;
       let terminationConfirmed = false;
       let busy = false;
       const lifetime = new AbortController();
+      client.setNotificationHandler(uiNotificationSchema, ({ params }) => {
+        if (!closed) onUi(params);
+      });
       const terminated = new Promise((resolve) => {
-        transport.onclose = () => { closed = true; terminationConfirmed = true; resolve(); };
+        transport.onclose = () => {
+          closed = true; terminationConfirmed = true;
+          lifetime.abort(new Error("Computer Use disconnected."));
+          resolve(); onClose();
+        };
       });
       // SDK close() can return after SIGKILL but before the child exits. Its
       // onclose callback, installed before Client.connect composes it, is the receipt.
@@ -221,6 +229,19 @@ export function createLocalComputerAdapter({
         throw error;
       }
       return {
+        async notifyUi(params) {
+          if (closed) throw new Error("Computer Use connection is closed.");
+          if (!params || typeof params !== "object" || Array.isArray(params)
+            || Object.keys(params).some((key) => !["id", "action", "windowId", "visible"].includes(key))
+            || typeof params.id !== "string" || !params.id || params.id.length > 128
+            || !["approve", "deny", "takeover", "resume", "stop", "watch"].includes(params.action)
+            || (params.action === "approve" ? !Number.isSafeInteger(params.windowId) || params.windowId < 1 || params.windowId > 0xffffffff : params.windowId !== undefined)
+            || (params.action === "watch" ? typeof params.visible !== "boolean" : params.visible !== undefined)) {
+            throw new Error("A scoped native presentation action is required.");
+          }
+          // Notifications must not wait behind a pending consent or agent tool call.
+          await bounded(() => client.notification({ method: "openwork/ui", params }), limits.close, lifetime.signal);
+        },
         async callTool(name, args, { signal, timeoutMs = limits.call } = {}) {
           if (closed) throw new Error("Computer Use connection is closed.");
           if (!toolNames.has(name)) throw new Error("This Computer Use tool is not allowed.");

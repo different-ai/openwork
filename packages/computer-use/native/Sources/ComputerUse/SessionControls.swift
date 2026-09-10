@@ -56,9 +56,15 @@ final class SessionControls: NSObject {
     static var hosted = false
     // Presentation only: Coworker keeps native consent and explicit Continue.
     static var coworkerPresentation = false
+    static var embeddedCoworker = false
+    static var automaticRecovery: Bool { hosted && !coworkerPresentation && !embeddedCoworker }
     static weak var active: SessionControls?
     private var hostID = UUID().uuidString
     private var hostState: [String: Any] = [:]
+    private var frameSequence = 0
+    private var inputSequence = 0
+    private var lastFrameAt: TimeInterval = -.infinity
+    private var canContinue = false
     private var approval: ((WindowTarget?) -> Void)?
     private var approvalWindows: [WindowTarget] = []
     private var previewView: AgentPreview?
@@ -79,18 +85,52 @@ final class SessionControls: NSObject {
         guard Self.hosted && !Self.coworkerPresentation else { return }
         hostState.merge(values) { _, new in new }
         hostState["id"] = hostID
-        guard let data = try? JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "method": "openwork/ui", "params": hostState]) else { return }
-        FileHandle.standardOutput.write(data + Data([10]))
+        if Self.embeddedCoworker {
+            hostState["kind"] = "state"
+            let fields: Set<String> = ["kind", "id", "phase", "appName", "appID", "pid", "windowTitle", "task", "mode", "windows", "status", "canContinue"]
+            hostState = hostState.filter { fields.contains($0.key) }
+            if hostState["phase"] as? String != "approval" { hostState.removeValue(forKey: "windows") }
+        }
+        MCPOutput.shared.send(["jsonrpc": "2.0", "method": "openwork/ui", "params": hostState])
+    }
+    func frame(_ data: Data, width: Int, height: Int, capturedAt: Int64) {
+        guard Self.embeddedCoworker, Self.active === self, hostState["phase"] as? String == "working",
+              MCPOutput.shared.canSendFrame, ProcessInfo.processInfo.systemUptime - lastFrameAt >= 0.2 else { return }
+        lastFrameAt = ProcessInfo.processInfo.systemUptime
+        frameSequence += 1
+        MCPOutput.shared.send(["jsonrpc": "2.0", "method": "openwork/ui", "params": [
+            "kind": "frame", "id": hostID, "sequence": frameSequence, "capturedAt": capturedAt,
+            "width": width, "height": height, "mimeType": "image/png", "data": data.base64EncodedString()
+        ]], frame: true)
+    }
+    func inputFeedback(_ feedback: InputFeedback) {
+        guard Self.embeddedCoworker, Self.active === self,
+              ["working", "paused"].contains(hostState["phase"] as? String ?? "") else { return }
+        inputSequence += 1
+        var value = feedback.payload
+        value["kind"] = "input"; value["id"] = hostID; value["sequence"] = inputSequence
+        MCPOutput.shared.send(["jsonrpc": "2.0", "method": "openwork/ui", "params": value])
+    }
+    func hostDisconnected() {
+        cancelConsent(); onStop?()
     }
     func hostAction(_ value: [String: Any]) {
         guard Self.hosted && !Self.coworkerPresentation,
               value["id"] as? String == hostID, let action = value["action"] as? String else { return }
         switch action {
         case "approve":
-            guard let id = value["windowId"] as? Int, let target = approvalWindows.first(where: { Int($0.id) == id }), let approval else { return }
+            guard let id = try? Arguments(values: value).integer("windowId", min: 1, max: Int(UInt32.max)),
+                  let target = approvalWindows.first(where: { Int($0.id) == id }), let approval else { return }
             self.approval = nil; approvalWindows = []; approval(target)
         case "deny": cancelConsent()
-        case "resume": onResume?()
+        case "resume":
+            if !Self.embeddedCoworker || (isPaused && canContinue) { onResume?() }
+        case "takeover":
+            if Self.embeddedCoworker { onPause?("You have control. Click Continue when you are ready.") }
+        case "watch":
+            guard Self.embeddedCoworker,
+                  let visible = try? Arguments(values: value).bool("visible", default: false) else { return }
+            onWatch?(visible)
         case "stop": cancelConsent(); onStop?()
         case "hide": hidePanel()
         case "show": showPanel()
@@ -319,13 +359,19 @@ final class SessionControls: NSObject {
         }
         panel.orderFrontRegardless()
 
+        showCoworkerMenu()
+    }
+
+    private func showCoworkerMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "Coworker computer use")
         item.button?.setAccessibilityTitle("Coworker computer use controls")
-        item.button?.toolTip = "Coworker Computer Use · Show controls or Stop"
+        item.button?.toolTip = Self.embeddedCoworker ? "Coworker Computer Use · Take over or Stop" : "Coworker Computer Use · Show controls or Stop"
         let menu = NSMenu(); menu.autoenablesItems = false
-        let show = NSMenuItem(title: "Show Computer Use controls", action: #selector(showPanel), keyEquivalent: "")
-        show.target = self; menu.addItem(show)
+        if !Self.embeddedCoworker {
+            let show = NSMenuItem(title: "Show Computer Use controls", action: #selector(showPanel), keyEquivalent: "")
+            show.target = self; menu.addItem(show)
+        }
         let pause = NSMenuItem(title: "Take over", action: #selector(togglePause), keyEquivalent: "")
         pause.target = self; menu.addItem(pause); menuToggle = pause
         menu.addItem(.separator())
@@ -364,14 +410,17 @@ final class SessionControls: NSObject {
     var onResume: (() -> Void)?
     var onStop: (() -> Void)?
     var onTick: (() -> Void)?
+    var onWatch: ((Bool) -> Void)?
     var isPaused = false
 
     func chooseWindow(app: AppIdentity, mode: AccessMode, windows: [WindowTarget], purpose: String) async throws -> WindowTarget {
         if Self.hosted && !Self.coworkerPresentation {
             Self.active = self; hostID = UUID().uuidString; hostState = [:]; approvalWindows = windows
+            frameSequence = 0; inputSequence = 0; lastFrameAt = -.infinity; canContinue = false
             let target: WindowTarget? = await withCheckedContinuation { continuation in
                 approval = { continuation.resume(returning: $0) }
-                publish(["phase": "approval", "appName": app.name, "task": purpose, "mode": mode.rawValue,
+                publish(["phase": "approval", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),
+                    "windowTitle": "", "task": purpose, "mode": mode.rawValue, "status": "Waiting for window approval.", "canContinue": false,
                     "windows": windows.map { ["id": Int($0.id), "title": $0.title] }])
             }
             guard let target else { throw UseError("access_denied", "App access was declined. Wait for the person to ask again.", next: "human_takeover") }
@@ -404,13 +453,18 @@ final class SessionControls: NSObject {
         return windows[picker.indexOfSelectedItem]
     }
     func cancelConsent() {
-        if let approval { self.approval = nil; approvalWindows = []; approval(nil); publish(["phase": "closed"]) }
+        if let approval { self.approval = nil; approvalWindows = []; approval(nil); publish(["phase": "closed", "status": "Access declined.", "canContinue": false]) }
         if let host = consentWindow, let sheet = host.attachedSheet { host.endSheet(sheet, returnCode: .cancel) }
     }
 
     func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String) {
-        isPaused = false
-        if Self.coworkerPresentation { showCoworker(app: app, target: target, mode: mode, purpose: purpose) }
+        isPaused = false; canContinue = true
+        if Self.embeddedCoworker {
+            showCoworkerMenu()
+            publish(["phase": "working", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),
+                "windowTitle": target.title, "task": purpose, "mode": mode.rawValue, "status": "Starting...", "canContinue": true])
+        }
+        else if Self.coworkerPresentation { showCoworker(app: app, target: target, mode: mode, purpose: purpose) }
         else if Self.hosted { showHosted(app: app, target: target, mode: mode, purpose: purpose) } else {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 230),
             styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -482,7 +536,7 @@ final class SessionControls: NSObject {
             MainActor.assumeIsolated {
                 if mode == .control, let activated = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                    activated.processIdentifier != app.pid, NSWorkspace.shared.frontmostApplication?.processIdentifier != app.pid {
-                    if Self.hosted && !Self.coworkerPresentation { self?.onAppSwitch?() }
+                    if Self.automaticRecovery { self?.onAppSwitch?() }
                     else { self?.onPause?("You switched apps. Continue will return to the approved window.") }
                 }
             }
@@ -494,14 +548,15 @@ final class SessionControls: NSObject {
             MainActor.assumeIsolated { self?.onTick?(); self?.refreshPreviewState() }
         }
         // Keep expiry and screenshot age current while the menu-bar controls are open.
-        if Self.coworkerPresentation, let timer { RunLoop.main.add(timer, forMode: .common) }
+        if Self.coworkerPresentation || Self.embeddedCoworker, let timer { RunLoop.main.add(timer, forMode: .common) }
     }
     func update(_ message: String, paused: Bool, canContinue: Bool = true, recoverable: Bool = false) {
         publish(["phase": paused ? "paused" : "working", "status": message, "canContinue": canContinue, "recoverable": recoverable])
+        self.canContinue = canContinue
         if paused { previewNeedsRefresh = true }
         isPaused = paused; status?.stringValue = message; toggle?.title = paused ? "Continue" : "Take over"
         toggle?.isEnabled = !paused || canContinue
-        if Self.coworkerPresentation {
+        if Self.coworkerPresentation || Self.embeddedCoworker {
             if message == "OpenWork is working. You can take over at any time." {
                 status?.stringValue = "Coworker is working in the approved window. You can take over at any time."
             }
@@ -518,11 +573,15 @@ final class SessionControls: NSObject {
         }
     }
     func updateExpiry(seconds: Int) {
-        publish(["remainingSeconds": seconds])
+        if !Self.embeddedCoworker { publish(["remainingSeconds": seconds]) }
         expiry?.stringValue = String(format: "Access ends in %d:%02d", seconds / 60, seconds % 60)
     }
     func close() {
-        cancelConsent(); publish(["phase": "closed"]); previewView = nil; Self.active = nil
+        cancelConsent()
+        if !Self.embeddedCoworker || (Self.active === self && hostState["phase"] as? String != "closed") {
+            publish(["phase": "closed", "status": "Access ended.", "canContinue": false])
+        }
+        previewView = nil; Self.active = nil; canContinue = false
         latestPreviewAt = nil; previewNeedsRefresh = true; previewUnavailable = false
         emptyPreview = nil; previewAge = nil; previewState = nil; actionLabel = nil; stateLabel = nil
         coworkerStack = nil; detailsStack = nil; disclosureButton = nil; menuToggle = nil
@@ -550,7 +609,7 @@ final class SessionControls: NSObject {
         resizeCoworkerPanel()
     }
     @objc private func togglePause() {
-        if isPaused { if toggle?.isEnabled == true { onResume?() } }
+        if isPaused { if canContinue { onResume?() } }
         else { onPause?("You have control. Click Continue when you are ready.") }
     }
     @objc private func stopSession() { onStop?() }
