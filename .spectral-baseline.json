@@ -1,10 +1,9 @@
 {
-  "warnings": 250,
+  "warnings": 191,
   "byRule": {
     "array-items": 2,
     "oas3-unused-component": 25,
-    "operation-description": 42,
     "ow-list-pagination": 26,
-    "ow-timestamps-date-time": 155
+    "ow-timestamps-date-time": 138
   }
 }
