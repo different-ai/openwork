@@ -1103,7 +1103,9 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
-            <div className={cn("group/workspaces-header flex h-6 items-center mt-4", SIDEBAR_SECTION_LANE)}>
+            {/* A flex item of the scrolling list: without shrink-0 it collapses to its
+                button's height once the list overflows, shifting every row up. */}
+            <div className={cn("group/workspaces-header flex h-6 shrink-0 items-center mt-4", SIDEBAR_SECTION_LANE)}>
               <span className={SIDEBAR_SECTION_LABEL}>
                 {t("workspace_list.title")}
               </span>
