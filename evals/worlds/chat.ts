@@ -1,16 +1,27 @@
 import { browserScript, reattachSurface, type Surface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
-import type { MockAgentWorkload } from "@openwork/labs";
+import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
+
+type AppSurface = "electron" | "web";
+
+/** Surface-registered cases default to the web lane; unregistered worlds keep Electron. */
+function requestedAppSurface(): AppSurface {
+  const value = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "web";
+  if (value !== "electron" && value !== "web") {
+    throw new Error(`OPENWORK_EVAL_APP_SURFACE must be web or electron; received ${JSON.stringify(value)}.`);
+  }
+  return value;
+}
 
 declare global {
   interface Window {
@@ -183,7 +194,7 @@ export async function configureProvider(
 
 async function seedControls(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   calls: readonly { action: string; args?: unknown }[],
 ): Promise<void> {
   for (const call of calls) await arrangeControl(seed, app, call.action, call.args);
@@ -191,7 +202,7 @@ async function seedControls(
 
 export async function arrangeControl(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   action: string,
   args?: unknown,
 ): Promise<unknown> {
@@ -246,13 +257,36 @@ async function splitPaneQuestions(
   name: string,
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
+  surface: AppSurface = "electron",
 ) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
-  const mock = seed.mock({ agentWorkloads });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  const mock = seed.mock({ isolatedProcessEnv: surface === "web", agentWorkloads });
+  // Electron stores realpath'd workspace roots; give the web server the same root
+  // so Stop's engine-directory verification matches (macOS /tmp is a symlink).
+  const requestedPath = seed.tmpPath(name);
+  const workspacePath = surface === "web"
+    ? join(realpathSync(dirname(requestedPath)), basename(requestedPath))
+    : requestedPath;
+  let app: Surface;
+  let agentMock: MockMcpHandle;
+  if (surface === "web") {
+    const web = await seed.appWeb({
+      name,
+      workspacePath,
+      mocks: { agent: mock },
+      headless: process.env.OPENWORK_EVAL_CHROME_HEADLESS === "1",
+    });
+    app = web;
+    const configured = web.mocks.agent;
+    if (!configured) throw new Error(`The app-web fixture did not boot the ${name} model witness.`);
+    agentMock = configured;
+  } else {
+    const den = await seed.den({ mocks: { agent: mock } });
+    app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
+    agentMock = den.mocks.agent;
+  }
+  const workspace = await seed.workspace(app, workspacePath);
   // Arrange an allowed native question tool independently of custom-agent defaults.
   // TODO(primitive): write workspace fixture files through a first-class seed API.
   const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
@@ -271,12 +305,12 @@ async function splitPaneQuestions(
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
         name: "Split send mock",
-        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-split-send" },
+        options: { baseURL: `${agentMock.url}/v1`, apiKey: "sk-split-send" },
         models: { [modelId]: { name: "Split send model" } },
       },
     },
   });
-  return { app, workspace, mock: den.mocks.agent };
+  return { app, workspace, mock: agentMock };
 }
 
 export async function delegatedQuestionHandoff(seed: Seed) {
@@ -1733,7 +1767,7 @@ export async function taskActivity(seed: Seed) {
 
 async function stoppingFeedbackFault(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   workspaceId: string,
   sessionId: string,
 ) {
@@ -1906,6 +1940,8 @@ async function stoppingFeedbackFault(
 }
 
 export async function unfinishedTools(seed: Seed) {
+  const surface = requestedAppSurface();
+  const engine = resolveEvalEngine();
   const prompt = "Hold the native tool open for Stop feedback proof.";
   const warmup = { prompt: "Create the Stop feedback fixture.", reply: "Stop feedback fixture ready." };
   const base = await splitPaneQuestions(seed, "unfinished-tool-lifecycle", [
@@ -1914,35 +1950,42 @@ export async function unfinishedTools(seed: Seed) {
       promptMarker: prompt,
       latestUserTurn: true,
       finalReply: "The held tool finished without Stop.",
-      steps: [{ tool: "bash", arguments: {
+      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
         command: "sleep 120",
         description: "Hold the native tool for Stop feedback",
         timeout: 180_000,
       } }],
     },
-  ], { permission: { bash: "allow" } });
+  ], { permission: { bash: "allow" } }, surface);
   const session = await seedSessionRetry(seed, base.app);
+  // v2 exposes live runs through /session/active ({ type: "running" }) rather than /session/status.
+  const statusPath = `/workspace/${encodeURIComponent(base.workspace.workspaceId)}`
+    + `/${engine === "v2" ? "opencode2/api/session/active" : "opencode/session/status"}`;
   return {
     ...base,
     session,
+    surface,
     prompt,
     warmup,
-    engine: resolveEvalEngine(),
+    engine,
     startStopFault: () => stoppingFeedbackFault(seed, base.app, base.workspace.workspaceId, session.sessionId),
-    nativeStatus: () => seed.evalIn(base.app, browserScript(async (workspaceId, sessionId) => {
+    nativeStatus: () => seed.evalIn(base.app, browserScript(async (statusPath, sessionId) => {
       const port = localStorage.getItem("openwork.server.port");
       const token = localStorage.getItem("openwork.server.token");
-      const response = await fetch(`http://127.0.0.1:${port}/workspace/${encodeURIComponent(workspaceId)}/opencode/session/status`, {
+      const response = await fetch(`http://127.0.0.1:${port}${statusPath}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) return `http-${response.status}`;
-      const statuses: unknown = await response.json();
+      const payload: unknown = await response.json();
+      // v2 wraps its body in { data }; v1 answers with the bare status map.
+      const statuses: unknown = payload && typeof payload === "object" && "data" in payload ? payload.data : payload;
       if (!statuses || typeof statuses !== "object") return "missing";
+      // The engine only lists sessions with live work; an absent session is idle.
+      if (!(sessionId in statuses)) return "idle";
       const status: unknown = Object.entries(statuses).find(([id]) => id === sessionId)?.[1];
-      return status && typeof status === "object" && "type" in status && typeof status.type === "string"
-        ? status.type
-        : "invalid";
-    }, [base.workspace.workspaceId, session.sessionId]), { awaitPromise: true }),
+      if (!status || typeof status !== "object" || !("type" in status) || typeof status.type !== "string") return "invalid";
+      return status.type === "running" ? "busy" : status.type;
+    }, [statusPath, session.sessionId]), { awaitPromise: true }),
   };
 }
 

@@ -4,7 +4,7 @@ import { arrangeControl, unfinishedTools } from "../worlds/chat.ts";
 
 const test = spec.world(unfinishedTools);
 
-test("unfinished current-turn tools expose Stop feedback and active, waiting, and unknown outcomes", async ({ world, user, seed, probe, step, evidence }) => {
+test("STOP-01 unfinished current-turn tools expose Stop feedback and active, waiting, and unknown outcomes", async ({ world, user, seed, probe, step, evidence }) => {
   await step("a completed turn grounds later Stop errors in the native snapshot", async () => {
     await user.type("composer", world.warmup.prompt, { replace: true, verify: true });
     await user.press("Enter");
@@ -93,6 +93,24 @@ test("unfinished current-turn tools expose Stop feedback and active, waiting, an
     evidence.recordAssertionEvidence(
       "A failed Stop remains explicitly retryable and never presents the run as completed",
       JSON.stringify(failed),
+      true,
+    );
+  });
+
+  await step("retrying Stop after the failure aborts the native run", async () => {
+    await user.click({ role: "button", label: "Stop" });
+    await probe.eventually(() => world.nativeStatus(), {
+      within: 45_000,
+      label: "the aborted native tool run",
+      until: (value) => value === "idle",
+    });
+    await user.see({ role: "button", label: "Run task" }, { timeoutMs: 15_000 });
+    await user.notSee({ role: "button", label: /^Stop/ });
+    const settled = await stopFault.read();
+    expect(settled).toMatchObject({ attempts: 1, held: 0, released: true, stoppingVisible: false, runVisible: true });
+    evidence.recordAssertionEvidence(
+      "Retrying Stop after a failed attempt aborts the native run and the run is idle before lifecycle seeding",
+      JSON.stringify(settled),
       true,
     );
   });
