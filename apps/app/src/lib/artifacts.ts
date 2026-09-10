@@ -374,14 +374,16 @@ export function useOpenArtifactPath() {
   const { onOpenTarget } = useOpenTargets();
 
   return React.useCallback((path: string, options?: { external?: boolean }) => {
-    const normalized = normalizeArtifactPath(path);
-    const target = openTargetFromArtifactPath(
-      normalized,
-      getArtifactName(normalized),
-      getArtifactType(normalized),
-      // Resolve this exact path, not a cached target with a matching suffix.
-      [],
-    );
+    // Explicit file actions must not strip path prefixes or reuse suffix matches.
+    const target: OpenTarget = {
+      id: `file:${path}`,
+      kind: "file",
+      value: path,
+      name: getArtifactName(path),
+      preview: artifactTypeToPreview(getArtifactType(path)),
+      confidence: 95,
+      reason: "artifact",
+    };
     onOpenTarget?.(target, options);
   }, [onOpenTarget]);
 }

@@ -32,9 +32,17 @@ export function localArtifactPath(root: string | null | undefined, value: string
     && (!/^[A-Za-z][A-Za-z\d+.-]*:/.test(path) || /^[A-Za-z]:[/\\]/.test(path));
   if (!path || !isLocal(path)) return null;
   if (isAbsolute(path)) return path;
+  // Validate decoded components without changing the literal filesystem name.
+  try {
+    const decoded = decodeURIComponent(path);
+    if (!isLocal(decoded) || isAbsolute(decoded)
+      || decoded.split(/[/\\]/).some((segment) => !segment || /^\.{1,2}\s*$/.test(segment))) return null;
+  } catch {
+    return null;
+  }
   const base = root?.trim();
   if (!base || !isAbsolute(base) || !isLocal(base) || path.startsWith("~")) return null;
-  return `${base.replace(/[/\\]+$/, "")}/${path.replace(/^\.[/\\]/, "")}`;
+  return `${base.replace(/[/\\]+$/, "")}/${path}`;
 }
 
 export async function resolveCollectibleOpenTarget(

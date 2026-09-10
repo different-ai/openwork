@@ -19,7 +19,10 @@ function renderToStaticMarkup(node: ReactNode) {
   return renderMarkup(<PlatformProvider value={createDefaultPlatform()}>{node}</PlatformProvider>);
 }
 
-test("file chips open the exact referenced path and copy it without opening another file", async () => {
+test.each([
+  "/tmp/Fresh Start.png", "workspaces/photos/Fresh Start.png", "workspace/123/Fresh Start.png",
+  "\\\\host\\Fresh Start.png", "C:\\Images\\Fresh Start.png", "./Fresh Start.png",
+])("file chips preserve %s for opening and copying", async (path) => {
   const registeredDom = typeof document === "undefined";
   if (registeredDom) GlobalRegistrator.register();
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
@@ -27,7 +30,6 @@ test("file chips open the exact referenced path and copy it without opening anot
   const copied: string[] = [];
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { copied.push(text); } } });
   const opened: { target: OpenTarget; options?: OpenTargetOptions }[] = [];
-  const path = "/tmp/Fresh Start.png";
   const other: OpenTarget = { id: "file:fresh start.png", kind: "file", value: "Fresh Start.png", name: "Fresh Start.png", preview: "image", exists: true, confidence: 100, reason: "workspace" };
   const container = document.createElement("div");
   document.body.append(container);
