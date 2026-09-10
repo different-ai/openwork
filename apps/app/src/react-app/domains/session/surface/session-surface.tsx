@@ -3258,6 +3258,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         </div>
         <SessionScrollOverlay
+          workspaceId={props.workspaceId}
           sessionId={props.sessionId}
           owner={sessionOwner}
           isStreaming={chatStreaming}

@@ -1,4 +1,5 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useSessionActivityStore } from "../status/session-activity-store";
 
 import {
   selectSessionIsStickyBottom,
@@ -22,7 +23,7 @@ const JumpToStartButton = memo(function JumpToStartButton({
   onJumpToStartOfMessage,
 }: JumpToStartButtonProps) {
   const handleClick = useCallback(() => {
-    onJumpToStartOfMessage("smooth");
+    onJumpToStartOfMessage(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth");
   }, [onJumpToStartOfMessage]);
 
   return (
@@ -38,13 +39,15 @@ const JumpToStartButton = memo(function JumpToStartButton({
 
 type JumpToLatestButtonProps = {
   onJumpToLatest: (behavior?: ScrollBehavior) => void;
+  newOutput: boolean;
 };
 
 const JumpToLatestButton = memo(function JumpToLatestButton({
   onJumpToLatest,
+  newOutput,
 }: JumpToLatestButtonProps) {
   const handleClick = useCallback(() => {
-    onJumpToLatest("smooth");
+    onJumpToLatest(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth");
   }, [onJumpToLatest]);
 
   return (
@@ -54,11 +57,13 @@ const JumpToLatestButton = memo(function JumpToLatestButton({
       onClick={handleClick}
     >
       Jump to latest
+      {newOutput ? <span className="ml-1.5 rounded-full bg-dls-hover px-1.5 py-0.5" role="status">New output</span> : null}
     </button>
   );
 });
 
 type SessionScrollOverlayProps = {
+  workspaceId: string;
   sessionId: string;
   owner?: string;
   isStreaming: boolean;
@@ -67,6 +72,7 @@ type SessionScrollOverlayProps = {
 };
 
 export const SessionScrollOverlay = memo(function SessionScrollOverlay({
+  workspaceId,
   sessionId,
   owner,
   isStreaming,
@@ -74,6 +80,21 @@ export const SessionScrollOverlay = memo(function SessionScrollOverlay({
   onJumpToStartOfMessage,
 }: SessionScrollOverlayProps) {
   const { isAtBottom, topClippedMessageId } = useSessionScrollOverlayState(sessionScrollKey(sessionId, owner));
+  const progressAt = useSessionActivityStore((state) => state.recordsByWorkspaceId[workspaceId]?.[sessionId]?.lastProgressAt ?? 0);
+  const key = JSON.stringify([workspaceId, owner, sessionId]);
+  const previous = useRef({ key, progressAt, isAtBottom, isStreaming });
+  const [unseenOwner, setUnseenOwner] = useState<string | null>(null);
+  useEffect(() => {
+    const last = previous.current;
+    if (last.key !== key || isAtBottom) {
+      setUnseenOwner(null);
+    } else if (!last.isAtBottom && (isStreaming || last.isStreaming) && progressAt > last.progressAt) {
+      // Observe validated transcript progress, not render/mutation counts or
+      // animation ticks. This affordance never changes the reader's position.
+      setUnseenOwner(key);
+    }
+    previous.current = { key, progressAt, isAtBottom, isStreaming };
+  }, [key, progressAt, isAtBottom, isStreaming]);
   const showJumpToStart = !isStreaming && Boolean(topClippedMessageId);
   const showJumpToLatest = !isAtBottom;
 
@@ -88,7 +109,7 @@ export const SessionScrollOverlay = memo(function SessionScrollOverlay({
           <JumpToStartButton onJumpToStartOfMessage={onJumpToStartOfMessage} />
         ) : null}
         {showJumpToLatest ? (
-          <JumpToLatestButton onJumpToLatest={onJumpToLatest} />
+          <JumpToLatestButton onJumpToLatest={onJumpToLatest} newOutput={unseenOwner === key} />
         ) : null}
       </div>
     </div>
