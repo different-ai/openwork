@@ -1910,6 +1910,21 @@ export async function archiveSessions(seed: Seed) {
   }
 
   return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled,
+    archiveToast: () => seed.evalIn(app, () => {
+      const pill = document.querySelector<HTMLElement>("[data-undo-toast]");
+      const message = pill?.querySelector("p");
+      const bounds = pill?.getBoundingClientRect();
+      return {
+        text: message?.textContent,
+        fullTitle: message?.querySelector("[title]")?.getAttribute("title"),
+        truncated: Boolean(message && message.scrollWidth > message.clientWidth && getComputedStyle(message).textOverflow === "ellipsis"),
+        fitsViewport: Boolean(bounds && bounds.left >= 0 && bounds.right <= window.innerWidth),
+        actionsInside: Boolean(pill && bounds && [...pill.querySelectorAll("button")].every(button => {
+          const action = button.getBoundingClientRect();
+          return action.width > 0 && action.left >= bounds.left && action.right <= bounds.right;
+        })),
+      };
+    }),
     hoverArchiveButton: async () => {
       // Disabled buttons reject pointer hits; hover their visible bounds without clicking.
       const button = await waitForLocated(app, { testId: `session-archive-${candidate.sessionId}` }, { timeoutMs: 10_000 });
