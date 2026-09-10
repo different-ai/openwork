@@ -67,17 +67,15 @@ export function SiteNav(props: Props) {
 
   return (
     <header className={`sticky top-0 z-20 w-full transition-all duration-300 ${scrolled ? "bg-white/80 shadow-sm backdrop-blur-md" : ""}`}>
-      <div className="mx-auto flex w-full max-w-[1176px] flex-col px-6">
-        <div className="grid grid-cols-[auto_1fr_auto] items-center py-4">
+      <div className="mx-auto flex w-full max-w-[1920px] flex-col px-[clamp(1.5rem,calc((100%-1128px)/2),4.75rem)]">
+        <div className="grid min-h-[97px] grid-cols-[auto_1fr_auto] items-center py-4">
           <Link
             href="/"
-            className="group inline-flex items-center gap-1.5"
+            aria-label="OpenWork"
+            className="group inline-flex items-center"
             onClick={() => setMobileOpen(false)}
           >
             <OpenWorkMark className="h-[30px] w-[38px] transition-opacity group-hover:opacity-80" />
-            <span className="text-[1.2rem] font-semibold tracking-tight text-[#011627] md:text-[1.3rem]">
-              OpenWork
-            </span>
           </Link>
 
           <nav className="hidden items-center justify-center gap-7 text-[14px] font-normal lg:flex">

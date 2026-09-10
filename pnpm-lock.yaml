@@ -1017,6 +1017,9 @@ importers:
       '@openwork/ui':
         specifier: workspace:*
         version: link:../../../packages/ui
+      '@paper-design/shaders-react':
+        specifier: 0.0.72
+        version: 0.0.72(@types/react@18.2.79)(react@18.2.0)
       botid:
         specifier: ^1.5.11
         version: 1.5.11(next@15.5.24(@opentelemetry/api@1.9.1)(@types/node@20.12.12)(babel-plugin-react-compiler@1.0.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(react@18.2.0)
@@ -12404,6 +12407,13 @@ snapshots:
   '@opentelemetry/semantic-conventions@1.42.0': {}
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
+
+  '@paper-design/shaders-react@0.0.72(@types/react@18.2.79)(react@18.2.0)':
+    dependencies:
+      '@paper-design/shaders': 0.0.72
+      react: 18.2.0
+    optionalDependencies:
+      '@types/react': 18.2.79
 
   '@paper-design/shaders-react@0.0.72(@types/react@19.2.14)(react@19.2.8)':
     dependencies:
