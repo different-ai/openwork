@@ -199,6 +199,7 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
     agentWorkloads: [{ promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] }],
   }));
   const { app, workspace, workspacePath } = await workspaceWorld(seed);
+  const documentStartedAt = await evalIn(app, () => performance.timeOrigin);
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: {
       [providerId]: {
@@ -208,6 +209,12 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
         models: { [modelId]: { name: "First send model" } },
       },
     },
+  });
+  // configureProvider schedules a reload; its readiness probe can still run in
+  // the old document. Never type the test prompt into that departing composer.
+  await waitForBehavior(app, browserScript((startedAt) => performance.timeOrigin !== startedAt
+    && Boolean(window.__openworkControl), [documentStartedAt]), {
+    timeoutMs: 60_000, label: "provider-configured replacement document mounted",
   });
   const resources = setup.move();
   const mount = `/workspace/${encodeURIComponent(workspace.workspaceId)}`;
