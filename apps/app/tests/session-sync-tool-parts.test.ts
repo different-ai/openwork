@@ -90,6 +90,15 @@ function writeToolPart(
 }
 
 describe("tool part mapper", () => {
+  test("forwards native tool start time without inventing pending timing", () => {
+    expect(parseDynamicToolUIPart(writeToolPart("running", { description: "Review" }, { tool: "task" })))
+      .toMatchObject({ callProviderMetadata: { openwork: { toolStartedAt: 1 } } });
+    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" })))
+      .toMatchObject({ callProviderMetadata: { opencode: { partId: "part-write" } } });
+    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" }))?.callProviderMetadata?.openwork)
+      .toBeUndefined();
+  });
+
   test("v1 execute tools keep their existing representation even with code or toolCalls metadata", () => {
     const part = writeToolPart("completed", { code: 'tools["openwork-cloud"].search_capabilities({})' }, { tool: "execute" });
     if (part.state.status !== "completed") throw new Error("Expected completed fixture");
@@ -197,7 +206,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(running)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1" },
+      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
 
     const completed = writeToolPart(
@@ -210,7 +219,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(completed)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1" },
+      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
   });
 

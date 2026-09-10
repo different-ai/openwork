@@ -191,7 +191,17 @@ export type V2EventTranslationState = {
   executionBySession: Map<string, V2EventPosition & { terminal?: boolean; retired?: V2EventPosition }>;
   terminalBySession: Map<string, V2EventPosition>;
   unknownTypes: Set<string>;
+  taskSessions: TaskSessionAssociations;
 };
+
+type TaskSessionAssociations = {
+  scope: string | null;
+  byCall: Map<string, string>;
+};
+
+const TASK_SESSION_ASSOCIATIONS_STORAGE_KEY = "openwork.v2.task-session-associations.v1";
+const MAX_TASK_SESSION_ASSOCIATIONS = 256;
+const taskSessionAssociationsByScope = new Map<string, Map<string, string>>();
 
 type TransportResult = {
   payload: unknown;
@@ -219,6 +229,105 @@ function readNumber(value: unknown, key: string): number | undefined {
   if (!isRecord(value)) return undefined;
   const field = value[key];
   return typeof field === "number" && Number.isFinite(field) ? field : undefined;
+}
+
+function taskSessionAssociationKey(parentSessionID: string, messageID: string, callID: string): string {
+  return JSON.stringify([parentSessionID, messageID, callID]);
+}
+
+function taskSessionStorage(): Storage | null {
+  try {
+    return typeof globalThis.sessionStorage === "undefined" ? null : globalThis.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function taskSessionAssociations(scope: string | null): TaskSessionAssociations {
+  if (scope === null) return { scope, byCall: new Map() };
+  const existing = taskSessionAssociationsByScope.get(scope);
+  if (existing) return { scope, byCall: existing };
+  const byCall = new Map<string, string>();
+  try {
+    const raw = taskSessionStorage()?.getItem(TASK_SESSION_ASSOCIATIONS_STORAGE_KEY);
+    if (raw) {
+      const stored: unknown = JSON.parse(raw);
+      if (Array.isArray(stored)) {
+        for (const entry of stored.slice(-MAX_TASK_SESSION_ASSOCIATIONS)) {
+          if (!isRecord(entry) || entry.scope !== scope) continue;
+          const parentSessionID = readString(entry, "parentSessionID");
+          const messageID = readString(entry, "messageID");
+          const callID = readString(entry, "callID");
+          const childSessionID = readString(entry, "childSessionID");
+          if (parentSessionID && messageID && callID && childSessionID) {
+            byCall.set(taskSessionAssociationKey(parentSessionID, messageID, callID), childSessionID);
+          }
+        }
+      }
+    }
+  } catch {
+    // Unavailable or invalid browser cache leaves the in-memory map empty.
+  }
+  taskSessionAssociationsByScope.set(scope, byCall);
+  return { scope, byCall };
+}
+
+function persistTaskSessionAssociations(associations: TaskSessionAssociations): void {
+  if (associations.scope === null) return;
+  const storage = taskSessionStorage();
+  if (!storage) return;
+  let stored: unknown[] = [];
+  try {
+    const raw = storage.getItem(TASK_SESSION_ASSOCIATIONS_STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) stored = parsed.filter((entry) => !isRecord(entry) || entry.scope !== associations.scope);
+    }
+  } catch {
+    // Reading may be blocked even when sessionStorage itself is exposed.
+    return;
+  }
+  for (const [key, childSessionID] of associations.byCall) {
+    let identity: unknown;
+    try {
+      identity = JSON.parse(key);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(identity) || typeof identity[0] !== "string"
+      || typeof identity[1] !== "string" || typeof identity[2] !== "string") continue;
+    stored.push({
+      scope: associations.scope,
+      parentSessionID: identity[0],
+      messageID: identity[1],
+      callID: identity[2],
+      childSessionID,
+    });
+  }
+  try {
+    storage.setItem(TASK_SESSION_ASSOCIATIONS_STORAGE_KEY, JSON.stringify(stored.slice(-MAX_TASK_SESSION_ASSOCIATIONS)));
+  } catch {
+    // Storage can be disabled or full; the in-memory exact mapping still wins.
+  }
+}
+
+function rememberTaskSession(
+  associations: TaskSessionAssociations,
+  parentSessionID: string,
+  messageID: string,
+  callID: string,
+  childSessionID: string,
+): void {
+  const key = taskSessionAssociationKey(parentSessionID, messageID, callID);
+  if (associations.byCall.get(key) === childSessionID) return;
+  associations.byCall.delete(key);
+  associations.byCall.set(key, childSessionID);
+  while (associations.byCall.size > MAX_TASK_SESSION_ASSOCIATIONS) {
+    const oldest = associations.byCall.keys().next().value;
+    if (typeof oldest !== "string") break;
+    associations.byCall.delete(oldest);
+  }
+  persistTaskSessionAssociations(associations);
 }
 
 function responseData(value: unknown): unknown {
@@ -301,10 +410,20 @@ function compatibleToolName(tool: string): string {
   return tool === "shell" ? "bash" : tool === "subagent" ? "task" : tool;
 }
 
-function toolMetadata(tool: string, metadata: Record<string, unknown>): Record<string, unknown> {
-  return tool === "subagent" && typeof metadata.sessionID === "string"
-    ? { sessionId: metadata.sessionID, ...metadata }
-    : metadata;
+function toolMetadata(
+  tool: string,
+  metadata: Record<string, unknown>,
+  parentSessionID: string,
+  messageID: string,
+  callID: string,
+  associations: TaskSessionAssociations,
+): Record<string, unknown> {
+  if (tool !== "subagent") return metadata;
+  const explicit = readString(metadata, "sessionId")?.trim() || readString(metadata, "sessionID")?.trim();
+  if (explicit) rememberTaskSession(associations, parentSessionID, messageID, callID, explicit);
+  const childSessionID = explicit
+    ?? associations.byCall.get(taskSessionAssociationKey(parentSessionID, messageID, callID));
+  return childSessionID ? { ...metadata, sessionId: childSessionID } : metadata;
 }
 
 function toolAttachments(
@@ -362,6 +481,7 @@ function mapV2ToolPart(
   messageID: string,
   sessionID: string,
   messageCreated: number,
+  taskSessions: TaskSessionAssociations,
 ): ToolPart | null {
   const callID = readString(value, "callID") ?? readString(value, "id");
   const sourceTool = readString(value, "tool") ?? readString(value, "name");
@@ -375,7 +495,7 @@ function mapV2ToolPart(
   const start = readNumber(time, "ran") ?? created;
   const end = readNumber(time, "completed") ?? start;
   const title = readString(state, "title") ?? tool;
-  const metadata = toolMetadata(sourceTool, readRecord(state, "metadata") ?? {});
+  const metadata = toolMetadata(sourceTool, readRecord(state, "metadata") ?? {}, sessionID, messageID, callID, taskSessions);
   const base: Omit<ToolPart, "state"> = {
     id: callID,
     messageID,
@@ -427,6 +547,7 @@ function mapV2MessageParts(
   messageID: string,
   sessionID: string,
   messageCreated: number,
+  taskSessions: TaskSessionAssociations,
 ): Part[] {
   if (Array.isArray(value.content)) {
     const ordinals = { text: 0, reasoning: 0 };
@@ -453,7 +574,7 @@ function mapV2MessageParts(
         }];
       }
       if (readString(entry, "type") === "tool") {
-        const part = mapV2ToolPart(entry, messageID, sessionID, messageCreated);
+        const part = mapV2ToolPart(entry, messageID, sessionID, messageCreated, taskSessions);
         return part ? [part] : [];
       }
       return [];
@@ -469,7 +590,11 @@ function mapV2MessageParts(
   }];
 }
 
-function mapV2Message(value: unknown, sessionID: string): V2MappedMessage | null {
+function mapV2Message(
+  value: unknown,
+  sessionID: string,
+  taskSessions: TaskSessionAssociations = taskSessionAssociations(null),
+): V2MappedMessage | null {
   if (!isRecord(value)) return null;
   // Native instruction/catalog updates belong to the model context, not the
   // visible conversation. Filter by role so identical user text is preserved.
@@ -480,7 +605,7 @@ function mapV2Message(value: unknown, sessionID: string): V2MappedMessage | null
   const created = readNumber(time, "created") ?? readNumber(value, "timestamp") ?? 0;
   const completed = readNumber(time, "completed");
   const resolvedSessionID = readString(value, "sessionID") ?? sessionID;
-  const parts = mapV2MessageParts(value, id, resolvedSessionID, created);
+  const parts = mapV2MessageParts(value, id, resolvedSessionID, created, taskSessions);
   const role = messageRole(value);
   const error = readRecord(value, "error");
   return {
@@ -713,7 +838,10 @@ function resolveToolStream(
   const sessionID = readSessionID(properties);
   const callID = readToolCallID(properties);
   if (!sessionID || !callID) return null;
-  return state.tools.get(toolStreamKey(sessionID, callID)) ?? null;
+  const stream = state.tools.get(toolStreamKey(sessionID, callID));
+  const messageID = readMessageID(properties);
+  if (stream && messageID && stream.messageID !== messageID) return null;
+  return stream ?? null;
 }
 
 function toolEventTimestamp(value: Record<string, unknown>, properties: Record<string, unknown>): number {
@@ -737,7 +865,7 @@ function pendingToolPart(stream: ToolStream): ToolPart {
   };
 }
 
-function runningToolPart(stream: ToolStream, start: number): ToolPart {
+function runningToolPart(stream: ToolStream, start: number, taskSessions: TaskSessionAssociations): ToolPart {
   return {
     id: stream.partID,
     messageID: stream.messageID,
@@ -750,7 +878,7 @@ function runningToolPart(stream: ToolStream, start: number): ToolPart {
       status: "running",
       input: stream.input,
       title: compatibleToolName(stream.tool),
-      metadata: toolMetadata(stream.tool, stream.metadata),
+      metadata: toolMetadata(stream.tool, stream.metadata, stream.sessionID, stream.messageID, stream.callID, taskSessions),
       time: { start },
     },
   };
@@ -760,6 +888,7 @@ function completedToolPart(
   stream: ToolStream,
   properties: Record<string, unknown>,
   end: number,
+  taskSessions: TaskSessionAssociations,
 ): ToolPart {
   return {
     id: stream.partID,
@@ -775,7 +904,7 @@ function completedToolPart(
       output: toolOutput(properties.content, properties.result),
       ...toolAttachments(properties.content, stream.callID, stream.messageID, stream.sessionID),
       title: compatibleToolName(stream.tool),
-      metadata: toolMetadata(stream.tool, stream.metadata),
+      metadata: toolMetadata(stream.tool, stream.metadata, stream.sessionID, stream.messageID, stream.callID, taskSessions),
       time: { start: stream.start ?? end, end },
     },
   };
@@ -785,6 +914,7 @@ function failedToolPart(
   stream: ToolStream,
   properties: Record<string, unknown>,
   end: number,
+  taskSessions: TaskSessionAssociations,
 ): ToolPart {
   return {
     id: stream.partID,
@@ -798,7 +928,7 @@ function failedToolPart(
       status: "error",
       input: stream.input,
       error: errorMessage(properties.error ?? properties.result),
-      metadata: toolMetadata(stream.tool, stream.metadata),
+      metadata: toolMetadata(stream.tool, stream.metadata, stream.sessionID, stream.messageID, stream.callID, taskSessions),
       time: { start: stream.start ?? end, end },
     },
   };
@@ -865,7 +995,13 @@ export function createV2EventTranslationState(): V2EventTranslationState {
     executionBySession: new Map(),
     terminalBySession: new Map(),
     unknownTypes: new Set(),
+    taskSessions: taskSessionAssociations(null),
   };
+}
+
+function updateToolStreamMetadata(stream: ToolStream, properties: Record<string, unknown>): void {
+  const metadata = readRecord(properties, "metadata") ?? readRecord(properties, "structured");
+  if (metadata) stream.metadata = metadata;
 }
 
 export function translateV2Event(
@@ -1063,8 +1199,10 @@ export function translateV2Event(
     if (!sessionID || !messageID || !callID || !sourceTool) return null;
     if (isRetiredV2Event(state, value, properties)) return null;
     const key = toolStreamKey(sessionID, callID);
-    const existing = state.tools.get(key);
-    if (existing === null || existing?.inputEnded || existing?.start !== undefined) return null;
+    const candidate = state.tools.get(key);
+    if (candidate === null) return null;
+    const existing = candidate?.messageID === messageID ? candidate : undefined;
+    if (existing?.inputEnded || existing?.start !== undefined) return null;
     const stream = existing ?? {
       sessionID,
       messageID,
@@ -1073,9 +1211,10 @@ export function translateV2Event(
       tool: sourceTool,
       raw: "",
       input: {},
-      metadata: {},
+      metadata: readRecord(properties, "metadata") ?? {},
     };
     trackV2Execution(state, value, properties);
+    updateToolStreamMetadata(stream, properties);
     state.tools.set(key, stream);
     return [
       {
@@ -1120,30 +1259,31 @@ export function translateV2Event(
     stream.input = parseToolInput(properties.input, stream.tool);
     stream.raw = "";
     stream.start ??= toolEventTimestamp(value, properties);
+    updateToolStreamMetadata(stream, properties);
     return [{
       type: "message.part.updated",
-      properties: { part: runningToolPart(stream, stream.start) },
+      properties: { part: runningToolPart(stream, stream.start, state.taskSessions) },
     }];
   }
 
   if (type === "session.tool.progress" || type === "session.next.tool.progress") {
     const stream = resolveToolStream(properties, state);
     if (!stream) return null;
-    stream.metadata = readRecord(properties, "metadata") ?? readRecord(properties, "structured") ?? stream.metadata;
+    updateToolStreamMetadata(stream, properties);
     const start = stream.start ?? toolEventTimestamp(value, properties);
     stream.start = start;
     stream.raw = "";
     return [{
       type: "message.part.updated",
-      properties: { part: runningToolPart(stream, start) },
+      properties: { part: runningToolPart(stream, start, state.taskSessions) },
     }];
   }
 
   if (type === "session.tool.success" || type === "session.next.tool.success") {
     const stream = resolveToolStream(properties, state);
     if (!stream) return null;
-    stream.metadata = readRecord(properties, "metadata") ?? readRecord(properties, "structured") ?? stream.metadata;
-    const part = completedToolPart(stream, properties, toolEventTimestamp(value, properties));
+    updateToolStreamMetadata(stream, properties);
+    const part = completedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
     clearV2SessionTranslation(state, stream.sessionID);
     return [{ type: "message.part.updated", properties: { part } }];
@@ -1152,8 +1292,8 @@ export function translateV2Event(
   if (type === "session.tool.failed" || type === "session.next.tool.failed") {
     const stream = resolveToolStream(properties, state);
     if (!stream) return null;
-    stream.metadata = readRecord(properties, "metadata") ?? stream.metadata;
-    const part = failedToolPart(stream, properties, toolEventTimestamp(value, properties));
+    updateToolStreamMetadata(stream, properties);
+    const part = failedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
     clearV2SessionTranslation(state, stream.sessionID);
     return [{ type: "message.part.updated", properties: { part } }];
@@ -1233,11 +1373,12 @@ function translateV2Events(
   response: Response,
   signal: AbortSignal | undefined,
   fetchSession: (sessionID: string, signal: AbortSignal) => Promise<Session | null>,
+  taskSessions: TaskSessionAssociations,
   directory?: string,
 ): AsyncGenerator<OpencodeEvent> {
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
-  const state = createV2EventTranslationState();
+  const state = { ...createV2EventTranslationState(), taskSessions };
   const discoveredForks = new Set<string>();
   const lookups = new Map<string, AbortController>();
   const discoveries: Session[] = [];
@@ -1251,7 +1392,9 @@ function translateV2Events(
     if (stopped) return;
     stopped = true;
     signal?.removeEventListener("abort", stop);
-    for (const collection of Object.values(state)) collection.clear();
+    // Child identity is shared with history reads and must survive subscription teardown.
+    const { taskSessions: _taskSessions, ...transient } = state;
+    for (const collection of Object.values(transient)) collection.clear();
     discoveredForks.clear();
     for (const lookup of lookups.values()) lookup.abort();
     lookups.clear();
@@ -1450,6 +1593,7 @@ export function createClientV2(
   const baseUrl = opencode2BaseUrl.replace(/\/+$/, "");
   const fetchImpl = createV2Fetch(auth);
   const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
+  const taskSessions = taskSessionAssociations(baseUrl);
   const permissionSessionByRequestID = new Map<string, string>();
   const questionFormsByID = new Map<string, NonNullable<ReturnType<typeof mapV2Question>>>();
 
@@ -1659,7 +1803,7 @@ export function createClientV2(
       const result = await request("GET", `/api/session${suffix}`, undefined, options?.signal);
       if (!result.response.ok) return failedResult(result);
       const next = readRecord(result.payload, "cursor")?.next;
-      if (!Array.isArray(responseData(result.payload)) || (next !== undefined && typeof next !== "string")) {
+      if (!Array.isArray(responseData(result.payload)) || (next !== undefined && next !== null && typeof next !== "string")) {
         return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse" } });
       }
       const data = responseItems(result.payload).flatMap((item) => {
@@ -1670,6 +1814,21 @@ export function createClientV2(
     },
     create: createSession,
     get: getSession,
+    message: async (
+      parameters: SessionParameters & { messageID: string },
+      options?: RequestOptions,
+    ): Promise<FieldsResult<V2MappedMessage>> => {
+      const result = await request(
+        "GET",
+        `/api/session/${encodeURIComponent(parameters.sessionID)}/message/${encodeURIComponent(parameters.messageID)}`,
+        undefined,
+        options?.signal,
+      );
+      if (!result.response.ok) return failedResult(result);
+      const mapped = mapV2Message(responseData(result.payload), parameters.sessionID, taskSessions);
+      if (mapped) return successfulResult(result, mapped);
+      return failedResult({ ...result, payload: { name: "InvalidV2MessageResponse" } });
+    },
     messages: async (
       parameters: SessionParameters & { limit?: number; before?: string },
       options?: RequestOptions,
@@ -1685,7 +1844,7 @@ export function createClientV2(
       );
       if (!result.response.ok) return failedResult(result);
       const data = responseItems(result.payload).flatMap((item) => {
-        const mapped = mapV2Message(item, parameters.sessionID);
+        const mapped = mapV2Message(item, parameters.sessionID, taskSessions);
         return mapped ? [mapped] : [];
       });
       return successfulResult(result, data);
@@ -1912,7 +2071,7 @@ export function createClientV2(
           stream: translateV2Events(response, options?.signal, async (sessionID, signal) => {
             const result = await request("GET", `/api/session/${encodeURIComponent(sessionID)}`, undefined, signal);
             return result.response.ok ? mapV2Session(result.payload, undefined) : null;
-          }, directory),
+          }, taskSessions, directory),
         };
       },
     },

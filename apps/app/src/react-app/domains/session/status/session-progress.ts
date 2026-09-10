@@ -34,7 +34,13 @@ function safeToolActivity(part: UIMessage["parts"][number]): string {
   }
 }
 
-type Progress = { revision: string; parts: Record<string, string>; label: string | null; timestamp: number };
+type Progress = {
+  revision: string;
+  parts: Record<string, string>;
+  label: string | null;
+  timestamp: number;
+  activeStartedAt: number;
+};
 
 function fingerprint(value: unknown): string {
   let hash = 2166136261;
@@ -59,9 +65,18 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
   const parts: Record<string, string> = {};
   let label: string | null = null;
   let timestamp = 0;
-  for (const message of messages) {
+  let activeStartedAt = 0;
+  let latestUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  for (const [messageIndex, message] of messages.entries()) {
     if (message.role !== "assistant") continue;
     let meaningful = false;
+    let active = false;
     for (const [index, part] of message.parts.entries()) {
       const key = `${message.id}:${isToolUIPart(part) ? part.toolCallId : index}`;
       let activity: string;
@@ -72,6 +87,7 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
         parts[key] = partFingerprint(part, () => [part.state, part.input,
           part.state === "output-available" ? part.output : null,
           part.state === "output-error" ? part.errorText : null]);
+        if (isToolPartInFlight(part)) active = true;
         // Fixed labels, not raw arguments, outputs, prompts, or tool payloads.
         activity = part.state === "output-available" ? "Tool result received"
           : part.state === "output-error" ? "Tool reported an error"
@@ -90,10 +106,16 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
     if (!time || typeof time !== "object") continue;
     for (const key of ["created", "completed"]) {
       const value = Reflect.get(time, key);
-      if (typeof value === "number" && Number.isFinite(value)) timestamp = Math.max(timestamp, value);
+      if (typeof value === "number" && Number.isFinite(value)) {
+        timestamp = Math.max(timestamp, value);
+      }
+    }
+    const created = Reflect.get(time, "created");
+    if (active && messageIndex > latestUserIndex && typeof created === "number" && Number.isFinite(created)) {
+      activeStartedAt = activeStartedAt === 0 ? created : Math.min(activeStartedAt, created);
     }
   }
-  return { revision: fingerprint(parts), parts, label, timestamp };
+  return { revision: fingerprint(parts), parts, label, timestamp, activeStartedAt };
 }
 
 export function lastTaskProgressAt(
