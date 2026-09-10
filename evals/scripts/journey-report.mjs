@@ -17,12 +17,12 @@ export function aggregate(plan, results) {
     return { ...entry, status: ['passed', 'failed', 'not tested'].includes(result?.status) ? result.status : 'not tested' };
   });
   const counts = Object.fromEntries(['passed', 'failed', 'not tested'].map(status => [status, entries.filter(entry => entry.status === status).length]));
-  return { suite: plan.suite, entries, counts, manual: plan.manual, ok: counts.failed === 0 && counts['not tested'] === 0 && entries.length > 0 };
+  return { suite: plan.suite, entries, counts, manual: plan.manual, notApplicable: plan.notApplicable ?? [], ok: counts.failed === 0 && counts['not tested'] === 0 && entries.length > 0 };
 }
 
 export function markdown(report) {
   const critical = report.entries.filter(entry => entry.critical);
-  return `## ${report.suite} — ${report.ok ? 'passed' : 'action needed'}\n\n${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested (spec files)\n\nCritical journeys: ${critical.length === 0 ? 'not selected' : critical.every(entry => entry.status === 'passed') ? 'all passed' : 'action needed'}\n\n| Journey | Result |\n|---|---|\n${report.entries.map(entry => `| ${entry.name}${entry.critical ? ' **(critical)**' : ''} | ${entry.status} |`).join('\n')}\n\n${report.manual.length} manual-only specs are outside automatic coverage. See the plan for their names.\n\nEvidence and logs are attached to this run. “Not tested” includes skipped tests, setup failures, missing results, and incomplete evidence.\n`;
+  return `## ${report.suite} — ${report.ok ? 'passed' : 'action needed'}\n\n${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested · ${report.notApplicable.length} not applicable (spec files)\n\nCritical journeys: ${critical.length === 0 ? 'not selected' : critical.every(entry => entry.status === 'passed') ? 'all passed' : 'action needed'}\n\n| Journey | Result |\n|---|---|\n${report.entries.map(entry => `| ${entry.name}${entry.critical ? ' **(critical)**' : ''} | ${entry.status} |`).join('\n')}\n${report.notApplicable.map(entry => `| ${entry.name} | not applicable — needs: ${entry.reason} |`).join('\n')}\n\n${report.manual.length} manual-only specs are outside automatic coverage. See the plan for their names.\n\nEvidence and logs are attached to this run. “Not tested” includes skipped tests, setup failures, missing results, and incomplete evidence. “Not applicable” journeys need something this lane does not provide (a packaged desktop binary, macOS) and are not counted either way.\n`;
 }
 
 async function main() {

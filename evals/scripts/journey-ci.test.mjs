@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeJourneys } from './judge-journeys.mjs';
 import assert from 'node:assert/strict';
-import { catalog, registeredCases, selectJourneys } from './journey-catalog.mjs';
+import { catalog, ciLane, registeredCases, selectJourneys, unmetLaneNeeds } from './journey-catalog.mjs';
 import { aggregate, classify, markdown } from './journey-report.mjs';
 import { notification, deliver, validateReport, findStateRun } from './notify-journeys.mjs';
 
@@ -52,6 +52,28 @@ test('changed additional journey joins critical selection; manual filters work f
   assert.equal(instantSend[0].model, 'mock');
   assert.equal(instantSend[0].critical, false);
   assert.equal(selectJourneys(entries, { only: 'does-not-exist' }).length, 0);
+  const several = selectJourneys(entries, { only: 'cross-server-handoff-atomic-commit, workspace-new-task-hit-target,' });
+  assert.deepEqual(several.map(value => value.spec).sort(), ['cross-server-handoff-atomic-commit.e2e.test.ts', 'workspace-new-task-hit-target.e2e.test.ts']);
+});
+
+test('journeys needing a packaged binary or macOS are not applicable in the CI lane; everything else is', async () => {
+  const entries = await catalog();
+  const notApplicable = entries.filter(entry => entry.placement !== 'manual' && unmetLaneNeeds(entry).length > 0);
+  assert.deepEqual(notApplicable.map(entry => [entry.spec, unmetLaneNeeds(entry).join(', ')]), [
+    ['computer-use-window-scope.e2e.test.ts', 'run on darwin'],
+    ['desktop-quit-path.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-activated-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-first-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-preactivation-egress.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-preactivation-updater.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['released-enterprise-activated.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+  ]);
+  assert(notApplicable.every(entry => entry.placement === 'local'));
+  assert(notApplicable.every(entry => !entry.critical));
+  // A lane that packages the enterprise desktop would run the packaged journeys again.
+  const packagedLane = { ...ciLane, env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
+  assert.deepEqual(notApplicable.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), ['computer-use-window-scope.e2e.test.ts']);
+  assert.deepEqual(unmetLaneNeeds(entry), []);
 });
 
 test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
@@ -115,6 +137,19 @@ test('missing or duplicate result cannot turn a selected journey green', () => {
   const output = aggregate(plan, [{ spec: entry.spec, status: 'passed' }]);
   assert.equal(output.ok, true);
   assert.match(markdown(output), /Critical journeys: all passed/);
+});
+
+test('not applicable journeys are listed with their reason and never decide the verdict', () => {
+  const quit = { spec: 'desktop-quit-path.e2e.test.ts', name: 'Quit an enterprise install cleanly', critical: false, placement: 'local', reason: 'set OPENWORK_EVAL_ELECTRON_BINARY' };
+  const output = aggregate({ ...plan, notApplicable: [quit] }, [{ spec: entry.spec, status: 'passed' }]);
+  assert.equal(output.ok, true);
+  assert.deepEqual(output.counts, { passed: 1, failed: 0, 'not tested': 0 });
+  const text = markdown(output);
+  assert.match(text, /1 passed · 0 failed · 0 not tested · 1 not applicable/);
+  assert.match(text, /\| Quit an enterprise install cleanly \| not applicable — needs: set OPENWORK_EVAL_ELECTRON_BINARY \|/);
+  // A stray result for an excluded journey cannot count as coverage, and a plan without the field still reports.
+  assert.equal(aggregate({ ...plan, notApplicable: [quit] }, [{ spec: entry.spec, status: 'passed' }, { spec: quit.spec, status: 'passed' }]).counts.passed, 1);
+  assert.match(markdown(aggregate(plan, [{ spec: entry.spec, status: 'passed' }])), /0 not applicable/);
 });
 
 test('notification distinguishes new failure, repeat, recovery and healthy run', () => {
