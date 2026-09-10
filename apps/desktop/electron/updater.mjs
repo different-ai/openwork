@@ -357,9 +357,17 @@ export function registerUpdaterIpc({
   }
 
   async function refreshUpdatePolicy(requireFresh = true) {
-    const snapshot = parseUpdaterPolicySnapshot(await readUpdatePolicy(), { requireManaged: distribution !== "public" });
-    if (requireFresh && snapshot.verification === "cached-offline") {
-      throw new Error("Connect to verify your organization's policy before downloading an update.");
+    let snapshot;
+    try {
+      snapshot = parseUpdaterPolicySnapshot(await readUpdatePolicy(), { requireManaged: distribution !== "public" });
+      if (requireFresh && snapshot.verification === "cached-offline") {
+        throw new Error("Connect to verify your organization's policy before downloading an update.");
+      }
+    } catch (error) {
+      // The main-process log is the only witness a packaged install offers for
+      // "the updater ran and stopped at the policy gate" versus "never ran".
+      console.warn("[updater] policy gate refused", error?.message ?? error);
+      throw error;
     }
     automaticInstallOnQuit = distribution === "public" && snapshot.policy === null;
     if (!automaticInstallOnQuit) preventPendingUpdaterInstall(autoUpdaterInstance);
