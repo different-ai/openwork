@@ -4,6 +4,8 @@ import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-serve
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
 import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
+import { parseConnectSkillToken } from "./composer/connect-skill-token";
+import { parseSlashCommandInvocation } from "./composer/slash-command";
 
 export function resolveRenderedSessionSnapshot(input: {
   sessionId: string;
@@ -49,7 +51,23 @@ export function deriveComposerHistory(messages: readonly UIMessage[]): string[] 
   // and ignored text, and message identity reconciles snapshots with live sends.
   for (const message of messages) {
     if (message.role !== "user") continue;
-    const text = message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n").trim();
+    let unsafe = false;
+    const text = message.parts.flatMap((part) => {
+      if (part.type !== "text") return [];
+      const metadata = part.providerMetadata?.opencode;
+      const token = metadata && typeof metadata === "object" && "composerToken" in metadata
+        ? metadata.composerToken : undefined;
+      if (typeof token === "string") {
+        const skill = parseConnectSkillToken(token);
+        if (skill && part.text === `/${skill.slug}`) return [token];
+        unsafe = true;
+      }
+      // Older labels have no durable skill identity. Never recall them as commands
+      // or try to recover that identity from generated model instructions.
+      if (parseSlashCommandInvocation(part.text.replace(/\s+/g, " "))) unsafe = true;
+      return [part.text];
+    }).join("\n").trim();
+    if (unsafe) continue;
     if (text && history.at(-1) !== text) history.push(text);
   }
   return history.slice(-50);

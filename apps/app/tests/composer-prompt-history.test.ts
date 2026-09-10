@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
+import type { TextPart } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
 import type { OpenworkSessionMessage, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { ComposerPart } from "../src/app/types";
+import { draftToParts } from "../src/react-app/domains/session/sync/draft-parts";
+import { textPartToUIPart } from "../src/react-app/domains/session/sync/usechat-adapter";
+import { encodeConnectSkillToken, parseConnectSkillToken } from "../src/react-app/domains/session/surface/composer/connect-skill-token";
+import { parseSlashCommandInvocation } from "../src/react-app/domains/session/surface/composer/slash-command";
 import {
   deriveComposerHistory,
   deriveRenderedSessionMessages,
@@ -99,4 +105,81 @@ test("reverted messages and removed pending sends do not linger in a second hist
   expect(deriveComposerHistory(pending)).toEqual(["Submitted"]);
   expect(deriveComposerHistory([])).toEqual([]);
   expect(deriveComposerHistory([])).not.toContain("Submitted");
+});
+
+test("Connect skill identity round-trips through durable text-part metadata in both draft branches, without changing display or model instructions", async () => {
+  const skill = {
+    type: "connect-skill", slug: "compact", name: "Com|pact ] %",
+    marketplace: "Team tools", capability: "plugin:team:compact",
+  } satisfies ComposerPart;
+  const token = encodeConnectSkillToken(skill);
+  for (const prefix of ["", "Please use "]) {
+    for (const attachmentToken of ["", "[attachment removed]"]) {
+      const parts = await draftToParts({
+        mode: "prompt", text: `${prefix}${token} Keep the details.${attachmentToken}`,
+        parts: [...(prefix ? [{ type: "text", text: prefix } satisfies ComposerPart] : []), skill, { type: "text", text: " Keep the details." }],
+        attachments: [],
+      }, "/fixture", "session-a", null);
+      const stored = message("connected", "");
+      stored.parts = parts.map((part, index) => ({ ...part, id: `part-${index}`, sessionID: "session-a", messageID: stored.info.id }));
+      const before = structuredClone(stored);
+      const expected = [prefix, token, " Keep the details."].filter(Boolean).join("\n").trim();
+      const rendered = deriveRenderedSessionMessages({ snapshot: snapshot([stored]), transcriptState: [] });
+      expect(history(snapshot(structuredClone([stored])))).toEqual([expected]);
+      expect(rendered[0]?.parts.filter((part) => part.type === "text").map((part) => part.text).join(""))
+        .toBe(`${prefix}/compact Keep the details.`);
+      const liveParts = stored.parts.flatMap((part) => {
+        if (part.type !== "text") return [];
+        const mapped = textPartToUIPart(part);
+        return mapped ? [mapped] : [];
+      });
+      const live: UIMessage[] = [{ id: stored.info.id, role: "user", parts: liveParts }];
+      expect(history(null, live)).toEqual([expected]);
+      expect(history(snapshot([stored]), live)).toEqual([expected]);
+      expect(parseSlashCommandInvocation(expected)).toBeNull();
+      expect(expected).not.toContain("execute_capability");
+      const recalledToken = expected.match(/\[connect-skill [^\]]+\]/)?.[0] ?? "";
+      const identity = parseConnectSkillToken(recalledToken);
+      expect(identity).toEqual({ slug: skill.slug, name: skill.name, marketplace: skill.marketplace, capability: skill.capability });
+      if (!identity) throw new Error("Missing recalled skill identity");
+      const resent = await draftToParts({ mode: "prompt", text: recalledToken, parts: [{ type: "connect-skill", ...identity }], attachments: [] }, "/fixture", "session-a", null);
+      expect(resent.filter((part) => part.type === "text" && part.synthetic))
+        .toEqual(parts.filter((part) => part.type === "text" && part.synthetic));
+      expect(stored).toEqual(before);
+    }
+  }
+});
+
+test("legacy slash labels and native commands are excluded rather than replayed with lost identity", () => {
+  const legacy = message("legacy", "/compact");
+  legacy.parts.push(
+    { id: "instructions", messageID: legacy.info.id, sessionID: "session-a", type: "text", synthetic: true, text: "PRIVATE Connect skill instructions with plugin:team:compact" },
+    { id: "suffix", messageID: legacy.info.id, sessionID: "session-a", type: "text", text: " Keep the details." },
+  );
+  expect(history(snapshot([legacy]))).toEqual([]);
+  const inline = structuredClone(legacy);
+  inline.parts.unshift({ id: "prefix", messageID: legacy.info.id, sessionID: "session-a", type: "text", text: "Please use " });
+  expect(history(snapshot([inline]))).toEqual([]);
+  for (const text of [" /compact Keep the details.", "/compact\nKeep the details."]) {
+    expect(history(null, [{ id: "pending", role: "user", parts: [{ type: "text", text }] }])).toEqual([]);
+  }
+  expect(history(snapshot([message("command", "/compact"), message("path", "/workspace/notes.txt"), message("local", "[skill summarize] Keep the details.")])))
+    .toEqual(["/workspace/notes.txt", "[skill summarize] Keep the details."]);
+});
+
+test("invalid or mismatched token metadata cannot turn a label into a recalled skill; hidden metadata stays hidden", () => {
+  const token = encodeConnectSkillToken({ slug: "compact", name: "Compact", marketplace: "Team", capability: "skill:compact" });
+  for (const metadata of [{ openworkComposerToken: "[connect-skill incomplete]" }, { openworkComposerToken: token }, { openworkComposerToken: 42 }]) {
+    const stored = message("invalid", "/different");
+    stored.parts = [{ id: "invalid", sessionID: "session-a", messageID: "invalid", type: "text", text: "/different", metadata }];
+    expect(history(snapshot([stored]))).toEqual([]);
+  }
+  for (const flags of [{ synthetic: true }, { ignored: true }]) {
+    const stored = message("hidden", "");
+    const part = { id: "hidden", sessionID: "session-a", messageID: "hidden", type: "text", text: "/compact", metadata: { openworkComposerToken: token }, ...flags } satisfies TextPart;
+    stored.parts = [part];
+    expect(history(snapshot([stored]))).toEqual([]);
+    expect(textPartToUIPart(part)).toBeNull();
+  }
+  expect(history(snapshot([message("original-token", `${token} Keep the details.`)]))).toEqual([`${token} Keep the details.`]);
 });

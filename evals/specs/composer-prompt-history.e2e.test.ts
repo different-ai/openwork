@@ -3,7 +3,10 @@ import { spec } from "@openwork/testkit";
 import { composerPromptHistory } from "../worlds/composer-prompt-history.ts";
 import { longHistoryLast, longHistoryOtherTitle, longHistoryTitle } from "../worlds/chat.ts";
 
-const test = spec.world(composerPromptHistory, { timeout: 600_000 });
+const test = spec.world(composerPromptHistory, {
+  timeout: 600_000,
+  resources: { surfaces: ["desktop"], services: [], nativeReason: "Prompt recall must survive an Electron main-process relaunch with the same profile." },
+});
 
 test("composer recalls durable prompts across reloads and a real desktop restart without leaking into another session", async ({ user, step, world }) => {
   await user.click({ role: "button", label: new RegExp(`^${longHistoryTitle}`) });

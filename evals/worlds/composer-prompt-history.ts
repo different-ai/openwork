@@ -11,7 +11,7 @@ export async function composerPromptHistory(seed: Seed) {
     async restart() {
       const previousOrigin = await evalIn(base.app, () => performance.timeOrigin);
       // Real main-process relaunch, keeping the seed-owned profile and engine data.
-      await evalIn(base.app, async () => { await window.__OPENWORK_ELECTRON__.shell.relaunch(); })
+      await evalIn(base.app, async () => { await window.__OPENWORK_ELECTRON__.shell.relaunch(); }, { reattachAttempts: 0 })
         .catch(() => undefined); // Quit may destroy the context before the IPC reply; never dispatch twice.
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
