@@ -1266,10 +1266,14 @@ async function proxyOpencodeV2Request(input: {
       if (!isRecord(value) || typeof value.id !== "string" || typeof value.providerID !== "string") {
         throw new ApiError(502, "invalid_engine_response", "Invalid model metadata");
       }
-      return Object.fromEntries(Object.entries(value).filter(([key]) => [
+      const metadata = Object.fromEntries(Object.entries(value).filter(([key]) => [
         "id", "modelID", "providerID", "canonical", "family", "name", "package",
         "capabilities", "time", "cost", "status", "enabled", "limit",
       ].includes(key)));
+      // The picker needs opaque variant IDs, never their provider settings.
+      const variants = (Array.isArray(value.variants) ? value.variants : []).flatMap((variant) =>
+        isRecord(variant) && typeof variant.id === "string" ? [{ id: variant.id }] : []);
+      return { ...metadata, variants };
     };
     return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicModel) : publicModel(raw) });
   }

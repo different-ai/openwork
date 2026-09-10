@@ -1,12 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import {
   createClientV2,
   createV2EventTranslationState,
   translateV2Event,
+  type V2MappedMessage,
 } from "../src/app/lib/opencode-v2-adapter";
 import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
+import { getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 
 const capturedPermissionAsked = {
   id: "evt_permission_asked",
@@ -912,6 +915,39 @@ describe("OpenCode v2 event translation", () => {
       { type: "session.execution.succeeded", properties: { sessionID: "ses_child", sequence: undefined } },
     ]);
   });
+
+  test("keeps an explicit subagent session through empty updates without bleeding across messages, calls, or parents", () => {
+    const state = createV2EventTranslationState();
+    const start = (sessionID: string, id: string, assistantMessageID = `msg_${sessionID}`) => {
+      const identity = { sessionID, assistantMessageID, id };
+      translateV2Event({ type: "session.tool.input.started", data: { ...identity, name: "subagent" } }, state);
+      translateV2Event({ type: "session.tool.called", data: { ...identity, input: { agent: "general" } } }, state);
+      return identity;
+    };
+    const exact = start("ses_parent_exact", "call_exact");
+    const otherCall = start("ses_parent_exact", "call_other");
+    const otherParent = start("ses_parent_other", "call_exact");
+
+    expect(translateV2Event({ type: "session.tool.progress", data: {
+      ...exact, metadata: { sessionID: "ses_child_exact", status: "running" },
+    } }, state)).toMatchObject([{ properties: { part: { state: { metadata: {
+      sessionID: "ses_child_exact", sessionId: "ses_child_exact", status: "running",
+    } } } } }]);
+    expect(translateV2Event({ type: "session.tool.progress", data: { ...exact, metadata: {} } }, state))
+      .toMatchObject([{ properties: { part: { state: { metadata: {
+        sessionId: "ses_child_exact",
+      } } } } }]);
+    expect(JSON.stringify(translateV2Event({
+      type: "session.tool.progress", data: { ...otherCall, metadata: {} },
+    }, state))).not.toContain("ses_child_exact");
+    expect(JSON.stringify(translateV2Event({
+      type: "session.tool.progress", data: { ...otherParent, metadata: {} },
+    }, state))).not.toContain("ses_child_exact");
+    const otherMessage = start("ses_parent_exact", "call_exact", "msg_next_turn");
+    expect(JSON.stringify(translateV2Event({
+      type: "session.tool.progress", data: { ...otherMessage, metadata: {} },
+    }, state))).not.toContain("ses_child_exact");
+  });
 });
 
 describe("OpenCode v2 client compatibility", () => {
@@ -1191,6 +1227,156 @@ describe("OpenCode v2 client compatibility", () => {
         .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("hydrates only exact previously observed subagent associations from live and reload caches", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const storageKey = "openwork.v2.task-session-associations.v1";
+    const previous = globalThis.sessionStorage.getItem(storageKey);
+    const liveBaseUrl = "http://live-association.test/opencode2";
+    const coldBaseUrl = "http://cold-association.test/opencode2";
+    const directory = "/workspace";
+    globalThis.sessionStorage.setItem(storageKey, JSON.stringify([
+      {
+        scope: coldBaseUrl,
+        parentSessionID: "ses_parent_cold",
+        messageID: "msg_call_evicted",
+        callID: "call_evicted",
+        childSessionID: "ses_child_evicted",
+      },
+      ...Array.from({ length: 255 }, (_, index) => ({
+        scope: coldBaseUrl,
+        parentSessionID: `ses_noise_${index}`,
+        messageID: `msg_noise_${index}`,
+        callID: `call_noise_${index}`,
+        childSessionID: `ses_child_noise_${index}`,
+      })),
+      {
+        scope: coldBaseUrl,
+        parentSessionID: "ses_parent_cold",
+        callID: "call_legacy",
+        childSessionID: "ses_child_legacy",
+      },
+      {
+        scope: coldBaseUrl,
+        parentSessionID: "ses_parent_cold",
+        messageID: "msg_call_exact",
+        callID: "call_exact",
+        childSessionID: "ses_child_cold",
+      },
+    ]));
+    const originalFetch = globalThis.fetch;
+    let liveReads = 0;
+    const message = (callID: string, metadata: Record<string, unknown>, id = `msg_${callID}`) => ({
+      id,
+      type: "assistant",
+      time: { created: 10 },
+      content: [{
+        type: "tool", id: callID, name: "subagent", time: { created: 10, ran: 20 },
+        state: { status: "running", input: { agent: "general" }, metadata },
+      }],
+    });
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const match = new URL(request.url).pathname.match(/\/api\/session\/([^/]+)\/message$/);
+      const sessionID = match?.[1];
+      const hostname = new URL(request.url).hostname;
+      if (hostname === "live-association.test" && new URL(request.url).pathname.endsWith("/api/event")) {
+        return new Response("", { headers: { "Content-Type": "text/event-stream" } });
+      }
+      if (hostname === "live-association.test" && sessionID === "ses_parent_live") {
+        liveReads += 1;
+        return jsonResponse({ data: [message("call_exact", liveReads === 1 ? { sessionID: "ses_child_live" } : {})] });
+      }
+      if (hostname === "cold-association.test" && sessionID === "ses_parent_cold") {
+        return jsonResponse({ data: [
+          message("call_exact", {}),
+          message("call_exact", {}, "msg_next_turn"),
+          message("call_other", {}),
+          message("call_legacy", {}),
+          message("call_evicted", {}),
+        ] });
+      }
+      if (hostname === "cold-association.test" && sessionID === "ses_parent_other") {
+        return jsonResponse({ data: [message("call_exact", {})] });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+    };
+    const uiPart = (messages: V2MappedMessage[] | undefined, index: number) => {
+      const part = messages?.[index]?.parts[0];
+      if (!part || part.type !== "tool") throw new Error("Missing subagent tool part");
+      return parseDynamicToolUIPart(part);
+    };
+    try {
+      const live = createClientV2(liveBaseUrl, undefined, {});
+      expect(uiPart((await live.session.messages({ sessionID: "ses_parent_live" })).data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_live" } });
+      const subscription = await live.event.subscribe();
+      await subscription.stream.return(undefined);
+      expect(uiPart((await live.session.messages({ sessionID: "ses_parent_live" })).data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_live" } });
+      const hydrated = createClientV2(liveBaseUrl, directory, {});
+      expect(uiPart((await hydrated.session.messages({ sessionID: "ses_parent_live" })).data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_live" } });
+      expect(globalThis.sessionStorage.getItem(storageKey)).toContain("ses_child_live");
+
+      const cold = createClientV2(coldBaseUrl, directory, {});
+      const exact = await cold.session.messages({ sessionID: "ses_parent_cold" });
+      expect(uiPart(exact.data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_cold" } });
+      for (const index of [1, 2, 3, 4]) {
+        expect(JSON.stringify(uiPart(exact.data, index)?.callProviderMetadata)).not.toContain("ses_child_");
+      }
+      const otherParent = await cold.session.messages({ sessionID: "ses_parent_other" });
+      expect(JSON.stringify(uiPart(otherParent.data, 0)?.callProviderMetadata)).not.toContain("ses_child_cold");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previous === null) globalThis.sessionStorage.removeItem(storageKey);
+      else globalThis.sessionStorage.setItem(storageKey, previous);
+      if (ownedDom) await GlobalRegistrator.unregister();
+    }
+  });
+
+  test("keeps observed subagent associations in memory when browser cache access throws", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const getItem = spyOn(globalThis.sessionStorage, "getItem").mockImplementation(() => {
+      throw new DOMException("Storage blocked", "SecurityError");
+    });
+    const setItem = spyOn(globalThis.sessionStorage, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage blocked", "SecurityError");
+    });
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    globalThis.fetch = async () => {
+      reads += 1;
+      return jsonResponse({ data: [{
+        id: "msg_storage_blocked", type: "assistant", time: { created: 10 },
+        content: [{
+          type: "tool", id: "call_storage_blocked", name: "subagent", time: { created: 10, ran: 20 },
+          state: {
+            status: "running", input: { agent: "general" },
+            metadata: reads === 1 ? { sessionID: "ses_child_storage_blocked" } : {},
+          },
+        }],
+      }] });
+    };
+    try {
+      const client = createClientV2("http://storage-blocked.test/opencode2", "/workspace", {});
+      for (let read = 0; read < 2; read += 1) {
+        const result = await client.session.messages({ sessionID: "ses_parent_storage_blocked" });
+        const part = result.data?.[0]?.parts[0];
+        if (!part || part.type !== "tool") throw new Error("Missing blocked-storage subagent");
+        expect(parseDynamicToolUIPart(part)?.callProviderMetadata)
+          .toMatchObject({ openwork: { childSessionId: "ses_child_storage_blocked" } });
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      getItem.mockRestore();
+      setItem.mockRestore();
+      if (ownedDom) await GlobalRegistrator.unregister();
     }
   });
 
@@ -1887,11 +2073,19 @@ describe("OpenCode v2 client compatibility", () => {
 });
 
 
-test("v2 provider catalog retains display names without exposing request settings", async () => {
+test("v2 provider catalog retains display names and advertised effort without exposing provider credentials", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
-    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [{ id: "coding", providerID: "lpr_fixture", name: "Coding" }] });
+    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [
+      { id: "coding", providerID: "lpr_fixture", name: "Coding", variants: [
+        { id: "low", settings: { reasoningEffort: "low" } },
+        { id: "high", settings: { reasoningEffort: "high" } },
+        { id: "CustomExact", settings: { thinking: { budgetTokens: 4096 } } },
+      ] },
+      { id: "standard", providerID: "lpr_fixture", name: "Standard", variants: [] },
+      { id: "builtin", providerID: "lpr_fixture", capabilities: { output: ["text", "reasoning"] } },
+    ] });
     if (request.url.endsWith("/api/provider")) return jsonResponse({ data: [{ id: "lpr_fixture", name: "Assigned Coding", settings: { apiKey: "fixture-private" } }] });
     if (request.url.endsWith("/api/model/default")) return jsonResponse({ data: {} });
     throw new Error(`Unexpected request: ${request.url}`);
@@ -1900,10 +2094,41 @@ test("v2 provider catalog retains display names without exposing request setting
     const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
     const result = await client.provider.list();
     expect(result.data?.all[0]?.name).toBe("Assigned Coding");
+    const models = result.data?.all[0]?.models;
+    expect(models?.coding?.variants).toEqual({ low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" }, CustomExact: { thinking: { budgetTokens: 4096 } } });
+    if (!models?.coding || !models.standard || !models.builtin) throw new Error("Missing mapped models");
+    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual(["low", "high", "CustomExact"]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.standard)).toEqual([]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.builtin)).toEqual([]);
     expect(JSON.stringify(result.data)).not.toContain("fixture-private");
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("v2 prompts set the exact selected variant on the native model ref and omit it for Default", async () => {
+  const originalFetch = globalThis.fetch;
+  const writes: { path: string; body: unknown }[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    writes.push({ path: new URL(request.url).pathname, body: await request.json() });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+    for (const variant of ["high", "CustomExact", undefined]) {
+      const result = await client.session.promptAsync({ sessionID: "ses_effort", model: { providerID: "witness", modelID: "model" }, variant, parts: [{ type: "text", text: "Hello" }] });
+      expect(result.response.status).toBe(204);
+    }
+    expect(writes.filter((write) => write.path.endsWith("/model")).map((write) => write.body)).toEqual([
+      { model: { providerID: "witness", id: "model", variant: "high" } },
+      { model: { providerID: "witness", id: "model", variant: "CustomExact" } },
+      { model: { providerID: "witness", id: "model" } },
+    ]);
+    expect(writes.filter((write) => write.path.endsWith("/prompt")).map((write) => write.body)).toEqual([
+      { text: "Hello" }, { text: "Hello" }, { text: "Hello" },
+    ]);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 describe("v2 question forms", () => {

@@ -1,4 +1,4 @@
-import { browserScript, reattachSurface, type Surface } from "@openwork/cdp";
+import { addInitScript, browserScript, reattachSurface, type Surface } from "@openwork/cdp";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -16,6 +16,7 @@ type AppSurface = "electron" | "web";
 
 declare global {
   interface Window {
+    __modelEffortRequests?: unknown[];
     __openworkSubmissionFault?: { attempts: number; release: () => void };
     __openworkStoppingFault?: {
       state: {
@@ -535,6 +536,68 @@ export async function modelPicker(seed: Seed) {
   return { app, den, session };
 }
 
+/** Model picker contract through a real native engine and a synthetic provider. */
+export async function modelPickerEffortWeb(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const providerId = "effort-witness";
+  const modelId = "reasoning-model";
+  const prompt = "Explain why the sky looks blue.";
+  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
+    promptMarker: prompt, latestUserTurn: true, finalReply: "Air scatters blue light more strongly.", steps: [],
+  }] });
+  const workspacePath = seed.tmpPath("model-picker-effort");
+  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, mocks: { agent: mock } });
+  // Observe model references without consuming or changing the app's requests.
+  await addInitScript(app.client, () => {
+    window.__modelEffortRequests = [];
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      if (method === "POST" && /\/opencode2\/api\/session\/[^/]+\/model$/.test(new URL(url, location.href).pathname)) {
+        const body: unknown = await new Request(input instanceof Request ? input.clone() : input, init).json();
+        window.__modelEffortRequests?.push(body);
+      }
+      return originalFetch(input, init);
+    };
+  });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing effort provider witness");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, { provider: {
+    [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Effort witness",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "synthetic-effort-key" },
+      models: {
+        [modelId]: { name: "Reasoning witness", reasoning: true, variants: {
+          low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" },
+          CustomExact: { reasoningEffort: "low" },
+          hidden: { disabled: true, reasoningEffort: "high" },
+        } },
+        standard: { name: "Standard witness", reasoning: false },
+      },
+    },
+  } }, engine);
+  const session = await seedSessionRetry(seed, app, { title: "Model effort contract" });
+  return { app, engine, workspace, session, prompt, providerId, modelId,
+    modelRequests: () => seed.evalIn(app, () => window.__modelEffortRequests ?? []),
+    runtimeFacts: async () => ({
+      ...await seed.evalIn(app, () => ({ browser: navigator.userAgent, electronBridge: Boolean(window.__OPENWORK_ELECTRON__) })),
+      sourceSha: app.actualSourceSha,
+    }),
+    readNative: (path: string) => seed.evalIn(app, browserScript(async (path) => {
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      const response = await fetch(base + path, {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body: unknown = await response.json();
+      return { status: response.status, body };
+    }, [path]), { awaitPromise: true, timeoutMs: 20_000 }),
+    requests: async () => (await witness.agentRequests({ promptMarker: prompt })).filter((request) => request.kind === "final"),
+  };
+}
+
 export async function connectionsMenu(seed: Seed) {
   const connector = seed.mock();
   const den = await seed.den({ mocks: { connector } });
@@ -826,6 +889,12 @@ export async function streamedToolHistory(seed: Seed) {
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name: "streamed-tool-history", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("streamed-tool-history"));
+  const profile = await seed.api(den.admin, "/v1/me");
+  if (!profile.response.ok || !isRecord(profile.body) || !isRecord(profile.body.user)
+    || typeof profile.body.user.id !== "string" || !profile.body.user.id.trim()) {
+    throw new Error("Streamed history fixture could not resolve its authenticated principal");
+  }
+  const principalId = profile.body.user.id.trim();
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     permission: { bash: "allow" },
     provider: { [providerId]: {
@@ -870,7 +939,7 @@ export async function streamedToolHistory(seed: Seed) {
       }
     }
   }, [historyPath, history, toolNames.map(command), providerId, modelId]), { awaitPromise: true, timeoutMs: 185_000 });
-  return { app, workspace, session, neighbor, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
+  return { app, workspace, session, neighbor, principalId, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
 }
 
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";

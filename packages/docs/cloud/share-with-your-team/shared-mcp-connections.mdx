@@ -47,6 +47,26 @@ one with form or JSON arguments, and inspect the request and response. The tool
 policy controls on this page choose which tools the organization can use.
 **Your Connections** also shows admins a wrench shortcut to the same tester.
 
+## Organization policy and native actions
+
+Connect is default-on. A platform administrator can disable member-facing
+connections with the organization's `capabilities.mcpConnections` setting.
+Native Google Workspace and Microsoft 365 actions honor that same policy,
+including existing clients using legacy/default accounts. Client version does
+not bypass a disabled organization's authorization policy.
+
+A disabled native action returns the existing `policy_blocked` error and an
+administrator-directed message; native REST routes use HTTP `403`. This is not
+a sign-in failure: reconnecting an account does not enable Connect. Missing
+credentials in an enabled organization still return `needs_connection` and HTTP
+`409`. Success payloads and saved credentials are unchanged. Administrators can
+still manage connection configuration, and re-enabling Connect restores access
+subject to the member's existing grants and credentials.
+
+For self-hosted deployments, `DEN_MCP_CONNECTIONS_GATING_ENABLED` is deprecated
+and inert. It does not override an explicit organization disable; the existing
+organization metadata policy remains authoritative.
+
 ## OAuth redirect URL
 
 An OAuth redirect URL, also called a callback URL, is the exact address where
@@ -206,6 +226,11 @@ What stays the same:
 - Member-added local MCP servers are never touched.
 
 Directly exposed connections appear in OpenCode as `openwork-direct-<name>-…`.
+
+External provider tool calls require the caller's `mcp:write` scope even when
+the provider advertises `readOnlyHint: true`. Provider hints do not grant
+execution authority; discovery and connection-status probes remain available
+with `mcp:read`. See [MCP token scopes](/cloud/run-in-the-cloud/cloud-mcp#mcp-token-scopes).
 
 ## Notes for admins
 

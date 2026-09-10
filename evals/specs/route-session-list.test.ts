@@ -101,7 +101,7 @@ function pageReply(engine: Engine, source: RouteSession[]) {
         data: page.filter((session) => session.directory === directoryFor(request)).map(({ directory, ...session }) => ({
           ...session, location: { directory },
         })),
-        cursor: next ? { next } : {},
+        cursor: next ? { next } : { previous: null, next: null },
       },
     };
   };

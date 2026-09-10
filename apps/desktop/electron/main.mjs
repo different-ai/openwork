@@ -167,6 +167,7 @@ const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
+  closeBrowserTab: (host) => browserPanel?.closeFocusedBrowserTab(host) ?? false,
 });
 
 let browserPanel = null;
@@ -2617,6 +2618,7 @@ async function createMainWindow() {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
   applicationMenu.applyVisibility(mainWindow);
+  browserPanel.registerWindowShortcuts(mainWindow);
 
   mainWindow.webContents.on("context-menu", (_event, params) => {
     void nativeContextMenus.showEditing(params).catch((error) => {
