@@ -358,11 +358,11 @@ const EDITING_COMMANDS: Record<string, string[]> = {
 
 export async function pressKey(surface: Surface, key: string): Promise<void> {
   const descriptor = mapKey(key);
+  // Let Chrome derive native codes: Windows VK values are different macOS keys.
   const params = {
     key: descriptor.key,
     code: descriptor.code,
     windowsVirtualKeyCode: descriptor.windowsVirtualKeyCode,
-    nativeVirtualKeyCode: descriptor.windowsVirtualKeyCode,
     modifiers: descriptor.modifiers,
   };
   const commands = EDITING_COMMANDS[key];
@@ -397,18 +397,26 @@ export async function waitForLocated(
   const timeoutMs = options.timeoutMs ?? 30_000;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
+  let previous: Located | null = null;
   while (Date.now() < deadline) {
     try {
       // locate() centers the element on every attempt, so smooth scrolling and
       // transient overlays are re-evaluated instead of preserving stale geometry.
       const found = await locate(surface, target);
-      if (found.visible && (!options.mustHitTest || found.hitTestOk)) return found;
+      const stable = previous && Math.abs(found.rect.x - previous.rect.x) < 0.5
+        && Math.abs(found.rect.y - previous.rect.y) < 0.5
+        && Math.abs(found.rect.width - previous.rect.width) < 0.5
+        && Math.abs(found.rect.height - previous.rect.height) < 0.5;
+      if (found.visible && (!options.mustHitTest || (found.hitTestOk && stable))) return found;
+      // Hit testing alone can select a neighboring option as an animated menu moves.
+      previous = found;
       const covering = found.covering
         ? ` Covered by ${found.covering.tag}${found.covering.role ? ` role=${JSON.stringify(found.covering.role)}` : ""}${found.covering.text ? ` text=${JSON.stringify(found.covering.text)}` : ""}.`
         : "";
       lastError = new Error(`Located element was visible=${found.visible}, hitTestOk=${found.hitTestOk}.${covering}`);
     } catch (error) {
       lastError = error;
+      previous = null;
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
   }
