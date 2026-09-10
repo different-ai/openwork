@@ -1,9 +1,12 @@
-import { engineSessionProbe } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
-import { arrangeControl, steeringRecovery } from "../worlds/chat.ts";
+import { arrangeControl } from "../worlds/chat.ts";
+import { queuedSteeringWeb } from "../worlds/queued-steering-web.ts";
 
-const test = spec.world(steeringRecovery, { timeout: 600_000 });
+const test = spec.world(queuedSteeringWeb, {
+  timeout: 600_000,
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
 
 function includesExactlyOnce(values: string[], marker: string): boolean {
   return values.reduce((count, value) => count + value.split(marker).length - 1, 0) === 1;
@@ -16,9 +19,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
     world.signedOutWithoutServerDenSession,
   );
   expect(world.signedOutWithoutServerDenSession).toBe(true);
-  const workspaceId = world.workspace.workspaceId;
-  const native = engineSessionProbe({ engine: world.engine, surface: world.app, workspaceId });
-  const otherLane = engineSessionProbe({ engine: world.engine === "v2" ? "v1" : "v2", surface: world.app, workspaceId });
+  const { native, otherLane } = world;
   type NativeSnapshot = Awaited<ReturnType<typeof native.snapshot>>;
   const compactSnapshot = ({ ok, status, data }: NativeSnapshot) => ({ ok, status, data });
   const snapshotText = (snapshot: Pick<NativeSnapshot, "data">) => snapshot.data.messages
@@ -40,7 +41,8 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
   };
 
   await milestone("the real engine records completed shell work and the provider's terminal HTTP 400", "Local configured-provider work reaches the intended provider failure", async () => {
-    const laneStatus = await agent.desktopApi("/experimental/engine-v2-preview/status", { method: "GET" });
+    const laneStatus = await world.runtimeStatus();
+    expect(laneStatus.electronBridge).toBe(false);
     expect([200, 404]).toContain(laneStatus.status);
     const selectedV2 = laneStatus.status === 200 && typeof laneStatus.body === "object" && laneStatus.body !== null
       && "enabled" in laneStatus.body && laneStatus.body.enabled === true
@@ -68,6 +70,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
         && requests.some((request) => request.kind === "error" && request.toolName === world.failureSentinelTool),
     });
     expect(failed.snapshot.data.session?.id).toBe(world.recovery.sessionId);
+    evidence.recordJsonArtifact("Native failure and provider admission witness", failed);
     expect(failed.requests.map((request) => [request.kind, request.completedTools, request.toolName])).toEqual([
       ["tool", 0, world.shellTool],
       ["error", 1, world.failureSentinelTool],
@@ -115,6 +118,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
         && requests.some((request) => request.promptMarker === world.recoveryPromptMarker && request.kind === "final"),
     });
     expect(recovered.snapshot.data.session?.id).toBe(world.recovery.sessionId);
+    evidence.recordJsonArtifact("Native same-session recovery without replay", recovered);
     expect(recovered.visible.sessionId).toBe(world.recovery.sessionId);
     expect(includesExactlyOnce(recovered.visible.users, world.recoveryFailureMarker)).toBe(true);
     expect(includesExactlyOnce(recovered.visible.users, world.recoveryPromptMarker)).toBe(true);
@@ -206,6 +210,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
           .some((part) => part.tool === world.shellTool && part.status === "running" && part.input.command === world.bypassCommand),
     });
     expect(handoff.snapshot.data.session?.id).toBe(world.bypass.sessionId);
+    evidence.recordJsonArtifact("Immediate X admission with B and C held in FIFO order", handoff);
     expect(handoff.visible.queued.every((text) => !text.includes(world.bypassDirectMarker))).toBe(true);
     expect(handoff.visible.users.some((text) => text.includes(world.bypassQueuedBMarker))).toBe(false);
     expect(handoff.visible.users.some((text) => text.includes(world.bypassQueuedCMarker))).toBe(false);
@@ -241,6 +246,7 @@ test("local signed-out failed-task recovery, queued follow-ups, and truthful unf
         && visible.queued.length === 0 && visible.runTask === 1 && visible.stop === 0 && visible.composerEditable,
     });
     expect(complete.snapshot.data.session?.id).toBe(world.bypass.sessionId);
+    evidence.recordJsonArtifact("Final native queue transcript and ordered provider receipts", complete);
     const bypassParts = complete.snapshot.data.messages.flatMap((message) => message.parts);
     const bypassShell = bypassParts.filter((part) => part.tool === world.shellTool && part.input.command === world.bypassCommand);
     expect(bypassShell).toHaveLength(1);

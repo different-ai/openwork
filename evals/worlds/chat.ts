@@ -175,7 +175,7 @@ async function seedControls(
 
 export async function arrangeControl(
   seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
+  app: Surface,
   action: string,
   args?: unknown,
 ): Promise<unknown> {
@@ -266,7 +266,12 @@ async function splitPaneQuestions(
   return { app, workspace, mock: den.mocks.agent };
 }
 
-export async function steeringRecovery(seed: Seed) {
+export async function steeringRecovery(
+  seed: Seed,
+  arrange: (...args: Parameters<typeof splitPaneQuestions>) => Promise<
+    Omit<Awaited<ReturnType<typeof splitPaneQuestions>>, "app"> & { app: Surface }
+  > = splitPaneQuestions,
+) {
   const engine = resolveEvalEngine();
   const shellTool = engine === "v2" ? "shell" : "bash";
   const runId = `${Date.now().toString(36)}-${process.pid}`;
@@ -303,7 +308,7 @@ export async function steeringRecovery(seed: Seed) {
     finalReply,
     steps: [],
   });
-  const base = await splitPaneQuestions(seed, "local-steering-recovery", [
+  const base = await arrange(seed, "local-steering-recovery", [
     {
       promptMarker: recoveryFailureMarker,
       latestUserTurn: true,
