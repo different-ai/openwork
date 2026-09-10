@@ -265,16 +265,16 @@ describe("workspace route session load budget", () => {
     const starts: string[] = [];
     let releaseWorkspaceA: (() => void) | undefined;
 
-    const firstWorkspaceA = coalescer.run("workspace-a", async () => {
+    const firstWorkspaceA = coalescer.run("workspace-a", "v1", async () => {
       starts.push("workspace-a");
       await new Promise<void>((resolve) => {
         releaseWorkspaceA = resolve;
       });
     });
-    const duplicateWorkspaceA = coalescer.run("workspace-a", async () => {
+    const duplicateWorkspaceA = coalescer.run("workspace-a", "v1", async () => {
       starts.push("workspace-a-duplicate");
     });
-    const workspaceB = coalescer.run("workspace-b", async () => {
+    const workspaceB = coalescer.run("workspace-b", "v1", async () => {
       starts.push("workspace-b");
     });
 
@@ -287,7 +287,7 @@ describe("workspace route session load budget", () => {
     await Promise.all([firstWorkspaceA, duplicateWorkspaceA, workspaceB]);
     expect(coalescer.isInFlight("workspace-a")).toBe(false);
 
-    await coalescer.run("workspace-a", async () => {
+    await coalescer.run("workspace-a", "v1", async () => {
       starts.push("workspace-a-after-settle");
     });
     expect(starts).toEqual(["workspace-a", "workspace-b", "workspace-a-after-settle"]);
