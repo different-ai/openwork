@@ -11,6 +11,14 @@ interface MockGoogleServerOptions {
   port: number;
   autoApprove: boolean;
   baseUrl?: string;
+  threads?: Record<string, MockGoogleThread[]>;
+}
+
+export interface MockGoogleThread {
+  id: string;
+  messages: Record<string, unknown>[];
+  /** Undefined preserves the default; null omits threadId from drafts.create. */
+  returnedThreadId?: string | null;
 }
 
 interface StartedMockGoogleServer {
@@ -29,6 +37,7 @@ interface RequestEntry {
   path: string;
   url: string;
   at: string;
+  email?: string;
 }
 
 interface PendingAuthorization {
@@ -54,6 +63,10 @@ interface RecordedDraft {
   to: string;
   body: string;
   threadId?: string;
+  draftId?: string;
+  messageId?: string;
+  returnedThreadId?: string | null;
+  raw?: string;
   attachments?: RecordedAttachment[];
   tokenId: string;
   at: string;
@@ -86,6 +99,7 @@ interface MockGoogleState {
   accessTokens: Map<string, Account>;
   refreshTokens: Map<string, RefreshCredential>;
   drafts: Map<string, RecordedDraft[]>;
+  threads: Record<string, MockGoogleThread[]>;
   driveUploads: Map<string, RecordedDriveUpload[]>;
   keys: SigningKeys;
   actions: ReturnType<typeof serviceActionsWitness>;
@@ -218,11 +232,13 @@ function accountForRequest(state: MockGoogleState, request: IncomingMessage): Ac
 }
 
 function recordRequest(state: MockGoogleState, request: IncomingMessage, url: URL): void {
+  const account = accountForRequest(state, request);
   state.requests.push({
     method: method(request),
     path: url.pathname,
     url: `${url.pathname}${url.search}`,
     at: new Date().toISOString(),
+    ...(account ? { email: account.email } : {}),
   });
 }
 
@@ -429,19 +445,19 @@ function decodeBase64Body(body: string): string {
   }
 }
 
-function mimeTextBody(headers: string, body: string): string | null {
+function mimeTextBody(headers: string, body: string, mimeType = "text/plain"): string | null {
   const contentType = headerValue(headers, "content-type");
   const boundary = /boundary="?([^";]+)"?/i.exec(contentType)?.[1] ?? null;
   if (boundary) {
     for (const part of body.split(`--${boundary}`).slice(1)) {
       if (!part.trim() || part.trim().startsWith("--")) continue;
       const split = splitMessage(part.replace(/^\r?\n/, ""));
-      const decoded = mimeTextBody(split.headers, split.body);
+      const decoded = mimeTextBody(split.headers, split.body, mimeType);
       if (decoded !== null) return decoded;
     }
     return null;
   }
-  if (contentType && !contentType.toLowerCase().startsWith("text/plain")) return null;
+  if (contentType && !contentType.toLowerCase().startsWith(mimeType)) return null;
   return headerValue(headers, "content-transfer-encoding").toLowerCase() === "base64"
     ? decodeBase64Body(body)
     : body.trimEnd();
@@ -449,6 +465,22 @@ function mimeTextBody(headers: string, body: string): string | null {
 
 function draftBody(headers: string, body: string): string {
   return mimeTextBody(headers, body) ?? "";
+}
+
+/** Decode only provider-observed bytes, independently of the product MIME writer. */
+export function parseMockGmailMime(raw: string) {
+  const message = decodedRawMessage(raw);
+  const { headers, body } = splitMessage(message);
+  const subject = headerValue(headers, "subject")
+    .replace(/(\?=)[ \t]+(?==\?)/g, "$1")
+    .replace(/=\?UTF-8\?B\?([^?]+)\?=/gi, (_, encoded: string) => decodeBase64Body(encoded));
+  return {
+    raw: message, headers, subject,
+    inReplyTo: headerValue(headers, "in-reply-to"),
+    references: headerValue(headers, "references"),
+    plain: mimeTextBody(headers, body),
+    html: mimeTextBody(headers, body, "text/html"),
+  };
 }
 
 function unquoteMimeParameter(value: string): string {
@@ -497,6 +529,12 @@ async function createDraft(state: MockGoogleState, request: IncomingMessage, res
     return;
   }
   const input = draftInput(await jsonBody(request));
+  const configuredThread = state.threads[account.email]?.find((thread) => thread.id === input.threadId);
+  const returnedThreadId = configuredThread?.returnedThreadId === undefined
+    ? input.threadId ?? `thread-${randomUUID()}`
+    : configuredThread.returnedThreadId;
+  const draftId = `draft-${randomUUID()}`;
+  const messageId = `msg-${randomUUID()}`;
   const message = decodedRawMessage(input.raw);
   const split = splitMessage(message);
   const draft: RecordedDraft = {
@@ -504,6 +542,7 @@ async function createDraft(state: MockGoogleState, request: IncomingMessage, res
     body: draftBody(split.headers, split.body),
     tokenId: tokenId(accessToken),
     at: new Date().toISOString(),
+    draftId, messageId, returnedThreadId, raw: input.raw,
   };
   if (input.threadId) draft.threadId = input.threadId;
   const attachments = mimeAttachments(split.headers, split.body);
@@ -511,10 +550,9 @@ async function createDraft(state: MockGoogleState, request: IncomingMessage, res
   const mailbox = state.drafts.get(account.email) ?? [];
   mailbox.push(draft);
   state.drafts.set(account.email, mailbox);
-  const threadId = input.threadId ?? `thread-${randomUUID()}`;
   sendJson(response, 200, {
-    id: `draft-${randomUUID()}`,
-    message: { id: `msg-${randomUUID()}`, threadId },
+    id: draftId,
+    message: { id: messageId, ...(returnedThreadId === null ? {} : { threadId: returnedThreadId }) },
   });
 }
 
@@ -668,6 +706,17 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
     sendJson(response, 200, { messages: [], resultSizeEstimate: 0 });
     return;
   }
+  if (requestMethod === "GET" && url.pathname.startsWith("/gmail/v1/users/me/threads/")) {
+    const account = accountForRequest(state, request);
+    if (!account) {
+      sendJson(response, 401, { error: { code: 401, message: "Invalid Credentials" } });
+      return;
+    }
+    const id = decodeURIComponent(url.pathname.slice("/gmail/v1/users/me/threads/".length));
+    const thread = state.threads[account.email]?.find((entry) => entry.id === id);
+    sendJson(response, thread ? 200 : 404, thread ? { id: thread.id, messages: thread.messages } : { error: { code: 404, message: "Thread not found" } });
+    return;
+  }
   if (requestMethod === "POST" && url.pathname === "/gmail/v1/users/me/drafts") {
     await createDraft(state, request, response);
     return;
@@ -718,6 +767,7 @@ export async function startMockGoogleServer(options: MockGoogleServerOptions): P
     accessTokens: new Map(),
     refreshTokens: new Map(),
     drafts: new Map(),
+    threads: options.threads ?? {},
     driveUploads: new Map(),
     keys: createSigningKeys(),
     actions: serviceActionsWitness(),

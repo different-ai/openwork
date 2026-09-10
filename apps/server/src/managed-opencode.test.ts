@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -117,29 +117,22 @@ describe("managed OpenCode startup", () => {
     });
   }
 
-  test("checks next-engine policy over private IPC without giving shell children a credential or channel", async () => {
+  test("starts next-engine without managed policy credentials or IPC", async () => {
     const root = await createRoot();
-    const clientPath = new URL("./opencode-plugins/managed-policy-next.ts", import.meta.url).href;
+    const policyDir = join(root, "managed-policy");
+    await mkdir(policyDir);
+    await mkdir(join(root, "config"));
+    const oldEntrypoint = "export default {}; // retained for explicit references\n";
+    await writeFile(join(policyDir, "server.js"), oldEntrypoint);
+    await writeFile(join(root, "config", "opencode.json"), JSON.stringify({ plugins: [policyDir] }));
     const shellPath = join(root, "shell-child.mjs");
     await writeFile(shellPath, "console.log(JSON.stringify({ policy: process.env.OPENWORK_POLICY_TOKEN ?? null, client: process.env.OPENWORK_SERVER_TOKEN ?? null, ipc: typeof process.send === 'function' }));");
-    const checked: Array<{ action: string; input: Record<string, unknown> }> = [];
-    const checking = Promise.withResolvers<void>();
-    const unblock = Promise.withResolvers<void>();
     const bin = await writeExecutable(root, "policy-env.mjs", [
-      `import plugin from ${JSON.stringify(clientPath)};`,
       "import { execFileSync } from 'node:child_process';",
-      "const hooks = {};",
-      "await plugin.setup(Object.fromEntries(['tool', 'shell', 'session'].map(kind => [kind, { hook: async (name, callback) => { hooks[kind] = callback; } }])));",
       "const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {",
       "  const path = new URL(request.url).pathname;",
-      "  if (path === '/env') return Response.json({ policy: process.env.OPENWORK_POLICY_TOKEN ?? null, client: process.env.OPENWORK_SERVER_TOKEN ?? null });",
+      "  if (path === '/env') return Response.json({ policy: process.env.OPENWORK_POLICY_TOKEN ?? null, client: process.env.OPENWORK_SERVER_TOKEN ?? null, ipc: typeof process.send === 'function' });",
       `  if (path === '/shell-env') return Response.json(JSON.parse(execFileSync(process.execPath, [${JSON.stringify(shellPath)}], { encoding: 'utf8' })));`,
-      "  if (path === '/disconnect') { process.disconnect(); return Response.json({ ok: true }); }",
-      "  if (path === '/check') {",
-      "    const { kind, event } = await request.json();",
-      "    try { await hooks[kind](event); return Response.json({ allowed: true }); }",
-      "    catch (error) { return Response.json({ allowed: false, message: error.message }); }",
-      "  }",
       "  return Response.json({ healthy: true, version: 'test', pid: process.pid });",
       "} });",
       "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
@@ -148,33 +141,16 @@ describe("managed OpenCode startup", () => {
     const managed = await createManagedOpencodeV2Server({
       bin, rootDir: root,
       env: { OPENWORK_SERVER_TOKEN: "must-stay-private", OPENWORK_POLICY_TOKEN: "policy-only-test-token" },
-      checkPolicy: async (action, input) => {
-        checked.push({ action, input });
-        if (input.command === "blocked") throw new Error("Command blocked by team policy.");
-        if (input.command === "waiting") { checking.resolve(); await unblock.promise; }
-      },
+      permissions: async () => [{ action: "shell", resource: "*", effect: "deny" }],
     });
     try {
-      expect(await managed.fetchJson("/env")).toEqual({ status: 200, json: { policy: null, client: null } });
+      const config = JSON.parse(await readFile(join(root, "config", "opencode.json"), "utf8"));
+      expect(config.plugins).toBeUndefined();
+      expect(config.permissions).toEqual([{ action: "shell", resource: "*", effect: "deny" }]);
+      expect(await readFile(join(policyDir, "server.js"), "utf8")).toBe(oldEntrypoint);
+      expect(await managed.fetchJson("/env")).toEqual({ status: 200, json: { policy: null, client: null, ipc: false } });
       expect(await managed.fetchJson("/shell-env")).toEqual({ status: 200, json: { policy: null, client: null, ipc: false } });
-      const check = (kind: string, event: Record<string, unknown>) => managed.fetchJson("/check", { method: "POST", body: { kind, event }, timeoutMs: 2000 });
-      expect(await check("shell", { command: "allowed" })).toEqual({ status: 200, json: { allowed: true } });
-      expect(await check("shell", { command: "blocked" })).toEqual({ status: 200, json: { allowed: false, message: "Command blocked by team policy." } });
-      expect(await check("tool", { tool: "read", input: {} })).toEqual({ status: 200, json: { allowed: true } });
-      expect(await check("session", { model: { providerID: "fixture", id: "model" } })).toEqual({ status: 200, json: { allowed: true } });
-      expect(checked).toEqual([
-        { action: "shell", input: { command: "allowed" } },
-        { action: "shell", input: { command: "blocked" } },
-        { action: "sync", input: {} },
-        { action: "model", input: { providerID: "fixture", id: "model" } },
-      ]);
-      const waiting = check("shell", { command: "waiting" });
-      await checking.promise;
-      await managed.fetchJson("/disconnect");
-      expect(await waiting).toEqual({ status: 200, json: { allowed: false, message: "OpenWork policy service is unavailable." } });
-      expect(await check("shell", { command: "allowed" })).toEqual({ status: 200, json: { allowed: false, message: "OpenWork policy service is unavailable." } });
-      expect(checked).toHaveLength(5);
-    } finally { unblock.resolve(); await managed.close(); }
+    } finally { await managed.close(); }
   });
 
   test("spawns the engine with npm audit disabled so first-run installs never wait on the advisories endpoint", async () => {

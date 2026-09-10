@@ -159,6 +159,7 @@ function startFakeDen(options?: { providers?: Record<string, unknown>[] }): { ur
     fetch(request) {
       const url = new URL(request.url);
       requests.push(`${request.method} ${url.pathname}`);
+      if (request.method === "GET" && url.pathname === "/v1/me/desktop-config") return Response.json({});
       if (request.method === "GET" && url.pathname === "/v1/llm-providers") {
         return new Response(JSON.stringify({ llmProviders: providers }), { headers: { "content-type": "application/json" } });
       }

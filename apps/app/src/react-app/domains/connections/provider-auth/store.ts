@@ -382,8 +382,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersGeneration = 0;
   let cloudProviderSyncContextKey = "";
   let lastDenSessionPushKey = "";
+  let lastDenIdentityPushKey = "";
   let denSessionDelivery: { key: string; controller: AbortController } | null = null;
-  let denSessionPushInFlight: Promise<boolean> | null = null;
+  let denSessionPushInFlight: { mode: "identity" | "sync"; promise: Promise<boolean> } | null = null;
 
   const emitChange = () => {
     for (const listener of listeners) listener();
@@ -488,6 +489,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     denSessionDelivery = null;
     denSessionPushInFlight = null;
     lastDenSessionPushKey = "";
+    lastDenIdentityPushKey = "";
     cloudProviderSyncContextKey = "";
   };
 
@@ -505,27 +507,35 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const isCurrentDenSessionDelivery = (delivery: typeof denSessionDelivery) =>
     !disposed && delivery !== null && delivery === denSessionDelivery && delivery.key === getDenSessionDeliveryKey();
 
-  const pushDenSession = (force = false): Promise<boolean> => {
+  const pushDenSession = (mode: "identity" | "sync" = "sync", force = false): Promise<boolean> => {
     const delivery = syncDenSessionDelivery();
     const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
     if (!delivery || !openworkClient || disposed) return Promise.resolve(false);
-    if (!force && delivery.key === lastDenSessionPushKey) return Promise.resolve(true);
-    if (denSessionPushInFlight) return denSessionPushInFlight;
-    lastDenSessionPushKey = "";
+    if (!force && delivery.key === (mode === "identity" ? lastDenIdentityPushKey : lastDenSessionPushKey)) return Promise.resolve(true);
+    if (denSessionPushInFlight) {
+      if (denSessionPushInFlight.mode === mode) return denSessionPushInFlight.promise;
+      // Readiness can recover during early verification, including an older
+      // server's 404. Serialize the full PUT, but never dedupe it against identity.
+      return denSessionPushInFlight.promise.catch(() => false).then(() =>
+        isCurrentDenSessionDelivery(delivery) ? pushDenSession(mode, force) : false);
+    }
+    if (mode === "sync" && !hasCloudProviderSyncPrerequisites()) return Promise.resolve(false);
+    if (mode === "sync") lastDenSessionPushKey = "";
     const settings = readDenSettings();
     const apiBaseUrl = settings.apiBaseUrl ?? resolveDenBaseUrls(settings).apiBaseUrl;
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     const request = (async () => {
-      // Retry only delivery, not provider materialization. Policy verification
-      // can fail transiently with 403 policy_unavailable; auth denials and
-      // rate limits remain terminal.
+      // Policy verification can fail transiently with 403 policy_unavailable;
+      // auth denials and rate limits remain terminal.
       for (let attempt = 0; attempt < 3; attempt += 1) {
         if (!isCurrentDenSessionDelivery(delivery)) return false;
         try {
-          await openworkClient.putDenSession({ baseUrl: apiBaseUrl, token, orgId }, delivery.controller.signal);
+          const put = mode === "identity" ? openworkClient.putDenIdentity : openworkClient.putDenSession;
+          await put({ baseUrl: apiBaseUrl, token, orgId }, delivery.controller.signal);
           if (!isCurrentDenSessionDelivery(delivery)) return false;
-          lastDenSessionPushKey = delivery.key;
+          lastDenIdentityPushKey = delivery.key;
+          lastDenSessionPushKey = mode === "sync" ? delivery.key : "";
           return true;
         } catch (error) {
           if (!isCurrentDenSessionDelivery(delivery)) return false;
@@ -546,9 +556,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
       return false;
     })();
-    denSessionPushInFlight = request;
+    denSessionPushInFlight = { mode, promise: request };
     const clearInFlight = () => {
-      if (denSessionPushInFlight === request) {
+      if (denSessionPushInFlight?.promise === request) {
         denSessionPushInFlight = null;
       }
     };
@@ -2189,6 +2199,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (reason === "settings_cloud_opened") {
         setStateField("providerAuthError", null);
       }
+      // The trusted local server needs the session before the engine or
+      // workspace is ready. Provider materialization still waits for both.
+      if (delivery && !getOpenworkGatewayOrigin()) {
+        try {
+          await pushDenSession("identity");
+        } catch (error) {
+          if (isCurrentDenSessionDelivery(delivery)) logCloudProviderSyncError(reason, error);
+        }
+      }
       return;
     }
     if (getOpenworkGatewayOrigin()) {
@@ -2217,7 +2236,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             let result = await openworkClient.runCloudProviderSyncNow(reason, delivery?.controller.signal);
             if (!isCurrent()) return;
             if (result.status === "no_session") {
-              if (!await pushDenSession(true) || !isCurrent()) return;
+              if (!await pushDenSession("sync", true) || !isCurrent()) return;
               result = await openworkClient.runCloudProviderSyncNow(reason, delivery?.controller.signal);
             }
             return result;

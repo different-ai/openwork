@@ -859,7 +859,6 @@ export type OpenworkConnectState = {
   status: "available" | "missing" | "invalid" | "unreadable";
   connectEnabled: boolean;
   cloudMcpPresent: boolean;
-  googleWorkspace: { legacyConfigured: boolean };
 };
 
 export type OpenworkExtensionActionCall = {
@@ -1594,6 +1593,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       if (workspaceId?.trim()) query.set("workspaceId", workspaceId.trim());
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
+    },
+    putDenIdentity: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
+      await requestJson<unknown>(baseUrl, "/den-session/identity", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });
     },
     putDenSession: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
       await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });

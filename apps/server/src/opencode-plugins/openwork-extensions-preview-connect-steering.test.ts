@@ -9,6 +9,7 @@ import {
   OPENWORK_CONNECT_DISABLED_INSTRUCTION,
   OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+  OPENWORK_GOOGLE_CONNECTION_INSTRUCTION,
   OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
   resetOpenWorkExtensionDiscoveryInstructionCacheForTests,
   resolveOpenWorkExtensionDiscoveryInstruction,
@@ -22,7 +23,7 @@ type CloudFailure = NonNullable<CloudHealth["firstFailure"]>;
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 
-const EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION =
+const EXTENSION_DISCOVERY_PREFIX =
   "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action. Do not use another route to bypass a failed connection; follow its connection guidance.";
 
 beforeEach(() => {
@@ -75,7 +76,6 @@ function state(cloudHealth: OpenWorkExtensionConnectState["cloudHealth"]): OpenW
     cloudMcpPresent: cloudHealth?.usable === true,
     cloudHealth,
     workspace: { resolution: "resolved", id: "ws_1", directory: "/tmp/ws_1" },
-    googleWorkspace: { legacyConfigured: false },
   };
 }
 
@@ -103,14 +103,14 @@ describe("composeSteeringFromEngineMcpStatus", () => {
 });
 
 describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
-  test("keeps bounded fallback discovery when state is unavailable or generic discovery is gated", () => {
-    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction(null)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+  test("retains generic extension discovery when state is unavailable or discovery is gated", () => {
+    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION.startsWith(EXTENSION_DISCOVERY_PREFIX)).toBe(true);
+    expect(composeOpenWorkExtensionDiscoveryInstruction(null)).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
-  test("keeps fallback when only legacy Google Workspace is configured", () => {
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+  test("requires Cloud sign-in when no Cloud health is available", () => {
+    expect(composeOpenWorkExtensionDiscoveryInstruction(state(null))).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
   });
 
   test("steers ready Connect users to verified openwork-cloud capabilities first", () => {
@@ -119,7 +119,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("host file transport");
     expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("Do not use another route to bypass a failed connection");
     // Tool mechanics and the "only name what search returns" rule live once in
-    // the base agent prompt; ready steering adds only the host-specific path.
+    // the base agent prompt; ready steering adds shared Google guidance to the signal.
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("openwork-cloud_search_capabilities with");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("available_skills");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("A successful search proves");
@@ -131,10 +131,46 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("relay connectionStatus.action exactly");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("results are live, not cached");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION.length).toBeLessThan(700);
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION.replace(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION, "").length).toBeLessThan(600);
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+  });
+
+  test("shares Cloud-only Google guidance and host discovery in every readiness mode", () => {
+    for (const instruction of [
+      OPENWORK_CLOUD_CONNECTION_INSTRUCTION,
+      OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+      OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
+      OPENWORK_CONNECT_DISABLED_INSTRUCTION,
+    ]) {
+      expect(instruction.split(OPENWORK_GOOGLE_CONNECTION_INSTRUCTION)).toHaveLength(2);
+      expect(instruction).toContain("Google Workspace uses OpenWork Cloud Connect only");
+      expect(instruction).toContain("Do not set up local Google OAuth, request Google tokens, or offer a legacy Google extension or another provider stack");
+      expect(instruction).toContain("OpenWork Cloud readiness alone does not establish Google connection readiness");
+      expect(instruction).toContain("follow the exact live Cloud connection status action returned for that connection");
+      expect(instruction).toContain("Never invent a connection status, connection id, or setup action");
+      expect(instruction).toContain("if no live status action is available, report that limitation");
+      expect(instruction).toContain("Cloud search results alone do not establish that upload is unavailable");
+      expect(instruction).toContain("when OpenWork host tools are exposed, first query extension.actions with extensionId openwork-cloud-uploads");
+      expect(instruction).toContain("Discover the native Gmail draft schema");
+      expect(instruction).toContain("host file transport, preserving the selected connection");
+      expect(instruction).toContain("including the selected connectionId");
+      expect(instruction).toContain("sending is a separate, permissioned operation");
+      expect(instruction).toContain("Do not retry or switch routes after an uncertain result");
+      expect(instruction).toContain("Only if drive_upload_file is returned and the user authorizes the upload");
+      expect(instruction).toContain("execute that exact action through openwork_execute id extension.call with extensionId openwork-cloud-uploads and args containing path and optional folderId");
+      expect(instruction).toContain("up to 4 MiB under authorized roots");
+      expect(instruction).toContain("preserves bytes outside model context");
+      expect(instruction).toContain("only if gmail_create_draft_with_attachments is returned and the user authorizes draft creation");
+      expect(instruction).toContain("authorized paths and draft fields from its returned input schema");
+      expect(instruction).toContain("creates a reviewable draft, does not send email");
+      expect(instruction).toContain("up to 10 files totaling 4 MiB");
+      expect(instruction).toContain("Cloud backend member connection, not local Google credentials");
+      expect(instruction).toContain("Drive uses the member's default Google connection and cannot select another named connection");
+      expect(instruction).toContain("unless it is confirmed to be the default");
+      expect(instruction).toContain("Never load file bytes into model context or tool arguments, extract tokens, or use shell uploads as a fallback");
+      expect(instruction).toContain("If host tools or the action are absent, including in external MCP-only clients, report that limitation");
+    }
   });
 
   test("selects one compact skill-authoring prompt from verified Cloud access", () => {
@@ -334,7 +370,6 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       })),
       { ...state(null), workspace: { resolution: "unknown", id: null, directory: "/tmp/unknown" } },
       { ...state(null), connectCatalogEnabled: false },
-      { ...state(null), googleWorkspace: { legacyConfigured: true } },
       state(null),
     ];
     for (const fallbackState of fallbackStates) {
@@ -390,7 +425,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
@@ -402,11 +437,11 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
-  test("falls back to server connect state when engine has no openwork-cloud entry", async () => {
+  test("reads Cloud-only server connect state when engine has no openwork-cloud entry", async () => {
     process.env.OPENWORK_SERVER_URL = "http://openwork.test";
     process.env.OPENWORK_SERVER_TOKEN = "test-token";
     const client = engineMcpClient({ data: { other: { status: "connected" } } });
@@ -421,7 +456,6 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
         cloudMcpPresent: true,
         cloudHealth: health(),
         workspace: { resolution: "resolved", id: "ws_1", directory: "/tmp/ws_1" },
-        googleWorkspace: { legacyConfigured: false },
       });
     };
 
@@ -456,7 +490,6 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
           },
         }),
         workspace: { resolution: "resolved", id: "ws_1", directory: "/tmp/ws_1" },
-        googleWorkspace: { legacyConfigured: false },
       });
     };
 
@@ -464,7 +497,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       context: { directory: "/tmp/ws_1" },
       model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
     };
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(calls).toBe(2);
     expect(urls).toEqual([
@@ -488,7 +521,6 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
         cloudMcpPresent: true,
         cloudHealth: health(),
         workspace: { resolution: "resolved", id: "ws_2", directory: "/tmp/worktree" },
-        googleWorkspace: { legacyConfigured: false },
       });
     };
 
@@ -504,7 +536,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
     };
     const invalidFetch = async (): Promise<Response> => Response.json({ ok: true });
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, failingFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, invalidFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, failingFetch)).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, invalidFetch)).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 });

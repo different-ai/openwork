@@ -1,13 +1,10 @@
-import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
-import { serveManagedPolicyIpc, type ManagedPolicyCheck } from "./managed-policy-ipc.js";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
 export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
@@ -39,7 +36,6 @@ export interface ManagedOpencodeV2ServerOptions {
   env?: Record<string, string>;
   bootTimeoutMs?: number;
   permissions?: () => Promise<EnginePermissionRule[]>;
-  checkPolicy?: ManagedPolicyCheck;
 }
 
 export interface OpencodeV2Health {
@@ -85,7 +81,6 @@ export async function createManagedOpencodeV2Server(
   const port = options.port ?? 0;
   const bootTimeoutMs = options.bootTimeoutMs ?? 60_000;
   const configDir = join(options.rootDir, "config");
-  const policyPluginDir = join(options.rootDir, "managed-policy");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   let url = "";
@@ -112,16 +107,9 @@ export async function createManagedOpencodeV2Server(
   await chmod(options.rootDir, 0o700);
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await chmod(configDir, 0o700);
-  if (options.checkPolicy) {
-    // The pinned v2 loader accepts configured plugin directories, not files.
-    // Keep its entrypoint inside that directory for the loader's path check.
-    await mkdir(policyPluginDir, { recursive: true, mode: 0o700 });
-    await chmod(policyPluginDir, 0o700);
-    await writeFile(join(policyPluginDir, "server.js"),
-      `export { default } from ${JSON.stringify(pathToFileURL(managedPolicyPluginPath(true)).href)};\n`,
-      { mode: 0o600 });
-  }
-  // Load enforcement on the first boot, before any session can run.
+  // Replace the generated config before boot, removing stale managed-policy
+  // registrations while retaining independent engine permissions. Leave the
+  // old entrypoint on disk: another configuration may still reference it.
   await writeProviders();
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
@@ -131,10 +119,8 @@ export async function createManagedOpencodeV2Server(
       OPENCODE_CONFIG_DIR: configDir,
       ...(opencodeModelsUrl === undefined ? {} : { OPENCODE_MODELS_URL: opencodeModelsUrl }),
     },
-    stdio: ["ignore", "pipe", "pipe", options.checkPolicy ? "ipc" : "ignore"],
-    serialization: "json",
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  if (options.checkPolicy) serveManagedPolicyIpc(child, options.checkPolicy);
 
   let stdout = "";
   let stderr = "";
@@ -150,14 +136,12 @@ export async function createManagedOpencodeV2Server(
     closed = true;
     lines.stop();
   });
-  // The extra IPC entry selects spawn's nullable-stream overload, but both
-  // diagnostic streams are explicitly piped above.
-  child.stdout!.on("data", (chunk) => {
+  child.stdout.on("data", (chunk) => {
     const text = String(chunk);
     stdout = appendEngineOutputTail(stdout, text);
     lines.write(text);
   });
-  child.stderr!.on("data", (chunk) => {
+  child.stderr.on("data", (chunk) => {
     stderr = appendEngineOutputTail(stderr, String(chunk));
   });
   child.on("error", (error) => {
@@ -248,7 +232,6 @@ export async function createManagedOpencodeV2Server(
       $schema: "https://opencode.ai/config.json",
       providers: providerConfig,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
-      ...(options.checkPolicy ? { plugins: [policyPluginDir] } : {}),
     }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }

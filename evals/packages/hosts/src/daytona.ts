@@ -759,7 +759,6 @@ PYEOF`;
         handle.meta.remotePid = remotePid;
       } else {
         env.set("OPENWORK_WORKSPACE_DIR", "/workspace");
-        env.set("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", "1");
         const packagedBinary = process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
         if (packagedBinary) env.set("OPENWORK_EVAL_ELECTRON_BINARY", packagedBinary);
         const startCommand = `set -euo pipefail; cd /workspace; ${shellExport(env)} bash /workspace/.devcontainer/start-daytona-electron.sh --detach`;

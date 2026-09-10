@@ -2793,6 +2793,7 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   distribution: DESKTOP_DISTRIBUTION.flavor,
   platform: process.platform,
   arch: process.arch,
+  assertActivation: assertDesktopActivation,
 });
 
 if (!app.requestSingleInstanceLock()) {

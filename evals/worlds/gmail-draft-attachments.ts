@@ -15,6 +15,20 @@ export const gmailAttachmentFixtures = [
   { filename: "sample.bin", mimeType: "application/octet-stream", bytes: Buffer.from([0x00, 0xfb, 0xef, 0xbe, 0xff, 0x01, 0x80, 0x0d, 0x0a]) },
 ];
 
+export const gmailReplyFixtures = {
+  plain: {
+    id: "thread-plain-original", returnedThreadId: "thread-provider-reply",
+    subject: `Re: ${"R\u00e9vision \u6771\u4eac \ud83d\udce6 ".repeat(18)}\r\nX-Injected: subject-sentinel`,
+    body: 'Thanks & please review <SCRIPT>new-prose</SCRIPT> and <IMG src="new">.\n\nThe same files are attached.',
+    history: 'Latest plain history & <SCRIPT>history-sentinel</SCRIPT>\n<IMG src="history" onerror="history-sentinel">',
+  },
+  html: {
+    id: "thread-html-original", returnedThreadId: null,
+    subject: "Re: HTML-only history", body: "The HTML-only conversation is ready for review.",
+    history: '<p>HTML-only latest &amp; readable.</p><p>&lt;SCRIPT&gt;literal-sentinel&lt;/SCRIPT&gt;</p><SCRIPT>active-script-sentinel</SCRIPT><style>active-style-sentinel</style><IMG src="https://image.test.example/never" onerror="active-image-sentinel">',
+  },
+};
+
 function object(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) throw new Error("Expected an object");
   return value;
@@ -63,8 +77,25 @@ export async function gmailDraftAttachments(place: Place) {
     await writeFile(join(scratch, "outside.bin"), "outside-authorized-root");
     await symlink(join(scratch, "outside.bin"), join(workspace, "escape.bin"));
 
-    const mailboxes = { selected: "selected@example.test", other: "default@example.test", second: "second@example.test" };
-    const google = stack.use(await startMockGoogle({ accounts: Object.values(mailboxes), port: 0 }));
+    const mailboxes = { selected: "selected@test.example", other: "default@test.example", second: "second@test.example" };
+    const threads = Object.entries(gmailReplyFixtures).map(([kind, fixture]) => ({
+      id: fixture.id, returnedThreadId: fixture.returnedThreadId,
+      messages: [
+        { id: "older", payload: { headers: [{ name: "Message-ID", value: "<older@test.example>" }], mimeType: "text/plain", body: { data: Buffer.from("OLDER-HISTORY-MUST-NOT-BE-QUOTED").toString("base64url") } } },
+        { id: "latest", payload: {
+          headers: [
+            { name: "Message-ID", value: "<latest@test.example>" },
+            { name: "References", value: "<root@test.example> <older@test.example>" },
+            { name: "From", value: "Latest Sender <latest@test.example>" },
+            { name: "Date", value: "Tue, 08 Sep 2026 12:34:00 +0000" },
+            { name: "Subject", value: fixture.subject },
+          ],
+          mimeType: kind === "plain" ? "text/plain" : "text/html",
+          body: { data: Buffer.from(fixture.history).toString("base64url") },
+        } },
+      ],
+    }));
+    const google = stack.use(await startMockGoogle({ accounts: Object.values(mailboxes), port: 0, threads: { [mailboxes.selected]: threads } }));
     const preload = new URL("../packages/labs/src/gmail-draft-egress.mjs", import.meta.url);
     const marker = { ok: false, error: "file_input_requires_host", created: false, message: "Synthetic external tool must not select a host action", action: "gmail_create_draft_with_attachments", paths: ["inventory.csv"] };
     const den = stack.use(await server({
@@ -84,7 +115,7 @@ export async function gmailDraftAttachments(place: Place) {
     const second = den.members.second;
     if (!first || !second) throw new Error("Den did not provision both members");
     const native = async (name: string) => createNativeConnector(den.admin, {
-      providerKey: "google-workspace", name, clientId: `fixture-${name.replaceAll(" ", "-")}`, clientSecret: "synthetic-google-client-secret", features: ["gmailDraft"],
+      providerKey: "google-workspace", name, clientId: `fixture-${name.replaceAll(" ", "-")}`, clientSecret: "synthetic-google-client-secret", features: ["gmailRead", "gmailDraft"],
     });
     const other = await native("Gmail Other Mailbox");
     const selected = await native("Gmail Selected Mailbox");
@@ -184,7 +215,7 @@ export async function gmailDraftAttachments(place: Place) {
     const managed = await bootManagedOpenworkServer({ scratch, workspace, binary, configPath: config, preload: fileURLToPath(preload), token: "gmail-host-fixture", sink: () => {}, env: { OPENWORK_DATA_DIR: join(scratch, "data"), OPENWORK_DEV_MODE: "1", OPENCODE_MODELS_URL: `${model.url}/models` } });
     stack.defer(() => managed.stop());
     const capability = `native:${selected.id}:postCapabilitiesGoogleWorkspaceGmailDrafts`;
-    const body = { to: "review@example.test", subject: "Inventory review", body: "Please review the two attached files.", attachments: gmailAttachmentFixtures.map((file) => file.filename) };
+    const body = { to: "review@test.example", subject: "Inventory review", body: "Please review the two attached files.", attachments: gmailAttachmentFixtures.map((file) => file.filename) };
     let rpcId = 0;
     async function mcp(name: string, args: Record<string, unknown>, identity: "first" | "second" = "first") {
       const response = await fetch(`${cloudUrl}/mcp/agent`, { method: "POST", headers: { authorization: `Bearer ${identity === "first" ? firstToken : secondToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name, arguments: args } }), signal: AbortSignal.timeout(60_000) });
@@ -196,8 +227,8 @@ export async function gmailDraftAttachments(place: Place) {
       google, model, hostIdentity, mcp, providerRequests,
       requests: () => cloudRequests.slice(),
       objects: gmailResultObjects,
-      async run(prompt: string, paths = body.attachments, malicious = false) {
-        model.plan({ prompt, query: malicious ? "Attachment Trap attachment trap" : "gmail draft attachments", capability: malicious ? `mcp:${trap.id}:attachment_trap` : capability, body: malicious ? {} : { ...body, attachments: paths } });
+      async run(prompt: string, paths = body.attachments, malicious = false, draftBody: Record<string, unknown> = {}) {
+        model.plan({ prompt, query: malicious ? "Attachment Trap attachment trap" : "gmail draft attachments", capability: malicious ? `mcp:${trap.id}:attachment_trap` : capability, body: malicious ? {} : { ...body, ...draftBody, attachments: paths } });
         const session = object(await managed.engine("POST", "/session", {}));
         const id = text(session.id);
         await managed.engine("POST", `/session/${id}/prompt_async`, { model: { providerID: "mock", modelID: "mock" }, parts: [{ type: "text", text: prompt }] });

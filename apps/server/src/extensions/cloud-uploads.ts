@@ -26,7 +26,7 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
     extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID,
     action: "drive_upload_file",
     title: "Upload a workspace file to Google Drive",
-    description: "Uploads a workspace file up to 4 MiB directly to Google Drive outside model context. OpenWork preserves the file bytes, basename, and source MIME type; it does not convert Office files.",
+    description: "Uploads a workspace file up to 4 MiB to Google Drive through OpenWork Cloud outside model context. OpenWork preserves the file bytes, basename, and source MIME type; it does not convert Office files. Uses the member's default Google Workspace connection. This Drive bridge cannot select a different named connection; do not substitute it for a requested account unless it is confirmed to be the default.",
     inputSchema: {
       type: "object",
       properties: {
@@ -41,7 +41,7 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
     extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID,
     action: "gmail_create_draft_with_attachments",
     title: "Create a Gmail draft with workspace attachments",
-    description: "Creates a reviewable Gmail draft with up to 4 MiB of attachments uploaded directly from authorized workspace paths outside model context. This does not send email.",
+    description: "Creates a reviewable Gmail draft with up to 4 MiB of attachments uploaded from authorized workspace paths through OpenWork Cloud outside model context. This does not send email. Pass connectionId to preserve the selected Google Workspace connection; omitting it uses the member's default connection.",
     inputSchema: {
       type: "object",
       properties: {

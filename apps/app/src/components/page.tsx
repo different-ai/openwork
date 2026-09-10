@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react";
 import { Loader2 } from "lucide-react";
-import { Dithering } from "@paper-design/shaders-react";
 
+import { DitherBackdrop } from "@/components/dither-backdrop";
 import { cn } from "@/lib/utils";
 
 function Page({ className, ...props }: ComponentProps<"div">) {
@@ -24,17 +24,7 @@ function PageBackground({ className, ...props }: ComponentProps<"div">) {
       className={cn("pointer-events-none fixed inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert", className)}
       {...props}
     >
-      <Dithering
-        className="size-full"
-        speed={0.01}
-        shape="warp"
-        type="2x2"
-        size={20.3}
-        scale={1.19}
-        frame={264559.21}
-        colorBack="#00000000"
-        colorFront="#000000"
-      />
+      <DitherBackdrop />
     </div>
   );
 }

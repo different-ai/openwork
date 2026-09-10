@@ -31,10 +31,15 @@ async function handleEngineRequest(
   response: ServerResponse,
   config: ServerConfig,
   requests: string[],
+  busy: boolean,
 ): Promise<void> {
   const method = request.method ?? "GET";
   const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
   requests.push(`${method} ${path}`);
+  if (method === "GET" && path === "/session/status") {
+    sendJson(response, 200, busy ? { ses_live: { type: "busy" } } : {});
+    return;
+  }
   if (method === "GET" && path === "/config") {
     const content = await readFile(openworkRuntimeConfigFilePath(config), "utf8");
     response.writeHead(200, { "content-type": "application/json" });
@@ -53,8 +58,9 @@ async function handleEngineRequest(
 }
 
 async function startFakeEngine(config: ServerConfig, requests: string[]) {
+  let busy = false;
   const engine = createServer((request, response) => {
-    void handleEngineRequest(request, response, config, requests).catch((error) => {
+    void handleEngineRequest(request, response, config, requests, busy).catch((error) => {
       sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
     });
   });
@@ -66,6 +72,7 @@ async function startFakeEngine(config: ServerConfig, requests: string[]) {
   if (!address || typeof address === "string") throw new Error("Fake engine did not bind a TCP port");
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
+    setBusy: (value: boolean) => { busy = value; },
     stop: () => new Promise<void>((resolve, reject) => {
       engine.close((error) => error ? reject(error) : resolve());
       engine.closeAllConnections();
@@ -73,7 +80,7 @@ async function startFakeEngine(config: ServerConfig, requests: string[]) {
   };
 }
 
-test("stored managed provider credentials reload the engine after auth delivery", async () => {
+test("stored managed provider credentials reload only after full session or auth delivery", async () => {
   const root = await mkdtemp(join(tmpdir(), "openwork-provider-env-reload-"));
   const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
   const previousEnvStore = process.env.OPENWORK_ENV_STORE;
@@ -113,6 +120,7 @@ test("stored managed provider credentials reload the engine after auth delivery"
   };
   let engine: Awaited<ReturnType<typeof startFakeEngine>> | undefined;
   let server: Awaited<ReturnType<typeof startServer>> | undefined;
+  let den: ReturnType<typeof createServer> | undefined;
 
   try {
     engine = await startFakeEngine(config, engineRequests);
@@ -199,8 +207,76 @@ test("stored managed provider credentials reload the engine after auth delivery"
       label: "rotated managed auth delivery followed by engine reload",
     })).toEqual(["PUT /auth/lpr_test", "POST /instance/dispose"]);
     expect(engineRequests).toEqual(["PUT /auth/lpr_test", "GET /session/status", "POST /instance/dispose"]);
+    engineRequests.length = 0;
+
+    const denRequests: string[] = [];
+    const cloudProvider = {
+      id: "lpr_ready", providerId: "openai-compatible", name: "Ready provider", source: "custom",
+      providerConfig: { env: ["READY_PROVIDER_KEY"], npm: "@ai-sdk/openai-compatible" },
+      apiKey: "sk-ready-only", models: [{ id: "ready-model", name: "Ready model", config: {} }],
+    };
+    const denWitness = createServer((request, response) => {
+      const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+      denRequests.push(path);
+      if (path === "/v1/me/desktop-config") sendJson(response, 200, {});
+      else if (path === "/v1/llm-providers") sendJson(response, 200, { llmProviders: [cloudProvider] });
+      else if (path === "/v1/llm-providers/lpr_ready/connect") sendJson(response, 200, { llmProvider: cloudProvider });
+      else sendJson(response, 404, { error: "not_found" });
+    });
+    den = denWitness;
+    await new Promise<void>((resolve, reject) => {
+      denWitness.once("error", reject);
+      denWitness.listen(0, "127.0.0.1", resolve);
+    });
+    const address = denWitness.address();
+    if (!address || typeof address === "string") throw new Error("Den witness did not bind a port");
+    const identity = JSON.stringify({ baseUrl: `http://127.0.0.1:${address.port}`, token: "test-den-token", orgId: "org_ready" });
+    const providersBefore = await (await fetch(`${base}/runtime-config/providers`, { headers: hostHeaders() })).json();
+    const envBefore = await readFile(process.env.OPENWORK_ENV_STORE, "utf8");
+    const configBefore = await readFile(openworkRuntimeConfigFilePath(config), "utf8");
+    const early = await fetch(`${base}/den-session/identity`, { method: "PUT", headers: hostHeaders(), body: identity });
+    expect(early.status).toBe(204);
+    expect(await (await fetch(`${base}/managed-policy`, { headers: { authorization: `Bearer ${CLIENT_TOKEN}` } })).json())
+      .toMatchObject({ policy: {} });
+    const premature = await fetch(`${base}/cloud-provider-sync/run`, { method: "POST", headers: hostHeaders(), body: "{}" });
+    expect(await premature.json()).toEqual({ status: "no_session" });
+    expect(denRequests.every((path) => path === "/v1/me/desktop-config")).toBe(true);
+    expect(await (await fetch(`${base}/runtime-config/providers`, { headers: hostHeaders() })).json()).toEqual(providersBefore);
+    expect(await readFile(process.env.OPENWORK_ENV_STORE, "utf8")).toBe(envBefore);
+    expect(await readFile(openworkRuntimeConfigFilePath(config), "utf8")).toBe(configBefore);
+    expect(engineRequests).toEqual([]);
+
+    const ready = await fetch(`${base}/den-session`, { method: "PUT", headers: hostHeaders(), body: identity });
+    expect(ready.status).toBe(204);
+    await eventually(async () => {
+      const response = await fetch(`${base}/cloud-provider-sync/status`, { headers: { authorization: `Bearer ${CLIENT_TOKEN}` } });
+      return response.json();
+    }, { within: 5_000, intervalMs: 25, until: (status) => status.lastRun?.status === "applied", label: "automatic sync after full session delivery" });
+    expect(denRequests).toContain("/v1/llm-providers/lpr_ready/connect");
+    expect(await (await fetch(`${base}/env/READY_PROVIDER_KEY`, { headers: hostHeaders() })).json())
+      .toMatchObject({ item: { value: "sk-ready-only" } });
+    expect(managedProviderChanges(engineRequests)).toContain("PUT /auth/lpr_ready");
+    expect(engineRequests.indexOf("PUT /auth/lpr_ready")).toBeLessThan(engineRequests.indexOf("POST /instance/dispose"));
+
+    const materializedEnv = await readFile(process.env.OPENWORK_ENV_STORE, "utf8");
+    const materializedConfig = await readFile(openworkRuntimeConfigFilePath(config), "utf8");
+    engine.setBusy(true);
+    engineRequests.length = 0;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect((await fetch(`${base}/den-session/identity`, { method: "PUT", headers: hostHeaders(), body: identity })).status).toBe(204);
+    }
+    expect((await fetch(`${base}/den-session`, { method: "PUT", headers: hostHeaders(), body: identity })).status).toBe(204);
+    const resumed = await fetch(`${base}/cloud-provider-sync/run`, { method: "POST", headers: hostHeaders(), body: "{}" });
+    expect(await resumed.json()).toEqual({ status: "noop" });
+    expect(await readFile(process.env.OPENWORK_ENV_STORE, "utf8")).toBe(materializedEnv);
+    expect(await readFile(openworkRuntimeConfigFilePath(config), "utf8")).toBe(materializedConfig);
+    expect(engineRequests.filter((entry) => !entry.startsWith("GET "))).toEqual([]);
   } finally {
     await server?.stop();
+    if (den) {
+      const witness = den;
+      await new Promise<void>((resolve) => { witness.close(() => resolve()); witness.closeAllConnections(); });
+    }
     await engine?.stop();
     resetManagedProviderAuthCache();
     if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;

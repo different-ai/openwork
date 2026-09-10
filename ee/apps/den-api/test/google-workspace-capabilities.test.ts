@@ -71,8 +71,8 @@ function decodeDraftRaw(): string {
   return Buffer.from(raw, "base64url").toString("utf8")
 }
 
-function decodeDraftTextBody(): string {
-  const encoded = decodeDraftRaw().match(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/)?.[1] ?? ""
+function decodeDraftTextBody(kind: "plain" | "html" = "plain"): string {
+  const encoded = decodeDraftRaw().match(new RegExp(`Content-Type: text/${kind}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)`))?.[1] ?? ""
   return Buffer.from(encoded.replace(/\r\n/g, ""), "base64").toString("utf8")
 }
 
@@ -114,6 +114,11 @@ let gmailMetadataFailureId: string | null = null
 let activeGmailMetadataRequests = 0
 let maxActiveGmailMetadataRequests = 0
 let gmailMessageBody = "Plain Gmail body"
+let gmailThreadBody = "Original line\n> previous quote"
+let gmailThreadMimeType = "text/plain"
+let gmailThreadMessageId = "<orig-2@mail.gmail.com>"
+let gmailThreadReferences = "<orig-1@mail.gmail.com>"
+let gmailDraftReturnedThreadId: string | undefined = "thread_1"
 let driveFileText = "Drive file text"
 let driveDocumentText = "Exported doc text"
 
@@ -147,6 +152,11 @@ function resetFakeGoogle() {
   activeGmailMetadataRequests = 0
   maxActiveGmailMetadataRequests = 0
   gmailMessageBody = "Plain Gmail body"
+  gmailThreadBody = "Original line\n> previous quote"
+  gmailThreadMimeType = "text/plain"
+  gmailThreadMessageId = "<orig-2@mail.gmail.com>"
+  gmailThreadReferences = "<orig-1@mail.gmail.com>"
+  gmailDraftReturnedThreadId = "thread_1"
   driveFileText = "Drive file text"
   driveDocumentText = "Exported doc text"
 }
@@ -241,13 +251,13 @@ const fakeGoogleServer = Bun.serve({
             id: "msg_2",
             payload: {
               headers: [
-                { name: "Message-ID", value: "<orig-2@mail.gmail.com>" },
-                { name: "References", value: "<orig-1@mail.gmail.com>" },
+                { name: "Message-ID", value: gmailThreadMessageId },
+                { name: "References", value: gmailThreadReferences },
                 { name: "Subject", value: "Quarterly plan" },
                 { name: "From", value: "Ada <ada@example.com>" },
                 { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
               ],
-              parts: [{ mimeType: "text/plain", body: { data: base64Url("Original line\n> previous quote") } }],
+              parts: [{ mimeType: gmailThreadMimeType, body: { data: base64Url(gmailThreadBody) } }],
             },
           },
         ],
@@ -256,7 +266,7 @@ const fakeGoogleServer = Bun.serve({
     if (url.pathname === "/gmail/v1/users/me/drafts" && request.method === "POST") {
       const body: unknown = await request.json()
       lastDraftPayload = body
-      return json({ id: "draft_1", message: { id: "draft_msg_1", threadId: "thread_1" } })
+      return json({ id: "draft_1", message: { id: "draft_msg_1", threadId: gmailDraftReturnedThreadId } })
     }
 
     if (url.pathname === "/calendar/v3/calendars/primary/events" && request.method === "GET") {
@@ -791,6 +801,15 @@ test("calendar events list accepts RFC 3339 offsets and forwards them verbatim",
   const url = new URL(expectString(lastCalendarUrl, "calendar list URL"))
   expect(url.searchParams.get("timeMin")).toBe("2026-09-03T00:00:00+02:00")
   expect(url.searchParams.get("timeMax")).toBe("2026-09-04T00:00:00+02:00")
+  expect(url.searchParams.get("maxResults")).toBe("25")
+  expect(googleCallCount).toBe(1)
+
+  const mixedOffsets = new URLSearchParams({ timeMin: "2026-09-03T17:00:00+02:00", timeMax: "2026-09-03T16:00:00Z", maxResults: "100" })
+  expect((await request(`/v1/capabilities/google-workspace/calendar-events?${mixedOffsets}`)).status).toBe(200)
+  const mixedOffsetUrl = new URL(expectString(lastCalendarUrl, "mixed-offset calendar URL"))
+  expect(mixedOffsetUrl.searchParams.get("timeMin")).toBe(mixedOffsets.get("timeMin"))
+  expect(mixedOffsetUrl.searchParams.get("timeMax")).toBe(mixedOffsets.get("timeMax"))
+  expect(mixedOffsetUrl.searchParams.get("maxResults")).toBe("100")
 
   resetFakeGoogle()
   const invalidResponse = await request("/v1/capabilities/google-workspace/calendar-events?timeMin=2026-09-03%2000%3A00&timeMax=2026-09-04%2000%3A00")
@@ -798,6 +817,21 @@ test("calendar events list accepts RFC 3339 offsets and forwards them verbatim",
   const invalidBody = expectRecord(await invalidResponse.json(), "invalid calendar list response")
   expect(invalidBody.error).toBe("invalid_request")
   expect(googleCallCount).toBe(0)
+})
+
+test("calendar list preserves published range forwarding and provider errors", async () => {
+  for (const timeMax of ["2026-09-03T17:00:00+02:00", "2026-09-03T15:00:00Z", "2026-09-03T14:59:59Z", "2026-09-03T18:00:00+04:00"]) {
+    resetFakeGoogle()
+    forceGoogleError = true
+    const query = new URLSearchParams({ timeMin: "2026-09-03T17:00:00+02:00", timeMax })
+    const response = await request(`/v1/capabilities/google-workspace/calendar-events?${query}`)
+    expect(response.status).toBe(502)
+    expect(expectRecord(await response.json(), "calendar provider error").error).toBe("google_api_error")
+    expect(googleCallCount).toBe(1)
+    const url = new URL(expectString(lastCalendarUrl, "calendar list URL"))
+    expect(url.searchParams.get("timeMin")).toBe(query.get("timeMin"))
+    expect(url.searchParams.get("timeMax")).toBe(timeMax)
+  }
 })
 
 test("calendar create requests a Google Meet link when asked", async () => {
@@ -1060,6 +1094,75 @@ test("gmail attachment download returns google_api_error when Google rejects the
   expect(expectMessage(body).startsWith("Gmail attachment download failed: 404")).toBe(true)
 })
 
+for (const transport of ["JSON", "multipart"]) {
+  test(`gmail ${transport} draft normalizes legacy caller headers without injecting MIME fields and keeps validation`, async () => {
+    const body = "Reply body\n\nBcc: body-only@example.com\nKeep this line"
+    const draft = { to: "recipient@example.com", cc: '"Review, Team" <review@example.com>, second@example.com', bcc: "hidden@example.com", subject: "Reply", threadId: "thread_1", body }
+    const sendDraft = (payload: Record<string, unknown>) => {
+      if (transport === "JSON") return request("/v1/capabilities/google-workspace/gmail-drafts", { method: "POST", body: payload })
+      const form = new FormData()
+      form.append("payload", JSON.stringify(payload))
+      form.append("file", new File([attachmentBytes], "notes.pdf", { type: "application/pdf" }))
+      return requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", form)
+    }
+    for (const { field, min, max } of [{ field: "to", min: 3, max: 320 }, { field: "cc", min: 3, max: 1_000 }, { field: "bcc", min: 3, max: 1_000 }, { field: "subject", min: 1, max: 500 }]) {
+      for (const [value, normalized] of [
+        ["safe@example.com\r\nBcc: injected@example.com", "safe@example.com Bcc: injected@example.com"],
+        ["safe@example.com\rBcc: injected@example.com", "safe@example.com Bcc: injected@example.com"],
+        ["safe@example.com\nBcc: injected@example.com", "safe@example.com Bcc: injected@example.com"],
+        [" \r\nsafe@example.com\r\n\r\nBcc: injected@example.com\r\n ", "safe@example.com Bcc: injected@example.com"],
+        ["\r\nsafe@example.com", "safe@example.com"],
+        ["safe@example.com\r\n", "safe@example.com"],
+      ]) {
+        resetFakeGoogle()
+        gmailThreadMessageId = "<orig-2@mail.gmail.com>\r\nBcc: provider@example.com"
+        gmailThreadReferences = "<orig-1@mail.gmail.com>\nX-Injected: provider"
+        const response = await sendDraft({ ...draft, [field]: value })
+        expect(response.status).toBe(200)
+        expect(googleCallCount).toBe(2)
+        const result = expectRecord(await response.json(), "normalized draft response")
+        const expected = { ...draft, [field]: normalized }
+        expect(result).toMatchObject({ ok: true, to: expected.to, subject: expected.subject, quotedHistoryIncluded: true })
+        expect(expectDraftMessage().threadId).toBe("thread_1")
+        const decoded = decodeDraftRaw()
+        const headers = decoded.split("\r\n\r\n")[0]!.replace(/\r\n(?=[ \t])/g, "").split("\r\n")
+        expect(headers).toHaveLength(8)
+        expect(headers.slice(0, 7)).toEqual([
+          `To: ${expected.to}`,
+          `Cc: ${expected.cc}`,
+          `Bcc: ${expected.bcc}`,
+          `Subject: ${expected.subject}`,
+          "In-Reply-To: <orig-2@mail.gmail.com> Bcc: provider@example.com",
+          "References: <orig-1@mail.gmail.com> X-Injected: provider <orig-2@mail.gmail.com> Bcc: provider@example.com",
+          "MIME-Version: 1.0",
+        ])
+        expect(headers[7]).toStartWith(`Content-Type: multipart/${transport === "JSON" ? "alternative" : "mixed"};`)
+        expect(headers.filter((header) => /^Bcc:/i.test(header))).toHaveLength(1)
+        expect(headers.join("\r\n")).not.toMatch(/(?:^|\r\n)(?:X-Injected:|Bcc: (?:injected|provider)@)/i)
+        expect(decoded.replace(/\r\n/g, "")).not.toMatch(/[\r\n]/)
+        expect(decodeDraftTextBody()).toBe(`${body}\n\nOn Thu, 16 Jul 2026 at 15:21 UTC, Ada <ada@example.com> wrote:\n> Original line\n> > previous quote`)
+        if (transport === "multipart") {
+          expect(decoded).toContain('Content-Type: application/pdf; name="notes.pdf"')
+          expect(decoded).toContain('Content-Disposition: attachment; filename="notes.pdf"')
+          expect(decoded).toContain(attachmentBytes.toString("base64"))
+          expect(result.attachments).toEqual([{ filename: "notes.pdf", mimeType: "application/pdf", size: attachmentBytes.byteLength }])
+        } else {
+          expect(decoded).not.toContain("Content-Disposition: attachment;")
+          expect(result).not.toHaveProperty("attachments")
+        }
+      }
+      for (const value of ["\r\n ", "x".repeat(min - 1), "x".repeat(max + 1)]) {
+        resetFakeGoogle()
+        const response = await sendDraft({ ...draft, [field]: value })
+        expect(response.status).toBe(400)
+        expect(expectRecord(await response.json(), "invalid draft header length").error).toBe("invalid_request")
+        expect(googleCallCount).toBe(0)
+        expect(lastDraftPayload).toBeNull()
+      }
+    }
+  })
+}
+
 test("gmail plain draft supports cc without requiring a thread", async () => {
   const to = "sam@acme.test"
   const subject = "Quarterly plan"
@@ -1086,10 +1189,10 @@ test("gmail plain draft supports cc without requiring a thread", async () => {
     draftId: "draft_1",
     messageId: "draft_msg_1",
     draftUrl: "https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#drafts?compose=draft_msg_1",
-    threadUrl: null,
+    threadUrl: "https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#all/thread_1",
     to,
     subject,
-    threadId: null,
+    threadId: "thread_1",
     quotedHistoryIncluded: false,
   })
 })
@@ -1311,6 +1414,7 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
   form.append("payload", JSON.stringify({
     to: "sam@acme.test",
     cc: "ada@acme.test",
+    bcc: "hidden@acme.test",
     subject: "Quarterly plan",
     threadId: "thread_1",
     body: "Reply body",
@@ -1329,6 +1433,7 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
   const message = expectDraftMessage()
   expect(message.threadId).toBe("thread_1")
   const decoded = decodeDraftRaw()
+  expect(decoded).toContain("Cc: ada@acme.test\r\nBcc: hidden@acme.test\r\n")
   expect(decoded).toContain("In-Reply-To: <orig-2@mail.gmail.com>\r\n")
   expect(decoded).toContain("References: <orig-1@mail.gmail.com> <orig-2@mail.gmail.com>\r\n")
   expect(decodeDraftTextBody()).toBe([
@@ -1338,6 +1443,11 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
     "> Original line",
     "> > previous quote",
   ].join("\n"))
+  const html = decodeDraftTextBody("html")
+  expect(html).toContain('<div>Reply body</div><div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Thu, 16 Jul 2026 at 15:21 UTC, Ada &lt;ada@example.com&gt; wrote:</div><blockquote class="gmail_quote"')
+  expect(html).toContain('<div>Original line</div><div>&gt; previous quote</div></blockquote></div>')
+  expect(html).not.toContain("&gt; Original line")
+  expect(html).not.toContain("&gt; &gt; previous quote")
   expect(decoded).toContain('Content-Disposition: attachment; filename="notes.txt"')
   expect(decoded).toContain(Buffer.from("workspace notes", "utf8").toString("base64"))
   const body: unknown = await response.json()
@@ -1346,6 +1456,54 @@ test("direct Gmail upload keeps threaded reply metadata and attachment bytes", a
   expect(responseBody.draftUrl).toBe("https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#drafts?compose=draft_msg_1")
   expect(responseBody.threadUrl).toBe("https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#all/thread_1")
   expect(responseBody.quotedHistoryIncluded).toBe(true)
+})
+
+test("gmail JSON reply quotes HTML-only originals as escaped text", async () => {
+  gmailThreadMimeType = "text/html"
+  gmailThreadBody = '<p>Original &amp; &lt;IMG src=x onerror=unsafe()&gt; &lt;ImG src=x onerror=unsafe()&gt;<br>Next</p><ScRiPt>hidden()</ScRiPt>'
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: { to: "sam@acme.test", subject: "Quarterly plan", threadId: "thread_1", body: "Reply <SCRIPT>unsafe()</SCRIPT> <ScRiPt>unsafe()</ScRiPt>" },
+  })
+  expect(response.status).toBe(200)
+  expect(expectDraftMessage().threadId).toBe("thread_1")
+  expect(decodeDraftTextBody()).toContain("\n> Original & <IMG src=x onerror=unsafe()> <ImG src=x onerror=unsafe()>\n> Next")
+  const html = decodeDraftTextBody("html")
+  expect(html).toContain('<div>Reply &lt;SCRIPT&gt;unsafe()&lt;/SCRIPT&gt; &lt;ScRiPt&gt;unsafe()&lt;/ScRiPt&gt;</div>')
+  expect(html).toContain('<blockquote class="gmail_quote"')
+  expect(html).toContain('<div>Original &amp; &lt;IMG src=x onerror=unsafe()&gt; &lt;ImG src=x onerror=unsafe()&gt;</div><div>Next</div>')
+  expect(html).not.toMatch(/<script|<img|hidden\(\)|<div>&gt;/i)
+  expect(expectRecord(await response.json(), "HTML reply response").quotedHistoryIncluded).toBe(true)
+})
+
+test("gmail reply preserves caller-supplied quoted history without duplicating it", async () => {
+  const body = "Reply\n\nAda wrote:\n> Already quoted <text>"
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: { to: "sam@acme.test", subject: "Quarterly plan", threadId: "thread_1", body },
+  })
+  expect(response.status).toBe(200)
+  expect(decodeDraftTextBody()).toBe(body)
+  expect(decodeDraftTextBody("html")).not.toContain("gmail_quote")
+  expect(decodeDraftTextBody("html")).not.toContain("Original line")
+  expect(expectRecord(await response.json(), "already quoted response").quotedHistoryIncluded).toBe(true)
+})
+
+test("gmail draft reports only returned thread metadata, not the requested target", async () => {
+  for (const returnedThreadId of ["different_thread", undefined]) {
+    gmailDraftReturnedThreadId = returnedThreadId
+    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+      method: "POST",
+      body: { to: "sam@acme.test", subject: "Quarterly plan", threadId: "thread_1", body: "Reply" },
+    })
+    expect(response.status).toBe(200)
+    expect(expectDraftMessage().threadId).toBe("thread_1")
+    const result = expectRecord(await response.json(), "returned thread response")
+    expect(result.threadId).toBe(returnedThreadId ?? null)
+    expect(result.threadUrl).toBe(returnedThreadId
+      ? "https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#all/different_thread"
+      : null)
+  }
 })
 
 test("gmail reply-looking draft requires threadId before calling Google", async () => {
@@ -1990,7 +2148,7 @@ test("no connected account returns needs_connection", async () => {
   const body: unknown = await response.json()
   expect(body).toEqual({
     error: "needs_connection",
-    message: "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard.",
+    message: "Connect your Google account first: open Settings > Library > Connections and connect the Google Workspace connection, or use OpenWork Cloud > Your Connections.",
   })
 })
 
@@ -2022,6 +2180,11 @@ test("Google Workspace capability tools are discoverable and keep readable names
   if (!isOpenApiDocument(document)) {
     throw new Error("openapi.json did not look like an OpenAPI document")
   }
+
+  const descriptions = JSON.stringify(document)
+  expect(descriptions).toContain("decode to a workspace file")
+  expect(descriptions).toContain("if that action is available in the current client")
+  expect(descriptions).not.toContain("passed directly to the Drive upload capability's dataBase64 field")
 
   const catalog = buildMcpCatalog(document)
   const calendarMatch = searchCapabilities(catalog, "calendar events list", 10)[0]
@@ -2124,4 +2287,8 @@ test("search_capabilities exposes query parameter constraints as JSON schema ins
   }
   expect(properties).not.toHaveProperty("connectionId")
   expect(attachments).not.toHaveProperty("x-mcp-file")
+  expect(properties.to).toMatchObject({ type: "string", minLength: 3, maxLength: 320 })
+  expect(properties.cc).toMatchObject({ type: "string", minLength: 3, maxLength: 1_000 })
+  expect(properties.bcc).toMatchObject({ type: "string", minLength: 3, maxLength: 1_000 })
+  expect(properties.subject).toMatchObject({ type: "string", minLength: 1, maxLength: 500 })
 })

@@ -1,5 +1,6 @@
 import { truncateText } from "./binary-content.js"
 import { Parser } from "htmlparser2"
+import type { GmailDraftQuote } from "./gmail.js"
 
 export { truncateText } from "./binary-content.js"
 
@@ -219,12 +220,11 @@ export function gmailBodyHasQuotedHistory(body: string): boolean {
   return /^>\s?/m.test(body) && /^.*wrote:\s*$/m.test(body)
 }
 
-export function buildGmailQuoteBlock(input: { from: string; date: string; body: string }): string {
-  const header = input.date ? `On ${formatGmailQuoteDate(input.date)}, ${input.from} wrote:` : `${input.from} wrote:`
+export function buildGmailQuote(input: { from: string; date: string; body: string }): GmailDraftQuote {
+  const attribution = input.date ? `On ${formatGmailQuoteDate(input.date)}, ${input.from} wrote:` : `${input.from} wrote:`
   const truncated = input.body.length > GMAIL_QUOTE_BODY_LIMIT
-  const quotedLines = input.body.slice(0, GMAIL_QUOTE_BODY_LIMIT).replace(/\r\n?/g, "\n").split("\n").map((line) => `> ${line}`)
-  if (truncated) quotedLines.push("> [message trimmed]")
-  return [header, ...quotedLines].join("\n")
+  const body = input.body.slice(0, GMAIL_QUOTE_BODY_LIMIT).replace(/\r\n?/g, "\n")
+  return { attribution, body: truncated ? `${body}\n[message trimmed]` : body }
 }
 
 export function extractGmailThreadQuoteInput(json: unknown): { from: string; date: string; body: string } | null {
@@ -239,12 +239,13 @@ export function extractGmailThreadQuoteInput(json: unknown): { from: string; dat
   const headers = readGmailHeaders(payload)
   const state: GmailBodyState = { plain: null, html: null, attachments: [] }
   collectGmailPart(payload, state)
-  if (!state.plain) return null
+  const body = state.plain || state.html
+  if (!body) return null
 
   return {
     from: headers.get("from") ?? "",
     date: headers.get("date") ?? "",
-    body: state.plain,
+    body,
   }
 }
 

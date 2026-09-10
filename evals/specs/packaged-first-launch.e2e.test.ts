@@ -1,6 +1,12 @@
 import { expect } from "vitest";
-import { spec } from "@openwork/testkit";
-import { isRenderCrash, packagedFirstLaunchWorld } from "../worlds/packaged-first-launch.ts";
+import { sleep, spec } from "@openwork/testkit";
+import {
+  KNOWN_LAUNCH_REJECTIONS,
+  describeException,
+  isKnownRejection,
+  isRenderCrash,
+  packagedFirstLaunchWorld,
+} from "../worlds/packaged-first-launch.ts";
 import type { PackagedFlavor } from "../worlds/packaged-first-launch.ts";
 
 const test = spec.world(packagedFirstLaunchWorld, { timeout: 180_000 });
@@ -19,6 +25,9 @@ const FIRST_LAUNCH_HEADING: Partial<Record<PackagedFlavor, string>> = {
 
 /** Heading of the root error boundary's recovery screen (app-error-boundary.tsx). */
 const RECOVERY_HEADING = /OpenWork hit an unexpected error/;
+
+/** Late boot work (config refresh, bridge calls) settles well inside this after the gate mounts. */
+const REJECTION_SETTLE_MS = 3_000;
 
 test("a packaged flavor renders its first-launch gate without a render crash", async ({ world, user, probe, evidence }) => {
   const flavor = await probe.eventually(() => world.flavor(), {
@@ -39,11 +48,11 @@ test("a packaged flavor renders its first-launch gate without a render crash", a
     label: `${flavor} first-launch gate mounted in #root`,
     until: (text) => text.includes(heading) || RECOVERY_HEADING.test(text) || world.exceptions().some(isRenderCrash),
   });
-  const exceptions = world.exceptions();
-  const crashes = exceptions.filter(isRenderCrash);
-  const contextCrashes = exceptions.filter((exception) => /context is missing|must be used within/i.test(`${exception.text} ${exception.description}`));
+  const mounted = world.exceptions();
+  const crashes = mounted.filter(isRenderCrash);
+  const contextCrashes = mounted.filter((exception) => /context is missing|must be used within/i.test(`${exception.text} ${exception.description}`));
   expect(contextCrashes, "a provider context was missing during first launch").toEqual([]);
-  expect(crashes, "the renderer threw during first launch").toEqual([]);
+  expect(crashes.map(describeException), "the renderer threw during first launch").toEqual([]);
   expect(rootText, "the root error boundary caught a first-launch render crash").not.toMatch(RECOVERY_HEADING);
 
   expect(rootText).toContain(heading);
@@ -51,10 +60,18 @@ test("a packaged flavor renders its first-launch gate without a render crash", a
   await user.notSee({ text: RECOVERY_HEADING });
   await user.screenshot();
 
-  const rejections = exceptions.length - crashes.length;
+  // A rejected bootstrap promise can leave the app unusable without ever
+  // throwing during render, so only exactly-matched known rejections pass.
+  await sleep(REJECTION_SETTLE_MS);
+  const exceptions = world.exceptions();
+  const knownRejections = exceptions.filter(isKnownRejection);
+  const unexpected = exceptions.filter((exception) => !isRenderCrash(exception) && !isKnownRejection(exception));
+  expect(unexpected.map(describeException), `an unhandled promise rejection outside KNOWN_LAUNCH_REJECTIONS (${KNOWN_LAUNCH_REJECTIONS.length} allowed) during ${flavor} first launch`).toEqual([]);
+  expect(exceptions.filter(isRenderCrash).map(describeException), "the renderer threw after the first-launch gate mounted").toEqual([]);
+
   evidence.recordAssertionEvidence(
-    `The ${flavor} desktop mounts "${heading}" on first launch without a render crash`,
-    `#root text: ${JSON.stringify(rootText.slice(0, 200))}; render crashes: ${crashes.length}; unhandled promise rejections (not gating): ${rejections}`,
-    crashes.length === 0,
+    `The ${flavor} desktop mounts "${heading}" on first launch without a render crash or an unexpected unhandled rejection`,
+    `#root text: ${JSON.stringify(rootText.slice(0, 200))}; render crashes: ${crashes.length}; allowlisted rejections: ${knownRejections.length} of ${KNOWN_LAUNCH_REJECTIONS.length} known; unexpected rejections: ${unexpected.length}`,
+    crashes.length === 0 && unexpected.length === 0,
   );
 });

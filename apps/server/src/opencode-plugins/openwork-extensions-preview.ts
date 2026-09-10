@@ -32,11 +32,11 @@ type ExtensionActionPayload = {
 };
 
 const listActionsArgsSchema = z.object({
-  extensionId: z.string().optional().describe("Optional extension id to filter by, such as google-workspace."),
+  extensionId: z.string().optional().describe("Optional extension id to filter by, such as openwork-cloud-uploads."),
 });
 
 const callArgsSchema = z.object({
-  extensionId: z.string().describe("Extension id, such as google-workspace."),
+  extensionId: z.string().describe("Extension id returned by extension.actions, such as openwork-cloud-uploads."),
   action: z.string().describe("Action id from extension.actions."),
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action."),
 });

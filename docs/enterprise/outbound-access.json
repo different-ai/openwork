@@ -2,9 +2,9 @@
   "hosts": [
     {
       "host": "accounts.google.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "Google Workspace OAuth authorization page opened when a user connects Google Workspace.",
+      "kind": "link-only",
+      "components": ["renderer"],
+      "purpose": "Google authorization page opened in the user's browser by the OpenWork Cloud connection flow.",
       "requirement": "opt-in",
       "blockedEffect": "Users cannot complete Google Workspace sign-in from OpenWork.",
       "override": null
@@ -100,15 +100,6 @@
       "override": null
     },
     {
-      "host": "chat.googleapis.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "Google Chat API calls for Google Workspace chat actions.",
-      "requirement": "opt-in",
-      "blockedEffect": "Google Chat spaces, messages, and send-message actions fail for connected Google Workspace accounts.",
-      "override": null
-    },
-    {
       "host": "code.claude.com",
       "kind": "link-only",
       "components": ["server"],
@@ -145,15 +136,6 @@
       "override": null
     },
     {
-      "host": "gmail.googleapis.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "Gmail API calls for Google Workspace message search, reading, attachments, and draft creation.",
-      "requirement": "opt-in",
-      "blockedEffect": "Gmail read and draft actions fail for connected Google Workspace accounts.",
-      "override": null
-    },
-    {
       "host": "linear.app",
       "kind": "link-only",
       "components": ["renderer"],
@@ -165,8 +147,8 @@
     {
       "host": "mail.google.com",
       "kind": "link-only",
-      "components": ["server"],
-      "purpose": "Gmail draft and thread links returned after Google Workspace Gmail actions.",
+      "components": ["renderer"],
+      "purpose": "Gmail draft and thread links returned by OpenWork Cloud and opened in the user's browser.",
       "requirement": "opt-in",
       "blockedEffect": "Generated Gmail draft/thread links cannot open in the user's browser.",
       "override": null
@@ -233,15 +215,6 @@
       "requirement": "required-in-practice",
       "blockedEffect": "The model catalog is unavailable or degraded; model selection may be stale or incomplete.",
       "override": "OPENCODE_MODELS_URL"
-    },
-    {
-      "host": "oauth2.googleapis.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "Google OAuth token exchange, refresh, and revocation for Google Workspace connections.",
-      "requirement": "opt-in",
-      "blockedEffect": "Google Workspace accounts cannot finish OAuth, refresh tokens, or revoke tokens cleanly.",
-      "override": "OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL for token exchange/refresh only"
     },
     {
       "host": "release-assets.githubusercontent.com",
@@ -349,15 +322,6 @@
       "purpose": "Favicon image service and the embedded browser panel's user-created new-tab page.",
       "requirement": "optional",
       "blockedEffect": "Favicons may be missing and the browser panel's new tab page may not load.",
-      "override": null
-    },
-    {
-      "host": "www.googleapis.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "Google profile, Calendar, and Drive API calls for Google Workspace connections.",
-      "requirement": "opt-in",
-      "blockedEffect": "Google profile, Calendar, and Drive actions fail for connected Google Workspace accounts.",
       "override": null
     }
   ]

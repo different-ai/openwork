@@ -210,7 +210,6 @@ export default {
   "connect.diagnostics_expected_tools": "Expected tools",
   "connect.diagnostics_first_failure": "First failed check",
   "connect.diagnostics_global_cloud_mcp": "Global OpenWork Cloud MCP",
-  "connect.diagnostics_legacy_google_workspace": "Legacy Google Workspace configured",
   "connect.diagnostics_mcp_description": "Bounded configured intent from the reported sources, including enabled state, last registration result, and configured-header presence without secret values. Effective engine configuration was not observed.",
   "connect.diagnostics_mcp_description_effective": "The engine's merged configuration and OpenWork-managed dynamic injection intent are shown separately. Runtime rows include exact registration outcomes; this is not a complete live tool-registry snapshot.",
   "connect.diagnostics_mcp_empty": "No MCP configuration entries were observed.",

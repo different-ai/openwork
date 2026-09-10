@@ -1366,7 +1366,7 @@ export type GoogleWorkspaceDraftResponse = {
    */
   draftUrl: string | null;
   /**
-   * Gmail URL for the conversation thread when this draft is a threaded reply.
+   * Gmail URL for the conversation thread returned by Gmail for this draft.
    */
   threadUrl: string | null;
   to: string;
@@ -1540,7 +1540,7 @@ export type GoogleWorkspaceDriveFileResponse = {
     size: string | null;
     content: string | null;
     /**
-     * Standard base64-encoded file bytes for binary files; decode locally. Same encoding as the gmail-attachment capability's dataBase64 — it can be passed directly to the Drive upload capability's dataBase64 field.
+     * Standard base64-encoded file bytes for binary files; decode to a workspace file. To upload, use the host's Google Workspace upload action with the workspace file path, if that action is available in the current client. There is no dataBase64 Drive upload capability.
      */
     contentBase64: string | null;
     encoding: "text" | "base64" | "none";

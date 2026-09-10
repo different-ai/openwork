@@ -2886,6 +2886,19 @@ function createRoutes(
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
   });
 
+  addRoute(routes, "PUT", "/den-session/identity", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
+    if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    const suspended = cloudProviderSync.suspend();
+    try {
+      await managedDesktopPolicy(config).setSession(session);
+    } finally {
+      await suspended;
+    }
+    return new Response(null, { status: 204 });
+  });
+
   addRoute(routes, "PUT", "/den-session", "host-token", async (ctx) => {
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
