@@ -2,8 +2,12 @@ import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import { mcpMock, server, test } from "@openwork/testkit";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function record(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected an object");
+  if (!isRecord(value)) throw new Error("Expected an object");
   return value;
 }
 
