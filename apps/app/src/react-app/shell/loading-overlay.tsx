@@ -115,7 +115,7 @@ export function LoadingOverlay() {
             <button
               type="button"
               disabled={!releases.some((release) => release.marking === "previous")}
-              className="rounded-md bg-dls-accent px-3 py-2 font-medium text-dls-accent-foreground disabled:opacity-50"
+              className="rounded-md bg-dls-accent px-3 py-2 font-medium text-[var(--dls-accent-fg)] disabled:opacity-50"
               onClick={() => void runRecovery(window.__OPENWORK_ELECTRON__?.recovery?.restorePrevious)}
             >
               Restore previous version
