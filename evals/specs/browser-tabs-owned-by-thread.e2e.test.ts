@@ -281,9 +281,10 @@ test("a background conversation reads its owned page silently and requests atten
   const researchTab = await step("A background open waits without switching conversations or contacting its destination", async () => {
     const requests = (await witness()).pageRequests;
     let settled = false;
-    const pending = agent.desktopApi("/experimental/ui-control/request", { method: "POST", body: {
-      kind: "command", input: { id: "browser.open_url", args: { url: `${world.origin}/?viewport-probe=research`, provider: "builtin" }, origin: { sessionId: researching.sessionId } },
-    } }).then((response) => { settled = true; return response; });
+    // The server's HTTP mailbox answers within 5 s, so a command that must wait
+    // for approval is stamped with its origin at the window boundary instead.
+    const pending = world.commandFrom(researching.sessionId, "browser.open_url", { url: `${world.origin}/?viewport-probe=research`, provider: "builtin" })
+      .then((result) => { settled = true; return result; });
     const state = await probe.eventually(() => probe.browserState(), { within: 10_000, until: (value) => value.tabs.some((tab) => tab.ownerSessionId === researching.sessionId), label: "the background command allocates an owned review tab" });
     const blank = state.tabs.find((tab) => tab.ownerSessionId === researching.sessionId);
     if (!blank) throw new Error("Missing background review tab.");
@@ -304,10 +305,8 @@ test("a background conversation reads its owned page silently and requests atten
     await user.see({ role: "button", label: "Allow origin in this tab" });
     expect((await witness()).pageRequests).toEqual(requests);
     await user.click({ role: "button", label: "Allow origin in this tab" });
-    const response = await pending;
-    expect(response.status).toBe(200);
-    const result = response.body;
-    if (!result || typeof result !== "object" || !("result" in result)) throw new Error("The background browser command returned no result.");
+    const result = await pending;
+    if (!result || typeof result !== "object" || !("result" in result)) throw new Error(`The background browser command returned no result: ${JSON.stringify(result)}`);
     expect(result).toMatchObject({ ok: true, result: { owner_session_id: researching.sessionId, visible: true } });
     const opened = browserTabHandle(result.result);
     expect(opened.tabId).toBe(blank.id);
