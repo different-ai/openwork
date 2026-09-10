@@ -31,6 +31,15 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{/*
+Image tag resolution: component override, then image.tag, then the chart
+appVersion. Published charts are packaged with --app-version <release>, so
+`helm install --version X` pins the images to X without extra values.
+*/}}
+{{- define "openwork-ee.imageTag" -}}
+{{- .componentTag | default .root.Values.image.tag | default .root.Chart.AppVersion -}}
+{{- end -}}
+
 {{- define "openwork-ee.componentSelectorLabels" -}}
 {{ include "openwork-ee.selectorLabels" .root }}
 app.kubernetes.io/component: {{ .component }}

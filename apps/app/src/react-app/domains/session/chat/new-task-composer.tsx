@@ -40,6 +40,8 @@ export type NewTaskComposerContext = {
   workspaceId: string | null;
   /** Stable identity for draft ownership across workspace, endpoint, and account changes. */
   draftOwnerKey?: string;
+  /** Account/organization scope the persisted new-task draft is stored under; null while unverified. */
+  draftScope?: string | null;
   selectedModel: ModelRef;
   modelOptions?: readonly ModelOption[];
   modelUnavailable?: boolean;

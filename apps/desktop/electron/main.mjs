@@ -90,6 +90,7 @@ import {
   installSocketTypeOfServiceGuard,
   runDetachedTask,
 } from "./process-resilience.mjs";
+import { createQuitSequencer } from "./quit-sequence.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -1366,12 +1367,7 @@ let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
 let runtimeBootstrapPromise = null;
 
-function showShutdownScreen() {
-  const win = mainWindow;
-  if (!win || win.isDestroyed()) return;
-  try {
-    win.show();
-    void win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+const SHUTDOWN_SCREEN_HTML = `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -1392,7 +1388,20 @@ function showShutdownScreen() {
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>
-</html>`)}`).catch(() => undefined);
+</html>`;
+
+// Replace the current document in place. Navigating to a data: URL instead
+// spawns a speculative renderer process, and Electron aborts any child launch
+// with CHECK_EQ(program, child_path) once the app bundle is gone from disk.
+function showShutdownScreen() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.show();
+    void win.webContents.executeJavaScript(
+      `document.open(); document.write(${JSON.stringify(SHUTDOWN_SCREEN_HTML)}); document.close();`,
+      true,
+    ).catch(() => undefined);
   } catch {
     // Ignore renderer teardown races during quit.
   }
@@ -1408,6 +1417,24 @@ async function disposeRuntimeBeforeQuit() {
     runtimeDisposeInProgress = false;
   }
 }
+
+const quitSequencer = createQuitSequencer({
+  stop: async () => {
+    showShutdownScreen();
+    desktopAutomationRunner.stop();
+    browserLoginSync.shutdown();
+    await Promise.all([
+      disposeRuntimeBeforeQuit(),
+      uiControlServer.stop(),
+    ]);
+  },
+  quit: () => {
+    scheduleBlankSlateProfileCleanup();
+    app.quit();
+  },
+  exit: () => app.exit(0),
+});
+const quitInProgress = () => quitSequencer.phase() !== "idle";
 
 function assertOpenworkServerReady(info) {
   if (!info?.running) {
@@ -2600,6 +2627,7 @@ async function createMainWindow() {
     },
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    if (quitInProgress()) return;
     recoverRendererCrash(details);
   });
 
@@ -2793,6 +2821,7 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   distribution: DESKTOP_DISTRIBUTION.flavor,
   platform: process.platform,
   arch: process.arch,
+  assertActivation: assertDesktopActivation,
 });
 
 if (!app.requestSingleInstanceLock()) {
@@ -2808,25 +2837,8 @@ or use: pnpm dev:worktree`);
     app.quit();
   }
 } else {
-  app.on("before-quit", (event) => {
-    if (runtimeDisposedForQuit) return;
-    event.preventDefault();
-    if (runtimeDisposeInProgress) return;
-    showShutdownScreen();
-    desktopAutomationRunner.stop();
-    browserLoginSync.shutdown();
-    runDetachedTask("stop services before quit", async () => {
-      try {
-        await Promise.all([
-          disposeRuntimeBeforeQuit(),
-          uiControlServer.stop(),
-        ]);
-      } finally {
-        scheduleBlankSlateProfileCleanup();
-        app.quit();
-      }
-    });
-  });
+  app.on("before-quit", (event) => quitSequencer.handleBeforeQuit(event));
+  app.on("will-quit", () => quitSequencer.handleWillQuit());
 
   app.on("second-instance", (_event, argv) => {
     runDetachedTask("focus second instance", async () => {
@@ -2943,6 +2955,10 @@ or use: pnpm dev:worktree`);
     runDetachedTask("initialize updater", ensureAutoUpdater);
   }).catch((error) => {
     console.error("[desktop] startup failed", error);
+    // A quit that arrives mid-startup aborts the pending window load and
+    // rejects this chain. showErrorBox is a synchronous modal: raised here it
+    // would block the main thread, and the quit, until someone dismissed it.
+    if (quitInProgress()) return;
     dialog.showErrorBox(
       `${APP_NAME} could not start`,
       "OpenWork hit an unexpected startup error. Quit and reopen the app. If it continues, switch to a Stable build and share the diagnostics with support.",

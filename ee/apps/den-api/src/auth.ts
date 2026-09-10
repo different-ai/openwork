@@ -63,7 +63,7 @@ import {
   getOrganizationSsoJitRole,
   ORGANIZATION_SSO_JIT_ROLE,
 } from "./sso-jit.js";
-import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js";
+import { isScimDeprovisionedEmailForSsoProvider, isScimDeprovisionedIdentity, SCIM_DEPROVISIONED_SIGN_IN_MESSAGE } from "./scim-deprovisioning.js";
 import {
   ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
@@ -639,12 +639,22 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        before: async (user) => ({
-          data: {
-            ...user,
-            email: normalizeLoginEmail(user.email),
-          },
-        }),
+        before: async (user, context) => {
+          const email = normalizeLoginEmail(user.email);
+          // SSO callbacks (/sso/callback/:providerId, /sso/saml2/sp/acs/:providerId)
+          // create the user before provisionUser runs, so refuse a SCIM-deprovisioned
+          // email here or the refused sign-in leaves a ghost user, session, and membership.
+          const ssoProviderId = readStringProperty(context?.params, "providerId");
+          if (ssoProviderId && await isScimDeprovisionedEmailForSsoProvider({ ssoProviderId, email })) {
+            throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
+          }
+          return {
+            data: {
+              ...user,
+              email,
+            },
+          };
+        },
       },
       update: {
         before: async (user) => ({
@@ -1394,9 +1404,7 @@ export const auth = betterAuth({
         const organizationId = normalizeDenTypeId("organization", provider.organizationId);
         const userId = normalizeDenTypeId("user", user.id);
         if (await isScimDeprovisionedIdentity({ organizationId, userId, email })) {
-          throw new APIError("FORBIDDEN", {
-            message: "This user was deprovisioned by SCIM. Reactivate them in the identity provider before signing in.",
-          });
+          throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
         }
         const payload = {
           organizationId,

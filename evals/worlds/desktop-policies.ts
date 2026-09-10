@@ -1,9 +1,129 @@
-import { faultProxy, mcpMock } from "@openwork/env";
+import { faultProxy, mcpMock, resolveEvalEngine } from "@openwork/env";
+import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
+import { engineSessionProbe } from "@openwork/behaviors";
+import { configureProvider } from "./chat.ts";
 import type { Seed } from "@openwork/env";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isRecord, records } from "./library.ts";
 import { bootServer, stopChild } from "./openwork-server-cli.ts";
+
+/** Real app-web tools with the old policy HTTP service faulted and IPC severed.
+ * Wrappers affect only this fixture's captured PATH, never a personal engine. */
+export async function policyTransportRollback(seed: Seed) {
+  await using setup = new AsyncDisposableStack();
+  const engine = resolveEvalEngine();
+  const root = seed.tmpPath("policy-transport-rollback");
+  const bin = join(root, "bin");
+  const workspacePath = join(root, "workspace");
+  await mkdir(bin, { recursive: true });
+  await mkdir(workspacePath, { recursive: true });
+  const input = "policy-transport-input.txt";
+  const content = `tool-read-witness-${Date.now()}`;
+  await writeFile(join(workspacePath, input), content);
+  const requests: string[] = [];
+  const upstreamPath = join(root, "upstream.txt");
+  const fault = createServer(async (request, response) => {
+    if (request.url === "/managed-policy/evaluate") {
+      requests.push(request.url);
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ message: "Fixture policy transport unavailable" }));
+      return;
+    }
+    try {
+      const upstream = await readFile(upstreamPath, "utf8");
+      const body = [];
+      for await (const chunk of request) body.push(Buffer.from(chunk));
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(request.headers)) {
+        if (value !== undefined && !["host", "connection", "content-length"].includes(key)) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+      }
+      const result = await fetch(`${upstream}${request.url}`, {
+        method: request.method, headers,
+        ...(body.length ? { body: Buffer.concat(body) } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+      response.writeHead(result.status, { "content-type": result.headers.get("content-type") ?? "application/json" });
+      response.end(Buffer.from(await result.arrayBuffer()));
+    } catch {
+      response.writeHead(502);
+      response.end("Fixture forwarding failed");
+    }
+  });
+  setup.defer(async () => {
+    fault.closeAllConnections();
+    await new Promise<void>((resolve) => fault.close(() => resolve()));
+  });
+  await new Promise<void>((resolve) => fault.listen(0, "127.0.0.1", resolve));
+  const address = fault.address();
+  if (!address || typeof address === "string") throw new Error("Policy fault did not bind");
+  const faultUrl = `http://127.0.0.1:${address.port}`;
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  for (const name of ["opencode", "opencode2"]) {
+    const real = execFileSync("which", [name], { encoding: "utf8" }).trim();
+    await writeFile(join(bin, name), `#!/bin/sh
+if [ "$1" = "serve" ]; then
+  printf '%s' "$OPENWORK_SERVER_URL" > ${quote(upstreamPath)}
+  export OPENWORK_SERVER_URL=${quote(faultUrl)}
+  export OPENWORK_POLICY_TOKEN=fixture-policy-transport
+  unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
+  exec 3<&- 3>&-
+  printf '%s' 'HTTP fault configured; IPC fd closed' > ${quote(join(root, `${name}-fault.txt`))}
+fi
+exec ${quote(real)} "$@"
+`, { mode: 0o700 });
+  }
+  const marker = "POLICY_TRANSPORT_ROLLBACK";
+  const output = "policy-tool-output.txt";
+  const command = `printf '%s' '${content}' > '${output}'`;
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath}`;
+  let app;
+  try {
+    app = await seed.appWeb({
+      name: "policy-transport-rollback", workspacePath, headless: true,
+      mocks: { witness: seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
+        promptMarker: marker, finalReply: "The requested file was copied successfully.", steps: [
+          { tool: "read", arguments: { filePath: join(workspacePath, input), path: join(workspacePath, input) } },
+          { tool: engine === "v2" ? "shell" : "bash", arguments: { command, description: "Copy the read witness" } },
+        ],
+      }] }) },
+    });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+  const workspace = await seed.workspace(app, workspacePath);
+  const providerId = "policy-rollback-witness";
+  const modelId = "policy-rollback-model";
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { bash: "allow", read: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Policy rollback witness",
+      options: { baseURL: `${app.mocks.witness!.url}/v1`, apiKey: "fixture-only" },
+      models: { [modelId]: { name: "Policy rollback model", tool_call: true } },
+    } },
+  }, engine);
+  const session = await seed.session(app, { title: "Copy a local file during policy outage" });
+  const token = await seed.evalIn(app, () => localStorage.getItem("openwork.server.token"));
+  if (typeof token !== "string" || !token) throw new Error("Missing isolated app-web token");
+  const native = engineSessionProbe({ engine, serverUrl: app.openworkUrl, token, workspaceId: workspace.workspaceId });
+  const owned = setup.move();
+  return {
+    app, engine, marker, session, content, command,
+    native: () => native.snapshot(session.sessionId),
+    approve: () => native.approvePendingPermissions(session.sessionId),
+    output: () => readFile(join(workspacePath, output), "utf8"),
+    faultReceipt: () => readFile(join(root, `${engine === "v2" ? "opencode2" : "opencode"}-fault.txt`), "utf8"),
+    checkFault: async () => {
+      const response = await fetch(`${faultUrl}/managed-policy/evaluate`, { method: "POST" });
+      return { status: response.status, message: await response.text() };
+    },
+    policyRequests: () => [...requests],
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
+  };
+}
 
 /**
  * The organization's default desktop policy as Den returns it, with the shape

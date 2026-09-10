@@ -57,6 +57,8 @@ beforeEach(() => {
   envModule.env.installerReleaseRepo = "different-ai/openwork"
   envModule.env.installerReleaseTag = `v${PUBLISHED_DESKTOP_VERSIONS[0]}`
   envModule.env.installerReleaseTagExplicit = false
+  envModule.env.orgMode = "multi_org"
+  envModule.env.serviceVersion = "dev"
 })
 
 afterAll(() => {
@@ -111,5 +113,39 @@ describe("desktop release discovery", () => {
 
     await expect(desktopReleases.createDesktopReleaseSource().resolveInstallerReleaseTag()).resolves.toBe("v7.6.5")
     expect(failureRequests).toBe(0)
+  })
+
+  test("multi-org installs the latest published release", async () => {
+    envModule.env.serviceVersion = "0.18.45"
+
+    await expect(desktopReleases.createDesktopReleaseSource().resolveInstallerReleaseTag()).resolves.toBe("v1.0.0")
+    expect(successRequestUrl).not.toBeNull()
+  })
+
+  test("single-org installs the Den's own release without runtime discovery", async () => {
+    envModule.env.orgMode = "single_org"
+    envModule.env.serviceVersion = "0.18.45"
+    envModule.env.desktopReleasesBaseUrl = `${server.url.origin}/failure`
+
+    await expect(desktopReleases.createDesktopReleaseSource().resolveInstallerReleaseTag()).resolves.toBe("v0.18.45")
+    expect(failureRequests).toBe(0)
+  })
+
+  test("single-org dev and commit builds keep runtime discovery", async () => {
+    envModule.env.orgMode = "single_org"
+
+    for (const serviceVersion of ["dev", "commit a0d6bd1", "0.18.45-rc.1"]) {
+      envModule.env.serviceVersion = serviceVersion
+      await expect(desktopReleases.createDesktopReleaseSource().resolveInstallerReleaseTag()).resolves.toBe("v1.0.0")
+    }
+  })
+
+  test("single-org honors the explicit installer release tag over the Den's own release", async () => {
+    envModule.env.orgMode = "single_org"
+    envModule.env.serviceVersion = "0.18.45"
+    envModule.env.installerReleaseTag = "v7.6.5"
+    envModule.env.installerReleaseTagExplicit = true
+
+    await expect(desktopReleases.createDesktopReleaseSource().resolveInstallerReleaseTag()).resolves.toBe("v7.6.5")
   })
 })
