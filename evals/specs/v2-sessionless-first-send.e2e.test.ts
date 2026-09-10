@@ -8,17 +8,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Engine-native message list, normalized across v1 (array) and v2 ({ data }) bodies. */
+function textOf(value: unknown): string {
+  return isRecord(value) && typeof value.text === "string" ? value.text : "";
+}
+
+/**
+ * Engine-native message list, normalized the way the app reads each engine:
+ * v1 returns an array of `{ info: { role }, parts: [{ text }] }`; v2 returns
+ * `{ data: [{ role | type, content: [{ text }] | text }] }`.
+ */
 function nativeMessages(body: unknown): { role: string; text: string }[] {
   const items = Array.isArray(body) ? body : isRecord(body) && Array.isArray(body.data) ? body.data : [];
   return items.flatMap((message) => {
     if (!isRecord(message)) return [];
     const info = isRecord(message.info) ? message.info : message;
-    const parts = Array.isArray(message.parts) ? message.parts : [];
-    return [{
-      role: typeof info.role === "string" ? info.role : "",
-      text: parts.map((part) => isRecord(part) && typeof part.text === "string" ? part.text : "").join("\n"),
-    }];
+    const role = typeof info.role === "string" ? info.role : typeof info.type === "string" ? info.type : "";
+    const parts = Array.isArray(message.parts) ? message.parts : Array.isArray(message.content) ? message.content : [message];
+    return [{ role, text: parts.map(textOf).join("\n") }];
   });
 }
 
