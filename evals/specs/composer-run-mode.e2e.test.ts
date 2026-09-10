@@ -17,7 +17,7 @@ test("workspace run mode is opt-in, confirms Keep going, and preserves policy wh
 
   const read = async (path: string) => {
     const response = await probe.desktopApi(`${mount}/${path}`);
-    expect(response.status, `${path} ${JSON.stringify(response.body)}`).toBe(200);
+    expect(response.status, path).toBe(200);
     if (!isRecord(response.body)) throw new Error(`Expected an object from ${path}.`);
     return response.body;
   };
