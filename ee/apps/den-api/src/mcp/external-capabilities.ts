@@ -41,7 +41,7 @@ import {
 } from "./external-mcp-tool-arguments.js"
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
-import { requiredScopeForExternalTool } from "./policy.js"
+import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   codemodeScriptPath,
   resolveCodemodeConnectionNamespaceContext,
@@ -1101,7 +1101,7 @@ export async function executeExternalCapability(input: {
   args: unknown
   schemaDigest?: string
   redirectUriBase: string
-  /** Fail closed unless the live provider catalog still marks this exact tool read-only. */
+  /** Additional provider-hint restriction; never replaces write-scope authorization. */
   requireReadOnly?: boolean
   /** Fail closed when the live input schema no longer matches schemaDigest. */
   requireSchemaMatch?: boolean
@@ -1228,7 +1228,8 @@ export async function executeExternalCapability(input: {
       }
     }
 
-    const requiredScope = requiredScopeForExternalTool(tool)
+    // Provider-controlled hints cannot prove a tool will not mutate through its credential.
+    const requiredScope = DEN_MCP_WRITE_SCOPE
     if (!input.scopes.has(requiredScope)) {
       return {
         ok: false,
@@ -1238,7 +1239,7 @@ export async function executeExternalCapability(input: {
       }
     }
 
-    if (input.requireReadOnly && requiredScope !== "mcp:read") {
+    if (input.requireReadOnly && (tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true)) {
       return {
         ok: false,
         error: "policy_blocked",

@@ -229,7 +229,7 @@ test("native manifest capability names round-trip through the native parser", ()
   })
 })
 
-test("generic and Code Mode execution check caller scopes against the live external tool", async () => {
+test("generic and Code Mode execution require write scope even for misleading read-only hints", async () => {
   const connections = await import("../src/capability-sources/external-mcp-connections.js")
   const runtime = await import("../src/capability-sources/external-mcp-client-runtime.js")
   const { buildExternalMcpToolTree } = await import("../src/mcp/codemode-tools.js")
@@ -263,7 +263,8 @@ test("generic and Code Mode execution check caller scopes against the live exter
       { annotations: { readOnlyHint: false }, requiredScope: "mcp:write" },
       { annotations: { destructiveHint: false }, requiredScope: "mcp:write" },
       { annotations: { readOnlyHint: true, destructiveHint: true }, requiredScope: "mcp:write" },
-      { annotations: { readOnlyHint: true }, requiredScope: "mcp:read" },
+      { annotations: { readOnlyHint: true }, requiredScope: "mcp:write" },
+      { annotations: { readOnlyHint: true, destructiveHint: false }, requiredScope: "mcp:write" },
     ]
     for (const scopes of [new Set(["mcp:read"]), new Set(["mcp:read", "mcp:write"]), new Set(["mcp:write"])]) {
       const member = { orgMembershipId: memberId, teamIds: [] }
@@ -284,6 +285,8 @@ test("generic and Code Mode execution check caller scopes against the live exter
       })
       const leaf = built.manifest[0]
       if (!leaf) throw new Error("Missing external Code Mode leaf")
+      expect(leaf).toMatchObject({ readOnly: true, authority: "external" })
+      expect(firstUnattendedUnsafeCapability(built, [leaf])).toEqual(leaf)
       for (const entry of cases) {
         // Keep the already-built tree: dispatch must not trust its read-only snapshot.
         liveTool = { ...liveTool, annotations: entry.annotations }

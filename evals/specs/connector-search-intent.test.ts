@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
+import { queryDenDatabase } from "@openwork/env";
 import { mcpMock, needs, server, test } from "@openwork/testkit";
 
 function record(value: unknown): Record<string, unknown> {
@@ -17,10 +19,10 @@ function rows(value: unknown): Record<string, unknown>[] {
 test("gateway discovery preserves setup intent and execution scopes", { timeout: 300_000 }, async ({ evidence, place }) => {
   needs({ commands: ["bun", "pnpm"] });
   const scopeCases = [
-    { name: "read_scope_fixture", annotations: { readOnlyHint: true, destructiveHint: false }, requiresWrite: false },
-    { name: "write_scope_fixture", annotations: { readOnlyHint: false, destructiveHint: false }, requiresWrite: true },
-    { name: "unknown_scope_fixture", requiresWrite: true },
-    { name: "contradictory_scope_fixture", annotations: { readOnlyHint: true, destructiveHint: true }, requiresWrite: true },
+    { name: "misleading_read_scope_fixture", annotations: { readOnlyHint: true, destructiveHint: false } },
+    { name: "write_scope_fixture", annotations: { readOnlyHint: false, destructiveHint: false } },
+    { name: "unknown_scope_fixture" },
+    { name: "contradictory_scope_fixture", annotations: { readOnlyHint: true, destructiveHint: true } },
   ];
   const orgName = `Connector Search ${Date.now()}`;
   await using den = await server({
@@ -33,6 +35,8 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
       result: { content: [{ type: "text", text: "scope result" }] },
     })) }) },
   });
+  const database = den.database;
+  if (!database) throw new Error("Scope authority fixtures require a cold-booted owned Den database");
   const orgs = await denFetch(den.admin, "/v1/me/orgs", { headers: { authorization: `Bearer ${den.admin.token}` } });
   expect(orgs.response.status).toBe(200);
   const orgId = rows(record(orgs.body).orgs).find(org => org.name === orgName)?.id;
@@ -133,7 +137,17 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
   expect(record(granted.body).scopes).toEqual(["mcp:read", "mcp:write"]);
   const fullToken = record(granted.body).token;
   const appToken = record(minted.body).appHostToken;
-  if (typeof fullToken !== "string" || typeof appToken !== "string") throw new Error("Missing scoped control tokens");
+  const restrictedAppToken = record(granted.body).appHostToken;
+  if (typeof fullToken !== "string" || typeof appToken !== "string" || typeof restrictedAppToken !== "string") throw new Error("Missing scoped control tokens");
+  // The public mint cannot request a write-less App token. Narrow only this
+  // unused, genuinely minted token in the owned database; do not change mint policy.
+  if (!restrictedAppToken.startsWith("ow_mcp_at_")) throw new Error("Expected an opaque first-party App token");
+  const appTokenHash = createHash("sha256").update(restrictedAppToken.slice("ow_mcp_at_".length)).digest("base64url");
+  const restrictedScopes = JSON.stringify(["mcp:read", "mcp:app-host"]);
+  await queryDenDatabase(database.url, "UPDATE oauthAccessToken SET scopes = ? WHERE token = ? AND reference_id = ?",
+    [restrictedScopes, appTokenHash, String(orgId)]);
+  expect(await queryDenDatabase(database.url, "SELECT scopes FROM oauthAccessToken WHERE token = ? AND reference_id = ?",
+    [appTokenHash, String(orgId)])).toEqual([{ scopes: restrictedScopes }]);
   async function call(bearer: string, name: string, args: Record<string, unknown>, endpoint = "/mcp/agent") {
     const response = await fetch(`${den.ref.apiUrl}${endpoint}`, {
       method: "POST",
@@ -149,6 +163,27 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
     return record(rpc.result);
   }
   const discovered = rows((await search({ query: "Scope Fixture false", type: "mcp", limit: 20 })).payload.matches);
+  const beforeReadControls = await den.mocks.connector.toolCalls();
+  const status = await call(token, "execute_capability", { name: `mcp:${compatibilityId}:*` });
+  expect(status.isError).not.toBe(true);
+  expect(status.structuredContent).toMatchObject({ connectionId: compatibilityId, state: "connected" });
+  for (const bearer of [token, restrictedAppToken]) {
+    const discovery = await call(bearer, "search_capabilities", { query: "scope fixture", limit: 20 }, `/mcp/agent/connections/${compatibilityId}`);
+    expect(discovery.isError).not.toBe(true);
+    const matches = rows(record(discovery.structuredContent).matches);
+    expect(matches.map(entry => entry.name).sort()).toEqual(scopeCases.map(entry => entry.name).sort());
+    if (bearer === restrictedAppToken) {
+      for (const match of matches) expect(match.mcpApp).toMatchObject({ resourceUri: "ui://scope/fixture.html" });
+    }
+  }
+  const nativeRead = rows((await search({ query: "list workers", type: "api", limit: 20 })).payload.matches)
+    .find(entry => entry.method === "GET" && entry.path === "/v1/workers");
+  if (!nativeRead || typeof nativeRead.name !== "string" || typeof nativeRead.scriptPath !== "string") throw new Error("Missing native API read control");
+  expect((await call(token, "execute_capability", { name: nativeRead.name })).isError).not.toBe(true);
+  expect((await call(token, "execute_capability_script", { code: `return await ${nativeRead.scriptPath}({})` })).isError).not.toBe(true);
+  expect((await call(token, "execute_capability_script", { code: "return 1 + 1" })).content).toEqual([{ type: "text", text: "2" }]);
+  expect(await den.mocks.connector.toolCalls()).toEqual(beforeReadControls);
+  evidence.recordAssertionEvidence("Read scope still permits discovery, status, and native API reads", "The read-only token discovered external tools, read connected status, invoked GET /v1/workers directly and in Code Mode, and computed a pure script without any external provider tool call. The downscoped App token also discovered App bindings, proving the real authenticated App audience was reached.", true);
   let deniedCalls = 0;
   let acceptedCalls = 0;
   for (const fixture of scopeCases) {
@@ -157,19 +192,21 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
     const capabilityName = match.name;
     const scriptPath = match.scriptPath;
     const invoke = [
-      (bearer: string) => call(bearer, "execute_capability", { name: capabilityName, body: { marker: fixture.name } }),
-      (bearer: string) => call(bearer, "execute_capability", { name: fixture.name, body: { marker: fixture.name } }, `/mcp/agent/connections/${compatibilityId}`),
-      (bearer: string) => call(bearer, fixture.name, { marker: fixture.name }, `/mcp/agent/connections/${directId}`),
-      (bearer: string) => call(bearer, "execute_capability_script", { code: `return await ${scriptPath}({ marker: input.marker })`, input: { marker: fixture.name } }),
+      { tokens: [token, fullToken], execute: (bearer: string) => call(bearer, "execute_capability", { name: capabilityName, body: { marker: fixture.name } }) },
+      { tokens: [token, fullToken], execute: (bearer: string) => call(bearer, "execute_capability", { name: fixture.name, body: { marker: fixture.name } }, `/mcp/agent/connections/${compatibilityId}`) },
+      { tokens: [token, fullToken], execute: (bearer: string) => call(bearer, fixture.name, { marker: fixture.name }, `/mcp/agent/connections/${directId}`) },
+      { tokens: [token, fullToken], execute: (bearer: string) => call(bearer, "execute_capability_script", { code: `return await ${scriptPath}({ marker: input.marker })`, input: { marker: fixture.name } }) },
+      { tokens: [restrictedAppToken, appToken], execute: (bearer: string) => call(bearer, fixture.name, { marker: fixture.name }, `/mcp/agent/connections/${compatibilityId}`) },
+      { tokens: [restrictedAppToken, appToken], execute: (bearer: string) => call(bearer, "execute_capability", { name: fixture.name, body: { marker: fixture.name } }, `/mcp/agent/connections/${compatibilityId}`) },
     ];
-    for (const execute of invoke) {
-      for (const bearer of [token, fullToken]) {
+    for (const { execute, tokens } of invoke) {
+      for (const bearer of tokens) {
         const before = await den.mocks.connector.toolCalls();
         const result = await execute(bearer);
         const after = await den.mocks.connector.toolCalls();
         const text = rows(result.content).find(part => part.type === "text")?.text;
         if (typeof text !== "string") throw new Error("Missing execution result");
-        if (bearer === token && fixture.requiresWrite) {
+        if (bearer === token || bearer === restrictedAppToken) {
           expect(result.isError).toBe(true);
           expect(text).toContain("mcp:write");
           expect(["insufficient_mcp_scope", "script_failed"]).toContain(record(JSON.parse(text)).error);
@@ -183,16 +220,8 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
         }
       }
     }
-    // The separately minted first-party App token deliberately carries both
-    // scopes. App-host access must neither bypass scopes nor lose this authority.
-    const before = await den.mocks.connector.toolCalls();
-    const appResult = await call(appToken, fixture.name, { marker: "app" }, `/mcp/agent/connections/${compatibilityId}`);
-    expect(appResult.isError).not.toBe(true);
-    expect((await den.mocks.connector.toolCalls()).slice(before.length))
-      .toEqual([expect.objectContaining({ name: fixture.name, args: { marker: "app" } })]);
-    acceptedCalls += 1;
   }
-  expect(deniedCalls).toBe(12);
+  expect(deniedCalls).toBe(24);
   expect(acceptedCalls).toBe(24);
-  evidence.recordAssertionEvidence("Scoped external execution denies writes without invoking the provider", "A genuinely minted mcp:read token denied explicit, unclassified and contradictory writes through generic, direct, compatibility and Code Mode execution: 12 denials with zero provider calls. Read-only and full-scope controls plus the separately authorized App host produced exactly 24 expected calls.", true);
+  evidence.recordAssertionEvidence("Provider read-only hints never grant external execution authority", "Read-only tokens denied all four provider tools, including the misleading readOnlyHint:true tool, through generic, direct, compatibility, Code Mode and both App-host dispatch forms: 24 denials with zero provider calls. A genuinely minted App token was narrowed to mcp:read mcp:app-host in this owned database before first use, not issued by a changed production mint. Full-scope and unchanged App-host tokens produced exactly 24 expected calls.", true);
 });

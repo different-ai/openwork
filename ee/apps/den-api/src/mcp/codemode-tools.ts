@@ -23,7 +23,6 @@ import {
   type McpMemberIdentity,
 } from "./external-capabilities.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
-import { requiredScopeForExternalTool } from "./policy.js"
 import {
   buildNativeCapabilityName,
   executeNativeCapability,
@@ -361,7 +360,8 @@ export async function buildExternalMcpToolTree(input: {
         .map((tool) => ({
           scriptPath: codemodeScriptPath(namespace, tool.name),
           capabilityName: buildExternalCapabilityName(connection.id, tool.name),
-          readOnly: requiredScopeForExternalTool(tool) === "mcp:read",
+          // Descriptive only: external dispatch always requires the caller's write scope.
+          readOnly: tool.annotations?.readOnlyHint === true && tool.annotations?.destructiveHint !== true,
           authority: "external" as const,
         }))
     }),

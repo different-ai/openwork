@@ -207,6 +207,11 @@ What stays the same:
 
 Directly exposed connections appear in OpenCode as `openwork-direct-<name>-…`.
 
+External provider tool calls require the caller's `mcp:write` scope even when
+the provider advertises `readOnlyHint: true`. Provider hints do not grant
+execution authority; discovery and connection-status probes remain available
+with `mcp:read`. See [MCP token scopes](/cloud/run-in-the-cloud/cloud-mcp#mcp-token-scopes).
+
 ## Notes for admins
 
 - Members only see connections they've been granted — access is explicit

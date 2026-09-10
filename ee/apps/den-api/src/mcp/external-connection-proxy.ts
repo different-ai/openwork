@@ -40,8 +40,7 @@ import { externalMcpAppResourceUri, resolveMcpMemberIdentity } from "./external-
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, scoreText, SEARCH_CAPABILITIES_TOOL_NAME, tokenize } from "./search.js"
-import { DEN_MCP_APP_HOST_SCOPE } from "./scopes.js"
-import { requiredScopeForExternalTool } from "./policy.js"
+import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 
 function toolArguments(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -172,7 +171,7 @@ export function createExternalConnectionProxyServer(input: {
   const { connection } = input.operation
   const runtime = input.runtime ?? externalMcpProxyRuntime
   const callTool = (tool: ExternalMcpProxyTool, args: Record<string, unknown>) => {
-    const requiredScope = requiredScopeForExternalTool(tool)
+    const requiredScope = DEN_MCP_WRITE_SCOPE
     if (!input.scopes.has(requiredScope)) {
       return {
         isError: true,

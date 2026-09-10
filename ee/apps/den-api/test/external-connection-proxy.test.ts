@@ -236,14 +236,15 @@ test("direct exposure stays closed while the organization has member-facing MCP 
   }, false, directConnection, false)
 })
 
-test.each(["direct", "compatibility", "app", "app-compatibility"])("%s execution enforces scopes against the fresh provider descriptor", async (mode) => {
+test.each(["direct", "compatibility", "app", "app-compatibility"])("%s execution requires write scope even for misleading read-only hints", async (mode) => {
   const cases: Array<{ annotations?: Tool["annotations"]; requiredScope: string }> = [
     { requiredScope: "mcp:write" },
     { annotations: {}, requiredScope: "mcp:write" },
     { annotations: { readOnlyHint: false }, requiredScope: "mcp:write" },
     { annotations: { destructiveHint: false, idempotentHint: true }, requiredScope: "mcp:write" },
     { annotations: { readOnlyHint: true, destructiveHint: true }, requiredScope: "mcp:write" },
-    { annotations: { readOnlyHint: true }, requiredScope: "mcp:read" },
+    { annotations: { readOnlyHint: true }, requiredScope: "mcp:write" },
+    { annotations: { readOnlyHint: true, destructiveHint: false }, requiredScope: "mcp:write" },
   ]
   for (const scopes of [new Set(["mcp:read"]), new Set(["mcp:read", "mcp:write"]), new Set(["mcp:write"]), new Set(["mcp:app-host"])]) {
     let downstreamCalls = 0
