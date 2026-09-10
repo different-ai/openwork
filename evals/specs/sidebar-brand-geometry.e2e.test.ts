@@ -2,7 +2,7 @@ import { waitFor } from "@openwork/behaviors";
 import { currentTestEvidence, screenshot } from "@openwork/test-evidence";
 import { browserScript, evalIn, needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
-import { sidebarBrandApp } from "../worlds/sidebar-brand.ts";
+import { setSidebarBrandTheme, sidebarBrandApp } from "../worlds/sidebar-brand.ts";
 
 test("sidebar brand painted bounds align with the action rail without changing custom branding", async ({ place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: place.kind === "daytona" ? ["daytona"] : ["pnpm", "bun"] });
@@ -11,10 +11,10 @@ test("sidebar brand painted bounds align with the action rail without changing c
 
   for (const fontSize of [16, 20]) {
     for (const dark of [false, true]) {
-      await evalIn(app, browserScript((fontSize, dark) => {
+      await setSidebarBrandTheme(app, dark);
+      await evalIn(app, browserScript(fontSize => {
         document.documentElement.style.fontSize = `${fontSize}px`;
-        document.documentElement.classList.toggle("dark", dark);
-      }, [fontSize, dark]));
+      }, [fontSize]));
       // Menu padding transitions when rem changes; sample only settled geometry.
       await waitFor(app, browserScript(fontSize => {
         const action = document.querySelector('[data-sidebar-new-chat]');
@@ -57,6 +57,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
           const width = box.width * scale;
           const height = box.height * scale;
           return {
+            theme: getComputedStyle(document.documentElement).colorScheme,
             label: label.textContent, labelX: text.left, actionLabelX: actionText.left,
             iconCenterX: actionIcon.left + actionIcon.width / 2,
             slotWidth: slot.width, slotHeight: slot.height,
@@ -100,6 +101,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
       expect.soft(geometry.transform).toBe("none");
       expect.soft(geometry.aspect).not.toBe("none");
       expect.soft(geometry.filter).toBe(dark ? "invert(1)" : "none");
+      expect.soft(geometry.theme).toBe(dark ? "dark" : "light");
       expect.soft(geometry.pathsUnchanged).toBe(true);
       expect.soft(geometry.marketingViewBox).toBe("0 0 834 649");
     }
@@ -114,7 +116,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
   });
   await waitFor(app, () => Boolean(document.querySelector('[data-testid="brand-logo"] img')), { timeoutMs: 10_000 });
   for (const dark of [false, true]) {
-    await evalIn(app, browserScript(dark => { document.documentElement.classList.toggle("dark", dark); }, [dark]));
+    await setSidebarBrandTheme(app, dark);
     const custom = await evalIn(app, async () => {
       const header = document.querySelector<HTMLElement>('[data-testid="brand-logo"]');
       const image = header?.querySelector('img');
@@ -123,6 +125,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
       const box = image.getBoundingClientRect();
       const row = header.getBoundingClientRect();
       return {
+        theme: getComputedStyle(document.documentElement).colorScheme,
         stockVisible: Boolean(document.querySelector('[data-sidebar-brand]')),
         alt: image.alt, width: box.width, height: box.height, rowHeight: row.height,
         inset: box.left - row.left, filter: getComputedStyle(image).filter,
@@ -130,7 +133,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
       };
     }, { awaitPromise: true });
     console.log("custom", dark, JSON.stringify(custom));
-    expect(custom).toEqual({ stockVisible: false, alt: "Organization logo", width: 120, height: 32, rowHeight: 56, inset: 12, filter: "none", contained: true });
+    expect(custom).toEqual({ theme: dark ? "dark" : "light", stockVisible: false, alt: "Organization logo", width: 120, height: 32, rowHeight: 56, inset: 12, filter: "none", contained: true });
     currentTestEvidence()?.recordAssertionEvidence(`Custom wordmark unchanged (${dark ? "dark" : "light"})`, JSON.stringify(custom), true);
     await screenshot(app);
   }

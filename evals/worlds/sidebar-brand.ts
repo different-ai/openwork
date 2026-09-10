@@ -1,6 +1,13 @@
-import { createAndSelectWorkspace } from "@openwork/behaviors";
+import { createAndSelectWorkspace, waitFor } from "@openwork/behaviors";
 import { desktop } from "@openwork/hosts";
-import type { Place } from "@openwork/testkit";
+import { browserScript, type Place, type Surface } from "@openwork/testkit";
+
+export async function setSidebarBrandTheme(app: Surface, dark: boolean) {
+  const theme = dark ? "dark" : "light";
+  await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
+  await waitFor(app, browserScript(theme => document.documentElement.dataset.theme === theme
+    && getComputedStyle(document.documentElement).colorScheme === theme, [theme]), { timeoutMs: 5_000 });
+}
 
 export async function sidebarBrandApp(place: Place) {
   const app = await desktop({ name: "sidebar-brand-geometry", host: place.host() });
