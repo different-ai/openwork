@@ -1,13 +1,11 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { catalog, selectJourneys } from './journey-catalog.mjs';
-import { worldContract } from './world-plan.ts';
 
 const changed = process.env.CHANGED_FILES ? JSON.parse(await readFile(process.env.CHANGED_FILES, 'utf8')) : [];
 const critical = process.env.EVENT_NAME === 'workflow_run' || process.env.SUITE === 'critical';
 const all = await catalog();
 const selected = selectJourneys(all, { critical, only: process.env.ONLY_FILTER || '', changed: changed.map(file => file.replace('evals/specs/', '')) });
 const automatic = selected.filter(entry => entry.placement !== 'manual');
-for (const entry of selected) for (const world of entry.worlds) console.log(`contract: ${entry.spec}:${world.line} ${worldContract(world)}`);
 if (automatic.length === 0) throw new Error('No automated journeys matched. Check the filter; this is not a passing run.');
 const plan = { suite: critical ? 'Critical user journeys' : 'Full regression', entries: automatic, manual: selected.filter(entry => entry.placement === 'manual') };
 await mkdir('journey-plan', { recursive: true });

@@ -1,7 +1,4 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { journeyFiles, testName } from '../bin/test-files.mjs';
-import { discoverWorlds } from './world-plan.ts';
 
 // One home for CI grouping, readable names, and execution requirements.
 // Unlisted specs are discovered automatically as full-regression journeys.
@@ -36,24 +33,21 @@ export const registeredCases = Object.freeze(Object.entries(definitions).flatMap
   (definition.cases ?? []).map(value => Object.freeze({ spec, ...value }))
 ));
 
-export async function catalog(root) {
-  const paths = root ? (await readdir(root)).filter(file => file.endsWith('.e2e.test.ts')).sort().map(file => fileURLToPath(new URL(file, root))) : journeyFiles();
-  const files = paths.map(file => root ? file.split('/').at(-1) : testName(file));
+export async function catalog(root = new URL('../specs/', import.meta.url)) {
+  const files = (await readdir(root)).filter(file => file.endsWith('.e2e.test.ts')).sort();
   for (const file of Object.keys(definitions)) {
     if (!files.includes(file)) throw new Error(`Registered journey missing: ${file}`);
   }
-  return Promise.all(files.map(async (spec, index) => {
-    const source = await readFile(paths[index], 'utf8');
+  return Promise.all(files.map(async spec => {
+    const source = await readFile(new URL(spec, root), 'utf8');
     const rawDesktop = /import\s*\{[^}]*\bdesktop\b[^}]*\}\s*from\s*["']@openwork\/hosts["']/s.test(source);
     return {
       spec,
-      artifactId: Buffer.from(spec, 'utf8').toString('base64url'),
       name: spec.replace('.e2e.test.ts', '').replaceAll('-', ' '),
       critical: false,
       model: 'mock',
       placement: rawDesktop ? 'manual' : 'daytona',
       ...definitions[spec],
-      worlds: discoverWorlds(paths[index], source),
     };
   }));
 }

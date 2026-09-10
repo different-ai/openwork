@@ -74,21 +74,10 @@ jobs:
             exit 0
           fi
 
-          # Candidate specs are data, but the planner, its imports and install
-          # inputs are executable trust roots. Changes require manual dispatch.
-          # Include old names on renames and fail closed if the file API fails.
-          # GitHub's PR files endpoint is capped at 3,000 files.
-          changed_file_count="$(gh api "repos/$REPO/pulls/$PR" --jq '.changed_files')"
-          if ! [[ "$changed_file_count" =~ ^[0-9]+$ ]] || [ "$changed_file_count" -gt 3000 ]; then
-            echo "::notice::E2E regression withheld: complete changed-file audit unavailable. Explicit manual workflow_dispatch is required."
-            echo "authorized=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          changed_files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')"
-          trusted_paths='^(evals/(scripts/|bin/test-files\.mjs$|packages/env/src/world-resources\.ts$)|\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)|(^|/)(package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.ya?ml$|package-lock\.json$|npm-shrinkwrap\.json$|yarn\.lock$|\.npmrc$|\.?pnpmfile\.[^/]+$|tsconfig[^/]*\.json$|\.pnp\.[^/]+$|\.yarnrc[^/]*$|\.gitattributes$|\.gitmodules$|patches(/|$)|node_modules(/|$))'
-          guarded="$(printf '%s\n' "$changed_files" | grep -E "$trusted_paths" || test "$?" -eq 1)"
+          guarded="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' \
+            | grep -E '^(evals/scripts/|\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)' || true)"
           if [ -n "$guarded" ]; then
-            echo "::notice::E2E regression withheld: PR changes trusted review/planner machinery or install inputs. Explicit manual workflow_dispatch is required."
+            echo "::notice::E2E regression withheld: PR changes trusted review machinery."
             echo "authorized=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -100,18 +89,6 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
-        with:
-          node-version: 24.15.0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
-        with:
-          version: 11.4.0
-      - name: Install AST planner dependencies
-        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
-        run: pnpm --dir evals install --frozen-lockfile --ignore-scripts
 
       - name: Select user journeys
         id: matrix
@@ -230,7 +207,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: journey-evidence-${{ matrix.journey.artifactId }}
+          name: journey-evidence-${{ matrix.journey.spec }}
           path: |
             evals/results/test-runs/
             /tmp/daytona-e2e.log
@@ -240,7 +217,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: journey-result-${{ matrix.journey.artifactId }}
+          name: journey-result-${{ matrix.journey.spec }}
           path: journey-result.json
           retention-days: 14
           if-no-files-found: warn
@@ -263,32 +240,11 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
-      - name: Resolve local preparation resources
-        id: resources
-        env:
-          JOURNEY: ${{ toJSON(matrix.journey) }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { appendFileSync } from 'node:fs';
-          const journey = JSON.parse(process.env.JOURNEY);
-          const worlds = journey.worlds;
-          if (!Array.isArray(worlds) || worlds.length === 0) throw new Error('Missing journey world plan');
-          const legacy = worlds.some(world => world.resources === null);
-          const den = legacy || worlds.some(world => world.resources.services.includes('den'));
-          const native = legacy || worlds.some(world => world.resources.surfaces.includes('desktop'));
-          console.log(`Local preparation: den=${den}, native=${native}, legacy=${legacy}`);
-          appendFileSync(process.env.GITHUB_OUTPUT, `den=${den}\nnative=${native}\n`);
-          NODE
-      - name: Prepare local native libraries
-        if: steps.resources.outputs.native == 'true'
+      - name: Prepare local Den and Electron
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1
-      - name: Prepare local Den
-        if: steps.resources.outputs.den == 'true'
-        run: |
-          set -euo pipefail
           pnpm --filter @openwork/types build
           pnpm --filter @openwork-ee/den-db build
           pnpm --filter @openwork/email build
@@ -297,16 +253,11 @@ jobs:
         id: run
         env:
           SPEC_SLUG: ${{ matrix.journey.spec }}
-          NEEDS_NATIVE: ${{ steps.resources.outputs.native }}
         run: |
           set -euo pipefail
           # Permission failures must be real; root would bypass the fault.
           test "$(id -u)" -ne 0
-          command=(pnpm evals:e2e "$SPEC_SLUG" --local)
-          if [ "$NEEDS_NATIVE" = "true" ]; then
-            command=(xvfb-run -a "${command[@]}")
-          fi
-          "${command[@]}" 2>&1 | tee /tmp/local-handoff-e2e.log
+          xvfb-run -a pnpm evals:e2e "$SPEC_SLUG" --local 2>&1 | tee /tmp/local-handoff-e2e.log
       - name: Judge deferred vision claims
         id: vision
         if: success() || failure()
@@ -326,7 +277,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: journey-evidence-${{ matrix.journey.artifactId }}
+          name: journey-evidence-${{ matrix.journey.spec }}
           path: |
             evals/results/test-runs/
             /tmp/local-handoff-e2e.log
@@ -336,7 +287,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: journey-result-${{ matrix.journey.artifactId }}
+          name: journey-result-${{ matrix.journey.spec }}
           path: journey-result.json
           retention-days: 14
           if-no-files-found: warn
