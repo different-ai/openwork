@@ -585,6 +585,7 @@ export function SessionRoute() {
     : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
+    cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     opencodeClient,
