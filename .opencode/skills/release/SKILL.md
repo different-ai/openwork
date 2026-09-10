@@ -124,6 +124,66 @@ Confirm `npm view openwork-server version` matches.
 
 ---
 
+## Validate a published release
+
+Boot the *released* mac-arm64 desktop binaries (not a source build) through the
+packaged journeys. Both specs are `placement: 'local'` in
+`evals/scripts/journey-catalog.mjs` and skip loudly (verdict `incomplete`,
+exit 2) when `OPENWORK_EVAL_ELECTRON_BINARY` is unset, so a run without a
+binary can never pass by accident.
+
+Download and unpack the enterprise + cloud assets of the tag (`ditto` keeps
+the signature intact; the quarantine flag must go or macOS blocks the spawn):
+
+```bash
+V=X.Y.Z; cd /tmp/ow-release
+gh release download "v$V" -R different-ai/openwork -p "openwork-enterprise-mac-arm64-$V.zip" -p "openwork-cloud-mac-arm64-$V.zip"
+for f in enterprise cloud; do mkdir -p "$f-$V" && ditto -x -k "openwork-$f-mac-arm64-$V.zip" "$f-$V" && xattr -dr com.apple.quarantine "$f-$V"; done
+ENT="/tmp/ow-release/enterprise-$V/OpenWork Enterprise.app/Contents/MacOS/OpenWork Enterprise"
+CLD="/tmp/ow-release/cloud-$V/OpenWork Cloud.app/Contents/MacOS/OpenWork Cloud"
+```
+
+Fresh-machine gate (no bootstrap): the enterprise build must mount
+"Link this app to your organization", the cloud build "Welcome to OpenWork",
+each with zero renderer exceptions:
+
+```bash
+OPENWORK_EVAL_ELECTRON_BINARY="$ENT" pnpm evals:e2e packaged-first-launch --local
+OPENWORK_EVAL_ELECTRON_BINARY="$CLD" pnpm evals:e2e packaged-first-launch --local
+```
+
+Activated enterprise install (what every existing enterprise user boots
+into): the spec cold-boots a local Den, seeds an activated bootstrap and
+asserts the release reports its own version, skips the activation page and
+lands on the interactive `/signin` surface without a render crash.
+`OPENWORK_EVAL_RELEASED_VERSION` pins the version the binary must report:
+
+```bash
+OPENWORK_EVAL_ELECTRON_BINARY="$ENT" OPENWORK_EVAL_RELEASED_VERSION="$V" \
+  pnpm evals:e2e released-enterprise-activated --local
+```
+
+Baseline-upgrade variant: also download the previous release's enterprise zip
+(same steps, e.g. `B=X.Y.W`) and pass it as the baseline. The older release
+signs in and selects a workspace on a fresh profile, quits, then the release
+under test opens that same profile in place and once more after a restart;
+both launches must land in the same signed-in workspace route with zero
+renderer exceptions. Without the baseline variable this second test skips and
+the run is `incomplete`:
+
+```bash
+OPENWORK_EVAL_ELECTRON_BINARY="$ENT" OPENWORK_EVAL_RELEASED_VERSION="$V" \
+OPENWORK_EVAL_RELEASED_BASELINE_BINARY="/tmp/ow-release/enterprise-$B/OpenWork Enterprise.app/Contents/MacOS/OpenWork Enterprise" \
+  pnpm evals:e2e released-enterprise-activated --local
+```
+
+Each command prints a JSON verdict line; only `"verdict":"passed"` with
+`"skipped":0` counts. This covers mac-arm64 only, and the update is simulated
+by launching the new binary on the old profile — the real electron-updater
+download/apply is not exercised.
+
+---
+
 ## Notes
 
 - Desktop installer fixes only reach users through a new release — the org
