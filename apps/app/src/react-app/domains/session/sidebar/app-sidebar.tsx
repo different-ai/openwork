@@ -1794,12 +1794,24 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups
   workspaceId?: string;
   onTitlePointerDown?: React.PointerEventHandler<HTMLSpanElement>;
 }) {
+  // Dragging the title to reorder releases on this same header, which the
+  // browser reports as a click. Only a press that stayed put toggles.
+  const pressedAt = React.useRef<{ x: number; y: number } | null>(null);
+
   return (
     <div
       data-session-group={group?.id}
       role="button"
       tabIndex={0}
-      onClick={onToggle}
+      onPointerDown={(event) => {
+        pressedAt.current = { x: event.clientX, y: event.clientY };
+      }}
+      onClick={(event) => {
+        const pressed = pressedAt.current;
+        pressedAt.current = null;
+        if (pressed && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 3) return;
+        onToggle();
+      }}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
         event.preventDefault();
