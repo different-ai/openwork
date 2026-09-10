@@ -679,12 +679,18 @@ export async function server(options: ServerOptions): Promise<Den> {
     if (needsOwnDen && process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX?.trim()) {
       console.error(`[openwork/testkit] server({ env: ${Object.keys(denEnv).join(", ")} }) provisions its own Den sandbox instead of the prewarmed one.`);
     }
+    // The suite runner prewarmed this Den and kept the public identity it was
+    // started with (runner/stack-env.ts); every Den-signed link carries it.
+    const preparedWebUrl = process.env.OPENWORK_EVAL_DAYTONA_DEN_WEB_URL?.trim();
+    const preparedApiUrl = process.env.OPENWORK_EVAL_DAYTONA_DEN_API_URL?.trim();
+    const reuseUrls = preparedSandbox && preparedWebUrl && preparedApiUrl ? { webUrl: preparedWebUrl, apiUrl: preparedApiUrl } : undefined;
     const orgShape = options.org ?? {};
     const isolatePreparedTest = Boolean(preparedSandbox && options.provision !== false);
     const bootstrapAdmin = personDefaults("admin", orgShape.admin, runId);
     const provisioned = await provisionDenSandbox({
       ref: base.ref,
       reuse: preparedSandbox,
+      reuseUrls,
       bootstrapAdminEmail: bootstrapAdmin.email,
       env: denEnv,
       ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),

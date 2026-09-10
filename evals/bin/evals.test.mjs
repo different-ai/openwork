@@ -188,6 +188,8 @@ test("explicit local placement removes inherited remote provisioning inputs", ()
     OPENWORK_EVAL_DAYTONA_SANDBOX: "desktop-sandbox",
     OPENWORK_EVAL_DAYTONA_SANDBOX_ID: "legacy-sandbox",
     OPENWORK_EVAL_DAYTONA_DEN_SANDBOX: "den-sandbox",
+    OPENWORK_EVAL_DAYTONA_DEN_WEB_URL: "https://3005-baked.example.test",
+    OPENWORK_EVAL_DAYTONA_DEN_API_URL: "https://8788-baked.example.test",
     OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX: "prepared-desktop",
     OPENWORK_EVAL_DEN_API_URL: "https://den-api.example.test",
     OPENWORK_EVAL_DEN_WEB_URL: "https://den.example.test",

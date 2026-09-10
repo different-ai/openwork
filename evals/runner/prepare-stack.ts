@@ -14,7 +14,7 @@ const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 export type StackPreparation =
   | { kind: "none" }
   | { kind: "local"; runtimePrepared: true; electronPrepared: true }
-  | { kind: "daytona"; slots: { denSandbox: string; desktopSandbox: string }[] };
+  | { kind: "daytona"; slots: { denSandbox: string; denWebUrl: string; denApiUrl: string; desktopSandbox: string }[] };
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -89,7 +89,7 @@ async function prepareDaytona(argv: readonly string[]): Promise<{ preparation: S
           return result;
         }),
       ]);
-      return { denSandbox: den.sandbox, desktopSandbox: desktop.sandbox };
+      return { denSandbox: den.sandbox, denWebUrl: den.webUrl, denApiUrl: den.apiUrl, desktopSandbox: desktop.sandbox };
     }));
     console.error(`[openwork/evals] prepared ${slots.length} isolated Daytona worker slot${slots.length === 1 ? "" : "s"}.`);
     return {

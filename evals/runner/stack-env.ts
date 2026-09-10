@@ -12,5 +12,7 @@ if (preparation.kind === "daytona") {
   const slot = preparation.slots[workerSlot(process.env.VITEST_WORKER_ID, preparation.slots.length)];
   if (!slot) throw new Error("Vitest worker did not resolve to a prepared Daytona slot.");
   process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX = slot.denSandbox;
+  process.env.OPENWORK_EVAL_DAYTONA_DEN_WEB_URL = slot.denWebUrl;
+  process.env.OPENWORK_EVAL_DAYTONA_DEN_API_URL = slot.denApiUrl;
   process.env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX = slot.desktopSandbox;
 }
