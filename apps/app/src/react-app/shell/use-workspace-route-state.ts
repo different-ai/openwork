@@ -450,6 +450,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
     if (!workspace) return;
     loadedWorkspaceIdsRef.current = new Set([...loadedWorkspaceIdsRef.current].filter((id) => id !== workspaceId));
+    setRetryingWorkspaceIds((current) => Array.from(new Set([...current, workspaceId])));
     await loadWorkspaceSessionsInBackground([workspace]);
   }, [loadWorkspaceSessionsInBackground]);
   const workspaceSelectionCommitRef = useRef<(workspaceId: string) => Promise<void>>(async () => undefined);
