@@ -36,10 +36,12 @@ import {
   desktopFetch,
   desktopFetchViaMain,
   getDesktopBootstrapConfig as getDesktopBootstrapConfigFromShell,
+  readDesktopDistributionInfo,
   readInitialDesktopBootstrapConfig,
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
+import { enterpriseActivationRequired } from "./enterprise-activation";
 import { getOpenworkGatewayOrigin } from "./gateway-runtime";
 import { clearDesktopSignInIntent, clearOrgSelectionPending } from "./den-sign-in-intent";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
@@ -1023,6 +1025,24 @@ async function resolveDenBootstrapConfigWithRuntimeApi(
 }
 
 /**
+ * Boot-time resolution of the bootstrap the shell already holds. An
+ * unactivated activation-required install has no organization server yet —
+ * its bootstrap is only the build default — so the runtime-config probe would
+ * be the install's first request to a host nobody chose. Skip it: the address
+ * the person submits is resolved by `setDenBootstrapConfig`, and a completed
+ * activation resolves here on the next boot.
+ */
+async function resolveBootBootstrapConfig(
+  input: Parameters<typeof resolveDenBootstrapConfig>[0],
+): Promise<DenBootstrapConfig> {
+  const resolved = resolveDenBootstrapConfig(input);
+  if (enterpriseActivationRequired(readDesktopDistributionInfo(), resolved)) {
+    return resolved;
+  }
+  return resolveDenBootstrapConfigWithRuntimeApi(input);
+}
+
+/**
  * Resolve a handoff destination's base URLs. On desktop, when the caller does
  * not already know the destination's API base, prefer the API base the
  * destination publishes in its runtime config — the same source the durable
@@ -1215,7 +1235,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
 
   const initialBootstrap = readInitialDesktopBootstrapConfig();
   if (initialBootstrap) {
-    const resolved = await resolveDenBootstrapConfigWithRuntimeApi(initialBootstrap);
+    const resolved = await resolveBootBootstrapConfig(initialBootstrap);
     if (generation !== desktopBootstrapGeneration) return readDenBootstrapConfig();
     applyDesktopBootstrapConfig(resolved);
     adoptUntaggedDenSessionOrigin();
@@ -1230,7 +1250,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   for (let attempt = 1; attempt <= SHELL_BOOTSTRAP_ATTEMPTS; attempt += 1) {
     try {
       const bootstrap = await getDesktopBootstrapConfigFromShell();
-      const resolved = await resolveDenBootstrapConfigWithRuntimeApi(bootstrap);
+      const resolved = await resolveBootBootstrapConfig(bootstrap);
       if (generation !== desktopBootstrapGeneration) return readDenBootstrapConfig();
       applyDesktopBootstrapConfig(resolved);
       adoptUntaggedDenSessionOrigin();
@@ -1271,7 +1291,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
       if (generation !== desktopBootstrapGeneration) return;
       try {
         const bootstrap = await getDesktopBootstrapConfigFromShell();
-        const resolved = await resolveDenBootstrapConfigWithRuntimeApi(bootstrap);
+        const resolved = await resolveBootBootstrapConfig(bootstrap);
         if (generation !== desktopBootstrapGeneration) return;
         applyDesktopBootstrapConfig(resolved);
         adoptUntaggedDenSessionOrigin();
@@ -1297,7 +1317,7 @@ export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrap
     const generation = ++desktopBootstrapGeneration;
     try {
       const bootstrap = await getDesktopBootstrapConfigFromShell();
-      const resolved = await resolveDenBootstrapConfigWithRuntimeApi(bootstrap);
+      const resolved = await resolveBootBootstrapConfig(bootstrap);
       if (generation === desktopBootstrapGeneration) {
         applyDesktopBootstrapConfig(resolved);
         adoptUntaggedDenSessionOrigin();

@@ -72,6 +72,11 @@ test('registered case metadata names exact files, supported execution axes, and 
       id: 'SWITCH-10',
       engines: ['v1', 'v2'],
     },
+    {
+      spec: 'unfinished-tool-lifecycle.e2e.test.ts',
+      id: 'STOP-01',
+      engines: ['v1', 'v2'],
+    },
   ]);
   for (const registered of registeredCases) {
     assert(entries.some(entry => entry.spec === registered.spec));
