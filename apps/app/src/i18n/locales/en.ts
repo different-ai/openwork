@@ -1991,6 +1991,8 @@ export default {
   "workspace_list.connected": "Connected",
   "workspace_list.connected_loaded_tasks_one": "Connected. Loaded {count} task.",
   "workspace_list.connected_loaded_tasks_other": "Connected. Loaded {count} tasks.",
+  "workspace_list.conversation_count_one": "{count} unarchived top-level conversation, including pinned conversations",
+  "workspace_list.conversation_count_other": "{count} unarchived top-level conversations, including pinned conversations",
   "workspace_list.connecting": "Connecting...",
   "workspace_list.delete_session": "Delete session",
   "workspace_list.edit_connection": "Edit connection",
