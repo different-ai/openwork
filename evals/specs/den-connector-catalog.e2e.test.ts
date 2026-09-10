@@ -22,6 +22,20 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
   expect(before.response.ok).toBe(true);
   const requestsBefore = (await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
 
+  await step("Add connector opens advanced setup and cancel leaves connections unchanged", async () => {
+    await admin.see({ testId: "connector-catalog-count" }, { timeoutMs: 90_000 });
+    await admin.click({ testId: "connectors-add-connector" });
+    await admin.see({ testId: "add-mcp-connection-dialog" });
+    await admin.see({ role: "heading", label: "Add a custom MCP server" });
+    await admin.see({ placeholder: "notion" }, { value: "" });
+    await admin.notSee({ testId: "smart-add-query-input" });
+    await admin.click({ role: "button", label: "Cancel" });
+    await admin.notSee({ testId: "add-mcp-connection-dialog" });
+    expect((await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable")).body).toEqual(before.body);
+    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(requestsBefore);
+    expect(await probe.toolCalls(world.connector)).toEqual([]);
+  });
+
   await step("browse every integration with an accurate total and setup requirements", async () => {
     await admin.see({ testId: "connector-catalog-count" }, { text: `Showing 6 of ${expectedIds.length} integrations`, timeoutMs: 90_000 });
     await admin.see({ role: "button", label: "Set up Slack" });
@@ -57,6 +71,14 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
   });
 
   await step("filter the full inventory and recover from an empty result", async () => {
+    await admin.type({ testId: "connector-smart-bar" }, "Catalog Notes", { replace: true });
+    await admin.see({ testId: "configured-connector-matches" }, { text: /Configured \(1\)/ });
+    expect((await catalog.connectorCatalog()).entries.map((entry) => entry.id)).toEqual([world.connection.id]);
+    await admin.click({ testId: `connector-open-${world.connection.id}` });
+    await admin.see({ testId: "connector-detail-title" }, { text: /^Catalog Notes\b/ });
+    await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
+    await admin.notSee({ testId: "connector-detail-setup" });
+    await admin.navigate(catalogUrl);
     await admin.type({ testId: "connector-smart-bar" }, "granola", { replace: true });
     await admin.see({ testId: "connector-catalog-count" }, { text: `1 of ${expectedIds.length} integrations match` });
     expect((await catalog.connectorCatalog()).entries.map((entry) => entry.id)).toEqual(["granola"]);

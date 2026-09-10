@@ -1,12 +1,14 @@
 import { useCallback, useLayoutEffect, useRef, type RefObject, type UIEventHandler } from "react";
 
-import { flushSessionScrollState, getSessionScrollState, useSessionScrollStore, type SessionScrollAnchor } from "./scroll-store";
+import { flushSessionScrollState, getSessionScrollState, sessionScrollKey, useSessionScrollStore, type SessionScrollAnchor } from "./scroll-store";
 
 const EXACT_BOTTOM_GAP_PX = 1;
 const SCROLL_GESTURE_WINDOW_MS = 600;
+export const SESSION_SCROLL_NAVIGATION_EVENT = "session-scroll-navigation";
 
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
+  geometryOwner?: string;
   submittedMessageId: string | null;
   historyReady: boolean;
   renderedMessages: unknown;
@@ -64,7 +66,8 @@ type ScrollController = {
 };
 
 export function useSessionScrollController(options: SessionScrollControllerOptions) {
-  const { selectedSessionId, containerRef, contentRef } = options;
+  const { selectedSessionId, geometryOwner, containerRef, contentRef } = options;
+  const scrollKey = selectedSessionId ? sessionScrollKey(selectedSessionId, geometryOwner) : null;
   const controllerRef = useRef<ScrollController | null>(null);
   // Consumed (including cancelled) submissions survive session effect recreation.
   const submittedMessagesRef = useRef(new Set<string>());
@@ -77,7 +80,8 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     if (!container || !content) return;
 
     const store = useSessionScrollStore.getState();
-    const readState = () => getSessionScrollState(useSessionScrollStore.getState().sessions, selectedSessionId);
+    if (selectedSessionId && geometryOwner) store.claimOwner(selectedSessionId, geometryOwner);
+    const readState = () => getSessionScrollState(useSessionScrollStore.getState().sessions, scrollKey);
     let active = true;
     let historyReady = false;
     let pendingRestore = true;
@@ -102,8 +106,32 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       for (const id of frames) window.cancelAnimationFrame(id);
       frames.clear();
     };
+    const rememberGeometry = () => {
+      if (!geometryOwner || !scrollKey || !historyReady || pendingRestore || cancelledWhileLoading
+        || container.clientWidth <= 0 || container.clientHeight <= 0
+        || !content.querySelector('[data-thread-history-complete="true"]')) return;
+      const viewport = container.getBoundingClientRect();
+      const messages = [...container.querySelectorAll<HTMLElement>("[data-message-id]")];
+      const firstVisible = messages.findIndex((message) => {
+        const rect = message.getBoundingClientRect();
+        return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+      });
+      if (firstVisible < 0) return;
+      const nearby = messages.slice(Math.max(0, firstVisible - 4), firstVisible + 20);
+      const first = nearby[0];
+      const last = nearby.at(-1);
+      if (!first || !last) return;
+      store.setGeometry(scrollKey, {
+        owner: geometryOwner,
+        scrollHeight: container.scrollHeight,
+        viewportWidth: container.clientWidth,
+        before: Math.max(0, container.scrollTop + first.getBoundingClientRect().top - viewport.top),
+        after: Math.max(0, container.scrollHeight - container.scrollTop - last.getBoundingClientRect().bottom + viewport.top),
+        messageIds: nearby.flatMap((message) => { const id = messageIdForElement(message); return id ? [id] : []; }),
+      });
+    };
     const refreshTopClippedMessage = () => {
-      if (active && historyReady) store.setTopClippedMessageId(selectedSessionId, latestMessageTopClippedId(container));
+      if (active && historyReady) store.setTopClippedMessageId(scrollKey, latestMessageTopClippedId(container));
     };
     const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
       if (!active) return;
@@ -112,7 +140,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       pendingSubmittedMessageId = null;
       cancelledWhileLoading = false;
       lastGestureAt = -Infinity;
-      store.setStickyBottom(selectedSessionId, null);
+      store.setStickyBottom(scrollKey, null);
       smoothJump = behavior === "smooth";
       container.scrollTo({ top: container.scrollHeight, behavior });
       lastKnownScrollTop = container.scrollTop;
@@ -148,18 +176,28 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         container.scrollTop = top;
         lastKnownScrollTop = container.scrollTop;
         const clipped = latestMessageTopClippedId(container);
-        if (isExactlyAtBottom(container)) store.setStickyBottom(selectedSessionId, clipped);
-        else store.setManualScroll(selectedSessionId, container.scrollTop, clipped, readingAnchor(container));
+        if (isExactlyAtBottom(container)) store.setStickyBottom(scrollKey, clipped);
+        else store.setManualScroll(scrollKey, container.scrollTop, clipped, readingAnchor(container));
         return;
       }
-      if (!historyReady) return;
+      if (!historyReady) {
+        // Reserve the last known extent while Suspense owns the transcript,
+        // without overwriting the real reading position with a loading clamp.
+        const saved = readState();
+        if (pendingRestore && saved.geometry && saved.geometry.owner === geometryOwner && content.querySelector("[data-thread-loading]")) {
+          container.scrollTop = saved.mode === "manual" ? saved.scrollTop : container.scrollHeight;
+          lastKnownScrollTop = container.scrollTop;
+        }
+        return;
+      }
       const saved = readState();
       if (pendingRestore) {
-        pendingRestore = false;
         if (saved.mode === "manual") {
-          // A bounded snapshot may not contain the old message. Fall back once,
-          // without persisting a clamped position or silently becoming sticky.
           const top = saved.anchor ? anchorTop(saved.anchor) : null;
+          // A live tail/partial preview is not proof the old anchor is gone.
+          const partial = content.querySelector('[data-thread-history-complete="false"]');
+          if (partial && (top === null || top < 0 || top > container.scrollHeight - container.clientHeight + EXACT_BOTTOM_GAP_PX)) return;
+          pendingRestore = false;
           container.scrollTop = top ?? saved.scrollTop;
           lastKnownScrollTop = container.scrollTop;
         } else {
@@ -171,11 +209,13 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
       }
       refreshTopClippedMessage();
+      rememberGeometry();
     };
     const markScrollGesture = (target?: EventTarget | null) => {
       if (!active) return;
       const nested = target instanceof Element ? target.closest("[data-scrollable]") : null;
       if (nested && nested !== container) return;
+      container.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
       // Pointer presses may just be clicks. Defer cancelling restoration until
       // they actually scroll; release without scrolling resumes pending follow.
       if (activePointerId === null) {
@@ -207,9 +247,9 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         cancelledWhileLoading = false;
         const clipped = latestMessageTopClippedId(container);
         if (isExactlyAtBottom(container)) {
-          store.setStickyBottom(selectedSessionId, clipped);
+          store.setStickyBottom(scrollKey, clipped);
         } else {
-          store.setManualScroll(selectedSessionId, container.scrollTop, clipped, readingAnchor(container));
+          store.setManualScroll(scrollKey, container.scrollTop, clipped, readingAnchor(container));
         }
       } else {
         const saved = readState();
@@ -218,11 +258,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         // visit, but never persist the initial restore's clamp or missing anchor.
         if (!pendingRestore && historyReady && container.scrollTop !== lastKnownScrollTop
           && saved.mode === "manual" && saved.anchor && messageElementById(container, saved.anchor.messageId)) {
-          store.setManualScroll(selectedSessionId, container.scrollTop, latestMessageTopClippedId(container), readingAnchor(container));
+          store.setManualScroll(scrollKey, container.scrollTop, latestMessageTopClippedId(container), readingAnchor(container));
         }
         refreshTopClippedMessage();
       }
       lastKnownScrollTop = container.scrollTop;
+      rememberGeometry();
     };
     const jumpToStartOfMessage = (behavior: ScrollBehavior = "smooth") => {
       if (!active) return;
@@ -236,7 +277,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       pendingSubmittedMessageId = null;
       cancelledWhileLoading = false;
       lastGestureAt = -Infinity;
-      store.setManualScroll(selectedSessionId, top, messageId, anchor);
+      store.setManualScroll(scrollKey, top, messageId, anchor);
       smoothJump = behavior === "smooth";
       container.scrollTo({ top, behavior });
       lastKnownScrollTop = container.scrollTop;
@@ -286,12 +327,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     window.addEventListener("pagehide", flushSessionScrollState);
     document.addEventListener("visibilitychange", handleVisibility);
     controllerRef.current = {
-      sessionId: selectedSessionId,
+      sessionId: scrollKey,
       update: (ready, messageId) => {
         historyReady = ready;
         if (!messageId) pendingSubmittedMessageId = null;
         else {
-          const key = JSON.stringify([selectedSessionId, messageId]);
+          const key = JSON.stringify([scrollKey, messageId]);
           if (!submittedMessagesRef.current.has(key)) {
             submittedMessagesRef.current.add(key);
             pendingSubmittedMessageId = messageId;
@@ -322,25 +363,37 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       controllerRef.current = null;
       flushSessionScrollState();
     };
-  }, [selectedSessionId, containerRef, contentRef]);
+  }, [selectedSessionId, geometryOwner, scrollKey, containerRef, contentRef]);
 
   useLayoutEffect(() => {
     controllerRef.current?.update(options.historyReady, options.submittedMessageId);
-  }, [selectedSessionId, containerRef, contentRef, options.historyReady, options.submittedMessageId, options.renderedMessages]);
+  }, [scrollKey, containerRef, contentRef, options.historyReady, options.submittedMessageId, options.renderedMessages]);
 
   const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>((event) => {
-    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.handleScroll(event);
-  }, [selectedSessionId]);
+    if (controllerRef.current?.sessionId === scrollKey) controllerRef.current.handleScroll(event);
+  }, [scrollKey]);
   const markScrollGesture = useCallback((target?: EventTarget | null) => {
-    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.markScrollGesture(target);
-  }, [selectedSessionId]);
+    if (controllerRef.current?.sessionId === scrollKey) controllerRef.current.markScrollGesture(target);
+  }, [scrollKey]);
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
-    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.scrollToBottom(behavior);
-  }, [selectedSessionId]);
+    if (controllerRef.current?.sessionId === scrollKey) {
+      containerRef.current?.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
+      controllerRef.current.scrollToBottom(behavior);
+    }
+  }, [scrollKey, containerRef]);
   const jumpToLatest = useCallback((behavior: ScrollBehavior = "smooth") => scrollToBottom(behavior), [scrollToBottom]);
   const jumpToStartOfMessage = useCallback((behavior: ScrollBehavior = "smooth") => {
-    if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.jumpToStartOfMessage(behavior);
-  }, [selectedSessionId]);
+    if (controllerRef.current?.sessionId === scrollKey) {
+      containerRef.current?.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
+      controllerRef.current.jumpToStartOfMessage(behavior);
+    }
+  }, [scrollKey, containerRef]);
 
-  return { handleScroll, markScrollGesture, scrollToBottom, jumpToLatest, jumpToStartOfMessage };
+  const refresh = useCallback(() => {
+    if (controllerRef.current?.sessionId === scrollKey) {
+      controllerRef.current.update(options.historyReady, options.submittedMessageId);
+    }
+  }, [scrollKey, options.historyReady, options.submittedMessageId]);
+
+  return { handleScroll, markScrollGesture, scrollToBottom, jumpToLatest, jumpToStartOfMessage, refresh };
 }

@@ -15,6 +15,7 @@ import { z } from "zod"
 import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { keysetCursorQuerySchema } from "../../list-pagination.js"
 import type { UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
@@ -55,6 +56,7 @@ export const updateWorkerSchema = z.object({
 })
 
 export const listWorkersQuerySchema = z.object({
+  cursor: keysetCursorQuerySchema.optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
 

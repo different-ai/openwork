@@ -11,7 +11,7 @@ import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
 import { MicrosoftGraphClient, MicrosoftGraphMutationOutcomeUnknownError, MicrosoftGraphRequestError } from "../../capability-sources/microsoft-graph.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
-import { listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
+import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, type NativeProviderPolicyError } from "../../capability-sources/native-provider-connections.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { INTERNAL_CAPABILITY_CONNECTOR_HEADER, readInternalCapabilityConnectorId } from "../../session.js"
@@ -308,6 +308,7 @@ export type Microsoft365AccessToken =
   | { kind: "ok"; accessToken: string; scopes: string[] | null; enabledFeatures: string[] }
   | { kind: "needs_connection"; message: string }
   | { kind: "microsoft_graph_error"; message: string }
+  | NativeProviderPolicyError
 
 export type Microsoft365AccessTokenResolver = (input: {
   organizationId: DenTypeId<"organization">
@@ -345,7 +346,8 @@ async function defaultAccessTokenResolver(input: {
     credentialProviderId = await resolveDefaultNativeProviderCredentialId({ ...input, nativeProviderKey: provider.providerId, teamIds })
   }
   if (!credentialProviderId) {
-    return { kind: "needs_connection", message: CONNECT_MICROSOFT_ACCOUNT_MESSAGE }
+    return await nativeProviderConnectionPolicyError(input.organizationId)
+      ?? { kind: "needs_connection", message: CONNECT_MICROSOFT_ACCOUNT_MESSAGE }
   }
   const client = await getOrgOAuthClient(input.organizationId, credentialProviderId)
   if (!client) {
@@ -452,7 +454,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     if (!payload) return Response.json({ error: "unauthorized" }, { status: 401 })
     const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
     if (token.kind === "microsoft_graph_error") return Response.json({ error: token.kind, message: token.message }, { status: 502 })
-    if (token.kind === "needs_connection") return Response.json({ error: token.kind, message: token.message }, { status: 409 })
+    if (token.kind === "needs_connection" || token.kind === "policy_blocked") return Response.json({ error: token.kind, message: token.message }, { status: token.kind === "policy_blocked" ? 403 : 409 })
     if (!featureEnabled(token, features)) return Response.json({ error: "needs_connection", message: disabledFeatureMessage(label) }, { status: 409 })
     if (!featureGranted(token, features)) return Response.json({ error: "needs_connection", message: missingPermissionMessage(label) }, { status: 409 })
     return graphClient(token.accessToken, signal)
@@ -597,7 +599,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         orgMembershipId: payload.currentMember.id,
       })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["mailRead"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook mail access") }, 409)
       }
@@ -637,7 +639,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["mailRead"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook mail access") }, 409)
       }
@@ -673,7 +675,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["calendarRead"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook calendar access") }, 409)
       }
@@ -714,7 +716,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["filesRead", "filesWrite", "filesReadAll", "filesFull"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive access") }, 409)
       }
@@ -751,7 +753,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["filesRead", "filesWrite", "filesReadAll", "filesFull"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive access") }, 409)
       }
@@ -787,7 +789,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["mailDraft"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook draft creation") }, 409)
       }
@@ -824,7 +826,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["calendarWrite"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Outlook calendar event creation") }, 409)
       }
@@ -860,7 +862,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["filesWrite", "filesFull"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive file writing") }, 409)
       }
@@ -896,7 +898,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["teamsChatRead", "teamsChatSend"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Teams chat reading") }, 409)
       }
@@ -933,7 +935,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["teamsChatRead", "teamsChatSend"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Teams chat reading") }, 409)
       }
@@ -973,7 +975,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const token = await resolveAccessToken({ organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id })
       if (token.kind === "microsoft_graph_error") return c.json({ error: token.kind, message: token.message }, 502)
-      if (token.kind === "needs_connection") return c.json({ error: token.kind, message: token.message }, 409)
+      if (token.kind === "needs_connection" || token.kind === "policy_blocked") return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       if (!featureEnabled(token, ["teamsChatSend"])) {
         return c.json({ error: "needs_connection", message: disabledFeatureMessage("Teams chat sending") }, 409)
       }

@@ -65,6 +65,7 @@ export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables 
       // Session-equivalent credential minting must never be exposed as an MCP
       // tool; the Authentication tag is blocked by the MCP exposure policy.
       tags: ["Authentication"],
+      security: [{ bearerAuth: [] }],
       summary: "Mint MCP access token",
       description: "Mints an org-scoped MCP access token for the caller's active organization so first-party clients can connect to the Den MCP server without a separate browser OAuth flow.",
       responses: {
