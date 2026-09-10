@@ -354,7 +354,7 @@ async function startRemoteRuntime(
     configureProviders: async (provider) => {
       const output = await runRemoteModule(sandbox, workspaceModulePath, REMOTE_WORKSPACE_SOURCE, {
         runtimeManifestPath: receipt.runtimeManifestPath, openworkUrl: receipt.openworkUrl, operation: "providers", provider,
-      }, `configure owned app-web providers ${worldName}`, 60_000);
+      }, `configure owned app-web providers ${worldName}`, 150_000);
       const value: unknown = JSON.parse(output.trim());
       if (typeof value !== "object" || value === null || !("ok" in value) || value.ok !== true) throw new Error("Owned provider configuration was not acknowledged.");
     },

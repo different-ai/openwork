@@ -17,7 +17,9 @@ async function ownedRequest(
     redirect: "error",
     headers: { "x-openwork-host-token": owner.hostToken, "content-type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    // Provider configuration may cold-start/reload both managed engines.
+    // Match the existing provider seed's bound without extending journey assertions.
+    signal: AbortSignal.timeout(path === "/runtime-config/providers" ? 120_000 : 30_000),
   });
   if (!response.ok) throw new Error(`Owned app-web workspace provisioning failed: HTTP ${response.status}`);
   return response.json();
