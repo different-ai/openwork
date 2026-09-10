@@ -350,14 +350,20 @@ test("visitors can explore the sovereign AI homepage without losing comparison o
     evidence.recordAssertionEvidence(`Homepage copy, links, and responsive layout at ${width}px`, JSON.stringify(facts), true);
   }
 
-  await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Outreach Creation$/, nth: 1 }, { mustHitTest: true })).center);
-  const outreach = await eventually(() => evaluateOnSurface(browser, () => document.getElementById("product")?.innerText), {
+  const outreach = await eventually(async () => {
+    await freezeMotion(browser);
+    await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Outreach Creation$/, nth: 1 }, { mustHitTest: true, timeoutMs: 5_000 })).center);
+    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText);
+  }, {
     within: 10_000, until: (text) => typeof text === "string" && text.includes("I've drafted the follow-up email"),
   });
   expect(outreach).not.toContain("I analyzed the spreadsheet");
   evidence.recordAssertionEvidence("Visitors can change the app demo to outreach", outreach, true);
-  await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Data Analysis$/, nth: 1 }, { mustHitTest: true })).center);
-  const analysis = await eventually(() => evaluateOnSurface(browser, () => document.getElementById("product")?.innerText), {
+  const analysis = await eventually(async () => {
+    await freezeMotion(browser);
+    await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Data Analysis$/, nth: 1 }, { mustHitTest: true, timeoutMs: 5_000 })).center);
+    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText);
+  }, {
     within: 10_000, until: (text) => typeof text === "string" && text.includes("I analyzed the spreadsheet"),
   });
   expect(analysis).not.toContain("I've drafted the follow-up email");
