@@ -53,6 +53,7 @@ import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
+import { ProgressiveMessageList, type MessageListViewport } from "@/components/chat/progressive-message-list"
 import {
   DescriptiveButtonContent,
   DescriptiveButtonDescription,
@@ -1449,6 +1450,7 @@ interface MessageListProps {
   activityStatus: SessionActivityStatus
   retryStatus?: RetryStatus | null
   syncHealth?: RunSyncHealth
+  viewport?: MessageListViewport
 }
 
 export function shouldShowMessageListLoading(
@@ -1465,7 +1467,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, status, activityStatus, retryStatus, syncHealth }: MessageListProps) {
+export function MessageList({ messages, status, activityStatus, retryStatus, syncHealth, viewport }: MessageListProps) {
   const { workspaceId, sessionId } = useMessageList()
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
@@ -1553,10 +1555,14 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}
     >
-      <div className={cn("flex flex-col gap-2 @container/message-list")}>
-        {messages.length === 0 && <TaskSuggestions className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-3 md:px-5 md:pb-5 grow" />}
-
-        {items.map((item) => {
+      <ProgressiveMessageList
+        groups={items}
+        viewport={viewport}
+        className="@container/message-list"
+        getGroupKey={(item) => isMessageGroup(item) ? item.messages[0]?.message.id ?? "empty-assistant-group" : item.message.id}
+        getMessageIds={(item) => isMessageGroup(item) ? item.messages.flatMap(({ message }) => [message.id, `${message.id}:steps`]) : [item.message.id]}
+        header={messages.length === 0 && <TaskSuggestions className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-3 md:px-5 md:pb-5 grow" />}
+        renderGroup={(item) => {
         if (isMessageGroup(item)) {
           return (
             <MemoizedMessageGroup
@@ -1581,13 +1587,13 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
             isLastStep={isLastStep}
           />
         )
-        })}
-
+        }}
+      >
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
-      </div>
+      </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
     </ParentRunActiveContext.Provider>
   )

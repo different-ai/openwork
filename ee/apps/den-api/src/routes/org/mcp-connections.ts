@@ -36,7 +36,7 @@ import {
   resolveMemberTeamsMiddleware,
   verifyOrgRole,
 } from "../../middleware/index.js"
-import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, okSchema, unauthorizedSchema } from "../../openapi.js"
 import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import { matchesLegacyExternalMcpOAuthStateIdentityBinding } from "../../capability-sources/external-mcp-oauth-state-identity.js"
 import {
@@ -433,7 +433,7 @@ const connectionResponseSchema = z.object({
   /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: z.boolean(),
   connected: z.boolean(),
-  connectedAt: z.string().nullable(),
+  connectedAt: z.string().datetime().nullable(),
   /** Safe creator display label for admin/manageable rows. */
   createdByName: z.string().nullable().optional(),
   updatedAt: z.string().datetime().optional(),
@@ -1927,6 +1927,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/oauth/client-metadata.json",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "OpenWork external MCP OAuth client metadata",
       description: "Public client metadata document for URL-based OAuth client registration. It contains no deployment secrets.",
       responses: {
@@ -2217,6 +2218,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Get the tool policy for an External MCP Connection",
+      description: "Returns the admin-managed tool policy for one connection: whether every tool is disabled, the individual tool names that are disabled, and who last changed it. Disabled tools are hidden from capability search and Code Mode and refused when called. Workspace owners and admins only.",
       responses: {
         200: jsonResponse("External MCP tool policy.", connectionToolPolicyResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2245,6 +2247,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Update the tool policy for an External MCP Connection",
+      description: "Replaces the connection's tool policy with the full desired state: allDisabled plus the complete list of disabled tool names (duplicates are collapsed). The policy takes effect immediately for capability search, Code Mode, and tool execution and records the calling admin as its author.",
       responses: {
         200: jsonResponse("External MCP tool policy updated.", connectionToolPolicyResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2910,8 +2913,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Remove an External MCP Connection",
+      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.",
       responses: {
-        200: emptyResponse("Removed."),
+        200: jsonResponse("The connection was removed.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners, super-admins, or the connection creator can remove MCP connections.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
@@ -2948,7 +2952,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       summary: "Disconnect (clear credentials for) an External MCP Connection without removing it",
       description: "Admin-only. Signs out every shared or per-member account stored for this connection, while preserving the connection row, access grants, OAuth client configuration, and plugin bindings.",
       responses: {
-        200: emptyResponse("Disconnected."),
+        200: jsonResponse("Every stored account for the connection was signed out.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can disconnect MCP connections.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
@@ -2978,7 +2982,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       summary: "Disconnect the calling member's account for a per-member External MCP Connection",
       description: "Removes only the caller's connected account for this MCP connection. The org-level connection, access grants, OAuth client configuration, and other members' accounts are preserved.",
       responses: {
-        200: emptyResponse("Disconnected."),
+        200: jsonResponse("The caller's connected account was removed.", okSchema),
         400: jsonResponse("This connection does not use per-member credentials.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         404: jsonResponse("Unknown connection or nothing was connected.", connectionNotFoundSchema),
@@ -3308,6 +3312,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/v1/mcp-connections/oauth/callback",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Shared OAuth callback for External MCP Connections",
       description: "Deployment-wide callback. Organization, member, and connection routing are derived exclusively from signed state.",
       responses: {
@@ -3373,6 +3378,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/v1/mcp-connections/:connectionId/connect/callback",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "OAuth callback for an External MCP Connection",
       description: "The external MCP server redirects here with code+state after the admin consents. Serves a small static HTML page — the admin's Den tab in the background polls connection status and never needs this response body.",
       responses: {

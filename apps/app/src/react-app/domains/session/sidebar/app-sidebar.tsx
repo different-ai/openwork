@@ -113,6 +113,7 @@ import {
 import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
   MAX_SESSIONS_PREVIEW,
+  buildGlobalArchivedSessions,
   flattenSessionRows,
   formatSessionRelativeTime,
   getRootSessions,
@@ -122,8 +123,9 @@ import {
   partitionArchivedSessions,
   workspaceKindLabel,
   workspaceLabel,
+  workspaceConversationCount,
 } from "./utils";
-import type { FlattenedSessionRow, SessionListItem } from "./utils";
+import type { FlattenedSessionRow, GlobalArchivedSessionEntry, SessionListItem } from "./utils";
 import {
   useSessionManagementStore,
   usePinnedSessionIds,
@@ -144,7 +146,7 @@ import {
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
-import { useNewTaskDraftState } from "../sync/draft-store";
+import { useNewTaskDraftState, useSessionDraftState } from "../sync/draft-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
 
@@ -937,15 +939,10 @@ export function AppSidebar(props: AppSidebarProps) {
       return entry ? [entry] : [];
     });
   }, [pinnedIds, props.workspaceSessionGroups]);
-  const archivedSessions = React.useMemo(() => {
-    const entries: GlobalArchivedSessionEntry[] = [];
-    for (const group of props.workspaceSessionGroups) {
-      for (const session of partitionArchivedSessions(group.sessions).archived) {
-        entries.push({ group, session });
-      }
-    }
-    return entries;
-  }, [props.workspaceSessionGroups]);
+  const archivedSessions = React.useMemo(
+    () => buildGlobalArchivedSessions(props.workspaceSessionGroups),
+    [props.workspaceSessionGroups],
+  );
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -966,8 +963,8 @@ export function AppSidebar(props: AppSidebarProps) {
             />
           </div>
         ) : (
-          <div data-sidebar-brand className="flex h-11 shrink-0 items-center gap-2 px-4 mac:titlebar-drag">
-            <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-5 shrink-0 object-contain dark:invert" />
+          <div data-sidebar-brand className="flex h-11 shrink-0 items-center gap-1.5 px-4 mac:titlebar-drag">
+            <img src={resolveExtensionIconSrc("/openwork-sidebar-mark.svg")} alt="" className="size-5 shrink-0 object-contain dark:invert" />
             <span className="truncate text-[15px] font-medium tracking-[-0.4px]" title={brandAppName}>{brandAppName}</span>
           </div>
         )}
@@ -1171,11 +1168,6 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
   );
 }
 
-type GlobalArchivedSessionEntry = {
-  group: WorkspaceSessionGroup;
-  session: SessionListItem;
-};
-
 function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEntry[] }) {
   const [expanded, setExpanded] = React.useState(false);
 
@@ -1294,6 +1286,7 @@ function WorkspaceReorderItem({
 
 type WorkspaceHeaderProps = {
   workspace: WorkspaceInfo;
+  conversationCount: number | undefined;
   statusLabel: string;
   isError: boolean;
   isLoading: boolean;
@@ -1302,6 +1295,7 @@ type WorkspaceHeaderProps = {
 
 function WorkspaceHeader({
   workspace,
+  conversationCount,
   statusLabel,
   isError,
   isLoading,
@@ -1309,6 +1303,7 @@ function WorkspaceHeader({
 }: WorkspaceHeaderProps) {
   const ctx = useSidebarContext();
   const label = workspaceLabel(workspace);
+  const countDescription = conversationCount === undefined ? undefined : t("workspace_list.conversation_count", { count: conversationCount });
   // Same reveal pattern as task rows: the name fades only where text is
   // hidden and scrolls into view on mouse hover or keyboard focus.
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
@@ -1343,6 +1338,7 @@ function WorkspaceHeader({
         // text, which put the fade on the last letters of every name.
         className="min-w-0 flex h-full flex-1 cursor-grab touch-none flex-col items-stretch justify-center border-0 bg-transparent p-0 text-left text-inherit active:cursor-grabbing pr-8 group-hover/workspace-header:pr-20 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-20 group-has-data-popup-open/workspace-header:pr-20"
         aria-label={statusLabel ? `${label}, ${statusLabel}` : label}
+        aria-description={countDescription}
         onPointerDown={onTitlePointerDown}
         onPointerEnter={(event) => {
           if (event.pointerType === "mouse") setIsTitleHovered(true);
@@ -1352,8 +1348,13 @@ function WorkspaceHeader({
         onBlur={() => setIsTitleFocused(false)}
         onClick={handleSelectWorkspace}
       >
-        <span className="flex min-w-0 items-center">
+        <span className="flex min-w-0 items-center gap-2">
           <SessionTitle intent={titleIntent} title={label} tooltip={label} />
+          {conversationCount !== undefined ? (
+            <span data-testid={`workspace-conversation-count-${workspace.id}`} aria-hidden="true" title={countDescription} className="shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground/70">
+              {conversationCount}
+            </span>
+          ) : null}
         </span>
         {statusLabel ? (
           <span className={cn("block text-xs", isError ? "text-destructive" : "text-muted-foreground")}>
@@ -1457,6 +1458,7 @@ function WorkspaceSidebarGroup({
             <div className="group/workspace-header relative max-md:hidden">
               <WorkspaceHeader
                 workspace={workspace}
+                conversationCount={isConnectionActionBusy || connectionState.status === "error" ? undefined : workspaceConversationCount(group)}
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
                 isLoading={isConnecting}
@@ -2132,6 +2134,9 @@ function SessionMenuItem({
   workspaceName,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
+  const { snapshot } = useSessionDraftState(ctx.newTaskDraftScope, workspaceId, session.id);
+  const hasDraft = Boolean(snapshot?.text.trim());
+  const draftLabel = t("workspace_list.new_task_draft");
   const attachedAsSideChat = useWorkbenchStore((state) => Object.values(state.sideChats).some((chat) =>
     isSameWorkbenchSession(chat, { workspaceId, sessionId: session.id })));
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
@@ -2246,7 +2251,7 @@ function SessionMenuItem({
               setIsTitleFocused(true);
             }}
             onBlur={() => setIsTitleFocused(false)}
-            aria-label={accessibleState}
+            aria-label={hasDraft ? `${accessibleState}, ${draftLabel}` : accessibleState}
             aria-description={shortcutDigit === undefined ? undefined : sessionNumberShortcutDescription(ctx.sessionNumberShortcutOs, shortcutDigit)}
             aria-keyshortcuts={ariaKeyShortcuts}
             className={cn(rowButtonClass, "w-full text-start")}
@@ -2254,6 +2259,11 @@ function SessionMenuItem({
           >
             {leading}
             <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
+            {hasDraft ? (
+              <span data-testid={`sidebar-session-draft-${session.id}`} className="shrink-0 text-xs text-muted-foreground">
+                {draftLabel}
+              </span>
+            ) : null}
             <SessionNumberShortcutSlot digit={shortcutDigit} />
           </SidebarMenuSubButton>
           {trailing}

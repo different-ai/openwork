@@ -1233,6 +1233,7 @@ describe("marketplace capabilities source", () => {
 
     for (const connectionId of [directConnectionId, validConnectionId]) {
       const result = await externalCapabilities.executeExternalCapability({
+        scopes: new Set(["mcp:read"]),
         organizationId: owner.organizationId,
         member: owner.member,
         connectionId,
@@ -1247,6 +1248,7 @@ describe("marketplace capabilities source", () => {
 
     for (const connectionId of [staleConnectionId, orphanConnectionId]) {
       const result = await externalCapabilities.executeExternalCapability({
+        scopes: new Set(["mcp:read"]),
         organizationId: owner.organizationId,
         member: owner.member,
         connectionId,
@@ -1313,6 +1315,7 @@ describe("marketplace capabilities source", () => {
       return (await listUsableExternalMcpConnections({ organizationId: owner.organizationId, orgMembershipId: owner.memberId, teamIds: [] })).map((connection) => connection.id)
     }
     const execute = (connectionId: DenTypeId<"externalMcpConnection">) => externalCapabilities.executeExternalCapability({
+      scopes: new Set(["mcp:read"]),
       organizationId: owner.organizationId,
       member: owner.member,
       connectionId,
@@ -1383,6 +1386,7 @@ describe("marketplace capabilities source", () => {
     expectYourConnectionsUrl(matches[0]?.connectionStatus?.action.url, connectionId)
 
     const executeResult = await externalCapabilities.executeExternalCapability({
+      scopes: new Set(["mcp:read"]),
       organizationId: owner.organizationId,
       member: owner.member,
       connectionId,

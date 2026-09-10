@@ -80,6 +80,8 @@ try {
     // Only the enterprise flavor has an activation gate that must hold the updater back.
     if (flavor === "enterprise") {
       bootPackagedDesktop("desktop-updater-gate-enterprise", "packaged-preactivation-updater", flavorBinary, 300_000);
+      // ...and must make no request outside loopback until a workspace address is submitted.
+      bootPackagedDesktop("desktop-egress-gate-enterprise", "packaged-preactivation-egress", flavorBinary, 300_000);
     }
   }
   // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).

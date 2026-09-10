@@ -477,6 +477,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/install-config",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       summary: "Resolve install-link configuration",
       description: "Returns organization setup details and a fresh desktop connection handoff for a valid install link token.",
       responses: {
@@ -529,6 +530,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/install-connect/status",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       summary: "Inspect desktop connection status",
       description: "Reports whether a short-lived organization connection code is still pending or has been accepted by a desktop.",
       responses: {
@@ -569,6 +571,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       `/v1/install-connect/${mode}`,
       describeRoute({
         tags: ["Organizations"],
+        security: [],
         summary: mode === "preview" ? "Preview desktop connection" : "Accept desktop connection",
         description: mode === "preview"
           ? "Resolves a short-lived organization connection code without consuming it."
@@ -613,6 +616,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/install/:platform",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       summary: "Download managed OpenWork desktop",
       description: "Redirects hosted Cloud deployments to the sign-in-required Cloud app and private single-org deployments to the activation-required Enterprise app.",
       responses: {
