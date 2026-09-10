@@ -123,6 +123,7 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.see({ role: "option", label: /^Agent access diagnostics/ });
     await user.see({ role: "option", label: /^OpenCode config sources/ });
     await user.see({ role: "option", label: /^Experimental engine/ });
+    await user.see({ role: "option", label: /^Workspace run mode/ });
     await user.see({ role: "option", label: /^Developer/ });
     await user.screenshot();
     await user.type(paletteInput, "Disable Developer Mode", { replace: true });
@@ -137,6 +138,7 @@ test("command palette searches settings by alias, navigates, records recents, an
     { query: "cloud mcp", title: "Agent access diagnostics", id: "agent-access" },
     { query: "config sources", title: "OpenCode config sources", id: "config-sources" },
     { query: "chat engine", title: "Experimental engine", id: "experimental-engine" },
+    { query: "keep going", title: "Workspace run mode", id: "workspace-run-mode" },
     { query: "deep link", title: "Developer", id: "developer" },
   ]) {
     await step(`Command+K jumps directly to ${section.title}`, async () => {
