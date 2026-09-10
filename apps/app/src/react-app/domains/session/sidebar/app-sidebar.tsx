@@ -30,7 +30,7 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
+import { LazyMotion, MotionContext, Reorder, domMax, m, useDragControls } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -166,6 +166,28 @@ function SidebarReorderScope({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Rendered inside the scrolling sidebar list. Motion projects every row at its
+ * previous position for at least one frame before a layout animation starts,
+ * even with a zero duration, so rows below an expanding workspace or group
+ * briefly overlap the newly revealed ones. Blocking the list's projection tree
+ * skips those animations entirely, the same way Motion blocks the row being
+ * dragged; a reorder gesture lifts the block so siblings still glide aside.
+ */
+function SidebarLayoutAnimationGate() {
+  const reorder = React.useContext(SidebarReorderContext);
+  const { visualElement } = React.useContext(MotionContext);
+  if (!reorder) throw new Error("SidebarLayoutAnimationGate requires SidebarReorderScope");
+
+  React.useLayoutEffect(() => {
+    const projection: unknown = visualElement?.projection;
+    if (typeof projection !== "object" || projection === null) return;
+    Object.assign(projection, { isAnimationBlocked: !reorder.isReordering });
+  }, [visualElement, reorder.isReordering]);
+
+  return null;
+}
+
 function SidebarReorderItem(props: React.ComponentProps<typeof Reorder.Item>) {
   const reorder = React.useContext(SidebarReorderContext);
   const ownsGesture = React.useRef(false);
@@ -179,11 +201,11 @@ function SidebarReorderItem(props: React.ComponentProps<typeof Reorder.Item>) {
   return (
     <Reorder.Item
       {...props}
+      // Reorder's drag prop measures layout on every update regardless of
+      // layoutDependency; SidebarLayoutAnimationGate decides whether the
+      // measured shift animates.
       layout="position"
       dragElastic={0}
-      // Reorder's drag prop bypasses layoutDependency. Keep measuring every
-      // update, but only animate layout shifts during an actual reorder gesture.
-      transition={reorder.isReordering ? undefined : { layout: { duration: 0 } }}
       onDragStart={() => {
         ownsGesture.current = true;
         reorder.setIsReordering(true);
@@ -1077,6 +1099,7 @@ export function AppSidebar(props: AppSidebarProps) {
             data-session-number-modifier-held={props.sessionNumberShortcuts.modifierHeld ? "true" : undefined}
             className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto [overflow-anchor:none] [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
           >
+            <SidebarLayoutAnimationGate />
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
