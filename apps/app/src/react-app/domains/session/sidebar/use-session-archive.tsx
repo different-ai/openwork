@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
-import type { RouteSession, RouteWorkspace } from "@/react-app/shell/route-workspaces";
+import { workspaceLabel, type RouteSession, type RouteWorkspace } from "@/react-app/shell/route-workspaces";
 import { readLastSessionFor, writeLastSessionFor } from "@/react-app/shell/session-memory";
 import { workspaceSessionRoute } from "@/react-app/shell/workspace-routes";
 import { useWorkbenchStore } from "../chat/workbench-store";
@@ -285,11 +285,27 @@ export function useSessionArchive(input: {
     archiveSession,
     archiveDialog: (
       <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(false); }}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("session_management.archive_working_title")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("session_management.archive_working_description")}
+            <AlertDialogTitle className="min-w-0 max-w-full [overflow-wrap:anywhere]">
+              {target ? t("session_management.archive_working_title", { title: target.title }) : null}
+            </AlertDialogTitle>
+            <AlertDialogDescription render={<div />} className="space-y-4">
+              <p>{t("session_management.archive_working_description")}</p>
+              {target ? (
+                <dl className="min-w-0 space-y-2 text-xs text-muted-foreground">
+                  <div>
+                    <dt>{t("session_management.archive_workspace")}</dt>
+                    <dd className="select-text [overflow-wrap:anywhere]">
+                      {workspaceLabel({ ...target.workspace, path: target.workspace.path.split(/[\\/]/).filter(Boolean).pop() ?? "" })}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{t("session_management.archive_session_id")}</dt>
+                    <dd className="select-text font-mono [overflow-wrap:anywhere]">{target.sessionId}</dd>
+                  </div>
+                </dl>
+              ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
