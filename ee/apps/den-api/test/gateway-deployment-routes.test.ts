@@ -9,6 +9,10 @@ import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-p
 let storageCalls = 0
 const storageReached = () => { storageCalls++; throw new Error("fixture_storage_reached") }
 mock.module("../src/db.js", () => ({ db: { select: storageReached, transaction: storageReached } }))
+// This suite isolates deployment admission, not cookie authentication. Keep
+// Better Auth's startup seeding away from the deliberately throwing DB sentinel;
+// inference-provider-oauth.test.ts covers the real signed-cookie boundary.
+mock.module("../src/session.js", () => ({ readSignedSessionCookieToken: async () => null }))
 
 process.env.DATABASE_URL = "mysql://fixture:fixture@127.0.0.1:3306/not_connected"
 process.env.DEN_DB_ENCRYPTION_KEY = "fixture-encryption-key-not-a-secret-32"
@@ -38,6 +42,7 @@ const memberRoute: MiddlewareHandler = async (c, next) => {
 mock.module("../src/middleware/index.js", () => ({
   ...validation,
   orgMemberRoute: () => memberRoute,
+  userSessionRoute: () => memberRoute,
   publicRoute: async (_c: unknown, next: () => Promise<void>) => next(),
 }))
 
@@ -148,11 +153,12 @@ test("management still requires authentication before the deployment gate", asyn
   expect(storageCalls).toBe(0)
 })
 
-test("public OAuth callback remains reachable without management enablement or a member session", async () => {
+test("OAuth callback requires browser sign-in even without management enablement", async () => {
   authenticated = false
   const response = await app.request("/v1/inference-providers/oauth/callback?error=access_denied")
   expect(response.status).toBe(400)
   expect(response.headers.get("content-type")).toContain("text/html")
+  expect(await response.text()).toContain("Sign in to Den in this browser")
   expect(storageCalls).toBe(0)
 })
 

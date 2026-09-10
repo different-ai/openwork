@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
-import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { AuthSessionTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_CREDENTIAL_STATUSES, GATEWAY_PROVIDER_STATUSES, type GatewayAccessGrantWrite, type GatewayProviderConnectResponse, type GatewayProviderSummary } from "@openwork/types/den/gateway"
 import type { Hono, MiddlewareHandler } from "hono"
@@ -19,8 +19,9 @@ import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeam
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
 import { getModelsDevProvider } from "../../llm/models-dev.js"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
-import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { readSignedSessionCookieToken } from "../../session.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
@@ -493,7 +494,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin Google sign-in for a member inference credential", z.object({ authUrl: z.string() })), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin Google sign-in for a member inference credential", z.object({ authUrl: z.string() })), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
@@ -522,9 +523,20 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (redirectTo) { const url = new URL(redirectTo); url.searchParams.set("error", message); return c.redirect(url.toString(), 302) }
       return c.html(connectCallbackPage({ ok: false, name: "Google", message, referenceId: requestId }), 400)
     }
+    // State is transferable, not browser authentication. Desktop may start with a
+    // bearer session, but the browser must independently sign in as the same user.
+    // Read the live session row so a revoked/expired cookie cannot use cached auth.
+    const cookieToken = await readSignedSessionCookieToken(c)
+    const [browserSession] = cookieToken ? await db.select({ userId: AuthSessionTable.userId }).from(AuthSessionTable)
+      .where(and(eq(AuthSessionTable.token, cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
+    const signInMessage = "Sign in to Den in this browser with the same OpenWork account that started Connect, then start Connect again."
+    if (!browserSession) return fail(signInMessage)
     if (!query.state) return fail("Missing state.")
     const [state] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, query.state)).limit(1)
-    if (!state || state.used_at || state.expires_at.getTime() <= Date.now()) return fail("This sign-in link has expired or was already used. Start Connect again.")
+    if (!state) return fail("This sign-in link has expired or was already used. Start Connect again.")
+    const [initiator] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(eq(MemberTable.id, state.org_membership_id)).limit(1)
+    if (!initiator?.userId || initiator.userId !== browserSession.userId) return fail(signInMessage)
+    if (state.used_at || state.expires_at.getTime() <= Date.now()) return fail("This sign-in link has expired or was already used. Start Connect again.")
     const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, state.gateway_provider_id))
     const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, state.credential_set_id))
     if (!provider || !set?.oauth_client_id || !set.oauth_client_secret) return fail("This credential set is no longer available.")

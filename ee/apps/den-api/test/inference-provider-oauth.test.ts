@@ -56,8 +56,13 @@ function request(cookie: string, path: string, init: RequestInit = {}) {
   return app.fetch(new Request(`${API_ORIGIN}${path}`, { ...init, headers, redirect: "manual" }))
 }
 
-function publicRequest(path: string) {
-  return app.fetch(new Request(`${API_ORIGIN}${path}`, { redirect: "manual" }))
+function publicRequest(path: string, headers?: HeadersInit) {
+  return app.fetch(new Request(`${API_ORIGIN}${path}`, { headers, redirect: "manual" }))
+}
+
+function browserRequest(path: string, cookie = memberCookie) {
+  // A top-level callback navigation carries cookies, not Desktop's bearer or Origin.
+  return publicRequest(path, { cookie })
 }
 
 const vertexCatalog = {
@@ -206,6 +211,7 @@ afterAll(async () => {
   await db.delete(schema.GatewayKeyTable).where(drizzle.eq(schema.GatewayKeyTable.organization_id, organizationId))
   await db.delete(schema.InferenceKeyTable).where(drizzle.eq(schema.InferenceKeyTable.organization_id, organizationId))
   await db.delete(schema.AuthSessionTable).where(drizzle.inArray(schema.AuthSessionTable.id, [ownerSessionId, memberSessionId]))
+  await db.delete(schema.AuthApiKeyTable).where(drizzle.inArray(schema.AuthApiKeyTable.referenceId, [ownerUserId, memberUserId]))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
@@ -401,7 +407,7 @@ test("callback exchanges the code, stores the encrypted member token, marks the 
   await withFakeGoogle(
     () => Response.json({ access_token: "ya29.access", refresh_token: "1//refresh", token_type: "Bearer", expires_in: 3600, scope: "https://www.googleapis.com/auth/cloud-platform" }),
     async (calls) => {
-      const callback = await publicRequest(`/v1/inference-providers/oauth/callback?code=4/auth-code&state=${encodeURIComponent(state)}`)
+      const callback = await browserRequest(`/v1/inference-providers/oauth/callback?code=4/auth-code&state=${encodeURIComponent(state)}`)
       expect(callback.status).toBe(200)
       const html = await callback.text()
       expect(html).toContain("You're connected")
@@ -450,7 +456,7 @@ test("callback exchanges the code, stores the encrypted member token, marks the 
   await withFakeGoogle(
     () => { throw new Error("must not exchange") },
     async (calls) => {
-      const replay = await publicRequest(`/v1/inference-providers/oauth/callback?code=4/again&state=${encodeURIComponent(state)}`)
+      const replay = await browserRequest(`/v1/inference-providers/oauth/callback?code=4/again&state=${encodeURIComponent(state)}`)
       expect(replay.status).toBe(400)
       expect(await replay.text()).toContain("already used")
       expect(calls).toHaveLength(0)
@@ -459,11 +465,11 @@ test("callback exchanges the code, stores the encrypted member token, marks the 
 })
 
 test("callback rejects expired and unknown state, and redirects failures with error= when redirectTo was given", async () => {
-  const unknown = await publicRequest("/v1/inference-providers/oauth/callback?code=x&state=not-a-state")
+  const unknown = await browserRequest("/v1/inference-providers/oauth/callback?code=x&state=not-a-state")
   expect(unknown.status).toBe(400)
   expect(await unknown.text()).toContain("expired or was already used")
 
-  const missing = await publicRequest("/v1/inference-providers/oauth/callback?code=x")
+  const missing = await browserRequest("/v1/inference-providers/oauth/callback?code=x")
   expect(missing.status).toBe(400)
 
   const startResponse = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start?redirectTo=${encodeURIComponent("openwork://inference/connected?provider=1")}`)
@@ -472,13 +478,13 @@ test("callback rejects expired and unknown state, and redirects failures with er
     .update(schema.GatewayProviderOauthStateTable)
     .set({ expires_at: new Date(Date.now() - 1000) })
     .where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, state))
-  const expired = await publicRequest(`/v1/inference-providers/oauth/callback?code=x&state=${encodeURIComponent(state)}`)
+  const expired = await browserRequest(`/v1/inference-providers/oauth/callback?code=x&state=${encodeURIComponent(state)}`)
   expect(expired.status).toBe(400)
   expect((await loadState(state))?.used_at).toBeNull()
 
   const deniedStart = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start?redirectTo=${encodeURIComponent("openwork://inference/connected?provider=1")}`)
   const deniedState = new URL(deniedStart.headers.get("location") ?? "").searchParams.get("state") ?? ""
-  const denied = await publicRequest(`/v1/inference-providers/oauth/callback?error=access_denied&state=${encodeURIComponent(deniedState)}`)
+  const denied = await browserRequest(`/v1/inference-providers/oauth/callback?error=access_denied&state=${encodeURIComponent(deniedState)}`)
   expect(denied.status).toBe(302)
   const deniedLocation = new URL(denied.headers.get("location") ?? "")
   expect(`${deniedLocation.protocol}//${deniedLocation.host}${deniedLocation.pathname}`).toBe("openwork://inference/connected")
@@ -491,7 +497,7 @@ test("callback rejects expired and unknown state, and redirects failures with er
   await withFakeGoogle(
     () => Response.json({ error: "invalid_grant", error_description: "Bad code FAKE_TOKEN_MUST_NOT_ECHO" }, { status: 400 }),
     async () => {
-      const failed = await publicRequest(`/v1/inference-providers/oauth/callback?code=bad&state=${encodeURIComponent(failedState)}`)
+      const failed = await browserRequest(`/v1/inference-providers/oauth/callback?code=bad&state=${encodeURIComponent(failedState)}`)
       expect(failed.status).toBe(302)
       const location = new URL(failed.headers.get("location") ?? "")
       expect(location.searchParams.get("error")).toContain("OpenWork could not finish Google sign-in")
@@ -504,7 +510,7 @@ test("callback rejects expired and unknown state, and redirects failures with er
   await withFakeGoogle(
     () => Response.json({ access_token: "ya29.second", expires_in: 3600 }),
     async () => {
-      const success = await publicRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${encodeURIComponent(successState)}`)
+      const success = await browserRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${encodeURIComponent(successState)}`)
       expect(success.status).toBe(302)
       expect(success.headers.get("location")).toBe("openwork://inference/connected")
     },
@@ -525,7 +531,7 @@ test.each([true, false])("DELETE oauth revokes the refresh token at Google with 
       async () => {
         const start = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
         const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
-        const callback = await publicRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${encodeURIComponent(state)}`)
+        const callback = await browserRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${encodeURIComponent(state)}`)
         expect(callback.status).toBe(200)
       },
     )
@@ -589,7 +595,7 @@ test("named member sets coexist with ready models and fence in-flight consent in
       expect(url.searchParams.get("client_id")).toBe(OAUTH_CLIENT_ID)
       const state = url.searchParams.get("state") ?? ""
       expect((await loadState(state))?.credential_set_id).toBe(firstSetId)
-      expect((await publicRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${state}`)).status).toBe(200)
+      expect((await browserRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${state}`)).status).toBe(200)
     },
   )
   const mixed = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
@@ -632,7 +638,7 @@ test("named member sets coexist with ready models and fence in-flight consent in
       return Response.json({ access_token: "ya29.stale-second", refresh_token: "stale-second-refresh", expires_in: 3600 })
     },
     async (calls) => {
-      const callback = await publicRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${pendingState}`)
+      const callback = await browserRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${pendingState}`)
       expect(callback.status).toBe(400)
       expect(calls.some((call) => call.url === GOOGLE_REVOKE_URL && call.body.get("token") === "stale-second-refresh")).toBe(true)
     },
@@ -649,7 +655,7 @@ test("named member sets coexist with ready models and fence in-flight consent in
   await withFakeGoogle(
     () => { throw new Error("Lost authorization must never exchange tokens") },
     async (calls) => {
-      expect((await publicRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${lostAccessState}`)).status).toBe(400)
+      expect((await browserRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${lostAccessState}`)).status).toBe(400)
       expect(calls).toHaveLength(0)
     },
   )
@@ -675,14 +681,14 @@ test("personal OAuth requires a current same-org member grant, never permits sha
     return state
   }
   const credentials = () => db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, id))
-  const callback = (state: string) => publicRequest(`/v1/inference-providers/oauth/callback?code=fake-code&state=${encodeURIComponent(state)}`)
+  const callback = (state: string, cookie = memberCookie) => browserRequest(`/v1/inference-providers/oauth/callback?code=fake-code&state=${encodeURIComponent(state)}`, cookie)
   // Ordinary self-service must not inherit the fresh-auth requirement for administration.
   await db.update(schema.AuthSessionTable).set({ createdAt: new Date(Date.now() - 60 * 60 * 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
   try {
     await withFakeGoogle(
       () => Response.json({ access_token: "fake-personal-access", refresh_token: "fake-personal-refresh", expires_in: 3600 }),
       async () => {
-        expect((await callback(await start(ownerCookie))).status).toBe(200)
+        expect((await callback(await start(ownerCookie), ownerCookie)).status).toBe(200)
         expect((await callback(await start(memberCookie))).status).toBe(200)
       },
     )
@@ -752,5 +758,161 @@ test("personal OAuth requires a current same-org member grant, never permits sha
     expect((await request(ownerCookie, `${base}/connect`)).status).toBe(200)
   } finally {
     await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+  }
+})
+
+test.each(["browser", "desktop"])("OAuth callback binds %s initiation to the independent browser user before consuming state or redirecting", async (mode) => {
+  const { auth } = await import("../src/auth.js")
+  const { buildOrganizationApiKeyMetadata } = await import("../src/api-keys.js")
+  const { createInternalMcpPrincipalHeader } = await import("../src/session.js")
+  const apiKey = await auth.api.createApiKey({ body: {
+    userId: memberUserId, name: "OAuth boundary fixture", rateLimitEnabled: false,
+    metadata: buildOrganizationApiKeyMetadata({ organizationId, orgMembershipId: memberId, issuedByUserId: memberUserId, issuedByOrgMembershipId: memberId }),
+  } })
+  const browserSessionId = createDenTypeId("session")
+  const browserToken = `ipo-browser-${browserSessionId}`
+  const secret = process.env.BETTER_AUTH_SECRET
+  if (!secret) throw new Error("BETTER_AUTH_SECRET is required")
+  // Desktop and browser do not share a session ID, or necessarily an active org.
+  await db.insert(schema.AuthSessionTable).values({ id: browserSessionId, userId: memberUserId, token: browserToken, activeOrganizationId: null, expiresAt: new Date(Date.now() + 300_000) })
+  const browserCookie = await serializeSignedCookie("openwork-den.session_token", browserToken, secret)
+  const base = `/v1/inference-providers/${inferenceProviderId}`
+  const startPath = `${base}/oauth/start?redirectTo=${encodeURIComponent("openwork://inference/connected")}`
+  const start = async () => {
+    const headers = new Headers({ accept: "application/json" })
+    headers.set(mode === "desktop" ? "authorization" : "cookie", mode === "desktop" ? `Bearer ${memberSessionToken}` : memberCookie)
+    const response = await publicRequest(startPath, headers)
+    expect(response.status).toBe(200)
+    const payload: unknown = await response.json()
+    if (!isRecord(payload)) throw new Error("OAuth start response missing")
+    const url = new URL(readString(payload, "authUrl"))
+    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth")
+    expect(url.href).not.toContain(memberSessionToken)
+    const state = url.searchParams.get("state")
+    if (!state) throw new Error("OAuth state missing")
+    return state
+  }
+  const credentials = () => db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, inferenceProviderId))
+  try {
+    // API keys and delegated principals are not initiating user sessions either.
+    const nonSessionHeaders: HeadersInit[] = [
+      { "x-api-key": apiKey.key },
+      { "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: memberUserId, organizationId }) },
+    ]
+    for (const headers of nonSessionHeaders) {
+      const statesBefore = await db.select().from(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.gateway_provider_id, inferenceProviderId))
+      expect((await publicRequest(startPath, headers)).status).toBe(403)
+      expect(await db.select().from(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.gateway_provider_id, inferenceProviderId))).toEqual(statesBefore)
+    }
+    for (const outcome of ["code=fake-browser-bound-code", "error=access_denied"]) {
+      const state = await start()
+      const path = `/v1/inference-providers/oauth/callback?${outcome}&state=${encodeURIComponent(state)}`
+      const stateBefore = await loadState(state)
+      expect(stateBefore?.used_at).toBeNull()
+      const credentialsBefore = await credentials()
+      await withFakeGoogle(() => { throw new Error("Unbound callbacks must not contact Google") }, async (calls) => {
+        const rejectedHeaders: HeadersInit[] = [
+          {},
+          { cookie: ownerCookie },
+          { authorization: `Bearer ${memberSessionToken}` },
+          { cookie: ownerCookie, authorization: `Bearer ${memberSessionToken}` },
+          { "x-api-key": apiKey.key },
+          { cookie: ownerCookie, "x-api-key": apiKey.key },
+          { cookie: `openwork-den.session_token=${memberSessionToken}` },
+          { "x-user-id": memberUserId, "x-den-internal-mcp-principal": `${memberUserId}.forged` },
+          { "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: memberUserId, organizationId }) },
+        ]
+        for (const headers of rejectedHeaders) {
+          const response = await publicRequest(path, headers)
+          expect(response.status).toBe(400)
+          expect(response.headers.get("location")).toBeNull()
+          expect(response.headers.get("set-cookie")).toBeNull()
+          expect(await response.text()).toContain("Sign in to Den in this browser")
+          expect(await loadState(state)).toEqual(stateBefore)
+          expect(await credentials()).toEqual(credentialsBefore)
+        }
+        expect(calls).toHaveLength(0)
+      })
+      // The failed attempts did not burn the legitimate user's state.
+      await withFakeGoogle(() => Response.json({ access_token: "fake-bound-access", refresh_token: "fake-bound-refresh", expires_in: 3600 }), async (calls) => {
+        const response = await browserRequest(path, browserCookie)
+        expect(response.status).toBe(302)
+        expect(response.headers.get("location")).toBe(outcome.startsWith("code=") ? "openwork://inference/connected" : "openwork://inference/connected?error=Google+access+was+denied.")
+        expect(calls).toHaveLength(outcome.startsWith("code=") ? 1 : 0)
+        expect((await loadState(state))?.used_at).not.toBeNull()
+      })
+      if (outcome.startsWith("error=")) expect(await credentials()).toEqual(credentialsBefore)
+      else {
+        const credential = await loadMemberCredential()
+        expect(credential?.status).toBe("active")
+        expect(JSON.parse(credential?.secret ?? "{}")).toEqual({ accessToken: "fake-bound-access", refreshToken: "fake-bound-refresh" })
+      }
+      expect((await credentials()).filter((row) => row.org_membership_id !== memberId)).toEqual(credentialsBefore.filter((row) => row.org_membership_id !== memberId))
+    }
+    // Correct-user disconnect still revokes only their credential and pending states.
+    const pending = await start()
+    const otherCredentials = (await credentials()).filter((row) => row.org_membership_id !== memberId)
+    await withFakeGoogle(() => new Response(null, { status: 200 }), async (calls) => {
+      expect((await request(memberCookie, `${base}/oauth`, { method: "DELETE" })).status).toBe(204)
+      expect(calls).toHaveLength(1)
+      expect(calls[0]?.url).toBe(GOOGLE_REVOKE_URL)
+      expect(calls[0]?.body.get("token")).toBe("fake-bound-refresh")
+    })
+    expect(await loadState(pending)).toBeNull()
+    expect((await loadMemberCredential())?.status).toBe("revoked")
+    const afterDisconnect = await credentials()
+    expect(afterDisconnect.filter((row) => row.org_membership_id !== memberId)).toEqual(otherCredentials)
+    await withFakeGoogle(() => { throw new Error("Revoked state must not contact Google") }, async (calls) => {
+      for (const cookie of ["", ownerCookie, browserCookie]) {
+        for (const outcome of ["code=fake-code", "error=access_denied"]) {
+          const response = await browserRequest(`/v1/inference-providers/oauth/callback?${outcome}&state=${pending}`, cookie)
+          expect(response.status).toBe(400)
+          expect(response.headers.get("location")).toBeNull()
+        }
+      }
+      expect(calls).toHaveLength(0)
+    })
+    expect(await credentials()).toEqual(afterDisconnect)
+  } finally {
+    await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, browserSessionId))
+    await db.delete(schema.AuthApiKeyTable).where(drizzle.eq(schema.AuthApiKeyTable.referenceId, memberUserId))
+  }
+})
+
+test.each(["expired", "revoked"])("OAuth callback rejects a %s signed browser session without changing state or credentials", async (invalidity) => {
+  const sessionId = createDenTypeId("session")
+  const token = `ipo-invalid-browser-${sessionId}`
+  const secret = process.env.BETTER_AUTH_SECRET
+  if (!secret) throw new Error("BETTER_AUTH_SECRET is required")
+  await db.insert(schema.AuthSessionTable).values({ id: sessionId, userId: memberUserId, token, expiresAt: new Date(Date.now() + 300_000) })
+  const cookie = await serializeSignedCookie("openwork-den.session_token", token, secret)
+  try {
+    // Resolve the session first so a cached principal cannot mask DB revocation.
+    await browserRequest("/v1/inference-providers/oauth/callback?error=access_denied", cookie)
+    if (invalidity === "expired") await db.update(schema.AuthSessionTable).set({ expiresAt: new Date(Date.now() - 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, sessionId))
+    else await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, sessionId))
+    const start = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start?redirectTo=${encodeURIComponent("openwork://inference/connected")}`)
+    expect(start.status).toBe(302)
+    const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+    const before = await loadState(state)
+    expect(before?.used_at).toBeNull()
+    const credentialBefore = await loadMemberCredential()
+    await withFakeGoogle(() => { throw new Error("Invalid sessions must not contact Google") }, async (calls) => {
+      for (const outcome of ["code=fake-code", "error=access_denied"]) {
+        const response = await browserRequest(`/v1/inference-providers/oauth/callback?${outcome}&state=${state}`, cookie)
+        expect(response.status).toBe(400)
+        expect(response.headers.get("location")).toBeNull()
+        expect(await response.text()).toContain("Sign in to Den in this browser")
+      }
+      expect(calls).toHaveLength(0)
+    })
+    expect(await loadState(state)).toEqual(before)
+    expect(await loadMemberCredential()).toEqual(credentialBefore)
+    const denied = await browserRequest(`/v1/inference-providers/oauth/callback?error=access_denied&state=${state}`)
+    expect(denied.status).toBe(302)
+    expect((await loadState(state))?.used_at).not.toBeNull()
+    expect(await loadMemberCredential()).toEqual(credentialBefore)
+  } finally {
+    await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, sessionId))
   }
 })
