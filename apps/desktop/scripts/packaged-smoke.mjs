@@ -78,6 +78,8 @@ try {
     accessSync(flavorBinary, constants.X_OK);
     bootPackagedDesktop(`desktop-boot-${flavor}`, "packaged-first-launch", flavorBinary, 150_000);
   }
+  // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).
+  bootPackagedDesktop("desktop-boot-enterprise-activated", "packaged-activated-launch", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 150_000);
   report.passed = true;
 } finally {
   report.totalMilliseconds = Math.round(performance.now() - started);

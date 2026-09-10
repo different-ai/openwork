@@ -8,6 +8,7 @@ const definitions = {
   'app-smoke.e2e.test.ts': { name: 'Open a working desktop', critical: true },
   // Boots the packaged cloud and enterprise artifacts; only packaged-smoke provides those binaries.
   'packaged-first-launch.e2e.test.ts': { name: 'Open a fresh cloud or enterprise install', placement: 'local' },
+  'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local' },
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
   'desktop-policy-restricted-mode.e2e.test.ts': { name: 'Apply organization and team permissions', critical: true },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
