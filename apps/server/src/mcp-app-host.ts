@@ -72,6 +72,8 @@ type McpAppLaunch = {
   sessionId: string | null;
   engine: "v1" | "v2";
   serverName: string;
+  /** Host-derived namespaces: dispatch identity plus any authoritative direct projection. */
+  policyServerNames: readonly string[];
   toolName: string;
   resourceUri: string;
   fingerprint: string;
@@ -111,7 +113,7 @@ async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceI
   return createHash("sha256").update(JSON.stringify({ config, managed, runtimeRevisions, privateRevision })).digest("hex");
 }
 
-function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext }, app: McpAppResource, fingerprint: string): McpAppResource {
+function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext }, app: McpAppResource, fingerprint: string, policyServerNames: readonly string[] = [app.serverName]): McpAppResource {
   // Old clients can read HTML, but cannot manufacture an actionable launch from a server name.
   if (!input.context || input.context.readOnly) return app;
   const launches = liveLaunches(input.serverConfig);
@@ -124,6 +126,7 @@ function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; wo
     workspaceId: input.workspaceId, workspaceRoot: input.workspaceRoot, sessionId: input.context.sessionId,
     engine: input.context.engine ?? "v1",
     serverName: app.serverName, toolName: app.toolName, resourceUri: app.resourceUri,
+    policyServerNames,
     fingerprint, expiresAt: Date.now() + LAUNCH_TTL_MS,
   });
   return { ...app, launchId };
@@ -180,6 +183,15 @@ function stringHeaders(value: unknown): Record<string, string> {
 export function projectedMcpToolName(serverName: string, toolName: string): string {
   const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_");
   return `${sanitize(serverName)}_${sanitize(toolName)}`;
+}
+
+/** Apply every host-owned lease namespace to a native tool, including resolved inner targets. */
+export async function assertMcpAppToolPolicy(workspaceRoot: string, policyServerNames: readonly string[], toolName: string): Promise<void> {
+  for (const serverName of policyServerNames) {
+    if ((await diagnoseMcpToolDenies(workspaceRoot, serverName, [projectedMcpToolName(serverName, toolName)])).length > 0) {
+      throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
+    }
+  }
 }
 
 export function toolUiResourceUri(tool: Partial<Tool>): string | null {
@@ -688,7 +700,7 @@ export async function resolveMcpAppResource(input: {
     item.config.enabled !== false
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
-  const matches: Array<{ app: McpAppResource; fingerprint: string }> = [];
+  const matches: Array<{ app: McpAppResource; fingerprint: string } | { launch: ConnectMcpAppLaunchReference; policyServerName: string }> = [];
   const resolutionErrors: McpAppHostError[] = [];
   for (const item of candidates) {
     if (!remoteUrl(item.config)) continue;
@@ -721,14 +733,12 @@ export async function resolveMcpAppResource(input: {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
       }
       if (directConnectionId) {
-        // Revalidate the original tool and UI binding on the private connection;
-        // never send its credential to the configured or result-provided URL.
-        return await resolveConnectMcpAppResource({
-          serverConfig: input.serverConfig,
-          workspaceId: input.workspaceId,
-          workspaceRoot: input.workspaceRoot,
+        // Wait for an unambiguous match before resolving and leasing the private
+        // connection. Its lease must never use this ordinary config fingerprint.
+        return {
           launch: { connectionId: directConnectionId, toolName: tool.name, resourceUri },
-        });
+          policyServerName: item.name,
+        };
       }
       const read = await client.readResource({ uri: resourceUri }).catch(() => {
         throw new McpAppHostError(
@@ -752,13 +762,22 @@ export async function resolveMcpAppResource(input: {
         : new McpAppHostError("mcp_app_resolution_failed", "The MCP App resource could not be resolved."));
       return null;
     });
-    if (match) matches.push({ app: match, fingerprint });
+    if (match) matches.push(match.launch ? match : { app: match, fingerprint });
   }
   if (matches.length > 1) {
     throw new McpAppHostError("ambiguous_tool", "More than one configured MCP App matches this projected tool name.");
   }
   if (matches.length === 0 && resolutionErrors[0]) throw resolutionErrors[0];
-  return matches[0] ? bindLaunch(input, matches[0].app, matches[0].fingerprint) : null;
+  const match = matches[0];
+  if (!match) return null;
+  if ("launch" in match) return resolvePrivateConnectMcpAppResource({
+    serverConfig: input.serverConfig,
+    workspaceId: input.workspaceId,
+    workspaceRoot: input.workspaceRoot,
+    context: input.context,
+    launch: match.launch,
+  }, match.policyServerName);
+  return bindLaunch(input, match.app, match.fingerprint);
 }
 
 /**
@@ -774,6 +793,15 @@ export async function resolveConnectMcpAppResource(input: {
   workspaceRoot: string;
   launch: ConnectMcpAppLaunchReference;
 }): Promise<McpAppResource> {
+  return resolvePrivateConnectMcpAppResource(input);
+}
+
+// Policy aliases are accepted only from the validated direct projection above,
+// never from a launch reference, conversation context, or request payload.
+async function resolvePrivateConnectMcpAppResource(
+  input: Parameters<typeof resolveConnectMcpAppResource>[0],
+  directPolicyServerName?: string,
+): Promise<McpAppResource> {
   if (!/^[a-zA-Z0-9_-]{1,160}$/.test(input.launch.connectionId)) {
     throw new McpAppHostError("invalid_launch_reference", "The MCP App connection reference is invalid.");
   }
@@ -793,6 +821,7 @@ export async function resolveConnectMcpAppResource(input: {
     throw new McpAppHostError("server_unavailable", "The originating Connect MCP server is not available to this workspace.");
   }
   const { serverName } = item;
+  const policyServerNames = directPolicyServerName ? [serverName, directPolicyServerName] : [serverName];
   const fingerprint = await launchFingerprint(input, serverName, item.config);
 
   const app = await withRemoteClient(item.config, async (client) => {
@@ -807,10 +836,7 @@ export async function resolveConnectMcpAppResource(input: {
     if (resourceUri !== input.launch.resourceUri) {
       throw new McpAppHostError("tool_resource_mismatch", "The originating MCP App tool now advertises a different resource.");
     }
-    const projectedName = projectedMcpToolName(serverName, tool.name);
-    if ((await diagnoseMcpToolDenies(input.workspaceRoot, serverName, [projectedName])).length > 0) {
-      throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
-    }
+    await assertMcpAppToolPolicy(input.workspaceRoot, policyServerNames, tool.name);
     const read = await client.readResource({ uri: resourceUri }).catch(() => {
       throw new McpAppHostError(
         "resource_read_failed",
@@ -827,7 +853,7 @@ export async function resolveConnectMcpAppResource(input: {
       ...presentation,
     };
   });
-  return bindLaunch(input, app, fingerprint);
+  return bindLaunch(input, app, fingerprint, policyServerNames);
 }
 
 /** Resolve an indirect launch against the same MCP server that owns the
@@ -954,9 +980,7 @@ export async function callMcpAppTool(input: {
     findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
       throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
     }));
-    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedMcpToolName(input.serverName, original.name)])).length > 0) {
-      throw new McpAppHostError("tool_denied", "The originating App tool is denied. Reopen it after reviewing the workspace tool policy.");
-    }
+    await assertMcpAppToolPolicy(input.workspaceRoot, launch.policyServerNames, original.name);
     const tool = tools.find((candidate) => candidate.name === input.name);
     if (!tool) throw new McpAppHostError("tool_not_found", "The requested same-server MCP tool was not found.");
     if (!toolVisibility(tool, "app")) {
@@ -969,10 +993,7 @@ export async function callMcpAppTool(input: {
         "The requested MCP tool is bound to a different MCP App resource.",
       );
     }
-    const projectedName = projectedMcpToolName(input.serverName, tool.name);
-    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedName])).length > 0) {
-      throw new McpAppHostError("tool_denied", "This same-server MCP tool is denied by the workspace tool policy.");
-    }
+    await assertMcpAppToolPolicy(input.workspaceRoot, launch.policyServerNames, tool.name);
     if (launch.sessionId !== null && !input.assertSessionActive) {
       throw new McpAppHostError("inactive_session", "The original conversation cannot be verified. Reopen it before using App actions.");
     }
@@ -984,6 +1005,8 @@ export async function callMcpAppTool(input: {
       );
     }
     await currentConfig();
+    await assertMcpAppToolPolicy(input.workspaceRoot, launch.policyServerNames, original.name);
+    await assertMcpAppToolPolicy(input.workspaceRoot, launch.policyServerNames, tool.name);
     assertLive();
     // A provider that rejects the call (for example JSON-RPC -32602 for a
     // missing required argument) must reach the member as that rejection,

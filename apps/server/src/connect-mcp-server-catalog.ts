@@ -47,7 +47,8 @@ const indexSchema = z.object({
     url: z.string().url().refine((value) => /^https?:\/\//.test(value), "MCP server URL must use HTTP(S)"),
     exposeDirectly: z.boolean().optional().default(false),
   })).max(100),
-});
+}).refine((index) => new Set(index.servers.map((server) => server.connectionId)).size === index.servers.length,
+  "MCP connection IDs must be unique");
 
 const appHostCredentialSchema = z.object({
   authorization: z.string(),
