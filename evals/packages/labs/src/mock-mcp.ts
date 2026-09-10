@@ -10,6 +10,12 @@ export interface MockAuthorizeRequest {
   path: string;
   url: string;
   at: string;
+  status?: number;
+  grantType?: string;
+  /** Non-secret fingerprint, shared by token issuance and resource validation witnesses. */
+  tokenId?: string | null;
+  refreshTokenIssued?: boolean;
+  oauthError?: string;
 }
 
 /** A tool invocation the connector actually served, and which credential served it. */
@@ -99,6 +105,13 @@ export interface MockMcpHandle {
   releaseAgentReply(promptMarker: string, count?: number): Promise<MockAgentReplyState>;
   handshakes(opts?: { timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockAuthorizeRequest[]>;
   configureOAuthRedirectUris(redirectUris: readonly string[]): Promise<void>;
+  /** Replace callback faults; an empty object restores normal token/resource responses. */
+  configureOAuthCallback(options: {
+    issueRefreshToken?: boolean;
+    resourceStatus?: 401 | 403;
+    /** Return HTTP 400 invalid_grant after validating the authorization code and PKCE. */
+    tokenErrorDescription?: string;
+  }): Promise<void>;
   resetOAuth(): Promise<void>;
   /** Expire access tokens and hold refresh replies until explicitly released. */
   holdRefreshResponses(): Promise<void>;
@@ -177,7 +190,14 @@ function parseRequest(value: unknown): MockAuthorizeRequest | null {
     || typeof value.url !== "string"
     || typeof value.at !== "string"
   ) return null;
-  return { method: value.method, path: value.path, url: value.url, at: value.at };
+  return {
+    method: value.method, path: value.path, url: value.url, at: value.at,
+    ...(typeof value.status === "number" ? { status: value.status } : {}),
+    ...(typeof value.grantType === "string" ? { grantType: value.grantType } : {}),
+    ...(typeof value.tokenId === "string" || value.tokenId === null ? { tokenId: value.tokenId } : {}),
+    ...(typeof value.refreshTokenIssued === "boolean" ? { refreshTokenIssued: value.refreshTokenIssued } : {}),
+    ...(typeof value.oauthError === "string" ? { oauthError: value.oauthError } : {}),
+  };
 }
 
 function parseRequests(value: unknown): MockAuthorizeRequest[] {
@@ -384,6 +404,9 @@ async function startEnterpriseProfileMock(options: StartMockMcpOptions): Promise
       await stop();
       redirectUris = [...nextRedirectUris];
       await boot();
+    },
+    async configureOAuthCallback() {
+      throw new Error("Callback fault controls are only supported by the legacy OAuth MCP mock.");
     },
     async resetOAuth() {
       await stop();
@@ -609,6 +632,15 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
     },
     async configureOAuthRedirectUris() {
       throw new Error("The legacy mock must receive preregistered redirect URIs before startup.");
+    },
+    async configureOAuthCallback(options) {
+      const response = await fetch(`${url}/admin/oauth-callback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(options),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Mock OAuth callback configuration failed: HTTP ${response.status}`);
     },
     async resetOAuth() {
       const response = await fetch(`${url}/admin/expire-oauth-tokens`, { method: "POST" });

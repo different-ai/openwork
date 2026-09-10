@@ -12,9 +12,8 @@ import {
 } from "./landing-demo-flows";
 import { LandingFaq } from "./landing-faq";
 import { LandingHeroPrompt } from "./landing-hero-prompt";
-import { LpCopyBar } from "./lp-copy-bar";
 import { LpCta } from "./lp-cta";
-import { LpGatewayDiagram } from "./lp-gateway-diagram";
+import { LpGatewayEndpoint } from "./lp-gateway-endpoint";
 import { LpHeroBackground } from "./lp-hero-background";
 import { LpParityTable } from "./lp-parity-table";
 import {
@@ -25,7 +24,7 @@ import {
 } from "./lp-primitives";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
-import { DownloadLink } from "./download-link";
+import { HeroDownloadButton } from "./hero-download-button";
 
 type Props = {
   stars: string;
@@ -79,21 +78,22 @@ export function LandingHome(props: Props) {
           active="home"
         />
 
-        <main className="mx-auto w-full max-w-[1176px] px-6 pb-8">
-          <div
-            aria-hidden="true"
-            className="font-pixel flex justify-between pb-10 pt-6 text-[clamp(3rem,16vw,12rem)] leading-none tracking-[-0.06em] sm:pb-12 sm:pt-8 lg:pb-16"
-          >
-            {Array.from("OpenWork").map((letter, index) => (
-              <span key={index}>{letter}</span>
-            ))}
-          </div>
+        <div
+          aria-hidden="true"
+          className="font-pixel mx-auto flex w-full max-w-[1176px] justify-between px-6 pb-10 pt-6 text-[clamp(3rem,calc(22vw_-_11px),14rem)] leading-none tracking-[-0.06em] sm:pb-12 sm:pt-8 lg:pb-16"
+        >
+          {Array.from("OpenWork").map((letter, index) => (
+            <span key={index}>{letter}</span>
+          ))}
+        </div>
 
+        <main className="mx-auto w-full max-w-[1176px] px-6 pb-8">
           <section
             aria-labelledby="sovereign-hero-heading"
-            className="grid items-start gap-10 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)] lg:gap-12"
+            className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.08fr)] lg:gap-12"
           >
-            <div className="min-w-0 lg:order-2 lg:pt-2">
+            <div className="relative min-w-0 lg:pt-2">
+              <div className="relative">
               <p className="mono mb-5 text-[11px] leading-relaxed tracking-[0.1em] text-[var(--lp-body)] sm:text-xs">
                 SOVEREIGN AI FOR KNOWLEDGE WORKERS
               </p>
@@ -123,12 +123,13 @@ export function LandingHome(props: Props) {
                     Get Started for Free <ArrowRight size={18} />
                   </a>
                 ) : (
-                  <DownloadLink className="doc-button inline-flex items-center gap-2">
-                    Download for free <ArrowRight size={18} />
-                  </DownloadLink>
+                  <HeroDownloadButton />
                 )}
-                <a href="/enterprise" className="secondary-button">
+                <a href="/enterprise" className="lp-btn lp-btn--secondary">
                   Explore enterprise
+                  <span className="lp-btn-icon" aria-hidden="true">
+                    →
+                  </span>
                 </a>
               </div>
 
@@ -142,65 +143,18 @@ export function LandingHome(props: Props) {
                 <a href={props.linuxDownloadHref} className="underline-offset-4 hover:underline">Linux</a>
               </div>
 
-              {props.isMobileVisitor ? null : (
-                <div className="mt-7 flex flex-wrap items-center gap-3 border-t border-[var(--lp-border)] pt-5">
-                  <p className="text-xs text-[var(--lp-muted)]">Already use an AI agent? Let it set up OpenWork.</p>
-                  <LandingHeroPrompt compact />
-                </div>
-              )}
-
               <div className="mt-7 flex items-center gap-2 text-xs text-[var(--lp-muted)]">
                 <span>Backed by</span>
                 <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] text-white">Y</span>
                 <span className="font-medium">Combinator</span>
               </div>
-            </div>
-
-            <div id="product" className="min-w-0 scroll-mt-24 lg:order-1" aria-label="OpenWork product demo">
-              <div className="landing-shell overflow-hidden rounded-2xl">
-                <div className="relative flex h-10 items-center border-b border-white/50 bg-gradient-to-b from-white/90 to-white/60 px-4">
-                  <div className="flex gap-1.5" aria-hidden="true">
-                    <div className="h-2.5 w-2.5 rounded-full border border-[#e0443e]/20 bg-[#ff5f56]/90" />
-                    <div className="h-2.5 w-2.5 rounded-full border border-[#dea123]/20 bg-[#ffbd2e]/90" />
-                    <div className="h-2.5 w-2.5 rounded-full border border-[#1aab29]/20 bg-[#27c93f]/90" />
-                  </div>
-                  <span className="absolute left-1/2 -translate-x-1/2 text-xs font-medium text-[var(--lp-muted)]">OpenWork</span>
-                </div>
-                <div className="p-3">
-                  <LandingAppDemoPanel
-                    flows={landingDemoFlows}
-                    activeFlowId={activeDemo.id}
-                    onSelectFlow={setActiveDemoId}
-                  />
-                </div>
-                <div className="flex flex-wrap gap-1 border-t border-[var(--lp-border)] px-3 py-3" aria-label="Example tasks">
-                  {landingDemoFlows.map((flow) => {
-                    const isActive = flow.id === activeDemo.id;
-                    return (
-                      <button
-                        key={flow.id}
-                        type="button"
-                        onClick={() => setActiveDemoId(flow.id)}
-                        aria-pressed={isActive}
-                        className={`relative cursor-pointer rounded-full px-3 py-2 text-xs transition-colors ${isActive ? "text-[var(--lp-ink)]" : "text-[var(--lp-muted)] hover:text-[var(--lp-ink)]"}`}
-                      >
-                        {isActive ? (
-                          <motion.div
-                            layoutId="active-pill"
-                            className="absolute inset-0 rounded-full border border-[var(--lp-border)] bg-white shadow-sm"
-                            transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                          />
-                        ) : null}
-                        <span className="relative z-10">{flow.categoryLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
-              <p className="mt-4 text-[13px] leading-relaxed text-[var(--lp-muted)]" aria-live="polite">
-                {activeDemo.description}
-              </p>
             </div>
+            {props.isMobileVisitor ? null : (
+              <div className="flex min-w-0 self-stretch lg:items-end lg:justify-end">
+                <LandingHeroPrompt className="w-full lg:max-w-[440px]" />
+              </div>
+            )}
           </section>
 
           <div className="mt-12 grid gap-4 border-y border-[var(--lp-border)] py-6 text-[13px] text-[var(--lp-body)] sm:grid-cols-3 sm:gap-0 lg:mt-16">
@@ -218,7 +172,7 @@ export function LandingHome(props: Props) {
           <section className="mt-20 scroll-mt-24 lg:mt-[120px]" id="models">
             <div className="mb-8">
               <h2 className="max-w-[680px] text-[16px] font-normal text-[var(--lp-ink)]">
-                Bring any model — or provision centrally for your whole org
+                Bring any model, or provision centrally for your whole org
               </h2>
             </div>
             <div className="rounded-[24px] bg-[var(--lp-tonal)] px-6 py-7 md:px-10">
@@ -255,7 +209,7 @@ export function LandingHome(props: Props) {
               }
             />
             <p className="mt-6 max-w-[640px] text-[16px] leading-[25px] text-[var(--lp-body)]">
-              If your team runs on Claude Cowork today, everything keeps working —
+              If your team runs on Claude Cowork today, everything keeps working,
               and you stop being tied to one vendor, one model, and one deployment.
             </p>
             <a
@@ -269,7 +223,7 @@ export function LandingHome(props: Props) {
             </div>
           </section>
 
-          <section className="mt-[120px]" id="product">
+          <section className="mt-[120px]">
             <div className="grid gap-6 md:grid-cols-3">
               <LpTonalCard className="group flex min-h-[260px] flex-col justify-between p-6">
                 <div className="lp-icon-chip flex h-11 w-11 items-center justify-center rounded-full bg-white transition-transform duration-150 group-hover:-translate-y-0.5 group-hover:rotate-[8deg]">
@@ -326,28 +280,21 @@ export function LandingHome(props: Props) {
             />
             <p className="mt-6 max-w-[640px] text-[16px] leading-[25px] text-[var(--lp-body)]">
               OpenWork Connect is our MCP gateway. Add a server or skill to your org
-              once — every teammate and agent gets it instantly, in OpenWork and in
-              any MCP-compatible client. Claude Cowork has no equivalent.
+              once and every teammate and agent gets it instantly, in OpenWork and in
+              any MCP client.
             </p>
             <a href="/connect" className="lp-pill-secondary lp-pill-sm mt-6 md:!hidden">
               Explore OpenWork Connect
             </a>
             <div className="mt-10">
-              <LpGatewayDiagram />
+              <LpGatewayEndpoint url={GATEWAY_URL} />
             </div>
-            <div className="mt-6">
-              <LpCopyBar value={GATEWAY_URL} />
-            </div>
-            <p className="mt-3 text-[13.5px] text-[var(--lp-muted)]">
-              One URL for your whole org — skills, MCPs, roles, and policies
-              included. Works with your OpenWork account.
-            </p>
           </section>
 
           <section className="mt-[120px]">
             <LpSectionHeader
               label="Get started"
-              heading="Use it today — your way."
+              heading="Use it today, your way."
               right={
                 <p className="max-w-[340px] text-left text-[14.5px] leading-[22px] text-[var(--lp-body)] md:text-right">
                   Three doors into the same workspace. Same skills, same gateway,
@@ -387,7 +334,7 @@ export function LandingHome(props: Props) {
                     In your browser <LpAlphaBadge />
                   </h3>
                   <p className="mt-2 max-w-[280px] text-[14px] leading-[22px] text-[var(--lp-body)] md:min-h-[66px]">
-                    OpenWork Web. Nothing to install — sign in and run your first
+                    OpenWork Web. Nothing to install. Sign in and run your first
                     task.
                   </p>
                   <a
@@ -455,7 +402,7 @@ export function LandingHome(props: Props) {
                 <div>
                   <h3 className="text-[19px] font-medium">Own your AI stack</h3>
                   <p className="mt-2 text-[14.5px] leading-[22px] text-[var(--lp-body)]">
-                    Self-sovereign AI — your models, your infrastructure. Managed or
+                    Self-sovereign AI: your models, your infrastructure. Managed or
                     self-hosted.
                   </p>
                   <div className="mt-4">
@@ -464,6 +411,56 @@ export function LandingHome(props: Props) {
                 </div>
               </LpTonalCard>
             </div>
+          </section>
+
+          <section
+            id="product"
+            className="mt-[120px] scroll-mt-24"
+            aria-label="OpenWork product demo"
+          >
+            <div className="landing-shell overflow-hidden rounded-2xl">
+              <div className="relative flex h-10 items-center border-b border-white/50 bg-gradient-to-b from-white/90 to-white/60 px-4">
+                <div className="flex gap-1.5" aria-hidden="true">
+                  <div className="h-2.5 w-2.5 rounded-full border border-[#e0443e]/20 bg-[#ff5f56]/90" />
+                  <div className="h-2.5 w-2.5 rounded-full border border-[#dea123]/20 bg-[#ffbd2e]/90" />
+                  <div className="h-2.5 w-2.5 rounded-full border border-[#1aab29]/20 bg-[#27c93f]/90" />
+                </div>
+                <span className="absolute left-1/2 -translate-x-1/2 text-xs font-medium text-[var(--lp-muted)]">OpenWork</span>
+              </div>
+              <div className="p-3">
+                <LandingAppDemoPanel
+                  flows={landingDemoFlows}
+                  activeFlowId={activeDemo.id}
+                  onSelectFlow={setActiveDemoId}
+                />
+              </div>
+              <div className="flex flex-wrap gap-1 border-t border-[var(--lp-border)] px-3 py-3" aria-label="Example tasks">
+                {landingDemoFlows.map((flow) => {
+                  const isActive = flow.id === activeDemo.id;
+                  return (
+                    <button
+                      key={flow.id}
+                      type="button"
+                      onClick={() => setActiveDemoId(flow.id)}
+                      aria-pressed={isActive}
+                      className={`relative cursor-pointer rounded-full px-3 py-2 text-xs transition-colors ${isActive ? "text-[var(--lp-ink)]" : "text-[var(--lp-muted)] hover:text-[var(--lp-ink)]"}`}
+                    >
+                      {isActive ? (
+                        <motion.div
+                          layoutId="active-pill"
+                          className="absolute inset-0 rounded-full border border-[var(--lp-border)] bg-white shadow-sm"
+                          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                        />
+                      ) : null}
+                      <span className="relative z-10">{flow.categoryLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <p className="mt-4 text-[13px] leading-relaxed text-[var(--lp-muted)]" aria-live="polite">
+              {activeDemo.description}
+            </p>
           </section>
 
           <div className="mt-[120px] [&_h2]:!text-[36px] [&_h2]:!leading-[42px]">

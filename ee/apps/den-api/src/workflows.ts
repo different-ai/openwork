@@ -8,7 +8,7 @@ import type {
   WorkflowVersion,
 } from "@openwork/types/workflows"
 import { WorkflowGraph } from "@openwork/codemode"
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
   AutomationRunTable,
@@ -25,6 +25,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { codemodeCodeDigest, parseCodemodeToolCalls } from "./workflow-runs.js"
 import { db } from "./db.js"
+import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
 import type { BuiltCodemodeTools } from "./mcp/codemode-tools.js"
@@ -233,15 +234,41 @@ async function workflowVersions(
   })
 }
 
-async function snapshotRows(organizationId: DenTypeId<"organization">, configObjectId: ConfigObjectId, limit = 100) {
-  return db.select({ receipt: WorkflowRunTable, automationTrigger: AutomationRunTable.trigger })
-    .from(WorkflowRunTable)
-    .leftJoin(AutomationRunTable, eq(AutomationRunTable.id, WorkflowRunTable.automation_run_id))
-    .where(and(
+async function snapshotRows(
+  organizationId: DenTypeId<"organization">,
+  configObjectId: ConfigObjectId,
+  limit = 100,
+  cursor?: KeysetCursor,
+) {
+  const conditions: Array<SQL | undefined> = [
     eq(WorkflowRunTable.organization_id, organizationId),
     eq(WorkflowRunTable.config_object_id, configObjectId),
     isNotNull(WorkflowRunTable.config_object_version_id),
-  )).orderBy(desc(WorkflowRunTable.finished_at), desc(WorkflowRunTable.id)).limit(limit)
+  ]
+  if (cursor) conditions.push(keysetAfter({ at: WorkflowRunTable.finished_at, id: WorkflowRunTable.id }, cursor))
+  return db.select({ receipt: WorkflowRunTable, automationTrigger: AutomationRunTable.trigger })
+    .from(WorkflowRunTable)
+    .leftJoin(AutomationRunTable, eq(AutomationRunTable.id, WorkflowRunTable.automation_run_id))
+    .where(and(...conditions))
+    .orderBy(desc(WorkflowRunTable.finished_at), desc(WorkflowRunTable.id)).limit(limit)
+}
+
+/** One page of artifact snapshots ordered by (finished_at desc, id desc); the cursor is the last row's sort key. */
+export async function workflowSnapshotPage(
+  organizationId: DenTypeId<"organization">,
+  configObjectId: ConfigObjectId,
+  input: { limit?: number; cursor?: KeysetCursor },
+): Promise<{ items: WorkflowArtifactSnapshot[]; nextCursor: string | null }> {
+  const limit = Math.min(200, Math.max(1, input.limit ?? 100))
+  const rows = await snapshotRows(organizationId, configObjectId, limit + 1, input.cursor)
+  const page = keysetPage(rows, limit, (row) => ({ at: row.receipt.finished_at, id: row.receipt.id }))
+  return {
+    items: page.items.flatMap((row) => {
+      const snapshot = serializeSnapshot(row.receipt, row.automationTrigger)
+      return snapshot ? [snapshot] : []
+    }),
+    nextCursor: page.nextCursor,
+  }
 }
 
 export async function getWorkflowDetail(input: {
@@ -359,12 +386,12 @@ export async function listWorkflowSnapshots(input: {
   context: PluginArchActorContext
   configObjectId: string
   limit?: number
+  cursor?: KeysetCursor
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "viewer")
-  const rows = await snapshotRows(resource.configObject.organizationId, resource.configObject.id, input.limit)
-  return rows.flatMap((row) => {
-    const snapshot = serializeSnapshot(row.receipt, row.automationTrigger)
-    return snapshot ? [snapshot] : []
+  return workflowSnapshotPage(resource.configObject.organizationId, resource.configObject.id, {
+    limit: input.limit,
+    cursor: input.cursor,
   })
 }
 

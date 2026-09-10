@@ -1155,6 +1155,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
   withPluginArchOrgContext(app, "get", "/v1/marketplaces/by-key/:externalKey",
     paramValidator(externalKeyParamsSchema),
     describeRoute({ tags: ["Marketplaces"], summary: "Read marketplace by stable key",
+      description: "Reads the marketplace identified by the stable externalKey assigned through declarative provisioning.",
       responses: { 200: jsonResponse("Marketplace configuration.", marketplaceDetailResponseSchema), 404: jsonResponse("Resource not found.", notFoundSchema) } }),
     async (c: OrgContext) => {
       try {
@@ -1209,6 +1210,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
   withPluginArchOrgContext(app, "delete", "/v1/marketplaces/by-key/:externalKey",
     paramValidator(externalKeyParamsSchema),
     describeRoute({ tags: ["Marketplaces"], summary: "Delete marketplace by stable key",
+      description: "Deletes the marketplace identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.",
       responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) } }),
     async (c: OrgContext) => {
       try {

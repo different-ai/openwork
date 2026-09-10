@@ -883,6 +883,12 @@ export async function streamedToolHistory(seed: Seed) {
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name: "streamed-tool-history", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("streamed-tool-history"));
+  const profile = await seed.api(den.admin, "/v1/me");
+  if (!profile.response.ok || !isRecord(profile.body) || !isRecord(profile.body.user)
+    || typeof profile.body.user.id !== "string" || !profile.body.user.id.trim()) {
+    throw new Error("Streamed history fixture could not resolve its authenticated principal");
+  }
+  const principalId = profile.body.user.id.trim();
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     permission: { bash: "allow" },
     provider: { [providerId]: {
@@ -927,7 +933,7 @@ export async function streamedToolHistory(seed: Seed) {
       }
     }
   }, [historyPath, history, toolNames.map(command), providerId, modelId]), { awaitPromise: true, timeoutMs: 185_000 });
-  return { app, workspace, session, neighbor, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
+  return { app, workspace, session, neighbor, principalId, historyPath, history, toolNames, latestTool, prompt, opening, middle, closing };
 }
 
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
