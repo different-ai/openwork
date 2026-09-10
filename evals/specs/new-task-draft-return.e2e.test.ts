@@ -78,6 +78,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
   const newDraft = "Plan a separate task";
   const existing = { testId: `sidebar-session-${world.session.sessionId}` };
   const neighbor = { testId: `sidebar-session-${world.neighbor.sessionId}` };
+  const reference = { testId: `sidebar-session-${world.reference.sessionId}` };
   const draftRow = { testId: `sidebar-new-task-draft-${world.workspace.workspaceId}` };
   const marked = { ...existing, role: "button" as const, label: /Release checklist, .*Draft$/ };
   const rowSelector = `[data-testid="${existing.testId}"]`;
@@ -121,6 +122,8 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     await user.click(neighbor);
     await user.reload();
     await user.see("composer", { editable: true, text: "" });
+    await user.see(reference);
+    await user.notSee({ ...reference, label: /Draft/ });
     await user.see(marked);
     await user.see(marker, { text: "Draft" });
     await user.see(draftRow, { text: `Draft: ${newDraft}` });

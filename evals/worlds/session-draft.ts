@@ -30,8 +30,9 @@ export async function existingSessionDraft(seed: Seed) {
       },
     },
   });
+  const reference = await seed.session(app, { title: "Read-only reference" });
   const neighbor = await seed.session(app, { title: "Another conversation" });
   const session = await seed.session(app, { title: "Release checklist" });
-  return { app, workspace, neighbor, session, history, followup,
+  return { app, workspace, reference, neighbor, session, history, followup,
     releaseReply: () => mock.releaseAgentReply(followup.prompt, 1) };
 }

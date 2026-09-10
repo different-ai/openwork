@@ -114,17 +114,27 @@ async function withWitness(
     local: NonNullable<ReturnType<typeof resolveWorkspaceEndpoint>>;
     remote: NonNullable<ReturnType<typeof resolveWorkspaceEndpoint>>;
     requests: Observation[];
+    routingRequests: Observation[];
   }) => Promise<void>,
 ) {
   const requests: Observation[] = [];
+  const routingRequests: Observation[] = [];
   const server = createServer((incoming, outgoing) => {
     const request = {
       url: new URL(incoming.url ?? "/", "http://witness.invalid"),
       auth: incoming.headers.authorization,
       method: incoming.method,
     };
-    requests.push(request);
     const remote = directoryFor(request) === REMOTE;
+    const routingPath = `${remote ? "/remote" : "/local"}/experimental/engine-v2-preview/status`;
+    if (request.url.pathname === routingPath && request.auth === `Bearer synthetic-${remote ? "remote" : "local"}`) {
+      routingRequests.push(request);
+      outgoing.writeHead(200, { "Content-Type": "application/json" });
+      outgoing.end(JSON.stringify({ enabled: engine === "v2", running: engine === "v2", chatRouting: engine === "v2",
+        mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] }));
+      return;
+    }
+    requests.push(request);
     const mount = remote ? "/remote/workspace/remote%2Fid" : "/local/workspace/local%20workspace";
     const path = `${mount}/${engine === "v1" ? "opencode/session" : "opencode2/api/session"}`;
     const result = request.auth !== `Bearer synthetic-${remote ? "remote" : "local"}`
@@ -148,7 +158,12 @@ async function withWitness(
       openworkWorkspaceId: "remote/id", openworkToken: "synthetic-remote",
     }, handle);
     if (!local || !remote) throw new Error("Missing witness endpoints");
-    await run({ local, remote, requests });
+    await run({ local, remote, requests, routingRequests });
+    for (const request of routingRequests) {
+      expect(request.method).toBe("GET");
+      expect(request.auth).toBe(`Bearer synthetic-${directoryFor(request) === REMOTE ? "remote" : "local"}`);
+      expect(request.url.search).toBe("");
+    }
     for (const request of requests) {
       expect(request.method).toBe("GET");
       expect(request.auth).toBe(`Bearer synthetic-${directoryFor(request) === REMOTE ? "remote" : "local"}`);
@@ -191,11 +206,11 @@ for (const engine of ["v1", "v2"] satisfies Engine[]) {
     // local first pages are empty, but their cursors must still be followed.
     const other = sessions(401, "other", REMOTE);
     const source = [...other, ...archived, ...children, ...active];
-    await withWitness(engine, pageReply(engine, source), async ({ local, remote, requests }) => {
-      const transport = engine === "v2" ? v2RouteSessionList : undefined;
+    await withWitness(engine, pageReply(engine, source), async ({ local, remote, requests, routingRequests }) => {
       const [localItems, remoteItems] = await Promise.all([
-        listRouteSessions(local, transport), listRouteSessions(remote, transport),
+        listRouteSessions(local), listRouteSessions(remote),
       ]);
+      expect(routingRequests.map(directoryFor).sort()).toEqual([LOCAL, REMOTE]);
       expect(localItems.map((item) => item.id)).toEqual([...archived, ...children, ...active].map((item) => item.id));
       expect(remoteItems.map((item) => item.id)).toEqual(other.map((item) => item.id));
       expect(localItems.every((item) => item.directory === LOCAL)).toBe(true);
