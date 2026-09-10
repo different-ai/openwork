@@ -5,11 +5,13 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   CONNECT_MCP_APP_HOST_CAPABILITY,
   CONNECT_MCP_APP_HOST_CAPABILITY_HEADER,
+  CONNECT_MCP_APP_HOST_NAME_PREFIX,
   connectMcpAppHostName,
   findOpenWorkConnectMcpAppHostServer,
   readOpenWorkConnectMcpAppHostAuthorization,
   readOpenWorkConnectMcpAppHostCatalog,
   refreshOpenWorkConnectMcpAppHostCatalog,
+  type ConnectMcpCatalogDiagnostic,
 } from "./connect-mcp-server-catalog.js";
 import type { ServerConfig } from "./types.js";
 import {
@@ -281,12 +283,25 @@ function decodeResourceHtml(content: { text?: string; blob?: string }): { html: 
   throw new McpAppHostError("invalid_resource", "The MCP App resource must contain exactly one of text or blob HTML.");
 }
 
+function connectCatalogError(diagnostic: Exclude<ConnectMcpCatalogDiagnostic, "ready" | "empty">): McpAppHostError {
+  const messages = {
+    missing_app_host_auth: "The Connect MCP App host needs a fresh private authorization. Sync OpenWork Connect and try again.",
+    untrusted_origin: "The Connect MCP catalog origin is not trusted. Activate the enterprise Den origin before loading Apps.",
+    invalid_catalog: "The Connect MCP catalog is invalid. Ask your administrator to check the Den catalog.",
+    invalid_proxy_descriptor: "The Connect MCP catalog contains an invalid provider proxy descriptor. Ask your administrator to correct it in Den.",
+    discovery_unavailable: "The Connect MCP catalog could not be discovered. Try again; this does not establish that the connection is missing.",
+  };
+  return new McpAppHostError(`connect_catalog_${diagnostic}`, messages[diagnostic]);
+}
+
 async function privateConnectMcpConfig(input: {
   serverConfig: ServerConfig;
   workspaceId: string;
   connectionId?: string;
   serverName?: string;
 }): Promise<{ serverName: string; config: Record<string, unknown> } | null> {
+  // Ordinary user-configured servers do not depend on Connect discovery.
+  if (input.connectionId === undefined && !input.serverName?.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)) return null;
   let descriptor = await findOpenWorkConnectMcpAppHostServer(
     input.serverConfig,
     input.workspaceId,
@@ -294,6 +309,9 @@ async function privateConnectMcpConfig(input: {
   );
   if (!descriptor) {
     const refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
+    if (refreshed.diagnostic !== "ready" && refreshed.diagnostic !== "empty") {
+      throw connectCatalogError(refreshed.diagnostic);
+    }
     if (refreshed.status === "synced") {
       descriptor = await findOpenWorkConnectMcpAppHostServer(
         input.serverConfig,
@@ -308,7 +326,7 @@ async function privateConnectMcpConfig(input: {
     input.workspaceId,
     descriptor.url,
   );
-  if (!appHostAuthorization) return null;
+  if (!appHostAuthorization) throw connectCatalogError("missing_app_host_auth");
   return {
     serverName: connectMcpAppHostName(descriptor.connectionId),
     config: {
