@@ -6,6 +6,7 @@ import { dirname, join } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/mysql2"
 import { migrate } from "drizzle-orm/mysql2/migrator"
 import mysql from "mysql2/promise"
@@ -15,6 +16,7 @@ import {
   ConfigObjectTable,
   ConfigObjectVersionTable,
 } from "../src/schema/sharables/plugin-arch.ts"
+import { ExternalMcpConnectionTable } from "../src/schema/sharables/capability-credentials.ts"
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..")
 const migrationsFolder = join(packageDir, "drizzle")
@@ -484,6 +486,22 @@ async function runRegressionInsert(connection: mysql.Connection) {
       rawSourceText: "insert proof",
       createdVia: "cloud",
     })
+
+    const connectionId = createDenTypeId("externalMcpConnection")
+    const scope = Array.from({ length: 80 }, (_, i) => `https://scope.example.test/resource/${i}`).join(" ")
+    assert.ok(scope.length > 1024)
+    await db.insert(ExternalMcpConnectionTable).values({
+      id: connectionId,
+      organizationId,
+      name: "Long scope fixture",
+      url: "https://mcp.example.test/mcp",
+      authType: "oauth",
+      scope,
+      createdByOrgMembershipId: memberId,
+    })
+    const [saved] = await db.select({ scope: ExternalMcpConnectionTable.scope })
+      .from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId))
+    assert.equal(saved?.scope, scope)
   } finally {
     if (previousEncryptionKey === undefined) {
       delete process.env.DEN_DB_ENCRYPTION_KEY
@@ -493,7 +511,7 @@ async function runRegressionInsert(connection: mysql.Connection) {
   }
 }
 
-test("migrations replay to exported schema and config object version inserts", { skip: !mysqlUrl, timeout: 300_000 }, async () => {
+test("migrations replay to exported schema and persist config objects and long OAuth scopes", { skip: !mysqlUrl, timeout: 300_000 }, async () => {
   if (!mysqlUrl) return
 
   const root = await mysql.createConnection(mysqlUrl)
@@ -532,6 +550,42 @@ test("migrations replay to exported schema and config object version inserts", {
     await exportedConnection?.end().catch(() => {})
     await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(migratedDatabase)}`).catch(() => {})
     await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(exportedDatabase)}`).catch(() => {})
+    await root.end()
+  }
+})
+
+test("OAuth scope migration preserves existing values and accepts long grants", { skip: !mysqlUrl, timeout: 30_000 }, async () => {
+  if (!mysqlUrl) return
+
+  const root = await mysql.createConnection(mysqlUrl)
+  const database = scratchDatabaseName()
+  let connection: mysql.Connection | undefined
+  try {
+    await root.query(`CREATE DATABASE ${quoteIdentifier(database)}`)
+    connection = await mysql.createConnection(databaseUrlFor(mysqlUrl, database))
+    await connection.query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES'")
+    await connection.query("CREATE TABLE `external_mcp_connection` (`id` varchar(64) PRIMARY KEY, `scope` varchar(1024))")
+    await connection.query("INSERT INTO `external_mcp_connection` (`id`, `scope`) VALUES ('existing', 'openid profile'), ('empty', NULL)")
+    const scope = Array.from({ length: 80 }, (_, i) => `https://scope.example.test/resource/${i}`).join(" ")
+    assert.ok(scope.length > 1024)
+    await assert.rejects(connection.query("UPDATE `external_mcp_connection` SET `scope` = ? WHERE `id` = 'existing'", [scope]), { code: "ER_DATA_TOO_LONG" })
+
+    const migrationSql = await readFile(join(migrationsFolder, "0095_external_mcp_connection_scope_text.sql"), "utf8")
+    await connection.query(migrationSql)
+    assert.deepEqual(await queryRecords(connection, "SELECT `id`, `scope` FROM `external_mcp_connection` ORDER BY `id`"), [
+      { id: "empty", scope: null },
+      { id: "existing", scope: "openid profile" },
+    ])
+    await connection.query("UPDATE `external_mcp_connection` SET `scope` = ? WHERE `id` = 'existing'", [scope])
+    await connection.query("INSERT INTO `external_mcp_connection` (`id`, `scope`) VALUES ('new', ?)", [scope])
+    assert.deepEqual(await queryRecords(connection, "SELECT `id`, `scope` FROM `external_mcp_connection` ORDER BY `id`"), [
+      { id: "empty", scope: null },
+      { id: "existing", scope },
+      { id: "new", scope },
+    ])
+  } finally {
+    await connection?.end().catch(() => {})
+    await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)}`).catch(() => {})
     await root.end()
   }
 })
