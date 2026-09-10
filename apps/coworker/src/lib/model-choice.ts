@@ -179,7 +179,7 @@ export function resolveDiscussionModel(
   const fixed = automatic ? null : catalog.models.find((model) => model.id === coworker.model) ?? null;
   const choice = automatic
     ? chooseIndexedModel(catalog, messageLane, { standard: coworker.model, preferences: coworker.modelSelectionPreferences })
-    : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : "The fixed model is unavailable; no replacement was selected.", indexVersion: MODEL_INTELLIGENCE_INDEX.version };
+    : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : `The saved model "${coworker.model}" is not available. Choose another AI model or connect its provider. No replacement was selected.`, indexVersion: MODEL_INTELLIGENCE_INDEX.version };
   return {
     ...choice,
     // Fixed mode reports the standard lane, but the message still determines thinking effort.

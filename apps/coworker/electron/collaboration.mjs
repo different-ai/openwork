@@ -235,7 +235,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     running.armDeadline = (current) => { entry = current; armDeadline(); };
     try {
       const setupSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(setupTimeoutMs)]);
-      const client = await withAbort(track(clientFor(entry.owner.slug, { kind: entry.continuation ? "review" : "reply", requestText: entry.requestText, model: entry.model, signal: setupSignal })), setupSignal);
+      const client = await withAbort(track(clientFor(entry.owner.slug, { kind: entry.continuation ? "review" : "reply", requestText: entry.requestText, model: entry.model, observationOnly: Boolean(entry.sentAt), signal: setupSignal })), setupSignal);
       running.client = client;
       if (entry.workspaceId && client.workspaceId !== entry.workspaceId) throw new Error("The original workspace is no longer available. This execution will not be moved or replayed.");
       let snapshot = await withAbort(client.getThreadSnapshot(entry.owner.threadId, { signal: setupSignal }), setupSignal);
