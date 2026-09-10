@@ -466,4 +466,17 @@ describe("OpenWork Connect MCP server catalog", () => {
       expect(result).toEqual({ index: null, diagnostic: "discovery_unavailable" });
     }
   });
+
+  test("rejects duplicate connection identities even when their names, URLs and direct exposure differ", async () => {
+    const connectionId = "emc_duplicate_fixture";
+    const result = await readOpenWorkConnectMcpServerIndexWithDiagnostics(
+      { type: "remote", url: "https://api.openworklabs.com/mcp/agent" },
+      "Bearer private-app-host-token",
+      indexFetcher([], [
+        { connectionId, name: "First fixture", description: null, url: `https://api.openworklabs.com/mcp/agent/connections/${connectionId}`, exposeDirectly: true },
+        { connectionId, name: "Forged alias", description: null, url: "https://api.openworklabs.com/mcp/agent/connections/another", exposeDirectly: false },
+      ]),
+    );
+    expect(result).toEqual({ index: null, diagnostic: "invalid_catalog" });
+  });
 });

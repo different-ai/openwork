@@ -411,7 +411,7 @@ test("a healthy native MCP App preserves its resource and same-server app-visibl
   })
 })
 
-test("a regular MCP with an App keeps every model-visible tool behind search and execute", async () => {
+test("a private App surface includes unbound helpers but no model-only tools or unbound resources", async () => {
   let downstreamCalls = 0
   let downstreamReads = 0
   const privateResourceUri = "data://fixture/private.json"
@@ -422,6 +422,7 @@ test("a regular MCP with an App keeps every model-visible tool behind search and
       "search_capabilities",
       "execute_capability",
       "open_fixture",
+      "search_fixture",
     ])
     for (const tool of tools) expect(tool._meta).toMatchObject({ ui: { visibility: ["app"] } })
     expect(tools.find((tool) => tool.name === "open_fixture")?._meta).toMatchObject({
@@ -432,9 +433,6 @@ test("a regular MCP with an App keeps every model-visible tool behind search and
     expect(resources.map((resource) => resource.uri)).toEqual([resourceUri])
     expect((await client.listResourceTemplates()).resourceTemplates).toEqual([])
 
-    await expect(client.callTool({ name: "search_fixture", arguments: { query: "private" } })).rejects.toThrow(
-      "Use search_capabilities and execute_capability",
-    )
     await expect(client.callTool({ name: "model_only_fixture", arguments: {} })).rejects.toThrow(
       "Use search_capabilities and execute_capability",
     )
@@ -446,6 +444,8 @@ test("a regular MCP with an App keeps every model-visible tool behind search and
     )
     expect(downstreamCalls).toBe(0)
     expect(downstreamReads).toBe(0)
+    expect((await client.callTool({ name: "search_fixture", arguments: { query: "private" } })).structuredContent)
+      .toEqual({ status: "healthy" })
 
     const searched = await client.callTool({
       name: "search_capabilities",
@@ -461,11 +461,11 @@ test("a regular MCP with an App keeps every model-visible tool behind search and
       arguments: { name: "search_fixture", body: { query: "private" } },
     })
     expect(executed.structuredContent).toEqual({ status: "healthy" })
-    expect(downstreamCalls).toBe(1)
+    expect(downstreamCalls).toBe(2)
 
     const opened = await client.callTool({ name: "open_fixture", arguments: {} })
     expect(opened.structuredContent).toEqual({ status: "healthy" })
-    expect(downstreamCalls).toBe(2)
+    expect(downstreamCalls).toBe(3)
   }, {
     listTools: async () => [
       ...(await runtime().listTools()),
@@ -498,6 +498,68 @@ test("a regular MCP with an App keeps every model-visible tool behind search and
       return { contents: [] }
     },
   })
+})
+
+test.each(["direct", "compatibility", "app", "app-compatibility"])("%s filters live inner targets by strict audience and organization policy", async (mode) => {
+  const cases = [
+    { visibility: undefined, model: true, app: true },
+    { visibility: ["model"], model: true, app: false },
+    { visibility: ["app"], model: false, app: true },
+    { visibility: ["model", "app"], model: true, app: true },
+    { visibility: [], model: false, app: false },
+    { visibility: ["model", "invalid"], model: false, app: false },
+    { visibility: ["app", null], model: false, app: false },
+    { visibility: "model", model: false, app: false },
+    { visibility: null, model: false, app: false },
+    { visibility: {}, model: false, app: false },
+  ]
+  const policy = { allDisabled: false, disabledTools: ["blocked_fixture"] }
+  let liveTools: Tool[] = cases.map(({ visibility }, index) => ({
+    name: `audience_fixture_${index}`, inputSchema: { type: "object" },
+    _meta: { ui: { visibility } },
+  }))
+  let calls = 0
+  const isApp = mode.startsWith("app")
+  const names = cases.flatMap((entry, index) => entry[isApp ? "app" : "model"] ? [`audience_fixture_${index}`] : [])
+  await withClient({ tools: {}, resources: {} }, async (client) => {
+    const listed = (await client.listTools()).tools
+    expect(listed.map(tool => tool.name)).toEqual(mode === "direct" ? names
+      : ["search_capabilities", "execute_capability", ...(isApp ? names : [])])
+    if (isApp) for (const tool of listed) expect(tool._meta).toMatchObject({ ui: { visibility: ["app"] } })
+    if (mode !== "direct") {
+      const result = await client.callTool({ name: "search_capabilities", arguments: {
+        query: "audience fixture", limit: 20, audience: isApp ? "model" : "app",
+      } })
+      const matches = (result.structuredContent as { matches: Array<{ name: string; kind?: string }> }).matches
+      expect(matches.map(tool => tool.name).sort()).toEqual([...names].sort())
+      expect(matches.every(tool => tool.kind === undefined)).toBe(true)
+    }
+    const call = (name: string) => client.callTool(mode.endsWith("compatibility")
+      ? { name: "execute_capability", arguments: { name, body: {}, audience: "app", appHostClient: true } }
+      : { name, arguments: {} })
+    for (const [index, entry] of cases.entries()) {
+      const before = calls
+      if (entry[isApp ? "app" : "model"]) {
+        expect((await call(`audience_fixture_${index}`)).isError).not.toBe(true)
+        expect(calls).toBe(before + 1)
+      } else {
+        await expect(call(`audience_fixture_${index}`)).rejects.toThrow()
+        expect(calls).toBe(before)
+      }
+    }
+    const before = calls
+    await expect(call("blocked_fixture")).rejects.toThrow()
+    liveTools = liveTools.map(tool => ({ ...tool, _meta: { ui: { visibility: [] } } }))
+    await expect(call(names[0]!)).rejects.toThrow()
+    policy.allDisabled = true
+    await expect(call("audience_fixture_0")).rejects.toThrow()
+    expect(calls).toBe(before)
+    expect((await client.listResources()).resources).toEqual([])
+    await expect(client.readResource({ uri: resourceUri })).rejects.toThrow()
+  }, {
+    listTools: async () => [...liveTools, { name: "blocked_fixture", inputSchema: { type: "object" } }],
+    callTool: async () => { calls += 1; return { content: [] } },
+  }, isApp, { ...connection, exposeDirectly: mode === "direct", toolPolicy: policy })
 })
 
 test("OAuth registration and network failures become sanitized protocol errors", async () => {

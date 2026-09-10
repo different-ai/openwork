@@ -49,6 +49,11 @@
       "development": "./src/connection-action-app.ts",
       "default": "./src/connection-action-app.ts"
     },
+    "./mcp-tool-visibility": {
+      "types": "./src/mcp-tool-visibility.ts",
+      "development": "./src/mcp-tool-visibility.ts",
+      "default": "./src/mcp-tool-visibility.ts"
+    },
     "./plugin-flow-app": {
       "types": "./src/plugin-flow-app.ts",
       "development": "./src/plugin-flow-app.ts",

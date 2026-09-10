@@ -7,6 +7,23 @@ import { Effect } from "effect"
 import { Hono } from "hono"
 import { buildMcpCatalog } from "../src/mcp/catalog.js"
 
+// These catalog tests supply principals directly; authentication must not seed a database at import time.
+mock.module("../src/auth.js", () => ({
+  auth: { handler: () => Promise.resolve(Response.json({ keys: [] })) },
+  DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "ow_mcp_at_",
+  DEN_MCP_FIRST_PARTY_CLIENT_ID: "openwork-desktop",
+  DEN_MCP_FIRST_PARTY_RESOURCES: [
+    "http://127.0.0.1:8790/mcp", "http://127.0.0.1:8790/mcp/agent", "http://127.0.0.1:8790/mcp/admin",
+  ],
+  DEN_MCP_GRANT_ID_CLAIM: "https://openworklabs.com/grant_id",
+  DEN_MCP_ORG_ID_CLAIM: "https://openworklabs.com/org_id",
+  DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp/agent",
+  DEN_MCP_RESOURCE: "http://127.0.0.1:8790/mcp",
+  DEN_MCP_RESOURCE_CLAIM: "https://openworklabs.com/resource",
+  DEN_MCP_RESOURCES: ["http://127.0.0.1:8790/mcp"],
+  DEN_MCP_TOKEN_USE_CLAIM: "https://openworklabs.com/token_use",
+}))
+
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
@@ -229,12 +246,14 @@ test("native manifest capability names round-trip through the native parser", ()
   })
 })
 
-test("generic and Code Mode execution require write scope even for misleading read-only hints", async () => {
+test("generic search and Code Mode retain model audience, live policy and unconditional write scope", async () => {
   const connections = await import("../src/capability-sources/external-mcp-connections.js")
   const runtime = await import("../src/capability-sources/external-mcp-client-runtime.js")
   const { buildExternalMcpToolTree } = await import("../src/mcp/codemode-tools.js")
   const { createCapabilityRegistryContext, executeCapability } = await import("../src/mcp/capability-registry.js")
   const { runCodemodeScript } = await import("../src/mcp/codemode-run.js")
+  const { searchExternalCapabilities } = await import("../src/mcp/external-capabilities.js")
+  const { clearExternalToolsSearchCache, getExternalToolsSearchCache } = await import("../src/mcp/external-tools-search-cache.js")
   const organizationId = createDenTypeId("organization")
   const memberId = createDenTypeId("member")
   const connection: ExternalMcpConnectionRow = {
@@ -266,7 +285,7 @@ test("generic and Code Mode execution require write scope even for misleading re
       { annotations: { readOnlyHint: true }, requiredScope: "mcp:write" },
       { annotations: { readOnlyHint: true, destructiveHint: false }, requiredScope: "mcp:write" },
     ]
-    for (const scopes of [new Set(["mcp:read"]), new Set(["mcp:read", "mcp:write"]), new Set(["mcp:write"])]) {
+    for (const scopes of [new Set(["mcp:read"]), new Set(["mcp:read", "mcp:write"]), new Set(["mcp:write"]), new Set(["mcp:read", "mcp:write", "mcp:app-host"])]) {
       const member = { orgMembershipId: memberId, teamIds: [] }
       const context = createCapabilityRegistryContext({
         app: new Hono(), env: undefined, catalog: [], organizationId, member,
@@ -275,14 +294,18 @@ test("generic and Code Mode execution require write scope even for misleading re
         organizationMetadata: null, mcpConnectionsGatingEnabled: false,
       })
       liveTool = { ...liveTool, annotations: { readOnlyHint: true } }
-      const built = await buildExternalMcpToolTree({
-        organizationId, member, scopes, redirectUriBase: context.redirectUriBase,
-        namespaceContext: {
-          nativeProviderEntries: [], codemodeNativeProviderEntries: [],
-          externalMcpConnections: [connection], codemodeExternalMcpConnections: [connection],
-          namespaces: buildCodemodeConnectionNamespaceMaps({ native: [], externalMcp: [connection] }),
-        },
+      const namespaceContext = {
+        nativeProviderEntries: [], codemodeNativeProviderEntries: [],
+        externalMcpConnections: [connection], codemodeExternalMcpConnections: [connection],
+        namespaces: buildCodemodeConnectionNamespaceMaps({ native: [], externalMcp: [connection] }),
+      }
+      const build = () => buildExternalMcpToolTree({
+        organizationId, member, scopes, redirectUriBase: context.redirectUriBase, namespaceContext,
       })
+      const search = () => searchExternalCapabilities({
+        organizationId, member, redirectUriBase: context.redirectUriBase, namespaceContext, query: "scope",
+      })
+      const built = await build()
       const leaf = built.manifest[0]
       if (!leaf) throw new Error("Missing external Code Mode leaf")
       expect(leaf).toMatchObject({ readOnly: true, authority: "external" })
@@ -306,6 +329,49 @@ test("generic and Code Mode execution require write scope even for misleading re
           expect(calls).toBe(before)
         }
       }
+      for (const { visibility, visible } of [
+        { visibility: undefined, visible: true },
+        { visibility: ["model"], visible: true },
+        { visibility: ["model", "app"], visible: true },
+        { visibility: ["app"], visible: false },
+        { visibility: [], visible: false },
+        { visibility: ["model", "invalid"], visible: false },
+        { visibility: ["app", null], visible: false },
+        { visibility: "model", visible: false },
+        { visibility: null, visible: false },
+        { visibility: {}, visible: false },
+      ]) {
+        liveTool = { ...liveTool, _meta: { ui: { visibility } } }
+        clearExternalToolsSearchCache()
+        const names = visible ? [leaf.capabilityName] : []
+        expect((await search()).map(tool => tool.name)).toEqual(names)
+        expect((await search()).map(tool => tool.name)).toEqual(names)
+        // The cache retains provider bytes, not an audience-specific projection.
+        expect(getExternalToolsSearchCache({ organizationId, connectionId: connection.id,
+          credentialMode: "shared", updatedAt: connection.updatedAt })).toEqual({ outcome: "success", tools: [liveTool] })
+        const current = await build()
+        expect(current.manifest.map(tool => tool.capabilityName)).toEqual(names)
+        expect(Object.values(current.tools).flatMap(tools => Object.keys(tools))).toEqual(visible ? [liveTool.name] : [])
+        expect(restrictCodemodeToolTree({ built: current, requiredCapabilities: [leaf] }).missing).toEqual(visible ? [] : [leaf])
+        const before = calls
+        const generic = await executeCapability(context, { name: leaf.capabilityName, body: { audience: "app" } })
+        // Retained callbacks must re-read visibility even when the token also has App-host scope.
+        const script = await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: built.tools, timeoutMs: 1_000 })
+        const executable = visible && scopes.has("mcp:write")
+        expect(generic.isError === true).toBe(!executable)
+        expect(script.ok).toBe(executable)
+        expect(calls).toBe(before + (executable ? 2 : 0))
+      }
+      liveTool = { ...liveTool, _meta: undefined }
+      connection.toolPolicy = { version: 1, allDisabled: false, disabledTools: [liveTool.name] }
+      clearExternalToolsSearchCache()
+      expect(await search()).toEqual([])
+      expect((await build()).manifest).toEqual([])
+      const beforePolicy = calls
+      expect((await executeCapability(context, { name: leaf.capabilityName, body: {} })).isError).toBe(true)
+      expect((await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: built.tools, timeoutMs: 1_000 })).ok).toBe(false)
+      expect(calls).toBe(beforePolicy)
+      connection.toolPolicy = null
       allowed = false
       const before = calls
       expect((await executeCapability(context, { name: leaf.capabilityName, body: {} })).isError).toBe(true)
@@ -314,6 +380,7 @@ test("generic and Code Mode execution require write scope even for misleading re
       allowed = true
     }
   } finally {
+    clearExternalToolsSearchCache()
     mock.restore()
   }
 })
