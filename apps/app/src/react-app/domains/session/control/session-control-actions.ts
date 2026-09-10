@@ -56,11 +56,6 @@ function booleanArg(args: unknown, name: string) {
   return objectArgs(args)[name] === true;
 }
 
-function numberArg(args: unknown, name: string) {
-  const value = objectArgs(args)[name];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const {
     canCreateTask,
@@ -108,13 +103,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
     ],
-    execute: (args) => listControlSessions({
-      workspaces,
-      sessionsByWorkspaceId,
-      pinnedIds,
-      workspaceId: stringArg(args, "workspaceId") || undefined,
-      limit: numberArg(args, "limit"),
-    }),
+    execute: (args) => listControlSessions(args, { workspaces, sessionsByWorkspaceId, pinnedIds }),
   }), [pinnedIds, sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
