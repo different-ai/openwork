@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { go } from "@openwork/behaviors";
-import { observeTranscript, spec, type Probe, type User } from "@openwork/testkit";
+import { observeTranscript, spec, type Probe, type Target, type User } from "@openwork/testkit";
 import { workspaceEngineUpgrade } from "../worlds/chat.ts";
 
 // Fresh-engine chat journeys cannot witness ownership after an upgrade.
@@ -11,7 +11,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function greet(user: User, probe: Probe) {
+function routeSessionId(hash: string): string | null {
+  return /\/session\/(ses_[^/?#]+)/.exec(hash)?.[1] ?? null;
+}
+
+/**
+ * The sidebar New session controls open the workspace's empty composer at once
+ * (#4577); the session itself is created by the first send. "Opened" is the
+ * empty New task route with no session surface and a prompt-ready composer.
+ */
+async function openEmptyNewTask(user: User, probe: Probe, workspaceId: string, control: Target) {
+  await user.click(control);
+  await probe.eventually(async () => ({
+    hash: await probe.hash(),
+    surface: await probe.eval(() => document.querySelector("[data-session-surface-id]") !== null),
+  }), {
+    within: 30_000, label: `empty New task route for ${workspaceId} without a session surface`,
+    until: ({ hash, surface }) => new RegExp(`/workspace/${workspaceId}/session/?$`).test(hash) && surface === false,
+  });
+  await user.see("composer", { timeoutMs: 30_000 });
+  await user.see("Run task", { timeoutMs: 30_000 });
+}
+
+/**
+ * Sends "hi", then returns the session the send landed in. It must be one no
+ * earlier turn of this journey used, so an empty composer that reused an old
+ * session (or a palette chat that never navigated) fails here.
+ */
+async function greet(user: User, probe: Probe, usedSessionIds: Set<string>): Promise<string> {
   await using transcript = await observeTranscript(probe, [
     { role: "user", text: "hi" }, { role: "assistant", text: reply },
   ]);
@@ -22,6 +49,14 @@ async function greet(user: User, probe: Probe) {
     within: 2_000, label: "sent hi visible in the user transcript",
     until: (state) => isRecord(state) && Array.isArray(state.seen) && state.seen[0] === true,
   });
+  const route = await probe.eventually(() => probe.hash(), {
+    within: 30_000, label: "the send lands on a session route",
+    until: (hash) => routeSessionId(hash) !== null,
+  });
+  const sessionId = routeSessionId(route);
+  if (!sessionId) throw new Error(`Session route omitted its ID: ${route}`);
+  expect(usedSessionIds.has(sessionId), `send landed in a distinct new session (${sessionId})`).toBe(false);
+  usedSessionIds.add(sessionId);
   await user.screenshot();
   await user.see({ text: reply }, { timeoutMs: 90_000 });
   await user.see("Run task", { timeoutMs: 30_000 });
@@ -29,9 +64,11 @@ async function greet(user: User, probe: Probe) {
   await user.reload();
   await user.see({ text: /^hi$/ }, { timeoutMs: 30_000 });
   await user.see({ text: reply });
+  return sessionId;
 }
 
 test("existing workspaces create usable sessions after changing chat engines", async ({ world, user, probe, step }) => {
+  const usedSessionIds = new Set([world.original.sessionId, world.otherOriginal.sessionId]);
   const macPlatform = await probe.eval(() => (/Mac|iPhone|iPad|iPod/.test(navigator.platform)));
   const paletteShortcut = macPlatform ? "Meta+K" : "Control+K";
   const createPaletteChat = async () => {
@@ -48,7 +85,7 @@ test("existing workspaces create usable sessions after changing chat engines", a
     await user.notSee(paletteInput);
     await user.see("Run task", { timeoutMs: 30_000 });
     await user.notSee({ text: /SessionNotFoundError|Session not found|Session could not be loaded/ });
-    await greet(user, probe);
+    await greet(user, probe, usedSessionIds);
   };
 
   expect((await probe.desktopApi("/experimental/engine-v2-preview/status")).body).toMatchObject({ chatRouting: false });
@@ -65,12 +102,8 @@ test("existing workspaces create usable sessions after changing chat engines", a
   await user.see("composer", { timeoutMs: 60_000 });
 
   await step("a new chat in the selected existing workspace keeps the first message visible", async () => {
-    const previousRoute = await probe.hash();
-    await user.click({ role: "button", label: "New session" });
-    await probe.eventually(() => probe.hash(), { within: 30_000,
-      label: "new session route", until: (hash) => hash !== previousRoute && hash.includes("/session/ses_") });
-    await user.see("composer", { timeoutMs: 30_000 });
-    await greet(user, probe);
+    await openEmptyNewTask(user, probe, world.primary.workspaceId, { role: "button", label: "New session" });
+    await greet(user, probe, usedSessionIds);
   });
 
   await step("the chat command palette creates another usable v2 chat", createPaletteChat);
@@ -78,18 +111,14 @@ test("existing workspaces create usable sessions after changing chat engines", a
   await step("a sidebar new session opens and runs in the configured engine", async () => {
     if (!world.otherName) throw new Error("Existing workspace name missing");
     await user.hover({ role: "button", label: world.otherName });
-    await user.click({ role: "button", label: `New session · ${world.otherName}` });
-    const route = await probe.eventually(() => probe.hash(), { within: 30_000,
-      label: "other workspace new session route",
-      until: (hash) => hash.includes(`/workspace/${world.other.workspaceId}/session/ses_`),
-    });
-    const sessionId = route.split("/session/")[1]?.split(/[?#/]/)[0];
-    if (!sessionId) throw new Error("Created session route omitted its ID");
+    await openEmptyNewTask(user, probe, world.other.workspaceId, { role: "button", label: `New session · ${world.otherName}` });
+    await user.notSee({ text: /SessionNotFoundError|Session not found|Session could not be loaded/ });
+    const sessionId = await greet(user, probe, usedSessionIds);
+    expect(await probe.hash()).toContain(`/workspace/${world.other.workspaceId}/session/${sessionId}`);
     const prefix = `/workspace/${world.other.workspaceId}`;
     expect((await probe.desktopApi(`${prefix}/opencode2/api/session/${sessionId}`)).status).toBe(200);
     expect((await probe.desktopApi(`${prefix}/opencode/session/${sessionId}`)).status).toBe(404);
     await user.notSee({ text: /SessionNotFoundError|Session not found|Session could not be loaded/ });
-    await greet(user, probe);
   });
 
   await step("switching back preserves v1 history and v1 can still create and run a chat", async () => {
@@ -103,12 +132,9 @@ test("existing workspaces create usable sessions after changing chat engines", a
     await user.see({ text: world.original.title }, { timeoutMs: 30_000 });
     expect((await probe.desktopApi(`/workspace/${world.other.workspaceId}/opencode/session/${world.otherOriginal.sessionId}`)).status).toBe(200);
     await user.notSee({ text: /SessionNotFoundError|Session not found|Session could not be loaded/ });
-    await user.click({ role: "button", label: "New session" });
-    await probe.eventually(() => probe.hash(), { within: 30_000,
-      label: "new v1 session route",
-      until: (hash) => hash.includes("/session/ses_") && !hash.includes(world.original.sessionId),
-    });
-    await greet(user, probe);
+    await openEmptyNewTask(user, probe, world.primary.workspaceId, { role: "button", label: "New session" });
+    const sessionId = await greet(user, probe, usedSessionIds);
+    expect((await probe.desktopApi(`/workspace/${world.primary.workspaceId}/opencode/session/${sessionId}`)).status).toBe(200);
   });
 
   await step("the chat command palette still creates a usable chat after returning to v1", createPaletteChat);
