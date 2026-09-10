@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { mcpToolVisibleTo } from "@openwork/types/mcp-tool-visibility"
 import type { Context, Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import type { RequestIdVariables } from "hono/request-id"
@@ -158,14 +159,8 @@ export function projectedMcpToolName(serverName: string, toolName: string): stri
   return `${sanitize(serverName)}_${sanitize(toolName)}`
 }
 
-/** Mirrors the App-host proxy's app-audience visibility rule. */
 export function mcpToolVisibleToApp(tool: { _meta?: unknown }): boolean {
-  const meta = isRecord(tool._meta) ? tool._meta : {}
-  const ui = isRecord(meta.ui) ? meta.ui : {}
-  if (ui.visibility === undefined) return true
-  return Array.isArray(ui.visibility)
-    && ui.visibility.every((entry) => entry === "model" || entry === "app")
-    && ui.visibility.includes("app")
+  return mcpToolVisibleTo(tool, "app")
 }
 
 /** True when the launch tool declares required input, so a tile cannot start it with empty arguments. */

@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
+import { mcpToolVisibleTo } from "@openwork/types/mcp-tool-visibility"
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import {
   OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND,
@@ -791,7 +792,7 @@ async function probeExternalMcpConnection(input: {
   }
 
   for (const tool of tools) {
-    if (isToolDisabled(connection.toolPolicy, tool.name)) continue
+    if (!mcpToolVisibleTo(tool, "model") || isToolDisabled(connection.toolPolicy, tool.name)) continue
     const summary = tool.description ?? tool.title ?? tool.name
     const nameTokens = tokenize(`${connection.name} ${tool.name}`)
     const summaryTokens = tokenize(summary)
@@ -1216,7 +1217,7 @@ export async function executeExternalCapability(input: {
   try {
     const redirectUri = redirectUriFor(input.redirectUriBase, connection.id)
     const tools = await listExternalMcpTools(connection, redirectUri, member, undefined, deadline)
-    const tool = tools.find((candidate) => candidate.name === input.toolName)
+    const tool = tools.find((candidate) => candidate.name === input.toolName && mcpToolVisibleTo(candidate, "model"))
     if (!tool) {
       return {
         ok: false,
