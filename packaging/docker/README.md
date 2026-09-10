@@ -272,13 +272,9 @@ Caveats: `grafana/otel-lgtm` is intended for development, demos, and tests, not 
 
 ### Install links (self-host)
 
-Run the install-link migration once against the Den database:
+Install links are enabled for every organization by default; there is no separate migration step or `/admin` toggle. The regular `den-migrate` job creates the tables, and organization owners mint links from the dashboard or with `POST /v1/orgs/{organizationId}/install-links`. A platform admin can disable minting for one organization by setting `metadata.capabilities.installLinks: false` on it.
 
-```bash
-docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "node /app/ee/packages/den-db/dist/scripts/bootstrap.js"
-```
-
-Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admin`, and toggle `Install links` for each org. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md).
+With no `allowedDesktopVersions` policy on the organization, a self-hosted (single-org) Den installs its own release version. Set `allowedDesktopVersions` to pin or advance the fleet, or set `OPENWORK_INSTALLER_RELEASE_TAG` to override the default. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md) and [Installer delivery](../../packages/docs/start-here/installer-delivery.mdx).
 
 ### Faster inner-loop alternative
 
