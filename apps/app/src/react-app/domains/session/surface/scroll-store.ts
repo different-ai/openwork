@@ -5,9 +5,20 @@ const PERSIST_DELAY_MS = 250;
 
 export type SessionScrollAnchor = { messageId: string; offset: number };
 
+// Geometry and nearby IDs only: never persist transcript text or tool results.
+export type SessionScrollGeometry = {
+  owner: string;
+  scrollHeight: number;
+  viewportWidth: number;
+  before: number;
+  after: number;
+  messageIds: string[];
+};
+
 type StickyBottomSessionScrollState = {
   mode: "stickyBottom";
   topClippedMessageId: string | null;
+  geometry?: SessionScrollGeometry;
 };
 
 type ManualSessionScrollState = {
@@ -15,6 +26,7 @@ type ManualSessionScrollState = {
   scrollTop: number;
   anchor?: SessionScrollAnchor;
   topClippedMessageId: string | null;
+  geometry?: SessionScrollGeometry;
 };
 
 export type SessionScrollState = StickyBottomSessionScrollState | ManualSessionScrollState;
@@ -38,8 +50,9 @@ function normalizeSessionScrollState(value: unknown): SessionScrollState | null 
   if (!isRecord(value)) return null;
 
   const topClippedMessageId = normalizeTopClippedMessageId(value.topClippedMessageId);
+  const geometry = normalizeGeometry(value.geometry);
   if (value.mode === "stickyBottom") {
-    return { mode: "stickyBottom", topClippedMessageId };
+    return { mode: "stickyBottom", topClippedMessageId, ...(geometry ? { geometry } : {}) };
   }
 
   if (value.mode !== "manual" || typeof value.scrollTop !== "number" || !Number.isFinite(value.scrollTop)) {
@@ -54,7 +67,20 @@ function normalizeSessionScrollState(value: unknown): SessionScrollState | null 
       ? { anchor: { messageId: value.anchor.messageId, offset: value.anchor.offset } }
       : {}),
     topClippedMessageId,
+    ...(geometry ? { geometry } : {}),
   };
+}
+
+function normalizeGeometry(value: unknown): SessionScrollGeometry | undefined {
+  if (!isRecord(value) || typeof value.owner !== "string" || !value.owner || value.owner.length > 1024) return;
+  const { scrollHeight, viewportWidth, before, after, messageIds } = value;
+  if (typeof scrollHeight !== "number" || !Number.isFinite(scrollHeight) || scrollHeight <= 0 || scrollHeight > 30_000_000
+    || typeof viewportWidth !== "number" || !Number.isFinite(viewportWidth) || viewportWidth <= 0 || viewportWidth > 30_000
+    || typeof before !== "number" || !Number.isFinite(before) || before < 0 || before > scrollHeight
+    || typeof after !== "number" || !Number.isFinite(after) || after < 0 || after > scrollHeight
+    || !Array.isArray(messageIds)) return;
+  const ids = messageIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length < 256).slice(0, 24);
+  return { owner: value.owner, scrollHeight, viewportWidth, before, after, messageIds: [...new Set(ids)] };
 }
 
 function readPersistedSessionScrollState(): SessionScrollStateById {
@@ -85,8 +111,8 @@ function persistSessionScrollState(sessions: SessionScrollStateById): void {
     // Clipped-message controls are presentation state, not a reading position.
     const positions = Object.fromEntries(Object.entries(sessions).map(([id, state]) => [id,
       state.mode === "manual"
-        ? { mode: state.mode, scrollTop: state.scrollTop, anchor: state.anchor }
-        : { mode: state.mode },
+        ? { mode: state.mode, scrollTop: state.scrollTop, anchor: state.anchor, geometry: state.geometry }
+        : { mode: state.mode, geometry: state.geometry },
     ]));
     window.localStorage.setItem(SESSION_SCROLL_STORAGE_KEY, JSON.stringify(positions));
   } catch {
@@ -130,7 +156,7 @@ function setSessionStickyBottom(
 
   return {
     ...sessions,
-    [sessionId]: { mode: "stickyBottom", topClippedMessageId },
+    [sessionId]: { mode: "stickyBottom", topClippedMessageId, ...(current.geometry ? { geometry: current.geometry } : {}) },
   };
 }
 
@@ -157,7 +183,7 @@ function setSessionManualScroll(
 
   return {
     ...sessions,
-    [sessionId]: { mode: "manual", scrollTop: nextScrollTop, topClippedMessageId, anchor },
+    [sessionId]: { mode: "manual", scrollTop: nextScrollTop, topClippedMessageId, anchor, ...(current.geometry ? { geometry: current.geometry } : {}) },
   };
 }
 
@@ -182,10 +208,26 @@ type SessionScrollStore = {
   setStickyBottom: (sessionId: string | null | undefined, topClippedMessageId: string | null) => void;
   setManualScroll: (sessionId: string | null | undefined, scrollTop: number, topClippedMessageId: string | null, anchor?: SessionScrollAnchor) => void;
   setTopClippedMessageId: (sessionId: string | null | undefined, topClippedMessageId: string | null) => void;
+  setGeometry: (sessionId: string, geometry: SessionScrollGeometry) => void;
 };
 
 export const useSessionScrollStore = create<SessionScrollStore>((set) => ({
   sessions: readPersistedSessionScrollState(),
+  setGeometry: (sessionId, geometry) => set((state) => {
+    const next = normalizeGeometry(geometry);
+    const current = getSessionScrollState(state.sessions, sessionId);
+    if (!next || JSON.stringify(current.geometry) === JSON.stringify(next)) return state;
+    const updated = { ...current, geometry: next };
+    schedulePersistence(current, updated);
+    const sessions = { ...state.sessions, [sessionId]: updated };
+    // Keep positions indefinitely, but bound the heavier geometry hints.
+    const older = Object.keys(sessions).filter((id) => id !== sessionId && sessions[id].geometry);
+    for (const id of older.slice(0, Math.max(0, older.length - 63))) {
+      const { geometry: _geometry, ...position } = sessions[id];
+      sessions[id] = position;
+    }
+    return { sessions };
+  }),
   setStickyBottom: (sessionId, topClippedMessageId) => set((state) => {
     const sessions = setSessionStickyBottom(state.sessions, sessionId, topClippedMessageId);
     schedulePersistence(getSessionScrollState(state.sessions, sessionId), getSessionScrollState(sessions, sessionId));
@@ -212,7 +254,7 @@ export function flushSessionScrollState() {
 }
 
 function schedulePersistence(before: SessionScrollState, next: SessionScrollState) {
-  const changed = before.mode !== next.mode || (next.mode === "manual" && before.mode === "manual" && (
+  const changed = before.geometry !== next.geometry || before.mode !== next.mode || (next.mode === "manual" && before.mode === "manual" && (
     next.scrollTop !== before.scrollTop || next.anchor?.messageId !== before.anchor?.messageId
     || next.anchor?.offset !== before.anchor?.offset
   ));

@@ -76,13 +76,14 @@ function observeStorageWrites() {
   return writes;
 }
 
-function fixture() {
+function fixture(geometryOwner?: string) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   const layout = {
     height: 1_000,
     viewportHeight: 200,
+    complete: true,
     messages: [
       { id: "first", top: 0, height: 300 },
       { id: "reading", top: 300, height: 300 },
@@ -102,6 +103,7 @@ function fixture() {
       Object.defineProperties(node, {
         scrollHeight: { configurable: true, get: () => layout.height },
         clientHeight: { configurable: true, get: () => layout.viewportHeight },
+        clientWidth: { configurable: true, get: () => 500 },
         scrollTop: { configurable: true, get: () => scrollTop, set: (top: number) => {
           scrollWrites.push(top);
           scrollTop = Math.max(0, Math.min(top, layout.height - layout.viewportHeight));
@@ -111,12 +113,13 @@ function fixture() {
       });
     }, []);
     const scroll = useSessionScrollController({
-      selectedSessionId: sessionId, submittedMessageId: null, historyReady: ready, renderedMessages: [...layout.messages], containerRef, contentRef,
+      selectedSessionId: sessionId, geometryOwner, submittedMessageId: null, historyReady: ready, renderedMessages: [...layout.messages], containerRef, contentRef,
     });
     controls = scroll;
     return <div ref={setContainer} onScroll={scroll.handleScroll} onWheel={(event) => scroll.markScrollGesture(event.target)}
       onPointerDown={(event) => { if (event.target === event.currentTarget) scroll.markScrollGesture(event.target); }}>
       <div ref={contentRef}>
+        <div data-thread-history-complete={layout.complete} data-thread-loading={!ready ? "" : undefined} />
         {layout.messages.map((message) => <div key={message.id} data-message-id={message.id} ref={(node) => {
           if (node) node.getBoundingClientRect = () => new DOMRect(0, 40 + message.top - scrollTop, 500, message.height);
         }}>{message.id}</div>)}
@@ -158,6 +161,58 @@ function fixture() {
 }
 
 describe("session reading position", () => {
+  test("restores estimated loading geometry without consuming an anchor absent from a partial preview", async () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    store.setGeometry("a", { owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["first", "reading", "latest"] });
+    const saved = state();
+    const view = fixture("owner-a");
+    view.layout.complete = false;
+    view.layout.messages = [];
+    await view.render("a", false);
+    expect(view.container.scrollTop).toBe(325);
+    view.layout.messages = [{ id: "latest", top: 600, height: 400 }];
+    await view.render();
+    expect(state()).toEqual(saved);
+    view.layout.messages.unshift({ id: "reading", top: 420, height: 180 });
+    await view.render();
+    expect(view.container.scrollTop).toBe(445);
+    expect(state()).toEqual(saved);
+  });
+
+  test("records complete geometry and nearby IDs without replacing it with partial or zero-sized layout", async () => {
+    const view = fixture("owner-a");
+    await view.render();
+    view.wheel(325);
+    expect(state().geometry).toEqual({ owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["first", "reading", "latest"] });
+    const geometry = state().geometry;
+    view.layout.complete = false;
+    view.layout.height = 1200;
+    await view.render();
+    view.wheel(350);
+    expect(state().geometry).toEqual(geometry);
+    useSessionScrollStore.getState().setStickyBottom("a", null);
+    flushSessionScrollState();
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toMatchObject({ a: { mode: "stickyBottom", geometry } });
+  });
+
+  test("does not consume a legacy anchor against a too-short preview", async () => {
+    useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    const saved = state();
+    const view = fixture();
+    view.layout.complete = false;
+    view.layout.height = 200;
+    view.layout.messages = [{ id: "reading", top: 0, height: 100 }];
+    await view.render();
+    view.scroll(0);
+    expect(state()).toEqual(saved);
+    view.layout.height = 1000;
+    view.layout.messages[0].top = 300;
+    await view.render();
+    expect(view.container.scrollTop).toBe(325);
+    expect(state()).toEqual(saved);
+  });
+
   test("remembers native reflow adjustments without applying a competing scroll", async () => {
     useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
     const view = fixture();

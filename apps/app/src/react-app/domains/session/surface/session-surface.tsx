@@ -90,6 +90,8 @@ import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { setQueuedSendContext } from "@/react-app/domains/session/sync/queued-send-context";
 import { useSessionScrollController } from "./scroll-controller";
+import { getSessionScrollState, useSessionScrollStore } from "./scroll-store";
+import { SessionHistoryBoundary, useOpeningSessionHistory, type OpeningHistoryWindow } from "./session-history";
 import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionFindBar } from "./find-bar";
 import { useSessionFindStore } from "./find-store";
@@ -1198,14 +1200,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setOwnedError(nextError ? { owner: sessionOwner, error: nextError } : null);
   }, [sessionOwner]);
   const [restoringRevertedMessages, setRestoringRevertedMessages] = useState(false);
-  const [delayedLoadingTarget, setDelayedLoadingTarget] = useState<{ workspaceId: string; sessionId: string } | null>(null);
-  const showDelayedLoading = delayedLoadingTarget?.workspaceId === props.workspaceId &&
-    delayedLoadingTarget.sessionId === props.sessionId;
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
   // Terminal invariant: an accepted admission that reached idle with no
   // assistant result surfaces a bounded recovery card instead of plain idle.
   const [admissionOutcomeUnresolved, setAdmissionOutcomeUnresolved] = useState(false);
-  const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
+  const [rendered, setRendered] = useState<{ owner: string; sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
   const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
@@ -1270,30 +1269,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const useDesktopLoopbackSnapshotRetry = isDesktopRuntime()
     && isLoopbackOpenworkServerUrl(props.opencodeBaseUrl);
-  const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
-    queryKey: snapshotQueryKey,
-    queryFn: async ({ signal }) => {
+  const readSnapshot = useCallback(async (signal: AbortSignal, window?: OpeningHistoryWindow) => {
       if (evalSnapshotFailureRef.current) {
         throw new Error("eval: forced session snapshot failure");
       }
       const startedAt = Date.now();
-      // No `limit`: OpenCode pages `limit` as the NEWEST n messages and only
-      // signals older pages through a Link header nothing here follows, so a
-      // cap silently drops the start of any longer conversation.
+      // The preview is bounded; the second read MUST remain uncapped. A preview
+      // is never written to the authoritative snapshot cache as complete history.
       const item = useDesktopLoopbackSnapshotRetry
         ? await opencodeSessionNative.composeNativeSessionSnapshotWithRetry(
           sessionOwner,
           () => snapshotTargetRef.current,
-          { signal },
+          { ...window, signal },
         )
         : await opencodeSessionNative.composeNativeSessionSnapshot(
           { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
           props.sessionId,
-          { signal },
+          { ...window, signal },
         );
       markSessionSnapshotFetchStart(item, startedAt);
       return item;
-    },
+  }, [props.opencodeBaseUrl, props.openworkToken, props.sessionId, sessionOwner, useDesktopLoopbackSnapshotRetry]);
+  const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, snapshotQueryKey, readSnapshot });
+  const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
+    queryKey: snapshotQueryKey,
+    queryFn: ({ signal }) => readSnapshot(signal),
+    enabled: openingHistory.backgroundReady,
     staleTime: 500,
     networkMode: useDesktopLoopbackSnapshotRetry ? "always" : undefined,
     retry: useDesktopLoopbackSnapshotRetry
@@ -1301,7 +1302,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       : (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
 
-  const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
+  const fullSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
+  const hasFullHistory = fullSnapshot !== null;
+  const currentSnapshot = fullSnapshot ?? openingHistory.snapshot;
   const archived = Boolean(props.archived || currentSnapshot?.session.time.archived);
   const archiveStateKnown = props.archived !== undefined || currentSnapshot !== null;
   const [restoringArchived, setRestoringArchived] = useState(false);
@@ -1329,8 +1332,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (!currentSnapshot) return;
-    setRendered({ sessionId: props.sessionId, snapshot: currentSnapshot });
-  }, [props.sessionId, currentSnapshot]);
+    setRendered({ owner: sessionOwner, sessionId: props.sessionId, snapshot: currentSnapshot });
+  }, [sessionOwner, props.sessionId, currentSnapshot]);
 
   useEffect(() => {
     evalSnapshotFailureRef.current = false;
@@ -1425,14 +1428,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, props.workspaceId]);
 
   useEffect(() => {
-    if (!currentSnapshot) return;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [currentSnapshot, props.sessionId, props.workspaceId]);
+    if (!fullSnapshot) return;
+    seedSessionState(props.workspaceId, fullSnapshot);
+  }, [fullSnapshot, props.sessionId, props.workspaceId]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
     currentSnapshot,
-    cachedRendered: rendered,
+    cachedRendered: rendered?.owner === sessionOwner ? rendered : null,
   });
   const revertMessageId = snapshot?.session.revert?.messageID ?? null;
   const revertedMessageCount = snapshot && revertMessageId ? hiddenMessageCount(snapshot, revertMessageId) : 0;
@@ -1808,7 +1811,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleOpenTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions) => {
     props.onOpenTarget?.(target, options, props.sessionId);
   }, [props.onOpenTarget, props.sessionId]);
-  const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
+  const pendingSessionLoad = !snapshot && !snapshotQuery.isError && renderedMessages.length === 0;
   const assistantOutputAfterAwaitStart = useMemo(() => {
     if (awaitingAssistantBaseline === null) return false;
     return renderedMessages
@@ -1883,16 +1886,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     usePanelTabStore.getState().syncTranscriptArtifacts(props.sessionId, verifiedOpenTargets);
   }, [props.sessionId, verifiedOpenTargets]);
 
-  useEffect(() => {
-    setDelayedLoadingTarget(null);
-    if (!pendingSessionLoad) return;
-    const id = window.setTimeout(() => setDelayedLoadingTarget({
-      workspaceId: props.workspaceId,
-      sessionId: props.sessionId,
-    }), 2000);
-    return () => window.clearTimeout(id);
-  }, [pendingSessionLoad, props.workspaceId, props.sessionId]);
-
   // Terminal invariant for accepted admissions: idle with no assistant result
   // must never silently clear the task. The transcript-length check alone is
   // not an outcome — the newly appended user message satisfies it even when no
@@ -1909,7 +1902,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [error, liveStatus.type, props.activePermission, props.activeQuestion, renderedMessages, sending]);
 
   useEffect(() => {
-    if (admissionOutcome !== "unresolved") {
+    if (!hasFullHistory || admissionOutcome !== "unresolved") {
       setAdmissionOutcomeUnresolved(false);
       return;
     }
@@ -1920,7 +1913,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setAdmissionOutcomeUnresolved(true);
     }, ADMISSION_OUTCOME_GRACE_MS);
     return () => window.clearTimeout(id);
-  }, [admissionOutcome]);
+  }, [admissionOutcome, hasFullHistory]);
 
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
@@ -2789,12 +2782,28 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const sessionScroll = useSessionScrollController({
     selectedSessionId: props.sessionId,
+    geometryOwner: sessionOwner,
     submittedMessageId: submittedMessage?.owner === sessionOwner ? submittedMessage.id : null,
     historyReady: snapshot !== null,
     renderedMessages,
     containerRef: scrollRef,
     contentRef,
   });
+  const initialScroll = openingHistory.saved;
+  const messageViewport = {
+    sessionKey: sessionOwner,
+    scrollRef,
+    anchorMessageId: initialScroll.mode === "manual" ? initialScroll.anchor?.messageId : undefined,
+    scrollTop: initialScroll.mode === "manual" ? initialScroll.scrollTop : undefined,
+    scrollHeight: initialScroll.geometry?.scrollHeight,
+    viewportWidth: initialScroll.geometry?.viewportWidth,
+    leadingHeight: initialScroll.mode === "manual" ? initialScroll.geometry?.before : undefined,
+    trailingHeight: initialScroll.mode === "manual" ? initialScroll.geometry?.after : undefined,
+    historyComplete: hasFullHistory,
+    revealAll: findOwned,
+    stickyBottom: () => getSessionScrollState(useSessionScrollStore.getState().sessions, props.sessionId).mode === "stickyBottom",
+    onReady: sessionScroll.refresh,
+  };
 
   const handleFindBeforeJump = useCallback(() => {
     sessionScroll.markScrollGesture(scrollRef.current);
@@ -3123,17 +3132,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       onFocusCapture={handleFindSurfaceInteraction}
       className="flex h-full min-h-0 flex-col"
     >
-      {model.transitionState === "switching" && showDelayedLoading ? (
-        <div className="flex justify-center px-6 pt-4">
-          <div className="rounded-full border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary">
-            {model.renderSource === "cache" ? "Switching session from cache..." : "Switching session..."}
-          </div>
-        </div>
-      ) : null}
-
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
+          data-thread-scroll
           onWheel={(event) => {
             sessionScroll.markScrollGesture(event.target);
           }}
@@ -3181,13 +3183,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 onOpenModelPicker={handleOpenModelPicker}
               />
             ) : null}
-            {showDelayedLoading && pendingSessionLoad ? (
-              <div className="px-6 py-16">
-                <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
-                  <div className="text-sm text-dls-secondary">Opening session…</div>
-                </div>
-              </div>
-            ) : (snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
+            <SessionHistoryBoundary owner={sessionOwner} pending={pendingSessionLoad}
+              options={openingHistory.options} saved={initialScroll}>
+            {(snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
               <div className="px-6 py-8">
                 {error ? (
                   <SessionErrorCard
@@ -3256,6 +3254,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onMcpRetry={handleMcpRetry}
                     >
                       <MessageList
+                        viewport={messageViewport}
                         messages={renderedMessages}
                         status={status}
                         activityStatus={effectiveActivityStatus}
@@ -3267,6 +3266,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 </OpenTargetProvider>
               </DevProfiler>
             )}
+            </SessionHistoryBoundary>
+            {snapshotQuery.isError && snapshot && !fullSnapshot ? (
+              <div role="alert" className="flex items-center justify-center gap-3 py-3 text-xs text-dls-secondary">
+                <span>The rest of this conversation could not be loaded.</span>
+                <button type="button" className="underline" onClick={() => void snapshotQuery.refetch()}>Retry</button>
+              </div>
+            ) : null}
             {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}

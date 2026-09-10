@@ -1814,6 +1814,21 @@ export function createClientV2(
     },
     create: createSession,
     get: getSession,
+    message: async (
+      parameters: SessionParameters & { messageID: string },
+      options?: RequestOptions,
+    ): Promise<FieldsResult<V2MappedMessage>> => {
+      const result = await request(
+        "GET",
+        `/api/session/${encodeURIComponent(parameters.sessionID)}/message/${encodeURIComponent(parameters.messageID)}`,
+        undefined,
+        options?.signal,
+      );
+      if (!result.response.ok) return failedResult(result);
+      const mapped = mapV2Message(responseData(result.payload), parameters.sessionID, taskSessions);
+      if (mapped) return successfulResult(result, mapped);
+      return failedResult({ ...result, payload: { name: "InvalidV2MessageResponse" } });
+    },
     messages: async (
       parameters: SessionParameters & { limit?: number; before?: string },
       options?: RequestOptions,

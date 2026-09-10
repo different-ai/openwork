@@ -7,6 +7,7 @@ const SCROLL_GESTURE_WINDOW_MS = 600;
 
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
+  geometryOwner?: string;
   submittedMessageId: string | null;
   historyReady: boolean;
   renderedMessages: unknown;
@@ -64,7 +65,7 @@ type ScrollController = {
 };
 
 export function useSessionScrollController(options: SessionScrollControllerOptions) {
-  const { selectedSessionId, containerRef, contentRef } = options;
+  const { selectedSessionId, geometryOwner, containerRef, contentRef } = options;
   const controllerRef = useRef<ScrollController | null>(null);
   // Consumed (including cancelled) submissions survive session effect recreation.
   const submittedMessagesRef = useRef(new Set<string>());
@@ -77,7 +78,10 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     if (!container || !content) return;
 
     const store = useSessionScrollStore.getState();
-    const readState = () => getSessionScrollState(useSessionScrollStore.getState().sessions, selectedSessionId);
+    const readState = () => {
+      const state = getSessionScrollState(useSessionScrollStore.getState().sessions, selectedSessionId);
+      return geometryOwner && state.geometry && state.geometry.owner !== geometryOwner ? getSessionScrollState({}, null) : state;
+    };
     let active = true;
     let historyReady = false;
     let pendingRestore = true;
@@ -101,6 +105,30 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     const cancelFrames = () => {
       for (const id of frames) window.cancelAnimationFrame(id);
       frames.clear();
+    };
+    const rememberGeometry = () => {
+      if (!geometryOwner || !selectedSessionId || !historyReady || pendingRestore || cancelledWhileLoading
+        || container.clientWidth <= 0 || container.clientHeight <= 0
+        || !content.querySelector('[data-thread-history-complete="true"]')) return;
+      const viewport = container.getBoundingClientRect();
+      const messages = [...container.querySelectorAll<HTMLElement>("[data-message-id]")];
+      const firstVisible = messages.findIndex((message) => {
+        const rect = message.getBoundingClientRect();
+        return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+      });
+      if (firstVisible < 0) return;
+      const nearby = messages.slice(Math.max(0, firstVisible - 4), firstVisible + 20);
+      const first = nearby[0];
+      const last = nearby.at(-1);
+      if (!first || !last) return;
+      store.setGeometry(selectedSessionId, {
+        owner: geometryOwner,
+        scrollHeight: container.scrollHeight,
+        viewportWidth: container.clientWidth,
+        before: Math.max(0, container.scrollTop + first.getBoundingClientRect().top - viewport.top),
+        after: Math.max(0, container.scrollHeight - container.scrollTop - last.getBoundingClientRect().bottom + viewport.top),
+        messageIds: nearby.flatMap((message) => { const id = messageIdForElement(message); return id ? [id] : []; }),
+      });
     };
     const refreshTopClippedMessage = () => {
       if (active && historyReady) store.setTopClippedMessageId(selectedSessionId, latestMessageTopClippedId(container));
@@ -152,14 +180,24 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         else store.setManualScroll(selectedSessionId, container.scrollTop, clipped, readingAnchor(container));
         return;
       }
-      if (!historyReady) return;
+      if (!historyReady) {
+        // Reserve the last known extent while Suspense owns the transcript,
+        // without overwriting the real reading position with a loading clamp.
+        const saved = readState();
+        if (pendingRestore && saved.geometry && saved.geometry.owner === geometryOwner && content.querySelector("[data-thread-loading]")) {
+          container.scrollTop = saved.mode === "manual" ? saved.scrollTop : container.scrollHeight;
+          lastKnownScrollTop = container.scrollTop;
+        }
+        return;
+      }
       const saved = readState();
       if (pendingRestore) {
-        pendingRestore = false;
         if (saved.mode === "manual") {
-          // A bounded snapshot may not contain the old message. Fall back once,
-          // without persisting a clamped position or silently becoming sticky.
           const top = saved.anchor ? anchorTop(saved.anchor) : null;
+          // A live tail/partial preview is not proof the old anchor is gone.
+          const partial = content.querySelector('[data-thread-history-complete="false"]');
+          if (partial && (top === null || top < 0 || top > container.scrollHeight - container.clientHeight + EXACT_BOTTOM_GAP_PX)) return;
+          pendingRestore = false;
           container.scrollTop = top ?? saved.scrollTop;
           lastKnownScrollTop = container.scrollTop;
         } else {
@@ -171,6 +209,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
       }
       refreshTopClippedMessage();
+      rememberGeometry();
     };
     const markScrollGesture = (target?: EventTarget | null) => {
       if (!active) return;
@@ -223,6 +262,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         refreshTopClippedMessage();
       }
       lastKnownScrollTop = container.scrollTop;
+      rememberGeometry();
     };
     const jumpToStartOfMessage = (behavior: ScrollBehavior = "smooth") => {
       if (!active) return;
@@ -322,7 +362,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       controllerRef.current = null;
       flushSessionScrollState();
     };
-  }, [selectedSessionId, containerRef, contentRef]);
+  }, [selectedSessionId, geometryOwner, containerRef, contentRef]);
 
   useLayoutEffect(() => {
     controllerRef.current?.update(options.historyReady, options.submittedMessageId);
@@ -342,5 +382,11 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     if (controllerRef.current?.sessionId === selectedSessionId) controllerRef.current.jumpToStartOfMessage(behavior);
   }, [selectedSessionId]);
 
-  return { handleScroll, markScrollGesture, scrollToBottom, jumpToLatest, jumpToStartOfMessage };
+  const refresh = useCallback(() => {
+    if (controllerRef.current?.sessionId === selectedSessionId) {
+      controllerRef.current.update(options.historyReady, options.submittedMessageId);
+    }
+  }, [selectedSessionId, options.historyReady, options.submittedMessageId]);
+
+  return { handleScroll, markScrollGesture, scrollToBottom, jumpToLatest, jumpToStartOfMessage, refresh };
 }
