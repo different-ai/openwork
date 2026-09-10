@@ -6,8 +6,8 @@ import { needs, test } from "@openwork/testkit";
 import { startCatalogWitness } from "../packages/labs/src/mock-mcp-catalog.ts";
 import { bootServer, isRecord, stopChild } from "../worlds/openwork-server-cli.ts";
 
-// New journey: operators can distinguish catalog failures in the real server's
-// reconciliation response. Quick-add catalog specs exercise Den/UI, not this API.
+// Operators can distinguish catalog failures and local App-host provisioning in
+// the real server's responses. Quick-add catalog specs exercise Den/UI, not this API.
 test("catalog reconciliation attributes failures without leaking private auth or retaining revoked direct servers", async ({ evidence }) => {
   needs({ commands: ["bun"] });
   const root = await mkdtemp(join(tmpdir(), "mcp-catalog-diagnostics-"));
@@ -51,6 +51,23 @@ test("catalog reconciliation attributes failures without leaking private auth or
     if (!isRecord(body)) throw new Error("Missing reconciliation result");
     return body;
   }
+  async function health(endpoint: string) {
+    const requestCount = witness.requests.length;
+    const registrationCount = witness.registrations.length;
+    const disconnectCount = witness.disconnects.length;
+    const response = await fetch(endpoint.replace("/reconcile", "/health"), { headers, signal: AbortSignal.timeout(10_000) });
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain(privateAuthorization.slice("Bearer ".length));
+    expect(text).not.toContain(memberAuthorization.slice("Bearer ".length));
+    expect(witness.requests).toHaveLength(requestCount);
+    expect(witness.registrations).toHaveLength(registrationCount);
+    expect(witness.disconnects).toHaveLength(disconnectCount);
+    const body: unknown = JSON.parse(text);
+    if (!isRecord(body)) throw new Error("Missing health result");
+    expect(body.tools).toMatchObject({ direct: { checked: false } });
+    return body;
+  }
   async function expectResolveError(endpoint: string, code: string) {
     const response = await fetch(endpoint.replace("/mcp/openwork-cloud/reconcile", "/mcp-apps/resolve"), {
       method: "POST", headers, signal: AbortSignal.timeout(20_000),
@@ -64,15 +81,26 @@ test("catalog reconciliation attributes failures without leaking private auth or
   }
   try {
     const endpoint = await boot("trusted-dev", "1");
+    expect((await health(endpoint)).appHostAuthorizationReady).toBeNull();
     const disabled = await reconcile(endpoint, undefined, false);
     expect(disabled.connectCatalogDiagnostic).toBeUndefined();
     expect(disabled.firstFailure).toMatchObject({ code: "cloud_mcp_disabled" });
-    expect((await reconcile(endpoint)).connectCatalogDiagnostic).toBe("missing_app_host_auth");
+    expect(disabled.appHostAuthorizationReady).toBeNull();
+    const missingAuth = await reconcile(endpoint);
+    expect(missingAuth).toMatchObject({ usable: true, phase: "ready", firstFailure: null, appHostAuthorizationReady: false, connectCatalogDiagnostic: "missing_app_host_auth" });
+    const missingAuthHealth = await health(endpoint);
+    expect(missingAuthHealth).toMatchObject({ usable: true, phase: "ready", firstFailure: null, appHostAuthorizationReady: false });
+    if (!isRecord(missingAuthHealth.desired) || typeof missingAuthHealth.desired.revision !== "string") throw new Error("Missing desired revision");
+    const desiredRevision = missingAuthHealth.desired.revision;
+    expect(missingAuth.desired).toMatchObject({ revision: desiredRevision });
     await expectResolveError(endpoint, "connect_catalog_missing_app_host_auth");
     expect(witness.requests.filter((entry) => entry.privateAuth || entry.method === "resources/read")).toEqual([]);
 
     witness.catalog(index([]));
-    expect((await reconcile(endpoint, privateAuthorization)).connectCatalogDiagnostic).toBe("empty");
+    const authorized = await reconcile(endpoint, privateAuthorization);
+    expect(authorized).toMatchObject({ usable: true, appHostAuthorizationReady: true, connectCatalogDiagnostic: "empty", desired: { revision: desiredRevision } });
+    expect(await health(endpoint)).toMatchObject({ usable: true, phase: "ready", firstFailure: null, appHostAuthorizationReady: true, desired: { revision: desiredRevision } });
+    evidence.recordAssertionEvidence("App-host provisioning is independent of ordinary Cloud health", "Ordinary health GET remains usable after global reconciliation without private auth, reports false then true after private authorization, and retains the same desired revision. GET makes no direct probe or catalog requests and leaks neither credential.", true);
     await expectResolveError(endpoint, "server_unavailable");
     expect(witness.requests.some((entry) => entry.method === "resources/read" && entry.privateAuth && entry.appHostCapability)).toBe(true);
     expect(witness.registrations.some((entry) => entry.name.startsWith("openwork-direct-"))).toBe(false);
@@ -106,7 +134,8 @@ test("catalog reconciliation attributes failures without leaking private auth or
     witness.catalog(index([]));
     const untrustedEndpoint = await boot("unactivated", "0");
     const privateRequestsBefore = witness.requests.filter((entry) => entry.privateAuth).length;
-    expect((await reconcile(untrustedEndpoint, privateAuthorization)).connectCatalogDiagnostic).toBe("untrusted_origin");
+    expect(await reconcile(untrustedEndpoint, privateAuthorization)).toMatchObject({ connectCatalogDiagnostic: "untrusted_origin", appHostAuthorizationReady: null });
+    expect(await health(untrustedEndpoint)).toMatchObject({ usable: true, firstFailure: null, appHostAuthorizationReady: null });
     await expectResolveError(untrustedEndpoint, "connect_catalog_untrusted_origin");
     expect(witness.requests.filter((entry) => entry.privateAuth)).toHaveLength(privateRequestsBefore);
     evidence.recordAssertionEvidence("Unactivated origin cannot receive private App-host credentials", "An isolated non-development server reports untrusted_origin for the same unactivated origin; private request count does not increase. Reconciliation responses omit both bearer credentials.", true);

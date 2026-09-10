@@ -253,11 +253,28 @@ export async function readOpenWorkConnectMcpAppHostAuthorization(
   config: ServerConfig,
   workspaceId: string,
   endpointUrl: string,
+  options?: { readOnly?: boolean },
 ): Promise<string | null> {
-  const credential = await appHostAuthorizationStore.get(config, workspaceId);
+  const credential = options?.readOnly
+    ? await appHostAuthorizationStore.getExisting(config, workspaceId)
+    : await appHostAuthorizationStore.get(config, workspaceId);
   const expectedOrigin = endpointOrigin(endpointUrl);
   if (!credential || !expectedOrigin || credential.origin !== expectedOrigin) return null;
   return privateAppHostAuthorization(credential.authorization);
+}
+
+/**
+ * Local provisioning for the caller's validated effective Cloud config only;
+ * never validates tokens or proves provider availability or access.
+ */
+export async function readOpenWorkConnectMcpAppHostAuthorizationReady(
+  config: ServerConfig,
+  workspaceId: string,
+  cloudMcp: Record<string, unknown> | null,
+): Promise<boolean | null> {
+  if (!cloudMcp || cloudMcp.type !== "remote" || cloudMcp.enabled !== true || typeof cloudMcp.url !== "string"
+    || !await trustedAppHostCloudEndpoint(cloudMcp)) return null;
+  return await readOpenWorkConnectMcpAppHostAuthorization(config, workspaceId, cloudMcp.url, { readOnly: true }) !== null;
 }
 
 export async function writeOpenWorkConnectMcpAppHostAuthorization(
