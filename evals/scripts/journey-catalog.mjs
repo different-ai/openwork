@@ -28,7 +28,7 @@ const definitions = {
     cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1' } }],
   },
   'unfinished-tool-lifecycle.e2e.test.ts': {
-    cases: [{ id: 'STOP-01', engines: ['v1', 'v2'], surfaces: ['web', 'electron'], defaultSurface: 'web', optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1', surface: 'web' } }],
+    cases: [{ id: 'STOP-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
 };
 

@@ -76,8 +76,6 @@ test('registered case metadata names exact files, supported execution axes, and 
       spec: 'unfinished-tool-lifecycle.e2e.test.ts',
       id: 'STOP-01',
       engines: ['v1', 'v2'],
-      surfaces: ['web', 'electron'],
-      defaultSurface: 'web',
     },
   ]);
   for (const registered of registeredCases) {

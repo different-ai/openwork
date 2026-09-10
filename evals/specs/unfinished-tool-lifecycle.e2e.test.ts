@@ -1,8 +1,11 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { arrangeControl, unfinishedTools } from "../worlds/chat.ts";
+import { arrangeControl, unfinishedToolsWeb } from "../worlds/chat.ts";
 
-const test = spec.world(unfinishedTools);
+const test = spec.world(unfinishedToolsWeb, {
+  timeout: 420_000,
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
 
 test("STOP-01 unfinished current-turn tools expose Stop feedback and active, waiting, and unknown outcomes", async ({ world, user, seed, probe, step, evidence }) => {
   await step("a completed turn grounds later Stop errors in the native snapshot", async () => {

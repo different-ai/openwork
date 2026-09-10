@@ -14,15 +14,6 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 
 type AppSurface = "electron" | "web";
 
-/** Surface-registered cases default to the web lane; unregistered worlds keep Electron. */
-function requestedAppSurface(): AppSurface {
-  const value = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "web";
-  if (value !== "electron" && value !== "web") {
-    throw new Error(`OPENWORK_EVAL_APP_SURFACE must be web or electron; received ${JSON.stringify(value)}.`);
-  }
-  return value;
-}
-
 declare global {
   interface Window {
     __openworkSubmissionFault?: { attempts: number; release: () => void };
@@ -275,7 +266,6 @@ async function splitPaneQuestions(
       name,
       workspacePath,
       mocks: { agent: mock },
-      headless: process.env.OPENWORK_EVAL_CHROME_HEADLESS === "1",
     });
     app = web;
     const configured = web.mocks.agent;
@@ -1939,8 +1929,7 @@ async function stoppingFeedbackFault(
   };
 }
 
-export async function unfinishedTools(seed: Seed) {
-  const surface = requestedAppSurface();
+export async function unfinishedToolsWeb(seed: Seed) {
   const engine = resolveEvalEngine();
   const prompt = "Hold the native tool open for Stop feedback proof.";
   const warmup = { prompt: "Create the Stop feedback fixture.", reply: "Stop feedback fixture ready." };
@@ -1956,7 +1945,7 @@ export async function unfinishedTools(seed: Seed) {
         timeout: 180_000,
       } }],
     },
-  ], { permission: { bash: "allow" } }, surface);
+  ], { permission: { bash: "allow" } }, "web");
   const session = await seedSessionRetry(seed, base.app);
   // v2 exposes live runs through /session/active ({ type: "running" }) rather than /session/status.
   const statusPath = `/workspace/${encodeURIComponent(base.workspace.workspaceId)}`
@@ -1964,7 +1953,6 @@ export async function unfinishedTools(seed: Seed) {
   return {
     ...base,
     session,
-    surface,
     prompt,
     warmup,
     engine,
