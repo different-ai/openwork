@@ -20,6 +20,14 @@
 #   OPENWORK_API_PORT      host port for the Den API                (default: 8788)
 #   OPENWORK_ALLOW_SIGNUP  allow public signup for evaluation       (default: true)
 #   OPENWORK_ORG_NAME      single organization name                 (default: OpenWork Evaluation)
+#
+# Private first administrator (instead of public signup), see
+# packages/docs/self-host/deploy-to-your-cloud/first-administrator.mdx:
+#   OPENWORK_OWNER_EMAILS  comma-separated owner emails allowed to claim the
+#                          organization at /setup                    (default: empty, no bootstrap)
+#   OPENWORK_SETUP_CODE    one-time setup code entered at /setup    (default: empty, no bootstrap)
+# Set both together with OPENWORK_ALLOW_SIGNUP=false; leave both empty to keep
+# the default public-signup evaluation.
 
 name: openwork-eval
 
@@ -80,6 +88,9 @@ services:
       DEN_SINGLE_ORG_NAME: ${OPENWORK_ORG_NAME:-OpenWork Evaluation}
       DEN_SINGLE_ORG_SLUG: default
       DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: ${OPENWORK_ALLOW_SIGNUP:-true}
+      # Initial-administrator bootstrap (/setup). Empty disables the flow.
+      DEN_SINGLE_ORG_OWNER_EMAILS: ${OPENWORK_OWNER_EMAILS:-}
+      DEN_INITIAL_ADMIN_BOOTSTRAP_CODE: ${OPENWORK_SETUP_CODE:-}
       DEN_REQUIRE_EMAIL_VERIFICATION: "false"
       DEN_API_PUBLIC_URL: http://localhost:${OPENWORK_API_PORT:-8788}
       DEN_MCP_RESOURCE_URL: http://localhost:${OPENWORK_API_PORT:-8788}/mcp
@@ -105,11 +116,12 @@ services:
     environment:
       # Den web origin (denUrls source of truth for readiness and derived URLs).
       DEN_BASE_URL: http://localhost:${OPENWORK_WEB_PORT:-3005}
-      # Container-internal API base for server-side calls (proxy, readiness, SSO probe).
+      # Container-internal API base for server-side calls: the /api/auth/* proxy
+      # (SSO ACS, SCIM, /setup account creation), readiness, SSO probe. Must be
+      # the in-network service URL; the host port is unreachable from here.
       DEN_API_BASE: http://den:8788
       # Browser-reachable API origin (what runtime-config hands to clients).
       DEN_API_PUBLIC_URL: http://localhost:${OPENWORK_API_PORT:-8788}
-      DEN_AUTH_FALLBACK_BASE: http://den:8788
       DEN_AUTH_ORIGIN: http://localhost:${OPENWORK_WEB_PORT:-3005}
       DEN_WEB_PUBLIC_ORIGIN: http://localhost:${OPENWORK_WEB_PORT:-3005}
       DEN_WEB_OPENWORK_AUTH_CALLBACK_URL: http://localhost:${OPENWORK_WEB_PORT:-3005}

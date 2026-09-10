@@ -115,6 +115,52 @@ describe("ConnectorCatalog", () => {
     expect(render({ filter: "zzzz" })).toContain("No connectors match");
   });
 
+  test("custom configured names match without changing the unfiltered catalog", () => {
+    const connections = [{ ...NOTION, id: "conn-custom", name: "Team Archive", url: "https://archive.example.com/mcp", connectedForMe: false }];
+    const markup = render({ connections, filter: "  TEAM archive  " });
+    expect(markup).toContain('data-testid="connector-row-conn-custom"');
+    expect(markup).toContain('href="/dashboard/mcp-connections/configured?connectionId=conn-custom"');
+    expect(markup).toContain('data-testid="connector-options-conn-custom"');
+    expect(markup).toContain('data-testid="connector-recover-conn-custom"');
+    expect(markup).toContain('data-testid="connector-chat-conn-custom"');
+    expect(markup).toContain("Needs your account");
+    expect(markup).toContain("Configured (1)");
+    expect(markup).toContain("0 of 9 integrations match, plus 1 configured connector");
+    expect(markup).not.toContain("No connectors match");
+    expect(markup).not.toContain('data-testid="connector-add-conn-custom"');
+    expect(render({ connections })).not.toContain('data-testid="connector-row-conn-custom"');
+    const unrelated = render({ connections, filter: "unrelated" });
+    expect(unrelated).not.toContain('data-testid="configured-connector-matches"');
+    expect(unrelated).not.toContain("Team Archive");
+    expect(unrelated).toContain("No connectors match");
+  });
+
+  test("matching catalog rows do not duplicate their configured connections", () => {
+    for (const [presetId, name, url] of [
+      ["notion", "Notion", NOTION.url],
+      ["granola", "Granola", "https://mcp.granola.ai/mcp"],
+      ["microsoft-365", "Microsoft 365", "https://graph.microsoft.com"],
+    ]) {
+      const markup = render({ connections: [{ ...NOTION, id: presetId, name, url }], filter: name });
+      expect(markup.split(`data-testid="connector-row-${presetId}"`)).toHaveLength(2);
+      expect(markup).not.toContain('data-testid="configured-connector-matches"');
+      expect(markup).toContain("1 of 9 integrations match");
+    }
+  });
+
+  test("a renamed preset is searchable by its custom name and deduplicated by service", () => {
+    const connections = [{ ...NOTION, name: "Research Hub" }];
+    const markup = render({ connections, filter: "Research Hub" });
+    expect(markup).toContain('data-testid="connector-row-conn-notion"');
+    expect(markup).toContain("Research Hub");
+    expect(markup).toContain('href="/dashboard/mcp-connections/configured?connectionId=conn-notion"');
+    expect(markup).not.toContain('data-testid="connector-row-notion"');
+    const serviceMatch = render({ connections, filter: "notion" });
+    expect(serviceMatch).toContain('data-testid="connector-row-notion"');
+    expect(serviceMatch).not.toContain('data-testid="connector-row-conn-notion"');
+    expect(serviceMatch).not.toContain('data-testid="configured-connector-matches"');
+  });
+
   test("every row opens its detail page: stable catalog identity even when configured", () => {
     const markup = render({ filter: "o" });
 

@@ -6,6 +6,7 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { hasTerminalSessionReply, holdSessionWork, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop } from "@/app/lib/opencode-interruption";
 import { setSessionArchived } from "@/app/lib/opencode-session";
 import { isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { readSessionTree } from "@/app/lib/session-ownership";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -14,7 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
-import type { RouteSession, RouteWorkspace } from "@/react-app/shell/route-workspaces";
+import { workspaceLabel, type RouteSession, type RouteWorkspace } from "@/react-app/shell/route-workspaces";
 import { readLastSessionFor, writeLastSessionFor } from "@/react-app/shell/session-memory";
 import { workspaceSessionRoute } from "@/react-app/shell/workspace-routes";
 import { useWorkbenchStore } from "../chat/workbench-store";
@@ -25,7 +26,7 @@ import { dispatchQueuedDrain, getQueuedDrainState, hasPendingQueuedAdmission } f
 import { clearQueuedSendContext } from "../sync/queued-send-context";
 import { applySessionArchived } from "../sync/session-sync";
 
-type ArchiveTarget = { workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; draftScope: string | null };
+type ArchiveTarget = { workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; title: string; draftScope: string | null };
 
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
@@ -99,7 +100,8 @@ export function useSessionArchive(input: {
   }
 
   function showUndo(target: ArchiveTarget, archived: boolean, undo?: typeof undoNavigation.current) {
-    toast.undo(archived ? t("session_management.session_archived") : t("session_management.session_unarchived"), {
+    const message = archived ? t("session_management.session_archived", { title: target.title }) : t("session_management.session_unarchived");
+    toast.undo(<span title={message}>{message}</span>, {
       id: `session-archive:${target.sessionId}`,
       icon: archived ? Archive : ArchiveRestore,
       undo: { label: t("common.undo"), onClick: () => {
@@ -150,20 +152,7 @@ export function useSessionArchive(input: {
     let archived = false;
     try {
       if (isOpencodeV2BaseUrl(baseUrl)) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
-      const readTree = async () => {
-        const root = unwrap(await client.session.get({ sessionID: sessionId, directory: workspace.path }, options));
-        if (root.id !== sessionId || root.directory !== workspace.path) throw new Error("Could not verify the conversation's workspace.");
-        const ids = [sessionId];
-        for (let index = 0; index < ids.length; index += 1) {
-          const children = unwrap(await client.session.children({ sessionID: ids[index], directory: workspace.path }, options));
-          for (const child of children) {
-            if (child.parentID !== ids[index] || child.directory !== workspace.path) throw new Error("Could not verify a subtask's owner.");
-            if (!ids.includes(child.id)) ids.push(child.id);
-            if (ids.length > 256) throw new Error("Too many subtasks to verify safely.");
-          }
-        }
-        return ids;
-      };
+      const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
       // Native Stop reaches the root immediately, concurrent with discovery.
       // Archive also accounts for older/background subtasks that would be hidden.
       let rootStop: Promise<void> | undefined;
@@ -271,7 +260,8 @@ export function useSessionArchive(input: {
       toast.error(endpoint && isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : "The session's workspace is not connected.");
       return false;
     }
-    const target = { workspace, endpoint, sessionId, draftScope: input.draftScope };
+    const title = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId)?.title?.trim() || t("session.default_title");
+    const target = { workspace, endpoint, sessionId, title, draftScope: input.draftScope };
     if (!archived) return restore(target, true);
     return new Promise<boolean>(resolve => {
       pending.current = resolve;
@@ -283,11 +273,27 @@ export function useSessionArchive(input: {
     archiveSession,
     archiveDialog: (
       <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(false); }}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("session_management.archive_working_title")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("session_management.archive_working_description")}
+            <AlertDialogTitle className="min-w-0 max-w-full [overflow-wrap:anywhere]">
+              {target ? t("session_management.archive_working_title", { title: target.title }) : null}
+            </AlertDialogTitle>
+            <AlertDialogDescription render={<div />} className="space-y-4">
+              <p>{t("session_management.archive_working_description")}</p>
+              {target ? (
+                <dl className="min-w-0 space-y-2 text-xs text-muted-foreground">
+                  <div>
+                    <dt>{t("session_management.archive_workspace")}</dt>
+                    <dd className="select-text [overflow-wrap:anywhere]">
+                      {workspaceLabel({ ...target.workspace, path: target.workspace.path.split(/[\\/]/).filter(Boolean).pop() ?? "" })}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{t("session_management.archive_session_id")}</dt>
+                    <dd className="select-text font-mono [overflow-wrap:anywhere]">{target.sessionId}</dd>
+                  </div>
+                </dl>
+              ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}

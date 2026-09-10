@@ -29,6 +29,7 @@ import {
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { z } from "zod"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, queryValidator } from "../../middleware/index.js"
@@ -39,6 +40,14 @@ import type { UserOrganizationsContext, OrganizationContextVariables } from "../
 type TelemetryRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables>
 
 const DAY_MS = 24 * 60 * 60 * 1000
+
+// OpenAPI-only view of the shared contract: den-web parses responses with the
+// shared schema, so the `date-time` format is declared here instead of there.
+const telemetryDimensionListDocumentSchema = telemetryDimensionListResponseSchema.extend({
+  items: z.array(telemetryDimensionListResponseSchema.shape.items.element.extend({
+    lastSeenAt: z.string().datetime(),
+  })),
+}).meta({ ref: "TelemetryDimensionListResponse" })
 
 async function queryWindowMetrics(orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null) {
   const rows = await db
@@ -131,7 +140,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       summary: "List telemetry dimension values",
       description: "Returns unique analytics dimension values for the active organization, such as project labels for the project selector.",
       responses: {
-        200: jsonResponse("Telemetry dimensions returned.", telemetryDimensionListResponseSchema),
+        200: jsonResponse("Telemetry dimensions returned.", telemetryDimensionListDocumentSchema),
         400: jsonResponse("Invalid dimension query.", invalidRequestSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
       },

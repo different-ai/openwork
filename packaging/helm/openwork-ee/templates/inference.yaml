@@ -61,7 +61,7 @@ spec:
       {{- end }}
       containers:
         - name: inference
-          image: "{{ .Values.inference.image.repository }}:{{ default .Values.image.tag .Values.inference.image.tag }}"
+          image: "{{ .Values.inference.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.inference.image.tag) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

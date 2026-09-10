@@ -1039,7 +1039,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const workspaceSessionGroups = useMemo(
     // Settings has no per-workspace loading state; the empty set keeps the
     // previous behavior (error -> "error", otherwise "ready").
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set()),
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(), new Set(Object.keys(sessionsByWorkspaceId))),
     [errorsByWorkspaceId, sessionsByWorkspaceId, workspaces],
   );
 
@@ -2161,6 +2161,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       runtime: "direct",
       workspacePaths,
       openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+      // The user env file is read when the local server process spawns, so a
+      // healthy engine must be replaced, not reused, for new values to apply.
+      forceRestart: true,
     });
     const reconnected = await openworkServerStore.reconnectOpenworkServer();
     if (!reconnected) {

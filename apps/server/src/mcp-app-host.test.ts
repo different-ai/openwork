@@ -521,7 +521,7 @@ describe("MCP Apps host transport", () => {
         toolName: "render_fixture",
         resourceUri: RESOURCE_URI,
       },
-    })).rejects.toMatchObject({ code: "server_unavailable" });
+    })).rejects.toMatchObject({ code: "connect_catalog_missing_app_host_auth" });
   });
 
   test("resolves a same-server MCP App through its capability gateway", async () => {

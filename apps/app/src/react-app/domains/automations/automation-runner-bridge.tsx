@@ -13,6 +13,7 @@ import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
 import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate"
 import { useAutomationDeploymentEnabled } from "./automation-availability"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
 
@@ -34,6 +35,11 @@ function resetDesktopRunnerId() {
 
 /** Keeps this signed-in desktop registered as the owner's Automation runner when Den allows it. */
 export function AutomationRunnerBridge() {
+  if (useEnterpriseActivationRequired()) return null
+  return <ActivatedAutomationRunnerBridge />
+}
+
+function ActivatedAutomationRunnerBridge() {
   const { status } = useDenAuth()
   const deploymentEnabled = useAutomationDeploymentEnabled()
 

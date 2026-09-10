@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
-import type { DenMcpToken, DenSettings } from "../src/app/lib/den";
-import type { OpenworkCloudMcpHealth, OpenworkCloudMcpReconcilePayload } from "../src/app/lib/openwork-server";
+import { DenApiError, type DenMcpToken, type DenSettings } from "../src/app/lib/den";
+import { OpenworkServerError, type OpenworkCloudMcpHealth, type OpenworkCloudMcpReconcilePayload } from "../src/app/lib/openwork-server";
 import {
   __setCloudMcpUserStateStorageForTest,
   readCloudMcpSyncMarker,
@@ -13,6 +13,7 @@ import {
   runCloudMcpMaintenanceWithRetry,
   runSessionMcpMaintenanceTask,
   syncCloudControlMcpInBackground,
+  waitForCloudMcpRetry,
 } from "../src/react-app/domains/connections/use-session-mcp-maintenance";
 
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
@@ -274,6 +275,187 @@ describe("session MCP maintenance", () => {
     })).resolves.toMatchObject({ outcome: "ready", status: "unchanged" });
     expect(mintCount).toBe(0);
     expect(writeCount).toBe(0);
+  });
+
+  test("startup recovers after the original retry burst without a navigation or online event", async () => {
+    let elapsed = 0;
+    let checks = 0;
+    let writes = 0;
+    const waits: number[] = [];
+    const result = await runCloudMcpMaintenanceWithRetry({
+      attempt: () => syncCloudControlMcpInBackground({
+        client: {
+          baseUrl: "https://worker.openwork.test",
+          listMcp: async () => ({ items: [] }),
+          getOpenworkCloudMcpHealth: async () => {
+            checks += 1;
+            if (elapsed < 10_000) throw new TypeError("Failed to fetch");
+            return cloudHealth(false);
+          },
+          reconcileOpenworkCloudMcp: async () => { writes += 1; return cloudHealth(true); },
+        },
+        settings: SETTINGS,
+        workspaceId: WORKSPACE_ID,
+        now: NOW,
+        mintToken: async () => MINTED,
+      }),
+      wait: async (delay) => { waits.push(delay); elapsed += delay; },
+    });
+    expect(result).toMatchObject({ outcome: "ready" });
+    expect(waits).toEqual([1_000, 3_000, 10_000]);
+    expect(checks).toBe(4);
+    expect(writes).toBe(1);
+  });
+
+  test("persistent policy unavailability has a finite backoff, but authorization denial is terminal", async () => {
+    for (const { code, expectedAttempts } of [
+      { code: "policy_unavailable", expectedAttempts: 6 },
+      { code: "forbidden", expectedAttempts: 1 },
+      { code: "unauthorized", expectedAttempts: 1 },
+    ]) {
+      let attempts = 0;
+      const waits: number[] = [];
+      const result = await runCloudMcpMaintenanceWithRetry({
+        attempt: () => syncCloudControlMcpInBackground({
+          client: {
+            baseUrl: "https://worker.openwork.test",
+            listMcp: async () => { attempts += 1; throw new OpenworkServerError(403, code, "Blocked"); },
+            getOpenworkCloudMcpHealth: async () => { throw new Error("must not probe"); },
+            reconcileOpenworkCloudMcp: async () => { throw new Error("must not register"); },
+          },
+          settings: SETTINGS,
+          workspaceId: WORKSPACE_ID,
+          mintToken: async () => { throw new Error("must not mint"); },
+        }),
+        wait: async (delay) => { waits.push(delay); },
+      });
+      expect(result).toMatchObject({ outcome: "failed", issue: { code, retryable: code === "policy_unavailable" } });
+      expect(attempts).toBe(expectedAttempts);
+      expect(waits).toEqual(code === "policy_unavailable" ? [1_000, 3_000, 10_000, 30_000, 60_000] : []);
+    }
+  });
+
+  test("online wakes a pending backoff without starting a second maintenance run", async () => {
+    const online = new EventTarget();
+    let attempts = 0;
+    const run = runCloudMcpMaintenanceWithRetry({
+      retryDelaysMs: [60_000],
+      attempt: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError("Failed to fetch");
+        return { outcome: "ready", status: "unchanged", health: cloudHealth(true) };
+      },
+      wait: (delay) => {
+        const waiting = waitForCloudMcpRetry(delay, undefined, online);
+        online.dispatchEvent(new Event("online"));
+        return waiting;
+      },
+    });
+    expect(await run).toMatchObject({ outcome: "ready" });
+    expect(attempts).toBe(2);
+  });
+
+  test("an authorization denial from the Den token endpoint is not treated as a network failure", async () => {
+    let mints = 0;
+    let writes = 0;
+    const waits: number[] = [];
+    const result = await runCloudMcpMaintenanceWithRetry({
+      attempt: () => syncCloudControlMcpInBackground({
+        client: {
+          baseUrl: "https://worker.openwork.test",
+          listMcp: async () => ({ items: [] }),
+          getOpenworkCloudMcpHealth: async () => cloudHealth(false),
+          reconcileOpenworkCloudMcp: async () => { writes += 1; return cloudHealth(true); },
+        },
+        settings: SETTINGS,
+        workspaceId: WORKSPACE_ID,
+        mintToken: async () => { mints += 1; throw new DenApiError(403, "forbidden", "Membership denied"); },
+      }),
+      wait: async (delay) => { waits.push(delay); },
+    });
+    expect(result).toMatchObject({ outcome: "failed", issue: { code: "forbidden", retryable: false, message: "Membership denied" } });
+    expect(mints).toBe(1);
+    expect(writes).toBe(0);
+    expect(waits).toEqual([]);
+  });
+
+  test("a current target retries a shared repair cancelled by a superseded model", async () => {
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let current = true;
+    let probes = 0;
+    let writes = 0;
+    const client = {
+      baseUrl: "https://worker.openwork.test",
+      listMcp: async () => ({ items: [] }),
+      getOpenworkCloudMcpHealth: async () => { probes += 1; await pending; return cloudHealth(false); },
+      reconcileOpenworkCloudMcp: async () => { writes += 1; return cloudHealth(true); },
+    };
+    const old = syncCloudControlMcpInBackground({
+      client, settings: SETTINGS, workspaceId: WORKSPACE_ID, mintToken: async () => MINTED,
+      providerModel: { provider: "openwork", model: "old" }, isCurrent: () => current,
+    });
+    const oldRejection = old.then(
+      () => { throw new Error("obsolete repair must be cancelled"); },
+      (error: unknown) => error,
+    );
+    // Let both list calls join the same pending probe.
+    await Promise.resolve();
+    const replacement = runCloudMcpMaintenanceWithRetry({
+      signal: new AbortController().signal,
+      attempt: () => syncCloudControlMcpInBackground({
+        client, settings: SETTINGS, workspaceId: WORKSPACE_ID, mintToken: async () => MINTED,
+        providerModel: { provider: "openwork", model: "new" },
+      }),
+      wait: async () => {},
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    current = false;
+    release();
+    expect(await oldRejection).toMatchObject({ name: "AbortError" });
+    expect(await replacement).toMatchObject({ outcome: "ready" });
+    expect(probes).toBe(2);
+    expect(writes).toBe(1);
+  });
+
+  test("cancels the sleeping retry when its workspace or account becomes obsolete", async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const run = runCloudMcpMaintenanceWithRetry({
+      signal: controller.signal,
+      attempt: async () => { attempts += 1; throw new TypeError("Failed to fetch"); },
+      wait: (delay) => {
+        const waiting = waitForCloudMcpRetry(delay, controller.signal);
+        controller.abort();
+        return waiting;
+      },
+    });
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    expect(attempts).toBe(1);
+  });
+
+  test("a late token mint cannot register into an obsolete workspace or write a readiness marker", async () => {
+    let current = true;
+    let writes = 0;
+    const run = syncCloudControlMcpInBackground({
+      client: {
+        baseUrl: "https://worker.openwork.test",
+        listMcp: async () => ({ items: [] }),
+        getOpenworkCloudMcpHealth: async () => cloudHealth(false),
+        reconcileOpenworkCloudMcp: async () => { writes += 1; return cloudHealth(true); },
+      },
+      settings: SETTINGS,
+      workspaceId: WORKSPACE_ID,
+      mintToken: async () => { current = false; return MINTED; },
+      isCurrent: () => current,
+    });
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    expect(writes).toBe(0);
+    expect(readCloudMcpSyncMarker({
+      denBaseUrl: SETTINGS.baseUrl, serverBaseUrl: "https://worker.openwork.test",
+      orgId: SETTINGS.activeOrgId ?? "", workspaceId: WORKSPACE_ID,
+    })).toBe(null);
   });
 
   test("direct-probes session maintenance so upgraded desktops silently remint missing MCP bearer failures", async () => {

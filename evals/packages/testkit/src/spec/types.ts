@@ -123,6 +123,8 @@ export interface SpecAdapters {
 }
 
 export interface SpecWorldOptions {
+  /** Frozen at registration and shared by arrangement/body. Omit only for bounded legacy migration. */
+  readonly resources?: import("@openwork/env").WorldResources;
   needs?: TestNeeds;
   timeout?: number;
   scope?: "test" | "file";
