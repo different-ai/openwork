@@ -24,7 +24,7 @@ describe("command palette settings", () => {
     expect(enabledIds).toContain("settings:updates");
   });
 
-  test("uses stable ids for tabs and Library sections", () => {
+  test("uses stable ids for tabs, Advanced sections, and Library sections", () => {
     expect(build(false, true).map((item) => item.id)).toEqual([
       "settings:general",
       "settings:preferences",
@@ -36,6 +36,13 @@ describe("command palette settings", () => {
       "settings:environment",
       "settings:updates",
       "settings:cloud-account",
+      "settings:advanced/organization-server",
+      "settings:advanced/runtime",
+      "settings:advanced/agent-access",
+      "settings:advanced/config-sources",
+      "settings:advanced/experimental-engine",
+      "settings:advanced/workspace-run-mode",
+      "settings:advanced/developer",
       "settings:extensions/skills",
       "settings:extensions/mcps",
       "settings:extensions/connections",
@@ -58,6 +65,9 @@ describe("command palette settings", () => {
     const items = build(false, true);
 
     expect(items.find((item) => item.id === "settings:advanced")?.keywords).toContain("recovery");
-    expect(rankPaletteItems("reset", items, [])[0]?.items[0]?.id).toBe("settings:advanced");
+    expect(rankPaletteItems("reset", items, [])[0]?.items.slice(0, 2).map((item) => item.id)).toEqual([
+      "settings:advanced/organization-server",
+      "settings:advanced",
+    ]);
   });
 });
