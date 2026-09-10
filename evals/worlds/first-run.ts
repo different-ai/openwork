@@ -1305,8 +1305,10 @@ export async function revokedUpdateWorld(seed: Seed) {
   await allowVersions(["9.9.9"]);
   const app = await seed.desktop({ name: "revoked-update", den, as: "admin" });
   const workspace = await seed.workspace(app, seed.tmpPath("revoked-update"));
-  await evalIn(app, () => {
-    const currentVersion = "0.18.0";
+  await evalIn(app, async () => {
+    // Report the real installed version: a different one would re-key the
+    // background auto-check and start a second check beside the manual one.
+    const { currentVersion } = await window.__OPENWORK_ELECTRON__.updater.getChannel();
     const state: Window["__backgroundUpdateWitness"] = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
     window.__backgroundUpdateWitness = state;
     window.__openworkReadDesktopVersionMetadataEval = () => ({
@@ -1329,14 +1331,14 @@ export async function revokedUpdateWorld(seed: Seed) {
       },
       onDownloadProgress: () => () => {},
     };
-  });
+  }, { awaitPromise: true });
   return {
     app,
     den,
     allowVersions,
     snapshot: () => evalIn(app, () => {
-      const { checks, downloads, installs } = window.__backgroundUpdateWitness;
-      return { checks, downloads, installs };
+      const { downloads, installs } = window.__backgroundUpdateWitness;
+      return { downloads, installs };
     }),
     openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),

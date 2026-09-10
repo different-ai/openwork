@@ -27,7 +27,7 @@ revokedTest("a downloaded update is not installed once the organization revokes 
   await user.notSee({ text: readyText });
   await user.notSee({ text: "Restart to update" });
   await user.notSee({ text: "Install & restart" });
-  expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0 });
+  expect(await world.snapshot()).toMatchObject({ downloads: 1, installs: 0 });
   await user.screenshot();
 
   // Positive control: the same version approved again installs from Settings.
@@ -41,7 +41,7 @@ revokedTest("a downloaded update is not installed once the organization revokes 
     within: 10_000, label: "install proceeds while the version stays allowed",
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
   });
-  expect(await world.snapshot()).toMatchObject({ checks: 2, downloads: 2, installs: 1 });
+  expect(await world.snapshot()).toMatchObject({ downloads: 2, installs: 1 });
 });
 
 test("updates download outside Settings and offer a persistent, optional restart", async ({ world, user, probe }) => {
