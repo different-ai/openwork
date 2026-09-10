@@ -177,6 +177,16 @@ gh release view vX.Y.Z --repo different-ai/openwork   # published, not draft
 fallback snapshot only; refresh it occasionally with
 `node scripts/release/generate-desktop-versions.mjs --version <latest>`.
 
+One file does carry a released version by design: the pull-only evaluation
+stack `packaging/docker/docker-compose.eval.yml` pins den-api and den-web by
+`<version>@<digest>`, and the docs download it by commit sha + checksum. After
+`Publish EE Artifacts` pushes a stable tag's images, its `pin-eval-compose` job
+opens an auto-approved, auto-merging PR to `dev` that rewrites those pins
+(`scripts/release/pin-compose-images.mjs`), and `Compose pins drift`
+(`node scripts/release/check-compose-pins.mjs`) fails when the pins lag the
+highest stable tag. Like the changelog PR, that bot PR follows the release; it
+is not part of cutting it.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
