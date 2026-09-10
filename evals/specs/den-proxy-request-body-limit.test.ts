@@ -46,7 +46,7 @@ function postBody(url: URL, requestId: string, declared: boolean): Promise<{ res
   });
 }
 
-test("the auth proxy rejects oversized bodies before Den while ordinary sign-in still works", { timeout: 300_000 }, async ({ evidence, place }) => {
+test("the auth proxy rejects oversized bodies before sender EOF and preserves ordinary sign-in", { timeout: 300_000 }, async ({ evidence, place }) => {
   needs({ commands: ["bun"] });
   if (place.kind === "local" && !await localMysqlIsRunning()) {
     throw new SkipError("local MySQL on 127.0.0.1:3306");
@@ -113,8 +113,8 @@ test("the auth proxy rejects oversized bodies before Den while ordinary sign-in 
   expect(accepted.status).toBe(200);
   expect(accepted.headers.get("set-cookie")).toContain("session_token");
 
-  // Observe the accepted control before using the exact request delta to prove
-  // non-delivery; any completed rejected request must be an additional record.
+  // Observe the accepted control and compare completed requests only. This
+  // completion-log witness cannot exclude upstream contact still in flight.
   const requests = await eventually(readNewRequests, {
     within: 10_000,
     label: "successful auth control in Den's access log",
@@ -125,8 +125,8 @@ test("the auth proxy rejects oversized bodies before Den while ordinary sign-in 
     method: "POST", route: "/api/auth/*", status: 200,
   }]);
   evidence.recordAssertionEvidence(
-    "Declared and chunked oversized bodies stop at the web boundary without contacting Den",
-    `Neither rejection added a Den HTTP completion. After the successful control, the isolated server recorded exactly ${requests.length} new request: POST /api/auth/* with HTTP 200 and a server-generated ID.`,
+    "Den records only the successful sign-in completion during the request sequence",
+    `No new HTTP completions were observed after either rejection. Through the successful control, the isolated server recorded exactly ${requests.length} new completion: POST /api/auth/* with HTTP 200 and a server-generated ID. This observation does not exclude upstream contact still in flight.`,
     requests.length === 1 && requests.every(({ method, route, status }) => method === "POST" && route === "/api/auth/*" && status === 200),
   );
   evidence.recordAssertionEvidence(
