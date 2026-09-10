@@ -76,7 +76,7 @@ import { PaperGrainGradient } from "@openwork/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
-import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
+import { deriveComposerHistory, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import {
   ADMISSION_OUTCOME_GRACE_MS,
   createSingleFlight,
@@ -115,7 +115,6 @@ import {
   composerDraftNeedsHydration,
   getComposerAttachments,
   getComposerDraft,
-  getComposerHistory,
   getComposerMentions,
   getComposerPasteParts,
   getComposerQueuedDrafts,
@@ -1097,8 +1096,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     setHydratedDraftScopeKey(persistedDraftKey);
   }, [hydrateComposerDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
-  const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
-  const appendComposerHistory = useComposerStateStore((state) => state.appendHistory);
   // Queued follow-up drafts live in the shared composer store keyed by session
   // id. That keeps a queued message in session A from being drained into
   // session B when the route swaps the same surface component to another
@@ -1533,6 +1530,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return claimed.length ? { ...item, previousMessageIds: [...item.previousMessageIds, ...claimed] } : item;
     }) };
   }, [baseRenderedMessages, pendingMessages, props.opencodeBaseUrl]);
+  const inputHistory = useMemo(() => deriveComposerHistory(pendingReconciliation.messages), [pendingReconciliation.messages]);
   const remainingPendingMessages = pendingReconciliation.remaining;
   useEffect(() => {
     if (!pendingMessages || (pendingMessages.length === remainingPendingMessages.length
@@ -2069,7 +2067,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
-      appendComposerHistory(props.sessionId, nextDraft.text);
       useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
       if (activeSessionOwnerRef.current === sessionOwner) {
         setAwaitingAssistantBaseline(renderedMessages.length);
@@ -2098,7 +2095,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [archived, archiveStateKnown, appendComposerHistory, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
+  }, [archived, archiveStateKnown, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, renderedMessages.length, sessionOwner, setError]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
