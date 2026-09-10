@@ -82,6 +82,12 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
   const marked = { ...existing, role: "button" as const, label: /Release checklist, .*Draft$/ };
   const rowSelector = `[data-testid="${existing.testId}"]`;
   const marker = { testId: `sidebar-session-draft-${world.session.sessionId}` };
+  const seeRestoredDraft = async () => {
+    await user.see("composer", { editable: true, text: /Check the release notes\s+Keep the rollback instructions too\./ });
+    // innerText inserts two newlines between paragraphs; the composer serializes one.
+    const paragraphs = await probe.dom('[data-lexical-editor="true"] > p');
+    expect(paragraphs.elements.map((paragraph) => paragraph.text).join("\n")).toBe(draft);
+  };
   const draftKeys = () => probe.storage("openwork.session-drafts.v2", (value) => {
     if (typeof value !== "object" || value === null || !("drafts" in value) || typeof value.drafts !== "object" || value.drafts === null) return [];
     return Object.keys(value.drafts);
@@ -120,7 +126,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     await user.see(draftRow, { text: `Draft: ${newDraft}` });
     expect(await draftKeys()).toHaveLength(2);
     await user.click(existing);
-    await user.see("composer", { editable: true, text: draft });
+    await seeRestoredDraft();
     await user.see({ text: world.history.reply });
     await user.screenshot();
   });
@@ -152,7 +158,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     await world.releaseReply();
     await user.see({ ...existing, label: /Release checklist, Unread result, Draft$/ });
     await user.click(existing);
-    await user.see("composer", { editable: true, text: draft });
+    await seeRestoredDraft();
     await user.type("composer", " ", { replace: true });
     await user.press("Backspace");
     await user.click(draftRow);
