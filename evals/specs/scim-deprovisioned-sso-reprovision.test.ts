@@ -6,6 +6,7 @@ import type { StartedMockIdpLab } from "@openwork/labs";
 import { createAdmin, eventually, inviteMember, queryDenDatabase, server, test } from "@openwork/testkit";
 import type { Den } from "@openwork/testkit";
 import { enableScimFixtureSso } from "./helpers/scim-fixture.ts";
+import { signedScimSamlFixture } from "./helpers/scim-saml-fixture.ts";
 
 // One IdP-shaped lifecycle that Okta's Provision Users + SSO combination
 // produces in the field: SCIM deactivates a member, the person still tries the
@@ -68,11 +69,9 @@ async function scimFetch(
   return { response, body, text };
 }
 
-// Drives Den's real OIDC sign-in the way a browser would: Den mints the
-// authorization URL and state cookie, the IdP redirects back with a code, and
-// the callback is delivered to Den with that state cookie. The IdP's callback
-// target is Den's public auth origin; the API host serves the same route.
-async function attemptSsoSignIn(den: Den, email: string) {
+// Drive Den's real sign-in with its state cookie, then deliver either the OIDC
+// code redirect or a signed SAML assertion to the API-hosted callback route.
+async function attemptSsoSignIn(den: Den, email: string, saml?: ReturnType<typeof signedScimSamlFixture>) {
   const start = await denFetch(den.ref, "/api/auth/sign-in/sso", {
     method: "POST",
     body: JSON.stringify({ email, callbackURL: `${den.ref.webUrl}/` }),
@@ -82,20 +81,30 @@ async function attemptSsoSignIn(den: Den, email: string) {
     throw new Error(`SSO sign-in start failed: HTTP ${start.response.status} ${start.text.slice(0, 500)}`);
   }
   const stateCookie = start.response.headers.getSetCookie().map((cookie) => cookie.split(";")[0]?.trim() ?? "").filter(Boolean).join("; ");
-  const idpRedirect = await fetch(authorizationUrl, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
-  const idpLocation = idpRedirect.headers.get("location");
-  if (idpRedirect.status !== 302 || !idpLocation) {
-    throw new Error(`Mock IdP did not redirect back to Den: HTTP ${idpRedirect.status} ${(await idpRedirect.text()).slice(0, 300)}`);
+  let callback: Response;
+  if (saml) {
+    const signed = saml.response(authorizationUrl, email, den.ref.apiUrl);
+    callback = await fetch(new URL(new URL(signed.acs).pathname, den.ref.apiUrl), {
+      method: "POST", redirect: "manual",
+      headers: { cookie: stateCookie, "content-type": "application/x-www-form-urlencoded" },
+      body: signed.body, signal: AbortSignal.timeout(30_000),
+    });
+  } else {
+    const idpRedirect = await fetch(authorizationUrl, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+    const idpLocation = idpRedirect.headers.get("location");
+    if (idpRedirect.status !== 302 || !idpLocation) {
+      throw new Error(`Mock IdP did not redirect back to Den: HTTP ${idpRedirect.status} ${(await idpRedirect.text()).slice(0, 300)}`);
+    }
+    const callbackUrl = new URL(idpLocation);
+    const apiOrigin = new URL(den.ref.apiUrl);
+    callbackUrl.protocol = apiOrigin.protocol;
+    callbackUrl.host = apiOrigin.host;
+    callback = await fetch(callbackUrl, {
+      redirect: "manual",
+      headers: { cookie: stateCookie },
+      signal: AbortSignal.timeout(30_000),
+    });
   }
-  const callbackUrl = new URL(idpLocation);
-  const apiOrigin = new URL(den.ref.apiUrl);
-  callbackUrl.protocol = apiOrigin.protocol;
-  callbackUrl.host = apiOrigin.host;
-  const callback = await fetch(callbackUrl, {
-    redirect: "manual",
-    headers: { cookie: stateCookie },
-    signal: AbortSignal.timeout(30_000),
-  });
   const text = await callback.text();
   let body: unknown = text;
   try {
@@ -115,9 +124,10 @@ interface JourneyOrg {
   controlEmail: string;
   controlRole: string;
   mode: "multi_org" | "single_org";
+  saml?: ReturnType<typeof signedScimSamlFixture>;
 }
 
-async function registerEnabledOidcSso(den: Den, idp: StartedMockIdpLab): Promise<{ organizationId: string; adminHeaders: Record<string, string> }> {
+async function registerEnabledSso(den: Den, idp: StartedMockIdpLab, saml?: ReturnType<typeof signedScimSamlFixture>): Promise<{ organizationId: string; adminHeaders: Record<string, string> }> {
   const organizationResult = await denFetch(den.ref, "/v1/org", { headers: { authorization: `Bearer ${den.admin.token}` } });
   const organizationId = isRecord(organizationResult.body) ? stringField(organizationResult.body.organization, "id") : null;
   if (!organizationResult.response.ok || !organizationId) {
@@ -139,10 +149,13 @@ async function registerEnabledOidcSso(den: Den, idp: StartedMockIdpLab): Promise
     "x-openwork-org-id": organizationId,
   };
   const registration = idp.registration();
-  const sso = await denFetch(den.ref, "/v1/sso/oidc", {
+  const sso = await denFetch(den.ref, saml ? "/v1/sso/saml" : "/v1/sso/oidc", {
     method: "POST",
     headers: adminHeaders,
-    body: JSON.stringify({
+    body: JSON.stringify(saml ? {
+      issuer: saml.issuer, cert: saml.cert, entryPoint: `${saml.issuer}/sso`,
+      audience: den.ref.apiUrl, domain: registration.domain,
+    } : {
       issuer: registration.issuer,
       domain: registration.domain,
       clientId: registration.clientId,
@@ -218,7 +231,9 @@ async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts
   expect(userRowsAfterDeprovision, "deprovisioned user row").toHaveLength(0);
 
   // ── The deactivated person still tries the SSO link ──────────────────────
-  const ssoAttempt = await attemptSsoSignIn(den, managedEmail);
+  const sessionsBeforeSso = await queryDenDatabase(databaseUrl, "SELECT id FROM `session` ORDER BY id", []);
+  const ssoAttempt = await attemptSsoSignIn(den, managedEmail, org.saml);
+  expect(await queryDenDatabase(databaseUrl, "SELECT id FROM `session` ORDER BY id", []), "refused SSO must not create even an orphan session").toEqual(sessionsBeforeSso);
   const userRowsAfterSso = await queryDenDatabase(databaseUrl, "SELECT id FROM `user` WHERE email = ?", [managedEmail]);
   const sessionRowsAfterSso = await queryDenDatabase(
     databaseUrl,
@@ -236,8 +251,8 @@ async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts
   expect(orgHasJoinedMember(orgAfterSso.body, controlEmail)).toBe(true);
   expect(orgMemberRole(orgAfterSso.body, controlEmail)).toBe(controlRole);
   const refusal = {
-    claim: `A SCIM-deprovisioned person is refused at the SSO callback without leaving a ghost identity (${mode})`,
-    detail: `The OIDC callback returned ${ssoAttempt.response.status} "${stringField(ssoAttempt.body, "message")}" with no session cookie; afterwards the database holds ${userRowsAfterSso.length} user row(s) and ${sessionRowsAfterSso.length} session row(s) for ${managedEmail}, /v1/org lists no joined member for that email, and ${controlEmail} remains ${orgMemberRole(orgAfterSso.body, controlEmail)}.`,
+    claim: `A SCIM-deprovisioned person is refused at the ${org.saml ? "SAML" : "OIDC"} callback without leaving a ghost identity (${mode})`,
+    detail: `The ${org.saml ? "signed SAML" : "OIDC"} callback returned ${ssoAttempt.response.status} "${stringField(ssoAttempt.body, "message")}" with no session cookie; afterwards the database holds ${userRowsAfterSso.length} user row(s) and ${sessionRowsAfterSso.length} session row(s) for ${managedEmail}, /v1/org lists no joined member for that email, and ${controlEmail} remains ${orgMemberRole(orgAfterSso.body, controlEmail)}.`,
     passed: ssoAttempt.response.status === 403
       && stringField(ssoAttempt.body, "message") === DEPROVISIONED_MESSAGE
       && !ssoAttempt.sessionCookieIssued
@@ -288,7 +303,9 @@ async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts
   return { refusal, reprovision };
 }
 
-test("a SCIM-deactivated member who tries SSO is refused without a ghost identity, so the IdP can re-provision them (multi-org Den)", { timeout: 600_000 }, async ({ evidence, place }) => {
+for (const protocol of ["OIDC", "SAML"]) {
+test(`a SCIM-deactivated member who tries ${protocol} SSO is refused without a ghost identity, so the IdP can re-provision them (multi-org Den)`, { timeout: 120_000 }, async ({ evidence, place }) => {
+  const saml = protocol === "SAML" ? signedScimSamlFixture() : undefined;
   const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
   const managedDomain = `okta-scim-${runId}.test`;
   const managedEmail = `avery.${runId}@${managedDomain}`;
@@ -300,7 +317,7 @@ test("a SCIM-deactivated member who tries SSO is refused without a ghost identit
     org: { name: `SCIM SSO Ghost ${runId}`, admin: { name: "SCIM Admin" } },
   });
   const control = await inviteMember(den, "control", { email: `control.${runId}@openwork.test`, name: "Control Member" });
-  const { organizationId, adminHeaders } = await registerEnabledOidcSso(den, idp);
+  const { organizationId, adminHeaders } = await registerEnabledSso(den, idp, saml);
   const facts = await runDeprovisionedSsoJourney({
     den,
     organizationId,
@@ -309,12 +326,14 @@ test("a SCIM-deactivated member who tries SSO is refused without a ghost identit
     controlEmail: control.email,
     controlRole: "member",
     mode: "multi_org",
+    saml,
   });
   evidence.recordAssertionEvidence(facts.refusal.claim, facts.refusal.detail, facts.refusal.passed);
   evidence.recordAssertionEvidence(facts.reprovision.claim, facts.reprovision.detail, facts.reprovision.passed);
 });
 
-test("a SCIM-deactivated member who tries SSO is refused without a ghost identity, so the IdP can re-provision them (single-org Den)", { timeout: 600_000 }, async ({ evidence, place }) => {
+test(`a SCIM-deactivated member who tries ${protocol} SSO is refused without a ghost identity, so the IdP can re-provision them (single-org Den)`, { timeout: 120_000 }, async ({ evidence, place }) => {
+  const saml = protocol === "SAML" ? signedScimSamlFixture() : undefined;
   const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
   const managedDomain = `okta-scim-${runId}.test`;
   const managedEmail = `avery.${runId}@${managedDomain}`;
@@ -335,7 +354,7 @@ test("a SCIM-deactivated member who tries SSO is refused without a ghost identit
   });
   // The first owner-listed sign-in materialises the singleton organization.
   const admin = await createAdmin(den, { email: adminEmail, name: "SCIM Admin" });
-  const { organizationId, adminHeaders } = await registerEnabledOidcSso(den, idp);
+  const { organizationId, adminHeaders } = await registerEnabledSso(den, idp, saml);
   const facts = await runDeprovisionedSsoJourney({
     den,
     organizationId,
@@ -344,7 +363,9 @@ test("a SCIM-deactivated member who tries SSO is refused without a ghost identit
     controlEmail: admin.email,
     controlRole: "owner",
     mode: "single_org",
+    saml,
   });
   evidence.recordAssertionEvidence(facts.refusal.claim, facts.refusal.detail, facts.refusal.passed);
   evidence.recordAssertionEvidence(facts.reprovision.claim, facts.reprovision.detail, facts.reprovision.passed);
 });
+}
