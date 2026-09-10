@@ -9,8 +9,11 @@ const test = spec.world(archivedSessionSort, {
 });
 
 test("Archived is globally ordered by archive time across workspace reorder, reload, restore and rearchive", async ({ world, user, agent, probe, step }) => {
-  const { newest, oldest, tieA, tieB, active, workspaceA, workspaceB } = world;
-  const ties = workspaceA.workspaceId < workspaceB.workspaceId ? [tieA, tieB] : [tieB, tieA];
+  const { newest, oldest, tieA, tieA2, tieB, active, workspaceA, workspaceB } = world;
+  const ties = [tieA, tieA2, tieB].sort((a, b) => {
+    if (a.workspaceId !== b.workspaceId) return a.workspaceId < b.workspaceId ? -1 : 1;
+    return a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0;
+  });
   const expected = [newest, ...ties, oldest];
   const rowTitles = async () => (await probe.dom("[data-global-archived-sessions] [data-session-tab-id]"))
     .elements.filter(row => row.rect.width > 0 && row.rect.height > 0).map(row => row.text);
@@ -31,7 +34,10 @@ test("Archived is globally ordered by archive time across workspace reorder, rel
     expect(recent.archived).toBeGreaterThan(old.archived);
     expect(recent.created).toBeLessThan(old.created);
     expect(recent.updated).toBeLessThan(old.updated);
-    expect((await world.metadata(tieA)).archived).toBe((await world.metadata(tieB)).archived);
+    const tiedTimestamp = (await world.metadata(tieA)).archived;
+    expect(tiedTimestamp).toBeGreaterThan(0);
+    expect((await world.metadata(tieA2)).archived).toBe(tiedTimestamp);
+    expect((await world.metadata(tieB)).archived).toBe(tiedTimestamp);
     expect((await world.metadata(active)).archived).toBe(0);
   });
 
@@ -39,12 +45,12 @@ test("Archived is globally ordered by archive time across workspace reorder, rel
     await step("a real reload consumes workspace order without changing archive recency or ties", async () => {
       await world.workspaceOrder(workspaceIds);
       await user.reload();
-      await user.see({ role: "button", label: /^Archived\s+4$/ }, { timeoutMs: 90_000 });
+      await user.see({ role: "button", label: /^Archived\s+5$/ }, { timeoutMs: 90_000 });
       const first = (await probe.dom(`[data-sidebar-workspace-id="${workspaceIds[0]}"]`)).elements[0];
       const second = (await probe.dom(`[data-sidebar-workspace-id="${workspaceIds[1]}"]`)).elements[0];
       if (!first || !second) throw new Error("Both fixture workspaces must be visible in the sidebar");
       expect(first.rect.top).toBeLessThan(second.rect.top);
-      await user.click({ role: "button", label: /^Archived\s+4$/ });
+      await user.click({ role: "button", label: /^Archived\s+5$/ });
       await expectRows(expected);
       await user.see({ testId: `sidebar-session-${active.sessionId}` });
     });
@@ -61,6 +67,7 @@ test("Archived is globally ordered by archive time across workspace reorder, rel
     await user.click({ role: "button", label: "Restore" });
     await user.see("composer", { editable: true });
     await expectRows([newest, ...ties]);
+    await user.see({ role: "button", label: /^Archived\s+4$/ });
     expect((await world.metadata(oldest)).archived).toBe(0);
     expect((await world.metadata(newest)).archived).toBeGreaterThan(0);
   });
@@ -72,7 +79,8 @@ test("Archived is globally ordered by archive time across workspace reorder, rel
     expect((await world.metadata(active)).archived).toBe(0);
     await user.see({ testId: `sidebar-session-${active.sessionId}` });
     await user.reload();
-    await user.click({ role: "button", label: /^Archived\s+4$/ });
+    await user.see({ role: "button", label: /^Archived\s+5$/ }, { timeoutMs: 90_000 });
+    await user.click({ role: "button", label: /^Archived\s+5$/ });
     await expectRows([oldest, newest, ...ties]);
   });
 });

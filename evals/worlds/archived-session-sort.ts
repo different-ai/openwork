@@ -1,4 +1,4 @@
-import { browserScript, navigate } from "@openwork/cdp";
+import { addInitScript, browserScript, navigate } from "@openwork/cdp";
 import { waitUntilInteractive } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
@@ -14,6 +14,7 @@ export async function archivedSessionSort(seed: Seed) {
   const workspaceA = await seed.workspace(app, workspacePath);
   const newest = { ...await seed.session(app, { title: "Newest archive, oldest creation" }), ...workspaceA };
   const tieA = { ...await seed.session(app, { title: "Archive tie A" }), ...workspaceA };
+  const tieA2 = { ...await seed.session(app, { title: "Archive tie A2" }), ...workspaceA };
   // appWeb deliberately gives the browser only client credentials. Arrange the
   // second workspace with this test-owned runtime's host API, not a browser grant.
   const paths = resolveHeadlessWorldRuntimePaths(fileURLToPath(new URL("../../", import.meta.url)), app.handle.name);
@@ -72,14 +73,29 @@ export async function archivedSessionSort(seed: Seed) {
   const timestamp = Date.now() - 86_400_000;
   await metadata(newest, timestamp + 300);
   await metadata(tieA, timestamp + 200);
+  await metadata(tieA2, timestamp + 200);
   await metadata(tieB, timestamp + 200);
   await metadata(oldest, timestamp + 100);
+  // Native list order already matches ascending IDs. Reverse only this real
+  // HTTP response so the same-workspace tie cannot pass by stable-sort accident.
+  const reversedList = await addInitScript(app.client, browserScript((workspaceId) => {
+    const original = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const response = await original(request);
+      if (request.method !== "GET" || new URL(request.url).pathname !== `/workspace/${workspaceId}/opencode/session` || !response.ok) return response;
+      const sessions: unknown = await response.json();
+      if (!Array.isArray(sessions)) throw new Error("Archive fixture expected a native session list");
+      return Response.json(sessions.reverse(), { status: response.status });
+    };
+  }, [workspaceA.workspaceId]));
   return {
-    app, workspacePath, workspaceA, workspaceB, newest, oldest, tieA, tieB, active, metadata,
+    app, workspacePath, workspaceA, workspaceB, newest, oldest, tieA, tieA2, tieB, active, metadata,
     route: () => seed.evalIn(app, () => location.pathname),
     // Persist the same preference as workspace dragging, then let a real reload consume it.
     workspaceOrder: (ids: string[]) => seed.evalIn(app, browserScript((ids) => {
       localStorage.setItem("openwork.react.workspaceOrder", JSON.stringify(ids));
     }, [ids])),
+    [Symbol.asyncDispose]: () => reversedList[Symbol.asyncDispose](),
   };
 }
