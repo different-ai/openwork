@@ -3,12 +3,17 @@ import { spec } from "@openwork/testkit";
 import { taskActivityWeb } from "../worlds/task-activity-web.ts";
 
 const test = spec.world(taskActivityWeb, {
-  resources: { surfaces: ["appWeb"], services: [] },
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-test("ACT-01 delegated-task activity stays with its original message after a follow-up", async ({ user, probe }) => {
+test("ACT-01 delegated-task activity stays with its original message after a follow-up", async ({ world, user, probe, evidence }) => {
   await user.see({ text: "Build isolated Azure repro" });
   await user.see({ text: "What is the update?" });
+  evidence.recordJsonArtifact("Delegated activity state", await probe.eval(() =>
+    [...document.querySelectorAll("[data-subagent-run]")].map((row) => ({
+      activity: row.getAttribute("data-subagent-activity"), text: row.textContent,
+    })),
+  ));
   // TODO(primitive): inspect the visual treatment classes on a delegated-task status row.
   const rendered = await probe.eval(() => {
     const row = document.querySelector<HTMLElement>('[data-subagent-activity="shimmer"]');
@@ -37,4 +42,18 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
     precedesFollowup: true,
     rawPromptVisible: false,
   });
+  expect(await probe.eval(() => document.querySelector('[data-subagent-run="eval-subagent-activity"]')
+    ?.getAttribute("data-subagent-session-id"))).toBe(world.child.sessionId);
+  await user.click({ role: "button", label: /Build isolated Azure repro/ });
+  await user.see({ text: "ACTIVITY_CHILD_HOLD" });
+  await user.see({ text: /Working/ });
+  await probe.eval(() => { location.reload(); });
+  await user.see({ text: "ACTIVITY_CHILD_HOLD" }, { timeoutMs: 30_000 });
+  await user.see({ text: /Working/ });
+  expect(await probe.eval(() => document.querySelector("[data-session-surface-id]")
+    ?.getAttribute("data-session-surface-id"))).toBe(world.child.sessionId);
+  expect((await world.replyState()).deliveredChunks).toBe(1);
+  await user.notSee({ text: "Activity child finished." });
+  evidence.recordAssertionEvidence("Delegated activity opens the exact live child across reload",
+    "Original row shimmers before follow-up; opening it and reloading preserves the child session, prompt and Working state while the provider remains held.", true);
 });
