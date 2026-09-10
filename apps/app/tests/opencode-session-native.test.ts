@@ -792,6 +792,22 @@ describe("native Stop and follow-up handoff", () => {
       }
       const rejected = path.match(/\/question\/([^/]+)\/reject$/)?.[1];
       if (request.method === "POST" && rejected) { withdrawn.push(rejected); return Response.json(true); }
+      // Same engine gap for permissions: an aborted tool's approval stays listed.
+      if (path.endsWith("/permission")) {
+        expect(statusReads).toBeGreaterThan(1);
+        return Response.json([
+          { id: "per_nested", sessionID: "ses_nested", permission: "bash", patterns: [], always: [], metadata: {} },
+          { id: "per_unrelated", sessionID: "ses_unrelated", permission: "bash", patterns: [], always: [], metadata: {} },
+        ]);
+      }
+      const replied = path.match(/\/permission\/([^/]+)\/reply$/)?.[1];
+      if (request.method === "POST" && replied) {
+        return request.clone().json().then((body: unknown) => {
+          const reply = typeof body === "object" && body !== null && "reply" in body ? body.reply : undefined;
+          withdrawn.push(`${replied}:${String(reply)}`);
+          return Response.json(true);
+        });
+      }
       const [, id, action] = path.match(/\/session\/([^/]+)(?:\/([^/]+))?$/) ?? [];
       if (request.method === "POST" && action === "prompt_async") return new Response(null, { status: 204 });
       if (request.method === "POST" && action === "abort" && id) {
@@ -840,13 +856,14 @@ describe("native Stop and follow-up handoff", () => {
         idle.resolve(Response.json({ [root.id]: { type: "idle" }, ses_unrelated: { type: "busy" }, ses_old: { type: "busy" } }));
         await Promise.all([stop, followUp]);
         expect(sent).toEqual([true]);
-        expect(withdrawn).toEqual(["que_nested"]);
+        expect(withdrawn).toEqual(["que_nested", "per_nested:reject"]);
         expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
         expect(requests.filter((request) => /\/session\/ses_[^/]+$/.test(new URL(request.url).pathname))
           .map((request) => new URL(request.url).pathname.split("/").at(-1)))
           .toEqual([root.id, "ses_child", "ses_nested", "ses_late"]);
         for (const request of requests) {
-          expect(request.url.startsWith(`${baseUrl}/session/`) || request.url.startsWith(`${baseUrl}/question`)).toBe(true);
+          expect(request.url.startsWith(`${baseUrl}/session/`) || request.url.startsWith(`${baseUrl}/question`)
+            || request.url.startsWith(`${baseUrl}/permission`)).toBe(true);
           expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
           if (!request.url.endsWith("/prompt_async")) expect(new URL(request.url).searchParams.get("directory")).toBe(root.directory);
         }

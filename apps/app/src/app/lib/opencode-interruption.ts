@@ -287,13 +287,14 @@ async function stopForegroundTree(
     if ([...targets].every((id) => !statuses[id] || statuses[id].type === "idle")) break;
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
-  await withdrawQuestions(client, targets, directory, options);
+  await withdrawRequests(client, targets, directory, options);
 }
 
 /** The engine marks an interrupted tool part as aborted but keeps its unanswered
- * question pending (tools run on detached fibers), so the stopped tree would keep
- * asking in every pane and after reload. Withdraw what nothing can answer anymore. */
-async function withdrawQuestions(client: Client, sessions: ReadonlySet<string>, directory: string | undefined, options: { signal: AbortSignal }) {
+ * question or permission pending (tools run on detached fibers), so the stopped
+ * tree would keep asking in every pane and after reload. Withdraw what nothing
+ * can answer anymore; each kind is best-effort on its own. */
+async function withdrawRequests(client: Client, sessions: ReadonlySet<string>, directory: string | undefined, options: { signal: AbortSignal }) {
   try {
     const questions = unwrap(await client.question.list({ directory }, options));
     for (const question of questions) {
@@ -301,5 +302,13 @@ async function withdrawQuestions(client: Client, sessions: ReadonlySet<string>, 
     }
   } catch {
     // The tree is already stopped; a failed withdrawal only leaves a stale prompt.
+  }
+  try {
+    const permissions = unwrap(await client.permission.list({ directory }, options));
+    for (const permission of permissions) {
+      if (sessions.has(permission.sessionID)) unwrap(await client.permission.reply({ requestID: permission.id, reply: "reject", directory }, options));
+    }
+  } catch {
+    // Same: the aborted tool cannot consume an answer, so a stale card is the only cost.
   }
 }
