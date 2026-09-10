@@ -16,7 +16,9 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   if (!native?.childId) throw new Error("Missing native child association");
   expect(native.status, JSON.stringify(native)).toBe("running");
   evidence.recordJsonArtifact("Native delegation identity", native);
-  await world.followup();
+  await user.type("composer", "What is the update?", { verify: true });
+  // Busy Enter queues; the production Cmd/Ctrl+Enter shortcut sends steering now.
+  await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
   await user.see({ text: "Build isolated Azure repro" });
   await user.see({ text: "What is the update?" });
   evidence.recordJsonArtifact("Delegated activity state", await probe.eval(() =>

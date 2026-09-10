@@ -37,20 +37,6 @@ export async function taskActivityWeb(seed: Seed) {
     } },
   }, engine);
   const session = await seed.session(app, { title: "Delegated activity" });
-  const followup = () => seed.evalIn(app, browserScript(async (workspaceId, sessionId, engine, providerID, modelID) => {
-    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port")
-      + "/workspace/" + encodeURIComponent(workspaceId) + (engine === "v2" ? "/opencode2/api" : "/opencode");
-    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" };
-    const post = async (path: string, body: unknown) => {
-      const response = await fetch(base + path, { method: "POST", headers, body: JSON.stringify(body) });
-      if (!response.ok) throw new Error(path + ": " + response.status + " " + await response.text());
-    };
-    const path = "/session/" + encodeURIComponent(sessionId);
-    if (engine === "v2") {
-      await post(path + "/model", { model: { providerID, id: modelID } });
-      await post(path + "/prompt", { text: "What is the update?" });
-    } else await post(path + "/prompt_async", { model: { providerID, modelID }, parts: [{ type: "text", text: "What is the update?" }] });
-  }, [workspace.workspaceId, session.sessionId, engine, providerId, modelId]), { awaitPromise: true, timeoutMs: 90_000 });
   const native = () => seed.evalIn(app, browserScript(async (workspaceId, sessionId, engine) => {
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port")
       + "/workspace/" + encodeURIComponent(workspaceId) + (engine === "v2" ? "/opencode2/api" : "/opencode");
@@ -84,5 +70,5 @@ export async function taskActivityWeb(seed: Seed) {
     }
     return null;
   }, [workspace.workspaceId, session.sessionId, engine]), { awaitPromise: true });
-  return { app, workspace, session, prompt, followup, native, replyState: () => mock.agentReplyState(marker) };
+  return { app, workspace, session, prompt, native, replyState: () => mock.agentReplyState(marker) };
 }
