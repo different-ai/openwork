@@ -757,12 +757,13 @@ async function sendMessage(app: Surface, text: string, witnessNonce: string): Pr
   return measurePreparedSend(app, text, witnessNonce);
 }
 
-async function createNewSession(app: Surface): Promise<{ sessionId: string; ms: number }> {
-  const previousSessionId = await evalIn(
-    app,
-    () => (document.querySelector<HTMLElement>("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""),
-  );
-  const previous = typeof previousSessionId === "string" ? previousSessionId : "";
+/**
+ * The sidebar New task control opens the workspace's empty composer at once and
+ * the session itself is created by the first send, so "ready" is the empty New
+ * task route with no session surface and a prompt-ready composer. The send that
+ * follows reports the new session id.
+ */
+async function createNewSession(app: Surface): Promise<{ ms: number }> {
   await pollExpression(app, () => {
     const button = document.querySelector<HTMLElement>('[data-sidebar-new-chat]');
     return button instanceof HTMLButtonElement && !button.disabled;
@@ -775,24 +776,12 @@ async function createNewSession(app: Surface): Promise<{ sessionId: string; ms: 
     return true;
   });
   expect(clicked).toBe(true);
-  const sessionId = await eventually(async () => {
-    const value = await evalIn(app, () => {
-      const match = /\/session\/(ses_[^/?#]+)/.exec(window.location.hash);
-      return match?.[1] ?? "";
-    });
-    return typeof value === "string" ? value : "";
-  }, {
-    within: 60_000,
-    intervalMs: pollResolutionMs,
-    label: "new session route",
-    until: (value) => value.startsWith("ses_") && value !== previous,
-  });
-  await pollExpression(app, browserScript((sessionId) => {
-    const surface = document.querySelector<HTMLElement>("[data-session-surface-id]");
-    return surface?.getAttribute("data-session-surface-id") === sessionId;
-  }, [sessionId]), `new session surface ${sessionId}`);
-  await waitForComposerReady(app, `new session ${sessionId} composer and Run task`);
-  return { sessionId, ms: Date.now() - startedAt };
+  await pollExpression(app, () => (
+    /^#\/workspace\/[^/?#]+\/session\/?$/.test(window.location.hash)
+      && !document.querySelector<HTMLElement>("[data-session-surface-id]")
+  ), "empty New task route without a session surface");
+  await waitForComposerReady(app, "new task composer and Run task");
+  return { ms: Date.now() - startedAt };
 }
 
 async function createSecondWorkspaceViaUi(app: Surface, firstWorkspaceId: string, workspacePath: string): Promise<string> {
@@ -1042,11 +1031,6 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
             // (injected by apps/server/src/openwork-runtime-config.ts) can hold its install lock for minutes and block /config + /provider, so the picker
             // reports "No models found" and the run times out. OPENCODE_PURE skips plugin loading for both the v1 and v2 lanes alike.
-        // The completion milestone reads the sidebar's per-session loading
-        // indicator, which only renders at desktop width. A local host's window
-        // manager (tiling, for instance) may shrink the Electron window well
-        // below that, so pin the viewport the benchmark actually measures.
-        await setViewport(app, { width: 1280, height: 900, deviceScaleFactor: 1 });
             OPENCODE_PURE: "true",
             ANTHROPIC_API_KEY: "",
             OPENAI_API_KEY: "",
@@ -1058,6 +1042,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
           },
         });
         const appInteractive = Date.now() - coldStartedAt;
+        // The completion milestone reads the sidebar's per-session loading
+        // indicator, which only renders at desktop width. A local host's window
+        // manager (tiling, for instance) may shrink the Electron window well
+        // below that, so pin the viewport the benchmark actually measures.
+        await setViewport(app, { width: 1280, height: 900, deviceScaleFactor: 1 });
         let appReadinessMs: number | undefined;
         for (const span of timeline().slice(timelineStart)) {
           if (span.label === "app.readiness" && span.detail === appName) appReadinessMs = span.ms;
@@ -1127,11 +1116,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
           expect(setup.assistantText).toContain(`token 20 ${witnessNonce}`);
           let latestBChat: Chat = { workspaceId: workspaceBId, sessionId: setup.sessionId, title: "workspace B setup" };
           let latestBMarker = setupNonce;
+          const priorSessionIds = new Set([warmup.sessionId, setup.sessionId]);
 
           for (let warmIndex = 0; warmIndex < iterations; warmIndex += 1) {
             const created = await createNewSession(app);
             results.new_session_ready.push(created.ms);
-            newSessionIds.push(created.sessionId);
             if (benchEngine === "v2") {
               if (await ensureBenchModelV2(app)) modelReselectedPerSession = true;
             } else if (await ensureBenchModel(app)) {
@@ -1143,9 +1132,13 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             bNonces.push(messageNonce);
             const messageRun = await sendMessage(app, message, witnessNonce);
             results.message_rtt.push(messageRun.timing);
-            const messageComplete = messageRun.sessionId === created.sessionId
+            // The empty composer creates its session on submit, so the send must
+            // land in a session no earlier turn in this run has used.
+            const messageComplete = !priorSessionIds.has(messageRun.sessionId)
               && messageRun.userLength === message.length
               && messageRun.assistantText.includes(`token 20 ${witnessNonce}`);
+            newSessionIds.push(messageRun.sessionId);
+            priorSessionIds.add(messageRun.sessionId);
             messageCompletions.push(messageComplete);
             expect(messageComplete).toBe(true);
             expect(messageRun.timing.complete, "warm reply finishes without waiting for the reconciliation timer").toBeLessThan(10_000);
@@ -1167,6 +1160,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
               witnessNonce,
             );
             results.long_message.push({ insertMs, ...longRun.timing });
+            priorSessionIds.add(longRun.sessionId);
             const longComplete = longRun.userLength === longMessageChars
               && longRun.assistantText.includes(`token 20 ${witnessNonce}`);
             longMessageChecks.push(longComplete);
@@ -1278,8 +1272,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
     expect(results.new_session_ready).toHaveLength(iterations);
     expect(new Set(newSessionIds).size).toBe(iterations);
     evidence.recordAssertionEvidence(
-      "Every sidebar New task click reaches a distinct prompt-ready session",
-      `${iterations} New task clicks produced ${new Set(newSessionIds).size} distinct session ids with editable composers and visible Run task controls; ms=${JSON.stringify(results.new_session_ready)}.`,
+      "Every sidebar New task click reaches a prompt-ready empty composer whose first send lands in a distinct new session",
+      `${iterations} New task clicks reached the empty New task route with editable composers and visible Run task controls, and their sends created ${new Set(newSessionIds).size} distinct session ids unused by earlier turns; ms=${JSON.stringify(results.new_session_ready)}.`,
       results.new_session_ready.length === iterations && new Set(newSessionIds).size === iterations,
     );
 
