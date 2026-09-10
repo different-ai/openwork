@@ -1918,6 +1918,21 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
 }
 
 /**
+ * A session the app just created has no history to load, so its surface must
+ * not spend the first snapshot round trip in the "switching" state where the
+ * composer refuses to send. Seed the cache from the create response and leave
+ * it stale, so the first real fetch runs as a background refresh of a session
+ * that is already on screen.
+ */
+export function seedCreatedSessionSnapshot(workspaceId: string, session: Session) {
+  getReactQueryClient().setQueryData<OpenworkSessionSnapshot>(
+    snapshotKey(workspaceId, session.id),
+    { session, messages: [], todos: [], status: { type: "idle" } },
+    { updatedAt: 0 },
+  );
+}
+
+/**
  * Apply a server-confirmed revert to the local session caches.
  *
  * `session.revert` only reaches the renderer through the snapshot cache, so
