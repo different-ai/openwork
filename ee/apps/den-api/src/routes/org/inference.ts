@@ -17,8 +17,8 @@ const inferenceSettingsSchema = z.object({
 
 const inferenceUsageBucketSchema = z.object({
   windowType: z.enum(["five_hour", "weekly", "monthly"]),
-  windowStartAt: z.string(),
-  windowEndAt: z.string(),
+  windowStartAt: z.string().datetime(),
+  windowEndAt: z.string().datetime(),
   limitAmount: z.number(),
   usedAmount: z.number(),
 })

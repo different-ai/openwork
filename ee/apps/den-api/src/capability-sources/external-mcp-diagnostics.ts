@@ -192,25 +192,26 @@ const PROVIDER_CODE_FIELDS = ["code", "error"]
 const PROVIDER_REQUEST_ID_FIELDS = ["requestId", "request_id", "transactionId", "transaction_id"]
 const URL_ELICITATION_REQUIRED_JSON_RPC_CODE = -32042
 
-const TYPED_OAUTH_ERROR_NAMES = new Set([
-  "InvalidClientError",
-  "UnauthorizedClientError",
-  "InvalidClientMetadataError",
-  "InvalidGrantError",
-  "InvalidRequestError",
-  "InvalidScopeError",
-  "InvalidTargetError",
-  "InvalidTokenError",
-  "InsufficientScopeError",
-  "MethodNotAllowedError",
-  "TooManyRequestsError",
-  "UnsupportedTokenTypeError",
-  "AccessDeniedError",
-  "UnsupportedGrantTypeError",
-  "UnsupportedResponseTypeError",
-  "TemporarilyUnavailableError",
-  "ServerError",
+const TYPED_OAUTH_ERROR_NAMES_BY_CODE = new Map([
+  ["invalid_client", "InvalidClientError"],
+  ["unauthorized_client", "UnauthorizedClientError"],
+  ["invalid_client_metadata", "InvalidClientMetadataError"],
+  ["invalid_grant", "InvalidGrantError"],
+  ["invalid_request", "InvalidRequestError"],
+  ["invalid_scope", "InvalidScopeError"],
+  ["invalid_target", "InvalidTargetError"],
+  ["invalid_token", "InvalidTokenError"],
+  ["insufficient_scope", "InsufficientScopeError"],
+  ["method_not_allowed", "MethodNotAllowedError"],
+  ["too_many_requests", "TooManyRequestsError"],
+  ["unsupported_token_type", "UnsupportedTokenTypeError"],
+  ["access_denied", "AccessDeniedError"],
+  ["unsupported_grant_type", "UnsupportedGrantTypeError"],
+  ["unsupported_response_type", "UnsupportedResponseTypeError"],
+  ["temporarily_unavailable", "TemporarilyUnavailableError"],
+  ["server_error", "ServerError"],
 ])
+const TYPED_OAUTH_ERROR_NAMES = new Set(TYPED_OAUTH_ERROR_NAMES_BY_CODE.values())
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -661,6 +662,20 @@ function errorName(value: unknown): string {
   return name && SAFE_ERROR_NAMES.has(name) ? name : "Error"
 }
 
+function typedOAuthErrorName(error: unknown): string | undefined {
+  let current: unknown = error
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    const name = errorName(current)
+    if (TYPED_OAUTH_ERROR_NAMES.has(name)) return name
+    if (name === "OAuthError") {
+      const mappedName = TYPED_OAUTH_ERROR_NAMES_BY_CODE.get(stringProperty(current, "code") ?? "")
+      if (mappedName) return mappedName
+    }
+    current = errorCause(current)
+  }
+  return undefined
+}
+
 function oauthProviderDetail(error: unknown): string | undefined {
   let current: unknown = error
   const seen = new Set<unknown>()
@@ -668,9 +683,11 @@ function oauthProviderDetail(error: unknown): string | undefined {
     seen.add(current)
     const name = errorName(current)
     if (TYPED_OAUTH_ERROR_NAMES.has(name) || name === "OAuthError" || name === "CustomOAuthError") {
+      // SDK v2 embeds raw response bodies in OAuthError.message. Only legacy
+      // typed errors use message as the provider description.
       const description = stringProperty(current, "error_description")
-        ?? (current instanceof Error ? current.message : stringProperty(current, "message"))
-      if (!description) return name
+        ?? (TYPED_OAUTH_ERROR_NAMES.has(name) ? stringProperty(current, "message") : undefined)
+      if (!description) return undefined
       const prefix = `${name}: `
       const redacted = redactSensitiveString(description).slice(
         0,
@@ -748,7 +765,10 @@ export function safeExternalMcpCauseChain(error: unknown): ExternalMcpSafeCause[
     const rawCode = stringOrNumberProperty(current, "code")
     const code = typeof rawCode === "number" && Number.isSafeInteger(rawCode)
       ? String(rawCode).slice(0, 16)
-      : typeof rawCode === "string" && SAFE_NATIVE_ERROR_CODES.has(rawCode)
+      : typeof rawCode === "string" && (
+          SAFE_NATIVE_ERROR_CODES.has(rawCode)
+          || (errorName(current) === "OAuthError" && TYPED_OAUTH_ERROR_NAMES_BY_CODE.has(rawCode))
+        )
         ? rawCode
         : undefined
     const errno = stringOrNumberProperty(current, "errno")
@@ -866,7 +886,12 @@ function safeBaseMessageFor(input: {
     return "The authorization server rejected the OAuth client configured for this connection; the saved client was kept for an administrator to review."
   }
   if (input.phase === "AUTH_TOKEN_ACQUISITION" || input.phase === "CONTINUITY_REFRESH") {
-    return "The authorization server rejected the code or token refresh exchange."
+    if (input.code === "MCP_OAUTH_INVALID_GRANT" || input.category === "oauth_request_rejected") {
+      return "The authorization server rejected the code or token refresh exchange."
+    }
+    return input.phase === "CONTINUITY_REFRESH"
+      ? "OpenWork could not complete the OAuth token refresh."
+      : "OpenWork could not complete the OAuth token exchange."
   }
   if (input.phase === "AUTH_USER_OR_WORKLOAD") {
     return input.code === "MCP_OAUTH_ACCESS_DENIED"
@@ -1026,9 +1051,9 @@ function httpClassification(input: {
   }
   if ((status === 401 || status === 403) && phase.startsWith("MCP_") && input.hasAuthorization) {
     // A 401 is itself an authentication challenge. A 403 is ambiguous for
-    // enterprise providers: only a Bearer/insufficient_scope challenge means
-    // token validation; an ordinary tools/* 403 is usually an ACL/role denial.
-    if (status === 401 || input.bearerChallenge || input.insufficientScope) {
+    // enterprise providers: initialization rejects access to the resource,
+    // while an ordinary tools/* 403 is usually an ACL/role denial.
+    if (status === 401 || phase === "MCP_INITIALIZE" || input.bearerChallenge || input.insufficientScope) {
       return {
         phase: "AUTH_RESOURCE_VALIDATION",
         category: input.insufficientScope ? "oauth_insufficient_scope" : "oauth_resource_rejected",
@@ -1037,7 +1062,9 @@ function httpClassification(input: {
         actionOwner: input.insufficientScope ? "organization_admin" : "member",
         operatorAction: input.insufficientScope
           ? "Grant the provider scopes required by this MCP resource and reconnect."
-          : "Reconnect the provider account and verify token audience, tenant, and resource binding.",
+          : status === 403 && !input.bearerChallenge
+            ? "Verify provider access policy and token audience, tenant, and resource binding before reconnecting."
+            : "Reconnect the provider account and verify token audience, tenant, and resource binding.",
       }
     }
     if (status === 403 && (phase === "MCP_TOOL_DISCOVERY" || phase === "MCP_TOOL_EXECUTION")) {
@@ -1342,7 +1369,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
   }
   if (numericCode !== undefined) return providerDeclaredErrorClassification()
 
-  const name = errorName(error)
+  const name = typedOAuthErrorName(error)
   const redirectUriRejectionCode = namedOAuthRedirectUriRejectionCode(error, fallbackPhase)
   if (redirectUriRejectionCode) return oauthRedirectUriNotAllowedClassification(redirectUriRejectionCode)
   if (name === "InvalidClientError" || name === "UnauthorizedClientError" || name === "InvalidClientMetadataError") {
@@ -1491,10 +1518,12 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
     category,
     code: `MCP_${phase}`,
     retryable: phase === "NETWORK_TCP" || phase === "MCP_TRANSPORT",
-    actionOwner: phase.startsWith("AUTH_") ? "organization_admin" : "provider_admin",
-    operatorAction: phase.startsWith("AUTH_")
-      ? "Verify the endpoint's OAuth metadata and provider application configuration."
-      : "Inspect the provider's MCP logs using the diagnostic reference and retry after correcting the named layer.",
+    actionOwner: isOAuthTokenPhase(phase) ? "openwork" : phase.startsWith("AUTH_") ? "organization_admin" : "provider_admin",
+    operatorAction: isOAuthTokenPhase(phase)
+      ? "Inspect OpenWork's OAuth diagnostics using the reference to identify where the exchange failed before retrying."
+      : phase.startsWith("AUTH_")
+        ? "Verify the endpoint's OAuth metadata and provider application configuration."
+        : "Inspect the provider's MCP logs using the diagnostic reference and retry after correcting the named layer.",
   }
 }
 
@@ -1738,7 +1767,7 @@ export class ExternalMcpDiagnosticTracker {
       || sourceCode === "MCP_LIFECYCLE_DEADLINE"
     const classified = this.forcedClassification
       && (this.forcedClassification.code === "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED" || (
-        !TYPED_OAUTH_ERROR_NAMES.has(errorName(source.error))
+        !typedOAuthErrorName(source.error)
         && !sourceIsApplicationOwnedOAuthFailure
         && inferredClassification.phase !== "MCP_VERSION"
       ))

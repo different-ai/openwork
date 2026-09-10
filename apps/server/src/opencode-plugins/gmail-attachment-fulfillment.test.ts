@@ -137,6 +137,8 @@ test("uncertain network or timeout failures surface unknown creation and are not
   for (const error of [new TypeError("fetch failed"), new DOMException("Timed out", "TimeoutError"),
     new ApiError(503, "file_not_found", "Unavailable"),
     new ApiError(502, "cloud_upload_failed", "Gmail create failed", { upstreamCode: "google_api_error" }),
+    new ApiError(502, "cloud_upload_failed", "Unconfirmed policy rejection", { upstreamCode: "policy_blocked" }),
+    new ApiError(403, "cloud_upload_failed", "Unknown rejection", { upstreamCode: "unrecognized_error" }),
     new ApiError(409, "cloud_upload_failed", "Unknown rejection", { upstreamCode: "unrecognized_error" }),
   ]) {
     let calls = 0;
@@ -205,7 +207,7 @@ test("disposal cancels a pending preflight and late success after cancellation i
   await expect(plugin["tool.execute.after"](queued, pending())).rejects.toThrow("no draft created");
 });
 
-test("definite file, size and missing connection rejections retain their actionable messages", async () => {
+test("definite file, size, connection and policy rejections retain their actionable messages", async () => {
   for (const error of [
     new ApiError(404, "file_not_found", "File was not found inside an authorized workspace root."),
     new ApiError(413, "file_too_large", "Direct uploads support files up to 4194304 bytes."),
@@ -213,6 +215,7 @@ test("definite file, size and missing connection rejections retain their actiona
     new ApiError(409, "cloud_not_connected", "Connect OpenWork Cloud before uploading files."),
     new ApiError(409, "cloud_upload_failed", "Connect the selected Google account in Settings > Connect.", { upstreamCode: "needs_connection" }),
     new ApiError(401, "cloud_upload_failed", "Sign in again to renew your token.", { upstreamCode: "invalid_mcp_token" }),
+    new ApiError(403, "cloud_upload_failed", "Connect is disabled for this organization. Ask your administrator to have it re-enabled.", { upstreamCode: "policy_blocked" }),
   ]) {
     let calls = 0;
     const fulfill = createGmailAttachmentFulfillment({ callExtension: async () => { calls++; throw error; } });
@@ -296,6 +299,7 @@ test.each([
   { status: 404, code: "file_not_found", message: "Choose a file inside an authorized workspace root.", details: undefined },
   { status: 409, code: "cloud_not_connected", message: "Connect OpenWork Cloud before uploading files.", details: undefined },
   { status: 409, code: "cloud_upload_failed", message: "Reconnect the selected account in Settings > Connect.", details: { upstreamCode: "needs_connection" } },
+  { status: 403, code: "cloud_upload_failed", message: "Connect is disabled for this organization. Ask your administrator to have it re-enabled.", details: { upstreamCode: "policy_blocked" } },
 ])("Gmail loopback adapter preserves structured rejection $code", async ({ status, ...payload }) => {
   const previousUrl = process.env.OPENWORK_SERVER_URL;
   const previousToken = process.env.OPENWORK_SERVER_TOKEN;

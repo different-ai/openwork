@@ -55,7 +55,7 @@ declare global {
       };
       slice(name: "route"): {
         selectedWorkspaceId: string | null;
-        workspaces: { id: string; name?: string; displayName?: string; displayNameResolved?: string; path?: string; loading?: boolean; error?: string | null }[];
+        workspaces: { id: string; name?: string; path?: string; displayName?: string; displayNameResolved?: string; loading?: boolean; error?: string | null }[];
         sessionsByWorkspaceId: Record<string, { id: string; title?: string }[]>;
       };
     };
