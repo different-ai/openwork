@@ -426,10 +426,17 @@ test("a background conversation reads its owned page silently and requests atten
     expect(await agent.run("browser.restore_tab", { tabId: readingTab.tabId }))
       .toMatchObject({ tab_id: readingTab.tabId, target_id: readingTab.targetId, owner_session_id: reading.sessionId });
     await expect(agent.run("browser.restore_tab", { tabId: researchTab.tabId })).rejects.toThrow(/owner/i);
-    await user.click({ role: "button", label: "Suspend tab" });
-    await user.see({ text: /Browser tab is protected or busy/ });
+    // While a task protects the page, the panel refuses suspension; disabled controls never reach the browser.
+    const suspendButton = (title: string) => probe.dom(`button[title=${JSON.stringify(title)}]`);
+    await probe.eventually(() => suspendButton("Protected until browser work is released"), { within: 15_000,
+      until: (value) => value.elements.length === 1 && value.elements[0].text === "Suspend", label: "the protected page shows a disabled Suspend control" });
+    expect((await probe.dom('button[title="Protected until browser work is released"]:disabled')).elements).toHaveLength(1);
+    expect((await suspendButton("Suspend this tab to free memory")).elements).toEqual([]);
     expect(await agent.run("browser.release_tab", { tabId: readingTab.tabId }))
       .toMatchObject({ tabId: readingTab.tabId, released: true });
+    await probe.eventually(() => probe.dom('button[title="Suspend this tab to free memory"]:not(:disabled)'), { within: 15_000,
+      until: (value) => value.elements.length === 1 && value.elements[0].text === "Suspend", label: "releasing the task lets the user suspend the page" });
+    expect((await suspendButton("Protected until browser work is released")).elements).toEqual([]);
     expect((await probe.browserState()).tabs.map(tab => tab.id).sort())
       .toEqual([readingTab.tabId, researchTab.tabId].sort());
     expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }], inputValue: "ok", sessionReads: 0 });
