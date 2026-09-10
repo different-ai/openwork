@@ -55,10 +55,32 @@ test("the auth proxy rejects oversized bodies before Den while ordinary sign-in 
     throw new SkipError("local Redis on 127.0.0.1:6379");
   }
   await using den = await server({ place, web: true, org: { name: "Proxy body limit" } });
+  const readCompletedRequests = async () => (await den.apiLog()).split(/\r?\n/).flatMap((line) => {
+    if (!line.startsWith("{")) return [];
+    const entry: unknown = JSON.parse(line);
+    if (typeof entry !== "object" || entry === null
+      || Reflect.get(entry, "component") !== "http" || Reflect.get(entry, "message") !== "request completed") return [];
+    const requestId = Reflect.get(entry, "request_id");
+    const method = Reflect.get(entry, "http_method");
+    const route = Reflect.get(entry, "http_route");
+    const status = Reflect.get(entry, "http_status_code");
+    if (typeof requestId !== "string" || typeof method !== "string" || typeof route !== "string" || typeof status !== "number") {
+      throw new Error("Malformed Den HTTP completion record.");
+    }
+    return [{ requestId, method, route, status }];
+  });
+  // Den generates its own IDs and normalizes auth paths. Use the exclusively
+  // owned server's completed requests, after its setup response is recorded.
+  const setupRequests = await eventually(readCompletedRequests, {
+    within: 10_000,
+    label: "isolated organization setup in Den's access log",
+    until: (requests) => requests.some(({ method, route, status }) => method === "POST" && route === "/v1/org" && status === 201),
+  });
+  const setupIds = new Set(setupRequests.map(({ requestId }) => requestId));
+  const readNewRequests = async () => (await readCompletedRequests()).filter(({ requestId }) => !setupIds.has(requestId));
   const nonce = `${Date.now().toString(36)}-${process.pid}`;
   const declaredId = `proxy-declared-${nonce}`;
   const chunkedId = `proxy-chunked-${nonce}`;
-  const acceptedId = `proxy-accepted-${nonce}`;
   const url = new URL("/api/auth/sign-in/email", den.ref.webUrl);
 
   const { response: declared, senderEnded: declaredEnded } = await postBody(url, declaredId, true);
@@ -67,6 +89,7 @@ test("the auth proxy rejects oversized bodies before Den while ordinary sign-in 
   expect(await declared.json()).toMatchObject({
     error: "request_too_large", requestId: declaredId, maxBytes, declaredBytes: maxBytes + 1,
   });
+  expect(await readNewRequests()).toHaveLength(0);
 
   const { response: chunked, senderEnded: chunkedEnded } = await postBody(url, chunkedId, false);
   expect(chunkedEnded).toBe(false);
@@ -74,26 +97,37 @@ test("the auth proxy rejects oversized bodies before Den while ordinary sign-in 
   expect(await chunked.json()).toMatchObject({
     error: "request_too_large", requestId: chunkedId, maxBytes, observedBytes: maxBytes + 1,
   });
+  expect(await readNewRequests()).toHaveLength(0);
+  evidence.recordAssertionEvidence(
+    "Declared and chunked oversized bodies receive structured 413 responses before sender EOF",
+    `Declared: HTTP ${declared.status}, sender ended: ${declaredEnded}; chunked: HTTP ${chunked.status}, sender ended: ${chunkedEnded}; limit: ${maxBytes} bytes.`,
+    declared.status === 413 && chunked.status === 413 && !declaredEnded && !chunkedEnded,
+  );
 
   const accepted = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-request-id": acceptedId, origin: den.ref.webUrl },
+    headers: { "content-type": "application/json", origin: den.ref.webUrl },
     body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
     signal: AbortSignal.timeout(30_000),
   });
   expect(accepted.status).toBe(200);
   expect(accepted.headers.get("set-cookie")).toContain("session_token");
 
-  // Observe the accepted control before using absence to prove non-delivery.
-  await eventually(async () => (await den.apiLog()).includes(acceptedId), { within: 10_000 });
-  const log = await den.apiLog();
-  expect(log).toContain(acceptedId);
-  expect(log).not.toContain(declaredId);
-  expect(log).not.toContain(chunkedId);
+  // Observe the accepted control before using the exact request delta to prove
+  // non-delivery; any completed rejected request must be an additional record.
+  const requests = await eventually(readNewRequests, {
+    within: 10_000,
+    label: "successful auth control in Den's access log",
+    until: (entries) => entries.some(({ method, route, status }) => method === "POST" && route === "/api/auth/*" && status === 200),
+  });
+  expect(requests).toEqual([{
+    requestId: expect.stringMatching(/^req_[a-z0-9]+$/),
+    method: "POST", route: "/api/auth/*", status: 200,
+  }]);
   evidence.recordAssertionEvidence(
     "Declared and chunked oversized bodies stop at the web boundary without contacting Den",
-    "Both real auth-proxy requests returned structured 413 responses; the API log contained the accepted control request and neither rejection id.",
-    !log.includes(declaredId) && !log.includes(chunkedId) && log.includes(acceptedId),
+    `Neither rejection added a Den HTTP completion. After the successful control, the isolated server recorded exactly ${requests.length} new request: POST /api/auth/* with HTTP 200 and a server-generated ID.`,
+    requests.length === 1 && requests.every(({ method, route, status }) => method === "POST" && route === "/api/auth/*" && status === 200),
   );
   evidence.recordAssertionEvidence(
     "An ordinary sign-in still reaches Den and returns its session cookie",
