@@ -13,6 +13,9 @@ test("composer recalls durable prompts across reloads and a real desktop restart
       if (boot === "restart") {
         const restarted = await world.restart();
         expect(restarted.origin).not.toBe(restarted.previousOrigin);
+        // A desktop relaunch opens the workspace landing page; reopen the
+        // persisted conversation rather than testing automatic route restore.
+        await user.click({ role: "button", label: new RegExp(`^${longHistoryTitle}`) });
       } else {
         await user.reload();
       }
