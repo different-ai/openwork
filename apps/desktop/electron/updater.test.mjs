@@ -127,8 +127,10 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", arch, distr
 }
 
 describe("managed deferred native staging", () => {
+  /** @type {Array<"enterprise" | "public">} */
+  const distributions = ["enterprise", "public"];
   for (const platform of ["darwin", "linux"]) {
-    for (const distribution of ["enterprise", "public"]) {
+    for (const distribution of distributions) {
       it(`${distribution} ${platform} only stages or arms background installation when public`, async () => {
         const packagedDistribution = distribution === "enterprise" ? ENTERPRISE_DESKTOP_DISTRIBUTION : PUBLIC_DESKTOP_DISTRIBUTION;
         const bootstrap = { enterpriseActivation: { activatedAt: "2026-01-01T00:00:00Z", denBaseUrl: "https://managed-updater.example.test" } };
@@ -219,7 +221,7 @@ describe("main-owned updater policy", () => {
       async () => Response.json(policySnapshot({ allowAlphaUpdates: "false" })),
     ]) {
       await assert.rejects(readRequiredUpdaterPolicy({ requiresPolicy: () => true, getServerInfo: serverInfo, fetchPolicy }),
-        error => error.message === "Sign in and connect to verify your organization's update policy.");
+        { message: "Sign in and connect to verify your organization's update policy." });
     }
   });
 
