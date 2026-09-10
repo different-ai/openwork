@@ -7,7 +7,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { stopTaskRecovery } from "./task-recovery.js";
-import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import {
@@ -217,7 +216,6 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
         OPENWORK_SERVER_URL: serverUrl,
         OPENWORK_SERVER_TOKEN: config.token,
-        OPENWORK_POLICY_TOKEN: managedDesktopPolicy(config).evaluationToken,
         OPENCODE_CONFIG: runtimeConfigPath,
         OPENCODE_MODELS_URL: opencodeModelsUrl,
       };

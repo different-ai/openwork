@@ -9,7 +9,11 @@ const definitions = {
   // Boots the packaged cloud and enterprise artifacts; only packaged-smoke provides those binaries.
   'packaged-first-launch.e2e.test.ts': { name: 'Open a fresh cloud or enterprise install', placement: 'local' },
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
-  'desktop-policy-restricted-mode.e2e.test.ts': { name: 'Apply organization and team permissions', critical: true },
+  'desktop-policy-restricted-mode.e2e.test.ts': {
+    // The rollback case severs local child IPC and faults its loopback transport.
+    name: 'Apply organization and team permissions', critical: true, placement: 'local',
+    cases: [{ id: 'POLICY-ROLLBACK', engines: ['v1', 'v2'], surfaces: ['web'], defaultSurface: 'web', optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1', surface: 'web' } }],
+  },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
   'streamed-markdown-answer.e2e.test.ts': {
