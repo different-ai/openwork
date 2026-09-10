@@ -8,6 +8,9 @@ import { useSessionManagementStore } from "../domains/session/sidebar/session-ma
 import { usePublishOpenworkContext } from "./control/control-provider";
 import { buildOpenworkContext } from "./openwork-context-projector";
 import { useUiStateStore } from "./ui-state-store";
+import { useSessionActivityStore } from "../domains/session/status/session-activity-store";
+import { sessionAttentionRevision } from "../domains/session/control/list-control-sessions";
+import { useSessionAttentionOwners } from "../domains/session/control/session-attention-owners";
 
 export function OpenworkContextPublisher() {
   const location = useLocation();
@@ -22,6 +25,9 @@ export function OpenworkContextPublisher() {
   const workspaceRightSidebarExpanded = useUiStateStore((state) => state.workspaceRightSidebarExpanded);
   const panelSessions = usePanelTabStore((state) => state.sessions);
   const pinnedSessionIds = useSessionManagementStore((state) => state.pinnedIds);
+  // Publish attention changes, not every streamed token's activity timestamp.
+  const attentionRevision = useSessionActivityStore(state => sessionAttentionRevision(state.recordsByWorkspaceId));
+  const activityCacheIds = useSessionAttentionOwners(state => state.cacheIds);
   const route = `${location.pathname}${location.search}${location.hash}`;
 
   const context = useMemo(() => buildOpenworkContext({
@@ -44,8 +50,12 @@ export function OpenworkContextPublisher() {
     },
     panelSessions,
     pinnedSessionIds,
+    activityByWorkspaceId: useSessionActivityStore.getState().recordsByWorkspaceId,
+    activityCacheIds,
     availableAffordances: [],
   }), [
+    attentionRevision,
+    activityCacheIds,
     applicationMenuVisible,
     focusedPane,
     panelSessions,

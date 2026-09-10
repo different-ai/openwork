@@ -13,6 +13,7 @@ import type {
 import type { PanelTabStore } from "../domains/session/panel/panel-tab-store";
 import type { WorkbenchSnapshot } from "../domains/session/chat/workbench-store";
 import type { UiState } from "./ui-state-store";
+import { observedSessionAttention, type ControlSessionActivity } from "../domains/session/control/list-control-sessions";
 
 type OpenworkContextProjectorInput = {
   route: string;
@@ -26,6 +27,8 @@ type OpenworkContextProjectorInput = {
   panelSessions: PanelTabStore["sessions"];
   pinnedSessionIds: string[];
   availableAffordances: OpenworkAffordanceDescriptor[];
+  activityByWorkspaceId?: Record<string, Record<string, ControlSessionActivity>>;
+  activityCacheIds?: Record<string, string | null>;
 };
 
 function decoded(value: string | undefined) {
@@ -147,6 +150,8 @@ export function buildOpenworkContext(
     });
   }
   for (const tab of input.workbench.tabs) {
+    const cacheId = input.activityCacheIds?.[tab.workspaceId];
+    const attention = observedSessionAttention(cacheId ? input.activityByWorkspaceId?.[cacheId]?.[tab.sessionId] : undefined);
     const inPrimary = tab.workspaceId === primary?.workspaceId && tab.sessionId === primary.sessionId;
     const inSecondary = tab.workspaceId === secondary?.workspaceId && tab.sessionId === secondary.sessionId;
     resources.push({
@@ -156,6 +161,7 @@ export function buildOpenworkContext(
       provider,
       state: {
         workspaceId: tab.workspaceId,
+        attention,
         open: true,
         visible: inPrimary || inSecondary,
         pinned: input.pinnedSessionIds.includes(tab.sessionId),

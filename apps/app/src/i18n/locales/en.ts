@@ -4,6 +4,18 @@
  */
 
 export default {
+  "session_review.title": "Review question answer",
+  "session_review.effects": "Sending answers this exact question and may resume the target agent's work. It does not approve permissions or change the focused conversation.",
+  "session_review.origin": "Proposed by {title} in {workspace}",
+  "session_review.target": "Answering {title} in {workspace}",
+  "session_review.answers": "Proposed answer: {answers}",
+  "session_review.send": "Send answer and resume",
+  "session_review.close": "Close review",
+  "session_review.loading": "Loading the exact question for review. Nothing has been sent.",
+  "session_review.sending": "Rechecking the question and sending your reviewed answer.",
+  "session_review.sent": "The question reply was accepted. Other questions and permissions are unchanged.",
+  "session_review.rejected": "This proposal could not be verified or its receipt could not be stored. The question or its owner may have changed, the answers may be invalid, or a reply may already have been attempted. Nothing was sent by this review.",
+  "session_review.unknown": "Reply acceptance is unknown. It may already have resumed the task. Do not resend; inspect the target conversation first.",
   "account.mcp_connected_one": "{count} MCP server",
   "account.mcp_connected_other": "{count} MCP servers",
   "account.providers_connected_one": "{count} model provider",

@@ -1,4 +1,46 @@
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
+import type { SessionActivityStatus } from "../status/session-activity-store";
+
+export type ControlSessionActivity = {
+  status: SessionActivityStatus;
+  updatedAt: number;
+  waitingQuestionIds: string[];
+  waitingPermissionIds: string[];
+};
+
+export function observedSessionActivity(record: ControlSessionActivity | undefined): {
+  freshness: "cached" | "unknown";
+  observedAt: number | null;
+  status: SessionActivityStatus | null;
+  questions: number | null;
+  permissions: number | null;
+} {
+  return {
+    freshness: record ? "cached" : "unknown",
+    observedAt: record?.updatedAt ?? null,
+    status: record?.status ?? null,
+    // Default empty arrays can come from run/transcript observations alone.
+    // Without per-kind snapshot evidence, only a nonzero cached wait is known.
+    questions: record?.waitingQuestionIds.length ? record.waitingQuestionIds.length : null,
+    permissions: record?.waitingPermissionIds.length ? record.waitingPermissionIds.length : null,
+  };
+}
+
+export function observedSessionAttention(record: ControlSessionActivity | undefined): {
+  questions: number | null; permissions: number | null;
+  questionFreshness: "cached" | "unknown"; permissionFreshness: "cached" | "unknown";
+} {
+  const activity = observedSessionActivity(record);
+  return { questions: activity.questions, permissions: activity.permissions,
+    questionFreshness: activity.questions === null ? "unknown" : "cached",
+    permissionFreshness: activity.permissions === null ? "unknown" : "cached" };
+}
+
+export function sessionAttentionRevision(records: Record<string, Record<string, ControlSessionActivity>>) {
+  return JSON.stringify(Object.entries(records).flatMap(([workspaceId, sessions]) =>
+    Object.entries(sessions).flatMap(([sessionId, record]) => record.waitingQuestionIds.length || record.waitingPermissionIds.length
+      ? [[workspaceId, sessionId, record.waitingQuestionIds.length, record.waitingPermissionIds.length]] : [])));
+}
 
 export type ControlSessionWorkspace = {
   id: string;
@@ -18,16 +60,20 @@ export type ControlSessionLike = {
 
 export type ListedControlSession = {
   sessionId: string;
+  workspaceId: string;
   title: string;
   workspace: string;
   updatedAt: number;
   pinned: boolean;
+  activity: ReturnType<typeof observedSessionActivity> & ReturnType<typeof observedSessionAttention>;
 };
 
 export type ListControlSessionsState = {
   workspaces: ControlSessionWorkspace[];
   sessionsByWorkspaceId: Record<string, ControlSessionLike[]>;
   pinnedIds: readonly string[];
+  activityByWorkspaceId?: Record<string, Record<string, ControlSessionActivity>>;
+  activityCacheIds?: Record<string, string | null>;
 };
 
 export function controlWorkspaceLabel(workspace: ControlSessionWorkspace) {
@@ -57,15 +103,21 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
   const out: ListedControlSession[] = [];
   for (const workspace of state.workspaces) {
     if (workspaceQuery && !matchesWorkspace(workspace, workspaceQuery)) continue;
+    const cacheId = state.activityCacheIds?.[workspace.id];
     for (const session of state.sessionsByWorkspaceId[workspace.id] ?? []) {
       const sessionId = session.id?.trim() ?? "";
       if (!sessionId) continue;
       out.push({
         sessionId,
+        workspaceId: workspace.id,
         title: getDisplaySessionTitle(session.title ?? ""),
         workspace: controlWorkspaceLabel(workspace),
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
+        activity: {
+          ...observedSessionActivity(cacheId ? state.activityByWorkspaceId?.[cacheId]?.[sessionId] : undefined),
+          ...observedSessionAttention(cacheId ? state.activityByWorkspaceId?.[cacheId]?.[sessionId] : undefined),
+        },
       });
     }
   }
