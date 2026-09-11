@@ -156,7 +156,7 @@ import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provi
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
-  resolveEntitledOrgDefaultModel,
+  resolveOrgDefaultModelReplacement,
   type ModelEntitlementOption,
 } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
@@ -1033,24 +1033,27 @@ export function SessionRoute() {
     return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
   const entitledOrgDefaultModel = useMemo(() => {
-    const runtimeOptions = providerListModelEntitlementOptions(
-      cloudProviderList ?? providerListQuery.data,
-    );
-    return resolveEntitledOrgDefaultModel(
-      runtimeOptions.length > 0 ? runtimeOptions : organizationAssignedModelOptions,
-      {
-        currentDefault: local.prefs.defaultModel,
-        restrictToCloud: restrictToCloudProviders,
-        checkRestriction: checkDesktopRestriction,
-      },
-    );
+    const runtimeProviderList = cloudProviderList ?? providerListQuery.data;
+    return resolveOrgDefaultModelReplacement({
+      runtimeOptions: providerListModelEntitlementOptions(runtimeProviderList),
+      // Same pending rule as computeModelAvailability: a connected workspace
+      // engine whose catalog has not answered (e.g. still reloading after a
+      // provider was configured) must not be read as "provider missing".
+      runtimeCatalogPending: Boolean(selectedWorkspaceId && opencodeClient) && !runtimeProviderList,
+      assignedOptions: organizationAssignedModelOptions,
+      currentDefault: local.prefs.defaultModel,
+      restrictToCloud: restrictToCloudProviders,
+      checkRestriction: checkDesktopRestriction,
+    });
   }, [
     checkDesktopRestriction,
     cloudProviderList,
     local.prefs.defaultModel,
+    opencodeClient,
     organizationAssignedModelOptions,
     providerListQuery.data,
     restrictToCloudProviders,
+    selectedWorkspaceId,
   ]);
   useEffect(() => {
     if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel);

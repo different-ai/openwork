@@ -6,27 +6,33 @@ import { createRequire } from "node:module";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
+import type { FieldsResult } from "../src/app/lib/opencode";
+import type { NativeSessionOperations, NativeSessionSnapshotTarget } from "../src/app/lib/opencode-session-native";
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { Platform } from "../src/react-app/kernel/platform";
 
-const workspaceId = "workspace-composer-snapshot-error";
-const sessionId = "session-composer-snapshot-error";
+const workspaceId = "workspace-snapshot-owner-flip";
+const sessionId = "ses_snapshot_owner_flip";
+const v1BaseUrl = "http://127.0.0.1:1/opencode";
+const v2BaseUrl = "http://127.0.0.1:1/opencode2";
+const transcriptText = "Transcript read from the v2 engine.";
 
-function createSnapshot(targetSessionId: string, messageText: string): OpenworkSessionSnapshot {
-  const messageId = `${targetSessionId}-user-message`;
+function createSnapshot(): OpenworkSessionSnapshot {
+  const messageId = `${sessionId}-user-message`;
   return {
     session: {
-      id: targetSessionId,
-      slug: targetSessionId,
-      projectID: "project-composer-snapshot-error",
-      directory: "/tmp/project-composer-snapshot-error",
-      title: "Composer snapshot error",
+      id: sessionId,
+      slug: sessionId,
+      projectID: "project-snapshot-owner-flip",
+      directory: "/tmp/project-snapshot-owner-flip",
+      title: "Snapshot owner flip",
       version: "1",
       time: { created: 1, updated: 1 },
     },
     messages: [{
       info: {
         id: messageId,
-        sessionID: targetSessionId,
+        sessionID: sessionId,
         role: "user",
         time: { created: 1 },
         agent: "build",
@@ -34,16 +40,44 @@ function createSnapshot(targetSessionId: string, messageText: string): OpenworkS
       },
       parts: [{
         id: `${messageId}-part`,
-        sessionID: targetSessionId,
+        sessionID: sessionId,
         messageID: messageId,
         type: "text",
-        text: messageText,
+        text: transcriptText,
       }],
     }],
     todos: [],
     status: { type: "idle" },
   };
 }
+
+function ok<T>(data: T): FieldsResult<T> {
+  return { data, request: new Request(v2BaseUrl), response: new Response(null, { status: 200 }) };
+}
+
+function notFound(): FieldsResult<never> {
+  return {
+    error: { code: "session_not_found" },
+    request: new Request(v1BaseUrl),
+    response: new Response(null, { status: 404 }),
+  };
+}
+
+const testPlatform: Platform = {
+  platform: "desktop",
+  capabilities: {
+    nativeFilePicker: false,
+    revealInFileManager: false,
+    terminal: false,
+    autoUpdate: false,
+    osNotifications: false,
+    localRuntimeControl: false,
+    desktopBootstrap: false,
+  },
+  openLink: () => {},
+  async restart() {},
+  async notify() {},
+};
 
 async function waitFor(predicate: () => boolean, label: string) {
   const deadline = Date.now() + 2_000;
@@ -56,7 +90,10 @@ async function waitFor(predicate: () => boolean, label: string) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-test("the composer stays editable when snapshot refresh fails or the model is unavailable", async () => {
+// Reload of a v2 session: the surface mounts under the v1 URL before the chat
+// routing status resolves, the first owned read 404s on v1 and waits to retry,
+// and the routing flip changes the owner while that read is still in flight.
+test("a session snapshot read that loses its owner mid-flight is re-read under the new owner", async () => {
   const require = createRequire(import.meta.url);
   // Bun's isolated test loader cycles Lexical's ESM entries; use their real CJS entries before the app imports the editor.
   for (const moduleId of [
@@ -78,23 +115,24 @@ test("the composer stays editable when snapshot refresh fails or the model is un
     { useComposerStateStore },
     { getReactQueryClient },
     { LocalProvider },
+    { PlatformProvider },
     { ShellConfigProvider },
-    { PlatformProvider, createDefaultPlatform },
+    sessionNative,
   ] = await Promise.all([
     import("../src/app/lib/openwork-server"),
     import("../src/react-app/domains/connections/cloud-mcp-submit-readiness"),
     import("../src/react-app/domains/session/surface/composer-state-store"),
     import("../src/react-app/infra/query-client"),
     import("../src/react-app/kernel/local-provider"),
-    import("../src/react-app/shell/shell-config"),
     import("../src/react-app/kernel/platform"),
+    import("../src/react-app/shell/shell-config"),
+    import("../src/app/lib/opencode-session-native"),
   ]);
   const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
   if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" });
-  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
-    configurable: true,
-    value: true,
-  });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  // The owned read with retry is the desktop loopback path.
+  Object.defineProperty(window, "__OPENWORK_ELECTRON__", { configurable: true, value: {} });
   document.open();
   document.write("<!doctype html><html><body></body></html>");
   document.close();
@@ -103,59 +141,75 @@ test("the composer stays editable when snapshot refresh fails or the model is un
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchStub });
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchStub });
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
-  let rejectSnapshot = false;
-  let fetchedSnapshot = createSnapshot(sessionId, "Cached transcript remains visible.");
+
+  const readEndpoints: string[] = [];
+  let releaseRetry: (() => void) | null = null;
+  const snapshot = createSnapshot();
+  const operationsFor = (endpoint: { opencodeBaseUrl: string }): NativeSessionOperations => {
+    readEndpoints.push(endpoint.opencodeBaseUrl);
+    const v2 = endpoint.opencodeBaseUrl === v2BaseUrl;
+    return {
+      get: async () => (v2 ? ok(snapshot.session) : notFound()),
+      messages: async () => (v2 ? ok(snapshot.messages) : notFound()),
+      todo: async () => (v2 ? ok(snapshot.todos) : notFound()),
+      status: async () => ok({}),
+      delete: async () => ok(true),
+    };
+  };
   mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
-  mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
+  // The empty-session hero and the run-mode menu need the desktop config tree, which this test does not mount.
+  const taskSuggestions = await import("../src/components/chat/task-suggestions");
+  mock.module("@/components/chat/task-suggestions", () => ({ ...taskSuggestions, TaskSuggestions: () => null }));
+  mock.module("../src/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
+  // Bind the real implementation first: mocking rewires the loaded module's live bindings.
+  const composeWithRetry = sessionNative.composeNativeSessionSnapshotWithRetry;
   mock.module("@/app/lib/opencode-session-native", () => ({
-    composeNativeSessionSnapshot: async () => {
-      if (rejectSnapshot) throw new Error("snapshot refresh failed");
-      return fetchedSnapshot;
-    },
+    ...sessionNative,
+    composeNativeSessionSnapshotWithRetry: (
+      expectedOwner: string,
+      readCurrentTarget: () => NativeSessionSnapshotTarget,
+      options: { signal?: AbortSignal },
+    ) => composeWithRetry(expectedOwner, readCurrentTarget, options, {
+      createOperations: operationsFor,
+      // The first (v1) read parks here until the test flips the owner.
+      waitForSnapshotRetry: (_delayMs, signal) => new Promise<void>((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        releaseRetry = resolve;
+      }),
+    }),
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey } = await import("../src/react-app/domains/session/sync/session-sync");
   const queryClient = getReactQueryClient();
   queryClient.clear();
   const key = snapshotKey(workspaceId, sessionId);
-  queryClient.setQueryDefaults(key, { retryDelay: 0 });
-  queryClient.setQueryData(key, fetchedSnapshot);
   const client = createOpenworkServerClient({ baseUrl: "http://127.0.0.1:1", token: "test-token" });
   const container = document.createElement("div");
-  const unavailableContainer = document.createElement("div");
-  document.body.append(container, unavailableContainer);
+  document.body.append(container);
   const root = createRoot(container);
-  const unavailableRoot = createRoot(unavailableContainer);
-  const platform = createDefaultPlatform();
-  let sendCount = 0;
-  const platform = createDefaultPlatform();
 
-  const surface = (targetSessionId: string, modelUnavailable: boolean) => (
-    <PlatformProvider value={platform}>
+  const surface = (opencodeBaseUrl: string) => (
     <QueryClientProvider client={queryClient}>
+      <PlatformProvider value={testPlatform}>
       <LocalProvider>
         <ShellConfigProvider>
           <SessionSurface
             client={client}
             workspaceId={workspaceId}
-            workspaceRoot="/tmp/project-composer-snapshot-error"
-            sessionId={targetSessionId}
+            workspaceRoot="/tmp/project-snapshot-owner-flip"
+            sessionId={sessionId}
             draftScope="local"
             isControlTarget={false}
-            opencodeBaseUrl="http://127.0.0.1:1/opencode"
+            opencodeBaseUrl={opencodeBaseUrl}
             openworkToken="test-token"
             developerMode
             modelLabel="Test model"
             onModelClick={() => {}}
             modelPickerOpen={false}
             selectedModel={{ providerID: "test", modelID: "test-model" }}
-            resolveModelAvailability={modelUnavailable ? () => ({ status: "unavailable", reason: "model_missing" }) : undefined}
             onModelPickerOpenChange={() => {}}
             onModelChange={() => {}}
-            onSendDraft={async () => {
-              sendCount += 1;
-              return { outcome: "accepted" };
-            }}
+            onSendDraft={async () => ({ outcome: "accepted" })}
             cloudMcpSubmissionState={IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE}
             onOpenConnect={() => {}}
             onDraftChange={() => {}}
@@ -177,49 +231,29 @@ test("the composer stays editable when snapshot refresh fails or the model is un
           />
         </ShellConfigProvider>
       </LocalProvider>
+      </PlatformProvider>
     </QueryClientProvider>
-    </PlatformProvider>
   );
 
   try {
-    await act(async () => root.render(<PlatformProvider value={platform}>{surface(sessionId, false)}</PlatformProvider>));
-    await waitFor(() => container.textContent?.includes("Cached transcript remains visible.") === true, "the cached transcript");
+    await act(async () => root.render(surface(v1BaseUrl)));
+    await waitFor(() => releaseRetry !== null, "the v1 read to 404 and park before its retry");
+    expect(readEndpoints).toEqual([v1BaseUrl]);
 
-    rejectSnapshot = true;
-    await act(async () => {
-      await queryClient.invalidateQueries({ queryKey: key });
-    });
-    await waitFor(() => queryClient.getQueryState(key)?.status === "error", "the failed snapshot query");
-    expect(container.querySelector('[contenteditable="true"][data-lexical-editor="true"]')).not.toBeNull();
+    // Routing status resolves: the same session is now owned by /opencode2.
+    await act(async () => root.render(surface(v2BaseUrl)));
+    await act(async () => { releaseRetry?.(); });
 
-    await act(async () => useComposerStateStore.getState().setDraft(sessionId, "still typing"));
-    await waitFor(
-      () => container.querySelector('[data-lexical-editor="true"]')?.textContent === "still typing",
-      "the draft to reach Lexical",
-    );
-    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.disabled).toBe(true);
-    expect(sendCount).toBe(0);
-    expect(container.textContent).toContain("Cached transcript remains visible.");
-
-    const unavailableSessionId = "session-composer-model-unavailable";
-    rejectSnapshot = false;
-    fetchedSnapshot = createSnapshot(unavailableSessionId, "Unavailable model transcript.");
-    queryClient.setQueryData(snapshotKey(workspaceId, unavailableSessionId), fetchedSnapshot);
-    await act(async () => unavailableRoot.render(<PlatformProvider value={platform}>{surface(unavailableSessionId, true)}</PlatformProvider>));
-    await waitFor(
-      () => unavailableContainer.querySelector('[contenteditable="true"][data-lexical-editor="true"]') !== null,
-      "the unavailable-model Lexical editor",
-    );
-    expect(unavailableContainer.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.disabled).toBe(true);
+    await waitFor(() => container.textContent?.includes(transcriptText) === true, "the transcript read under the v2 owner");
+    expect(queryClient.getQueryState(key)?.status).toBe("success");
+    expect(queryClient.getQueryState(key)?.error).toBeNull();
+    expect(container.textContent).not.toContain("owner changed");
+    expect(readEndpoints).toEqual([v1BaseUrl, v2BaseUrl]);
   } finally {
-    await act(async () => {
-      root.unmount();
-      unavailableRoot.unmount();
-    });
-    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {} });
+    await act(async () => root.unmount());
+    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });
     queryClient.clear();
     container.remove();
-    unavailableContainer.remove();
     mock.restore();
     if (registeredDom) await GlobalRegistrator.unregister();
   }

@@ -26,6 +26,8 @@ export interface Located {
   visible: boolean;
   hitTestOk: boolean;
   editable: boolean;
+  /** What disables the control (`disabled`, `aria-disabled="true"`), or null when it accepts input. */
+  disabled: string | null;
   value: string;
   text: string;
   covering: { tag: string; text: string; role: string } | null;
@@ -313,6 +315,10 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     const inViewport = center.x >= 0 && center.y >= 0 && center.x <= innerWidth && center.y <= innerHeight;
     const hit = inViewport ? document.elementFromPoint(center.x, center.y) : null;
     const hitTestOk = Boolean(hit && (hit === element || element.contains(hit)));
+    const disabledBy = [
+      element.matches(":disabled") ? "disabled" : "",
+      element.getAttribute("aria-disabled") === "true" ? 'aria-disabled="true"' : "",
+    ].filter(Boolean).join(" ");
     return {
       center,
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -321,6 +327,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk,
       editable: element instanceof HTMLSelectElement ? !element.matches(":disabled") : (element instanceof HTMLElement && element.isContentEditable) || (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) && !element.readOnly,
+      disabled: disabledBy || null,
       value: (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) ? element.value : (element instanceof HTMLElement && element.isContentEditable) ? element.innerText : "",
       text: ((element instanceof HTMLElement && element.isContentEditable) ? element.innerText : element.innerText ?? element.textContent ?? "").trim(),
       covering: hit && !hitTestOk ? {
@@ -354,6 +361,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     || typeof value.tag !== "string" || typeof value.name !== "string"
     || typeof value.visible !== "boolean" || typeof value.hitTestOk !== "boolean"
     || typeof value.editable !== "boolean" || typeof value.value !== "string" || typeof value.text !== "string"
+    || (value.disabled !== null && typeof value.disabled !== "string")
     || covering === undefined) {
     throw new Error("CDP returned invalid located-element geometry.");
   }
@@ -365,6 +373,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     visible: value.visible,
     hitTestOk: value.hitTestOk,
     editable: value.editable,
+    disabled: value.disabled,
     value: value.value,
     text: value.text,
     covering,
@@ -463,6 +472,40 @@ export async function waitForLocated(
   }
   const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
   throw new Error(`Timed out after ${timeoutMs}ms locating target.${detail}`);
+}
+
+/** The target was found but is disabled, so a click would be silently ignored by the page. */
+export class DisabledTargetError extends Error {}
+
+function describeRect(rect: Located["rect"]): string {
+  return `${Math.round(rect.x)},${Math.round(rect.y)} ${Math.round(rect.width)}×${Math.round(rect.height)}`;
+}
+
+function assertInteractive(found: Located): void {
+  if (found.disabled === null) return;
+  throw new DisabledTargetError(`Refused to click disabled ${found.tag} ${JSON.stringify(found.name)} (${found.disabled}); the page would ignore the click.`);
+}
+
+/**
+ * Wait for a visible target, then re-inspect it immediately before dispatching so
+ * a disabled state or a layout shift after the first inspection cannot absorb the click.
+ */
+export async function clickTarget(
+  surface: Surface,
+  target: Target,
+  options: { timeoutMs?: number; mustHitTest?: boolean; button?: "left" | "right" | "middle"; clickCount?: number } = {},
+): Promise<Located> {
+  const mustHitTest = options.mustHitTest ?? true;
+  const found = await waitForLocated(surface, target, { timeoutMs: options.timeoutMs, mustHitTest });
+  assertInteractive(found);
+  const fresh = await locate(surface, target);
+  assertInteractive(fresh);
+  if (!fresh.visible || (mustHitTest && !fresh.hitTestOk)) {
+    const covering = fresh.covering ? ` Covered by ${fresh.covering.tag}${fresh.covering.text ? ` text=${JSON.stringify(fresh.covering.text)}` : ""}.` : "";
+    throw new Error(`Target ${JSON.stringify(fresh.name)} moved before the click could be dispatched: ${describeRect(found.rect)} → ${describeRect(fresh.rect)} (visible=${fresh.visible}, hitTestOk=${fresh.hitTestOk}).${covering}`);
+  }
+  await clickAt(surface, fresh.center, { button: options.button, clickCount: options.clickCount });
+  return fresh;
 }
 
 /** Require every inspection in the interval to observe a missing or hidden target. */

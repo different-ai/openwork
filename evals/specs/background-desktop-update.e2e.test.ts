@@ -136,7 +136,12 @@ test("updates download outside Settings and offer a persistent, optional restart
     }, { within: 5_000, label: "the failed restart dismisses its dialog", until: Boolean });
     await user.notSee({ text: "Restart to update" });
     expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
+    // Coming back after the check interval must not restart the download loop
+    // on its own: the failure stays put until the person retries from Settings.
+    await world.returnToApp();
     await world.openSettings();
+    await user.see({ text: "Couldn't install the update" });
+    expect(await world.snapshot()).toMatchObject({ checks: index + 6, downloads: index + 3, installAttempts: index + 1, installs: 0 });
     await user.click({ role: "button", text: "Check now" });
     await probe.eventually(world.snapshot, {
       within: 5_000, label: "the user re-downloads after the failed install through Settings",

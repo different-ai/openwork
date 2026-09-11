@@ -546,8 +546,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const key = `${policyReleaseChannel}:${appVersion}`;
     const interval = 15 * 60 * 1000;
     const check = () => {
-      const state = updateStatusRef.current?.state;
+      const status = updateStatusRef.current;
+      const state = status?.state;
       if (autoCheckInFlightRef.current || state === "checking" || state === "downloading" || state === "ready") return;
+      // A failed install needs the person: the update was already downloaded,
+      // so a background re-check would only re-download it and re-offer the
+      // same restart. Keep the failure (and Settings' Check now) until they retry.
+      if (status?.state === "error" && status.failedAction === "install") return;
       if (autoCheckKeyRef.current === key && Date.now() - lastAutoCheckAtRef.current < interval) return;
       autoCheckKeyRef.current = key;
       lastAutoCheckAtRef.current = Date.now();

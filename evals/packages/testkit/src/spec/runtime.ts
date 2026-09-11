@@ -20,7 +20,7 @@ import {
   callFunctionOnSurface,
   addInitScript,
   callFunction, connect, debuggerUrlFor, listTargets,
-  clickAt,
+  clickTarget,
   dumpScreenState,
   evaluateOnSurface,
   hoverAt,
@@ -707,8 +707,7 @@ export class UserChannel implements User {
     const hitTestDetail = options.hitTest === false ? ", hitTest=false" : "";
     return this.#runtime.call("user", "rightClick", `rightClick(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
       if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, 1);
-      const found = await waitForLocated(surface, target, { mustHitTest: options.hitTest !== false });
-      await clickAt(surface, found.center, { button: "right" });
+      await clickTarget(surface, target, { mustHitTest: options.hitTest !== false, button: "right" });
     });
   }
 
@@ -721,9 +720,8 @@ export class UserChannel implements User {
     const hitTestDetail = options.hitTest === false ? ", hitTest=false" : "";
     return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
       if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, clickCount);
-      const found = await waitForLocated(surface, target, { mustHitTest: options.hitTest !== false });
-      this.#runtime.emit({ stage: this.#runtime.stage, channel: "user", verb: "target", detail: targetDetail(target), surface: surfaceName(surface), ok: true, target: found.rect });
-      await clickAt(surface, found.center, { clickCount });
+      const clicked = await clickTarget(surface, target, { mustHitTest: options.hitTest !== false, clickCount });
+      this.#runtime.emit({ stage: this.#runtime.stage, channel: "user", verb: "target", detail: targetDetail(target), surface: surfaceName(surface), ok: true, target: clicked.rect });
     });
   }
 
@@ -732,10 +730,7 @@ export class UserChannel implements User {
     return this.#runtime.call("user", "type", typedTextDetail(target, text, options), surface, async () => {
       if (options.typing) typingPlan(text, options.typing);
       if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
-      else {
-        const found = await waitForLocated(surface, target, { mustHitTest: true });
-        await clickAt(surface, found.center);
-      }
+      else await clickTarget(surface, target);
       if (options.sensitive) {
         const masked = await callFunctionOnSurface(surface, () => document.activeElement instanceof HTMLInputElement && document.activeElement.type === 'password', []);
         if (masked !== true) throw new Error("Sensitive typing requires a masked password input");
