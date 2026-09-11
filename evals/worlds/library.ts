@@ -418,7 +418,8 @@ export async function libraryConnectorDiscovery(seed: Seed) {
   const den = await seed.den({ org: { name: `Library connector discovery ${Date.now()}`, admin: { name: "Library Connector Admin" } } });
   const organizationId = await activeOrganizationId(seed, den.admin);
   const app = await seed.desktop({ den, as: "admin" });
-  const workspace = await seed.workspace(app, seed.tmpPath("library-connector-discovery"));
+  // Keep repository-local skills out of this empty Library fixture.
+  const workspace = await seed.workspace(app, seed.tmpPath("library-connector-discovery"), { create: true });
   await app.client.send("Emulation.setDeviceMetricsOverride", {
     width: 820,
     height: 760,

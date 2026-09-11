@@ -218,4 +218,36 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
       && conflictingConnection.response.status === 400
       && errorCode(conflictingConnection.body) === "invalid_request",
   );
+
+  await step("My Library defaults to Cloud MCP cards and also lists the created bundle under Plugins", async () => {
+    // Follow the existing organization-scoped navigation rather than inventing a slug.
+    await user.click({ role: "link", label: "My Library" });
+    await user.see({ testId: "den-library" }, { timeoutMs: 90_000 });
+    expect((await probe.dom('[data-testid="den-library"][data-library-kind="mcps"][data-library-layout="grid"]')).elements).toHaveLength(1);
+    const filters = await probe.dom('[aria-label="Library filters"] button[aria-pressed]:not([aria-label])');
+    expect(filters.elements.map((element) => element.text)).toEqual(["MCPs", "Skills", "Plugins"]);
+    expect((await probe.dom('[aria-label="Library filters"] button[aria-pressed="true"]:not([aria-label])')).elements.map((element) => element.text)).toEqual(["MCPs"]);
+    expect((await probe.dom('[data-testid="den-library"] [role="tab"][aria-selected="true"]')).elements).toMatchObject([{ text: expect.stringMatching(/^Ready to use\b/) }]);
+    expect((await probe.dom('button[aria-label="Card view"][aria-pressed="true"]')).elements).toHaveLength(1);
+    await user.notSee({ role: "button", label: /^All$/ });
+    await user.notSee({ role: "tab", label: /^All\b/ });
+    await user.notSee({ role: "button", label: "Show hidden" });
+    await user.see({ role: "link", label: "Add MCP" });
+    expect((await probe.dom('a[aria-label="Add MCP"]')).elements).toMatchObject([{ text: "" }]);
+    const pluginKey = `plugin-${resolved.plugin?.pluginId}`;
+    await user.see({ text: world.connection.name });
+    expect((await probe.dom(`[data-library-grid] [data-library-item-key="connection-${world.connection.id}"]`)).elements).toHaveLength(1);
+    expect((await probe.dom(`[data-library-item-key="${pluginKey}"]`)).elements).toHaveLength(0);
+    expect((await probe.dom('[data-library-list]')).elements).toHaveLength(0);
+
+    await user.click({ role: "button", label: "Plugins" });
+    await user.see({ text: world.pluginName });
+    await user.see({ role: "link", label: "Add plugin" });
+    await user.notSee({ role: "link", label: "Add MCP" });
+    expect((await probe.dom('[data-testid="den-library"][data-library-kind="plugins"][data-library-layout="grid"]')).elements).toHaveLength(1);
+    expect((await probe.dom(`[data-library-grid] [data-library-item-key="${pluginKey}"]`)).elements).toHaveLength(1);
+    expect((await probe.dom('[data-testid="den-library"] [data-library-item-type="connection"]')).elements).toHaveLength(0);
+    expect((await probe.dom('a[aria-label="Add plugin"]')).elements).toMatchObject([{ text: "" }]);
+    await user.screenshot();
+  });
 });

@@ -1,34 +1,25 @@
 import { expect } from "vitest";
-import { browserScript, spec } from "@openwork/testkit";
-import { emptySession } from "../worlds/desktop.ts";
+import { spec } from "@openwork/testkit";
+import { libraryMcpServersFromConfig } from "../worlds/desktop.ts";
 
-const test = spec.world(emptySession);
+const test = spec.world(libraryMcpServersFromConfig);
 
 // People paste MCP servers into opencode.json from Claude Desktop or Cursor,
 // where the shape is `command: "python3", args: [...]`. OpenWork must list that
 // server beside its own `command: [...]` shape instead of blanking Settings.
-const handWrittenConfig = {
-  $schema: "https://opencode.ai/config.json",
-  mcp: {
-    "docs-helper": { type: "local", command: "python3", args: ["-m", "http.server", "8321"], enabled: false },
-    "files-helper": { type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-filesystem"], enabled: false },
-    "remote-helper": { type: "remote", url: "https://mcp.example.test/sse", enabled: false },
-  },
-};
-
-test("the Library lists MCP servers written by hand into opencode.json, whichever command shape they use", async ({ world, seed, user, agent, probe, step, evidence }) => {
-  await step("a person writes three servers into the workspace's opencode.json", async () => {
-    const written = await seed.evalIn(world.app, browserScript(async (workspacePath: string, content: string) => {
-      const result = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("writeOpencodeConfig", "project", workspacePath, content);
-      return result ?? { ok: false, stderr: "desktop bridge unavailable" };
-    }, [world.workspacePath, `${JSON.stringify(handWrittenConfig, null, 2)}\n`]), { awaitPromise: true });
-    expect(written).toMatchObject({ ok: true });
+test("the Library lists MCP servers written by hand into opencode.json, whichever command shape they use", async ({ world, user, agent, probe, step, evidence }) => {
+  await step("the workspace fixture wrote three servers into opencode.json", async () => {
+    expect(world.configWrite).toMatchObject({ ok: true });
   });
 
-  await step("Settings opens and the Library lists every server", async () => {
+  await step("only Library Advanced lists the workspace's configured servers", async () => {
     await agent.run("route.extensions.skills");
     await user.see({ text: "Library" });
     await user.click({ role: "button", label: "MCPs" });
+    await user.notSee({ text: "docs-helper" });
+    await user.notSee({ text: "files-helper" });
+    await user.notSee({ text: "remote-helper" });
+    await user.click({ role: "button", label: /^Advanced\b/ });
     await user.see({ text: "docs-helper" });
     await user.see({ text: "files-helper" });
     await user.see({ text: "remote-helper" });
@@ -42,7 +33,7 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     expect(body.length).toBeGreaterThan(200);
     evidence.recordAssertionEvidence(
       "A Claude-style string command no longer blanks Settings",
-      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and the MCPs filter listed all three names.",
+      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and Advanced listed all three names without exposing them in the primary MCPs inventory.",
       true,
     );
   });
