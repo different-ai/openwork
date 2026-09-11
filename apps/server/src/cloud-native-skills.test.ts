@@ -181,6 +181,30 @@ test("fails closed on malformed index, rejected session, and partial body reads"
 
     fetcher = async () => new Response("unauthorized", { status: 401 });
     expect(await code()).toBe("cloud_skill_session_failed");
+    for (const transportError of [new TypeError("fetch failed"), new DOMException("Timed out", "TimeoutError")]) {
+      fetcher = fakeCloud({ index: indexFor([BRIEFING_URI]), bodies: { [BRIEFING_URI]: BRIEFING_BODY } }).fetcher;
+      await sync.sync();
+      fetcher = async () => { throw transportError; };
+      expect(await code()).toBe("cloud_skill_session_failed");
+      expect(sync.current()).toEqual({ root: null, skills: [] });
+      expect(registered.at(-1)).toBeNull();
+      expect(await stat(root).then(() => true, () => false)).toBe(false);
+    }
+  });
+});
+
+test("transport recovery does not hide a failed native unregistration", async () => {
+  await withRoot(async (root) => {
+    const cleanupError = new Error("Native unregistration failed");
+    let fetcher: McpFetch = fakeCloud({ index: indexFor([BRIEFING_URI]), bodies: { [BRIEFING_URI]: BRIEFING_BODY } }).fetcher;
+    const sync = createCloudNativeSkillSync({
+      root, fetcher: (url, init) => fetcher(url, init), readCloudConfig: async () => cloudConfig("t"),
+      register: async (directory) => { if (directory === null) throw cleanupError; },
+    });
+    await sync.sync();
+    fetcher = async () => { throw new TypeError("fetch failed"); };
+    await expect(sync.sync()).rejects.toBe(cleanupError);
+    expect(await stat(root).then(() => true, () => false)).toBe(false);
   });
 });
 

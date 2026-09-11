@@ -276,8 +276,11 @@ export function createCloudNativeSkillSync(options: {
       bodies = await fetchCloudNativeSkills(cloud, options.fetcher);
     } catch (error) {
       if (generation !== started) return "stale";
+      // Only a successfully cleared registry may admit a turn without Cloud
+      // skills. Cleanup failures still propagate and block admission.
       await clearAll();
-      throw error;
+      if (error instanceof CloudNativeSkillSyncError) throw error;
+      throw new CloudNativeSkillSyncError("cloud_skill_session_failed", "OpenWork Cloud skill transport is unavailable");
     }
     if (generation !== started) return "stale";
     const state = await materializeCloudNativeSkills(options.root, scope, bodies);

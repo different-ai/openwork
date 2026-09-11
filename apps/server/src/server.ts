@@ -37,7 +37,7 @@ import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plu
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
-import { CloudNativeSkillSyncError } from "./cloud-native-skills.js";
+import { CLOUD_NATIVE_SKILL_ID_PREFIX, CloudNativeSkillSyncError } from "./cloud-native-skills.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -901,6 +901,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
             proxyPath: mount.restPath,
             connection,
             syncCloudSkills: engineV2Preview.syncCloudSkills,
+            actor,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
           });
           const response = taskRecovery ? await taskRecovery.forward(workspace, "v2", mount.restPath, request, send) : await send();
@@ -1132,7 +1133,8 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-async function proxyOpencodeV2Request(input: {
+export async function proxyOpencodeV2Request(input: {
+  actor: Actor;
   config: ServerConfig;
   request: Request;
   url: URL;
@@ -1271,6 +1273,23 @@ async function proxyOpencodeV2Request(input: {
     headers.set("content-type", "application/json");
   }
   const response = await loopbackFetch(target.toString(), { method, headers, body, signal: input.recoverySignal });
+  if (method === "GET" && /^\/api\/skill(?:\/|$)/.test(decodeURIComponent(forwardedPath))
+    && input.actor.scope !== "owner" && response.ok) {
+    // A shared client token is not authorization to bulk-read the owner's Cloud
+    // instructions. Keep metadata for selection, just like the Connect catalog;
+    // bodies and private materialization paths stay on the owner/engine side.
+    // Internal watcher/admission reads above deliberately do not use this projection.
+    const payload: unknown = await response.json();
+    const raw = isRecord(payload) && "data" in payload ? payload.data : payload;
+    const publicSkill = (value: unknown) => {
+      if (!isRecord(value) || typeof value.id !== "string") {
+        throw new ApiError(502, "invalid_engine_response", "Invalid skill metadata");
+      }
+      if (!value.id.startsWith(CLOUD_NATIVE_SKILL_ID_PREFIX)) return value;
+      return Object.fromEntries(Object.entries(value).filter(([key]) => ["id", "name", "description", "slash"].includes(key)));
+    };
+    return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicSkill) : publicSkill(raw) });
+  }
   if (method === "GET" && /^\/api\/provider(?:\/|$)/.test(decodeURIComponent(forwardedPath)) && response.ok) {
     // Provider.Info includes request settings/headers, which may contain the
     // mirrored server-owned key. Clients only need public catalog metadata.

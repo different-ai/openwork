@@ -343,6 +343,29 @@ jitTest("SKILL-CLOUD-01 a Cloud skill is native before the first prompt, updates
     expect(registry).toHaveLength(1);
     const entry = expectCloudNativeEntry(registry[0], world, code);
     skillId = entry.id;
+    await step("shared clients can select Cloud skills but cannot bulk-read their bodies or private locations", async () => {
+      const cloudReads = world.cloud.resourceReads().length;
+      for (const scope of ["viewer", "collaborator"] as const) {
+        for (const encoded of [false, true]) {
+          const shared = await world.sharedNativeSkills(scope, encoded);
+          expect(shared.status).toBe(200);
+          const data = record(shared.json) && Array.isArray(shared.json.data) ? shared.json.data : [];
+          const skill = data.find((value) => record(value) && value.id === skillId);
+          expect(skill).toMatchObject({ id: skillId, name: world.cloudSkillName, description: cloudSkillDescription });
+          expect(skill).not.toHaveProperty("content");
+          expect(skill).not.toHaveProperty("location");
+          expect(shared.text).not.toContain(code);
+          expect(shared.text).not.toContain(entry.location);
+        }
+      }
+      expect(world.cloud.resourceReads()).toHaveLength(cloudReads);
+      expectCloudNativeEntry((await world.cloudNativeSkills())[0], world, code);
+      evidence.recordAssertionEvidence(
+        "Viewer and collaborator catalog reads expose metadata only while owner and internal native loading retain the complete skill",
+        "normal and encoded catalog routes: 200; Cloud body/path absent for both shared scopes; no extra Cloud fetch; owner body preserved",
+        true,
+      );
+    });
     expect(await talk.skillToolIds(turn.prompt)).toEqual([skillId]);
     const reads = world.cloud.resourceReads({ sinceIso: turn.startedAt });
     expect(reads.every((read) => read.identity === account && read.authorized)).toBe(true);

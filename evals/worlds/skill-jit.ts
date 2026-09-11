@@ -1,9 +1,11 @@
-import { browserScript } from "@openwork/cdp";
 import { deriveMockEnv, type MockBoot, type Place, type Seed } from "@openwork/env";
+import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
+import { fileURLToPath } from "node:url";
 import { startMockCloudSkills, type MockAgentRequest, type MockCloudSkillsHandle } from "@openwork/labs";
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+import { skillJitModelScript } from "../packages/labs/src/skill-jit-model.ts";
 import { configureProvider } from "./chat.ts";
 
 /** Account labels the fixture mints credentials for. Labels are safe to log; credentials are not. */
@@ -105,24 +107,34 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
   const app = await seed.appWeb({
     name: "skill-jit",
     workspacePath,
-    mocks: { agent: seed.mock({ isolatedProcessEnv: true }), cloud: cloudBoot },
+    mocks: { agent: seed.mock({ isolatedProcessEnv: true, scriptPath: skillJitModelScript }), cloud: cloudBoot },
   });
   const agentMock = app.mocks.agent;
   const cloud = booted.cloud;
   if (!agentMock || !cloud) throw new Error("The app-web fixture did not boot both the model witness and the Cloud skill fixture.");
 
   const workspace = await seed.workspace(app, workspacePath);
-  const credentials = await seed.evalIn(app, browserScript(() => ({
-    port: localStorage.getItem("openwork.server.port"),
-    token: localStorage.getItem("openwork.server.token"),
-  }), []));
-  if (!credentials.port || !credentials.token) throw new Error("The app-web renderer has no local server credentials.");
-  const serverUrl = `http://127.0.0.1:${credentials.port}`;
-  const serverToken = credentials.token;
-  const request = async (path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}) => {
+  // The renderer intentionally keeps its collaborator token. Fixture-only
+  // owner reads use an owner bearer minted through this owned runtime's host API.
+  const paths = resolveHeadlessWorldRuntimePaths(fileURLToPath(new URL("../../", import.meta.url)), app.handle.name);
+  const runtime = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
+  if (!runtime || runtime.openworkUrl !== app.openworkUrl || runtime.workspace !== app.workspaceRoot) {
+    throw new Error("The skill fixture could not identify its owned headless runtime");
+  }
+  const ownerResponse = await fetch(`${runtime.openworkUrl}/tokens`, {
+    method: "POST", headers: { "X-OpenWork-Host-Token": runtime.hostToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ scope: "owner", label: "skill-jit-owner" }), signal: AbortSignal.timeout(15_000),
+  });
+  const owner: unknown = await ownerResponse.json();
+  if (ownerResponse.status !== 201 || !isRecord(owner) || typeof owner.token !== "string") {
+    throw new Error(`Could not arrange owner catalog probe: HTTP ${ownerResponse.status}`);
+  }
+  const serverUrl = runtime.openworkUrl;
+  const serverToken = owner.token;
+  const request = async (path: string, init: { method?: string; body?: unknown; timeoutMs?: number; token?: string } = {}) => {
     const response = await fetch(serverUrl + path, {
       method: init.method ?? "GET",
-      headers: { Authorization: `Bearer ${serverToken}`, ...(init.body === undefined ? {} : { "Content-Type": "application/json" }) },
+      headers: { Authorization: `Bearer ${init.token ?? serverToken}`, ...(init.body === undefined ? {} : { "Content-Type": "application/json" }) },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       signal: AbortSignal.timeout(init.timeoutMs ?? 30_000),
     });
@@ -131,6 +143,15 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
     try { json = text ? JSON.parse(text) : null; } catch { json = null; }
     return { status: response.status, json, text };
   };
+
+  const sharedTokens = new Map<"viewer" | "collaborator", string>();
+  for (const scope of ["viewer", "collaborator"] as const) {
+    const issued = await request("/tokens", { method: "POST", body: { scope, label: `skill-jit-${scope}` } });
+    if (issued.status !== 201 || !isRecord(issued.json) || typeof issued.json.token !== "string") {
+      throw new Error(`Could not arrange ${scope} catalog probe: HTTP ${issued.status}`);
+    }
+    sharedTokens.set(scope, issued.json.token);
+  }
 
   // Native v2 conversation regardless of the inherited engine selector.
   const preview = await request("/experimental/engine-v2-preview", { method: "PUT", body: { enabled: true, chatRouting: true }, timeoutMs: 180_000 });
@@ -174,16 +195,10 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
     cloud,
     cloudSkillName: skillJitCloudSkillName,
     workspaceSkillName: skillJitWorkspaceSkillName,
-    /** Arrange the deterministic model turn: one native `skill` call, then the tool text as the visible answer. */
     async prepareTurn(prompt: string, target: SkillJitTurnTarget): Promise<void> {
-      const step = target.kind === "catalog"
-        ? { tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: target.skill } }
-        : { tool: "skill", arguments: { id: target.skillId } };
-      const result = await fetch(`${agentMock.url}/admin/agent-workloads`, {
+      const result = await fetch(`${agentMock.url}/admin/skill-turn`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workloads: [{
-          latestUserTurn: true, promptMarker: prompt, finalReply: "OpenWork: UNAVAILABLE", finalReplyFrom: "last-tool-text", steps: [step],
-        }] }),
+        body: JSON.stringify({ prompt, ...(target.kind === "forced" ? { forcedSkillId: target.skillId } : {}) }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!result.ok) throw new Error(`Could not arrange the model turn: HTTP ${result.status}`);
@@ -225,6 +240,12 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
       const result = await request(nativeSkillPath);
       if (result.status !== 200) throw new Error(`Native skill registry unavailable: HTTP ${result.status}`);
       return parseNativeSkills(result.json);
+    },
+    /** Read the same native catalog with a fixture-owned shared-client token. */
+    async sharedNativeSkills(scope: "viewer" | "collaborator", encoded = false) {
+      const token = sharedTokens.get(scope);
+      if (!token) throw new Error(`Missing ${scope} probe credential`);
+      return request(encoded ? nativeSkillPath.replace("/skill", "/%73kill/") : nativeSkillPath, { token });
     },
     async cloudNativeSkills(): Promise<NativeSkillEntry[]> {
       const result = await request(nativeSkillPath);
