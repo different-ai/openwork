@@ -7,6 +7,8 @@ import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
+import { useSessionActivityStore } from "../status/session-activity-store";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { controlWorkspaceLabel as workspaceLabel, listControlSessions, type ControlSessionLike as SessionLike } from "./list-control-sessions";
 
@@ -30,8 +32,11 @@ type UseSessionControlActionsInput = {
   createTaskInWorkspace: (workspaceId: string) => Promise<string | null> | string | null;
   openModelPicker: () => void;
   refreshRouteState: () => Promise<unknown> | unknown;
-  archiveSession: (sessionId: string, archived: boolean) => Promise<boolean>;
+  archiveSession: (sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
 };
+
+const ARCHIVE_AWAITING_CONFIRMATION_ERROR = "That session is still working. The person was asked in OpenWork to confirm Stop and archive; nothing has been stopped or archived yet.";
+const ARCHIVE_AWAITING_CONFIRMATION_HINT = "Do not retry: the request stays pending until the person answers. Check session.list_sessions later; `working` turns false once it is stopped or finished.";
 
 function findSessionWorkspace(
   workspaces: SessionControlWorkspace[],
@@ -95,7 +100,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error) and `working` (true while a turn, subtask, permission, or question is still open). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
@@ -103,7 +108,12 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
     ],
-    execute: (args) => listControlSessions(args, { workspaces, sessionsByWorkspaceId, pinnedIds }),
+    execute: (args) => listControlSessions(args, {
+      workspaces,
+      sessionsByWorkspaceId,
+      pinnedIds,
+      statusFor: (workspaceId, sessionId) => useSessionActivityStore.getState().getStatus(workspaceId, sessionId),
+    }),
   }), [pinnedIds, sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
@@ -261,7 +271,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.archive",
     label: "Archive or unarchive a session",
-    description: archiveDisabledReason ?? "Archive a session, preserving context. Working sessions require the user to confirm Stop and archive in the app. Pass archived=false to restore without restarting work.",
+    description: archiveDisabledReason ?? "Archive a session, preserving context. Check `working` in session.list_sessions first: an idle session archives immediately. A working session (including the calling session itself, which is working while it calls this) asks the person to confirm Stop and archive in the app and returns code awaiting_user_confirmation naming the target and requester; do not retry, the person decides. Pass archived=false to restore without restarting work.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [
@@ -269,13 +279,27 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "archived", type: "boolean", required: true, description: "true to archive, false to unarchive." },
     ],
     disabled: !opencodeClient || Boolean(archiveDisabledReason),
-    execute: async (args) => {
+    execute: async (args, helpers) => {
       const sessionId = stringArg(args, "sessionId");
       const archived = booleanArg(args, "archived");
       if (archiveDisabledReason) return { ok: false, error: archiveDisabledReason };
       if (!sessionId) return { ok: false, error: "sessionId is required" };
-      const ok = await archiveSession(sessionId, archived);
-      return ok
+      const requestedBy = helpers.origin?.sessionId;
+      const outcome = await archiveSession(sessionId, archived, {
+        ...(requestedBy ? { requester: { sessionId: requestedBy } } : {}),
+        onAwaitingConfirmation: (target) => {
+          const requester = target.requestedBy
+            ? target.requestedBy.sessionId === target.sessionId
+              ? "Requester: this session itself, from its own running turn."
+              : `Requester: "${target.requestedBy.title ?? "session"}" (${target.requestedBy.sessionId}).`
+            : "";
+          helpers.awaitingUserConfirmation?.({
+            error: ARCHIVE_AWAITING_CONFIRMATION_ERROR,
+            hint: [ARCHIVE_AWAITING_CONFIRMATION_HINT, `Target: "${target.title}" (${target.sessionId}).`, requester].filter(Boolean).join(" "),
+          });
+        },
+      });
+      return outcome === "done"
         ? { ok: true, sessionId, archived }
         : { ok: false, sessionId, error: "Session archive was cancelled or could not be confirmed" };
     },

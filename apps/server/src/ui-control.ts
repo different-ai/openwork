@@ -36,7 +36,10 @@ export class UiControlMailbox {
     return new Promise<unknown>((resolve) => {
       const timeout = setTimeout(() => {
         this.requests.delete(id);
-        resolve({ ok: false, error: "The OpenWork window did not answer within 5 seconds." });
+        resolve({
+          ok: false,
+          error: "The OpenWork window did not answer within 5 seconds. If the command opened a confirmation dialog, only the person can answer it in the app; do not retry.",
+        });
       }, REQUEST_TIMEOUT_MS);
 
       this.requests.set(id, { request, delivered: false, resolve, timeout });

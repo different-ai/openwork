@@ -87,11 +87,27 @@ const openworkAffordanceSuccessSchema = z.object({
   effects: openworkAffordanceEffectsSchema,
 })
 
+/**
+ * Structured outcomes an action can report so the agent can decide instead of
+ * retrying a transport-looking error. `awaiting_user_confirmation`: the command
+ * opened a dialog only the person can answer; the request stays pending in the
+ * app and `hint` names the target and requester.
+ */
+export const openworkAffordanceFailureCodeSchema = z.enum([
+  "unavailable",
+  "invalid-args",
+  "conflict",
+  "failed",
+  "awaiting_user_confirmation",
+])
+export type OpenworkAffordanceFailureCode = z.infer<typeof openworkAffordanceFailureCodeSchema>
+
 const openworkAffordanceFailureSchema = z.object({
   ok: z.literal(false),
   id: z.string(),
   error: z.string(),
-  code: z.enum(["unavailable", "invalid-args", "conflict", "failed"]),
+  code: openworkAffordanceFailureCodeSchema,
+  hint: z.string().optional(),
   revision: z.number().int().nonnegative().optional(),
 })
 

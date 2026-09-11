@@ -10,12 +10,14 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
-import type {
-  OpenworkAffordanceDescriptor,
-  OpenworkAffordanceEffects,
-  OpenworkAffordanceOrigin,
-  OpenworkAffordanceRequest,
-  OpenworkAffordanceResult,
+import {
+  openworkAffordanceFailureCodeSchema,
+  type OpenworkAffordanceDescriptor,
+  type OpenworkAffordanceEffects,
+  type OpenworkAffordanceFailureCode,
+  type OpenworkAffordanceOrigin,
+  type OpenworkAffordanceRequest,
+  type OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
 import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
 import { useUiControlMailbox } from "./use-ui-control-mailbox";
@@ -57,12 +59,19 @@ export type OpenworkControlSnapshot = {
 
 export type OpenworkControlResult =
   | { ok: true; actionId: string; result?: unknown }
-  | { ok: false; actionId: string; error: string };
+  | { ok: false; actionId: string; error: string; code?: OpenworkAffordanceFailureCode; hint?: string };
 
 export type OpenworkControlHelpers = {
   setNarration: (text: string) => void;
   /** The conversation whose agent issued the request, when it came through the agent bridge. */
   origin?: OpenworkAffordanceOrigin;
+  /**
+   * Present only for bridged commands (the server mailbox gives up after a few
+   * seconds). An action that opens a dialog only the person can answer calls
+   * this so the agent receives `awaiting_user_confirmation` at once while the
+   * dialog stays open; direct window callers keep awaiting the dialog.
+   */
+  awaitingUserConfirmation?: (detail: { error: string; hint: string }) => void;
 };
 
 export type OpenworkControlTargetRef = {
@@ -152,11 +161,16 @@ function describeError(error: unknown) {
 
 function returnedActionError(result: unknown) {
   if (!result || typeof result !== "object") return null;
-  const payload = result as { ok?: unknown; error?: unknown };
+  const payload: { ok?: unknown; error?: unknown; code?: unknown; hint?: unknown } = result;
   if (payload.ok !== false) return null;
-  return typeof payload.error === "string" && payload.error.trim()
-    ? payload.error
-    : "Action returned an error.";
+  const code = openworkAffordanceFailureCodeSchema.safeParse(payload.code);
+  return {
+    error: typeof payload.error === "string" && payload.error.trim()
+      ? payload.error
+      : "Action returned an error.",
+    ...(code.success ? { code: code.data } : {}),
+    ...(typeof payload.hint === "string" && payload.hint.trim() ? { hint: payload.hint } : {}),
+  };
 }
 
 function isBrowser() {
@@ -400,6 +414,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     actionId: string,
     args?: unknown,
     origin?: OpenworkAffordanceOrigin,
+    awaitingUserConfirmation?: OpenworkControlHelpers["awaitingUserConfirmation"],
   ): Promise<OpenworkControlResult> => {
     const registered = actionsRef.current.get(actionId);
     const action = registered?.ref.current;
@@ -427,14 +442,14 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       await playTargetChoreography(action, runId);
       setNarration(`Running ${action.label}…`);
       const effectiveArgs = args === undefined ? action.previewArgs : args;
-      const result = await action.execute(effectiveArgs, { setNarration, origin });
+      const result = await action.execute(effectiveArgs, { setNarration, origin, awaitingUserConfirmation });
       const resultError = returnedActionError(result);
       if (resultError) {
-        setNarration(`Could not ${action.label}: ${resultError}`);
+        setNarration(`Could not ${action.label}: ${resultError.error}`);
         if (spotlightRunRef.current === runId) {
           setSpotlight({ visible: false, phase: "target", rect: null });
         }
-        return { ok: false, actionId, error: resultError };
+        return { ok: false, actionId, ...resultError };
       }
       setNarration(`Done: ${action.label}`);
       await wait(SPOTLIGHT_TIMING_MS.done);
@@ -487,8 +502,9 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
         return {
           ok: false,
           id: request.id,
-          error: resultError,
-          code: "failed",
+          error: resultError.error,
+          code: resultError.code ?? "failed",
+          ...(resultError.hint ? { hint: resultError.hint } : {}),
           revision,
         };
       }
@@ -544,14 +560,32 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       };
     }
     busyActorRef.current = request.actor ?? null;
-    const result = await executeAction(request.id, request.args, request.origin);
+    // A dialog only the person can answer must not look like a dead window to
+    // the bridge: answer with awaiting_user_confirmation now, keep the dialog.
+    let awaiting: (detail: { error: string; hint: string }) => void = () => undefined;
+    const confirmation = new Promise<OpenworkAffordanceResult>((resolve) => {
+      awaiting = (detail) => resolve({
+        ok: false,
+        id: request.id,
+        error: detail.error,
+        hint: detail.hint,
+        code: "awaiting_user_confirmation",
+        revision: contextRevisionRef.current,
+      });
+    });
+    const result = await Promise.race([
+      executeAction(request.id, request.args, request.origin, (detail) => awaiting(detail)),
+      confirmation,
+    ]);
+    if ("id" in result) return result;
     if (!busyActionIdRef.current) busyActorRef.current = null;
     if (!result.ok) {
       return {
         ok: false,
         id: request.id,
         error: result.error,
-        code: result.error.startsWith("Already acting:") ? "conflict" : "failed",
+        code: result.code ?? (result.error.startsWith("Already acting:") ? "conflict" : "failed"),
+        ...(result.hint ? { hint: result.hint } : {}),
         revision: contextRevisionRef.current,
       };
     }

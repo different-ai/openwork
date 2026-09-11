@@ -28,6 +28,14 @@ That means you can ask things like:
 
 Because this uses the OpenWork UI, the agent may briefly navigate away from your current session to inspect another one. You can ask it to return to the current session afterward.
 
+## How agents manage other sessions
+
+An agent can start sessions (`session.create`) and file them away (`session.archive`), so it also has to know whether a session is still busy before it touches it. The rule is check status, then stop, then archive, and stopping is always your decision:
+
+1. **Check status.** `session.list_sessions` and `session.read` return `status` and a `working` boolean for every session. `working` is true while a turn, subtask, permission request, or question is still open.
+2. **Stop is the person's call.** There is no agent action that stops another session. When an agent archives a session that is still working (including itself, which is working while it makes the call), OpenWork asks you to confirm **Stop and archive** and immediately tells the agent `awaiting_user_confirmation` with the target and the requester, instead of letting the request time out. The dialog names the target session and, under **Requested by**, the agent session that asked, or "this session itself" when a session asked to archive itself. Nothing is stopped or archived until you choose.
+3. **Archive once it is idle.** Archiving a session with `working: false` completes immediately and preserves its context. Restoring an archived session never restarts stopped work.
+
 ## Current limits
 
 - Session lookup is based on the sessions OpenWork has loaded for the current app and workspace context.

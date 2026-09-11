@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
+import { sessionActivityFrom } from "./session-activity.js";
 import {
   OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
@@ -191,6 +192,13 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
         }
         return Response.json([sessionArchive]);
       }
+
+      // Live activity: alpha is mid-turn, beta waits on a permission, archive is idle.
+      if (url.pathname === "/workspace/ws_1/opencode/session/status") return Response.json({ ses_alpha: { type: "busy" } });
+      if (url.pathname === "/workspace/ws_1/opencode/permission") return Response.json([{ id: "per_1", sessionID: "ses_beta" }]);
+      if (url.pathname === "/workspace/ws_1/opencode/question") return Response.json([]);
+      if (url.pathname === "/workspace/ws_2/opencode/session/status") return Response.json({});
+      if (url.pathname === "/workspace/ws_2/opencode/permission" || url.pathname === "/workspace/ws_2/opencode/question") return Response.json([]);
 
       if (url.pathname === "/workspace/ws_1/opencode/session/ses_alpha") return Response.json(sessionAlpha);
       if (url.pathname === "/workspace/ws_1/opencode/session/ses_beta") return Response.json(sessionBeta);
@@ -410,6 +418,26 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(parsed.result.sessionId).toBe("ses_archive");
     expect(parsed.result.messages.at(-1)?.text).toContain("archive importer");
+  });
+
+  test("session.read reports live status and working so agents can check before archiving", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = async (sessionId: string) => affordanceResultSchema("session.read", readResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId, count: 1 } })))
+      .result;
+
+    expect(await read("ses_alpha")).toMatchObject({ status: "busy", working: true });
+    expect(await read("ses_beta")).toMatchObject({ status: "waiting", working: true });
+    expect(await read("ses_archive")).toMatchObject({ status: "idle", working: false });
+  });
+
+  test("an unreadable activity probe never reports a session as safe to archive", () => {
+    expect(sessionActivityFrom(null, [], [], "ses_x")).toEqual({ status: "busy", working: true });
+    expect(sessionActivityFrom({}, null, [], "ses_x")).toEqual({ status: "busy", working: true });
+    expect(sessionActivityFrom({ ses_x: { type: "retry" } }, [], [], "ses_x")).toEqual({ status: "retry", working: true });
+    expect(sessionActivityFrom({ ses_x: { type: "idle" } }, [], [{ sessionID: "ses_x" }], "ses_x")).toEqual({ status: "waiting", working: true });
+    expect(sessionActivityFrom({ ses_other: { type: "busy" } }, [{ sessionID: "ses_other" }], [], "ses_x")).toEqual({ status: "idle", working: false });
   });
 
   test("refuses to expose a session that lives outside the requested workspace", async () => {
