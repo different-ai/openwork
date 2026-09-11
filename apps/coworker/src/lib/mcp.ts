@@ -16,7 +16,16 @@ export type CoworkerMcpItem = {
   managedOAuth?: CoworkerManagedMcpConnection | null;
 };
 
+export type CoworkerMcpAppContext = {
+  sessionId: string | null;
+  engine: "v1" | "v2";
+  readOnly: boolean;
+};
+
 export type CoworkerMcpAppResource = {
+  launchId?: string;
+  /** Captured by the host at resolution, never accepted from provider HTML. */
+  context: CoworkerMcpAppContext;
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -73,13 +82,19 @@ export type PreservedMcpAppResult = {
 };
 
 export class CoworkerMcpError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly details?: unknown;
   constructor(
-    readonly status: number,
-    readonly code: string,
+    status: number,
+    code: string,
     message: string,
-    readonly details?: unknown,
+    details?: unknown,
   ) {
     super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
     this.name = "CoworkerMcpError";
   }
 }
@@ -132,7 +147,7 @@ export function createCoworkerMcpClient(input: {
 
   async function request<T>(path: string, options?: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T> {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), options?.timeoutMs ?? 15_000);
+    const timeout = globalThis.setTimeout(() => controller.abort(), options?.timeoutMs ?? 15_000);
     try {
       const response = await fetch(`${baseUrl}${path}`, {
         method: options?.method ?? "GET",
@@ -161,7 +176,7 @@ export function createCoworkerMcpClient(input: {
       }
       throw cause;
     } finally {
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
     }
   }
 
@@ -191,12 +206,26 @@ export function createCoworkerMcpClient(input: {
       `/workspace/${workspace}/mcp-apps/list`,
       { timeoutMs: 30_000 },
     ),
-    resolveApp: (projectedToolName: string, launch?: CoworkerMcpAppLaunchReference) =>
-      request<{ app: CoworkerMcpAppResource | null }>(`/workspace/${workspace}/mcp-apps/resolve`, {
+    searchCapabilities: (query: string) => request<PreservedMcpAppResult>(`/workspace/${workspace}/mcp/openwork-cloud/search`, {
+      method: "POST",
+      body: { query },
+    }),
+    resolveApp: async (projectedToolName: string, context: CoworkerMcpAppContext, launch?: CoworkerMcpAppLaunchReference) => {
+      const captured = { ...context };
+      const resolved = await request<{ app: Omit<CoworkerMcpAppResource, "context"> | null }>(`/workspace/${workspace}/mcp-apps/resolve`, {
         method: "POST",
-        body: { projectedToolName, ...(launch ? { launch } : {}) },
-      }),
+        body: { projectedToolName, context: captured, ...(launch ? { launch } : {}) },
+      });
+      return { app: resolved.app ? { ...resolved.app, context: captured } : null };
+    },
+    releaseApp: (launchId: string) => request<{ released: boolean }>(`/workspace/${workspace}/mcp-apps/release`, {
+      method: "POST",
+      body: { launchId },
+    }),
     callAppTool: (payload: {
+      launchId: string;
+      sessionId: string | null;
+      engine: "v1" | "v2";
       serverName: string;
       name: string;
       resourceUri: string;
@@ -219,3 +248,48 @@ export function createCoworkerMcpClient(input: {
 }
 
 export type CoworkerMcpClient = ReturnType<typeof createCoworkerMcpClient>;
+
+/** One bridge lifetime. The resolving surface owns release of its server lease. */
+export function createCoworkerMcpAppActions(
+  client: Pick<CoworkerMcpClient, "callAppTool">,
+  app: CoworkerMcpAppResource,
+  confirm: (message: string) => boolean | Promise<boolean>,
+) {
+  let active = true;
+  const assertActive = () => {
+    if (!active) throw new Error("This App view has closed or changed. Reopen it before using its actions.");
+    if (app.context.readOnly) throw new Error("This view is read-only and cannot perform App actions.");
+    if (!app.launchId) throw new Error("This App has no live launch context. Reopen it before using its actions.");
+    return app.launchId;
+  };
+  return {
+    dispose: () => { active = false; },
+    assertActive,
+    callTool: async (name: string, args?: Record<string, unknown>, approved = false) => {
+      const request = {
+        launchId: assertActive(),
+        sessionId: app.context.sessionId,
+        engine: app.context.engine,
+        serverName: app.serverName,
+        resourceUri: app.resourceUri,
+        name,
+        arguments: args,
+        ...(approved ? { approved: true } : {}),
+      };
+      try {
+        const result = await client.callAppTool(request);
+        assertActive();
+        return result;
+      } catch (cause) {
+        assertActive();
+        if (approved || !(cause instanceof CoworkerMcpError) || cause.code !== "tool_requires_approval") throw cause;
+        const allowed = await confirm(`Allow this App to use ${name} on ${app.serverName} once?`);
+        assertActive();
+        if (!allowed) throw new Error("You declined this App tool call.");
+        const result = await client.callAppTool({ ...request, approved: true });
+        assertActive();
+        return result;
+      }
+    },
+  };
+}

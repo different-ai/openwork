@@ -20,7 +20,7 @@ test("a level snaps to the nearest effort the model offers, ties go lower, and a
   assert.equal(variantForLevel(2, ["fast", "thinking"]), "fast");
 });
 
-test("the effort a turn is sent with: an exact effort the person fixed wins when offered, otherwise the dial through the kind", () => {
+test("turn effort preserves exact choices, refuses unavailable choices, and uses the dial only when unset", () => {
   const lane = classifyRequest("Quick audit; keep the answer short.");
   const kind = replyKindForLane(laneWithPreference(lane, "balanced"));
   assert.equal(effortForTurn({ kind, stop: "balanced", fixedVariant: "", variants: SIX }), "high", "a short audit still gets deep effort");
@@ -29,7 +29,8 @@ test("the effort a turn is sent with: an exact effort the person fixed wins when
   assert.equal(effortForTurn({ kind: "worker-turn", stop: "balanced", fixedVariant: "", variants: SIX }), "high");
   assert.equal(effortForTurn({ kind: "worker-turn", stop: "all-in", fixedVariant: "", variants: SIX }), "max");
   assert.equal(effortForTurn({ kind: "reply", stop: "all-in", fixedVariant: "low", variants: SIX }), "low", "the person's exact effort wins over the dial");
-  assert.equal(effortForTurn({ kind: "reply", stop: "all-in", fixedVariant: "ultra", variants: SIX }), "xhigh", "an exact effort the model does not offer is ignored, not guessed");
+  assert.throws(() => effortForTurn({ kind: "reply", stop: "all-in", fixedVariant: "ultra", variants: SIX }), /no longer offers thinking effort "ultra"/, "an unavailable fixed effort must not silently become adaptive");
+  assert.throws(() => effortForTurn({ kind: "assignment-run", stop: "balanced", fixedVariant: "high", variants: [] }), /no different effort was selected/);
   assert.equal(effortForTurn({ kind: "reply", stop: "all-in", fixedVariant: "", variants: [] }), "", "no efforts offered: the model default, whatever the dial says");
   assert.equal(effortForTurn({ kind: "facilitator", stop: "all-in", fixedVariant: "", variants: SIX }), "minimal");
 });

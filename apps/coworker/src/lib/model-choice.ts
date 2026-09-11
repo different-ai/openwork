@@ -190,14 +190,15 @@ export function resolveDiscussionModel(
   const choice = automatic
     ? chooseIndexedModel(catalog, lane, { standard, preferences: coworker.modelSelectionPreferences })
     : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : `The saved model "${fixedId}" is not available. Choose another AI model or connect its provider. No replacement was selected.`, indexVersion: MODEL_INTELLIGENCE_INDEX.version };
-  const fixedVariant = selected.modelVariant?.trim() ?? "";
-  if (inherited && fixed && fixedVariant && !fixed.variants.includes(fixedVariant)) {
-    return { ...choice, model: null, variant: "", lane, reason: `The app conversation model "${fixed.id}" no longer offers thinking effort "${fixedVariant}". Update the app model defaults; no different effort was selected.` };
+  if (!choice.model) return { ...choice, variant: "", lane };
+  const fixedVariant = inherited && automatic ? "" : selected.modelVariant?.trim() ?? "";
+  if (fixedVariant && !choice.model.variants.includes(fixedVariant)) {
+    return { ...choice, model: null, variant: "", lane, reason: `The ${inherited ? "app conversation" : "selected"} model "${choice.model.id}" no longer offers thinking effort "${fixedVariant}". Update ${inherited ? "the app model defaults" : "this coworker's effort setting"}; no different effort was selected.` };
   }
   return {
     ...choice,
     lane,
-    variant: effortForTurn({ kind: replyKindForLane(messageLane), stop, fixedVariant: inherited && automatic ? "" : fixedVariant, variants: choice.model?.variants ?? [] }),
+    variant: effortForTurn({ kind: replyKindForLane(messageLane), stop, fixedVariant, variants: choice.model.variants }),
   };
 }
 

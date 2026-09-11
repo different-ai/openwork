@@ -62,8 +62,10 @@ IDs to the scoped `/context` route. The broker checks the saved private
 discussion, native directory, active person-request execution, exact tool name
 and arguments. Stable call IDs suppress duplicate dispatch, including uncertain
 responses. Workers, groups, schedules and automatic continuations are denied.
-The original unrestricted `browser_*` tools are disabled in each Coworker config
-and rejected by the native plugin's pre-execution hook.
+The Desktop-host `browser_*` and `webmcp_*` namespaces are disabled in each
+Coworker config and rejected by the native plugin's pre-execution hook, including
+explicit enables and future names. Coworker keeps its own broker; sharing the
+native page host does not enable a second task/approval authority.
 
 The exact-version pnpm patch `patches/opencode-chrome-devtools@1.0.4.patch`
 adds cancellation to the shared provider, rather than copying its automation
@@ -76,7 +78,10 @@ observations and UID input. Already dispatched input cannot be undone; an
 interrupted action is never replayed and requires a fresh observation.
 
 The renderer bridge exposes only view-scoped UI commands and tab presentation,
-not CDP endpoints, targets, policy tokens or arbitrary native methods. The
+with geometry stamped by preload's current native zoom. Window resize invalidates
+the last CSS-geometry observation, and stale native stamps are rejected without
+resuming a handoff. It does not expose CDP endpoints, targets, policy tokens or
+arbitrary native methods. The
 embedded host checks `/managed-policy/evaluate` with the embedded server handle's
 dedicated `policyToken`. Missing, denied or unreadable policy fails closed;
 navigation, redirects, frames, uploads and CDP requests retain the host's request

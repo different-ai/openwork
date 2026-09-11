@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { coworkerBridge } from "@/lib/bridge";
 import {
-  CoworkerMcpError,
+  createCoworkerMcpAppActions,
   isRecord,
   type CoworkerMcpAppResource,
   type CoworkerMcpClient,
@@ -100,27 +100,33 @@ export function McpAppFrame({
   const [ready, setReady] = useState(false);
   closeRef.current = onClose;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe?.contentWindow) return;
     setReady(false);
+    setError("");
     let disposed = false;
     let failed = false;
     const sandbox = client.sandboxFor(app, window.location.origin);
     if (sandbox.expectedOrigin === window.location.origin) {
       setError("OpenWork could not isolate this interactive App from the host window.");
+      if (app.launchId) void client.releaseApp(app.launchId).catch(() => undefined);
       return;
     }
 
+    const actions = createCoworkerMcpAppActions(client, app, (message) => window.confirm(message));
+    const readOnly = app.context.readOnly;
     const bridge = new AppBridge(
       null,
       { name: "Open Coworker", version: "1.0.0" },
-      { serverTools: {} },
-      { hostContext: { theme: "dark", displayMode: "inline" } },
+      readOnly ? {} : { serverTools: {}, openLinks: {} },
+      { hostContext: { theme: "dark", displayMode: "inline", availableDisplayModes: ["inline"] } },
     );
-    bridge.onopenlink = async ({ url }) => {
+    if (!readOnly) bridge.onopenlink = async ({ url }) => {
       try {
+        actions.assertActive();
         const result = await coworkerBridge.openUntrustedExternal(url);
+        actions.assertActive();
         if (!result.ok) return { isError: true };
         return {};
       } catch {
@@ -128,26 +134,16 @@ export function McpAppFrame({
       }
     };
     bridge.onsizechange = ({ height: requestedHeight }) => {
+      if (disposed || failed) return;
       if (requestedHeight === undefined || !Number.isFinite(requestedHeight)) return;
       setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.ceil(requestedHeight))));
     };
-    bridge.onrequestteardown = () => closeRef.current?.();
-    bridge.oncalltool = async ({ name, arguments: argumentsValue }) => {
-      const request = {
-        serverName: app.serverName,
-        name,
-        resourceUri: app.resourceUri,
-        arguments: argumentsValue,
-      };
-      try {
-        return asToolResult(await client.callAppTool(request));
-      } catch (cause) {
-        if (!(cause instanceof CoworkerMcpError) || cause.code !== "tool_requires_approval") throw cause;
-        const approved = window.confirm(`Allow this App to use ${name} on ${app.serverName} once?`);
-        if (!approved) throw new Error("You declined this App tool call.");
-        return asToolResult(await client.callAppTool({ ...request, approved: true }));
-      }
+    bridge.onrequestteardown = () => {
+      if (disposed || failed) return;
+      actions.dispose();
+      closeRef.current?.();
     };
+    if (!readOnly) bridge.oncalltool = async ({ name, arguments: args }) => asToolResult(await actions.callTool(name, args));
     let resourceDeliveryTimer: number | undefined;
     let initializeTimer: number | undefined;
     let initialized = false;
@@ -156,9 +152,12 @@ export function McpAppFrame({
     const fail = (message: string) => {
       if (disposed || failed) return;
       failed = true;
+      actions.dispose();
+      if (app.launchId) void client.releaseApp(app.launchId).catch(() => undefined);
       setError(message);
     };
     bridge.oninitialized = () => {
+      if (disposed || failed) return;
       initialized = true;
       setReady(true);
       if (resourceDeliveryTimer !== undefined) window.clearTimeout(resourceDeliveryTimer);
@@ -211,14 +210,15 @@ export function McpAppFrame({
       window.clearTimeout(sandboxReadyTimer);
       const transport = new PostMessageTransport(iframe.contentWindow!, iframe.contentWindow!);
       const deliverResource = async () => {
+        if (disposed || failed) return;
         resourceSendAttempts += 1;
         try {
           await bridge.sendSandboxResourceReady({
             html: secureHtml(app),
             csp: app.csp,
-            sandbox: "allow-scripts allow-same-origin",
+            sandbox: "allow-scripts",
           });
-          if (resourceAccepted || initialized) return;
+          if (disposed || failed || resourceAccepted || initialized) return;
           resourceDeliveryTimer = window.setTimeout(() => {
             if (resourceAccepted || initialized) return;
             if (resourceSendAttempts < MAX_RESOURCE_SEND_ATTEMPTS) {
@@ -243,6 +243,7 @@ export function McpAppFrame({
     iframe.src = sandbox.url;
     return () => {
       disposed = true;
+      actions.dispose();
       window.clearTimeout(sandboxReadyTimer);
       if (resourceDeliveryTimer !== undefined) window.clearTimeout(resourceDeliveryTimer);
       if (initializeTimer !== undefined) window.clearTimeout(initializeTimer);

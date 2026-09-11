@@ -279,10 +279,15 @@ test("discussion resolution shares adjusted message effort across private/group 
   assert.equal(resolveDiscussionModel(models, base, "hello").variant, "high", "supported fixed effort wins on the selected sibling");
   const sibling = models.models.find((model) => model.id === "openai/gpt-5-mini");
   assert.ok(sibling);
-  sibling.variants = ["minimal", "medium"];
-  assert.equal(resolveDiscussionModel(models, base, "hello").variant, "minimal", "unsupported fixed effort snaps from the adjusted message baseline");
-  sibling.variants = [];
-  assert.equal(resolveDiscussionModel(models, base, "hello").variant, "");
+  for (const variants of [["minimal", "medium"], []]) {
+    sibling.variants = variants;
+    for (const modelMode of ["auto", "fixed"]) {
+      const choice = resolveDiscussionModel(models, { ...base, model: sibling.id, modelMode }, "hello");
+      assert.equal(choice.model, null, "an unavailable personal effort must not silently become adaptive");
+      assert.equal(choice.variant, "");
+      assert.match(choice.reason, /no longer offers thinking effort "high"/);
+    }
+  }
 });
 
 test("fixed discussion models ignore automatic preferences and never replace an exact missing ID; empty records inherit", () => {

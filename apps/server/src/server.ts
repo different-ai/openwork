@@ -39,6 +39,7 @@ import {
   callMcpAppTool,
   listMcpAppCatalog,
   listMcpServerTools,
+  searchWorkspaceCapabilities,
   McpAppHostError,
   resolveConnectMcpAppResource,
   resolveMcpAppResource,
@@ -3457,6 +3458,20 @@ function createRoutes(
         workspaceRoot: workspace.path,
       });
       return jsonResponse({ servers });
+    } catch (error) {
+      rethrowMcpAppHostError(error);
+    }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/search", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || typeof body.query !== "string" || !body.query.trim() || body.query.length > 2_000 || Object.keys(body).some((key) => key !== "query")) {
+      throw new ApiError(400, "invalid_payload", "Capability discovery accepts only a query of 1 to 2000 characters.");
+    }
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    try {
+      return jsonResponse(await searchWorkspaceCapabilities({ serverConfig: config, workspaceId: workspace.id, workspaceRoot: workspace.path, query: body.query }));
     } catch (error) {
       rethrowMcpAppHostError(error);
     }

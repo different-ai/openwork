@@ -12,9 +12,12 @@ import {
   markStopped,
   parseTurnsFile,
   removeQueued,
+  runThreadStop,
   saveThreadTurns,
   serializeTurnsFile,
+  subscribeThreadStops,
   takeQueued,
+  threadStop,
   threadTurns,
   withThreadTurns,
   type ThreadTurnState,
@@ -81,6 +84,29 @@ test("the pending turn is begun, stopped, and cleared without touching Next", ()
   assert.equal(cleared.pending, null);
   assert.equal(cleared.next, queued.next);
   assert.equal(clearPending(cleared), cleared);
+});
+
+test("Stop is immediately pending, single-flight across view subscriptions, and scoped on failure and retry", async () => {
+  const scope = "stop-test:discussion-a";
+  let calls = 0;
+  let notifications = 0;
+  const unsubscribe = subscribeThreadStops(() => { notifications += 1; });
+  let fail: (cause: Error) => void = () => { throw new Error("Stop did not start"); };
+  const response = new Promise<void>((_resolve, reject) => { fail = reject; });
+  const stop = () => { calls += 1; return response; };
+  const first = runThreadStop(scope, stop, "msg_a");
+  assert.deepEqual(threadStop(scope), { state: "pending", messageId: "msg_a" });
+  assert.equal(notifications, 1);
+  unsubscribe();
+  assert.equal(runThreadStop(scope, stop, "msg_a"), first);
+  assert.equal(threadStop("stop-test:discussion-b"), undefined);
+  fail(new Error("Cancellation could not be confirmed"));
+  assert.equal(await first, false);
+  assert.equal(calls, 1);
+  assert.deepEqual(threadStop(scope), { state: "unconfirmed", messageId: "msg_a", error: "Cancellation could not be confirmed" });
+  assert.equal(await runThreadStop(scope, async () => { calls += 1; }, "msg_a"), true);
+  assert.equal(calls, 2);
+  assert.equal(threadStop(scope), undefined);
 });
 
 test("the store reads one file per coworker, caches it, serializes writes, and forgets settled threads", async () => {
