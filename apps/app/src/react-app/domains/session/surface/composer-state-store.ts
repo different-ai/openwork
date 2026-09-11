@@ -255,6 +255,11 @@ export function getComposerQueuedDrafts(state: ComposerStateStore, sessionId: st
   return state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
 }
 
+/** Follow-ups waiting behind running tasks across every conversation. */
+export function countComposerQueuedDrafts(state: ComposerStateStore): number {
+  return Object.values(state.queuedDrafts).reduce((count, items) => count + items.length, 0);
+}
+
 export function getComposerRevertMessageId(state: ComposerStateStore, sessionId: string): string | null {
   return state.sessions[sessionId]?.revertMessageId ?? null;
 }

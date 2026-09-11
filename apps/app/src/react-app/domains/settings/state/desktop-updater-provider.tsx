@@ -9,6 +9,7 @@ import { useLocal } from "../../../kernel/local-provider";
 import { useDesktopConfig } from "../../cloud/desktop-config-provider";
 import { useEnterpriseActivationRequired } from "../../cloud/enterprise-activation-gate";
 import { useBrandAppName } from "../../cloud/brand-theme";
+import { countComposerQueuedDrafts, useComposerStateStore } from "../../session/surface/composer-state-store";
 import { notifyAlert } from "../../../shell/notifications";
 import { useElectronUpdaterState } from "./electron-updater-state";
 
@@ -76,6 +77,7 @@ export function DesktopUpdateButton() {
   const updater = useContext(DesktopUpdaterContext);
   const appName = useBrandAppName();
   const [confirmRestart, setConfirmRestart] = useState(false);
+  const waitingMessages = useComposerStateStore(countComposerQueuedDrafts);
   if (updater?.updateStatus?.state !== "ready") return null;
   return (
     <>
@@ -99,6 +101,11 @@ export function DesktopUpdateButton() {
           <RotateCw className="mb-3 size-6 text-muted-foreground" aria-hidden="true" />
           <AlertDialogTitle className="mb-2 text-[19px] leading-tight tracking-tight">{t("settings.update_restart_now_title", undefined, { appName })}</AlertDialogTitle>
           <AlertDialogDescription className="text-xs leading-[1.75]">{t("settings.update_restart_now_message", undefined, { appName })}</AlertDialogDescription>
+          {waitingMessages > 0 ? (
+            <AlertDialogDescription data-testid="update-restart-waiting-messages" className="mt-2 text-xs leading-[1.75]">
+              {t("settings.update_restart_waiting_messages", { count: waitingMessages })}
+            </AlertDialogDescription>
+          ) : null}
           <AlertDialogFooter className="mt-5">
             <AlertDialogCancel variant="ghost" size="sm" className="rounded-[7px] text-[11px] text-muted-foreground">{t("settings.update_keep_working")}</AlertDialogCancel>
             <AlertDialogAction size="sm" className="rounded-[7px] text-[11px]" onClick={() => {
