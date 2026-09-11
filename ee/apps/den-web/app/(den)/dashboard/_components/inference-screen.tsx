@@ -12,7 +12,7 @@ import { parseInferencePayload, type InferenceStatus } from "../../_lib/inferenc
 import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute, getCustomLlmProvidersRoute, getGatewayProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
@@ -113,7 +113,6 @@ export function InferenceScreen() {
     dashboard.orgContext?.roles,
   );
   const redirect = !access.isAdmin ? "/dashboard"
-    : gatewayAccess === "enabled" ? getGatewayProvidersRoute(dashboard.orgSlug)
     : runtimeConfig.orgMode === "single_org" ? getCustomLlmProvidersRoute(dashboard.orgSlug)
     : null;
 
