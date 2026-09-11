@@ -94,6 +94,49 @@ All rules apply to the worker namespace only.
 - No pod-level autoscaling: one worker per user, scaled between 0 and 1 replicas.
 - PVCs use `ReadWriteOnce`; the Deployment uses a Recreate strategy so image updates cannot MultiAttach-stall behind a terminating pod.
 
+
+## Worker pod customization
+
+All optional — when unset the provisioner builds its default pod shape. Set them under `config.kubernetes` when your cluster needs scheduling, registry, security, or network controls the defaults don't cover.
+
+| Helm value | Purpose |
+| --- | --- |
+| `workerImagePullSecrets` | names of image-pull secrets for a private worker registry (string list) |
+| `workerNodeSelector` | pin workers to a node pool (e.g. GPU nodes) |
+| `workerTolerations` | tolerate taints on those nodes |
+| `workerAffinity` | full affinity rules |
+| `workerTopologySpreadConstraints` | spread workers across zones |
+| `workerPriorityClassName` | priority/preemption class |
+| `workerPodAnnotations` | annotations for monitoring/network-policy/cost tooling |
+| `workerPodLabels` | labels (merged; the provisioner's selector labels always win on collision) |
+| `workerPodSecurityContext` | pod-level `securityContext` (runAsNonRoot, fsGroup, seccomp…) |
+| `workerContainerSecurityContext` | container-level `securityContext` |
+| `workerExtraVolumes` | extra volumes (a `name` colliding with `workspace`/`data` is dropped) |
+| `workerExtraVolumeMounts` | matching mounts (same collision rule) |
+| `workerExtraEnv` | extra env vars (a `name` colliding with a provisioner env var is dropped — worker tokens cannot be overridden) |
+| `workerDnsPolicy` / `workerDnsConfig` | custom pod DNS |
+
+Object/array values are emitted as JSON; den-api parses them. Example:
+
+```yaml
+config:
+  provisioner:
+    mode: kubernetes
+  kubernetes:
+    workerImage: registry.corp/openwork-microsandbox:v1
+    workerImagePullSecrets:
+      - corp-regcred
+    workerNodeSelector:
+      nodepool: gpu
+    workerTolerations:
+      - key: gpu
+        operator: Exists
+    workerPodLabels:
+      team: platform
+```
+
+Collision handling: the provisioner's selector labels (`openwork.den.worker-id`, `openwork.den.provider`), its `workspace`/`data` volumes, and its env vars (worker tokens, runtime config) always win. Operator extras that collide are dropped with a `kubernetes_provisioner` warning rather than failing the provision.
+
 ## Troubleshooting
 
 - **Worker stuck in `provisioning`**: check `cloud_failure_code`/`cloud_failure_stage` on the worker row and den-api logs (`kubernetes_provisioner` component). Quota or scheduling failures surface through the cloud failure codes; pod log tails appear in health-timeout errors (tokens redacted).

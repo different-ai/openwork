@@ -209,6 +209,88 @@ function containerEnv(input: ProvisionInput) {
   ]
 }
 
+// Operator-provided pod overrides (scheduling, security, metadata, networking).
+// The provisioner's own selector labels, env, and volumes always win on a
+// name collision; operator extras that collide are dropped with a warning.
+const RESERVED_VOLUME_NAMES = ["workspace", "data"]
+
+function operatorPodTemplateLabels(workerId: WorkerId) {
+  const reserved = Object.keys(podLabels(workerId))
+  const operator = env.kubernetes.workerPodLabels
+  if (!operator) {
+    return podLabels(workerId)
+  }
+  // Operator labels come first so the provisioner's selector labels override any
+  // attempt to clobber openwork.den.worker-id / openwork.den.provider.
+  return { ...operator, ...podLabels(workerId), ...Object.fromEntries(reserved.map((k) => [k, (podLabels(workerId) as Record<string, string>)[k]])) }
+}
+
+function operatorPodAnnotations() {
+  return env.kubernetes.workerPodAnnotations ?? {}
+}
+
+function operatorImagePullSecrets() {
+  const names = env.kubernetes.workerImagePullSecrets
+  return names?.length ? names.map((name) => ({ name })) : undefined
+}
+
+function mergeExtraEnv(base: ReturnType<typeof containerEnv>, extras: unknown[] | undefined) {
+  if (!extras || !extras.length) {
+    return base
+  }
+  const reserved = new Set(base.map((e: { name: string }) => e.name))
+  const accepted: Record<string, unknown>[] = []
+  for (const entry of extras) {
+    if (entry && typeof entry === "object" && "name" in entry && typeof (entry as { name: unknown }).name === "string") {
+      if (reserved.has((entry as { name: string }).name)) {
+        logger.warn("dropping operator env override that collides with a provisioner env var", { env_var: (entry as { name: string }).name })
+        continue
+      }
+      reserved.add((entry as { name: string }).name)
+      accepted.push(entry as Record<string, unknown>)
+    }
+  }
+  return accepted.length ? [...base, ...accepted] : base
+}
+
+function mergeExtraVolumes(extras: unknown[] | undefined) {
+  if (!extras || !extras.length) {
+    return undefined
+  }
+  const reserved = new Set(RESERVED_VOLUME_NAMES)
+  const accepted: Record<string, unknown>[] = []
+  for (const vol of extras) {
+    if (vol && typeof vol === "object" && "name" in vol && typeof (vol as { name: unknown }).name === "string") {
+      if (reserved.has((vol as { name: string }).name)) {
+        logger.warn("dropping operator volume that collides with a provisioner volume", { volume: (vol as { name: string }).name })
+        continue
+      }
+      reserved.add((vol as { name: string }).name)
+      accepted.push(vol as Record<string, unknown>)
+    }
+  }
+  return accepted.length ? accepted : undefined
+}
+
+function mergeExtraVolumeMounts(extras: unknown[] | undefined) {
+  if (!extras || !extras.length) {
+    return undefined
+  }
+  const reserved = new Set(RESERVED_VOLUME_NAMES)
+  const accepted: Record<string, unknown>[] = []
+  for (const mount of extras) {
+    if (mount && typeof mount === "object" && "name" in mount && typeof (mount as { name: unknown }).name === "string") {
+      if (reserved.has((mount as { name: string }).name)) {
+        logger.warn("dropping operator volume mount that collides with a provisioner volume mount", { volume_mount: (mount as { name: string }).name })
+        continue
+      }
+      reserved.add((mount as { name: string }).name)
+      accepted.push(mount as Record<string, unknown>)
+    }
+  }
+  return accepted.length ? accepted : undefined
+}
+
 function deploymentManifest(input: ProvisionInput) {
   return {
     apiVersion: "apps/v1",
@@ -231,10 +313,20 @@ function deploymentManifest(input: ProvisionInput) {
       },
       template: {
         metadata: {
-          labels: podLabels(input.workerId),
+          labels: operatorPodTemplateLabels(input.workerId),
+          ...(Object.keys(operatorPodAnnotations()).length ? { annotations: operatorPodAnnotations() } : {}),
         },
         spec: {
           automountServiceAccountToken: false,
+          ...(operatorImagePullSecrets() ? { imagePullSecrets: operatorImagePullSecrets() } : {}),
+          ...(env.kubernetes.workerNodeSelector ? { nodeSelector: env.kubernetes.workerNodeSelector } : {}),
+          ...(env.kubernetes.workerTolerations ? { tolerations: env.kubernetes.workerTolerations } : {}),
+          ...(env.kubernetes.workerAffinity ? { affinity: env.kubernetes.workerAffinity } : {}),
+          ...(env.kubernetes.workerTopologySpreadConstraints ? { topologySpreadConstraints: env.kubernetes.workerTopologySpreadConstraints } : {}),
+          ...(env.kubernetes.workerPriorityClassName ? { priorityClassName: env.kubernetes.workerPriorityClassName } : {}),
+          ...(env.kubernetes.workerDnsPolicy ? { dnsPolicy: env.kubernetes.workerDnsPolicy } : {}),
+          ...(env.kubernetes.workerDnsConfig ? { dnsConfig: env.kubernetes.workerDnsConfig } : {}),
+          ...(env.kubernetes.workerPodSecurityContext ? { securityContext: env.kubernetes.workerPodSecurityContext } : {}),
           containers: [
             {
               name: "openwork-server",
@@ -243,7 +335,7 @@ function deploymentManifest(input: ProvisionInput) {
               ports: [
                 { containerPort: env.kubernetes.workerPort },
               ],
-              env: containerEnv(input),
+              env: mergeExtraEnv(containerEnv(input), env.kubernetes.workerExtraEnv),
               readinessProbe: {
                 httpGet: { path: "/health", port: env.kubernetes.workerPort },
               },
@@ -260,9 +352,11 @@ function deploymentManifest(input: ProvisionInput) {
                   memory: env.kubernetes.workerResources.memoryLimit,
                 },
               },
+              ...(env.kubernetes.workerContainerSecurityContext ? { securityContext: env.kubernetes.workerContainerSecurityContext } : {}),
               volumeMounts: [
                 { name: "workspace", mountPath: "/workspace" },
                 { name: "data", mountPath: "/data" },
+                ...(mergeExtraVolumeMounts(env.kubernetes.workerExtraVolumeMounts) ?? []),
               ],
             },
           ],
@@ -275,6 +369,7 @@ function deploymentManifest(input: ProvisionInput) {
               name: "data",
               persistentVolumeClaim: { claimName: dataVolumeName(input.workerId) },
             },
+            ...(mergeExtraVolumes(env.kubernetes.workerExtraVolumes) ?? []),
           ],
         },
       },

@@ -120,6 +120,24 @@ config:
     healthcheckTimeoutMs: ""
     pollIntervalMs: ""
     workerRecordTtlSeconds: ""
+    # Worker pod scheduling, security, metadata, and networking overrides
+    # (all optional). When unset the provisioner builds its default pod shape.
+    # JSON-shaped values are parsed by den-api; imagePullSecrets is a string list.
+    workerImagePullSecrets: []
+    workerNodeSelector: {}
+    workerTolerations: []
+    workerAffinity: {}
+    workerTopologySpreadConstraints: []
+    workerPriorityClassName: ""
+    workerPodAnnotations: {}
+    workerPodLabels: {}
+    workerPodSecurityContext: {}
+    workerContainerSecurityContext: {}
+    workerExtraVolumes: []
+    workerExtraVolumeMounts: []
+    workerExtraEnv: []
+    workerDnsPolicy: ""
+    workerDnsConfig: {}
   polar:
     featureGateEnabled: "false"
     apiBase: ""

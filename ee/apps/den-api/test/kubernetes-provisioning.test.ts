@@ -464,3 +464,104 @@ describe("Kubernetes health deadline", () => {
     expect(message).toContain("[REDACTED]")
   })
 })
+
+describe("Kubernetes worker pod overrides", () => {
+  // Reads the Deployment manifest the provisioner created from the fake client.
+  async function createdManifest() {
+    const input = provisionInput()
+    const fake = makeClient()
+    await kubernetes.provisionWorkerOnKubernetesWithRuntime(input, makeRuntime(fake.client))
+    const manifest = (await fake.client.getDeployment(kubernetes.kubernetesWorkerName(input.workerId))) as Record<string, unknown>
+    const spec = manifest.spec as { template: { spec: Record<string, unknown>; metadata: { labels?: Record<string, string>; annotations?: Record<string, unknown> } } }
+    const template = spec.template
+    return { input, template, podSpec: template.spec, podMeta: template.metadata }
+  }
+
+  test("injects nodeSelector, tolerations, affinity, and imagePullSecrets when configured", async () => {
+    env.kubernetes.workerNodeSelector = { "nodepool": "gpu" }
+    env.kubernetes.workerTolerations = [{ key: "gpu", operator: "Exists" }]
+    env.kubernetes.workerAffinity = { nodeAffinity: {} }
+    env.kubernetes.workerImagePullSecrets = ["regcred"]
+    const { podSpec } = await createdManifest()
+    expect(podSpec.nodeSelector).toEqual({ nodepool: "gpu" })
+    expect(podSpec.tolerations).toEqual([{ key: "gpu", operator: "Exists" }])
+    expect(podSpec.affinity).toEqual({ nodeAffinity: {} })
+    expect(podSpec.imagePullSecrets).toEqual([{ name: "regcred" }])
+    env.kubernetes.workerNodeSelector = undefined
+    env.kubernetes.workerTolerations = undefined
+    env.kubernetes.workerAffinity = undefined
+    env.kubernetes.workerImagePullSecrets = undefined
+  })
+
+  test("merges operator pod labels without clobbering the provisioner selector labels", async () => {
+    env.kubernetes.workerPodLabels = { "team": "platform", "openwork.den.worker-id": "evil" }
+    const { podMeta, input } = await createdManifest()
+    expect(podMeta.labels?.["team"]).toBe("platform")
+    // The provisioner selector label must win over the operator's attempt to clobber it.
+    expect(podMeta.labels?.["openwork.den.worker-id"]).toBe(input.workerId)
+    env.kubernetes.workerPodLabels = undefined
+  })
+
+  test("applies pod annotations, security contexts, priority class, and dns config", async () => {
+    env.kubernetes.workerPodAnnotations = { "corp.io/owner": "infra" }
+    env.kubernetes.workerPodSecurityContext = { runAsNonRoot: true }
+    env.kubernetes.workerContainerSecurityContext = { allowPrivilegeEscalation: false }
+    env.kubernetes.workerPriorityClassName = "worker-priority"
+    env.kubernetes.workerDnsPolicy = "ClusterFirst"
+    env.kubernetes.workerDnsConfig = { nameservers: ["1.1.1.1"] }
+    const { podSpec, podMeta } = await createdManifest()
+    expect(podMeta.annotations?.["corp.io/owner"]).toBe("infra")
+    expect(podSpec.securityContext).toEqual({ runAsNonRoot: true })
+    expect((podSpec.containers as Array<{ securityContext?: unknown }>)[0].securityContext).toEqual({ allowPrivilegeEscalation: false })
+    expect(podSpec.priorityClassName).toBe("worker-priority")
+    expect(podSpec.dnsPolicy).toBe("ClusterFirst")
+    expect(podSpec.dnsConfig).toEqual({ nameservers: ["1.1.1.1"] })
+    env.kubernetes.workerPodAnnotations = undefined
+    env.kubernetes.workerPodSecurityContext = undefined
+    env.kubernetes.workerContainerSecurityContext = undefined
+    env.kubernetes.workerPriorityClassName = undefined
+    env.kubernetes.workerDnsPolicy = undefined
+    env.kubernetes.workerDnsConfig = undefined
+  })
+
+  test("appends non-colliding extra volumes and mounts, drops colliding ones", async () => {
+    env.kubernetes.workerExtraVolumes = [{ name: "scratch", emptyDir: {} }, { name: "workspace", emptyDir: {} }]
+    env.kubernetes.workerExtraVolumeMounts = [{ name: "scratch", mountPath: "/scratch" }, { name: "data", mountPath: "/evil" }]
+    const { podSpec } = await createdManifest()
+    const volumes = podSpec.volumes as Array<{ name: string }>
+    const mounts = (podSpec.containers as Array<{ volumeMounts: Array<{ name: string }> }>)[0].volumeMounts
+    expect(volumes.some((v) => v.name === "scratch")).toBe(true)
+    expect(volumes.filter((v) => v.name === "workspace").length).toBe(1)
+    expect(mounts.some((m) => m.name === "scratch")).toBe(true)
+    expect(mounts.filter((m) => m.name === "data").length).toBe(1)
+    expect(mounts.some((m) => m.mountPath === "/evil")).toBe(false)
+    env.kubernetes.workerExtraVolumes = undefined
+    env.kubernetes.workerExtraVolumeMounts = undefined
+  })
+
+  test("appends non-colliding extra env and drops entries that override provisioner env", async () => {
+    env.kubernetes.workerExtraEnv = [{ name: "EXTRA_VAR", value: "yes" }, { name: "OPENWORK_TOKEN", value: "stolen" }]
+    const { podSpec } = await createdManifest()
+    const envArr = (podSpec.containers as Array<{ env: Array<{ name: string; value?: string }> }>)[0].env
+    expect(envArr.some((e) => e.name === "EXTRA_VAR" && e.value === "yes")).toBe(true)
+    expect(envArr.filter((e) => e.name === "OPENWORK_TOKEN").length).toBe(1)
+    expect(envArr.find((e) => e.name === "OPENWORK_TOKEN")?.value).toBeUndefined()
+    env.kubernetes.workerExtraEnv = undefined
+  })
+
+  test("produces the same manifest as today when no overrides are set", async () => {
+    const { podSpec, podMeta } = await createdManifest()
+    expect(podSpec.nodeSelector).toBeUndefined()
+    expect(podSpec.affinity).toBeUndefined()
+    expect(podSpec.tolerations).toBeUndefined()
+    expect(podSpec.imagePullSecrets).toBeUndefined()
+    expect(podSpec.securityContext).toBeUndefined()
+    expect(podSpec.priorityClassName).toBeUndefined()
+    expect(podSpec.dnsPolicy).toBeUndefined()
+    expect(podSpec.dnsConfig).toBeUndefined()
+    expect(podMeta.annotations).toBeUndefined()
+    expect((podSpec.containers as Array<{ securityContext?: unknown }>)[0].securityContext).toBeUndefined()
+    const volumes = podSpec.volumes as Array<{ name: string }>
+    expect(volumes.map((v) => v.name).sort()).toEqual(["data", "workspace"])
+  })
+})

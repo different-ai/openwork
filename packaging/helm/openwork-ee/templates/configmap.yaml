@@ -227,8 +227,56 @@ data:
   {{ end }}
   {{ with .Values.config.kubernetes.workerRecordTtlSeconds }}
   KUBERNETES_WORKER_RECORD_TTL_SECONDS: {{ . | quote }}
-  {{ end }}
   {{- end }}
+  # Optional operator overrides for the worker pod spec (scheduling, security,
+  # metadata, networking). Emitted only when set; unset values keep the
+  # provisioner's default pod shape.
+  {{- with .Values.config.kubernetes.workerImagePullSecrets }}
+  KUBERNETES_WORKER_IMAGE_PULL_SECRETS: {{ join "," . | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerNodeSelector }}
+  KUBERNETES_WORKER_NODE_SELECTOR: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerTolerations }}
+  KUBERNETES_WORKER_TOLERATIONS: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerAffinity }}
+  KUBERNETES_WORKER_AFFINITY: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerTopologySpreadConstraints }}
+  KUBERNETES_WORKER_TOPOLOGY_SPREAD_CONSTRAINTS: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerPriorityClassName }}
+  KUBERNETES_WORKER_PRIORITY_CLASS_NAME: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerPodAnnotations }}
+  KUBERNETES_WORKER_POD_ANNOTATIONS: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerPodLabels }}
+  KUBERNETES_WORKER_POD_LABELS: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerPodSecurityContext }}
+  KUBERNETES_WORKER_POD_SECURITY_CONTEXT: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerContainerSecurityContext }}
+  KUBERNETES_WORKER_CONTAINER_SECURITY_CONTEXT: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerExtraVolumes }}
+  KUBERNETES_WORKER_EXTRA_VOLUMES: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerExtraVolumeMounts }}
+  KUBERNETES_WORKER_EXTRA_VOLUME_MOUNTS: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerExtraEnv }}
+  KUBERNETES_WORKER_EXTRA_ENV: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerDnsPolicy }}
+  KUBERNETES_WORKER_DNS_POLICY: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerDnsConfig }}
+  KUBERNETES_WORKER_DNS_CONFIG: {{ . | toJson | quote }}
+  {{- end }}
+{{- end }}
   {{ with .Values.config.inference.openRouterWorkspaceId }}
   OPENROUTER_WORKSPACE_ID: {{ . | quote }}
   {{ end }}

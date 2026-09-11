@@ -84,6 +84,10 @@ config:
     healthcheckTimeoutMs: "300000"
     pollIntervalMs: "1000"
     workerRecordTtlSeconds: "3600"
+    workerImagePullSecrets:
+      - regcred
+    workerNodeSelector:
+      nodepool: gpu
 EOF
 kubernetes_rendered="$tmp_dir/kubernetes.yaml"
 helm template openwork-ee "$chart_dir" -f "$kubernetes_values" > "$kubernetes_rendered"
@@ -109,6 +113,8 @@ assert_contains "$kubernetes_configmap" "KUBERNETES_WORKER_STORAGE_CLASS: \"ceph
 assert_contains "$kubernetes_configmap" "KUBERNETES_HEALTHCHECK_TIMEOUT_MS: \"300000\""
 assert_contains "$kubernetes_configmap" "KUBERNETES_POLL_INTERVAL_MS: \"1000\""
 assert_contains "$kubernetes_configmap" "KUBERNETES_WORKER_RECORD_TTL_SECONDS: \"3600\""
+assert_contains "$kubernetes_configmap" "KUBERNETES_WORKER_IMAGE_PULL_SECRETS: \"regcred\""
+assert_contains "$kubernetes_configmap" "KUBERNETES_WORKER_NODE_SELECTOR:"
 assert_contains "$kubernetes_rendered" "KUBERNETES_API_TOKEN"
 assert_contains "$kubernetes_rendered" "serviceAccountName:"
 assert_not_document "$kubernetes_rendered" "ClusterRole"
