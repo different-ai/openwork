@@ -141,6 +141,37 @@ export function clearPending(state: ThreadTurnState): ThreadTurnState {
   return state.pending ? { ...state, pending: null } : state;
 }
 
+export type ThreadStopAttempt = { state: "pending" | "unconfirmed"; messageId?: string; error?: string };
+const threadStops = new Map<string, ThreadStopAttempt>();
+const stoppingThreads = new Map<string, Promise<boolean>>();
+const stopListeners = new Set<() => void>();
+
+/** Stop feedback outlives a view, but never belongs to another conversation. */
+export function threadStop(scope: string): ThreadStopAttempt | undefined { return threadStops.get(scope); }
+export function subscribeThreadStops(listener: () => void): () => void {
+  stopListeners.add(listener);
+  return () => { stopListeners.delete(listener); };
+}
+
+export function runThreadStop(scope: string, stop: () => Promise<void>, messageId?: string): Promise<boolean> {
+  const pending = stoppingThreads.get(scope);
+  if (pending) return pending;
+  threadStops.set(scope, { state: "pending", messageId });
+  const request = Promise.resolve().then(stop).then(() => {
+    threadStops.delete(scope);
+    return true;
+  }).catch((cause: unknown) => {
+    threadStops.set(scope, { state: "unconfirmed", messageId, error: cause instanceof Error ? cause.message : String(cause) });
+    return false;
+  }).finally(() => {
+    stoppingThreads.delete(scope);
+    for (const listener of stopListeners) listener();
+  });
+  stoppingThreads.set(scope, request);
+  for (const listener of stopListeners) listener();
+  return request;
+}
+
 // ---------------------------------------------------------------------------
 // File-backed store with a renderer-side cache. The file access is injected by
 // the UI layer (the main-process bridge is not loadable in plain tests); until

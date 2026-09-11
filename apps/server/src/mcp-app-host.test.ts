@@ -25,6 +25,7 @@ import {
   callMcpAppTool,
   listMcpAppCatalog,
   listMcpServerTools,
+  searchWorkspaceCapabilities,
   McpAppHostError,
   projectedMcpToolName,
   resolveConnectMcpAppResource,
@@ -90,6 +91,11 @@ async function startFixtureMcp(
   );
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      {
+        name: "search_capabilities",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      },
       {
         name: "render_fixture",
         description: "Render the fixture",
@@ -330,6 +336,8 @@ async function configuredFixture(
       "Bearer app-host-token",
       fixture.catalogUrl,
     );
+  } else if (mcpName === "openwork-cloud") {
+    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({ ...current, mcp: { ...runtimeMcpMap(current), [mcpName]: mcpConfig } }));
   } else {
     await addMcp(config, WORKSPACE_ID, mcpName, mcpConfig);
   }
@@ -409,6 +417,19 @@ describe("MCP Apps host transport", () => {
     const renderEditor = fixture?.apps.find((app) => app.toolName === "render_editor");
     expect(renderEditor?.requiresInput).toBe(false);
     expect(renderEditor?.requiresApproval).toBe(true);
+  });
+
+  test("capability discovery uses a fixed non-App tool and still honors disabled and denied configuration", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-capability-discovery-", undefined, "openwork-cloud");
+    const input = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, query: "calendar" };
+    await searchWorkspaceCapabilities(input);
+    expect(calls).toEqual([{ name: "search_capabilities", arguments: { query: "calendar", limit: 20, intent: "discover" } }]);
+    await Bun.write(join(root, "opencode.json"), JSON.stringify({ tools: { "openwork-cloud_search_capabilities": false } }));
+    await expect(searchWorkspaceCapabilities(input)).rejects.toMatchObject({ code: "tool_denied" });
+    expect(calls).toHaveLength(1);
+    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({ ...current, mcp: { ...runtimeMcpMap(current), "openwork-cloud": { type: "remote", url: "http://127.0.0.1:1/mcp", enabled: false } } }));
+    await expect(searchWorkspaceCapabilities(input)).rejects.toMatchObject({ code: "server_unavailable" });
+    expect(calls).toHaveLength(1);
   });
 
   test("lists everything one server offers, with its App binding noted and denied tools left out", async () => {

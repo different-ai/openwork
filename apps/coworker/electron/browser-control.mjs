@@ -156,7 +156,7 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
     try {
       setVisibleOwner(ownerId);
       panel.setPresentation({ ownerId, tabId: activeByOwner[ownerId], mode: control.presentation.mode });
-      panel.show(bounds);
+      return panel.show(bounds);
     } catch (error) { detachBinding(); throw error; }
   }
   function detachBinding() {
@@ -377,8 +377,12 @@ export function createBrowserControl({ createPanel, panelOptions, discussionFor,
       else if (action === "hide") { binding.bounds = null; binding.captureEpoch++; parkNative(); }
       else if (action === "bounds") {
         if (!bounds || ["x", "y", "width", "height"].some((key) => !Number.isFinite(bounds[key]) || bounds[key] < 0 || bounds[key] > 100_000)) throw new Error("Valid browser bounds are required.");
+        if (bounds.zoomFactor !== undefined && (!Number.isFinite(bounds.zoomFactor) || bounds.zoomFactor <= 0)) throw new Error("Valid browser zoom is required.");
         binding.bounds = { ...bounds };
-        syncNative();
+        if (syncNative() === false) {
+          binding.bounds = null;
+          throw new Error("Browser zoom changed. Measure the viewport again.");
+        }
       } else if (["select", "close"].includes(action)) {
         if (typeof tabId !== "string" || !tabId) throw new Error("An owned tab is required.");
         if (action === "select") { invalidate(targetFor(selected(ownerId, tabId))); panel.selectBrowser({ ownerId, tabId }); }

@@ -231,6 +231,7 @@ declare global {
   interface Window {
     __COWORKER_OUTCOME_TRACE__?: { outcomes: Set<string | null>; headers: Set<string>; rails: Set<string>; failures: Set<string>; observer: MutationObserver };
     __savedAnimationFrame?: typeof requestAnimationFrame;
+    __COWORKER_STOP_FAULT__?: { fetch: typeof fetch; attempts: number; fail?: () => void };
   }
 }
 
@@ -676,6 +677,48 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await type(app, STOP_PROMPT);
   await waitUntilRunning(app, STOP_PROMPT);
   await waitFor(app, () => document.querySelector('[data-testid="coworker-send"]')?.getAttribute("data-role") === "stop", { timeoutMs: 30_000, label: "the round control became Stop" });
+  await evalIn(app, () => {
+    const fault: NonNullable<Window["__COWORKER_STOP_FAULT__"]> = { fetch: window.fetch, attempts: 0 };
+    window.__COWORKER_STOP_FAULT__ = fault;
+    window.fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (/\/session\/[^/]+\/abort$/.test(url)) {
+        fault.attempts += 1;
+        return new Promise<Response>((resolve) => { fault.fail = () => resolve(Response.json({ error: "Stop unavailable" }, { status: 503 })); });
+      }
+      return fault.fetch(input, init);
+    };
+    return true;
+  });
+  try {
+    await evalIn(app, () => {
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="coworker-send"][data-role="stop"]');
+      if (!button) throw new Error("Stop unavailable");
+      button.click(); button.click();
+      return true;
+    });
+    await waitFor(app, () => {
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="coworker-send"]');
+      return window.__COWORKER_STOP_FAULT__?.attempts === 1 && button?.disabled && button.getAttribute("aria-busy") === "true" && button.textContent?.includes("Stopping") && !document.querySelector('[data-outcome="stopped-by-you"]');
+    }, { timeoutMs: 10_000, label: "one held Stop with pending feedback, not success" });
+    await type(app, "KEEP QUEUED WHILE STOP IS UNCONFIRMED");
+    await evalIn(app, () => { window.__COWORKER_STOP_FAULT__?.fail?.(); return true; });
+    await waitFor(app, () => {
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="coworker-send"]');
+      return button && !button.disabled && button.textContent?.includes("Retry stop") && document.querySelector('[data-outcome="stop-unconfirmed"]') && !document.querySelector('[data-outcome="stopped-by-you"]');
+    }, { timeoutMs: 10_000, label: "failed cancellation offers Retry stop, never turn Retry" });
+    await click(app, '[aria-label="Actions for queued message 1"]');
+    await click(app, '[data-testid="coworker-next-send-now"]');
+    expect(await evalIn(app, () => document.querySelector('[data-testid="coworker-next-row"]')?.textContent)).toContain("KEEP QUEUED WHILE STOP IS UNCONFIRMED");
+    expect(scripted.countFor("KEEP QUEUED WHILE STOP IS UNCONFIRMED")).toBe(0);
+    expect(await evalIn(app, () => window.__COWORKER_STOP_FAULT__?.attempts)).toBe(1);
+  } finally {
+    await evalIn(app, () => {
+      const fault = window.__COWORKER_STOP_FAULT__;
+      if (fault) { fault.fail?.(); window.fetch = fault.fetch; delete window.__COWORKER_STOP_FAULT__; }
+      return true;
+    });
+  }
   await click(app, '[data-testid="coworker-send"][data-role="stop"]');
   const stoppedLine = await waitFor(app, () => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"]');
@@ -689,6 +732,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     };
   }, { timeoutMs: 60_000, label: "the Stopped. line" });
   expect(stoppedLine).toEqual({ text: "Stopped.", choices: ["retry"], header: "Stopped", rail: "Stopped.", working: false });
+  expect(await evalIn(app, () => document.querySelector('[data-testid="coworker-next-row"]')?.textContent)).toContain("KEEP QUEUED WHILE STOP IS UNCONFIRMED");
+  await click(app, '[aria-label="Actions for queued message 1"]');
+  await click(app, '[data-testid="coworker-next-remove"]');
+  evidence.recordAssertionEvidence("Stop stays pending until confirmed and failed cancellation holds Next", "A held abort showed busy, disabled Stopping after two clicks with one request. Failure offered Retry stop without Stopped or turn Retry. Send now kept the queued message unsent; retrying cancellation reached Stopped with Next still present.", true);
   scripted.release("STOP");
   await click(app, '[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"] [data-choice="retry"]');
   try {

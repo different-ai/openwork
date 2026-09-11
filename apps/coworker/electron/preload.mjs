@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 /**
  * The whole renderer bridge is one invoke channel. Every command is validated
@@ -19,7 +19,12 @@ if (process.isMainFrame) {
   });
   contextBridge.exposeInMainWorld("__COWORKER__", {
     invoke: (command, payload) => ipcRenderer.invoke("coworker:invoke", {
-      command, payload,
+      command,
+      // Stamp CSS geometry before IPC; a later main-process zoom cannot safely
+      // reinterpret the rectangle measured by this renderer turn.
+      payload: command === "browser.command" && payload?.action === "bounds" && payload.bounds
+        ? { ...payload, bounds: { ...payload.bounds, zoomFactor: webFrame.getZoomFactor() } }
+        : payload,
       userGesture: command === "voice.microphone" && navigator.userActivation.isActive,
     }),
     onDeepLink: (listener) => {

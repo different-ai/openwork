@@ -920,6 +920,36 @@ export async function listMcpServerTools(input: {
   }));
 }
 
+/** Host-owned discovery only; this is not an arbitrary tool execution endpoint. */
+export async function searchWorkspaceCapabilities(input: {
+  serverConfig: ServerConfig;
+  workspaceId: string;
+  workspaceRoot: string;
+  query: string;
+}): Promise<CallToolResult> {
+  const serverName = "openwork-cloud";
+  const name = "search_capabilities";
+  const configured = await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
+  const item = configured.find((candidate) => candidate.name === serverName && candidate.config.enabled !== false);
+  if (!item) throw new McpAppHostError("server_unavailable", "OpenWork Connect is unavailable to this workspace.");
+  return await withRemoteClient(item.config, async (client) => {
+    const tool = (await listTools(client)).find((candidate) => candidate.name === name);
+    if (!tool || !toolVisibility(tool, "model") || toolRequiresApproval(tool)) {
+      throw new McpAppHostError("tool_not_visible", "OpenWork Connect does not advertise read-only capability discovery.");
+    }
+    if ((await diagnoseMcpToolDenies(input.workspaceRoot, serverName, [projectedMcpToolName(serverName, name)])).length > 0) {
+      throw new McpAppHostError("tool_denied", "Capability discovery is denied by the workspace tool policy.");
+    }
+    const result = await client.callTool({ name, arguments: { query: input.query, limit: 20, intent: "discover" } }).catch(() => {
+      throw new McpAppHostError("tool_call_failed", "OpenWork Connect capability discovery failed.");
+    });
+    if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_RESULT_BYTES) {
+      throw new McpAppHostError("result_too_large", "The capability discovery result exceeds the 1 MiB host limit.");
+    }
+    return result as CallToolResult;
+  });
+}
+
 export async function callMcpAppTool(input: {
   launchId?: string;
   sessionId?: string | null;

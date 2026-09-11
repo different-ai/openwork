@@ -121,6 +121,14 @@ const builtAppHtml = await buildStandardAppHtml({
   description: "Deterministic Open Coworker MCP App fixture.",
 });
 
+const isolatedAppHtml = builtAppHtml.replace("</body>", `<script>
+  let blocked = false;
+  try { void window.parent.document.body; } catch { blocked = true; }
+  const proof = document.createElement("p");
+  proof.textContent = blocked ? "Provider document isolated" : "Provider isolation failed";
+  document.body.append(proof);
+</script></body>`);
+
 function rpcResponse(message: Record<string, unknown>): Record<string, unknown> {
   if (message.method === "initialize") {
     return {
@@ -172,7 +180,7 @@ function rpcResponse(message: Record<string, unknown>): Record<string, unknown> 
         contents: [{
           uri: resourceUri,
           mimeType: "text/html;profile=mcp-app",
-          blob: Buffer.from(builtAppHtml, "utf8").toString("base64"),
+          blob: Buffer.from(isolatedAppHtml, "utf8").toString("base64"),
           _meta: {
             ui: {
               prefersBorder: true,
@@ -206,11 +214,12 @@ async function waitForMountedApp(app: Awaited<ReturnType<typeof coworker>>, time
     if (sandbox) {
       const client = await connect(debuggerUrlFor(app.handle.cdpUrl, sandbox));
       try {
-        const mounted = await evaluate(client, () => {
-          const text = document.querySelector("iframe")?.contentDocument?.body?.innerText ?? "";
-          return text.includes("Team pulse") && text.includes("Ready for review");
+        // Provider HTML is opaque even to the proxy. Never use contentDocument to read its text.
+        const isolated = await evaluate(client, () => {
+          const frame = document.querySelector("iframe");
+          return frame?.getAttribute("sandbox") === "allow-scripts" && frame.contentDocument === null;
         });
-        if (mounted === true) return true;
+        expect(isolated).toBe(true);
       } finally {
         client.close();
       }
@@ -349,6 +358,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   expect(hostClaim).toBe(true);
   const mountedApp = await waitForMountedApp(app);
   expect(mountedApp).toBe(true);
+  await expect.poll(async () => JSON.stringify(await app.client.send("Accessibility.getFullAXTree")), { timeout: 30_000 }).toContain("Provider document isolated");
   expect(toolCalls).toBe(1);
   expect(resourceReads).toBeGreaterThanOrEqual(1);
   evidence.recordAssertionEvidence(
@@ -397,4 +407,36 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
     "Ask Scout filled the discussion composer with Team pulse. No user message appeared and the tool-call witness stayed at the two explicit App launches.",
     true,
   );
+
+  const leaseChecks = await evalIn(app, browserScript(async (toolName, resourceUri, mcpServerName) => {
+    const runtime = await window.__COWORKER__.invoke("runtime.info");
+    const coworkers = await window.__COWORKER__.invoke("coworkers.list");
+    if (!runtime.ok || !coworkers.ok) throw new Error("Fixture runtime unavailable");
+    const info = runtime.result;
+    const team = coworkers.result;
+    if (typeof info !== "object" || info === null || !("serverUrl" in info) || typeof info.serverUrl !== "string" || !("ownerToken" in info) || typeof info.ownerToken !== "string" || !Array.isArray(team)) throw new Error("Fixture runtime invalid");
+    const owner = team.find((item) => item.slug === "scout");
+    if (!owner?.workspaceId) throw new Error("Fixture workspace unavailable");
+    const base = `${info.serverUrl}/workspace/${encodeURIComponent(owner.workspaceId)}`;
+    const post = async (path: string, body: unknown) => {
+      const response = await fetch(base + path, { method: "POST", headers: { Authorization: `Bearer ${info.ownerToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    };
+    const context = { sessionId: null, engine: "v1", readOnly: false };
+    const resolved = await post("/mcp-apps/resolve", { projectedToolName: `${mcpServerName}_${toolName}`, context });
+    const launchId = resolved.body.app?.launchId;
+    if (typeof launchId !== "string") throw new Error("Catalog App did not receive a live lease");
+    const call = { launchId, sessionId: null, engine: "v1", serverName: mcpServerName, resourceUri, name: toolName, arguments: {} };
+    const valid = await post("/mcp-apps/call", call);
+    const wrongSession = await post("/mcp-apps/call", { ...call, sessionId: "not-the-origin" });
+    const released = await post("/mcp-apps/release", { launchId });
+    const stale = await post("/mcp-apps/call", call);
+    const readOnly = await post("/mcp-apps/resolve", { projectedToolName: `${mcpServerName}_${toolName}`, context: { ...context, readOnly: true } });
+    const readOnlyCall = await post("/mcp-apps/call", { ...call, launchId: readOnly.body.app?.launchId });
+    const invalidSearch = await post("/mcp/openwork-cloud/search", { query: "calendar", name: "execute_capability" });
+    return { valid: valid.status, wrongSession: wrongSession.body.code, released: released.body.released, stale: stale.body.code, readOnlyHasLease: Boolean(readOnly.body.app?.launchId), readOnlyCall: readOnlyCall.body.code, invalidSearch: invalidSearch.status };
+  }, [toolName, resourceUri, mcpServerName]), { awaitPromise: true, timeoutMs: 60_000 });
+  expect(leaseChecks).toEqual({ valid: 200, wrongSession: "stale_launch_context", released: true, stale: "stale_launch_context", readOnlyHasLease: false, readOnlyCall: "missing_launch_context", invalidSearch: 400 });
+  expect(toolCalls).toBe(callsBeforeDraft + 1);
+  evidence.recordAssertionEvidence("App leases stay scoped and discovery cannot execute arbitrary tools", "The sessionless catalog lease executed once; wrong-session, released and read-only calls added no provider calls. Discovery rejected an executable tool name.", true);
 });

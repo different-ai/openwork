@@ -635,7 +635,10 @@ line, Activity's Now card, and the journeys read the same value.
   changed, one line stays: "Retried with Claude".
 - **Stopped.** The round send control becomes a stop control while a reply runs
   and the field is empty; the live row's *Stop* and the header's *Stop* do the
-  same. Stopping leaves one quiet line — "Stopped." · *Retry* — and Retry runs
+  same. A requested stop shows **Stopping...** immediately and admits only one
+  cancellation attempt. Failed or unconfirmed cancellation offers **Retry stop**;
+  Next remains held, including when Send now cannot confirm Stop. Only confirmed
+  cancellation and an idle engine leave "Stopped." · *Retry*, and Retry runs
   the same message again under its own id, so it is never in the thread twice
   (`retryTurn` in `@openwork/headless-threads` removes the earlier attempt and
   prompts again). A stop pressed while the message is still on its way is kept
@@ -1019,7 +1022,9 @@ assignment run high · a review medium · the facilitator minimal, always), the
 stop moves it by −2 … +2 steps, and the result snaps to the nearest effort the
 model actually offers — or the model default when it offers none, whatever the
 dial says. An *exact thinking effort* fixed in Coworker settings wins over the
-dial when the model offers it. The dial also nudges the lane a message takes
+dial when the model offers it. When a refreshed catalog no longer offers that
+exact choice, admission refuses with a settings explanation instead of silently
+choosing another effort. An empty choice still follows the dial. The dial also nudges the lane a message takes
 (Thorough gives a quick ask a proper look, All in makes ordinary work deep,
 Light and Steady the other way) and sets a Worker's default lifespan when the
 coworker chose none for delivery (6 · 8 · 10 · 14 · 20 turns; thinking defaults to
@@ -1254,6 +1259,14 @@ removes the gateway again. The packaged app ships the engine's OpenWork plugins
 under `Resources/opencode-plugins`, as the desktop does.
 
 ## Apps & tools
+
+Embedded Apps carry a server-issued launch lease bound to their originating
+workspace, engine and conversation; catalog launches are explicitly sessionless.
+Actions retain that binding through approval and reject closed or read-only
+views. Closing or changing context releases the lease. Provider documents use an
+opaque inner sandbox (`allow-scripts` only); unsupported read-only host actions
+remain absent rather than advertised as available. Catalog search uses a separate
+discovery-only server route, not an App action without a lease.
 
 Apps & tools is the first row of Coworker settings and a small navigable
 surface inside the panel — tap in, read, tap back — never one long page of

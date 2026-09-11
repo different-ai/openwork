@@ -3,7 +3,15 @@ const { readFileSync } = require("node:fs");
 const test = require("node:test");
 const { runInNewContext } = require("node:vm");
 
-const { installWebMcpRuntime } = require("../../../packages/browser-tabs/browser-content-preload.cjs");
+const preloadSource = readFileSync(require.resolve("../../../packages/browser-tabs/browser-content-preload.cjs"), "utf8");
+const preloadModule = { exports: {} };
+// Electron supplies this module in production. The page-runtime unit tests
+// need no native binary or package-local Electron dependency after extraction.
+new Function("require", "module", preloadSource)((name) => {
+  assert.equal(name, "electron");
+  return {};
+}, preloadModule);
+const { installWebMcpRuntime } = preloadModule.exports;
 
 function createRealm(policy = null) {
   class TestDocument {
@@ -189,7 +197,7 @@ test("the isolated preload exposes only a payload-free check, not a policy-repor
       { contentWindow: child, src: "https://child.example/", getAttribute: () => "tools 'src'" },
     ],
   };
-  runInNewContext(readFileSync(require.resolve("../../../packages/browser-tabs/browser-content-preload.cjs"), "utf8"), {
+  runInNewContext(preloadSource, {
     require: () => ({
       ipcRenderer: {
         on: (channel, handler) => listeners.set(channel, handler),

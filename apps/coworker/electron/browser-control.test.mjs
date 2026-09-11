@@ -627,6 +627,22 @@ test("UI controls are view-scoped and old cleanup cannot hide the next discussio
   await f.broker.command({ viewId: "one", action: "request", open: true });
   await f.broker.command({ viewId: "one", action: "bounds", bounds: { x: 20, y: 150, width: 600, height: 300 } });
   assert.equal(f.shown, true);
+  const handoff = f.broker.read({ viewId: "one" }).control;
+  const show = f.panel.show;
+  f.panel.show = (bounds) => {
+    if (bounds.zoomFactor !== 1.25) return false;
+    show(bounds);
+    return true;
+  };
+  const geometry = { x: 20, y: 150, width: 600, height: 300 };
+  for (const zoomFactor of [NaN, Infinity, 0, -1, null]) {
+    await assert.rejects(f.broker.command({ viewId: "one", action: "bounds", bounds: { ...geometry, zoomFactor } }), /Valid browser zoom/);
+  }
+  await assert.rejects(f.broker.command({ viewId: "one", action: "bounds", bounds: { ...geometry, zoomFactor: 1 } }), /Browser zoom changed/);
+  assert.deepEqual(f.broker.read({ viewId: "one" }).control, handoff, "geometry rejection cannot resume or replace the handoff");
+  await f.broker.command({ viewId: "one", action: "bounds", bounds: { ...geometry, zoomFactor: 1.25 } });
+  assert.deepEqual(f.controls.at(-1), { bounds: { ...geometry, zoomFactor: 1.25 } });
+  f.panel.show = show;
   await f.broker.command({ viewId: "one", action: "hide" });
   assert.equal(f.shown, false);
   for (const action of ["back", "forward", "reload"]) await f.broker.command({ viewId: "one", action });
@@ -742,10 +758,43 @@ test("a late bind cannot select a discussion after its unmount", async () => {
   assert.equal(f.visible, owner);
 });
 
+test("preload stamps only browser geometry before IPC without changing payloads or authority", async () => {
+  const source = await readFile(new URL("./preload.mjs", import.meta.url), "utf8");
+  const calls = [];
+  let zoom = 1.25;
+  let bridge;
+  const electron = {
+    contextBridge: { exposeInMainWorld(name, value) { assert.equal(name, "__COWORKER__"); bridge = value; } },
+    ipcRenderer: { on() {}, invoke(channel, payload) { calls.push({ channel, payload }); return Promise.resolve({ ok: true }); } },
+    webFrame: { getZoomFactor: () => zoom },
+  };
+  const execute = new Function("contextBridge", "ipcRenderer", "webFrame", "process", "window", "navigator", source.replace(/^import .*;\n/gm, ""));
+  execute(electron.contextBridge, electron.ipcRenderer, electron.webFrame, { isMainFrame: false }, {}, {});
+  assert.equal(bridge, undefined);
+  execute(electron.contextBridge, electron.ipcRenderer, electron.webFrame, { isMainFrame: true }, { addEventListener() {} }, { userActivation: { isActive: true } });
+  const payload = { viewId: "one", action: "bounds", bounds: { x: 10, y: 20, width: 500, height: 300, zoomFactor: 99 } };
+  const pending = bridge.invoke("browser.command", payload);
+  zoom = 0.8;
+  await pending;
+  assert.deepEqual(calls[0], { channel: "coworker:invoke", payload: { command: "browser.command", payload: { ...payload, bounds: { ...payload.bounds, zoomFactor: 1.25 } }, userGesture: false } });
+  assert.equal(payload.bounds.zoomFactor, 99, "the caller's geometry is not mutated or trusted as a zoom source");
+  await bridge.invoke("browser.command", payload);
+  assert.equal(calls[1].payload.payload.bounds.zoomFactor, 0.8);
+  for (const action of ["hide", "resume", "takeover"]) {
+    const input = { viewId: "one", action, handoffId: "specific-handoff", tabId: "owned-tab" };
+    await bridge.invoke("browser.command", input);
+    assert.equal(calls.at(-1).payload.payload, input);
+  }
+  await bridge.invoke("voice.microphone", { action: "request" });
+  assert.equal(calls.at(-1).payload.userGesture, true);
+  assert.ok(calls.every(({ channel }) => channel === "coworker:invoke"), "no Desktop browser/task IPC is introduced");
+});
+
 test("installed wrapper disables unrestricted tools and preserves config without duplicate registration", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "coworker-browser-"));
   try {
-    await writeFile(path.join(directory, "opencode.json"), JSON.stringify({ plugin: ["existing"], tools: { read: false }, permission: { edit: "ask" } }));
+    const permission = { edit: "ask", coworker_browser_open: "allow", coworker_browser_fill: { "*": "ask" } };
+    await writeFile(path.join(directory, "opencode.json"), JSON.stringify({ plugin: ["existing"], tools: { read: false, coworker_browser_open: true, coworker_browser_fill: false, browser_future_action: true, webmcp_future_action: true, webmcp_call_tool: true }, permission }));
     await installBrowserPlugin({ path: directory });
     await installBrowserPlugin({ path: directory });
     const config = JSON.parse(await readFile(path.join(directory, "opencode.json"), "utf8"));
@@ -753,7 +802,10 @@ test("installed wrapper disables unrestricted tools and preserves config without
     assert.equal(config.tools.read, false);
     assert.equal(config.tools.browser_list, false);
     assert.equal(config.tools.browser_eval, false);
-    assert.deepEqual(config.permission, { edit: "ask" });
+    for (const name of ["browser_*", "browser_open", "browser_tabs", "browser_observe", "browser_act", "browser_handoff", "browser_future_action", "webmcp_*", "webmcp_list_tools", "webmcp_call_tool", "webmcp_future_action"]) assert.equal(config.tools[name], false, name);
+    assert.equal(config.tools.coworker_browser_open, true);
+    assert.equal(config.tools.coworker_browser_fill, false);
+    assert.deepEqual(config.permission, permission);
     assert.equal(await readFile(path.join(directory, ".opencode", "coworker-browser.js"), "utf8"), BROWSER_PLUGIN);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -766,7 +818,9 @@ test("native plugin hook rejects originals and stamps the actual engine identity
     async (url, input) => { sent.push({ url, ...input }); return { ok: true, json: async () => "Page receipt" }; },
   );
   const plugin = await factory({ directory: "/workspace/scout" });
-  for (const name of ["browser_list", "browser_snapshot", "browser_eval", "browser_screenshot", "browser_navigate"]) await assert.rejects(plugin["tool.execute.before"]({ tool: name }, { args: {} }), /Unrestricted browser/);
+  for (const name of ["browser_list", "browser_snapshot", "browser_eval", "browser_screenshot", "browser_navigate", "browser_open", "browser_tabs", "browser_observe", "browser_act", "browser_handoff", "browser_future_action", "webmcp_list_tools", "webmcp_call_tool", "webmcp_future_action"]) await assert.rejects(plugin["tool.execute.before"]({ tool: name }, { args: {} }), /Unrestricted browser/);
+  assert.deepEqual(sent, [], "generic browser and WebMCP tools never reach host discovery or dispatch");
+  await plugin["tool.execute.before"]({ tool: "read" }, { args: {} });
   const args = { browser_url: "http://127.0.0.1:9222", target_id: "owned" };
   assert.equal(z.object(plugin.tool.coworker_browser_snapshot.args).safeParse({ browser_url: args.browser_url }).success, false);
   assert.equal(z.object(plugin.tool.coworker_browser_click.args).safeParse({ ...args, uid: 2 }).success, false);
