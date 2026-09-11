@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
+import { rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
 import { ApiError } from "./errors.js";
 import { selectPrimaryCredentialEnvName, syncManagedProviderAuth } from "./managed-provider-auth.js";
@@ -198,7 +199,13 @@ type CloudProviderSyncPendingSession = {
 export type CloudProviderSyncOptions = {
   config: ServerConfig;
   env: EnvService;
-  reloadEngine: () => Promise<void>;
+  /**
+   * Bring the engine onto the materialized config and credentials. The
+   * outcome decides whether the owed reload clears: only an applied action
+   * (`rolled_over`, `reloaded_in_place`) proves the engine read them. A
+   * `skipped` or `coalesced` answer leaves the reload pending and retried.
+   */
+  reloadEngine: () => Promise<RolloverOutcome>;
   /**
    * Reports whether the managed engine currently has non-idle sessions.
    * When it returns true a pending engine reload is deferred to a later
@@ -801,7 +808,7 @@ function configuredReloadRetryMs(): number {
 export class CloudProviderSync {
   private readonly config: ServerConfig;
   private readonly env: EnvService;
-  private readonly reloadEngine: () => Promise<void>;
+  private readonly reloadEngine: () => Promise<RolloverOutcome>;
   private readonly engineBusy?: () => Promise<boolean>;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly logger?: CloudProviderSyncLogger;
@@ -1111,7 +1118,12 @@ export class CloudProviderSync {
           return;
         }
         try {
-          await this.reloadEngine();
+          const outcome = await this.reloadEngine();
+          if (!rolloverOutcomeApplied(outcome)) {
+            // Still owed: the engine did not read the materialized config.
+            this.scheduleReloadRetry();
+            return;
+          }
           this.reloadPending = false;
           // A landed retry settles a previously failed run: without this the
           // status would stay "failed" forever even though the engine now
@@ -1300,8 +1312,22 @@ export class CloudProviderSync {
         this.scheduleReloadRetry();
       } else {
         try {
-          await this.reloadEngine();
-          this.reloadPending = false;
+          const outcome = await this.reloadEngine();
+          if (rolloverOutcomeApplied(outcome)) {
+            this.reloadPending = false;
+          } else if (outcome.action === "coalesced") {
+            // Parked behind a drain or throttle inside the pool: it lands
+            // later, so keep it owed and visible rather than calling it done.
+            reloadDeferred = true;
+            this.scheduleReloadRetry();
+          } else {
+            // The engine answered "skipped" to a change it must apply (a
+            // rotated key never shows in its config fingerprint). Clearing
+            // reloadPending here is what reported "applied" while the engine
+            // still served the previous credential.
+            reloadError = new Error(`cloud_provider_engine_reload_skipped: ${outcome.reason}`);
+            this.scheduleReloadRetry();
+          }
         } catch (error) {
           reloadError = error;
           // Self-heal like the busy-deferral path: without this, a failed
@@ -1429,8 +1455,9 @@ export class CloudProviderSync {
       this.scheduleReloadRetry();
     } else if (this.reloadPending) {
       try {
-        await this.reloadEngine();
-        this.reloadPending = false;
+        const outcome = await this.reloadEngine();
+        if (rolloverOutcomeApplied(outcome)) this.reloadPending = false;
+        else this.scheduleReloadRetry();
       } catch (error) {
         reloadError = error;
         // Sign-out cleanup must still reach the engine once it recovers.

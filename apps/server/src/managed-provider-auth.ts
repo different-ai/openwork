@@ -98,6 +98,18 @@ let cacheEpoch = 0;
 
 const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
 
+/**
+ * Budget for one engine auth PUT/DELETE. The engine answers these on the
+ * loopback in milliseconds; a request that hangs (instance rebuild wedged,
+ * half-open socket) must surface as a failed delivery so the caller can keep
+ * the reload owed and retry, instead of stalling the sync queue or a standby
+ * flip forever.
+ */
+function authRequestTimeoutMs(): number {
+  const raw = Number(process.env.OPENWORK_PROVIDER_AUTH_TIMEOUT_MS ?? "");
+  return Number.isFinite(raw) && raw > 0 ? raw : 10_000;
+}
+
 function stateForConfig(config: ServerConfig): ManagedProviderAuthState {
   const current = stateByConfig.get(config);
   if (current) {
@@ -315,6 +327,7 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
         method: "PUT",
         headers,
         body: JSON.stringify({ type: "api", key: credential }),
+        signal: AbortSignal.timeout(authRequestTimeoutMs()),
       });
       if (!isCurrent()) return result;
       if (!response.ok) {
@@ -349,6 +362,7 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
       const response = await fetchImpl(`${target.baseUrl}/auth/${encodeURIComponent(providerId)}`, {
         method: "DELETE",
         headers,
+        signal: AbortSignal.timeout(authRequestTimeoutMs()),
       });
       if (!isCurrent()) return result;
       if (!response.ok) {

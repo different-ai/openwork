@@ -18,6 +18,7 @@ import {
   type EnginePoolConnection,
   type EngineEventProxyLease,
   type EngineSpawnTemplate,
+  type RolloverOutcome,
   type RolloverReason,
 } from "./engine-pool.js";
 import { withEngineDirectoryFence } from "./engine-directory-fence.js";
@@ -3248,8 +3249,9 @@ function createRoutes(
     readJsonBody,
     requireClientScope,
     resolveWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route" }),
+    reloadOpencodeEngine: async (routeConfig, workspace) => {
+      await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route" });
+    },
   });
 
   registerUiControlRoutes({ routes, jsonResponse, readJsonBody, requireClientScope });
@@ -4580,18 +4582,20 @@ async function reloadOpencodeEngine(
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
   options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason },
-): Promise<void> {
+): Promise<RolloverOutcome> {
   const pool = enginePoolForConfig(config);
   if (pool) {
-    await pool.requestRollover({
+    // The outcome is the caller's proof: only an applied action means the
+    // engine now reads the requested config and credentials.
+    return pool.requestRollover({
       reason: options?.reason ?? "engine_reload",
       workspace,
       awaitPostRefreshSync: options?.awaitPostRefreshSync,
       forceStandby: options?.forceStandby,
     });
-    return;
   }
   await reloadOpencodeEngineInPlace(config, workspace, serverState, options);
+  return { action: "reloaded_in_place" };
 }
 
 async function reloadOpencodeEngineInPlace(
@@ -5381,6 +5385,13 @@ export function createEnginePoolForConfig(input: {
           "provider.auth.skipped": result.skipped.length,
           "provider.auth.failed": result.failed.length,
         });
+        // A generation missing even one managed credential must not be
+        // promoted: the pool keeps the live engine and the caller retries.
+        if (result.failed.length > 0) {
+          throw new Error(
+            `Managed provider credential seed failed for ${result.failed.map((entry) => entry.providerId).join(", ")}`,
+          );
+        }
       },
       writeRuntimeConfigFile: (poolConfig) => writeOpenworkRuntimeConfigFile(poolConfig),
       registerTrusted: (poolConfig, generation) => registerTrustedOpencodeProcess(poolConfig, generation),
