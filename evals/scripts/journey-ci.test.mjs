@@ -83,7 +83,8 @@ test('journeys needing a packaged binary or macOS are skipped in the CI lane (pr
 // The WHOLE-FILE blockers a spec and the worlds it imports actually gate on: env vars every
 // `needs: { env }` declaration in the spec shares (a prerequisite only one case declares is that
 // case's own, not the file's), plus env reads and platform checks in the lines leading to a
-// `throw new SkipError` in a world body (which every case runs). Scoped to journeys that declare
+// `throw new SkipError` or `throw new Error` in a world body (which every case runs; #4814 made a
+// missing packaged binary a hard error rather than a skip). Scoped to journeys that declare
 // `needs`: shared worlds (first-run.ts) hold scenario-specific guards, and per-scenario world
 // plans are #4771's job — this guard only keeps declared needs from drifting either way.
 function wholeFileBlockers(specSource, worldSources) {
@@ -95,7 +96,7 @@ function wholeFileBlockers(specSource, worldSources) {
   for (const text of worldSources) {
     const lines = text.split('\n');
     lines.forEach((line, index) => {
-      if (!line.includes('throw new SkipError')) return;
+      if (!/throw new (?:SkipError|Error)\(/.test(line)) return;
       const window = lines.slice(Math.max(0, index - 2), index + 1).join('\n');
       for (const match of window.matchAll(/process\.env\.(OPENWORK_EVAL_\w+)/g)) env.add(match[1]);
       platform = window.match(/process\.platform\s*!==\s*"(\w+)"/)?.[1] ?? platform;
@@ -127,6 +128,9 @@ test('mixed-world specs: a prerequisite one case declares is never promoted to t
   const mixed = `const launch = spec.world(w, { needs: { env: ["OPENWORK_EVAL_A"] } });\nconst update = spec.world(w, { needs: { env: ["OPENWORK_EVAL_A", "OPENWORK_EVAL_B"], platform: "darwin" } });`;
   const world = `export async function w() {\n  const binary = process.env.OPENWORK_EVAL_C?.trim();\n  if (!binary) throw new SkipError("set it");\n  if (process.platform !== "linux") throw new SkipError("linux only");\n}`;
   assert.deepEqual(wholeFileBlockers(mixed, [world]), { env: ['OPENWORK_EVAL_A', 'OPENWORK_EVAL_C'], platform: 'linux' });
+  // A world that hard-errors on a missing prerequisite (not a skip) still declares a whole-file blocker.
+  const strict = `if (!process.env.OPENWORK_EVAL_D?.trim()) {\n  throw new Error("OPENWORK_EVAL_D must point at a packaged desktop binary");\n}`;
+  assert.deepEqual(wholeFileBlockers('', [strict]), { env: ['OPENWORK_EVAL_D'], platform: undefined });
   assert.deepEqual(wholeFileBlockers(mixed, []), { env: ['OPENWORK_EVAL_A'], platform: undefined });
   assert.deepEqual(wholeFileBlockers('spec.world(w, { timeout: 1, needs: { platform: "darwin" } });', []), { env: [], platform: 'darwin' });
   // An env read that is not followed by a SkipError (optional pin) is not a blocker.
