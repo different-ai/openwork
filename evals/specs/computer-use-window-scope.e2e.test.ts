@@ -8,7 +8,7 @@ import { createAndSelectWorkspace, evalIn, waitFor } from "@openwork/behaviors";
 
 // New journey: a person grants one native window and can revoke it. The helper
 // is a real stdio process; the fixture app has two independent, disposable windows.
-const test = spec.world(computerUseWorld, { timeout: 180_000 });
+const test = spec.world(computerUseWorld, { timeout: 180_000, needs: { platform: "darwin" } });
 
 test("Computer Use respects window consent, fresh observations and the person's Stop control", async ({ world, step }) => {
   await step("Discovery exposes identities without window content or input access", async () => {

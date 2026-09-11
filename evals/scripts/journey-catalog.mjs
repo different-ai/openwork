@@ -3,8 +3,10 @@ import { readdir, readFile } from 'node:fs/promises';
 // One home for CI grouping, readable names, and execution requirements.
 // Unlisted specs are discovered automatically as full-regression journeys.
 // `needs` names what a journey requires beyond its placement (an env var the
-// lane must provide, or a platform). The planner reports a journey whose needs
-// the lane cannot meet as not applicable instead of scheduling a guaranteed skip.
+// lane must provide, or a platform), in the TestNeeds vocabulary the specs use.
+// The planner reports a journey whose needs the lane cannot meet as
+// "skipped: lane cannot satisfy prerequisites" instead of scheduling a guaranteed
+// skip. journey-ci.test.mjs checks these against what each spec and world guards.
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
   'composer-model-picker-no-subscribe-promo.e2e.test.ts': {
@@ -27,8 +29,8 @@ const definitions = {
   'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local', needs: PACKAGED_BINARY },
   // Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
   'desktop-quit-path.e2e.test.ts': { name: 'Quit an enterprise install cleanly', placement: 'local', needs: PACKAGED_BINARY },
-  // Boots a RELEASED enterprise binary (and optionally an older baseline) already activated against a real Den; skips without OPENWORK_EVAL_ELECTRON_BINARY.
-  'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local', needs: PACKAGED_BINARY },
+  // Boots a RELEASED enterprise binary already activated against a real Den, then updates it from an older released baseline; both binaries are prerequisites.
+  'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local', needs: { env: ['OPENWORK_EVAL_ELECTRON_BINARY', 'OPENWORK_EVAL_RELEASED_BASELINE_BINARY'] } },
   // Drives a real AppKit window through the native Computer Use helper; only a local macOS host can run it.
   'computer-use-window-scope.e2e.test.ts': { placement: 'local', needs: { platform: 'darwin' } },
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
@@ -79,8 +81,10 @@ export async function catalog(root = new URL('../specs/', import.meta.url)) {
 }
 
 // `only` is a comma-separated list of filename substrings; empty matches everything.
+// Delimiters alone (", ,") are a typo, not "everything": refuse them instead of running the whole suite.
 export function selectJourneys(entries, { critical = false, only = '', changed = [] } = {}) {
   const filters = only.split(',').map(value => value.trim()).filter(Boolean);
+  if (filters.length === 0 && only.trim() !== '') throw new Error(`The only filter "${only}" names no journey; give comma-separated filename substrings or leave it empty to select everything.`);
   return entries.filter(entry => (!critical || entry.critical || changed.includes(entry.spec))
     && (filters.length === 0 || filters.some(filter => entry.spec.includes(filter))));
 }

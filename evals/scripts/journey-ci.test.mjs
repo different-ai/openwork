@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeJourneys } from './judge-journeys.mjs';
@@ -54,26 +54,66 @@ test('changed additional journey joins critical selection; manual filters work f
   assert.equal(selectJourneys(entries, { only: 'does-not-exist' }).length, 0);
   const several = selectJourneys(entries, { only: 'cross-server-handoff-atomic-commit, workspace-new-task-hit-target,' });
   assert.deepEqual(several.map(value => value.spec).sort(), ['cross-server-handoff-atomic-commit.e2e.test.ts', 'workspace-new-task-hit-target.e2e.test.ts']);
+  // Delimiters alone are a typo, never "run everything"; blank input still is.
+  for (const only of [', ,', ',', ' , ']) assert.throws(() => selectJourneys(entries, { only }), /names no journey/);
+  assert.equal(selectJourneys(entries, { only: '  ' }).length, entries.length);
 });
 
-test('journeys needing a packaged binary or macOS are not applicable in the CI lane; everything else is', async () => {
+test('journeys needing a packaged binary or macOS are skipped in the CI lane (prerequisites unmet); everything else runs', async () => {
   const entries = await catalog();
-  const notApplicable = entries.filter(entry => entry.placement !== 'manual' && unmetLaneNeeds(entry).length > 0);
-  assert.deepEqual(notApplicable.map(entry => [entry.spec, unmetLaneNeeds(entry).join(', ')]), [
+  const excluded = entries.filter(entry => entry.placement !== 'manual' && unmetLaneNeeds(entry).length > 0);
+  assert.deepEqual(excluded.map(entry => [entry.spec, unmetLaneNeeds(entry).join(', ')]), [
     ['computer-use-window-scope.e2e.test.ts', 'run on darwin'],
     ['desktop-quit-path.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-activated-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-first-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-preactivation-egress.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-preactivation-updater.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
-    ['released-enterprise-activated.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['released-enterprise-activated.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY, set OPENWORK_EVAL_RELEASED_BASELINE_BINARY'],
   ]);
-  assert(notApplicable.every(entry => entry.placement === 'local'));
-  assert(notApplicable.every(entry => !entry.critical));
-  // A lane that packages the enterprise desktop would run the packaged journeys again.
+  assert(excluded.every(entry => entry.placement === 'local'));
+  assert(excluded.every(entry => !entry.critical));
+  // A lane that packages the enterprise desktop still lacks a released baseline and macOS.
   const packagedLane = { ...ciLane, env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
-  assert.deepEqual(notApplicable.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), ['computer-use-window-scope.e2e.test.ts']);
+  assert.deepEqual(excluded.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), ['computer-use-window-scope.e2e.test.ts', 'released-enterprise-activated.e2e.test.ts']);
   assert.deepEqual(unmetLaneNeeds(entry), []);
+});
+
+// What a spec and the worlds it imports actually gate on: `needs: { env, platform }` declarations,
+// plus env reads and platform checks in the lines leading to a `throw new SkipError`. Scoped to
+// journeys that declare `needs`: shared worlds (first-run.ts) hold scenario-specific guards, and
+// per-scenario world plans are #4771's job — this guard only keeps declared needs from drifting.
+async function guardedPrerequisites(spec, root = new URL('../specs/', import.meta.url)) {
+  const source = await readFile(new URL(spec, root), 'utf8');
+  const worlds = [...new Set([...source.matchAll(/from\s+["']\.\.\/worlds\/([\w-]+\.ts)["']/g)].map(match => match[1]))];
+  const sources = [source, ...await Promise.all(worlds.map(world => readFile(new URL(`../worlds/${world}`, root), 'utf8')))];
+  const env = new Set();
+  let platform;
+  for (const text of sources) {
+    for (const match of text.matchAll(/needs:\s*\{[^}]*\benv:\s*\[([^\]]*)\]/g)) for (const name of match[1].matchAll(/"(OPENWORK_EVAL_\w+)"/g)) env.add(name[1]);
+    for (const match of text.matchAll(/needs:\s*\{[^}]*\bplatform:\s*"(\w+)"/g)) platform = match[1];
+    const lines = text.split('\n');
+    lines.forEach((line, index) => {
+      if (!line.includes('throw new SkipError')) return;
+      const window = lines.slice(Math.max(0, index - 2), index + 1).join('\n');
+      for (const match of window.matchAll(/process\.env\.(OPENWORK_EVAL_\w+)/g)) env.add(match[1]);
+      platform = window.match(/process\.platform\s*!==\s*"(\w+)"/)?.[1] ?? platform;
+    });
+  }
+  return { env: [...env].sort(), platform };
+}
+
+test('catalog needs match the prerequisites each spec and its worlds guard, in both directions', async () => {
+  const entries = await catalog();
+  const declared = entries.filter(entry => entry.needs);
+  assert.equal(declared.length, 7);
+  for (const entry of declared) {
+    assert.deepEqual({ env: [...(entry.needs.env ?? [])].sort(), platform: entry.needs.platform }, await guardedPrerequisites(entry.spec), `${entry.spec}: catalog needs drifted from the spec/world guards`);
+  }
+  // The scanner itself sees the guards it is trusted to see.
+  assert.deepEqual(await guardedPrerequisites('released-enterprise-activated.e2e.test.ts'), { env: ['OPENWORK_EVAL_ELECTRON_BINARY', 'OPENWORK_EVAL_RELEASED_BASELINE_BINARY'], platform: undefined });
+  assert.deepEqual(await guardedPrerequisites('computer-use-window-scope.e2e.test.ts'), { env: [], platform: 'darwin' });
+  assert.deepEqual(await guardedPrerequisites('mcp-oauth-start-unreadable-response.e2e.test.ts'), { env: [], platform: undefined });
 });
 
 test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
