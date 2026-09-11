@@ -519,12 +519,10 @@ export function toSessionGroups(
   sessionsByWorkspaceId: Record<string, RouteSession[]>,
   errorsByWorkspaceId: Record<string, string | null>,
   loadingWorkspaceIds: Set<string>,
-  loadedWorkspaceIds: ReadonlySet<string>,
 ): WorkspaceSessionGroup[] {
   return workspaces.map((workspace) => ({
     workspace,
     sessions: sessionsByWorkspaceId[workspace.id] ?? [],
-    sessionsLoaded: loadedWorkspaceIds.has(workspace.id),
     status: loadingWorkspaceIds.has(workspace.id)
       ? "loading"
       : errorsByWorkspaceId[workspace.id]

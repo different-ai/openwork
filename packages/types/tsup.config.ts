@@ -3,6 +3,7 @@ import { defineConfig } from "tsup"
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    "cloud-model-fast": "src/cloud-model-fast.ts",
     "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
     "openwork-affordance": "src/openwork-affordance.ts",
     "openwork-context": "src/openwork-context.ts",
@@ -16,6 +17,7 @@ export default defineConfig({
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/connect-diagnostics": "src/den/connect-diagnostics.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
+    "den/gateway": "src/den/gateway.ts",
     "den/inference": "src/den/inference.ts",
     "den/managed-models-policy": "src/den/managed-models-policy.ts",
     "den/mcp-connection-action": "src/den/mcp-connection-action.ts",

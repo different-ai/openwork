@@ -1374,7 +1374,6 @@ export function SessionPage(props: SessionPageProps) {
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
-          newTaskDraftScope={props.newTaskComposer?.draftScope ?? null}
           onSelectWorkspace={props.sidebar.onSelectWorkspace}
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}

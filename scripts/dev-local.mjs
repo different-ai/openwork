@@ -19,7 +19,7 @@ const composeFile = path.join(rootDir, "packaging", "docker", "docker-compose.we
 const composeProject = "openwork-den-local"
 
 const apiPort = process.env.DEN_API_PORT?.trim() || process.env.DEN_CONTROLLER_PORT?.trim() || "8788"
-const inferencePort = process.env.INFERENCE_PORT?.trim() || "8791"
+const gatewayPort = process.env.GATEWAY_PORT ?? process.env.INFERENCE_PORT?.trim() ?? "8791"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
 const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173"
 const extraAppPorts = (process.env.OPENWORK_EXTRA_APP_PORTS?.trim() || "5174")
@@ -172,14 +172,25 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 async function main() {
-  for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["inference", inferencePort]]) {
+  let databaseEndpoint
+  try {
+    databaseEndpoint = parseUrlEndpoint(databaseUrl, "3306")
+    if (new URL(databaseUrl).protocol !== "mysql:") throw new Error()
+  } catch {
+    throw new Error("DATABASE_URL must be a valid local MySQL URL (value withheld).")
+  }
+  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(databaseEndpoint.host)) {
+    throw new Error("dev:web-local only migrates loopback MySQL databases. Remote databases require a separately reviewed migration procedure.")
+  }
+  if (databaseEndpoint.host === "[::1]") databaseEndpoint.host = "::1"
+  for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["gateway", gatewayPort]]) {
     const available = await canListenOnPort(Number(port))
     if (!available) {
       throw new Error(`${name} local port ${port} is already in use. Stop the existing process or rerun with a different port env override.`)
     }
   }
 
-  const { host, port } = parseUrlEndpoint(databaseUrl, "3306")
+  const { host, port } = databaseEndpoint
   const mysqlAvailable = await canReachTcp(host, port)
 
   if (!mysqlAvailable) {
@@ -208,8 +219,12 @@ async function main() {
     console.log(`[den] Using existing Redis at ${redis.host}:${redis.port}`)
   }
 
-  console.log("[den] Syncing Den schema...")
-  await run("bash", ["-c", "pnpm --filter @openwork-ee/den-db build && pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts --force"], {
+  console.log("[den] Building Den database package...")
+  await run("pnpm", ["--filter", "@openwork-ee/den-db", "build"], {
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+  })
+  console.log("[den] Applying ordered local migrations before starting services...")
+  await run("pnpm", ["--filter", "@openwork-ee/den-db", "db:migrate:local"], {
     env: {
       ...process.env,
       DATABASE_URL: databaseUrl,
@@ -228,7 +243,7 @@ async function main() {
       "dev:local",
       "--output-logs=full",
         "--filter=@openwork-ee/den-api",
-        "--filter=@openwork-ee/inference",
+        "--filter=@openwork-ee/gateway",
         "--filter=@openwork-ee/den-web",
     ],
     {
@@ -247,8 +262,8 @@ async function main() {
         CORS_ORIGINS: process.env.CORS_ORIGINS?.trim() || webOrigins,
         DEN_API_PORT: apiPort,
         DEN_CONTROLLER_PORT: apiPort,
-        INFERENCE_PORT: inferencePort,
-        INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL?.trim() || `http://127.0.0.1:${inferencePort}`,
+        GATEWAY_PORT: gatewayPort,
+        GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL?.trim() ?? `http://127.0.0.1:${gatewayPort}`,
         DEN_WEB_PORT: webPort,
         DEN_API_BASE: process.env.DEN_API_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
         DEN_API_PUBLIC_URL: process.env.DEN_API_PUBLIC_URL?.trim() || `http://localhost:${apiPort}`,

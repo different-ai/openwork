@@ -75,7 +75,7 @@ not local OAuth environment variables.
 
 | Host | Requirement | Why it is reached | What breaks when blocked |
 | --- | --- | --- | --- |
-| `ghcr.io` | Required unless mirrored | OpenWork Helm chart and container images. | Kubernetes cannot pull the chart or `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference` images. |
+| `ghcr.io` | Required unless mirrored | OpenWork Helm chart and container images. | Kubernetes cannot pull the chart or `openwork-den-api`, `openwork-den-web`, and optional Gateway image `openwork-inference` (retained repository name). |
 | Internal registry mirror | Required when public GHCR is blocked | Your mirrored chart and images. | Installs and upgrades fail until the mirror has the requested version. |
 
 For fully isolated deployments, also mirror installer artifacts, npm packages used by `npx`, and the model catalog. See [Air-gapped deployment](/start-here/air-gapped-deployment) and [Installer delivery](/start-here/installer-delivery).

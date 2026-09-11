@@ -80,6 +80,8 @@ test("the composer stays editable when snapshot refresh fails or the model is un
     { LocalProvider },
     { ShellConfigProvider },
     { PlatformProvider, createDefaultPlatform },
+    { DenAuthProvider },
+    { DesktopConfigProvider },
   ] = await Promise.all([
     import("../src/app/lib/openwork-server"),
     import("../src/react-app/domains/connections/cloud-mcp-submit-readiness"),
@@ -88,6 +90,8 @@ test("the composer stays editable when snapshot refresh fails or the model is un
     import("../src/react-app/kernel/local-provider"),
     import("../src/react-app/shell/shell-config"),
     import("../src/react-app/kernel/platform"),
+    import("../src/react-app/domains/cloud/den-auth-provider"),
+    import("../src/react-app/domains/cloud/desktop-config-provider"),
   ]);
   const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
   if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -128,11 +132,11 @@ test("the composer stays editable when snapshot refresh fails or the model is un
   const unavailableRoot = createRoot(unavailableContainer);
   const platform = createDefaultPlatform();
   let sendCount = 0;
-  const platform = createDefaultPlatform();
 
   const surface = (targetSessionId: string, modelUnavailable: boolean) => (
     <PlatformProvider value={platform}>
     <QueryClientProvider client={queryClient}>
+      <DenAuthProvider><DesktopConfigProvider>
       <LocalProvider>
         <ShellConfigProvider>
           <SessionSurface
@@ -177,6 +181,7 @@ test("the composer stays editable when snapshot refresh fails or the model is un
           />
         </ShellConfigProvider>
       </LocalProvider>
+      </DesktopConfigProvider></DenAuthProvider>
     </QueryClientProvider>
     </PlatformProvider>
   );

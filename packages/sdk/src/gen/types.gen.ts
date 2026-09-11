@@ -661,6 +661,14 @@ export type OrganizationContextResponse = {
   currentMemberTeams: Array<{
     [key: string]: unknown;
   }>;
+  capabilities: {
+    gatewayDashboard: boolean;
+    [key: string]: unknown;
+  };
+  deploymentCapabilities: {
+    version: 1;
+    aiGateway: boolean;
+  };
   [key: string]: unknown;
 };
 
@@ -1203,7 +1211,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1369,6 +1377,205 @@ export type LlmProviderCredentialVersionConflictError = {
 export type ConflictError = {
   error: string;
   message?: string;
+};
+
+export type GatewayProviderDetails = {
+  /**
+   * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
+   */
+  modelIds: Array<string>;
+  catalogWarning?: string;
+  /**
+   * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+   */
+  id: string;
+  providerId: string;
+  name: string;
+  source: "openwork_gateway";
+  credentialMode: "org" | "member";
+  credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+  authUrl: string | null;
+  status: "active" | "disabled";
+  updatedAt: string;
+  providerConfig: {
+    [key: string]: unknown;
+  };
+  models: Array<{
+    id: string;
+    name: string;
+    config: {
+      id: string;
+      [key: string]: unknown;
+    };
+    upstreamModelId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelGroupName: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    credentialSetName: string;
+  }>;
+  authorizationRequests: Array<{
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    name: string;
+    authUrl: string;
+  }>;
+  migration?: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+    runtimeEnvNames: Array<string>;
+  };
+  settings: {
+    [key: string]: unknown;
+  };
+  modelGroups: Array<{
+    name: string;
+    description: string | null;
+    modelIds: Array<string>;
+    status: "active" | "disabled";
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+  }>;
+  credentialSets: Array<{
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    name: string;
+    createdAt?: string;
+    createdBy?: {
+      /**
+       * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string | null;
+      email: string | null;
+    } | null;
+    credentialMode: "org" | "member";
+    status: "active" | "disabled";
+    configured: boolean;
+    credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+    oauthClientId?: string | null;
+    hasOauthClientSecret?: boolean;
+  }>;
+  accessGrants: Array<{
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    audience:
+      | {
+          type: "organization";
+        }
+      | {
+          type: "team";
+          /**
+           * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+           */
+          teamId: string;
+        }
+      | {
+          type: "member";
+          /**
+           * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+           */
+          memberId: string;
+        };
+    /**
+     * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+  }>;
+  oauthCallbackUrl?: string;
+  credentials?: Array<{
+    /**
+     * Den TypeID with 'ipc_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    subject: string;
+    orgMembershipId: string | null;
+    memberName: string | null;
+    memberEmail: string | null;
+    kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+    status: "active" | "revoked" | "refresh_failed";
+    expiresAt: string | null;
+  }>;
+};
+
+export type GatewayProviderSummary = {
+  /**
+   * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
+   */
+  modelIds: Array<string>;
+  catalogWarning?: string;
+  /**
+   * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+   */
+  id: string;
+  providerId: string;
+  name: string;
+  source: "openwork_gateway";
+  credentialMode: "org" | "member";
+  credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+  authUrl: string | null;
+  status: "active" | "disabled";
+  updatedAt: string;
+  providerConfig: {
+    [key: string]: unknown;
+  };
+  models: Array<{
+    id: string;
+    name: string;
+    config: {
+      id: string;
+      [key: string]: unknown;
+    };
+    upstreamModelId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelGroupName: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    credentialSetName: string;
+  }>;
+  authorizationRequests: Array<{
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    name: string;
+    authUrl: string;
+  }>;
+  migration?: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+    runtimeEnvNames: Array<string>;
+  };
 };
 
 export type OAuthClientConfigResponse = {
@@ -11974,6 +12181,1986 @@ export type DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses = {
 
 export type DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponse =
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses[keyof DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses];
+
+export type GetV1InferenceProvidersUsageData = {
+  body?: never;
+  path?: never;
+  query?: {
+    groupBy?: "model" | "team" | "person";
+    days?: string;
+    filterIds?: string;
+  };
+  url: "/v1/inference-providers/usage";
+};
+
+export type GetV1InferenceProvidersUsageErrors = {
+  /**
+   * Invalid query
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required
+   */
+  401: UnauthorizedError;
+  /**
+   * Owner/admin permission required or Gateway management disabled
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Usage cannot be represented safely
+   */
+  422: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetV1InferenceProvidersUsageError =
+  GetV1InferenceProvidersUsageErrors[keyof GetV1InferenceProvidersUsageErrors];
+
+export type GetV1InferenceProvidersUsageResponses = {
+  /**
+   * Gateway usage
+   */
+  200: {
+    usage: {
+      groupBy: "model" | "team" | "person";
+      days: number;
+      from: string;
+      to: string;
+      timezone: "UTC";
+      emptyReason?: "no_teams";
+      totalTokens: number;
+      unreportedRequests: number | null;
+      totalCostMicroUsd: number;
+      unpricedRequests: number | null;
+      series: Array<{
+        id: string;
+        label: string;
+      }>;
+      daily: Array<{
+        date: string;
+        totalTokens: number;
+        values: {
+          [key: string]: number;
+        };
+        totalCostMicroUsd: number;
+        costValues: {
+          [key: string]: number | null;
+        };
+      }>;
+      filterOptions: Array<{
+        id: string;
+        label: string;
+      }>;
+    };
+  };
+};
+
+export type GetV1InferenceProvidersUsageResponse =
+  GetV1InferenceProvidersUsageResponses[keyof GetV1InferenceProvidersUsageResponses];
+
+export type GetV1InferenceProvidersData = {
+  body?: never;
+  path?: never;
+  query?: {
+    scope?: "usable" | "manageable";
+  };
+  url: "/v1/inference-providers";
+};
+
+export type GetV1InferenceProvidersErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersError = GetV1InferenceProvidersErrors[keyof GetV1InferenceProvidersErrors];
+
+export type GetV1InferenceProvidersResponses = {
+  /**
+   * List organization inference gateway providers
+   */
+  200: {
+    inferenceProviders: Array<GatewayProviderDetails | GatewayProviderSummary>;
+  };
+};
+
+export type GetV1InferenceProvidersResponse = GetV1InferenceProvidersResponses[keyof GetV1InferenceProvidersResponses];
+
+export type PostV1InferenceProvidersData = {
+  body: {
+    name: string;
+    providerId: string;
+    /**
+     * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
+     */
+    modelIds?: Array<string>;
+    settings?: {
+      project?: string;
+      location?: string;
+      resourceName?: string;
+      apiVersion?: string;
+      region?: string;
+      upstreamBaseUrl?: string;
+    };
+    status?: "active" | "disabled";
+    credentialMode?: "org" | "member";
+    credential?: {
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      secret: string;
+    };
+    apiKeys?: {
+      [key: string]: string;
+    };
+    oauthClientId?: string;
+    oauthClientSecret?: string;
+    allMembers?: boolean;
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers";
+};
+
+export type PostV1InferenceProvidersErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersError = PostV1InferenceProvidersErrors[keyof PostV1InferenceProvidersErrors];
+
+export type PostV1InferenceProvidersResponses = {
+  /**
+   * Create inference gateway provider
+   */
+  201: {
+    inferenceProvider: GatewayProviderDetails;
+  };
+};
+
+export type PostV1InferenceProvidersResponse =
+  PostV1InferenceProvidersResponses[keyof PostV1InferenceProvidersResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdError =
+  DeleteV1InferenceProvidersByInferenceProviderIdErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdResponses = {
+  /**
+   * Delete inference gateway provider
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdError =
+  GetV1InferenceProvidersByInferenceProviderIdErrors[keyof GetV1InferenceProvidersByInferenceProviderIdErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdResponses = {
+  /**
+   * Get inference gateway provider
+   */
+  200: {
+    inferenceProvider: GatewayProviderDetails;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdResponse =
+  GetV1InferenceProvidersByInferenceProviderIdResponses[keyof GetV1InferenceProvidersByInferenceProviderIdResponses];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdData = {
+  body: {
+    name?: string;
+    providerId?: string;
+    /**
+     * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
+     */
+    modelIds?: Array<string>;
+    settings?: {
+      project?: string;
+      location?: string;
+      resourceName?: string;
+      apiVersion?: string;
+      region?: string;
+      upstreamBaseUrl?: string;
+    };
+    status?: "active" | "disabled";
+    credentialMode?: "org" | "member";
+    credential?: {
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      secret: string;
+    };
+    apiKeys?: {
+      [key: string]: string;
+    };
+    oauthClientId?: string;
+    oauthClientSecret?: string;
+    allMembers?: boolean;
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}";
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdError =
+  PatchV1InferenceProvidersByInferenceProviderIdErrors[keyof PatchV1InferenceProvidersByInferenceProviderIdErrors];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdResponses = {
+  /**
+   * Update inference gateway provider
+   */
+  200: {
+    inferenceProvider: GatewayProviderDetails;
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdResponse =
+  PatchV1InferenceProvidersByInferenceProviderIdResponses[keyof PatchV1InferenceProvidersByInferenceProviderIdResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/connect";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectError =
+  GetV1InferenceProvidersByInferenceProviderIdConnectErrors[keyof GetV1InferenceProvidersByInferenceProviderIdConnectErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
+  /**
+   * Get inference gateway provider connect payload
+   */
+  200: {
+    inferenceProvider: {
+      /**
+       * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
+       */
+      modelIds: Array<string>;
+      catalogWarning?: string;
+      /**
+       * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      providerId: string;
+      name: string;
+      source: "openwork_gateway";
+      credentialMode: "org" | "member";
+      credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+      authUrl: string | null;
+      status: "active" | "disabled";
+      updatedAt: string;
+      providerConfig: {
+        [key: string]: unknown;
+      };
+      models: Array<{
+        id: string;
+        name: string;
+        config: {
+          id: string;
+          [key: string]: unknown;
+        };
+        upstreamModelId: string;
+        /**
+         * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+         */
+        modelGroupId: string;
+        modelGroupName: string;
+        /**
+         * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+         */
+        credentialSetId: string;
+        credentialSetName: string;
+      }>;
+      authorizationRequests: Array<{
+        /**
+         * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+         */
+        credentialSetId: string;
+        name: string;
+        authUrl: string;
+      }>;
+      migration?: {
+        /**
+         * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+         */
+        llmProviderId: string;
+        runtimeEnvNames: Array<string>;
+      };
+      apiKey: string;
+      apiKeys: {
+        [key: string]: string;
+      };
+    };
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdConnectResponse =
+  GetV1InferenceProvidersByInferenceProviderIdConnectResponses[keyof GetV1InferenceProvidersByInferenceProviderIdConnectResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/models";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelsError =
+  GetV1InferenceProvidersByInferenceProviderIdModelsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdModelsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelsResponses = {
+  /**
+   * List configured gateway catalog models
+   */
+  200: {
+    /**
+     * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
+     */
+    modelIds: Array<string>;
+    catalogWarning?: string;
+    models: Array<{
+      id: string;
+      name: string;
+      config: {
+        [key: string]: unknown;
+      };
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdModelsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdModelsResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/model-groups";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsError =
+  GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponses = {
+  /**
+   * List gateway model groups
+   */
+  200: {
+    modelGroups: Array<{
+      name: string;
+      description: string | null;
+      modelIds: Array<string>;
+      status: "active" | "disabled";
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsData = {
+  body: {
+    name: string;
+    description?: string | null;
+    modelIds: Array<string>;
+    status?: "active" | "disabled";
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/model-groups";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsError =
+  PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors[keyof PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses = {
+  /**
+   * Create gateway model group
+   */
+  201: {
+    modelGroup: {
+      name: string;
+      description: string | null;
+      modelIds: Array<string>;
+      status: "active" | "disabled";
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+    };
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponse =
+  PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    groupId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/model-groups/{groupId}";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdError =
+  DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses = {
+  /**
+   * Delete gateway model group
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdData = {
+  body: {
+    name?: string;
+    description?: string | null;
+    modelIds?: Array<string>;
+    status?: "active" | "disabled";
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    groupId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/model-groups/{groupId}";
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdError =
+  PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors[keyof PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses = {
+  /**
+   * Update gateway model group
+   */
+  200: {
+    modelGroup: {
+      name: string;
+      description: string | null;
+      modelIds: Array<string>;
+      status: "active" | "disabled";
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+    };
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponse =
+  PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses[keyof PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/credential-sets";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsError =
+  GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses = {
+  /**
+   * List gateway credential sets
+   */
+  200: {
+    credentialSets: Array<{
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+      createdAt?: string;
+      createdBy?: {
+        /**
+         * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+         */
+        id: string;
+        name: string | null;
+        email: string | null;
+      } | null;
+      credentialMode: "org" | "member";
+      status: "active" | "disabled";
+      configured: boolean;
+      credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+      oauthClientId?: string | null;
+      hasOauthClientSecret?: boolean;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsData = {
+  body: {
+    name: string;
+    credentialMode: "org" | "member";
+    credential?: {
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      secret: string;
+    };
+    apiKeys?: {
+      [key: string]: string;
+    };
+    oauthClientId?: string;
+    oauthClientSecret?: string;
+    status?: "active" | "disabled";
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/credential-sets";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsError =
+  PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors[keyof PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses = {
+  /**
+   * Create gateway credential set
+   */
+  201: {
+    credentialSet: {
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+      createdAt?: string;
+      createdBy?: {
+        /**
+         * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+         */
+        id: string;
+        name: string | null;
+        email: string | null;
+      } | null;
+      credentialMode: "org" | "member";
+      status: "active" | "disabled";
+      configured: boolean;
+      credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+      oauthClientId?: string | null;
+      hasOauthClientSecret?: boolean;
+    };
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponse =
+  PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/credential-sets/{credentialSetId}";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdError =
+  DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses = {
+  /**
+   * Delete gateway credential set
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdData = {
+  body: {
+    name?: string;
+    credentialMode?: "org" | "member";
+    credential?: {
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      secret: string;
+    };
+    apiKeys?: {
+      [key: string]: string;
+    };
+    oauthClientId?: string;
+    oauthClientSecret?: string;
+    status?: "active" | "disabled";
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/credential-sets/{credentialSetId}";
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdError =
+  PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors[keyof PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses = {
+  /**
+   * Update gateway credential set
+   */
+  200: {
+    credentialSet: {
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+      createdAt?: string;
+      createdBy?: {
+        /**
+         * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+         */
+        id: string;
+        name: string | null;
+        email: string | null;
+      } | null;
+      credentialMode: "org" | "member";
+      status: "active" | "disabled";
+      configured: boolean;
+      credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+      oauthClientId?: string | null;
+      hasOauthClientSecret?: boolean;
+    };
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponse =
+  PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses[keyof PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/access-grants";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsError =
+  GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses = {
+  /**
+   * List gateway access grants
+   */
+  200: {
+    accessGrants: Array<{
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      audience:
+        | {
+            type: "organization";
+          }
+        | {
+            type: "team";
+            /**
+             * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+             */
+            teamId: string;
+          }
+        | {
+            type: "member";
+            /**
+             * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+             */
+            memberId: string;
+          };
+      /**
+       * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsData = {
+  body: {
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    audience:
+      | {
+          type: "organization";
+        }
+      | {
+          type: "team";
+          /**
+           * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+           */
+          teamId: string;
+        }
+      | {
+          type: "member";
+          /**
+           * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+           */
+          memberId: string;
+        };
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/access-grants";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsError =
+  PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors[keyof PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses = {
+  /**
+   * Create gateway access grant
+   */
+  201: {
+    accessGrant: {
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      audience:
+        | {
+            type: "organization";
+          }
+        | {
+            type: "team";
+            /**
+             * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+             */
+            teamId: string;
+          }
+        | {
+            type: "member";
+            /**
+             * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+             */
+            memberId: string;
+          };
+      /**
+       * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+    };
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponse =
+  PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+     */
+    grantId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/access-grants/{grantId}";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdError =
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses = {
+  /**
+   * Remove inference provider access grant
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdData = {
+  body: {
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId?: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId?: string;
+    audience?:
+      | {
+          type: "organization";
+        }
+      | {
+          type: "team";
+          /**
+           * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+           */
+          teamId: string;
+        }
+      | {
+          type: "member";
+          /**
+           * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+           */
+          memberId: string;
+        };
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+     */
+    grantId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/access-grants/{grantId}";
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdError =
+  PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors[keyof PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses = {
+  /**
+   * Update gateway access grant
+   */
+  200: {
+    accessGrant: {
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      audience:
+        | {
+            type: "organization";
+          }
+        | {
+            type: "team";
+            /**
+             * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+             */
+            teamId: string;
+          }
+        | {
+            type: "member";
+            /**
+             * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+             */
+            memberId: string;
+          };
+      /**
+       * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+    };
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponse =
+  PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses[keyof PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'ipa_' prefix and a 26-character base32 suffix.
+     */
+    grantId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/access/{grantId}";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdError =
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponses = {
+  /**
+   * Remove inference provider access grant
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: {
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId?: string;
+    redirectTo?: string;
+  };
+  url: "/v1/inference-providers/{inferenceProviderId}/oauth/start";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartError =
+  GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors[keyof GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses = {
+  /**
+   * Begin Google sign-in for a member inference credential
+   */
+  200: {
+    authUrl: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponse =
+  GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses[keyof GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses];
+
+export type GetV1InferenceProvidersOauthCallbackData = {
+  body?: never;
+  path?: never;
+  query?: {
+    code?: string;
+    state?: string;
+    error?: string;
+  };
+  url: "/v1/inference-providers/oauth/callback";
+};
+
+export type GetV1InferenceProvidersOauthCallbackErrors = {
+  /**
+   * Sign-in failed (HTML) or invalid callback query (JSON).
+   */
+  400: InvalidRequestError;
+};
+
+export type GetV1InferenceProvidersOauthCallbackError =
+  GetV1InferenceProvidersOauthCallbackErrors[keyof GetV1InferenceProvidersOauthCallbackErrors];
+
+export type GetV1InferenceProvidersOauthCallbackResponses = {
+  /**
+   * Connected.
+   */
+  200: string;
+};
+
+export type GetV1InferenceProvidersOauthCallbackResponse =
+  GetV1InferenceProvidersOauthCallbackResponses[keyof GetV1InferenceProvidersOauthCallbackResponses];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: {
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId?: string;
+  };
+  url: "/v1/inference-providers/{inferenceProviderId}/oauth";
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthError =
+  DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors[keyof DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors];
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses = {
+  /**
+   * Disconnect the caller's Google credential for an inference provider
+   */
+  204: void;
+};
+
+export type DeleteV1InferenceProvidersByInferenceProviderIdOauthResponse =
+  DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses];
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderData = {
+  body: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/migrate-from-llm-provider";
+};
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderError =
+  PostV1InferenceProvidersMigrateFromLlmProviderErrors[keyof PostV1InferenceProvidersMigrateFromLlmProviderErrors];
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderResponses = {
+  /**
+   * Move an LLM provider to the inference gateway
+   */
+  201: {
+    inferenceProvider: GatewayProviderDetails;
+  };
+};
+
+export type PostV1InferenceProvidersMigrateFromLlmProviderResponse =
+  PostV1InferenceProvidersMigrateFromLlmProviderResponses[keyof PostV1InferenceProvidersMigrateFromLlmProviderResponses];
 
 export type PostV1MembersByMemberIdRoleData = {
   body: {

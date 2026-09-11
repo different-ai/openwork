@@ -41,6 +41,21 @@ Containerized production installs run the precompiled artifact directly:
 node /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
+## Local startup safety
+
+`pnpm dev:web-local` runs guarded loopback-only migrations before application
+services start. `db:migrate:local --check` reports the plan without writes and
+permits active connections for inspection; apply requires them to be stopped.
+An unjournaled 0094 schema may be repaired only when its remaining differences
+are missing non-unique prefix indexes `account_account_id_provider_id`,
+`oauth_access_token_token`, and/or `oauth_refresh_token_token`. Definitions are
+checked against 0094 and the individual CREATE INDEX statements in 0046/0073.
+Data guards run first; a durable interruption marker precedes index creation.
+Exact schema reinspection must succeed before recording the 0094 baseline and
+running 0095. This never replays 0073's email rewrite or baselines Gateway tables.
+Any differently defined index, other unknown drift, or interruption marker stops
+startup for deliberate recovery; do not clear the marker to force a retry.
+
 ## Automated migrations (CI)
 
 Two GitHub Actions workflows keep schema and database in sync:

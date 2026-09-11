@@ -812,6 +812,9 @@ importers:
 
   ee/apps/den-web:
     dependencies:
+      '@base-ui/react':
+        specifier: ^1.4.1
+        version: 1.4.1(@types/react@19.2.14)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -963,7 +966,7 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
-  ee/apps/inference:
+  ee/apps/gateway:
     dependencies:
       '@hono/node-server':
         specifier: 2.0.12
