@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
+import { renderOpencodeV2Config } from "./managed-opencode-v2.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -259,6 +261,36 @@ test("explicit Den variants on any model turn off catalog enrichment for that pr
     expect(spec).not.toHaveProperty("canonical");
   }
   expect(explicit.specs[1]?.models.find((model) => model.id === "gpt-5.4")?.config).toMatchObject({ variants: {} });
+});
+
+test("managed Fast metadata retains native effort and priority variants without catalog enrichment", () => {
+  const variants = {
+    [CATALOG_FAST_VARIANT]: { disabled: true, openworkNativeFast: 1, reasoningEfforts: ["low", "high"] },
+    low: { reasoningEffort: "medium" },
+    high: { disabled: true, reasoningEffort: "high" },
+  };
+  const result = mapRuntimeProvidersToV2Specs({
+    lpr_fast: {
+      id: "openai", npm: "@ai-sdk/openai", options: { apiKey: "fast-fixture-key" },
+      models: { "gpt-5.4": { id: "gpt-5.4", name: "Fast model", reasoning: true, variants } },
+    },
+  });
+  expect(result.skippedProviderIds).toEqual([]);
+  expect(result.specs[0]?.package).toBe("@opencode-ai/ai/providers/openai");
+  expect(result.specs[0]).not.toHaveProperty("canonical");
+  expect(renderOpencodeV2Config({ providers: result.specs, skills: [] })).toMatchObject({ providers: {
+    lpr_fast: {
+      package: "@opencode-ai/ai/providers/openai",
+      settings: { apiKey: "fast-fixture-key" },
+      models: { "gpt-5.4": { variants: [
+        { id: "low", settings: { providerOptions: { reasoningEffort: "medium" } } },
+        { id: FAST_DEFAULT_VARIANT, settings: { providerOptions: { serviceTier: "priority" } } },
+        { id: fastVariantId("low"), settings: { providerOptions: { reasoningEffort: "medium", serviceTier: "priority" } } },
+      ] } },
+    },
+  } });
+  expect(variants.high.disabled).toBe(true);
+  expect(Object.keys(variants)).toEqual([CATALOG_FAST_VARIANT, "low", "high"]);
 });
 
 test("providers without a catalog identity keep the native package path", () => {

@@ -50,7 +50,7 @@ function matchesPrompt(description: string, prompt: string): boolean {
   return terms.some((_, index) => index + 3 <= terms.length && request.includes(` ${terms.slice(index, index + 3).join(" ")} `));
 }
 
-function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSkillId?: string } | null) {
+function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSkillId?: string } | null, credential: "unknown" | "missing") {
   const messages = Array.isArray(body.messages) ? body.messages.filter(record) : [];
   const latestUserIndex = messages.findLastIndex((message) => message.role === "user" && systemUpdate(message) === null);
   const prompt = text(messages[latestUserIndex]?.content);
@@ -58,6 +58,7 @@ function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSki
   const results = messages.slice(latestUserIndex + 1).filter((message) => message.role === "tool");
   const request: MockAgentRequest = {
     model: typeof body.model === "string" ? body.model : "skill-jit-model",
+    credential,
     promptMarker: matched ? turn.prompt : null,
     matchedMarkers: matched ? [turn.prompt] : [],
     completedTools: results.length,
@@ -123,7 +124,7 @@ if (import.meta.main) {
         res.writeHead(200, { "content-type": "application/json" }).end("{}");
         return;
       }
-      const { request, reply } = decide(body, turn);
+      const { request, reply } = decide(body, turn, req.headers.authorization?.trim() ? "unknown" : "missing");
       requests.push(request);
       const call = request.kind === "tool";
       const delta = call ? { tool_calls: [{ index: 0, id: `call_skill_${requests.length}`, type: "function",

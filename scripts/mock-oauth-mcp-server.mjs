@@ -503,7 +503,8 @@ function capabilitySearchArguments(messages) {
 function classifyAgentCredential(req) {
   const header = req.headers.authorization;
   if (typeof header !== "string" || !header.trim()) return "missing";
-  const bearer = header.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+  if (header.slice(0, 6).toLowerCase() !== "bearer" || ![" ", "\t"].includes(header[6])) return "unknown";
+  const bearer = header.slice(7).trim();
   const label = Object.entries(agentCredentials).find(([, value]) => value === bearer)?.[0];
   return label ?? "unknown";
 }
