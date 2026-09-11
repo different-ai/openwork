@@ -174,7 +174,7 @@ export function GroupDetailsSheet({
                 disabled={busy === "model"}
                 onChange={(event) => void save({ facilitatorModel: event.target.value }, "model")}
               >
-                <option value="">Automatic (the model your coworkers use)</option>
+                <option value="">Use app default (Chat turn assignment)</option>
                 {(models ?? []).map((model) => (
                   <option key={model.id} value={model.id}>{model.label}</option>
                 ))}

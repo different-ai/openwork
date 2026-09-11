@@ -20,6 +20,9 @@ import { COMPUTER_DENY } from "./computer-control.mjs";
 import { BROWSER_TOOLS } from "./browser-control.mjs";
 import { assertWorkerSupervisor, workerControlRequest } from "./worker-controls.mjs";
 import { effortForTurn, effortStopOf } from "../src/lib/effort.ts";
+import { DEFAULT_MODEL_DEFAULTS } from "../src/lib/model-defaults.ts";
+import { chooseIndexedModel } from "../src/lib/model-intelligence.ts";
+import { connectedModelCatalog, recommendModel } from "../src/lib/threads.ts";
 
 export const WORKERS_DIR = "workers";
 export const WORKERS_REGISTRY_FILE = "workers.json";
@@ -65,25 +68,28 @@ export function workerPurpose(value) {
   throw new Error("Worker purpose must be thinking or delivery.");
 }
 
-/** Resolve once at creation, then validate the saved choice without substituting
- * a provider or changing effort. Read the connected native catalog, not pricing
- * heuristics or the conversation's automatic lanes. */
-export function resolveWorkerModel(coworker, purpose, providers, snapshot = null, defaults = {}) {
+/** Resolve the role once at creation; saved snapshots only validate, never re-rank. */
+export function resolveWorkerModel(coworker, purpose, providers, snapshot = null, defaults = {}, modelDefaults = DEFAULT_MODEL_DEFAULTS) {
   const field = purpose === "thinking" ? "thinkingModel" : "deliveryModel";
-  const selected = coworker[field] ? { model: coworker[field], modelVariant: coworker[`${field}Variant`] } : coworker;
+  const selected = coworker[field]?.trim() ? { model: coworker[field].trim(), modelVariant: coworker[`${field}Variant`] } : modelDefaults[purpose];
   if (snapshot && (typeof snapshot.providerId !== "string" || typeof snapshot.modelId !== "string" || typeof snapshot.variant !== "string")) {
     throw new Error("The Worker's saved model is unreadable. No replacement model was selected.");
   }
-  let id = snapshot ? `${snapshot.providerId}/${snapshot.modelId}` : String(selected.model ?? "").trim();
+  let id = snapshot ? `${snapshot.providerId}/${snapshot.modelId}` : String(selected.model || coworker.model || "").trim();
   if (!id) {
     id = typeof defaults.model === "string" ? defaults.model.trim() : "";
     if (!id) {
       const entries = Object.entries(defaults.default ?? {});
-      if (entries.length !== 1 || typeof entries[0][1] !== "string" || !entries[0][1].trim()) {
-        throw new Error("The native default model could not be resolved unambiguously. Choose a model in Coworker settings; no recommendation or fallback was selected.");
+      if (entries.length === 1 && typeof entries[0][1] === "string" && entries[0][1].trim()) {
+        id = `${entries[0][0]}/${entries[0][1].trim()}`;
       }
-      id = `${entries[0][0]}/${entries[0][1].trim()}`;
     }
+  }
+  if (!snapshot && !selected.model) {
+    const catalog = connectedModelCatalog({ all: providers, connected: providers.map((provider) => provider.id), default: defaults.default });
+    const decision = chooseIndexedModel(catalog, purpose === "thinking" ? "deep" : "standard", { standard: id || recommendModel(catalog)?.id, preferences: coworker.modelSelectionPreferences });
+    if (!decision.model) throw new Error(`Worker model ${id} is unavailable or ineligible. ${decision.reason} This Worker will not switch models.`);
+    id = decision.model.id;
   }
   const separator = id.indexOf("/");
   if (separator <= 0 || separator === id.length - 1) throw new Error("Choose a model in Coworker settings before starting a Worker. No default or paid fallback was selected.");
@@ -93,7 +99,7 @@ export function resolveWorkerModel(coworker, purpose, providers, snapshot = null
   if (!model || model.status === "deprecated") throw new Error(`Worker model ${id} is unavailable from a connected provider. Restore access or choose a model for a new Worker; this Worker will not switch models.`);
   if (model.capabilities?.toolcall !== true) throw new Error(`Worker model ${id} does not advertise tool support. Choose a tool-capable model for a new Worker.`);
   const variants = Object.keys(model.variants ?? {}).filter((variant) => model.variants[variant]?.disabled !== true);
-  const fixedVariant = snapshot ? snapshot.variant : String(selected.modelVariant ?? "").trim();
+  const fixedVariant = snapshot ? snapshot.variant : selected.model ? String(selected.modelVariant ?? "").trim() : "";
   if (fixedVariant && !variants.includes(fixedVariant)) throw new Error(`Worker model ${id} no longer offers thinking effort ${fixedVariant}. This Worker will not change its saved effort.`);
   const variant = snapshot ? fixedVariant : effortForTurn({ kind: "worker-turn", stop: effortStopOf(coworker.effortPreference), fixedVariant, variants });
   return { providerId, modelId, variant };
@@ -926,7 +932,7 @@ export function workerToolCatalog() {
         properties: {
           name: { type: "string", description: "Short and specific, e.g. \"Market scan\"." },
           goal: { type: "string", description: "What done looks like, what to watch or produce, and any limits." },
-          purpose: { type: "string", enum: ["thinking", "delivery"], description: "Thinking brief or delivery work; defaults to delivery. Uses the person's corresponding Worker model setting." },
+          purpose: { type: "string", enum: ["thinking", "delivery"], description: "Use thinking for a bounded brief on hard ambiguity, delivery for heavier execution while the coworker stays available. Defaults to delivery. Uses the coworker's role override, then app defaults, then role-based automatic selection; pinned when started." },
           control: { type: "string", enum: ["browser", "computer"], description: "Request this discussion's browser or computer for this delivery Worker. It waits for the person's explicit approval; never an inherited grant." },
           lifespan: {
             type: "object",

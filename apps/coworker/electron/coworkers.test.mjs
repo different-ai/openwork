@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
+import { usesAppConversationDefault } from "../src/lib/model-defaults.ts";
 import {
   AGENTS_CONTRACT_VERSION,
   agentsContractVersion,
@@ -259,13 +260,22 @@ test("the record says who chose the model: the app's pick may be swapped once, t
   const coworkersDir = await tempCoworkersDir();
   const coworker = await createCoworker(coworkersDir, { name: "Pilot" });
   assert.equal(coworker.modelChosenBy, "", "a new coworker has no model and no chooser yet");
+  assert.equal(usesAppConversationDefault(coworker), true);
   const picked = await updateCoworker(coworkersDir, "pilot", { model: "openwork/claude", modelVariant: "", modelChosenBy: "app" });
   assert.equal(picked.modelChosenBy, "app");
   assert.equal((await getCoworker(coworkersDir, "pilot")).modelChosenBy, "app", "the answer survives a re-read (a relaunch)");
+  assert.equal(usesAppConversationDefault(await getCoworker(coworkersDir, "pilot")), true, "an early recommendation never freezes inheritance");
   const effort = await updateCoworker(coworkersDir, "pilot", { modelVariant: "high" });
   assert.equal(effort.modelChosenBy, "app", "an effort alone does not change who chose the model; the renderer says so when the person did");
   const chosen = await updateCoworker(coworkersDir, "pilot", { model: "openwork/claude", modelVariant: "high", modelChosenBy: "person" });
   assert.equal(chosen.modelChosenBy, "person");
+  assert.equal(chosen.useAppModelDefaults, false);
+  await updateCoworker(coworkersDir, "pilot", { useAppModelDefaults: true });
+  const inherited = await getCoworker(coworkersDir, "pilot");
+  assert.equal(inherited.useAppModelDefaults, true);
+  assert.equal(inherited.model, chosen.model, "inheritance retains the main override for later");
+  assert.equal(inherited.modelVariant, chosen.modelVariant);
+  assert.equal((await updateCoworker(coworkersDir, "pilot", { modelChosenBy: "person", useAppModelDefaults: true })).useAppModelDefaults, true, "explicit inheritance wins in the same update");
   const unsaid = await updateCoworker(coworkersDir, "pilot", { model: "openwork/other", modelVariant: "" });
   assert.equal(unsaid.modelChosenBy, "", "a model change that does not say who chose it is the person's: the app never inherits a claim");
   assert.equal((await updateCoworker(coworkersDir, "pilot", { modelChosenBy: "nobody" })).modelChosenBy, "", "unknown values read as the person's");
@@ -275,6 +285,7 @@ test("the record says who chose the model: the app's pick may be swapped once, t
   await writeFile(configPath, (await readFile(configPath, "utf8")).replace(/^modelChosenBy: .*\n/m, "").replace(/^model: .*$/m, 'model: "openwork/claude"'), "utf8");
   assert.equal((await getCoworker(coworkersDir, "legacy")).model, "openwork/claude");
   assert.equal((await getCoworker(coworkersDir, "legacy")).modelChosenBy, "");
+  assert.equal(usesAppConversationDefault(await getCoworker(coworkersDir, "legacy")), false);
 });
 
 test("a coworker's model mode: one model every time until the picker chooses Automatic, and records from before the field mean the same", async () => {

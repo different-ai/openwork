@@ -51,12 +51,13 @@ import {
   registerDiscussion,
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
-import { laneWithPreference, type EffortStop } from "@/lib/effort";
+import type { EffortStop } from "@/lib/effort";
 import { EffortDial } from "@/ui/effort-dial";
 import { ComputerControl } from "@/ui/computer-control";
 import { DiscussionBrowser } from "@/ui/browser-panel";
 import { PopoverDisclosure, TechnicalText } from "@/ui/details-popover";
-import { carryVariant, chooseFallbackModel, classifyRequest, describeModelChoice, markAutoPicked, resolveDiscussionModel, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
+import { carryVariant, chooseFallbackModel, describeModelChoice, markAutoPicked, resolveDiscussionModel, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
+import { usesAppConversationDefault, type ModelDefaults } from "@/lib/model-defaults";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { WorkersPanel } from "@/ui/workers";
@@ -176,6 +177,16 @@ type ActiveTurn = {
 
 /** How a turn is (re)sent: a fresh message, or the same message id run again after a failure, a stop, or a cut-off. */
 type TurnSend = ({ mode: "send" } | { mode: "retry"; attempt: number; switchedTo?: string; byPerson?: boolean }) & { voice?: VoiceExpectation | null };
+
+/** Retry policy travels with the model pin, never today's app defaults. */
+type TurnModelSelection = {
+  owner: CoworkerSummary;
+  defaults: ModelDefaults;
+  automatic: boolean;
+  allowFallback: boolean;
+  lane: ModelLane;
+  anchor: string;
+};
 
 /** One quiet line's worth of history for a reply that ended without words, kept in the transcript. */
 function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | null {
@@ -1447,20 +1458,14 @@ function ThreadView({
    * says "still working". Only the engine going idle without a reply ends the
    * turn without one.
    */
-  const submitTurn = useCallback(async (prompt: string, messageId: string, send: TurnSend, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = []) => {
+  const submitTurn = useCallback(async (prompt: string, messageId: string, send: TurnSend, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = [], originalSelection?: TurnModelSelection) => {
     if (activeTurnRef.current) { voiceRef.current?.abandonReply(send.voice ?? null); return; }
     let voiceIntent = send.voice ?? null;
     let voiceFollowup = false;
+    let turnModel: HeadlessThreadModel | undefined = modelOverride;
     /** The model this turn actually ran on, so a failure can be attributed and, if it was the app's pick, replaced. */
     let turnModelId = modelOverride ? `${modelOverride.providerId}/${modelOverride.modelId}` : coworker.model;
-    /**
-     * How much thinking this message deserves, decided once per message and kept across the app's own
-     * retries: the message's own lane, nudged by the effort dial. In Automatic mode the lane also picks
-     * the model; in fixed mode it only sets the effort the fixed model is asked for.
-     */
-    const automatic = coworker.modelMode === "auto";
-    const messageLane: ModelLane = laneWithPreference(classifyRequest(prompt), coworker.effortPreference);
-    const turnLane: ModelLane = automatic ? messageLane : "standard";
+    let selection = originalSelection;
     const attempt = send.mode === "retry" ? send.attempt : 0;
     let continued = false;
     /**
@@ -1473,23 +1478,24 @@ function ThreadView({
      */
     const fallBack = async (message: string): Promise<boolean> => {
       if (!viewMounted.current) return false;
-      if (!(automatic || wasAutoPicked(coworker, turnModelId)) || failedModels.length >= 1) return false;
+      if (!selection?.allowFallback || failedModels.length >= 1) return false;
       if (!describeTurnFailure(message, coworker.name).modelRelated) return false;
       try {
+        const { owner, defaults, automatic, lane, anchor } = selection;
         const excluded = [...failedModels, turnModelId];
         const catalog = await threads.listModelCatalog();
-        const next = chooseFallbackModel(catalog, turnLane, { standard: coworker.model || turnModelId, exclude: excluded, ...(automatic ? { preferences: coworker.modelSelectionPreferences } : {}) });
+        const next = chooseFallbackModel(catalog, lane, { standard: anchor, exclude: excluded, ...(automatic ? { preferences: owner.modelSelectionPreferences } : {}) });
         const nextModel = next ? parseModelPreference(next.id) : undefined;
         if (!next || !nextModel) return false;
         markAutoPicked(coworker.slug, next.id);
-        const modelVariant = carryVariant(coworker.modelVariant, next);
+        const variant = resolveDiscussionModel({ models: [next] }, { ...owner, model: next.id }, prompt, defaults).variant;
         // In Automatic mode a lane model that failed is simply not chosen again this turn; the saved standard model changes only when it was the one that failed.
-        if (!automatic || turnModelId === coworker.model || !coworker.model) {
-          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant, modelChosenBy: "app" }));
+        if (!usesAppConversationDefault(owner) && (!automatic || turnModelId === owner.model || !owner.model)) {
+          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant: carryVariant(owner.modelVariant, next), modelChosenBy: "app", useAppModelDefaults: false }));
         }
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
         voiceFollowup = true;
-        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel, voice: voiceIntent }, { ...nextModel, ...(modelVariant ? { variant: modelVariant } : {}) }, excluded), 0);
+        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel, voice: voiceIntent }, { ...nextModel, ...(variant ? { variant } : {}) }, excluded, selection), 0);
         return true;
       } catch {
         return false;
@@ -1513,7 +1519,7 @@ function ThreadView({
         setAppRetry(null);
         // A deferred admission keeps the selected model's receipt. It does not
         // inherit permission to undo a later person-initiated cancellation.
-        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1, voice: voiceIntent, ...(send.mode === "retry" && send.switchedTo ? { switchedTo: send.switchedTo } : {}) }, modelOverride, failedModels);
+        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1, voice: voiceIntent, ...(send.mode === "retry" && send.switchedTo ? { switchedTo: send.switchedTo } : {}) }, turnModel, failedModels, selection);
       }, delay);
       return true;
     };
@@ -1574,40 +1580,25 @@ function ThreadView({
       if (!engineKnows) setFailure(message);
     };
     try {
-      let turnModel: HeadlessThreadModel | undefined = modelOverride;
       if (!turnModel) {
-        const savedModel = parseModelPreference(coworker.model);
-        const catalog = await threads.listModelCatalog();
-        /** The standard model: the saved one, or — when nobody chose yet — the recommendation, kept from now on. */
-        let standardId = coworker.model;
-        if (savedModel) {
-          if (!catalog.models.some((model) => model.id === coworker.model)) {
-            throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
-          }
-          turnModel = savedModel;
-        } else {
-          // Nobody chose a model yet: start on a connected model that can use tools and keep it.
-          const pick = recommendModel(catalog, { exclude: failedModels });
-          if (!pick) throw new Error(NO_TOOL_MODEL_MESSAGE);
-          const chosen = parseModelPreference(pick.id);
-          if (chosen) turnModel = chosen;
-          turnModelId = pick.id;
-          standardId = pick.id;
-          markAutoPicked(coworker.slug, pick.id);
-          void coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "", modelChosenBy: "app" })
-            .then(onCoworkerChanged)
-            .catch(() => undefined);
-        }
+        const selectionOwner = kind === "discussion" ? coworker : { ...coworker, useAppModelDefaults: false };
+        const inherited = usesAppConversationDefault(selectionOwner);
+        const [catalog, settings] = await Promise.all([threads.listModelCatalog(), coworkerBridge.settings.get()]);
+        const modelDefaults = settings.modelDefaults;
+        const automatic = inherited ? !modelDefaults.conversation.model : coworker.modelMode === "auto";
+        const standardId = coworker.model || recommendModel(catalog)?.id || "";
         // One resolver serves this discussion and native group/review turns.
-        const decision = resolveDiscussionModel({ models: catalog.models.filter((model) => !failedModels.includes(model.id)) }, { ...coworker, model: standardId }, prompt);
+        const decision = resolveDiscussionModel(catalog, selectionOwner, prompt, modelDefaults);
         if (!decision.model) {
           // This is a selection-policy refusal, not a failed provider attempt.
           // Do not retry it through the model-failure fallback path.
-          setFailure(decision.reason);
+          const unavailable = inherited ? modelDefaults.conversation.model : coworker.model;
+          setFailure(unavailable && !catalog.models.some((model) => model.id === unavailable) ? describeUnavailableModel(unavailable, catalog.models, session) : decision.reason);
           return;
         }
         const pick = decision.model;
         turnModelId = pick.id;
+        selection = { owner: selectionOwner, defaults: modelDefaults, automatic, allowFallback: automatic || (!inherited && wasAutoPicked(coworker, pick.id)), lane: decision.lane, anchor: standardId || pick.id };
         turnModel = { providerId: pick.providerId, modelId: pick.modelId, ...(decision.variant ? { variant: decision.variant } : {}) };
         if (automatic && pick.id !== standardId) {
           markAutoPicked(coworker.slug, pick.id);
@@ -1703,7 +1694,7 @@ function ThreadView({
         setActiveTurn(null);
       }
     }
-  }, [abortUntilQuiet, commitTurnState, coworker.effortPreference, coworker.model, coworker.modelChosenBy, coworker.modelMode, coworker.modelSelectionPreferences, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
+  }, [abortUntilQuiet, commitTurnState, coworker.effortPreference, coworker.model, coworker.modelChosenBy, coworker.modelMode, coworker.modelSelectionPreferences, coworker.modelVariant, coworker.useAppModelDefaults, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
 
   /**
    * After a quit or reload the engine may still be on the turn. Follow it to

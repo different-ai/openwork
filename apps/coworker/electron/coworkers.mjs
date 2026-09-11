@@ -31,6 +31,9 @@ import { normalizeModelSelectionPreferences } from "../src/lib/model-intelligenc
 // The shared document codec is flat. Only coworker preferences use a nested JSON object.
 export function parseFrontmatter(content) {
   const parsed = parseFlatFrontmatter(content);
+  if (parsed.data.useAppModelDefaults === "true" || parsed.data.useAppModelDefaults === "false") {
+    parsed.data.useAppModelDefaults = parsed.data.useAppModelDefaults === "true";
+  }
   if (Object.hasOwn(parsed.data, "modelSelectionPreferences")) {
     let input = parsed.data.modelSelectionPreferences;
     if (typeof input === "string") {
@@ -554,6 +557,7 @@ async function readCoworkerRecord(coworkersDir, slug) {
     model: typeof data.model === "string" ? data.model.trim() : "",
     /** Optional reasoning/behavior variant for the preferred model. */
     modelVariant: typeof data.modelVariant === "string" ? data.modelVariant.trim() : "",
+    ...(typeof data.useAppModelDefaults === "boolean" ? { useAppModelDefaults: data.useAppModelDefaults } : {}),
     thinkingModel: typeof data.thinkingModel === "string" ? data.thinkingModel.trim() : "",
     thinkingModelVariant: typeof data.thinkingModelVariant === "string" ? data.thinkingModelVariant.trim() : "",
     deliveryModel: typeof data.deliveryModel === "string" ? data.deliveryModel.trim() : "",
@@ -708,6 +712,8 @@ export async function updateCoworker(coworkersDir, slug, patch) {
     if (typeof patch?.[field] === "string") data[field] = patch[field].trim();
   }
   if (typeof patch?.modelChosenBy === "string") data.modelChosenBy = modelChosenByOf(patch.modelChosenBy);
+  if (typeof patch?.useAppModelDefaults === "boolean") data.useAppModelDefaults = patch.useAppModelDefaults;
+  else if (patch?.modelChosenBy === "person") data.useAppModelDefaults = false;
   if (patch?.modelMode === "auto" || patch?.modelMode === "fixed") data.modelMode = patch.modelMode;
   data.modelSelectionPreferences = normalizeModelSelectionPreferences(
     patch?.modelSelectionPreferences !== undefined ? patch.modelSelectionPreferences : data.modelSelectionPreferences,

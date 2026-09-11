@@ -665,17 +665,18 @@ async function modelVariantsFor(coworker) {
 async function localRunModel(coworker, kind = "assignment-run", requestText) {
   const preference = String(coworker?.model ?? "").trim();
   const separator = preference.indexOf("/");
-  if (separator <= 0 || separator === preference.length - 1) return undefined;
   if ((kind === "reply" || kind === "review") && typeof requestText === "string") {
     const handle = await ensurePlatformServer();
     const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/provider`, {
       headers: { Authorization: `Bearer ${ownerToken}` }, signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new Error("The current model catalog could not be read. No replacement model was selected.");
-    const decision = resolveDiscussionModel(connectedModelCatalog(await response.json()), coworker, requestText);
+    const { modelDefaults } = await readSettings(settingsPath);
+    const decision = resolveDiscussionModel(connectedModelCatalog(await response.json()), coworker, requestText, modelDefaults);
     if (!decision.model) throw new Error(decision.reason);
     return { providerId: decision.model.providerId, modelId: decision.model.modelId, ...(decision.variant ? { variant: decision.variant } : {}) };
   }
+  if (separator <= 0 || separator === preference.length - 1) return undefined;
   const fixedVariant = String(coworker?.modelVariant ?? "").trim();
   const variants = await modelVariantsFor(coworker);
   const variant = variants === null
@@ -983,6 +984,7 @@ async function resolveControlContext(slug, context, expected, surface) {
 const groupExecution = createGroupExecution({
   directory: coworkersDir,
   collaboration,
+  settings: () => readSettings(settingsPath),
   coworkerFor: (slug) => getCoworker(coworkersDir, slug),
   coordinator: () => maintenanceAdmission.run(ensureCoordinatorWorkspace),
   catalogFor: async (workspace, signal) => {
@@ -1152,18 +1154,19 @@ async function readyWorkerClient(coworker, worker = null) {
 async function workerModelProviders(coworker, readDefault = false) {
   const handle = await ensurePlatformServer();
   if (!handle.managedOpencode) throw new Error(engineError || "AI is unavailable on this Mac");
-  const payload = await fetchJson(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/config/providers`, {
+  const payload = await fetchJson(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/provider`, {
     headers: { Authorization: `Bearer ${ownerToken}` },
   });
-  if (!Array.isArray(payload?.providers)) throw new Error("Worker model availability could not be checked. No fallback was selected.");
-  if (!readDefault) return payload;
+  if (!Array.isArray(payload?.all) || !Array.isArray(payload?.connected)) throw new Error("Worker model availability could not be checked. No fallback was selected.");
+  const providers = payload.all.filter((provider) => payload.connected.includes(provider.id));
+  if (!readDefault) return { ...payload, providers };
   let config;
   try {
     config = await fetchJson(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/config`, { headers: { Authorization: `Bearer ${ownerToken}` } });
   } catch {
     throw new Error("The configured native default model could not be read. Choose a Worker model or restore the AI service; no fallback was selected.");
   }
-  return { ...payload, model: config?.model };
+  return { ...payload, providers, model: config?.model };
 }
 
 /**
@@ -1200,8 +1203,9 @@ async function spawnWorker(slug, input, spawnedBy) {
     ? { kind: "turns", max: purpose === "thinking" ? THINKING_TURN_BUDGET : workerTurnsFor(effortStopOf(coworker.effortPreference)), used: 0 }
     : input.lifespan;
   const configured = purpose === "thinking" ? coworker.thinkingModel : coworker.deliveryModel;
-  const catalog = await workerModelProviders(coworker, !configured && !coworker.model);
-  const modelSnapshot = resolveWorkerModel(coworker, purpose, catalog.providers, null, catalog);
+  const { modelDefaults } = await readSettings(settingsPath);
+  const catalog = await workerModelProviders(coworker, !configured && !modelDefaults[purpose].model && !coworker.model);
+  const modelSnapshot = resolveWorkerModel(coworker, purpose, catalog.providers, null, catalog, modelDefaults);
   const worker = await createWorker(coworkersDir, slug, { ...input, purpose, modelSnapshot, lifespan, spawnedBy });
   if (spawnedBy === "person" && worker.spawnedFromThreadId) await collaboration.attachWorker(worker, await privateOwner(slug, worker.spawnedFromThreadId));
   await appendWorkerEvent(coworkersDir, slug, worker.id, {

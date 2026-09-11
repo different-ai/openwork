@@ -14,10 +14,14 @@
  * effort requests ("no need to think", "think carefully") win, but brevity or
  * speed alone never overrides substantive work. The dial still applies, and
  * assignments use the standard model; Workers resolve their purpose-specific
- * choice (or inherit the standard) separately at creation.
+ * choice separately at creation. App inheritance takes precedence over the
+ * retained main override: conversations use an exact app choice or the quick
+ * policy, leaving heavier work to the existing Worker purpose tool.
  */
 import type { ModelChosenBy } from "./bridge.ts";
 import type { EngineModelCatalog, EngineModelOption } from "./threads.ts";
+import { recommendModel } from "./threads.ts";
+import { DEFAULT_MODEL_DEFAULTS, usesAppConversationDefault, type ModelDefaults } from "./model-defaults.ts";
 import { chooseIndexedFallbackModel, chooseIndexedModel, MODEL_INTELLIGENCE_INDEX, type ModelSelectionDecision, type ModelSelectionOptions, type ModelSelectionPreferences } from "./model-intelligence.ts";
 import { effortForTurn, effortStopOf, laneWithPreference, replyKindForLane } from "./effort.ts";
 export { costsNoMoreThan } from "./model-intelligence.ts";
@@ -167,24 +171,33 @@ export function classifyRequest(prompt: string): ModelLane {
   return "standard";
 }
 
-/** Shared private/group discussion choice; initial model recommendation belongs to the caller. */
+/** Shared private/group choice. App inheritance is quick; explicit depth still sets effort. */
 export function resolveDiscussionModel(
   catalog: Pick<EngineModelCatalog, "models">,
-  coworker: { model: string; modelMode?: string; effortPreference?: string; modelVariant?: string; modelSelectionPreferences?: ModelSelectionPreferences },
+  coworker: { model: string; modelChosenBy?: string; useAppModelDefaults?: boolean; modelMode?: string; effortPreference?: string; modelVariant?: string; modelSelectionPreferences?: ModelSelectionPreferences },
   requestText: string,
+  defaults: ModelDefaults = DEFAULT_MODEL_DEFAULTS,
 ): ModelSelectionDecision & { variant: string; lane: ModelLane } {
   const stop = effortStopOf(coworker.effortPreference);
-  const messageLane = laneWithPreference(classifyRequest(requestText), stop);
-  const automatic = modelModeOf(coworker) === "auto";
-  const fixed = automatic ? null : catalog.models.find((model) => model.id === coworker.model) ?? null;
+  const inherited = usesAppConversationDefault(coworker);
+  const selected = inherited ? defaults.conversation : coworker;
+  const messageLane = inherited ? (DEEP_HINTS.test(requestText) ? "deep" : "quick") : laneWithPreference(classifyRequest(requestText), stop);
+  const automatic = inherited ? !selected.model : modelModeOf(coworker) === "auto";
+  const lane = inherited ? "quick" : automatic ? messageLane : "standard";
+  const standard = inherited ? coworker.model || recommendModel(catalog)?.id : coworker.model;
+  const fixedId = selected.model;
+  const fixed = automatic ? null : catalog.models.find((model) => model.id === fixedId) ?? null;
   const choice = automatic
-    ? chooseIndexedModel(catalog, messageLane, { standard: coworker.model, preferences: coworker.modelSelectionPreferences })
-    : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : `The saved model "${coworker.model}" is not available. Choose another AI model or connect its provider. No replacement was selected.`, indexVersion: MODEL_INTELLIGENCE_INDEX.version };
+    ? chooseIndexedModel(catalog, lane, { standard, preferences: coworker.modelSelectionPreferences })
+    : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : `The saved model "${fixedId}" is not available. Choose another AI model or connect its provider. No replacement was selected.`, indexVersion: MODEL_INTELLIGENCE_INDEX.version };
+  const fixedVariant = selected.modelVariant?.trim() ?? "";
+  if (inherited && fixed && fixedVariant && !fixed.variants.includes(fixedVariant)) {
+    return { ...choice, model: null, variant: "", lane, reason: `The app conversation model "${fixed.id}" no longer offers thinking effort "${fixedVariant}". Update the app model defaults; no different effort was selected.` };
+  }
   return {
     ...choice,
-    // Fixed mode reports the standard lane, but the message still determines thinking effort.
-    lane: automatic ? messageLane : "standard",
-    variant: effortForTurn({ kind: replyKindForLane(messageLane), stop, fixedVariant: coworker.modelVariant ?? "", variants: choice.model?.variants ?? [] }),
+    lane,
+    variant: effortForTurn({ kind: replyKindForLane(messageLane), stop, fixedVariant: inherited && automatic ? "" : fixedVariant, variants: choice.model?.variants ?? [] }),
   };
 }
 

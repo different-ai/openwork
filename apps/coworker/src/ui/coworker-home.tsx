@@ -403,7 +403,8 @@ export function CoworkerHome({
         if (pick) {
           if (chosen) takeStartingModel();
           else markAutoPicked(coworker.slug, pick.id);
-          // The record says who chose, so the choice reads the same after a relaunch: the person's is never swapped, the app's may be, once.
+          // An app recommendation is only an anchor; absent inheritance stays automatic.
+          // A person's starting choice opts out through the native update handler.
           onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "", modelChosenBy: chosen ? "person" : "app" }));
           return;
         }
@@ -659,6 +660,7 @@ export function CoworkerHome({
                 onCoworkerRemoved={onCoworkerRemoved}
                 onSyncProviders={onSyncProviders}
                 onOpenAccount={() => onOpenOpenWork("account")}
+                onOpenModelDefaults={() => onOpenOpenWork("model-defaults")}
                 onOpenMemory={() => nav.showView("memory")}
                 onOpenAppsTools={() => nav.push(APPS_TOOLS_CRUMB, APPS_TOOLS_CRUMB.id)}
                 focus={settingsFocus}
@@ -877,6 +879,7 @@ function CoworkerSettings({
   onCoworkerRemoved,
   onSyncProviders,
   onOpenAccount,
+  onOpenModelDefaults,
   onOpenMemory,
   onOpenAppsTools,
   focus,
@@ -888,6 +891,7 @@ function CoworkerSettings({
   onCoworkerRemoved: (slug: string) => void;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onOpenAccount: () => void;
+  onOpenModelDefaults: () => void;
   onOpenMemory: () => void;
   /** Apps & tools is the first level under these settings. */
   onOpenAppsTools: () => void;
@@ -1021,6 +1025,7 @@ function CoworkerSettings({
           onCoworkerChanged={onCoworkerChanged}
           onSyncProviders={onSyncProviders}
           onOpenAccount={onOpenAccount}
+          onOpenModelDefaults={onOpenModelDefaults}
         />
       </section>
 

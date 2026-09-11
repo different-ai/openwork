@@ -98,10 +98,12 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     } return data; })();
     try { return await loading; } catch (error) { loading = null; throw error; }
   }
-  function change(fn) {
+  function change(fn, needed = () => true) {
     const run = tail.then(async () => {
       if (writesClosed) throw new Error("Collaboration storage is closed.");
       const before = await load();
+      // Check inside the write queue so a new admission cannot race an idle tick.
+      if (!needed(before)) return;
       const next = structuredClone(before);
       const result = await fn(next);
       const serialized = JSON.stringify(next);
@@ -379,12 +381,15 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
           turns.pending = { messageId: entry.messageId, prompt: entry.prompt, startedAt: now(), stoppedAt: null };
         }
         return expired;
-      });
-      for (const task of expired) {
+      // Settled history needs no reconciliation. Keep observing live tasks and
+      // queued messages, without cloning/serializing all past work on idle ticks.
+      }, (state) => Object.values(state.tasks).some((task) => !terminal.has(task.state))
+        || Object.values(state.threads).some((turns) => turns.next.length > 0));
+      for (const task of expired ?? []) {
         for (const run of active.values()) if (run.id === task.executionId) run.controller.abort(new Error("The dependency reached its deadline."));
         if (task.workerId) await withAbort(track(cancelWorker(task.slug, task.workerId)), AbortSignal.timeout(setupTimeoutMs)).catch((error) => { cleanupError = error; });
       }
-      const tasks = await read((state) => Object.values(state.tasks));
+      const tasks = await read((state) => Object.values(state.tasks).filter((task) => task.state === "requested"));
       for (const task of tasks) {
         if (task.state === "requested") {
           const claimed = await change((state) => {
@@ -418,7 +423,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
               await change((state) => {
                 const child = state.tasks[task.id];
                 if (closed || signal.aborted || child.state !== "starting" || cancelled(state, child)) return;
-                const entry = execution(state, { id: collaborationId(child.id, "answer"), owner: prepared.owner, prompt: prepared.prompt, taskId: child.id });
+                const entry = execution(state, { id: collaborationId(child.id, "answer"), owner: prepared.owner, prompt: prepared.prompt, requestText: child.input.question, taskId: child.id });
                 child.owner = prepared.owner;
                 child.executionId = entry.id;
                 child.groupId = prepared.owner.groupId;
@@ -794,7 +799,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
       await change((state) => {
         const id = collaborationId(worker.slug, worker.id, "origin");
         if (state.tasks[id]) return;
-        const entry = execution(state, { id, owner, prompt: worker.goal, messageId: nativeMessageId() });
+        const entry = execution(state, { id, owner, prompt: worker.goal, requestText: worker.goal, messageId: nativeMessageId() });
         entry.state = "succeeded"; // the person's form submission, not an inference request
         entry.personRequest = true;
         const parent = state.tasks[id];

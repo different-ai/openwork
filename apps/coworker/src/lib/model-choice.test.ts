@@ -20,6 +20,7 @@ import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
 import { connectedModelCatalog, type EngineModelOption } from "./threads.ts";
 import { chooseIndexedModel, MODEL_INTELLIGENCE_INDEX, modelSelectionDefaults, normalizeModelSelectionPreferences } from "./model-intelligence.ts";
 import { describeTurnFailure } from "./turn-failure.ts";
+import { DEFAULT_MODEL_DEFAULTS } from "./model-defaults.ts";
 
 test("the model mode a stored record means: explicit wins, otherwise one model every time (Automatic is chosen in the picker)", () => {
   assert.equal(modelModeOf({ modelMode: "auto", model: "openai/gpt-5" }), "auto");
@@ -43,6 +44,7 @@ test("a lane pick never costs more than the standard model: on a provider that m
   ] };
   assert.equal(chooseModelForLane(catalog, "quick", { standard: "opencode/big-pickle" })?.id, "opencode/ling-2.6-flash-free", "the free fast sibling, never the paid haiku");
   assert.equal(chooseModelForLane(catalog, "deep", { standard: "opencode/big-pickle" })?.id, "opencode/big-pickle", "no free deep sibling: the standard model stays; never opus or pro");
+  assert.equal(resolveDiscussionModel(catalog, { model: "opencode/big-pickle", modelChosenBy: "app" }, "Prepare a report").model?.id, "opencode/ling-2.6-flash-free", "inherited speaking stays quick without escalating from free to paid");
   const free = { cost: { input: 0, output: 0 }, knownPrice: true };
   assert.equal(costsNoMoreThan(free, free), true);
   assert.equal(costsNoMoreThan({ cost: { input: 0, output: 0 } }, free), false, "zero without provenance is not free");
@@ -250,6 +252,30 @@ test("discussion resolution shares adjusted message effort across private/group 
     }
   }
   const base = { model: "openai/gpt-5", modelMode: "auto", effortPreference: "balanced", modelVariant: " high " };
+  const inherited = { ...base, useAppModelDefaults: true };
+  assert.equal(resolveDiscussionModel(models, inherited, "Prepare a report").variant, "low", "normal speaking ignores the retained override's effort");
+  assert.equal(resolveDiscussionModel(models, inherited, "Think carefully about this").variant, "high", "explicit depth still wins");
+  const appDefaults = { ...DEFAULT_MODEL_DEFAULTS, conversation: { model: "anthropic/claude-haiku-4-5", modelVariant: "max" } };
+  const appChoice = resolveDiscussionModel(models, { ...inherited, model: "gone/retained" }, "hello", appDefaults);
+  assert.equal(appChoice.model?.id, appDefaults.conversation.model, "an intentional app choice may change provider; the retained override need not be available");
+  assert.equal(appChoice.variant, "max");
+  assert.equal(resolveDiscussionModel(models, base, "hello", appDefaults).model?.id, "openai/gpt-5-mini", "legacy selected models do not inherit app choices");
+  assert.equal(resolveDiscussionModel(models, inherited, "hello", { ...appDefaults, conversation: { model: "gone/exact", modelVariant: "" } }).model, null, "an unavailable explicit app model cannot fall back");
+  const appModel = models.models.find((model) => model.id === appDefaults.conversation.model);
+  assert.ok(appModel);
+  for (const variants of [["low"], []]) {
+    appModel.variants = variants;
+    const incompatible = resolveDiscussionModel(models, inherited, "hello", appDefaults);
+    assert.equal(incompatible.model, null, "an explicit app effort cannot silently become automatic");
+    assert.equal(incompatible.variant, "");
+    assert.match(incompatible.reason, /no longer offers thinking effort "max"/);
+  }
+  const next = chooseFallbackModel(models, "deep", { standard: base.model, exclude: [base.model] });
+  assert.ok(next);
+  const savedFallback = { ...base, model: next.id, modelVariant: carryVariant("", next), modelChosenBy: "app", useAppModelDefaults: false };
+  assert.equal(resolveDiscussionModel(models, savedFallback, "Audit code").variant, "high");
+  assert.equal(savedFallback.modelVariant, "", "computed request effort is not a saved fixed preference");
+  assert.equal(resolveDiscussionModel(models, savedFallback, "hello").variant, "low", "later turns remain adaptive and opted out of app defaults");
   assert.equal(resolveDiscussionModel(models, base, "hello").variant, "high", "supported fixed effort wins on the selected sibling");
   const sibling = models.models.find((model) => model.id === "openai/gpt-5-mini");
   assert.ok(sibling);
@@ -259,7 +285,7 @@ test("discussion resolution shares adjusted message effort across private/group 
   assert.equal(resolveDiscussionModel(models, base, "hello").variant, "");
 });
 
-test("fixed discussion models ignore automatic preferences and never replace an exact missing or blank ID", () => {
+test("fixed discussion models ignore automatic preferences and never replace an exact missing ID; empty records inherit", () => {
   const models = catalog(), preferences = modelSelectionDefaults();
   preferences.avoided = ["openai/gpt-5"];
   preferences.preferred.quick = ["openai/gpt-5-mini"];
@@ -271,7 +297,9 @@ test("fixed discussion models ignore automatic preferences and never replace an 
   }
   assert.equal(resolveDiscussionModel(models, { model: "openai/gpt-5", modelMode: "auto", modelSelectionPreferences: preferences }, "hello").model, null);
   for (const modelMode of ["auto", "fixed"]) {
-    for (const model of ["", "gone/model", " openai/gpt-5 "]) {
+    assert.equal(resolveDiscussionModel(models, { model: "", modelMode }, "hello").model?.id, "openai/gpt-5-mini");
+    assert.equal(resolveDiscussionModel(models, { model: "", modelMode, useAppModelDefaults: false }, "hello").model, null);
+    for (const model of ["gone/model", " openai/gpt-5 "]) {
       const choice = resolveDiscussionModel(models, { model, modelMode, modelVariant: "high" }, "hello");
       assert.equal(choice.model, null);
       assert.equal(choice.variant, "");

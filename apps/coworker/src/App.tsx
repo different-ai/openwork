@@ -130,6 +130,8 @@ export default function App() {
   const notAnsweringSinceRef = useRef<Record<string, number>>({});
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
   const resetReturnFocusRef = useRef<HTMLElement | null>(null);
+  const groupReadingRef = useRef(false);
+  const activityReadingRef = useRef(false);
 
   const boot = useCallback(async () => {
     try {
@@ -164,10 +166,9 @@ export default function App() {
   useEffect(() => {
     if (!runtime) return;
     let cancelled = false;
-    let reading = false;
     const refresh = async () => {
-      if (reading) return;
-      reading = true;
+      if (cancelled || factoryResetOpen || groupReadingRef.current) return;
+      groupReadingRef.current = true;
       try {
         const list = await coworkerBridge.groups.list();
         if (cancelled) return;
@@ -188,7 +189,7 @@ export default function App() {
           setGroupActiveSlugs({});
           setGroupLines((current) => Object.fromEntries(Object.keys(current).map((id) => [id, "Activity unavailable"])));
         }
-      } finally { reading = false; }
+      } finally { groupReadingRef.current = false; }
     };
     const timer = window.setInterval(() => void refresh().catch(() => undefined), 2000);
     const open = (event: Event) => {
@@ -198,7 +199,7 @@ export default function App() {
     };
     window.addEventListener("coworker:open-group", open);
     return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("coworker:open-group", open); };
-  }, [runtime?.serverUrl, coworkers, setGroupLine]);
+  }, [runtime?.serverUrl, coworkers, setGroupLine, factoryResetOpen]);
 
   const openGlobalSettings = useCallback((section: SettingsSection = "general") => {
     const opener = document.activeElement;
@@ -439,7 +440,9 @@ export default function App() {
   }, [runtime?.engineManaged, session, syncConnect]);
 
   useEffect(() => {
-    if (!runtime) return;
+    // These reads feed the hidden sidebar, not native job execution. Keep the
+    // last display snapshot while reset is open; refresh it when returning.
+    if (!runtime || factoryResetOpen) return;
     let cancelled = false;
     const refreshActivity = async () => {
       const entries = await Promise.all(
@@ -556,13 +559,19 @@ export default function App() {
         return changed ? next : current;
       });
     }
-    void refreshActivity();
-    const timer = window.setInterval(() => void refreshActivity(), 4_000);
+    const refresh = () => {
+      // Persist the in-flight guard across effect restarts as well as timer ticks.
+      if (cancelled || activityReadingRef.current) return;
+      activityReadingRef.current = true;
+      void refreshActivity().catch(() => undefined).finally(() => { activityReadingRef.current = false; });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 4_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [runtime, coworkers]);
+  }, [runtime, coworkers, factoryResetOpen]);
 
   useEffect(() => {
     if (!session) {
