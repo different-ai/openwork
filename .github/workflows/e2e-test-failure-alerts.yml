@@ -2,7 +2,7 @@ name: Test alerts
 
 on:
   workflow_run:
-    workflows: [Product journeys, Build and core checks, Test reliability, Compose pins drift]
+    workflows: [Product journeys, Build and core checks, Test reliability]
     types: [completed]
 
 permissions:
