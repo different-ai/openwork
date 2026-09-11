@@ -6,7 +6,6 @@ const test = spec.world(archiveActiveSessions, { timeout: 12 * 60_000 });
 
 test("busy background archive identifies its captured target before consent and stops only that target", async ({ world, user, agent, probe, step }) => {
   const { a1, b1 } = world;
-  let workspaceName = world.workspaceBName;
   const routeA = `#/workspace/${a1.workspaceId}/session/${a1.sessionId}`;
   const mutationRequests = async () => (await world.facts()).requests.filter(request => ["abort", "metadata"].includes(request.action));
   const beginArchive = () => {
@@ -15,23 +14,21 @@ test("busy background archive identifies its captured target before consent and 
       .catch((error: unknown) => error).finally(() => { settled = true; });
     return { result, settled: () => settled };
   };
+  // The person just asked for this, so the confirmation stays simple: the
+  // captured target's title, one question, two choices. Forensic detail
+  // (workspace, id, requester) is not shown here.
   async function identify(title: string) {
     await user.see({ text: "This session is still working" });
     const dialog = await world.archiveConfirmation();
     expect(dialog.title).toBe(`This session is still working: ${title}`);
-    expect(dialog.metadata).toEqual([
-      { label: "Workspace", value: workspaceName, selectable: true },
-      { label: "Session ID", value: b1.sessionId, selectable: true },
-    ]);
+    expect(dialog.text).toContain("Stop the current task and archive?");
+    expect(dialog.metadata).toEqual([]);
     expect(dialog.text).not.toContain(a1.sessionId);
+    expect(dialog.text).not.toContain(b1.sessionId);
+    expect(dialog.text).not.toContain("Requested by");
     expect(dialog.text).not.toContain(`/tmp/${world.workspaceBName}`);
-    expect(dialog.text).toContain("Restoring this conversation won't restart stopped work.");
     const description = await world.archiveAccessibleDescription();
-    expect(description).toContain(`Workspace ${workspaceName}`);
-    expect(description).toContain(`Session ID ${b1.sessionId}`);
-    expect(description).toContain("Restoring this conversation won't restart stopped work.");
-    expect(description).not.toContain(a1.sessionId);
-    expect(description).not.toContain(`/tmp/${world.workspaceBName}`);
+    expect(description).toBe("Stop the current task and archive?");
     expect(dialog).toMatchObject({ titleUnclipped: true, fitsViewport: true, noHorizontalOverflow: true, contentReachable: true });
     expect(await probe.hash()).toBe(routeA);
   }
@@ -66,25 +63,6 @@ test("busy background archive identifies its captured target before consent and 
     expect(await mutationRequests()).toEqual([]);
     expect(await world.requests()).toHaveLength(2);
     expect(await probe.hash()).toBe(routeA);
-  });
-
-  await step("explicit workspace names keep their separators and distinguish two Production workspaces", async () => {
-    workspaceName = "Client B / Production";
-    for (const [workspaceId, displayName] of [[a1.workspaceId, "Client A / Production"], [b1.workspaceId, workspaceName]]) {
-      expect(await agent.desktopApi(`/workspaces/${workspaceId}/display-name`, { method: "PATCH", body: { displayName } })).toMatchObject({ status: 200 });
-    }
-    // Refresh the route through an existing control, without navigating or touching running work.
-    await agent.run("session.rename", { sessionId: a1.sessionId, title: a1.title });
-    await user.see({ role: "button", label: "Client A / Production" });
-    await user.see({ role: "button", label: workspaceName });
-    const before = await mutationRequests();
-    const attempt = beginArchive();
-    await identify(b1.title);
-    expect((await world.archiveConfirmation()).text).not.toContain("Client A / Production");
-    expect(await world.archiveAccessibleDescription()).not.toContain("Client A / Production");
-    await user.click({ role: "button", label: "Keep session open" });
-    expect(await attempt.result).toBeInstanceOf(Error);
-    expect(await mutationRequests()).toEqual(before);
   });
 
   for (const title of [a1.title, "", " \t ", `Long target ${"unbroken-identity".repeat(55)}`]) {

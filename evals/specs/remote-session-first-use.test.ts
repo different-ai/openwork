@@ -47,8 +47,9 @@ test("first cloud task provisions once over MCP, preserves access boundaries, an
   const orgs = await denFetch(den.admin, "/v1/me/orgs", { headers: { authorization: `Bearer ${den.admin.token}` } });
   const organizations = record(orgs.body).orgs;
   if (!Array.isArray(organizations) || organizations.length !== 1) throw new Error("Expected one isolated organization");
-  const orgId = record(organizations[0]).id;
-  if (typeof orgId !== "string") throw new Error("Organization id missing");
+  const organizationIdValue = record(organizations[0]).id;
+  if (typeof organizationIdValue !== "string") throw new Error("Organization id missing");
+  const orgId = organizationIdValue;
   const writeToken = await mint(den.admin, ["mcp:read", "mcp:write"]);
   const readToken = await mint(den.admin, ["mcp:read"]);
   let requestId = 0;

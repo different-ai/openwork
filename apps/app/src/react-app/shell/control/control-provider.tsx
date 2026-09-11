@@ -10,12 +10,14 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
-import type {
-  OpenworkAffordanceDescriptor,
-  OpenworkAffordanceEffects,
-  OpenworkAffordanceOrigin,
-  OpenworkAffordanceRequest,
-  OpenworkAffordanceResult,
+import {
+  openworkAffordanceFailureCodeSchema,
+  type OpenworkAffordanceDescriptor,
+  type OpenworkAffordanceEffects,
+  type OpenworkAffordanceFailureCode,
+  type OpenworkAffordanceOrigin,
+  type OpenworkAffordanceRequest,
+  type OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
 import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
 import { useUiControlMailbox } from "./use-ui-control-mailbox";
@@ -57,12 +59,19 @@ export type OpenworkControlSnapshot = {
 
 export type OpenworkControlResult =
   | { ok: true; actionId: string; result?: unknown }
-  | { ok: false; actionId: string; error: string };
+  | { ok: false; actionId: string; error: string; code?: OpenworkAffordanceFailureCode; hint?: string };
 
 export type OpenworkControlHelpers = {
   setNarration: (text: string) => void;
   /** The conversation whose agent issued the request, when it came through the agent bridge. */
   origin?: OpenworkAffordanceOrigin;
+  /**
+   * True when an agent issued the command through the server bridge, which
+   * answers within seconds and has no person on the other end. A warning for
+   * that request goes back through the agent's own conversation as a
+   * structured result, never through a dialog.
+   */
+  bridged: boolean;
 };
 
 export type OpenworkControlTargetRef = {
@@ -152,11 +161,16 @@ function describeError(error: unknown) {
 
 function returnedActionError(result: unknown) {
   if (!result || typeof result !== "object") return null;
-  const payload = result as { ok?: unknown; error?: unknown };
+  const payload: { ok?: unknown; error?: unknown; code?: unknown; hint?: unknown } = result;
   if (payload.ok !== false) return null;
-  return typeof payload.error === "string" && payload.error.trim()
-    ? payload.error
-    : "Action returned an error.";
+  const code = openworkAffordanceFailureCodeSchema.safeParse(payload.code);
+  return {
+    error: typeof payload.error === "string" && payload.error.trim()
+      ? payload.error
+      : "Action returned an error.",
+    ...(code.success ? { code: code.data } : {}),
+    ...(typeof payload.hint === "string" && payload.hint.trim() ? { hint: payload.hint } : {}),
+  };
 }
 
 function isBrowser() {
@@ -400,6 +414,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     actionId: string,
     args?: unknown,
     origin?: OpenworkAffordanceOrigin,
+    bridged = false,
   ): Promise<OpenworkControlResult> => {
     const registered = actionsRef.current.get(actionId);
     const action = registered?.ref.current;
@@ -427,14 +442,14 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       await playTargetChoreography(action, runId);
       setNarration(`Running ${action.label}…`);
       const effectiveArgs = args === undefined ? action.previewArgs : args;
-      const result = await action.execute(effectiveArgs, { setNarration, origin });
+      const result = await action.execute(effectiveArgs, { setNarration, origin, bridged });
       const resultError = returnedActionError(result);
       if (resultError) {
-        setNarration(`Could not ${action.label}: ${resultError}`);
+        setNarration(`Could not ${action.label}: ${resultError.error}`);
         if (spotlightRunRef.current === runId) {
           setSpotlight({ visible: false, phase: "target", rect: null });
         }
-        return { ok: false, actionId, error: resultError };
+        return { ok: false, actionId, ...resultError };
       }
       setNarration(`Done: ${action.label}`);
       await wait(SPOTLIGHT_TIMING_MS.done);
@@ -481,14 +496,15 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     }
     try {
       const effectiveArgs = request.args === undefined ? action.previewArgs : request.args;
-      const result = await action.execute(effectiveArgs, { setNarration: () => undefined });
+      const result = await action.execute(effectiveArgs, { setNarration: () => undefined, bridged: false });
       const resultError = returnedActionError(result);
       if (resultError) {
         return {
           ok: false,
           id: request.id,
-          error: resultError,
-          code: "failed",
+          error: resultError.error,
+          code: resultError.code ?? "failed",
+          ...(resultError.hint ? { hint: resultError.hint } : {}),
           revision,
         };
       }
@@ -544,14 +560,15 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       };
     }
     busyActorRef.current = request.actor ?? null;
-    const result = await executeAction(request.id, request.args, request.origin);
+    const result = await executeAction(request.id, request.args, request.origin, true);
     if (!busyActionIdRef.current) busyActorRef.current = null;
     if (!result.ok) {
       return {
         ok: false,
         id: request.id,
         error: result.error,
-        code: result.error.startsWith("Already acting:") ? "conflict" : "failed",
+        code: result.code ?? (result.error.startsWith("Already acting:") ? "conflict" : "failed"),
+        ...(result.hint ? { hint: result.hint } : {}),
         revision: contextRevisionRef.current,
       };
     }

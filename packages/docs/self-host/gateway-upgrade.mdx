@@ -104,7 +104,7 @@ There are additional environment differences in this legacy service-only mode. V
 
 Stopping new management admission does not mean stopping all new model requests, member connections, or OAuth operations. If the goal is security revocation, use the appropriate provider/grant/key controls or an explicit traffic stop. If the component, its dependencies, or ingress is stopped, **do not promise existing traffic will continue** merely because the disable flag itself is non-revoking.
 
-When effective dashboard enablement is removed, eligible hosted admins see OpenWork Models again; existing single-org custom-provider behavior remains. This UI change neither cancels nor creates a subscription and does not revoke Models or Gateway keys.
+OpenWork Models remains available to eligible hosted admins alongside Gateway, whether or not effective Gateway dashboard enablement is removed; existing single-org custom-provider behavior remains. Changing Gateway dashboard enablement neither cancels nor creates a subscription and does not revoke Models or Gateway keys.
 
 Keep schema-compatible images when disabling. **Do not run `helm rollback` to an older pre-migration image against the renamed schema.** Recover by fixing forward with compatible images, or use a separately approved, quiesced database-and-image restore from the verified backup. A restore can lose post-backup writes and must account for credentials, usage, and billing reconciliation. Keep traffic stopped until schema and all readers/writers agree again.
 

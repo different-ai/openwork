@@ -186,6 +186,7 @@ test("persisted GitHub bindings preserve desktop readiness without allowing new 
   expect(marketplaceCreated.response.status, marketplaceCreated.text).toBe(201);
   const marketplace = isRecord(marketplaceCreated.body) && isRecord(marketplaceCreated.body.item) ? marketplaceCreated.body.item : null;
   if (!marketplace || typeof marketplace.id !== "string") throw new Error("Missing created marketplace");
+  const marketplaceId = marketplace.id;
   const shared = await denFetch(den.admin, `/v1/marketplaces/${marketplace.id}/access`, {
     method: "POST", headers, body: JSON.stringify({ orgWide: true, role: "viewer" }),
   });
@@ -194,7 +195,7 @@ test("persisted GitHub bindings preserve desktop readiness without allowing new 
   async function createPlugin(authType: "none" | "oauth") {
     return denFetch(den.admin, "/v1/plugins", {
       method: "POST", headers,
-      body: JSON.stringify({ name: "Legacy GitHub", orgWide: true, marketplaceId: marketplace.id, components: [
+      body: JSON.stringify({ name: "Legacy GitHub", orgWide: true, marketplaceId, components: [
         mcpComponent(url, { authType, credentialMode: "shared" }),
         { type: "skill", input: { rawSourceText: skillSource } },
       ] }),
@@ -208,20 +209,21 @@ test("persisted GitHub bindings preserve desktop readiness without allowing new 
   expect(created.response.status, created.text).toBe(201);
   const plugin = isRecord(created.body) && isRecord(created.body.item) ? created.body.item : null;
   if (!plugin || typeof plugin.id !== "string") throw new Error("Missing created plugin");
+  const pluginId = plugin.id;
   const bindings = await queryDenDatabase(databaseUrl,
     "SELECT external_mcp_connection_id AS connectionId, config_object_id AS configObjectId FROM plugin_mcp_requirement_binding WHERE organization_id = ? AND plugin_id = ?",
-    [orgId, plugin.id],
+    [orgId, pluginId],
   );
   const binding = bindings[0];
   if (!isRecord(binding) || typeof binding.connectionId !== "string" || typeof binding.configObjectId !== "string") throw new Error("Missing created binding");
   const connectionId = binding.connectionId;
 
   async function desktopReadiness(member: DenSession = den.admin) {
-    const resolved = await denFetch(member, `/v1/marketplaces/${marketplace.id}/resolved`, { headers: orgHeaders(member, orgId) });
+    const resolved = await denFetch(member, `/v1/marketplaces/${marketplaceId}/resolved`, { headers: orgHeaders(member, orgId) });
     expect(resolved.response.status, resolved.text).toBe(200);
     const item = isRecord(resolved.body) && isRecord(resolved.body.item) ? resolved.body.item : null;
     const plugins = item && Array.isArray(item.plugins) ? item.plugins.filter(isRecord) : [];
-    const found = plugins.find((entry) => entry.id === plugin.id);
+    const found = plugins.find((entry) => entry.id === pluginId);
     if (!found || !isRecord(found.cloudReadiness)) throw new Error("Missing desktop cloud readiness");
     return found.cloudReadiness;
   }

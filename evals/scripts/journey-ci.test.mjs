@@ -1,11 +1,11 @@
 import test from 'node:test';
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeJourneys } from './judge-journeys.mjs';
 import assert from 'node:assert/strict';
-import { catalog, registeredCases, selectJourneys } from './journey-catalog.mjs';
-import { aggregate, classify, markdown } from './journey-report.mjs';
+import { catalog, ciLane, registeredCases, selectJourneys, unmetLaneNeeds } from './journey-catalog.mjs';
+import { EXCLUDED_LABEL, aggregate, classify, markdown } from './journey-report.mjs';
 import { notification, deliver, validateReport, findStateRun } from './notify-journeys.mjs';
 
 const summary = { command: 'evals:e2e', verdict: 'passed', passed: 1, failed: 0, skipped: 0 };
@@ -52,6 +52,89 @@ test('changed additional journey joins critical selection; manual filters work f
   assert.equal(instantSend[0].model, 'mock');
   assert.equal(instantSend[0].critical, false);
   assert.equal(selectJourneys(entries, { only: 'does-not-exist' }).length, 0);
+  const several = selectJourneys(entries, { only: 'cross-server-handoff-atomic-commit, workspace-new-task-hit-target,' });
+  assert.deepEqual(several.map(value => value.spec).sort(), ['cross-server-handoff-atomic-commit.e2e.test.ts', 'workspace-new-task-hit-target.e2e.test.ts']);
+  // Delimiters alone are a typo, never "run everything"; blank input still is.
+  for (const only of [', ,', ',', ' , ']) assert.throws(() => selectJourneys(entries, { only }), /names no journey/);
+  assert.equal(selectJourneys(entries, { only: '  ' }).length, entries.length);
+});
+
+test('journeys needing a packaged binary or macOS are skipped in the CI lane (prerequisites unmet); everything else runs', async () => {
+  const entries = await catalog();
+  const excluded = entries.filter(entry => entry.placement !== 'manual' && unmetLaneNeeds(entry).length > 0);
+  assert.deepEqual(excluded.map(entry => [entry.spec, unmetLaneNeeds(entry).join(', ')]), [
+    ['computer-use-window-scope.e2e.test.ts', 'run on darwin'],
+    ['desktop-quit-path.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-activated-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-first-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-preactivation-egress.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['packaged-preactivation-updater.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['released-enterprise-activated.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+  ]);
+  assert(excluded.every(entry => entry.placement === 'local'));
+  assert(excluded.every(entry => !entry.critical));
+  // A lane that packages the enterprise desktop would schedule the packaged journeys again; released-enterprise-activated's
+  // update case still skips itself there without OPENWORK_EVAL_RELEASED_BASELINE_BINARY, which the verdict counts as not tested.
+  const packagedLane = { ...ciLane, env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
+  assert.deepEqual(excluded.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), ['computer-use-window-scope.e2e.test.ts']);
+  assert.deepEqual(unmetLaneNeeds(entry), []);
+});
+
+// The WHOLE-FILE blockers a spec and the worlds it imports actually gate on: env vars every
+// `needs: { env }` declaration in the spec shares (a prerequisite only one case declares is that
+// case's own, not the file's), plus env reads and platform checks in the lines leading to a
+// `throw new SkipError` or `throw new Error` in a world body (which every case runs; #4814 made a
+// missing packaged binary a hard error rather than a skip). Scoped to journeys that declare
+// `needs`: shared worlds (first-run.ts) hold scenario-specific guards, and per-scenario world
+// plans are #4771's job — this guard only keeps declared needs from drifting either way.
+function wholeFileBlockers(specSource, worldSources) {
+  const declarations = [...specSource.matchAll(/needs:\s*\{([^}]*)\}/g)].map(match => match[1]);
+  const envSets = declarations.map(body => new Set([...(body.match(/\benv:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/"(OPENWORK_EVAL_\w+)"/g)].map(name => name[1])));
+  const env = new Set(envSets.length ? [...envSets[0]].filter(name => envSets.every(set => set.has(name))) : []);
+  const platforms = declarations.map(body => body.match(/\bplatform:\s*"(\w+)"/)?.[1]);
+  let platform = platforms.length && platforms.every(value => value && value === platforms[0]) ? platforms[0] : undefined;
+  for (const text of worldSources) {
+    const lines = text.split('\n');
+    lines.forEach((line, index) => {
+      if (!/throw new (?:SkipError|Error)\(/.test(line)) return;
+      const window = lines.slice(Math.max(0, index - 2), index + 1).join('\n');
+      for (const match of window.matchAll(/process\.env\.(OPENWORK_EVAL_\w+)/g)) env.add(match[1]);
+      platform = window.match(/process\.platform\s*!==\s*"(\w+)"/)?.[1] ?? platform;
+    });
+  }
+  return { env: [...env].sort(), platform };
+}
+
+async function guardedPrerequisites(spec, root = new URL('../specs/', import.meta.url)) {
+  const source = await readFile(new URL(spec, root), 'utf8');
+  const worlds = [...new Set([...source.matchAll(/from\s+["']\.\.\/worlds\/([\w-]+\.ts)["']/g)].map(match => match[1]))];
+  return wholeFileBlockers(source, await Promise.all(worlds.map(world => readFile(new URL(`../worlds/${world}`, root), 'utf8'))));
+}
+
+test('catalog needs match the whole-file prerequisites each spec and its worlds guard, in both directions', async () => {
+  const entries = await catalog();
+  const declared = entries.filter(entry => entry.needs);
+  assert.equal(declared.length, 7);
+  for (const entry of declared) {
+    assert.deepEqual({ env: [...(entry.needs.env ?? [])].sort(), platform: entry.needs.platform }, await guardedPrerequisites(entry.spec), `${entry.spec}: catalog needs drifted from the spec/world guards`);
+  }
+  // The released spec's update case alone needs the baseline binary; that is not a whole-file blocker.
+  assert.deepEqual(await guardedPrerequisites('released-enterprise-activated.e2e.test.ts'), { env: ['OPENWORK_EVAL_ELECTRON_BINARY'], platform: undefined });
+  assert.deepEqual(await guardedPrerequisites('computer-use-window-scope.e2e.test.ts'), { env: [], platform: 'darwin' });
+  assert.deepEqual(await guardedPrerequisites('mcp-oauth-start-unreadable-response.e2e.test.ts'), { env: [], platform: undefined });
+});
+
+test('mixed-world specs: a prerequisite one case declares is never promoted to the whole file; world-body guards always are', () => {
+  const mixed = `const launch = spec.world(w, { needs: { env: ["OPENWORK_EVAL_A"] } });\nconst update = spec.world(w, { needs: { env: ["OPENWORK_EVAL_A", "OPENWORK_EVAL_B"], platform: "darwin" } });`;
+  const world = `export async function w() {\n  const binary = process.env.OPENWORK_EVAL_C?.trim();\n  if (!binary) throw new SkipError("set it");\n  if (process.platform !== "linux") throw new SkipError("linux only");\n}`;
+  assert.deepEqual(wholeFileBlockers(mixed, [world]), { env: ['OPENWORK_EVAL_A', 'OPENWORK_EVAL_C'], platform: 'linux' });
+  // A world that hard-errors on a missing prerequisite (not a skip) still declares a whole-file blocker.
+  const strict = `if (!process.env.OPENWORK_EVAL_D?.trim()) {\n  throw new Error("OPENWORK_EVAL_D must point at a packaged desktop binary");\n}`;
+  assert.deepEqual(wholeFileBlockers('', [strict]), { env: ['OPENWORK_EVAL_D'], platform: undefined });
+  assert.deepEqual(wholeFileBlockers(mixed, []), { env: ['OPENWORK_EVAL_A'], platform: undefined });
+  assert.deepEqual(wholeFileBlockers('spec.world(w, { timeout: 1, needs: { platform: "darwin" } });', []), { env: [], platform: 'darwin' });
+  // An env read that is not followed by a SkipError (optional pin) is not a blocker.
+  assert.deepEqual(wholeFileBlockers('', ['const v = process.env.OPENWORK_EVAL_OPTIONAL?.trim() || null;\nreturn v;']), { env: [], platform: undefined });
 });
 
 test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
@@ -120,6 +203,22 @@ test('missing or duplicate result cannot turn a selected journey green', () => {
   const output = aggregate(plan, [{ spec: entry.spec, status: 'passed' }]);
   assert.equal(output.ok, true);
   assert.match(markdown(output), /Critical journeys: all passed/);
+});
+
+test('skipped journeys (prerequisites unmet) are listed with their reason in every report and never decide the verdict', () => {
+  const quit = { spec: 'desktop-quit-path.e2e.test.ts', name: 'Quit an enterprise install cleanly', critical: false, placement: 'local', reason: 'set OPENWORK_EVAL_ELECTRON_BINARY' };
+  const output = aggregate({ ...plan, excluded: [quit] }, [{ spec: entry.spec, status: 'passed' }]);
+  assert.equal(output.ok, true);
+  assert.deepEqual(output.counts, { passed: 1, failed: 0, 'not tested': 0 });
+  assert.deepEqual(output.excluded, [quit]);
+  const text = markdown(output);
+  assert.match(text, /1 passed · 0 failed · 0 not tested · 1 skipped \(prerequisites unmet\)/);
+  assert.match(text, new RegExp(`\\| Quit an enterprise install cleanly \\| ${EXCLUDED_LABEL} — needs: set OPENWORK_EVAL_ELECTRON_BINARY \\|`));
+  assert.match(text, /1 journeys skipped \(prerequisites unmet\): desktop-quit-path\.e2e\.test\.ts\./);
+  assert.doesNotMatch(text, /not applicable/);
+  // A stray result for an excluded journey cannot count as coverage, and a plan without the field still reports.
+  assert.equal(aggregate({ ...plan, excluded: [quit] }, [{ spec: entry.spec, status: 'passed' }, { spec: quit.spec, status: 'passed' }]).counts.passed, 1);
+  assert.match(markdown(aggregate(plan, [{ spec: entry.spec, status: 'passed' }])), /0 skipped \(prerequisites unmet\)/);
 });
 
 test('notification distinguishes new failure, repeat, recovery and healthy run', () => {

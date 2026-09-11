@@ -259,7 +259,7 @@ test.skipIf(!mysqlOpen || !redisOpen)("an API-key client reapplies and changes a
   const providerSecret = "declarative-witness-secret";
   const key = `config-${stamp}`;
   const base = (resource: string) => `/v1/${resource}/by-key/${key}`;
-  async function request(path: string, method = "GET", body?: unknown, auth = headers) {
+  async function request(path: string, method = "GET", body?: unknown, auth: Record<string, string> = headers) {
     return denFetch(admin, path, { method, headers: auth, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
   }
   async function put(resource: string, body: unknown, status: number) {

@@ -4,8 +4,12 @@ import { denFetch } from "@openwork/behaviors";
 import { queryDenDatabase } from "@openwork/env";
 import { mcpMock, needs, server, test } from "@openwork/testkit";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function record(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected an object");
+  if (!isRecord(value)) throw new Error("Expected an object");
   return value;
 }
 
@@ -191,7 +195,7 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
     if (!match || typeof match.name !== "string" || typeof match.scriptPath !== "string") throw new Error(`Missing ${fixture.name}`);
     const capabilityName = match.name;
     const scriptPath = match.scriptPath;
-    const invoke = [
+    const invoke: { tokens: string[]; execute: (bearer: string) => Promise<Record<string, unknown>> }[] = [
       { tokens: [token, fullToken], execute: (bearer: string) => call(bearer, "execute_capability", { name: capabilityName, body: { marker: fixture.name } }) },
       { tokens: [token, fullToken], execute: (bearer: string) => call(bearer, "execute_capability", { name: fixture.name, body: { marker: fixture.name } }, `/mcp/agent/connections/${compatibilityId}`) },
       { tokens: [token, fullToken], execute: (bearer: string) => call(bearer, fixture.name, { marker: fixture.name }, `/mcp/agent/connections/${directId}`) },
