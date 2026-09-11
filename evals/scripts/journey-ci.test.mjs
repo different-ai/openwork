@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { judgeJourneys } from './judge-journeys.mjs';
 import assert from 'node:assert/strict';
 import { catalog, ciLane, registeredCases, selectJourneys, unmetLaneNeeds } from './journey-catalog.mjs';
-import { aggregate, classify, markdown } from './journey-report.mjs';
+import { EXCLUDED_LABEL, aggregate, classify, markdown } from './journey-report.mjs';
 import { notification, deliver, validateReport, findStateRun } from './notify-journeys.mjs';
 
 const summary = { command: 'evals:e2e', verdict: 'passed', passed: 1, failed: 0, skipped: 0 };
@@ -184,17 +184,20 @@ test('missing or duplicate result cannot turn a selected journey green', () => {
   assert.match(markdown(output), /Critical journeys: all passed/);
 });
 
-test('not applicable journeys are listed with their reason and never decide the verdict', () => {
+test('skipped journeys (prerequisites unmet) are listed with their reason in every report and never decide the verdict', () => {
   const quit = { spec: 'desktop-quit-path.e2e.test.ts', name: 'Quit an enterprise install cleanly', critical: false, placement: 'local', reason: 'set OPENWORK_EVAL_ELECTRON_BINARY' };
-  const output = aggregate({ ...plan, notApplicable: [quit] }, [{ spec: entry.spec, status: 'passed' }]);
+  const output = aggregate({ ...plan, excluded: [quit] }, [{ spec: entry.spec, status: 'passed' }]);
   assert.equal(output.ok, true);
   assert.deepEqual(output.counts, { passed: 1, failed: 0, 'not tested': 0 });
+  assert.deepEqual(output.excluded, [quit]);
   const text = markdown(output);
-  assert.match(text, /1 passed · 0 failed · 0 not tested · 1 not applicable/);
-  assert.match(text, /\| Quit an enterprise install cleanly \| not applicable — needs: set OPENWORK_EVAL_ELECTRON_BINARY \|/);
+  assert.match(text, /1 passed · 0 failed · 0 not tested · 1 skipped \(prerequisites unmet\)/);
+  assert.match(text, new RegExp(`\\| Quit an enterprise install cleanly \\| ${EXCLUDED_LABEL} — needs: set OPENWORK_EVAL_ELECTRON_BINARY \\|`));
+  assert.match(text, /1 journeys skipped \(prerequisites unmet\): desktop-quit-path\.e2e\.test\.ts\./);
+  assert.doesNotMatch(text, /not applicable/);
   // A stray result for an excluded journey cannot count as coverage, and a plan without the field still reports.
-  assert.equal(aggregate({ ...plan, notApplicable: [quit] }, [{ spec: entry.spec, status: 'passed' }, { spec: quit.spec, status: 'passed' }]).counts.passed, 1);
-  assert.match(markdown(aggregate(plan, [{ spec: entry.spec, status: 'passed' }])), /0 not applicable/);
+  assert.equal(aggregate({ ...plan, excluded: [quit] }, [{ spec: entry.spec, status: 'passed' }, { spec: quit.spec, status: 'passed' }]).counts.passed, 1);
+  assert.match(markdown(aggregate(plan, [{ spec: entry.spec, status: 'passed' }])), /0 skipped \(prerequisites unmet\)/);
 });
 
 test('notification distinguishes new failure, repeat, recovery and healthy run', () => {
