@@ -1,0 +1,66 @@
+{{- /*
+  RBAC for the migration Job's wait-for-secret init container: the Job polls
+  for an asynchronously materialized Secret (ESO / out-of-band creation)
+  instead of failing on the env secretKeyRef. Rendered only outside inline
+  mode. In hook mode these must be hooks with an earlier weight than the Job
+  (-6 precedes the Job's -5) so they exist before it starts.
+*/}}
+{{- /* Runs the legacy create=false shim before the secretsMode check below. */}}
+{{- include "openwork-ee.secretsMode.validate" . }}
+{{- if and .Values.migrations.enabled (ne .Values.secret.secretsMode "inline") }}
+{{- $asHook := .Values.migrations.hook }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-migrate
+  namespace: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "migration") | nindent 4 }}
+  {{- if $asHook }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-6"
+    "helm.sh/hook-delete-policy": before-hook-creation
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-migrate
+  namespace: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "migration") | nindent 4 }}
+  {{- if $asHook }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-6"
+    "helm.sh/hook-delete-policy": before-hook-creation
+  {{- end }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ include "openwork-ee.secretName" . }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-migrate
+  namespace: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "migration") | nindent 4 }}
+  {{- if $asHook }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-6"
+    "helm.sh/hook-delete-policy": before-hook-creation
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "openwork-ee.fullname" . }}-migrate
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openwork-ee.fullname" . }}-migrate
+    namespace: {{ include "openwork-ee.namespace" . }}
+{{- end }}

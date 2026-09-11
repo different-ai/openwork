@@ -1,0 +1,46 @@
+{{- /*
+  lookup returns empty under helm template / ArgoCD repo-server rendering, so
+  GitOps flows still get the Namespace manifest; a live helm install/upgrade
+  skips it when the namespace already exists, avoiding AlreadyExists failures
+  against pre-provisioned namespaces.
+
+  When migrations run as pre-install/pre-upgrade hooks, the hook chain
+  (ExternalSecret, migration RBAC, migration Job) is applied before normal
+  manifests — so a first-time install into a fresh namespace would create
+  namespaced hook resources before the Namespace exists. Render the Namespace
+  as the earliest hook (weight -11, preceding the ExternalSecret's -10) in
+  that case so the whole install proceeds without pre-provisioning. A hook
+  Namespace is cluster-scoped and immediately ready, so hook completion is
+  not delayed. helm uninstall does not remove hook resources, so the
+  Namespace outlives the release (intentional — deleting it would cascade to
+  any externally-created resources in it).
+*/ -}}
+{{- $namespaceName := include "openwork-ee.namespace" . | trimAll "\"" -}}
+{{- /*
+  Gate the cluster-scoped lookup behind createNamespace so restricted-RBAC
+  helm install/upgrade (no get on cluster Namespaces) still renders when the
+  feature is off.
+*/ -}}
+{{- $existing := dict -}}
+{{- if .Values.createNamespace -}}
+{{- $existing = lookup "v1" "Namespace" "" $namespaceName -}}
+{{- end -}}
+{{- if and .Values.createNamespace (not $existing) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+  {{- /*
+    No hook-delete-policy here: before-hook-creation would delete and recreate
+    the Namespace on any hook re-run, cascade-deleting everything inside it.
+    Hook + weight alone give the ordering; the lookup guard above already
+    suppresses re-creation on live installs.
+  */}}
+  {{- if .Values.migrations.hook }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-11"
+  {{- end }}
+{{- end }}

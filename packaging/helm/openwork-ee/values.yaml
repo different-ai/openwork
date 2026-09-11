@@ -1,6 +1,19 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# Kubernetes namespace where every namespaced resource (Deployments, Services,
+# ConfigMap, Secret, Ingress, migration Job, ...) is deployed. The chart sets
+# metadata.namespace explicitly so `helm template | kubectl apply` pipelines do
+# not fall back to the kubectl context namespace (e.g. kube-system). When using
+# `helm install`, keep this aligned with `--namespace` / the release namespace.
+namespace: openwork
+
+# Render a Namespace object for the namespace above, so GitOps flows (ArgoCD
+# runs helm template and does not create namespaces unless CreateNamespace=true)
+# manage it as a resource from git. Set false only when the platform team
+# provisions namespaces out of band.
+createNamespace: true
+
 image:
   # Blank pins every image to the chart appVersion, which the publish workflow
   # stamps with the release version, so `--version X` deploys the X images.
@@ -161,7 +174,26 @@ redis:
   allowInsecureInternal: false
 
 secret:
+  # How this deployment manages secrets. One of:
+  #   inline:         the chart renders a v1/Secret from secret.values.
+  #                   Local evaluation only — the values live wherever this
+  #                   values file lives, so never commit real credentials.
+  #   existingSecret: workloads consume a pre-created Secret named by
+  #                   secret.existingSecret; the chart renders nothing.
+  #   externalSecrets: the chart renders an ExternalSecret (ESO) that
+  #                   materializes the workload Secret from an external provider
+  #                   — the GitOps/ArgoCD-safe path; git holds only store
+  #                   references and remote key paths.
+  secretsMode: inline
+  # Must be true when secretsMode: inline and false in every other mode; the
+  # render fails otherwise. Exception: legacy values files upgraded from
+  # before secretsMode that set create: false with the untouched placeholder
+  # values below are auto-corrected to existingSecret mode (using the
+  # chart-created secret name when existingSecret is blank) — real values with
+  # create: false still fail the render.
   create: true
+  # REQUIRED when secretsMode: existingSecret — must be populated, not blank
+  # or empty (the render fails otherwise). Must stay empty in other modes.
   existingSecret: ""
   keys:
     databaseUrl: DATABASE_URL
@@ -184,6 +216,10 @@ secret:
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
     connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
+  # Used ONLY when secretsMode: inline; ignored otherwise. REQUIRED then:
+  # databaseUrl, betterAuthSecret, denDbEncryptionKey (the workloads cannot
+  # start without them). Never commit real credentials here — use
+  # externalSecrets mode for anything beyond local evaluation.
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     databaseRedisUrl: ""
@@ -205,6 +241,62 @@ secret:
     githubConnectorAppWebhookSecret: ""
     connectLinkPrivateKey: ""
     initialAdminBootstrapCode: ""
+
+# External Secrets Operator (ESO) configuration. Active only when
+# secretsMode: externalSecrets; the chart renders an ExternalSecret that
+# materializes the workload Secret from the provider. Requires ESO and a
+# SecretStore/ClusterSecretStore on the destination cluster.
+externalSecrets:
+  # ATTENTION: the three boot-critical keys (DATABASE_URL, BETTER_AUTH_SECRET,
+  # DEN_DB_ENCRYPTION_KEY) and every key you list under optionalKeys must exist
+  # in your provider under pathPrefix — the chart pulls each rendered key by
+  # name from <pathPrefix>/<KEY_NAME> and a missing rendered key fails the
+  # ExternalSecret. Keys you neither need nor list are not pulled.
+  # How often ESO re-syncs the Secret from the provider.
+  refreshInterval: 1h
+  # Store holding the remote keys. For AWS Secrets Manager the store's
+  # spec.provider.aws is configured on the (Cluster)SecretStore itself; the
+  # chart only references it by name.
+  secretStoreRef:
+    # REQUIRED when secretsMode: externalSecrets — must be populated, not
+    # blank or empty (the render fails otherwise), and must match the name of
+    # your SecretStore/ClusterSecretStore. Without it ESO has no provider to
+    # read from.
+    name: "external-secrets"
+    kind: ClusterSecretStore
+  target:
+    # Owner deletes the Secret with the ExternalSecret; Merge keeps it.
+    creationPolicy: Owner
+    # Retain keeps the Secret if the ExternalSecret is deleted.
+    deletionPolicy: Retain
+  # Remote path trunk: keys are pulled from <pathPrefix>/<KEY_NAME>. The chart
+  # renders spec.data for the three boot-critical keys (DATABASE_URL,
+  # BETTER_AUTH_SECRET, DEN_DB_ENCRYPTION_KEY) plus the entries explicitly
+  # selected in optionalKeys. The optional list is opt-in and maintained by
+  # hand — if a future feature starts consuming a new secret key, add its
+  # secret.keys.* name to optionalKeys and create the provider entry.
+  # REQUIRED when secretsMode: externalSecrets (render fails if blank).
+  # Example (AWS Secrets Manager): pathPrefix: "eks/openwork/prod/den"
+  pathPrefix: ""
+  # Optional keys to also pull from the provider. Entries are secret.keys
+  # property names (camelCase, e.g. smtpPass, databaseRedisUrl); the provider
+  # path and target Secret key use the corresponding value (SMTP_PASS).
+  # Only listed keys get a spec.data entry — ESO's remoteRef has no "skip if
+  # missing", so keys you do not list here need not exist in the provider and
+  # simply do not land in the Secret.
+  optionalKeys: []
+  # Seconds the workload init container waits for an optional key to appear in
+  # the materialized Secret before starting without it. envFrom snapshots keys
+  # at pod start, so a pod that boots before ESO reconciles a newly added
+  # optional key would otherwise hold a stale environment until its next
+  # restart. Required keys always block indefinitely. Set 0 to skip waiting
+  # for optional keys entirely.
+  optionalKeyWaitSeconds: 60
+  # Strategy fields applied uniformly to every pulled key (ESO defaults,
+  # matching the external-secrets.io/v1 schema).
+  conversionStrategy: Default
+  decodingStrategy: None
+  metadataPolicy: None
 
 installerArtifacts:
   enabled: false
@@ -308,6 +400,12 @@ migrations:
   activeDeadlineSeconds: 1800
   podAnnotations: {}
   resources: {}
+  # Pinned kubectl image for the wait-for-secret init container (non-inline
+  # secretsModes). Keep this at a specific patch version (or digest); avoid
+  # floating tags so installs are reproducible.
+  kubectlImage:
+    repository: bitnami/kubectl
+    tag: "1.33.4"
   command:
     - node
   args:

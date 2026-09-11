@@ -89,6 +89,33 @@ ingress:
     host: api.openwork.example.com
 ```
 
+### Namespace
+
+The chart sets `metadata.namespace` on every namespaced resource (Deployments,
+Services, ConfigMap, Secret, Ingress, migration Job) from the `namespace` value,
+which defaults to `openwork`:
+
+~~~yaml
+namespace: openwork
+~~~
+
+To use the Helm release namespace instead, set `namespace: ""` (or `--set namespace=`).
+
+This keeps `helm template ... | kubectl apply -f -` pipelines from falling back
+to the kubectl context namespace (e.g. `kube-system`). When installing with
+Helm, keep `namespace` aligned with the release namespace:
+
+```bash
+helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
+  --namespace openwork \
+  --create-namespace \
+  -f values.prod.yaml
+```
+
+When applying rendered manifests directly, create the namespace first
+(`kubectl create namespace openwork`) since Helm does not create it for you in
+that flow.
+
 ### Upgrade note: public URL values
 
 Current chart versions make `config.public.webOrigin` the primary public URL.
@@ -266,19 +293,110 @@ Published self-host planning pages:
 
 ## Secrets
 
-The chart can create an Opaque Secret from `secret.values`, or consume an existing Secret:
+The deployment declares how it manages secrets with a single key:
 
 ```yaml
 secret:
+  secretsMode: inline # inline | existingSecret | externalSecrets
+```
+
+- `inline` (default): the chart renders an Opaque Secret from `secret.values`.
+  Local evaluation only — the values live wherever the values file lives, so
+  never commit real credentials.
+- `existingSecret`: workloads consume a pre-created Secret named by
+  `secret.existingSecret` (requires `secret.create: false`); the chart renders
+  no secret resource.
+- `externalSecrets`: the chart renders an
+  [External Secrets Operator](https://external-secrets.io/) `ExternalSecret`
+  that materializes the workload Secret from an external provider — the
+  GitOps/ArgoCD-safe path, where git holds only store references and remote
+  key paths (requires `secret.create: false`).
+
+Any `secret.keys` override applies in every mode, since all three resolve the
+workload Secret through the same names. The mode combinations are enforced at
+render time: an unknown `secretsMode`, a missing `secret.existingSecret` in
+`existingSecret` mode, `secret.existingSecret` set in any other mode, and
+`secret.create: true` outside `inline` mode all fail the render.
+
+### existingSecret
+
+```yaml
+secret:
+  secretsMode: existingSecret
   create: false
   existingSecret: openwork-ee-secrets
 ```
 
-The existing Secret must contain the keys listed under `secret.keys`, especially:
+The existing Secret must be created in the `namespace` where the chart deploys
+(default `openwork`) before the workloads start, and must contain the keys
+listed under `secret.keys`, especially:
 
 - `DATABASE_URL`
 - `BETTER_AUTH_SECRET`
 - `DEN_DB_ENCRYPTION_KEY`
+
+### externalSecrets (GitOps / ArgoCD)
+
+For GitOps flows (ArgoCD runs `helm template`, so anything in values lands in
+git and in rendered manifests), use ESO mode. The chart renders an
+`ExternalSecret` that materializes the same-named workload Secret from your
+provider in-cluster:
+
+The chart renders `spec.data` — the oldest stable ESO shape, unchanged since
+`external-secrets.io/v1beta1` — pulling keys from `<pathPrefix>/<KEY_NAME>` in
+the provider. Only the three boot-critical keys (`DATABASE_URL`,
+`BETTER_AUTH_SECRET`, `DEN_DB_ENCRYPTION_KEY`) are rendered by default; add
+more by name via `optionalKeys`:
+
+```yaml
+secret:
+  secretsMode: externalSecrets
+  create: false
+externalSecrets:
+  secretStoreRef:
+    # References an existing (Cluster)SecretStore; for AWS Secrets Manager the
+    # store itself carries spec.provider.aws (region, auth), the chart only
+    # points at it by name.
+    name: external-secrets
+    kind: ClusterSecretStore
+  refreshInterval: 5m
+  # The three boot-critical keys must exist under this trunk, e.g.
+  # eks/openwork/prod/den/DATABASE_URL.
+  pathPrefix: "eks/openwork/prod/den"
+  # Additional keys to pull, by secret.keys.* name. Only listed keys are
+  # rendered, so keys you do not list need not exist in the provider.
+  optionalKeys:
+    - databaseRedisUrl
+    - emailFrom
+    - smtpHost
+    - smtpPort
+    - smtpUser
+    - smtpPass
+    - smtpSecure
+```
+
+The three required keys must exist in your provider under `pathPrefix` — a
+missing one fails the ExternalSecret loudly. ESO's `remoteRef` has no
+"skip-if-missing" field, so optional keys are opt-in: any `secret.keys.*` name
+you list under `optionalKeys` must exist in the provider, and keys you omit do
+not land in the Secret. Omitted keys are simply absent from the workload
+environment, so check each consumer before omitting one. Two illustrative
+cases: `DAYTONA_API_KEY` is *required* when `config.provisioner.mode` is
+`daytona` — Den API rejects startup without it, so omitting it there breaks
+boot, whereas it is safe to omit under the default `stub` provisioner; and
+omitted `SMTP_PORT`/`SMTP_SECURE` fall back to the application's own defaults
+(`587` / `false`) whenever they are absent, regardless of whether the Secret
+carries them. `optionalKeys`
+entries are `secret.keys` **property names** (camelCase, e.g. `smtpPass`); the
+provider path and the target Secret key use the corresponding **value**
+(`SMTP_PASS` by default, overridable via `secret.keys.smtpPass`). So list
+`smtpPass` here, ensure `eks/.../SMTP_PASS` (or your overridden value) exists
+in the provider, and the Secret key will be `SMTP_PASS`.
+`target.deletionPolicy` defaults to `Retain`, so uninstalling the release keeps
+the materialized Secret. ESO must be installed on the destination cluster with
+a `SecretStore`/`ClusterSecretStore`; the chart selects
+`external-secrets.io/v1` or `v1beta1` from cluster capabilities and fails
+loudly at sync time if the CRDs are missing.
 
 Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 

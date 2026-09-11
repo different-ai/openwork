@@ -1,9 +1,12 @@
 {{- include "openwork-ee.customCa.validate" . }}
+{{- /* Runs the legacy create=false shim before any secretsMode check below. */}}
+{{- include "openwork-ee.secretsMode.validate" . }}
 {{- if .Values.migrations.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: {{ include "openwork-ee.fullname" . }}-migrate
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "migration") | nindent 4 }}
   {{- if .Values.migrations.hook }}
@@ -27,6 +30,9 @@ spec:
       {{- end }}
     spec:
       restartPolicy: Never
+      {{- if ne .Values.secret.secretsMode "inline" }}
+      serviceAccountName: {{ include "openwork-ee.fullname" . }}-migrate
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -34,6 +40,17 @@ spec:
       {{- if .Values.customCa.enabled }}
       volumes:
         {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+      {{- end }}
+      {{- /*
+        When the Secret is materialized asynchronously (ESO or out-of-band
+        creation), the Job must not fail on a missing Secret before it exists.
+        Block in an init container until it appears (and, in externalSecrets
+        mode, holds the expected keys) instead of erroring on the env
+        secretKeyRef.
+      */}}
+      {{- if ne .Values.secret.secretsMode "inline" }}
+      initContainers:
+        {{- include "openwork-ee.waitForSecretInitContainer" . | nindent 8 }}
       {{- end }}
       containers:
         - name: migrate
@@ -51,22 +68,22 @@ spec:
             - name: DB_MODE
               value: {{ .Values.config.databaseMode | quote }}
             - name: DATABASE_URL
-              {{- if .Values.secret.create }}
+              {{- if eq .Values.secret.secretsMode "inline" }}
               value: {{ .Values.secret.values.databaseUrl | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
                   name: {{ include "openwork-ee.secretName" . }}
-                  key: {{ .Values.secret.keys.databaseUrl }}
+                  key: {{ .Values.secret.keys.databaseUrl | quote }}
               {{- end }}
             - name: DEN_DB_ENCRYPTION_KEY
-              {{- if .Values.secret.create }}
+              {{- if eq .Values.secret.secretsMode "inline" }}
               value: {{ .Values.secret.values.denDbEncryptionKey | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
                   name: {{ include "openwork-ee.secretName" . }}
-                  key: {{ .Values.secret.keys.denDbEncryptionKey }}
+                  key: {{ .Values.secret.keys.denDbEncryptionKey | quote }}
               {{- end }}
             {{- if .Values.customCa.enabled }}
             {{- include "openwork-ee.customCa.env" . | nindent 12 }}

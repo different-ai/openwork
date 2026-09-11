@@ -1,0 +1,44 @@
+{{- /*
+  ServiceAccount + Role + RoleBinding for the workload Deployments
+  (den-api, den-web, inference) so their wait-for-secret init containers can
+  read the workload Secret. Rendered only outside inline mode. Not hook
+  resources — these must persist for the life of the Deployments.
+*/}}
+{{- if ne .Values.secret.secretsMode "inline" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-workload
+  namespace: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-workload
+  namespace: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ include "openwork-ee.secretName" . }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-workload
+  namespace: {{ include "openwork-ee.namespace" . }}
+  labels:
+    {{- include "openwork-ee.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "openwork-ee.fullname" . }}-workload
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openwork-ee.fullname" . }}-workload
+    namespace: {{ include "openwork-ee.namespace" . }}
+{{- end }}

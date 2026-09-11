@@ -3,6 +3,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "openwork-ee.denApiServiceName" . }}
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
   {{- with .Values.denApi.service.annotations }}
@@ -29,6 +30,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "openwork-ee.fullname" . }}-den-api
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
 spec:
@@ -45,7 +47,7 @@ spec:
         {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/secret: {{ include "openwork-ee.secretChecksum" . }}
         {{- with .Values.denApi.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -78,6 +80,11 @@ spec:
         {{- if .Values.customCa.enabled }}
         {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
         {{- end }}
+      {{- end }}
+      {{- if ne .Values.secret.secretsMode "inline" }}
+      serviceAccountName: {{ include "openwork-ee.fullname" . }}-workload
+      initContainers:
+        {{- include "openwork-ee.waitForSecretInitContainer" . | nindent 8 }}
       {{- end }}
       containers:
         - name: den-api
