@@ -2552,7 +2552,7 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
-  const { archiveSession, stopSession, archiveDialog } = useSessionArchive({
+  const { archiveSession, archiveDialog } = useSessionArchive({
     workspaces,
     sessionsByWorkspaceId,
     endpointForWorkspace,
@@ -2592,7 +2592,6 @@ export function SessionRoute() {
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
     archiveSession,
-    stopSession,
   });
 
   const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {

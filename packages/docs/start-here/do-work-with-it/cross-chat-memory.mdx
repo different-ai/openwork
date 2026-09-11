@@ -30,13 +30,12 @@ Because this uses the OpenWork UI, the agent may briefly navigate away from your
 
 ## How agents manage other sessions
 
-An agent can start sessions (`session.create`), stop them (`session.stop`), and file idle ones away (`session.archive`). The rule is check status, then stop, then archive, and a warning always goes back through the channel the request came from: you get a dialog, an agent gets a structured result in its own conversation.
+An agent can start sessions (`session.create`) and file idle ones away (`session.archive`). The rule is check status, then archive, and a warning always goes back through the channel the request came from: you get a dialog, an agent gets a structured result in its own conversation.
 
 1. **Check status.** `session.list_sessions` and `session.read` return `status` and a `working` boolean for every session. `working` is true while a turn, subtask, permission request, or question is still open.
-2. **Stop when you ask for it.** `session.stop` is the Stop button for any session by id: it aborts the current turn, cancels its subtasks and queued messages, and leaves you where you are. Stopping an idle session is a no-op (`alreadyIdle`). The safeguard is attribution, not a gate: every agent-initiated stop shows `Session stopped: …` with **Requested by** naming the agent session that asked, both as a toast and as an entry in the notification bell with a **View** action, so you can always see who stopped what.
-3. **Archive once it is idle.** Archiving a session with `working: false` completes immediately and preserves its context. If an agent tries to archive a session that is still working, nothing happens in the app: the agent receives `target_working` with the advice to call `session.stop` first if you want it closed, or to leave it running. A session that tries to archive itself, or its parent, from inside its own turn receives `self_archive_while_working`: it should finish the turn so its conclusions can be reviewed; the reviewer archives. Restoring an archived session never restarts stopped work.
+2. **Archive once it is idle.** Archiving a session with `working: false` completes immediately and preserves its context. If an agent tries to archive a session that is still working, nothing happens in the app: the agent receives `target_working` with the advice to ask you to stop it in the app if you want it closed, or to leave it running. A session that tries to archive itself, or its parent, from inside its own turn receives `self_archive_while_working`: it should finish the turn so its conclusions can be reviewed; the reviewer archives. Restoring an archived session never restarts stopped work.
 
-When you archive a working session yourself, from the sidebar, OpenWork asks a short confirmation naming the session ("Stop the current task and archive?") with **Keep session open** and **Stop and archive**.
+Stopping a session is yours: use the Stop button in that conversation. When you archive a working session yourself, from the sidebar, OpenWork asks a short confirmation naming the session ("Stop the current task and archive?") with **Keep session open** and **Stop and archive**.
 
 ## Current limits
 
