@@ -3309,6 +3309,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         </div>
         <SessionHistoryStatus key={sessionOwner} complete={hasFullHistory} pending={pendingSessionLoad}
+          loading={snapshotQuery.isFetching && openingHistory.partial}
           failed={snapshotQuery.isError && !snapshotQuery.isFetching} onRetry={() => snapshotQuery.refetch()} />
         <SessionScrollOverlay
           sessionId={props.sessionId}

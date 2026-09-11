@@ -179,10 +179,16 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
       if (second !== undefined) window.cancelAnimationFrame(second);
     };
   }, [input.owner, query.isSuccess, hasFullSnapshot]);
+  const snapshot = hasFullSnapshot ? null : query.data?.snapshot ?? null;
+  const limit = openingHistoryWindow(saved).limit;
   return {
     saved,
     options,
-    snapshot: hasFullSnapshot ? null : query.data?.snapshot ?? null,
+    snapshot,
+    // A newest window that came back shorter than its limit already holds the
+    // whole conversation. Only a full window, a saved-position window, or an
+    // unavailable preview can still be missing earlier messages.
+    partial: snapshot === null || limit === undefined || snapshot.messages.length >= limit,
     backgroundReady: hasFullSnapshot || backgroundOwner === input.owner,
     ensureFullSnapshot,
     runWithFullSnapshot,
@@ -207,15 +213,22 @@ export function SessionHistoryLoading({ saved, failed = false }: { saved: Sessio
   </div>;
 }
 
-export function SessionHistoryStatus({ complete, pending, failed, onRetry }: {
+export function SessionHistoryStatus({ complete, pending, loading, failed, onRetry }: {
   complete: boolean;
   pending: boolean;
+  /** The uncapped read is in flight and may still add earlier messages. */
+  loading: boolean;
   failed: boolean;
   onRetry: () => Promise<unknown>;
 }) {
   const [retrying, setRetrying] = useState(false);
   const retryPending = useRef(false);
   if (complete || (pending && !failed && !retrying)) return null;
+  // Only a read that is actually in flight may announce loading. A read that
+  // is not enabled yet, paused, or reverted by a cancellation has nothing to
+  // report, and an announcement derived from missing history alone would sit
+  // over the first message with nothing left to clear it.
+  if (!loading && !failed && !retrying) return null;
   return <div data-thread-history-status className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
     <div role={failed && !retrying ? "alert" : "status"} aria-live="polite" className="pointer-events-auto flex items-center gap-2 rounded-md bg-dls-surface/95 px-3 py-1 text-xs text-dls-secondary shadow-sm">
       <span>{retrying ? pending ? "Loading conversation…" : "Loading earlier messages…" : failed

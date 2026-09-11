@@ -40,6 +40,9 @@ afterAll(async () => {
   if (ownedDom) await GlobalRegistrator.unregister();
 });
 
+// A newest window that fills its limit may still be missing earlier messages.
+const fullWindow = Array.from({ length: 24 }, (_, index) => `w${index}`);
+
 function snapshot(id: string, title: string, ids: string[] = [], revert?: string): OpenworkSessionSnapshot {
   return {
     session: { id, title, version: "1", time: { created: 1, updated: 1 }, revert: revert ? { messageID: revert } : undefined },
@@ -97,7 +100,7 @@ function fixture() {
     const failed = full.isError && !full.isFetching;
     return <><span>Composer {owner}</span><input aria-label="Draft" /><div className="relative"><div data-thread-scroll><SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
       <div>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.id}</div>)}
-    </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} failed={failed} onRetry={() => full.refetch()} /></div></>;
+    </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} loading={full.isFetching && opening.partial} failed={failed} onRetry={() => full.refetch()} /></div></>;
   }
   async function renderInput(options: ReturnType<typeof input>, mount: { strict?: boolean; onMount?: (ensure: () => Promise<OpenworkSessionSnapshot>) => void } = {}) {
     const tree = <QueryClientProvider client={client}><Harness options={options} onMount={mount.onMount} /></QueryClientProvider>;
@@ -339,27 +342,34 @@ describe("opening a thread", () => {
   test("partial, failed, retrying, and complete history status stays outside the reader's scroll geometry", async () => {
     const view = fixture();
     await view.render();
-    await view.resolve(0, snapshot("a", "Reading preview", ["anchor"]));
+    await view.resolve(0, snapshot("a", "Reading preview", [...fullWindow, "anchor"]));
     const scroller = view.host.querySelector<HTMLDivElement>("[data-thread-scroll]");
     if (!scroller) throw new Error("Missing scroll viewport");
     scroller.scrollTop = 800;
     const anchor = scroller.querySelector('[data-message-id="anchor"]');
-    const checkGeometry = () => {
+    const checkGeometry = (status: string | null) => {
       expect(view.host.querySelector("[data-thread-scroll]")).toBe(scroller);
       expect(scroller.scrollTop).toBe(800);
       expect(scroller.querySelector('[data-message-id="anchor"]')).toBe(anchor);
       expect(scroller.querySelector("[data-thread-history-status]")).toBeNull();
-      expect(view.host.querySelector("[data-thread-history-status]")?.className).toContain("absolute");
+      const element = view.host.querySelector("[data-thread-history-status]");
+      if (status === null) expect(element).toBeNull();
+      else {
+        expect(element?.className).toContain("absolute");
+        expect(element?.textContent).toContain(status);
+      }
     };
-    checkGeometry();
+    // Nothing is in flight until the uncapped read is staged.
+    checkGeometry(null);
     await paint();
     await paint();
+    checkGeometry("Loading earlier messages…");
     await act(async () => view.reads[1].reject(new Error("Full read unavailable")));
     await settle();
-    checkGeometry();
+    checkGeometry("could not be loaded");
     await act(async () => view.host.querySelector("button")?.click());
-    checkGeometry();
-    await view.resolve(2, snapshot("a", "Full history", ["before", "anchor", "after"]));
+    checkGeometry("Retrying…");
+    await view.resolve(2, snapshot("a", "Full history", ["before", ...fullWindow, "anchor", "after"]));
     expect(scroller.scrollTop).toBe(800);
     expect(scroller.querySelector('[data-message-id="anchor"]')).toBe(anchor);
     expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
@@ -565,10 +575,12 @@ describe("opening a thread", () => {
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
     expect(view.host.textContent).toContain("Composer a");
     expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }]);
-    await view.resolve(0, "Latest messages");
+    await view.resolve(0, snapshot("a", "Latest messages", fullWindow));
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
     expect(view.host.textContent).toContain("Latest messages");
     expect(view.reads).toHaveLength(1);
+    // The window is full, yet nothing is loading until the read is staged.
+    expect(view.host.querySelector('[role="status"]')).toBeNull();
     await paint();
     expect(view.reads).toHaveLength(1);
     await paint();
@@ -582,6 +594,46 @@ describe("opening a thread", () => {
     expect(view.host.querySelector('[role="status"]')).toBeNull();
     await act(async () => { jest.advanceTimersByTime(150); });
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
+  });
+
+  test("a short preview never announces earlier messages, and a reverted read does not stay announced", async () => {
+    // A newest window shorter than its limit is the whole conversation: the
+    // uncapped read still runs, but there are no earlier messages to announce
+    // over the first one.
+    const short = fixture();
+    await short.render();
+    await short.resolve(0, snapshot("a", "Whole conversation", ["first", "second"]));
+    await paint();
+    await paint();
+    expect(short.reads.map((read) => read.window)).toEqual([{ limit: 24 }, undefined]);
+    expect(short.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(short.host.querySelectorAll("[data-message-id]")).toHaveLength(2);
+    await short.resolve(1, snapshot("a", "Whole conversation", ["first", "second"]));
+    expect(short.host.querySelector("[data-thread-history-status]")).toBeNull();
+    await cleanups.pop()?.();
+
+    // A cancelled read reverts to idle without history. The announcement must
+    // follow the read, not the missing history, or it never clears.
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, snapshot("a", "Partial window", fullWindow));
+    await paint();
+    await paint();
+    expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
+    await act(async () => { await view.client.cancelQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await settle();
+    expect(view.reads[1].signal.aborted).toBe(true);
+    expect(view.client.getQueryState(snapshotKey("workspace", "a"))).toMatchObject({ status: "pending", fetchStatus: "idle" });
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.host.querySelector('[role="alert"]')).toBeNull();
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(24);
+    await act(async () => { void view.client.refetchQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await settle();
+    expect(view.reads).toHaveLength(3);
+    expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
+    await view.resolve(2, snapshot("a", "Complete history", ["earlier", ...fullWindow]));
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(25);
   });
 
   test("saved positions request their own region, while a late previous-thread preview cannot render in the destination", async () => {
