@@ -102,10 +102,16 @@ jobs:
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
       - name: Prepare virtual display
+        timeout-minutes: 4
+        shell: bash
         run: |
+          set -euo pipefail
+          node --test scripts/ci/ubuntu-apt-https.test.mjs
           if ! command -v xvfb-run >/dev/null || ! command -v xdpyinfo >/dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y xvfb x11-utils
+            sudo "$(command -v node)" scripts/ci/ubuntu-apt-https.mjs
+            apt_options=(-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1)
+            sudo apt-get "${apt_options[@]}" update --error-on=any -qq
+            sudo apt-get "${apt_options[@]}" install -y xvfb x11-utils
           fi
       - name: Package and smoke-test the installed desktop
         timeout-minutes: 7
