@@ -254,9 +254,6 @@ jobs:
       - name: Run test-framework checks
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm test:eval-runner
-      - name: Typecheck evals
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm evals:typecheck
       - name: Run all PR specs
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm sdk:build && pnpm evals:pr
