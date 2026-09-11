@@ -501,7 +501,8 @@ describe("cloud provider sync gateway", () => {
       expect((await put("/den-session", "org_new")).status).toBe(204);
       // Join delivery, then force the same no-op a 20 ms timer can complete before
       // a status observer wakes. lastRun is not history; assert durable effects.
-      expect(["applied", "noop"]).toContain((await runSync(base, "identity-ready")).status);
+      expect(await runSync(base, "identity-ready"))
+        .toMatchObject({ status: expect.stringMatching(/^(applied|noop)$/) });
       expect(await runSync(base, "after-ready")).toEqual({ status: "noop" });
       expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeDefined();
       expect((await new EnvService({ path: process.env.OPENWORK_ENV_STORE }).list())
