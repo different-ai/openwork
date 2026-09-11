@@ -25,6 +25,7 @@ import {
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_BACKSPACE_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
   type SerializedTextNode,
@@ -39,6 +40,7 @@ import { parseConnectSkillToken } from "./connect-skill-token";
 import { encodeConnectorToken, parseConnectorToken } from "./connector-token";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
+import { lineBoundaryMoveForKey } from "./line-boundary-keys";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -1259,6 +1261,30 @@ function MentionChipNavigationPlugin() {
   return null;
 }
 
+// Home / End move the caret to the line boundary (Shift extends). See
+// lineBoundaryMoveForKey for why Chromium on macOS does not do this itself.
+function LineBoundaryKeysPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event: KeyboardEvent) => {
+        const move = lineBoundaryMoveForKey(event);
+        if (!move) return false;
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return false;
+        event.preventDefault();
+        selection.modify(move.alter, move.backward, "lineboundary");
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEditorHandle> }) {
   const [editor] = useLexicalComposerContext();
 
@@ -1398,6 +1424,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentChipPlugin onRemoveAttachment={props.onRemoveAttachment} onExpandAttachment={props.onExpandAttachment} />
         <MentionChipNavigationPlugin />
+        <LineBoundaryKeysPlugin />
         <ImperativeHandlePlugin editorRef={ref} />
       </div>
     </LexicalComposer>

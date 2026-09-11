@@ -404,6 +404,13 @@ const EDITING_COMMANDS: Record<string, string[]> = {
   "Control+A": ["selectAll"],
   "Meta+ArrowDown": ["moveToEndOfDocument"],
   "Control+End": ["moveToEndOfDocument"],
+  // macOS standard key bindings: bare Home/End scroll the document and only
+  // move the caret when nothing in the scroll chain accepts the scroll. Named
+  // on every lane so specs see the same keys a Mac user presses.
+  Home: ["scrollToBeginningOfDocument"],
+  End: ["scrollToEndOfDocument"],
+  "Shift+Home": ["moveToBeginningOfDocumentAndModifySelection"],
+  "Shift+End": ["moveToEndOfDocumentAndModifySelection"],
 };
 
 export async function pressKey(surface: Surface, key: string): Promise<void> {
