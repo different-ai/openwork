@@ -39,7 +39,7 @@ function expectSettledDocument(visibleText: string) {
 
 test("sending clears the composer and shows one pending turn in existing and new conversations", async ({ world, user, probe, step }) => {
   for (const scenario of ["existing", "new"]) {
-    if (scenario === "new") await user.click({ role: "button", label: "New task" });
+    if (scenario === "new") await user.click({ role: "button", label: "New session" });
     const text = `Keep this ${scenario} conversation message while submission is delayed.`;
     await user.type("composer", text);
     await world.holdNextSubmission();

@@ -64,6 +64,7 @@ export interface MockAgentWorkload {
 
 export interface MockAgentRequest {
   model: string;
+  reasoningEffort?: string | null;
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
@@ -534,6 +535,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         || typeof completion.completedTools !== "number") continue;
       completions.push({
         model: completion.model,
+        reasoningEffort: typeof completion.reasoningEffort === "string" ? completion.reasoningEffort : null,
         promptMarker: marker,
         matchedMarkers: completion.matchedMarkers.filter((value): value is string => typeof value === "string"),
         completedTools: completion.completedTools,

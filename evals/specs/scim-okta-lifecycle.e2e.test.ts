@@ -6,6 +6,8 @@ import { enableScimFixtureSso } from "./helpers/scim-fixture.ts";
 
 const requirements: TestNeeds = {
   optIn: ["OPENWORK_EVAL_E2E_TESTS"],
+  // enableScimFixtureSso writes to the isolated testkit database that only a local Den exposes.
+  placement: "local",
 };
 const missingRequirements = unmetNeeds(requirements, process.env);
 const title = missingRequirements.length > 0

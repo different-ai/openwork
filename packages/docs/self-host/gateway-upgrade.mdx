@@ -1,0 +1,118 @@
+---
+title: "Upgrade Gateway safely"
+description: "Plan the database and writer cutover before enabling Gateway, and disable management without an unsafe schema downgrade."
+---
+
+Use this guide when moving an existing Den/Models or Gateway installation to the Gateway-capable release. For a fresh deployment's configuration and environment reference, see [Enable OpenWork Gateway](/self-host/gateway).
+
+<Warning>
+  Migration `0097_gateway_access_matrix` renames live tables and columns. It is not an online, atomic, or rolling-compatible migration. Quiesce readers and writers before migration and keep them stopped until schema verification and rollout of matching images are complete. Helm's current pre-upgrade hook does not make this cutover safe automatically.
+</Warning>
+
+## Pin a coherent release
+
+Use the Gateway-capable chart implementation introduced in `0.2.0` (or a later release that includes it) and **matching Den API, Den Web, and Gateway images from this release**. It implements the authenticated deployment capability contract `version: 1`. Do not infer image support from a numerically newer chart, an older stable tag, or the checkout's placeholder `appVersion: "0.1.0"`.
+
+Pin the shared `image.tag` and inspect all component overrides: `denApi.image.tag`, `denWeb.image.tag`, and the effective `gateway.image.tag`/`inference.image.tag`. A nonempty component tag wins over the shared tag; the shared tag wins over `Chart.appVersion`. An empty canonical component tag clears its legacy override, but still requires a compatible shared tag. The retention job uses the effective Gateway image too.
+
+Keep the installed release name, `*-inference` Service/Deployment/container names and selectors, and `ghcr.io/different-ai/openwork-inference` repository. Product naming changed to OpenWork Gateway; installed resource identifiers did not. `den-gateway` is the separate Web proxy, not a replacement image.
+
+## Why the default hook is insufficient
+
+The chart defaults to a `pre-install,pre-upgrade` migration Job running:
+
+```text
+node /app/ee/packages/den-db/dist/scripts/bootstrap.js
+```
+
+Whenever the chart's migration Job is enabled, it receives TCP MySQL `DATABASE_URL` through the existing `secret.keys.databaseUrl` mapping and `DEN_DB_ENCRYPTION_KEY` through `secret.keys.denDbEncryptionKey`, regardless of `config.databaseMode`. Even with a PlanetScale HTTP runtime using `DATABASE_HOST`, `DATABASE_USERNAME`, and `DATABASE_PASSWORD`, the precreated Secret must also provide the mapped TCP URL for the **same database**. Include the database name, TCP port, and verified TLS options in that URL; there are no new migration values or chart inputs for bootstrap's alternative `DATABASE_NAME`/`DATABASE_PORT` configuration. Runtime credentials alone do not satisfy migration connectivity, TLS trust, or DDL privileges.
+
+A pre-upgrade hook runs **before** the updated Deployments are applied, while the old pods can still be reading and writing. It does not drain model requests, OAuth callbacks, refresh workers, background writers, or retention jobs. Setting `migrations.hook: false` is not a fix: a normal Job does not establish the required migration-before-rollout barrier either. Helm timeout, retry, and automatic rollback options do not undo MySQL DDL.
+
+There is also a production bootstrap baseline hazard. For an existing schema **without** `__drizzle_migrations`, the current bootstrap records all committed migrations as a baseline without checking that the existing schema already contains their changes. It can therefore mark `0097` and its successors applied without executing them. A successful hook or a populated ledger is not proof that the schema is correct. Do not use that path for an unverified legacy database.
+
+For this existing-database cutover, disable the automatic Job and use an externally controlled, reviewed migration procedure:
+
+```yaml
+migrations:
+  enabled: false
+```
+
+This skips the chart Job and its migration-specific TCP configuration validation; the external procedure must still supply its reviewed migration connection. It is an orchestration choice, **not permission to skip migrations**. Do not roll out the new runtime until the external procedure has finished and its receipt and schema have been checked. Keep backup/restore and the traffic barrier under operator control, not a blind `helm upgrade --atomic` recovery.
+
+## Prepare before the maintenance window
+
+1. Inventory all readers/writers of the shared database, installed images, current values, database version/mode, migration ledger, and actual schema. Include Den API, Gateway/legacy inference, OAuth callbacks and refresh workers, administrative scripts, and retention callers. Confirm no old replica or controller can restart during cutover.
+2. Back up the database and retain the **existing** encryption key securely. Verify a restore into an isolated environment. Preserve row counts, schema/ledger evidence, and encrypted credential/usage history without exposing secret columns.
+3. Rehearse the migration against an isolated restored copy using the exact release SQL and approved runner. Migration source or journal registration is not evidence that production data passes preflight.
+4. Review the full `0096` prerequisite schema and registered migrations `0097`, `0098`, and `0099`, plus any later migrations shipped with the selected release. A schema-push database may be baselined only after full schema verification, never by guessing from table presence.
+5. Prepare one complete, reviewed values set with `migrations.enabled: false`, precreated Secret references, explicit destinations, matching images, and an explicit choice about component retention and capability enablement. When removing saved canonical entries, use `--reset-values` with that full configuration, not a final empty override file or `--reset-then-reuse-values`. Verify the final render without displaying secrets.
+
+For migration `0097`, the runner must use **one dedicated MySQL connection**, execute statements sequentially at `--> statement-breakpoint` boundaries, and stop on the first error. It requires MySQL `8.0.16+` (including 8.4), enforced CHECK support, strict SQL mode (`STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`), `CREATE TEMPORARY TABLES`, and ordinary migration DDL/DML rights. MariaDB and TiDB are explicitly refused. A serverless/HTTP transport that cannot preserve connection-local temporary tables is not sufficient; choose a reviewed migration connection rather than bypassing preflight. Runtime `planetscale` mode alone does not validate this.
+
+The embedded preflight checks the complete prior schema, indexes, IDs, ownership, credential subjects, and grant audiences before persistent DDL. It rejects duplicate or dual-audience grants rather than silently merging or deleting them. See the release's [0097 migration contract](https://github.com/different-ai/openwork/blob/dev/ee/packages/den-db/drizzle/0097_gateway_access_matrix.md) for the exact sentinels and preservation rules; use the copy from your pinned release, not an unreviewed moving branch.
+
+## Quiesced cutover
+
+1. Establish the maintenance barrier. Block new requests at ingress and other callers, drain active streams and OAuth work, stop all relevant application readers/writers, and suspend retention/background jobs. A database migration lock alone does not exclude application writers.
+2. Confirm the backup and migration starting state. A legacy schema must reach verified `0096` before applying `0097`; an already-migrated or partially migrated schema needs explicit inspection rather than replay. A genuinely empty database can be initialized from the matching current-schema snapshot, but must not be confused with a populated database missing its ledger.
+3. Run the approved migration procedure. Execute `0097` with its embedded preflight and connection requirements, then registered `0098_gateway_provider_model_universe` and `0099_gateway_credential_set_creator` in order, and any further release prerequisites. Keep old writers stopped: `0098` also backfills model policy that old code does not maintain.
+4. Verify actual schema, preserved data, and receipts. Record each migration only after all its SQL succeeds. Check canonical Gateway tables and selection columns, `gateway_providers.model_ids`, and `gateway_credential_sets.created_by_org_membership_id`, not just `select 1` or ledger timestamps.
+5. With traffic still closed, deploy the matching Den API, Den Web, and Gateway images. Keep `migrations.enabled: false` for this externally migrated rollout. Review sparse values and required Secret references as described in [the opt-in guide](/self-host/gateway).
+6. Verify liveness/readiness, then the authenticated `GET /v1/org` top-level `deploymentCapabilities` contract across API replicas. For opt-in, expect `{ "version": 1, "aiGateway": true }`. Confirm the intended organization's separate dashboard grant and fresh admin access. Readiness and the capability response are not schema proofs.
+7. Exercise a permitted provider flow with non-sensitive test data, verify public desktop routing and internal routing, and check usage attribution. Reopen traffic only after these checks pass; resume approved retention and background work last.
+
+If embedded preflight fails before the first persistent DDL, close the connection to discard its temporary table, investigate the named check, and resolve it through the approved preservation plan. If execution fails **after the first rename**, stop startup and inspect partial state. MySQL DDL auto-commits: neither a failed Job nor a process restart rolls it back. Do not blindly retry, schema-push, stamp a baseline, or start either incompatible runtime against partial tables.
+
+### Expected preserved state
+
+- Existing providers, credential identities, encrypted credential values, grants, and usage history are preserved by the migration's explicit backfills/renames. Keep `DEN_DB_ENCRYPTION_KEY` unchanged.
+- Existing provider grants receive the migration's default group/set mapping; historical usage selection fields remain unknown/null rather than being attributed to invented selections.
+- Unused legacy OAuth states are marked used because they lack the new set/client binding. Members must start those sign-in flows again; existing credentials are not deleted or revoked by that action.
+- Gateway's `gateway_keys` starts empty. Members receive independent `ow_gw_` keys through the normal connect/provisioning flow; existing Models `ow_inf_` keys are not copied into it.
+- Models keys, subscription billing, limits, usage buckets, and ledger remain separate. Keep `OPENWORK_INFERENCE_BASE_URL`, `STRIPE_INFERENCE_PRICE_ID`, and `config.inference.*` legacy contracts intact.
+
+## Disable without a schema downgrade
+
+Choose the operation that matches your intent. These switches preserve persisted Gateway data; they are not credential-revocation controls or a schema rollback.
+
+| Intent | Action | Consequence |
+| --- | --- | --- |
+| Hide one organization's Gateway dashboard | Allowlisted platform admin disables the existing `capabilities.gatewayDashboard` flag in `/admin`. | Removes dashboard exposure; does not disable management APIs, provider sync, credentials, traffic, or billing. |
+| Stop new Gateway management admission while keeping the component | Native deployment: set `GATEWAY_ENABLED=false` on Den API and Gateway and restart the matching release. Helm: retain `inference.enabled: true` and **omit** `gateway.enabled` from effective values, as below. | Capability becomes false; management reads/writes are blocked. Existing authorized member usable/connect/OAuth/revoke paths and runtime routes are not shut off by this flag. |
+| Remove the Helm-managed component | Set `gateway.enabled: false`. | Canonical false overrides legacy true: the Gateway Deployment, Service, and chart retention job are omitted/deleted on upgrade. Traffic depending on that Service stops. |
+
+For the keep-component Helm case, the relevant final values are:
+
+```yaml
+inference:
+  enabled: true
+gateway: {}
+migrations:
+  enabled: false
+```
+
+The snippet only illustrates enablement, not a full replacement for your production values. Preserve approved Gateway image/settings, public/internal destinations, database and encryption references, and any intentionally retained token/retention configuration. An absent `gateway` root is also supported for legacy reused values and means no canonical overrides. However, once `gateway.enabled` or other canonical entries have been saved, an empty root or nested map can be refilled by Helm's saved values or earlier input files. Use `--reset-values` with a complete, reviewed values file that omits `gateway.enabled` and unwanted canonical entries, explicitly includes any desired empty maps, and preserves the rest of the deployment. A final empty override file or `--reset-then-reuse-values` is not a substitute. Render the complete desired values and confirm the `*-inference` component remains and both services receive `GATEWAY_ENABLED=false`.
+
+Do not use `gateway.enabled: false` together with `inference.enabled: true` to try to keep the component: canonical presence wins, so it is removed. Do not inject `GATEWAY_ENABLED` through `denApi.env`, `gateway.env`, or `inference.env`; the chart rejects that override. Retaining other canonical keys while omitting only `enabled` is supported.
+
+There are additional environment differences in this legacy service-only mode. Verify the rendered pod environment, not just retained values:
+
+- Keep `config.public.gatewayPublicBaseUrl` and the legacy Models public origin in `config.internal.inferenceProxyBaseUrl`. The chart retains those destinations when management is disabled, and runtime selection prefers a valid legacy Models public origin, then a valid Gateway public origin, independently of the management flag. Existing disabled-mode per-app `GATEWAY_PUBLIC_BASE_URL` overrides are still honored without duplicate env entries, but remove them before re-enabling and use shared public configuration. If neither public destination is usable, historical Models fallback may still be private/loopback; malformed optional disabled settings do not become new startup prerequisites. Existing member Gateway payloads retain their configured public URL. Previously stored provider URLs are not automatically repaired by toggling the flag.
+- The enabled-only required database/encryption `secretKeyRef` entries also disappear. Legacy pods use the shared Secret through `envFrom`; ensure it contains the actual runtime names (`DATABASE_URL`, or the PlanetScale variables, and `DEN_DB_ENCRYPTION_KEY`). Remapped data keys alone no longer provide those runtime variables in service-only mode. Resolve this through the precreated Secret, not literal env values.
+- Outside retention, canonical admin/webhook token overrides are no longer emitted. Recheck the effective aliases from the shared Secret and any legacy env settings. Retention, if retained, still supplies both admin-token aliases from its dedicated reference.
+
+Stopping new management admission does not mean stopping all new model requests, member connections, or OAuth operations. If the goal is security revocation, use the appropriate provider/grant/key controls or an explicit traffic stop. If the component, its dependencies, or ingress is stopped, **do not promise existing traffic will continue** merely because the disable flag itself is non-revoking.
+
+When effective dashboard enablement is removed, eligible hosted admins see OpenWork Models again; existing single-org custom-provider behavior remains. This UI change neither cancels nor creates a subscription and does not revoke Models or Gateway keys.
+
+Keep schema-compatible images when disabling. **Do not run `helm rollback` to an older pre-migration image against the renamed schema.** Recover by fixing forward with compatible images, or use a separately approved, quiesced database-and-image restore from the verified backup. A restore can lose post-backup writes and must account for credentials, usage, and billing reconciliation. Keep traffic stopped until schema and all readers/writers agree again.
+
+## Release references
+
+- [Gateway chart values and compatibility](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/README.md#gateway-compatibility-chart-020)
+- [0097 migration contract](https://github.com/different-ai/openwork/blob/dev/ee/packages/den-db/drizzle/0097_gateway_access_matrix.md)
+- [0098 model-policy backfill](https://github.com/different-ai/openwork/blob/dev/ee/packages/den-db/drizzle/0098_gateway_provider_model_universe.md)
+- [0099 credential-set creator](https://github.com/different-ai/openwork/blob/dev/ee/packages/den-db/drizzle/0099_gateway_credential_set_creator.md)
+
+These source links help locate the files. Review their counterparts in the exact release being deployed; a README, rendered chart, healthy pod, or registered migration is not a production migration receipt.

@@ -266,7 +266,7 @@ async function serveWitness() {
         res.end("data: [DONE]\n\n");
     });
     await new Promise((resolve) => upstream.listen(Number(process.env.MODELS_WITNESS_PORT ?? 8792), "0.0.0.0", resolve));
-    await import("../../../../ee/apps/inference/src/server.ts");
+    await import("../../../../ee/apps/gateway/src/server.ts");
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     if (process.argv[2] === "serve")

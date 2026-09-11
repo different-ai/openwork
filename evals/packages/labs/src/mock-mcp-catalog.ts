@@ -45,7 +45,7 @@ export async function startCatalogWitness(privateAuthorization: string) {
     }
     if (path === "/mcp") return sendJson(response, 200, Object.fromEntries([...connected].map((name) => [name, { status: "connected" }])));
     if (path === "/global/health") return sendJson(response, 200, { healthy: true, version: "1.17.11" });
-    if (path === "/experimental/tool/ids") return sendJson(response, 200, ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"]);
+    if (path === "/experimental/tool/ids") return sendJson(response, 200, ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability", "openwork_docs_search", "openwork_query"]);
     if (path === "/provider") return sendJson(response, 200, { all: [], default: {}, connected: [] });
     if (path === "/session" || path === "/experimental/tool") return sendJson(response, 200, []);
     return sendJson(response, 200, {});

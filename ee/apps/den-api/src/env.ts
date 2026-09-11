@@ -2,6 +2,7 @@ import os from "node:os"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { denUrls } from "@openwork-ee/utils/den-urls"
+import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
@@ -181,7 +182,7 @@ const EnvSchema = z.object({
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
   DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
   DEN_CKPT_KEEP: z.string().optional(),
-  INFERENCE_PROXY_BASE_URL: z.string().optional(),
+  GATEWAY_PROXY_BASE_URL: z.string().optional(),
   OPENROUTER_MANAGEMENT_API_KEY: z.string().optional(),
   OPENROUTER_WORKSPACE_ID: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
@@ -235,7 +236,12 @@ const EnvSchema = z.object({
   }
 })
 
-const parsed = EnvSchema.parse(process.env)
+const gatewayDeployment = parseGatewayDeploymentEnv(process.env)
+const parsed = EnvSchema.parse({
+  ...process.env,
+  // Deprecated deployment alias; an explicitly set canonical value wins.
+  GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL,
+})
 
 function splitCsv(value: string | undefined) {
   return (value ?? "")
@@ -810,7 +816,13 @@ export const env = {
   dashboardsEnabled,
   corsHandledByEdge,
   openworkWebEnabled,
-  inferenceProxyBaseUrl: optionalString(parsed.INFERENCE_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  // Keep known public Models destinations even when Gateway management is off.
+  modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  gatewayEnabled: gatewayDeployment.enabled,
+  gatewayProxyBaseUrl: gatewayDeployment.proxyBaseUrl,
+  // Existing member payloads retain their legacy destination until explicitly configured.
+  gatewayPublicBaseUrl: gatewayDeployment.publicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   openRouterManagementApiKey: optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY),
   openRouterWorkspaceId: optionalString(parsed.OPENROUTER_WORKSPACE_ID),
   stripe: {

@@ -62,10 +62,15 @@ export function LandingHome(props: Props) {
 
         <div
           aria-hidden="true"
-          className="font-pixel mx-auto flex w-full max-w-[1176px] justify-between px-6 pb-10 pt-6 text-[clamp(3rem,calc(22vw_-_11px),14rem)] leading-none tracking-[-0.06em] sm:pb-12 sm:pt-8 lg:pb-16"
+          className="font-pixel mx-auto flex w-full max-w-[1176px] items-baseline justify-between px-6 pb-10 pt-6 text-[clamp(3rem,calc(21vw_-_11px),13.5rem)] leading-none tracking-[-0.06em] sm:pb-12 sm:pt-8 lg:pb-16"
         >
-          {Array.from("OpenWork").map((letter, index) => (
-            <span key={index}>{letter}</span>
+          {Array.from("Open").map((letter, index) => (
+            <span key={`open-${index}`}>{letter}</span>
+          ))}
+          {Array.from("Work").map((letter, index) => (
+            <span key={`work-${index}`} className="lp-wordmark-sans">
+              {letter}
+            </span>
           ))}
         </div>
 

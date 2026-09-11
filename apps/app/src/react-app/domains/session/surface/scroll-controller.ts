@@ -253,12 +253,21 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
       } else {
         const saved = readState();
-        // Native anchoring can move scrollTop when a diagram/image expands
-        // inside the reading message. Remember that adjustment for the next
-        // visit, but never persist the initial restore's clamp or missing anchor.
-        if (!pendingRestore && historyReady && container.scrollTop !== lastKnownScrollTop
-          && saved.mode === "manual" && saved.anchor && messageElementById(container, saved.anchor.messageId)) {
-          store.setManualScroll(scrollKey, container.scrollTop, latestMessageTopClippedId(container), readingAnchor(container));
+        if (!pendingRestore && historyReady && container.scrollTop !== lastKnownScrollTop) {
+          // Native anchoring can move scrollTop when a diagram/image expands
+          // inside the reading message. Remember that adjustment for the next
+          // visit, but never persist the initial restore's clamp or missing anchor.
+          if (saved.mode === "manual") {
+            if (saved.anchor && messageElementById(container, saved.anchor.messageId)) {
+              store.setManualScroll(scrollKey, container.scrollTop, latestMessageTopClippedId(container), readingAnchor(container));
+            }
+          } else if (!smoothJump && !isExactlyAtBottom(container)) {
+            // Keyboard focus and other reveals scroll an older message into view
+            // without wheel or key input. The person is reading it now: follow
+            // must not pull the view back on the next click or streamed chunk.
+            cancelFrames();
+            store.setManualScroll(scrollKey, container.scrollTop, latestMessageTopClippedId(container), readingAnchor(container));
+          }
         }
         refreshTopClippedMessage();
       }

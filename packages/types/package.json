@@ -4,6 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./cloud-model-fast": {
+      "types": "./src/cloud-model-fast.ts",
+      "development": "./src/cloud-model-fast.ts",
+      "bun": "./src/cloud-model-fast.ts",
+      "browser": "./src/cloud-model-fast.ts",
+      "default": "./dist/cloud-model-fast.js"
+    },
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",
@@ -78,6 +85,21 @@
       "types": "./src/den/managed-models-policy.ts",
       "development": "./src/den/managed-models-policy.ts",
       "default": "./src/den/managed-models-policy.ts"
+    },
+    "./den/deployment-capabilities": {
+      "types": "./src/den/deployment-capabilities.ts",
+      "development": "./src/den/deployment-capabilities.ts",
+      "default": "./src/den/deployment-capabilities.ts"
+    },
+    "./den/gateway": {
+      "types": "./src/den/gateway.ts",
+      "development": "./src/den/gateway.ts",
+      "default": "./dist/den/gateway.js"
+    },
+    "./den/gateway-usage": {
+      "types": "./src/den/gateway-usage.ts",
+      "development": "./src/den/gateway-usage.ts",
+      "default": "./src/den/gateway-usage.ts"
     },
     "./den/inference": {
       "types": "./src/den/inference.ts",

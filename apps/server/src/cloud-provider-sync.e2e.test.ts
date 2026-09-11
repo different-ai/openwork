@@ -6,18 +6,21 @@ import { join } from "node:path";
 import { EnvService } from "./env-file.js";
 import { CloudProviderSync } from "./cloud-provider-sync.js";
 import { openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
-import { clearEnginePoolForConfig, setEnginePoolForConfig, type EnginePool } from "./engine-pool.js";
+import { clearEnginePoolForConfig, setEnginePoolForConfig, type EnginePool, type RolloverOutcome } from "./engine-pool.js";
 import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import {
   readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   runtimeProviderMap,
+  writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
 
 const clientToken = "owt_cloud_provider_client";
+/** Stub reload that reports the engine applied the change in place. */
+const reloadedInPlace = async (): Promise<RolloverOutcome> => ({ action: "reloaded_in_place" });
 const hostToken = "owt_cloud_provider_host";
 const roots: string[] = [];
 const stops: Array<() => void | Promise<void>> = [];
@@ -181,6 +184,141 @@ afterEach(async () => {
 });
 
 describe("cloud provider sync gateway", () => {
+  for (const mode of ["sync", "offline sync", "cold cleanup"]) {
+    test(`forged provider import baselines never confer cleanup ownership during ${mode}`, async () => {
+      const root = await createRoot();
+      const config = serverConfig(root, "https://engine.example.test");
+      const forgedIds = ["lpr_00000000000000000000000001", "ipr_00000000000000000000000002", "openwork"];
+      // Personal auth already exists in the engine, not in the server env store.
+      // Even a full-length lpr ID must not migrate without its scoped binding.
+      const personal = { id: "openai", npm: "@ai-sdk/openai", env: ["PERSONAL_MISSING_API_KEY"] };
+      const providers = Object.fromEntries(forgedIds.map((id) => [id, personal]));
+      await writeGlobalRuntimeOpencodeConfig(config, () => ({ provider: providers }));
+      await writeRuntimeOpencodeConfig(config, "ws_1", () => ({ provider: providers }));
+      const baseline = { cloudImports: {
+        providers: Object.fromEntries(forgedIds.map((id) => [id, { cloudProviderId: id }])),
+        marketplaces: { mkp_keep: { name: "Keep" } },
+      } };
+      await writeOpenworkWorkspaceConfig(config, "ws_1", () => baseline);
+      expect(await readOpenworkWorkspaceConfig(config, "ws_1")).toEqual(baseline);
+      const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+      await env.upsertMany([{ key: "LPR_00001_API_KEY", value: "orphan-fixture-key" }]);
+      const envBefore = await env.list();
+      const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+      const engineAuth = new Map(forgedIds.map((id) => [id, "personal-fixture-auth"]));
+      const engineRequests: string[] = [];
+      const ownershipSnapshots: unknown[] = [];
+      const fetchImpl = Object.assign(async (
+        input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const url = new URL(String(input));
+        // Observe the ledger before apply/sweep can clear retired IDs, including
+        // the restore-before-fetch write on a failed sync.
+        ownershipSnapshots.push((await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).providerIds);
+        if (url.hostname === "den.example.test") {
+          if (mode === "offline sync") throw new Error("fixture offline");
+          if (url.pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+          return Response.json(url.pathname === "/v1/llm-providers"
+            ? { llmProviders: [provider] } : { llmProvider: provider });
+        }
+        engineRequests.push(`${init?.method} ${url.pathname}`);
+        const id = decodeURIComponent(url.pathname.slice("/auth/".length));
+        if (init?.method === "DELETE") engineAuth.delete(id);
+        if (init?.method === "PUT") engineAuth.set(id, "synced-fixture-auth");
+        return Response.json(true);
+      }, { preconnect: globalThis.fetch.preconnect });
+      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace });
+      stops.push(() => sync.stop());
+      if (mode !== "cold cleanup") {
+        await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
+        expect((await sync.run("baseline-regression")).status).toBe(mode === "sync" ? "applied" : "failed");
+        expect((await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).providerIds)
+          .toEqual(mode === "sync" ? [provider.id] : []);
+        for (const id of forgedIds) {
+          expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toEqual(personal);
+          expect(runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"))[id]).toEqual(personal);
+        }
+        // A collaborator can write another baseline after sync removes it.
+        await writeOpenworkWorkspaceConfig(config, "ws_1", () => baseline);
+      }
+      await sync.clearSession();
+      for (const id of forgedIds) {
+        expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toEqual(personal);
+        expect(runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"))[id]).toEqual(personal);
+        expect(engineAuth.get(id)).toBe("personal-fixture-auth");
+        expect(engineRequests).not.toContain(`DELETE /auth/${id}`);
+        for (const snapshot of ownershipSnapshots) expect(snapshot).not.toContain(id);
+      }
+      if (mode !== "cold cleanup") expect(ownershipSnapshots.length).toBeGreaterThan(0);
+      expect(await env.list()).toEqual(envBefore);
+      expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__"))
+        .toEqual({ providerIds: [], envHashes: {} });
+      expect(await readOpenworkWorkspaceConfig(config, "__managed_provider_auth__:workspace:ws_1\u0000endpoint:https://engine.example.test"))
+        .toEqual({ providerIds: [] });
+      expect((await readOpenworkWorkspaceConfig(config, "ws_1")).cloudImports)
+        .toEqual({ providers: {}, marketplaces: baseline.cloudImports.marketplaces });
+    });
+  }
+
+  for (const ownership of ["persisted sync", "scoped legacy binding"]) {
+    test(`cold cleanup retains genuine provider ownership from ${ownership} without import baselines`, async () => {
+      const root = await createRoot();
+      const config = serverConfig(root, "https://engine.example.test");
+      const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+      const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+      const id = ownership === "persisted sync" ? provider.id : "lpr_00000000000000000000000003";
+      const envName = ownership === "persisted sync" ? "TEST_PROVIDER_API_KEY" : "LPR_00003_API_KEY";
+      const engineRequests: string[] = [];
+      let offline = false;
+      const fetchImpl = Object.assign(async (
+        input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+      ) => {
+        const url = new URL(String(input));
+        if (url.hostname === "den.example.test") {
+          if (offline) throw new Error("fixture offline");
+          if (url.pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+          return Response.json(url.pathname === "/v1/llm-providers"
+            ? { llmProviders: [provider] } : { llmProvider: provider });
+        }
+        engineRequests.push(`${init?.method} ${url.pathname}`);
+        return Response.json(true);
+      }, { preconnect: globalThis.fetch.preconnect });
+      if (ownership === "persisted sync") {
+        const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace });
+        stops.push(() => sync.stop());
+        await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
+        expect((await sync.run("genuine-ownership")).status).toBe("applied");
+        const ledger = await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__");
+        expect(ledger.providerIds).toEqual([id]);
+        expect(Object.keys(expectRecord(ledger.envHashes, "owned env hashes"))).toEqual([envName]);
+        expect(engineRequests).toContain(`PUT /auth/${id}`);
+        sync.stop();
+      } else {
+        await env.upsertMany([{ key: envName, value: "legacy-fixture-key" }]);
+        await writeGlobalRuntimeOpencodeConfig(config, () => ({
+          provider: { [id]: { id: "openai", npm: "@ai-sdk/openai", env: [envName] } },
+        }));
+        expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).toEqual({});
+      }
+      const globalProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+      await writeRuntimeOpencodeConfig(config, "ws_1", () => ({ provider: { [id]: globalProviders[id] } }));
+      expect(await readOpenworkWorkspaceConfig(config, "ws_1")).toEqual({});
+      offline = true;
+      engineRequests.length = 0;
+      // New config and sync objects discard both in-memory ownership caches.
+      const cold = new CloudProviderSync({ config: serverConfig(root, "https://engine.example.test"), env,
+        fetchImpl, reloadEngine: reloadedInPlace });
+      stops.push(() => cold.stop());
+      await cold.clearSession();
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toBeUndefined();
+      expect(runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"))[id]).toBeUndefined();
+      expect(await env.list()).toEqual([]);
+      expect(engineRequests).toEqual([`DELETE /auth/${id}`]);
+      expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__"))
+        .toEqual({ providerIds: [], envHashes: {} });
+    });
+  }
+
   test("same-identity full delivery preserves providers on a busy engine; a new identity still cleans up", async () => {
     const root = await createRoot();
     const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
@@ -200,6 +338,7 @@ describe("cloud provider sync gateway", () => {
       if (path === "/v1/me/desktop-config") return org === "org_b" && denyPolicyB
         ? Response.json({ error: "denied" }, { status: 401 }) : Response.json({});
       if (org === "org_b") return Response.json({ error: "not_found" }, { status: 404 });
+      if (path === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
       return Response.json(path === "/v1/llm-providers" ? { llmProviders: [provider] } : { llmProvider: provider });
     } });
     stops.push(() => den.stop(true));
@@ -263,6 +402,7 @@ describe("cloud provider sync gateway", () => {
         input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
       ) => {
         const url = new URL(String(input));
+        if (url.hostname === "den.example.test" && url.pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
         if (url.hostname === "den.example.test") return Response.json(url.pathname === "/v1/llm-providers"
           ? { llmProviders: [provider] } : { llmProvider: provider });
         if (init?.method === "PUT" && holdAuth) {
@@ -273,7 +413,7 @@ describe("cloud provider sync gateway", () => {
       }, { preconnect: globalThis.fetch.preconnect });
       const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
       const sync = new CloudProviderSync({ config, env, fetchImpl, engineBusy: async () => true,
-        reloadEngine: async () => { reloads += 1; }, intervalMs: 3_600_000 });
+        reloadEngine: async () => { reloads += 1; return reloadedInPlace(); }, intervalMs: 3_600_000 });
       stops.push(() => sync.stop());
       const session = { baseUrl: "https://den.example.test", token: "token-a", orgId: "org_a" };
       try {
@@ -316,6 +456,7 @@ describe("cloud provider sync gateway", () => {
         const org = request.headers.get("x-openwork-legacy-org-id");
         denRequests.push(`${org} ${path}`);
         if (path === "/v1/me/desktop-config") return Response.json({ allowCustomProviders: false });
+        if (path === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
         if (path === "/v1/llm-providers") {
           if (org === "org_old") {
             reached.resolve();
@@ -504,6 +645,7 @@ describe("cloud provider sync gateway", () => {
       engineBusy: async () => engineBusy,
       reloadEngine: async () => {
         reloads += 1;
+        return reloadedInPlace();
       },
       intervalMs: 3_600_000,
     });
@@ -581,6 +723,7 @@ describe("cloud provider sync gateway", () => {
         reloads += 1;
         // A reload flips the pool onto a fresh generation.
         generationId = `generation-${reloads + 1}`;
+        return { action: "rolled_over", generationId, drainingSessions: 0 };
       },
       intervalMs: 3_600_000,
     });
@@ -629,7 +772,7 @@ describe("cloud provider sync gateway", () => {
       env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
       fetchImpl,
       engineBusy: async () => draining,
-      reloadEngine: async () => { reloads += 1; },
+      reloadEngine: async () => { reloads += 1; return reloadedInPlace(); },
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
@@ -694,6 +837,7 @@ describe("cloud provider sync gateway", () => {
             llmProviders: [buildProvider([{ id: "model-a", name: "Model A", config: {} }])],
           });
         }
+        if (url.pathname === "/v1/inference-providers") return Response.json({ error: "not_found" }, { status: 404 });
         return Response.json({
           llmProvider: buildProvider([{ id: "model-a", name: "Model A", config: {} }]),
         });
@@ -705,6 +849,7 @@ describe("cloud provider sync gateway", () => {
       env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
       reloadEngine: async () => {
         reloads += 1;
+        return reloadedInPlace();
       },
       intervalMs: 3_600_000,
     });
@@ -734,6 +879,40 @@ describe("cloud provider sync gateway", () => {
     expect(engineRequests).toContain("PUT /auth/lpr_test");
   });
 
+  test("preserves disabled Fast metadata and reconciles an unchanged catalog after serializer upgrade", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    const provider = buildProvider([{ id: "model", name: "Model", config: {
+      reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+      experimental: { modes: { fast: { provider: { body: { service_tier: "priority" } } } } },
+    } }]);
+    provider.providerConfig.npm = "@ai-sdk/openai";
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({ provider: { lpr_test: {
+      models: { model: { id: "model", name: "Model" } },
+    } } }));
+    const sync = new CloudProviderSync({
+      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: reloadedInPlace,
+      fetchImpl: Object.assign(async (input: URL | RequestInfo) => {
+        const { pathname } = new URL(String(input));
+        if (pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+        return Response.json(pathname.endsWith("/connect")
+          ? { llmProvider: provider } : { llmProviders: [provider] });
+      }, { preconnect: () => {} }),
+    });
+    stops.push(() => sync.stop());
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "synthetic", orgId: "org_test" });
+    expect((await sync.run()).status).toBe("applied");
+    expect(sync.status().providers[0]?.modelConfigVersion).toBe(2);
+    const written = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test;
+    const model = expectRecord(expectRecord(written.models, "serialized models").model, "serialized model");
+    expect(model.variants).toEqual({ __openwork_catalog_fast_v1: {
+      disabled: true, openworkNativeFast: 1, reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    } });
+    expect(JSON.stringify(written)).not.toContain('"experimental"');
+    expect((await sync.run()).status).toBe("noop");
+  });
+
   test("skips a per-member provider that needs the member's key", async () => {
     const root = await createRoot();
     const config = serverConfig(root, "https://engine.example.test");
@@ -746,6 +925,7 @@ describe("cloud provider sync gateway", () => {
         if (url.pathname === "/v1/llm-providers") {
           return Response.json({ llmProviders: [provider] });
         }
+        if (url.pathname === "/v1/inference-providers") return Response.json({ error: "not_found" }, { status: 404 });
         return Response.json({
           llmProvider: {
             ...provider,
@@ -760,7 +940,7 @@ describe("cloud provider sync gateway", () => {
     const sync = new CloudProviderSync({
       config,
       env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
-      reloadEngine: async () => undefined,
+      reloadEngine: reloadedInPlace,
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
@@ -778,6 +958,211 @@ describe("cloud provider sync gateway", () => {
       name: provider.name,
       reason: "needs_key",
     }]);
+  });
+
+  test("backward compatibility: Gateway list fallback, strict connect failures, and legacy provider isolation", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    const gatewayKey = `ow_gw_${Buffer.alloc(32, 1).toString("base64url")}`;
+    const groupSuffix = "00000000000000000000000001";
+    const setSuffix = "00000000000000000000000002";
+    const modelSuffix = "00000000000000000000000003";
+    const modelId = `gwm_${groupSuffix}_${setSuffix}_${modelSuffix}`;
+    const pendingSetId = "gcs_00000000000000000000000004";
+    const pendingAuthUrl = `https://den.example.test/v1/inference-providers/ipr_pending/oauth/start?credentialSetId=${pendingSetId}`;
+    const gatewayBaseUrl = "https://inference.example.test/api/v1/providers/ipr_ready";
+    const llmProvider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+    const readyGateway = {
+      id: "ipr_ready",
+      providerId: "anthropic",
+      name: "Team Anthropic",
+      source: "openwork_gateway",
+      credentialMode: "org",
+      credentialStatus: "ready",
+      status: "active",
+      authUrl: null,
+      authorizationRequests: [],
+      modelIds: ["claude-sonnet"],
+      updatedAt: "2026-08-20T00:00:00.000Z",
+      providerConfig: {
+        env: ["IPR_READY_ANTHROPIC_API_KEY"],
+        npm: "@ai-sdk/anthropic",
+        api: gatewayBaseUrl,
+        options: { baseURL: gatewayBaseUrl },
+      },
+      models: [{
+        id: modelId, name: "Claude Sonnet", config: { id: modelId, name: "Claude Sonnet" },
+        upstreamModelId: "claude-sonnet",
+        modelGroupId: `gmg_${groupSuffix}`, modelGroupName: "Team models",
+        credentialSetId: `gcs_${setSuffix}`, credentialSetName: "Organization key",
+      }],
+    };
+    const pendingGateway = {
+      ...readyGateway,
+      id: "ipr_pending",
+      name: "Member Google",
+      providerId: "google",
+      credentialMode: "member",
+      credentialStatus: "member_auth_required",
+      authUrl: pendingAuthUrl,
+      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl }],
+      models: [],
+      modelIds: [],
+      providerConfig: { env: ["IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY"], npm: "@ai-sdk/google" },
+    };
+    let inferenceListResponse: (() => Response) | undefined = () => new Response(null, { status: 404 });
+    let failure: { path: string; respond: () => Response } | undefined;
+    const denPaths: string[] = [];
+    const fetchImpl = Object.assign(async (
+      input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      const url = new URL(String(input));
+      expect(url.origin).toBe("https://den.example.test");
+      expect(init?.method ?? "GET").toBe("GET");
+      expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer den-token");
+      expect(new Headers(init?.headers).get("x-openwork-legacy-org-id")).toBe("org_test");
+      expect(new Headers(init?.headers).get("x-openwork-org-id")).toBe("org_test");
+      const path = `${url.pathname}${url.search}`;
+      denPaths.push(path);
+      if (failure?.path === path) return failure.respond();
+      if (path === "/v1/llm-providers") return Response.json({ llmProviders: [llmProvider] });
+      if (path === `/v1/llm-providers/${llmProvider.id}/connect`) return Response.json({ llmProvider });
+      if (path === "/v1/inference-providers?scope=usable") {
+        return inferenceListResponse?.() ?? Response.json({ inferenceProviders: [readyGateway, pendingGateway] });
+      }
+      if (path === `/v1/inference-providers/${readyGateway.id}/connect`) {
+        return Response.json({
+          inferenceProvider: { ...readyGateway, apiKey: gatewayKey, apiKeys: { IPR_READY_ANTHROPIC_API_KEY: gatewayKey } },
+        });
+      }
+      throw new Error(`Unexpected Den request: ${path}`);
+    }, { preconnect: globalThis.fetch.preconnect });
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const sync = new CloudProviderSync({
+      config,
+      env,
+      fetchImpl,
+      reloadEngine: reloadedInPlace,
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "den-token", orgId: "org_test" });
+    expect((await sync.run("old-den-first-sync")).status).toBe("applied");
+    expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual(["lpr_test"]);
+    expect(denPaths.sort()).toEqual([
+      "/v1/inference-providers?scope=usable", "/v1/llm-providers", "/v1/llm-providers/lpr_test/connect",
+    ]);
+    inferenceListResponse = undefined;
+    expect((await sync.run("gateway")).status).toBe("applied");
+    expect(denPaths).toContain("/v1/inference-providers?scope=usable");
+    expect(denPaths).toContain(`/v1/inference-providers/${readyGateway.id}/connect`);
+    expect(denPaths).not.toContain(`/v1/inference-providers/${pendingGateway.id}/connect`);
+
+    const status = sync.status();
+    expect(status.providers.map((entry) => entry.cloudProviderId)).toEqual(["ipr_ready", "lpr_test"]);
+    expect(status.providers.map((entry) => entry.providerId)).toEqual(["ipr_ready", "lpr_test"]);
+    expect(status.providers[0]).toMatchObject({
+      sourceProviderId: "anthropic",
+      name: "Team Anthropic",
+      source: "openwork_gateway",
+      modelIds: [modelId],
+    });
+    expect(status.providers[1]?.source).toBe("custom");
+    expect(status.skippedProviders).toEqual([{
+      cloudProviderId: "ipr_pending",
+      providerId: "ipr_pending",
+      credentialSetId: pendingSetId,
+      name: "Member Google / Personal Google",
+      reason: "member_auth_required",
+    }]);
+
+    const runtimeProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    expect(Object.keys(runtimeProviders).sort()).toEqual(["ipr_ready", "lpr_test"]);
+    const gatewayRuntime = expectRecord(runtimeProviders.ipr_ready, "gateway runtime provider");
+    expect(gatewayRuntime.name).toBe("Team Anthropic");
+    expect(gatewayRuntime.npm).toBe("@ai-sdk/anthropic");
+    expect(gatewayRuntime.api).toBe(gatewayBaseUrl);
+    expect(gatewayRuntime.models).toEqual({ [modelId]: { id: modelId, name: "Claude Sonnet" } });
+    expect(expectRecord(gatewayRuntime.options, "gateway options").baseURL).toBe(gatewayBaseUrl);
+    expect(JSON.stringify(gatewayRuntime)).not.toContain(gatewayKey);
+    const storedEnv = await env.list();
+    expect(storedEnv.find((entry) => entry.key === "IPR_READY_ANTHROPIC_API_KEY")?.value).toBe(gatewayKey);
+    expect(storedEnv.find((entry) => entry.key === "TEST_PROVIDER_API_KEY")?.value).toBe("sk-test-provider");
+    expect(storedEnv.some((entry) => entry.key === "IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
+    expect(storedEnv.some((entry) => entry.key === "GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
+
+    const ownership = await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__");
+    for (const endpoint of [
+      { path: "/v1/inference-providers?scope=usable", invalid: "den_inference_provider_list_invalid_response", list: true },
+      { path: `/v1/inference-providers/${readyGateway.id}/connect`, invalid: `den_inference_provider_connect_invalid_response_${readyGateway.id}`, list: false },
+      { path: "/v1/llm-providers", invalid: "den_llm_provider_list_invalid_response", list: false },
+      { path: `/v1/llm-providers/${llmProvider.id}/connect`, invalid: `den_llm_provider_connect_invalid_response_${llmProvider.id}`, list: false },
+    ]) {
+      // Even with no Gateway resource, legacy errors cannot become an empty
+      // desired provider set and erase the last successfully owned providers.
+      inferenceListResponse = endpoint.path.startsWith("/v1/llm-providers")
+        ? () => new Response(null, { status: 404 }) : undefined;
+      const httpStatuses = endpoint.list ? [401, 403, 500, 502, 503, 504] : [401, 403, 404, 405, 500, 501, 502, 503, 504];
+      const cases = [
+        ...httpStatuses.map((code) => ({
+          respond: () => new Response(null, { status: code }), message: `den_request_failed_${code}`,
+        })),
+        { respond: () => new Response("not JSON"), message: "den_request_invalid_json" },
+        { respond: () => Response.json(null), message: endpoint.invalid },
+        { respond: () => Response.json({}), message: endpoint.invalid },
+        { respond: () => Response.json({ inferenceProviders: [null], llmProviders: [null], inferenceProvider: {}, llmProvider: {} }), message: endpoint.invalid },
+        { respond: () => { throw new Error("fixture offline"); }, message: "den_request_failed: fixture offline" },
+      ];
+      if (endpoint.path.startsWith("/v1/inference-providers")) {
+        const malformedGateway = { ...readyGateway, models: [{ ...readyGateway.models[0], credentialSetId: undefined }] };
+        cases.push({
+          respond: () => Response.json({ inferenceProviders: [malformedGateway], inferenceProvider: malformedGateway }),
+          message: endpoint.invalid,
+        });
+        if (!endpoint.list) cases.push({
+          respond: () => Response.json({ inferenceProvider: {
+            ...readyGateway, apiKey: "ow_inf_legacy-fixture", apiKeys: { IPR_READY_ANTHROPIC_API_KEY: "ow_inf_legacy-fixture" },
+          } }),
+          message: `den_inference_provider_unscoped_credentials_${readyGateway.id}`,
+        });
+      }
+      for (const entry of cases) {
+        failure = { path: endpoint.path, respond: entry.respond };
+        expect(await sync.run(`${endpoint.path}: ${entry.message}`)).toEqual({ status: "failed", message: entry.message });
+        expect(sync.status().lastRun?.status).toBe("failed");
+        expect(sync.status().providers).toEqual(status.providers);
+        expect(sync.status().skippedProviders).toEqual(status.skippedProviders);
+        expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(runtimeProviders);
+        expect(await env.list()).toEqual(storedEnv);
+        expect(await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__")).toEqual(ownership);
+      }
+    }
+    failure = undefined;
+    // Only list-route absence (or a valid empty list) retires Gateway rows.
+    // Reconcile again with a restored endpoint to prove the fallback is not sticky.
+    for (const code of [404, 405, 501, 200]) {
+      inferenceListResponse = () => code === 200
+        ? Response.json({ inferenceProviders: [] }) : new Response("route unavailable", { status: code });
+      const pathOffset = denPaths.length;
+      expect((await sync.run(`older-den-${code}`)).status).toBe("applied");
+      expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual(["lpr_test"]);
+      expect(sync.status().skippedProviders).toEqual([]);
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual({ lpr_test: runtimeProviders.lpr_test });
+      expect(await env.list()).toEqual(storedEnv.filter((entry) => entry.key !== "IPR_READY_ANTHROPIC_API_KEY"));
+      expect(denPaths.slice(pathOffset).sort()).toEqual([
+        "/v1/inference-providers?scope=usable", "/v1/llm-providers", "/v1/llm-providers/lpr_test/connect",
+      ]);
+      expect(await sync.run("old-den-unchanged")).toEqual({ status: "noop" });
+      inferenceListResponse = undefined;
+      expect((await sync.run("gateway-restored")).status).toBe("applied");
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(runtimeProviders);
+      expect((await env.list()).map(({ key, value }) => ({ key, value })))
+        .toEqual(storedEnv.map(({ key, value }) => ({ key, value })));
+    }
+    expect(denPaths.some((path) => path.startsWith("/v1/llm-providers/ipr_"))).toBe(false);
   });
 
   test("materializes a credential-less Den provider from a matching local Desktop environment key", async () => {
@@ -822,7 +1207,7 @@ describe("cloud provider sync gateway", () => {
       config,
       env,
       fetchImpl,
-      reloadEngine: async () => undefined,
+      reloadEngine: reloadedInPlace,
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
@@ -919,7 +1304,7 @@ describe("cloud provider sync gateway", () => {
     const envValues = async () => new Map((await env.list()).map((entry) => [entry.key, entry.value]));
     const session = { baseUrl: "https://den.example.test", token: "den-token", orgId: "org-env-upgrade" };
     const newSync = () => {
-      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => undefined, intervalMs: 3_600_000 });
+      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace, intervalMs: 3_600_000 });
       stops.push(() => sync.stop());
       return sync;
     };
@@ -1124,7 +1509,8 @@ describe("cloud provider sync gateway", () => {
     )?.value).toBe("sk-test-provider");
 
     const workspaceProviders = runtimeProviderMap(await readRuntimeOpencodeConfig(config, "ws_1"));
-    expect(workspaceProviders.lpr_stale).toBeUndefined();
+    // A matching import baseline alone does not prove server ownership.
+    expect(workspaceProviders.lpr_stale).toEqual({ id: "stale", name: "Stale", env: ["STALE_KEY"] });
     expect(workspaceProviders.local_provider).toBeDefined();
     const openwork = await readOpenworkWorkspaceConfig(config, "ws_1");
     const cloudImports = expectRecord(openwork.cloudImports, "workspace cloud imports");

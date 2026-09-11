@@ -153,6 +153,44 @@ describe("managed OpenCode startup", () => {
     } finally { await managed.close(); }
   });
 
+  test("mirrors only enabled effort variants using the native provider settings contract", async () => {
+    const root = await createRoot();
+    const bin = await writeExecutable(root, "provider-config.mjs", [
+      "const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => Response.json({ healthy: true, version: 'test', pid: process.pid }) });",
+      "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
+      "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
+    ]);
+    const managed = await createManagedOpencodeV2Server({ bin, rootDir: root });
+    try {
+      await managed.injectProvider({
+        id: "effort-witness", name: "Effort witness", apiKey: "synthetic-key",
+        models: [
+          { id: "reasoner", name: "Reasoner", config: {
+            reasoning: true, variants: {
+              high: { reasoningEffort: "high" },
+              CustomExact: { disabled: false, thinking: { type: "enabled", budgetTokens: 4096 } },
+              hidden: { disabled: true, reasoningEffort: "high" },
+            },
+          } },
+          { id: "standard", name: "Standard" },
+        ],
+      });
+      const config: unknown = JSON.parse(await readFile(join(root, "config", "opencode.json"), "utf8"));
+      expect(config).toMatchObject({ providers: { "effort-witness": { models: {
+        reasoner: {
+          capabilities: { output: ["text", "reasoning"] },
+          variants: [
+            { id: "high", settings: { providerOptions: { reasoningEffort: "high" } } },
+            { id: "CustomExact", settings: { providerOptions: { thinking: { type: "enabled", budgetTokens: 4096 } } } },
+          ],
+        },
+        standard: { capabilities: { output: ["text"] } },
+      } } } });
+      expect(JSON.stringify(config)).not.toContain('"hidden"');
+      expect(JSON.stringify(config)).not.toContain('"disabled"');
+    } finally { await managed.close(); }
+  });
+
   test("spawns the engine with npm audit disabled so first-run installs never wait on the advisories endpoint", async () => {
     const root = await createRoot();
     const defaultDumpPath = join(root, "default-env.log");

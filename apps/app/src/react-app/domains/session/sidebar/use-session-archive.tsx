@@ -24,6 +24,7 @@ import { getComposerQueuedDrafts, useComposerStateStore } from "../surface/compo
 import { composerAutoSendScopeKey, consumeComposerAutoSend, hasComposerAutoSend } from "../surface/composer-auto-send";
 import { dispatchQueuedDrain, getQueuedDrainState, hasPendingQueuedAdmission } from "../surface/queued-drain-machine";
 import { clearQueuedSendContext } from "../sync/queued-send-context";
+import { isOrphanedInteraction, terminalToolCallIds } from "../sync/orphaned-interactions";
 import { applySessionArchived } from "../sync/session-sync";
 
 type ArchiveTarget = { workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; title: string; draftScope: string | null };
@@ -188,8 +189,12 @@ export function useSessionArchive(input: {
           }
           if (idle) dispatchQueuedDrain(id, { type: "idle_reconciled", observedAt, terminalObserved });
           else dispatchQueuedDrain(id, { type: "busy_observed" });
-          return !idle || permissionV2 || permissions.some(request => request.sessionID === id)
-            || questions.some(request => request.sessionID === id) || localWork(id)
+          // A request whose tool call already ended was abandoned by the engine
+          // without a rejection; nobody can answer it, so it is not open work.
+          const terminal = terminalToolCallIds(messages);
+          const unanswered = (request: { sessionID: string; tool?: { messageID: string; callID: string } }) =>
+            request.sessionID === id && !isOrphanedInteraction(request.tool, terminal);
+          return !idle || permissionV2 || permissions.some(unanswered) || questions.some(unanswered) || localWork(id)
             || sessionHasPendingSubmission(baseUrl, id, messages) || sessionNeedsStop(baseUrl, id)
             || hasPendingQueuedAdmission(getQueuedDrainState(id))
             || [workspace.id, endpoint.workspaceId].some(workspaceId =>

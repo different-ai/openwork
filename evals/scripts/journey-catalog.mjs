@@ -3,6 +3,9 @@ import { readdir, readFile } from 'node:fs/promises';
 // One home for CI grouping, readable names, and execution requirements.
 // Unlisted specs are discovered automatically as full-regression journeys.
 const definitions = {
+  'composer-model-picker-no-subscribe-promo.e2e.test.ts': {
+    cases: [{ id: 'MODEL-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
   // Its registered OAuth callback and synthetic client exchange run on owned loopback services.
   'mcp-connection-consent.e2e.test.ts': { name: 'Authorize a connected client once', placement: 'local' },
   'task-activity-shimmer.e2e.test.ts': {
@@ -29,6 +32,8 @@ const definitions = {
     cases: [{ id: 'POLICY-ROLLBACK', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
+  // Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
+  'scim-okta-lifecycle.e2e.test.ts': { name: 'Provision members from an Okta-shaped SCIM client', placement: 'local' },
   'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
   // Drives the real error boundary and web error monitor in a standalone Chrome; needs no Den or Electron.
   'crash-recovery.e2e.test.ts': { name: 'Recover from a render crash without leaking secrets' },

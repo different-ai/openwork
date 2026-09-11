@@ -1,3 +1,5 @@
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { Hono, type MiddlewareHandler } from "hono"
@@ -152,7 +154,17 @@ describe("Microsoft 365 bounded management routes", () => {
     const registry = await import("../src/capability-sources/provider-registry.js")
     const orgs = await import("../src/orgs.js")
     const session = await import("../src/session.js")
+    const { db } = await import("../src/db.js")
     const context = organizationContext()
+    // The default resolver reads the organization's Connect policy from the
+    // database when no credential resolves (#4830); a missing organization row
+    // reads as policy_blocked, so persist the fixture organization.
+    await db.insert(OrganizationTable).values({
+      id: context.organization.id,
+      name: context.organization.name,
+      slug: context.organization.slug,
+      metadata: null,
+    })
     const otherContext = { ...context, currentMember: organizationContext().currentMember }
     const teamId = createDenTypeId("team")
     const writerId = createDenTypeId("externalMcpConnection")
@@ -269,6 +281,7 @@ describe("Microsoft 365 bounded management routes", () => {
       defaults.mockRestore()
       clients.mockRestore()
       accounts.mockRestore()
+      await db.delete(OrganizationTable).where(eq(OrganizationTable.id, context.organization.id))
     }
   })
 

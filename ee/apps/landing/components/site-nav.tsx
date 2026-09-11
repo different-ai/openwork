@@ -78,7 +78,7 @@ export function SiteNav(props: Props) {
             <OpenWorkMark className="h-[30px] w-[38px] transition-opacity group-hover:opacity-80" />
           </Link>
 
-          <nav className="hidden items-center justify-center gap-7 text-[14px] font-normal lg:flex">
+          <nav className="hidden items-center justify-start gap-7 pl-10 text-[14px] font-normal lg:flex">
             {navItems.map(item => (
               <Link
                 key={item.key}

@@ -38,6 +38,8 @@ export type ComposerStateStore = {
   failedDrafts: Record<string, ComposerSessionState[]>;
   pendingMessages: Record<string, {
     draft: ComposerDraft & { messageId: string };
+    /** The composer as submitted, so a send whose hold is released later can still be saved as unsent. */
+    composer: ComposerSessionState;
     previousMessageIds: string[];
     serverMessageId?: string;
     preparedText?: string;

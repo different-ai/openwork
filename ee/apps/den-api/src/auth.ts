@@ -1,5 +1,7 @@
 import * as crypto from "node:crypto";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
+import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
+import { ensureMemberGatewayKey } from "./gateway-keys.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
@@ -673,7 +675,29 @@ export const auth = betterAuth({
         },
       },
     },
+    teamMember: {
+      delete: {
+        before: async (membership: typeof schema.TeamMemberTable.$inferSelect) => {
+          await db.transaction((tx) => invalidateTeamInferenceOAuth(tx, membership.teamId));
+        },
+      },
+    },
+    team: {
+      delete: {
+        before: async (team: typeof schema.TeamTable.$inferSelect) => {
+          await db.transaction((tx) => invalidateTeamInferenceOAuth(tx, team.id));
+        },
+      },
+    },
     member: {
+      create: {
+        after: async (member: AuthMemberHookRow) => {
+          if (member.userId && !member.removedAt) await ensureMemberGatewayKey({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+          });
+        },
+      },
       delete: {
         before: async (member: AuthMemberHookRow) => {
           const validation = await validateOrganizationMemberRemovalForHook({
@@ -692,6 +716,16 @@ export const auth = betterAuth({
             organizationId: member.organizationId,
             orgMembershipId: member.id,
             userId: member.userId,
+          });
+          await revokeMemberGatewayCredentials({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+          });
+        },
+        after: async (member: AuthMemberHookRow) => {
+          await revokeMemberGatewayCredentials({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
           });
         },
       },
@@ -1139,6 +1173,10 @@ export const auth = betterAuth({
           }
           if ("dpaSigned" in metadata) {
             throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
+          }
+          const capabilities = metadata.capabilities;
+          if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
+            throw new APIError("FORBIDDEN", { message: "capabilities.gatewayDashboard is reserved for internal platform administration." });
           }
         },
         beforeUpdateOrganization: async ({ organization }) => {

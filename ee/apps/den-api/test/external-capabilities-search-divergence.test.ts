@@ -567,8 +567,8 @@ test("MCP App launch metadata is published by default alongside regular search a
   })
   if (!executed.ok) throw new Error(executed.message)
   const launchResult = externalCapabilitySuccessToolResult(executed)
-  expect(launchResult.structuredContent).toMatchObject({
-    serverTools: {
+  expect(launchResult._meta).toMatchObject({
+    "openwork/serverTools": {
       searchCapabilities: "search_capabilities",
       executeCapability: "execute_capability",
     },

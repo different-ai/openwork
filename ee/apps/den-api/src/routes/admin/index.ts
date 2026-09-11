@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "../../llm/inference-provider-lifecycle.js"
 import type { SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
@@ -105,6 +106,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
     installLinks: z.boolean().nullable().optional(),
     mcpConnections: z.boolean().nullable().optional(),
     modelsAnalytics: z.boolean().nullable().optional(),
+    gatewayDashboard: z.boolean().nullable().optional(),
   }),
 })
 
@@ -277,6 +279,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
+    gatewayDashboard: normalizeOrganizationCapabilities(metadata).gatewayDashboard,
   }
 }
 
@@ -315,7 +318,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -1596,7 +1599,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       // the ids inside the transaction with a locking read so a concurrently
       // authorized consent cannot slip between the snapshot and the delete
       // (Warden RUD-WDK).
-      const oauthConsentRows = await db.transaction(async (tx) => {
+      const { oauthConsentRows, gatewayCredentials } = await db.transaction(async (tx) => {
+        const members = await tx.select({ id: MemberTable.id }).from(MemberTable)
+          .where(eq(MemberTable.userId, userId)).orderBy(MemberTable.id).for("update")
+        const credentials = await revokeInferenceCredentialsForMembers(tx, members.map((member) => member.id))
         const removedAt = new Date()
         const consentRows = await tx
           .select({ id: OAuthConsentTable.id })
@@ -1627,8 +1633,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.update(MemberTable).set({ removedAt }).where(eq(MemberTable.userId, userId))
         await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))
         await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
-        return consentRows
+        return { oauthConsentRows: consentRows, gatewayCredentials: credentials }
       })
+      await revokeGoogleCredentials(gatewayCredentials)
       // Auth session cache hits intentionally avoid a DB liveness check; user deletion must clear
       // both token and session-id cache entries for every deleted session instead.
       await Promise.all(sessionRows.flatMap((session) => [
@@ -2036,6 +2043,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const modelsAnalytics = body.data.capabilities.modelsAnalytics
         if (modelsAnalytics === null) delete capabilities.modelsAnalytics
         else if (modelsAnalytics !== undefined) capabilities.modelsAnalytics = modelsAnalytics
+
+        const gatewayDashboard = body.data.capabilities.gatewayDashboard
+        if (gatewayDashboard === null) delete capabilities.gatewayDashboard
+        else if (gatewayDashboard !== undefined) capabilities.gatewayDashboard = gatewayDashboard
 
         return {
           ...current,

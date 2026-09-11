@@ -32,7 +32,8 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
-import { sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
+import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
@@ -532,6 +533,7 @@ const AssistantMessage = React.memo(
               return (
                 <ReasoningBlock
                   key={`reasoning-${index}`}
+                  disclosureKey={JSON.stringify(["reasoning", message.id, index])}
                   text={group.text}
                   isStreaming={group.isStreaming}
                 />
@@ -549,7 +551,7 @@ const AssistantMessage = React.memo(
             if (group.kind === "tool-aggregate") {
               return (
                 <div key={`tool-aggregate-${index}`} className="w-full">
-                  <ToolAggregateGroup parts={group.parts} thoughts={group.thoughts} />
+                  <ToolAggregateGroup messageId={message.id} parts={group.parts} thoughts={group.thoughts} />
                 </div>
               )
             }
@@ -684,7 +686,8 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
+    const branching = forkingMessageId === message.id
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (!onOpenTarget || !(event.target instanceof Element)) return
@@ -706,7 +709,7 @@ const UserMessage = React.memo(
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
     )
     menuActions.push(
-      { type: "item", id: "branch", label: "Branch in new chat", icon: <Split className="size-4 rotate-90" />, onSelect: () => onForkAtMessage(message.id) },
+      { type: "item", id: "branch", label: branching ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(message.id) },
       { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
     )
 
@@ -758,7 +761,8 @@ const UserMessage = React.memo(
                 {!isStreaming && (
                   <MessageActions
                     className={cn(
-                      "flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100"
+                      "flex items-center gap-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100",
+                      branching ? "opacity-100" : "opacity-0"
                     )}
                   >
                     <MessageTimestamp message={message} className="mr-1.5" />
@@ -776,16 +780,19 @@ const UserMessage = React.memo(
                         </Button>
                       </MessageAction>
                     ) : null}
-                    <MessageAction tooltip="Branch in new chat">
+                    <MessageAction tooltip={branching ? "Branching..." : "Branch in new chat"}>
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label="Branch in new chat"
+                        aria-label={branching ? "Branching..." : "Branch in new chat"}
+                        aria-busy={branching || undefined}
+                        disabled={Boolean(forkingMessageId)}
                         onClick={() => onForkAtMessage(message.id)}
                       >
-                        <Split className="rotate-90" />
+                        {branching ? <LoaderCircle className="motion-safe:animate-spin" /> : <Split className="rotate-90" />}
                       </Button>
                     </MessageAction>
+                    {branching ? <span role="status" className="sr-only">Branching...</span> : null}
                     <MessageAction tooltip="Revert">
                       <Button
                         variant="ghost"
@@ -828,6 +835,8 @@ const MessageComponent = React.memo(
           showDescriptionOnResume={presentation?.kind === "provider-incomplete"}
           resumePrompt={presentation?.recoveryPrompt}
           technicalDetails={presentation?.technicalDetails}
+          gatewayConnectUrl={presentation?.kind === "gateway-auth-required" ? presentation.connectUrl ?? null : undefined}
+          gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
         />
       )
     }
@@ -859,10 +868,10 @@ const MessageComponent = React.memo(
 
 MessageComponent.displayName = "MessageComponent"
 
-const LoadingMessage = React.memo(({ elapsedSeconds }: { elapsedSeconds: number }) => (
+const LoadingMessage = React.memo(({ elapsedSeconds, starting }: { elapsedSeconds: number; starting: boolean }) => (
     <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-      <div data-loading-message="working" className="py-1 text-sm text-muted-foreground">
-        <span className="ow-text-shimmer tabular-nums">Working {formatElapsedSeconds(elapsedSeconds)}</span>
+      <div role={starting ? "status" : undefined} data-loading-message={starting ? "starting" : "working"} className="py-1 text-sm text-muted-foreground">
+        <span className="ow-text-shimmer tabular-nums">{starting ? "Starting…" : `Working ${formatElapsedSeconds(elapsedSeconds)}`}</span>
       </div>
     </Message>
 ))
@@ -925,6 +934,13 @@ interface ErrorMessageProps {
   resumePrompt?: string | null
   /** Error type, status, provider, code, response body — for bug reports and support. */
   technicalDetails?: string | null
+  /**
+   * Set (possibly null) only when the OpenWork Gateway rejected the request
+   * because the member must sign in: a URL opens the grant in the browser,
+   * null deep-links to Settings > AI providers instead.
+   */
+  gatewayConnectUrl?: string | null
+  gatewaySelectionRequired?: boolean
 }
 
 /**
@@ -989,13 +1005,17 @@ function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone
   )
 }
 
-function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, technicalDetails }: ErrorMessageProps) {
-  const { onResumeInterrupted, developerMode } = useMessageList()
+function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired }: ErrorMessageProps) {
+  const { onResumeInterrupted, developerMode, dispatchAction, sessionId } = useMessageList()
+  const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
+  const displayError = selection?.title ?? error
+  const displayDescription = selection?.description ?? description
+  const displayDetails = selection?.technicalDetails ?? technicalDetails
   // Status codes, provider names, and response bodies are for developers,
   // admins, and support — not the plain-language card end users see. They
   // surface only with Developer mode (Settings → Advanced), like the
   // session debug panel.
-  const details = developerMode && hasExtraTechnicalDetails(error, technicalDetails) ? technicalDetails : null
+  const details = developerMode && hasExtraTechnicalDetails(displayError, displayDetails) ? displayDetails : null
 
   // A resumable interruption is a pause, not a failure: it renders as a
   // quiet status line (like "Working 12s"), with Resume as the emphasis.
@@ -1035,13 +1055,32 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
           <div className="flex flex-row items-start gap-2">
             <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
             <div className="flex flex-col gap-1">
-              <p className="whitespace-pre-wrap text-destructive">{error}</p>
-              {description && (!resumePrompt || showDescriptionOnResume) ? (
-                <p className="text-sm text-destructive/80 whitespace-pre-wrap">{description}</p>
+              <p className="whitespace-pre-wrap text-destructive">{displayError}</p>
+              {displayDescription && (!resumePrompt || showDescriptionOnResume) ? (
+                <p className="text-sm text-destructive/80 whitespace-pre-wrap">{displayDescription}</p>
               ) : null}
             </div>
           </div>
           {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
+          {gatewaySelectionRequired || selection ? (
+            <Button variant="outline" size="sm" className="self-start" data-testid="session-error-gateway-selection"
+              onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>
+              Choose group and credential set
+            </Button>
+          ) : null}
+          {gatewayConnectUrl !== undefined ? (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="session-error-gateway-connect"
+              className="self-start"
+              onClick={() => {
+                dispatchAction({ target: "settings", action: "open", section: "providers" })
+              }}
+            >
+              Connect
+            </Button>
+          ) : null}
         </div>
       </div>
     </Message>
@@ -1206,7 +1245,7 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, showThinking, readOnly } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1254,7 +1293,7 @@ function MessageGroup({
     item.message.role === "assistant" && !isSessionErrorMessage(item.message)
       ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
         group.kind === "reasoning"
-          ? [{ key: `${item.message.id}-${groupIndex}`, text: group.text, isStreaming: group.isStreaming }]
+          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming }]
           : []
       )
       : []
@@ -1288,7 +1327,7 @@ function MessageGroup({
         key={`folded-reasoning-${reasoning.key}`}
         className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
       >
-        <ReasoningBlock text={reasoning.text} isStreaming={reasoning.isStreaming} />
+        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} />
       </Message>
     ))
     : []
@@ -1320,7 +1359,7 @@ function MessageGroup({
       nodes.push(
         <div key={`aggregate-${run.key}`}>
           <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-            <ToolAggregateGroup parts={run.parts} className="w-full" />
+            <ToolAggregateGroup messageId={run.key} parts={run.parts} className="w-full" />
           </Message>
         </div>
       )
@@ -1373,21 +1412,24 @@ function MessageGroup({
       ))}
       {renderItems(proseItems, stepItems.length, collapseSteps)}
       {lastTextMessage && !isStreaming && (
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100 md:px-8">
+        <div className={cn("mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 transition-opacity duration-150 group-hover/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100 md:px-8", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
           <MessageActions className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
               <>
-                <MessageAction tooltip="Branch in new chat">
+                <MessageAction tooltip={forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat"}>
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label="Branch in new chat"
+                    aria-label={forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat"}
+                    aria-busy={forkingMessageId === lastRealItem.message.id || undefined}
+                    disabled={Boolean(forkingMessageId)}
                     onClick={() => onForkAtMessage(lastRealItem.message.id)}
                   >
-                    <Split className="rotate-90" />
+                    {forkingMessageId === lastRealItem.message.id ? <LoaderCircle className="motion-safe:animate-spin" /> : <Split className="rotate-90" />}
                   </Button>
                 </MessageAction>
+                {forkingMessageId === lastRealItem.message.id ? <span role="status" className="sr-only">Branching...</span> : null}
                 <MessageAction tooltip="Revert">
                   <Button
                     variant="ghost"
@@ -1484,7 +1526,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
       || child?.compacting || child?.retrying
   }))
   const isStreaming = status === "streaming" || status === "retrying"
-  const runActive = status === "submitted" || status === "streaming" || status === "retrying"
+  const runActive = status === "streaming" || status === "retrying"
   const syncDegraded = syncHealth?.degraded === true
   const activityActive = runActive || tasks.length > 0
   const runStartedAtRef = React.useRef<number | null>(null)
@@ -1589,7 +1631,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
         )
         }}
       >
-        {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} />}
+        {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}

@@ -66,6 +66,24 @@ export function isPromptAdmissionUnknown(error: unknown): error is PromptAdmissi
   return error instanceof PromptAdmissionUnknownError;
 }
 
+/** The settled server failure behind an uncertain admission: the parsed
+ * response body when the server answered, otherwise the transport error or
+ * undefined for a timeout. It explains the failure; it never proves rejection. */
+export function promptAdmissionFailure(error: PromptAdmissionUnknownError): unknown {
+  let cause: unknown = error.cause;
+  while (isPromptAdmissionUnknown(cause)) cause = cause.cause;
+  return cause;
+}
+
+async function readSettledFailure(response: Response): Promise<unknown> {
+  const text = await response.text().catch(() => "");
+  try {
+    return text ? JSON.parse(text) : undefined;
+  } catch {
+    return text;
+  }
+}
+
 let lastMessageStamp = 0;
 
 /** Native sortable msg_ format. This identifies a submission, NOT an idempotency key. */
@@ -205,7 +223,7 @@ async function fetchWithTimeout(
     // A proxy/server failure can happen after native admission. Only an
     // explicit client rejection establishes that the prompt was not accepted.
     if (SESSION_PROMPT_ASYNC_URL_RE.test(getRequestUrl(input)) && (response.status >= 500 || response.status === 408)) {
-      throw new PromptAdmissionUnknownError();
+      throw new PromptAdmissionUnknownError({ cause: await readSettledFailure(response) });
     }
     return response;
   } catch (error) {
@@ -406,6 +424,24 @@ export async function hasAcceptedPromptMessage(client: ReturnType<typeof createC
   const message = result.data?.info;
   // Absence (including a transient 404) is not proof of rejection.
   return message?.id === messageID && message.sessionID === sessionID && message.role === "user";
+}
+
+export type PromptAdmission = "accepted" | "absent" | "unknown";
+
+/** Reconcile an uncertain prompt against native. Only the exact user message
+ * proves acceptance. `absent` is authoritative the other way: native listed
+ * the idle conversation without the message, so the settled POST is not going
+ * to admit it later. A failed or partial read stays unknown and keeps the hold. */
+export async function readPromptAdmission(client: ReturnType<typeof createClient>, sessionID: string, messageID: string): Promise<PromptAdmission> {
+  if (await hasAcceptedPromptMessage(client, sessionID, messageID)) return "accepted";
+  const [messages, statuses] = await Promise.all([
+    client.session.messages({ sessionID }),
+    client.session.status(),
+  ]);
+  if (!Array.isArray(messages.data) || !statuses.data) return "unknown";
+  const status = statuses.data[sessionID];
+  if (status && status.type !== "idle") return "unknown";
+  return messages.data.some(({ info }) => info.id === messageID) ? "unknown" : "absent";
 }
 
 export async function waitForHealthy(
