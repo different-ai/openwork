@@ -46,8 +46,21 @@ test('excluded persists quietly across healthy runs and stays in the incident st
   const next = notification(previous, { ...run, run_number: 12 }, report({ [smoke.spec]: 'passed' }, [quitExcluded]), 'S123');
   assert.equal(next.message, null);
   assert.deepEqual(next.state.excluded, [quit.spec]);
-  // State written before this field existed is read as "nothing excluded".
-  assert.equal(notification({ sequence: [11, 1], failures: [], thread: undefined }, { ...run, run_number: 12 }, report({ [smoke.spec]: 'passed' }, [quitExcluded])).message, null);
+  // Without any prior state there is nothing to compare against: quiet.
+  assert.equal(notification(undefined, run, report({ [smoke.spec]: 'passed' }, [quitExcluded])).message, null);
+});
+
+test('passed -> excluded (or state from before this field existed) announces the selection change once, never as a failure or recovery', () => {
+  for (const previous of [{ sequence: [11, 1], failures: [], excluded: [], thread: undefined }, { sequence: [11, 1], failures: [], thread: undefined }]) {
+    const changed = notification(previous, { ...run, run_number: 12 }, report({ [smoke.spec]: 'passed' }, [quitExcluded]), 'S123');
+    assert.match(changed.message.text, /coverage changed: 1 journey\(s\) newly skipped \(prerequisites unmet\)/);
+    assert.match(changed.message.text, /• Quit an enterprise install cleanly — newly skipped \(prerequisites unmet; needs: set OPENWORK_EVAL_ELECTRON_BINARY\)/);
+    assert.doesNotMatch(changed.message.text, /Recovered|failed|<!subteam/);
+    assert.equal(changed.message.thread_ts, undefined);
+    assert.deepEqual(changed.state, { sequence: [12, 1], failures: [], excluded: [quit.spec], thread: undefined });
+    // The next healthy run with the same exclusions is quiet again.
+    assert.equal(notification(changed.state, { ...run, run_number: 13 }, report({ [smoke.spec]: 'passed' }, [quitExcluded])).message, null);
+  }
 });
 
 test('excluded -> passed is a healthy run: quiet, and the journey leaves the excluded state', () => {

@@ -30,17 +30,24 @@ export function notification(previous, run, report, teamId = '') {
   const excluded = report.excluded.map(entry => entry.spec).sort();
   // A failing journey that is now excluded was not fixed; the lane stopped running it.
   const reclassified = report.excluded.filter(entry => previous?.failures.some(key => key.startsWith(`${entry.spec}:`)));
+  // A selection change (a journey newly skipped that was not failing) is announced once, then stays quiet.
+  const newlyExcluded = previous ? report.excluded.filter(entry => !(previous.excluded ?? []).includes(entry.spec) && !reclassified.includes(entry)) : [];
   const state = { sequence, failures, excluded, thread: bad.length ? previous?.thread : undefined };
-  if (bad.length === 0 && !previous?.failures.length) return { state, message: null };
+  if (bad.length === 0 && !previous?.failures.length && newlyExcluded.length === 0) return { state, message: null };
   const title = run.name === 'Product journeys' ? 'Full regression — user journeys' : run.name === 'Build and core checks' ? 'Full regression — component checks' : 'Test reliability';
   const mention = bad.length && newFailures && /^[A-Z0-9]+$/.test(teamId) ? `<!subteam^${teamId}> ` : '';
   const summary = bad.length ? `${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested · ${report.excluded.length} skipped (prerequisites unmet)`
     : reclassified.length ? `Executed checks passed — not a recovery: ${reclassified.length} previously failing journey(s) reclassified: prerequisite unsatisfied`
-    : 'Recovered — all selected checks passed';
+    : previous?.failures.length ? 'Recovered — all selected checks passed'
+    : `Executed checks passed — coverage changed: ${newlyExcluded.length} journey(s) newly skipped (prerequisites unmet)`;
   const criticalText = critical.length ? `\nCritical journeys: ${critical.every(entry => entry.status === 'passed') ? 'all passed' : '*ACTION NEEDED*'}` : '';
-  const details = bad.slice(0, 30).map(entry => `• ${escape(entry.name)} — ${entry.status}`).join('\n');
-  const reclassifiedText = reclassified.map(entry => `• ${escape(entry.name)} — reclassified: prerequisite unsatisfied (needs: ${escape(entry.reason)})`).join('\n');
-  const text = `${mention}*${title}*\n${summary}${criticalText}${details ? `\n${details}` : ''}${bad.length > 30 ? `\n…and ${bad.length - 30} more; see the run.` : ''}${reclassifiedText ? `\n${reclassifiedText}` : ''}${bad.length ? excludedLine(report) : ''}\n<${run.html_url}|View run and evidence>`;
+  const details = [
+    ...bad.slice(0, 30).map(entry => `• ${escape(entry.name)} — ${entry.status}`),
+    ...(bad.length > 30 ? [`…and ${bad.length - 30} more; see the run.`] : []),
+    ...reclassified.map(entry => `• ${escape(entry.name)} — reclassified: prerequisite unsatisfied (needs: ${escape(entry.reason)})`),
+    ...(bad.length ? [] : newlyExcluded.map(entry => `• ${escape(entry.name)} — newly skipped (prerequisites unmet; needs: ${escape(entry.reason)})`)),
+  ].join('\n');
+  const text = `${mention}*${title}*\n${summary}${criticalText}${details ? `\n${details}` : ''}${bad.length ? excludedLine(report) : ''}\n<${run.html_url}|View run and evidence>`;
   return { state, message: { text, ...(previous?.thread ? { thread_ts: previous.thread } : {}), unfurl_links: false, unfurl_media: false } };
 }
 
