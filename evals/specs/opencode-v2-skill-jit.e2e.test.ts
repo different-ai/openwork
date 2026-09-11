@@ -134,7 +134,8 @@ selectedTest("SKILL-ATTACH explicitly selected skills reach the first native mod
     await user.see({ text: world.reply }, { timeoutMs: 90_000 });
     await user.see("Run task", { timeoutMs: 30_000 });
   });
-  const prompts = await world.promptRequests();
+  const nativeRequests = await world.nativeRequests();
+  const prompts = nativeRequests.filter((request) => request.kind === "prompt").map((request) => request.body);
   expect(prompts).toHaveLength(1);
   const requests = world.providerRequests().filter((request) => record(request)
     && JSON.stringify(request.messages).includes(world.prompt));
@@ -143,6 +144,9 @@ selectedTest("SKILL-ATTACH explicitly selected skills reach the first native mod
   const modelRequests = await world.modelRequests();
   if (world.engine === "v2") {
     expect(prompts[0]).toEqual({ text: expect.stringContaining(world.prompt), skills: [{ id: nativeID }] });
+    // The engine's own permission evaluation is consulted for the resolved id before anything is submitted.
+    expect(nativeRequests.map((request) => request.kind)).toEqual(["permission", "prompt"]);
+    expect(nativeRequests[0]?.body).toMatchObject({ action: "skill", resources: [nativeID] });
     expect(JSON.stringify(prompts[0])).not.toContain("Load ");
     expect(JSON.stringify(first)).toContain(world.skillBody);
     expect(requests).toHaveLength(1);
@@ -165,7 +169,7 @@ selectedTest("SKILL-ATTACH explicitly selected skills reach the first native mod
   expect(await readTranscriptMessages(probe, "user")).toEqual(visible);
   expect(await readTranscriptMessages(probe, "system")).toEqual([]);
   evidence.recordJsonArtifact("SKILL-ATTACH boundary and reload", {
-    engine: world.engine, runtime, nativeID, prompts, modelRequests,
+    engine: world.engine, runtime, nativeID, nativeRequests, modelRequests,
     firstRequestContainsFullBody: JSON.stringify(first).includes(world.skillBody),
     finalRequestContainsFullBody: JSON.stringify(requests.at(-1)).includes(world.skillBody),
     providerRequestCount: requests.length, visibleBeforeReload: visible,
@@ -185,11 +189,11 @@ selectedTest("SKILL-MISSING a selected skill removed from the native registry fa
   });
   await user.click("Run task");
   await user.see({ text: /Selected skill .* is unavailable or ambiguous in OpenCode v2\. Nothing was sent\./ }, { timeoutMs: 30_000 });
-  expect(await world.promptRequests()).toEqual([]);
+  expect(await world.nativeRequests()).toEqual([]);
   expect(world.providerRequests()).toEqual([]);
   expect(await readTranscriptMessages(probe, "assistant")).toEqual([]);
   evidence.recordJsonArtifact("SKILL-MISSING no false submission", {
-    promptRequests: await world.promptRequests(), providerRequests: world.providerRequests(),
+    nativeRequests: await world.nativeRequests(), providerRequests: world.providerRequests(),
     assistantMessages: await readTranscriptMessages(probe, "assistant"),
   });
 });

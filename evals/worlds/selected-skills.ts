@@ -5,6 +5,10 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { configureProvider } from "./chat.ts";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 declare global {
   interface Window { __selectedSkillPrompts?: unknown[] }
 }
@@ -66,8 +70,9 @@ export async function selectedSkillsWeb(seed: Seed) {
       const original = window.fetch.bind(window);
       window.fetch = async (input, init) => {
         const request = new Request(input instanceof Request ? input.clone() : input, init);
-        if (request.method === "POST" && /\/(?:prompt|prompt_async)$/.test(new URL(request.url).pathname)) {
-          window.__selectedSkillPrompts?.push(await request.clone().json());
+        const pathname = new URL(request.url).pathname;
+        if (request.method === "POST" && /\/(?:prompt|prompt_async|permission)$/.test(pathname)) {
+          window.__selectedSkillPrompts?.push({ kind: pathname.endsWith("/permission") ? "permission" : "prompt", body: await request.clone().json() });
         }
         return original(input, init);
       };
@@ -98,7 +103,12 @@ export async function selectedSkillsWeb(seed: Seed) {
     return {
       app, workspace, session, engine, skillName, skillBody, prompt, reply, modelId,
       removeSkill: () => rm(skillDirectory, { recursive: true }),
-      promptRequests: () => seed.evalIn(app, () => window.__selectedSkillPrompts ?? []),
+      /** Native-boundary requests the app made, in order: permission asks and prompt submissions. */
+      nativeRequests: async () => {
+        const entries = await seed.evalIn(app, () => window.__selectedSkillPrompts ?? []);
+        return entries.flatMap((entry) => isRecord(entry) && (entry.kind === "permission" || entry.kind === "prompt")
+          ? [{ kind: entry.kind, body: entry.body }] : []);
+      },
       providerRequests: () => providerRequests,
       modelRequests: () => witness.agentRequests({ promptMarker: prompt }),
       runtimeFacts: () => seed.evalIn(app, () => ({ browser: navigator.userAgent, electronBridge: Boolean(window.__OPENWORK_ELECTRON__) })),
