@@ -27,6 +27,7 @@ const BROWSER_NEW_TAB_URL = "https://www.google.com";
 // than evicting a live document (unsaved input and CDP handles cannot be restored
 // from a URL). This is a tab bound, not a Chromium process or memory limit.
 const MAX_BROWSER_TABS = 12;
+const MAX_CLOSED_BROWSER_TABS = 20;
 const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
 const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   sandbox: true,
@@ -116,6 +117,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   const browserTabs = new Map();
   const suspendedTabs = new Map();
   const registry = createBrowserTabRegistry();
+  // URL-only, memory-only history. Closed pages never retain task/approval/CDP
+  // handles, and a conversation can only reopen its own most recent entry.
+  let closedTabs = [];
+  let shortcutFocus = null;
+  let reopeningTab = false;
   let browserViewVisible = false;
   let backgroundWindow = null;
   // Last accepted geometry in window DIPs. Reattaching must not scale an old
@@ -552,10 +558,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         }
         break;
       case "close-tab":
-        if (tab) closeBrowserTab(tab.tabId);
+        if (tab) closeUserBrowserTab(tab.tabId);
         break;
       case "close-all-tabs":
-        closeAllBrowserTabs();
+        closeAllBrowserTabs(true);
         break;
     }
   }
@@ -866,7 +872,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
       scheduleWebMcpToolCountRefresh(tabId);
     });
-    view.webContents.on("focus", () => resetViewportEmulation(view));
+    view.webContents.on("focus", () => {
+      if (isFocusedBrowserTab(tab)) setShortcutFocus(tabId);
+      resetViewportEmulation(view);
+    });
+    view.webContents.on("before-input-event", (event, input) => {
+      if (!isFocusedBrowserTab(tab)) return;
+      setShortcutFocus(tabId);
+      handleBrowserShortcut(event, input);
+    });
     view.webContents.once("destroyed", () => {
       // CDP Target.closeTarget and page-initiated close bypass our tab-strip
       // handler; they must release the native parent and owner state too.
@@ -999,6 +1013,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const previous = registry.visibleSessionId();
     const next = registry.setVisibleSession(sessionId);
     if (next === previous) return next;
+    shortcutFocus = null;
     hideContextMenu();
     applySurfacing();
     attachActiveBrowserView();
@@ -1144,6 +1159,114 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return tabId;
   }
 
+  function isFocusedBrowserTab(tab) {
+    return browserViewVisible && registry.onScreenTabId() === tab.tabId
+      && !tab.view.webContents.isDestroyed() && tab.view.webContents.isFocused()
+      && tab.view.getVisible() && window()?.contentView.children.includes(tab.view);
+  }
+
+  function hasBrowserShortcutFocus() {
+    const tab = getBrowserTab();
+    if (tab && isFocusedBrowserTab(tab)) setShortcutFocus(tab.tabId);
+    if (!shortcutFocus || shortcutFocus.visibleSessionId !== registry.visibleSessionId()) return false;
+    // A last-tab close leaves a short-lived browser context so T can recover it
+    // and a held/repeated W cannot accidentally close the application window.
+    // Keyboard focus on an inactive tab-strip button still belongs to that
+    // browser tab, even if an artifact currently occupies the native viewport.
+    return shortcutFocus.tabId === null || registry.has(shortcutFocus.tabId);
+  }
+
+  function setShortcutFocus(tabId) {
+    if (!registry.has(tabId) || registry.surfacingFor(tabId) !== "foreground") { shortcutFocus = null; return; }
+    if (shortcutFocus?.tabId === tabId && shortcutFocus.visibleSessionId === registry.visibleSessionId()) return;
+    shortcutFocus = { ownerSessionId: registry.ownerOf(tabId), visibleSessionId: registry.visibleSessionId(), tabId };
+  }
+
+  function closeUserBrowserTab(tabId = registry.onScreenTabId()) {
+    if (!registry.has(tabId)) return null;
+    const tab = getBrowserTab(tabId);
+    const saved = tab && !tab.view.webContents.isDestroyed()
+      ? browserTabToPanelTab(tabId, tab) : suspendedTabs.get(tabId);
+    const ownerSessionId = registry.ownerOf(tabId);
+    const focus = shortcutFocus?.ownerSessionId === ownerSessionId ? shortcutFocus : null;
+    if (saved && (saved.url === "about:blank" || isHttpUrl(saved.url))) {
+      closedTabs.push({ url: saved.url, ownerSessionId });
+      closedTabs = closedTabs.slice(-MAX_CLOSED_BROWSER_TABS);
+    }
+    const result = closeBrowserTab(tabId);
+    if (focus) {
+      const nextId = registry.onScreenTabId();
+      shortcutFocus = { ...focus, tabId: nextId && registry.ownerOf(nextId) === ownerSessionId ? nextId : null };
+    }
+    return result;
+  }
+
+  async function reopenClosedBrowserTab() {
+    if (reopeningTab || !hasBrowserShortcutFocus()) return;
+    const focus = shortcutFocus;
+    const saved = closedTabs.slice().reverse().find((entry) => entry.ownerSessionId === focus.ownerSessionId);
+    if (!saved) return;
+    reopeningTab = true;
+    try {
+      await checkPolicy?.({ url: saved.url });
+      // Focus, owner cleanup, or a conversation switch may change while policy
+      // is checked. A stale shortcut must not resurrect a deleted owner's page.
+      if (shortcutFocus !== focus || registry.visibleSessionId() !== focus.visibleSessionId || !closedTabs.includes(saved)) return;
+      // Use the ordinary manual-open path. Target the new tab immediately,
+      // before its asynchronous navigation: W must never fall through to Close
+      // Window while loading. A later reload/navigation owns its own document.
+      const tab = createBrowserTab(saved.url, { initializeBlank: false, ownerSessionId: saved.ownerSessionId });
+      closedTabs = closedTabs.filter((entry) => entry !== saved);
+      shortcutFocus = { ...focus, tabId: tab.tabId };
+      focusBrowserShortcutTarget();
+    } catch (error) {
+      if (shortcutFocus === focus && window() && !window().isDestroyed()) {
+        await dialog.showMessageBox(window(), {
+          type: "error", message: "Could not reopen browser tab",
+          detail: error instanceof Error ? error.message : "Try again after checking browser availability and your organization's policy.",
+        });
+      }
+    } finally {
+      reopeningTab = false;
+    }
+  }
+
+  function focusBrowserShortcutTarget() {
+    const tab = getBrowserTab();
+    if (tab && shortcutFocus?.tabId === tab.tabId && browserViewVisible && tab.view.getVisible() && window()?.contentView.children.includes(tab.view)) tab.view.webContents.focus();
+    else window()?.webContents.focus();
+  }
+
+  function closeFocusedBrowserTab(host = window()) {
+    if (host !== window() || !hasBrowserShortcutFocus()) return false;
+    if (shortcutFocus.tabId) closeUserBrowserTab(shortcutFocus.tabId);
+    focusBrowserShortcutTarget();
+    return true;
+  }
+
+  function handleBrowserShortcut(event, input) {
+    const primary = process.platform === "darwin" ? input.meta && !input.control : input.control && !input.meta;
+    const key = input.key?.toLowerCase();
+    if (!primary || input.alt || input.shift || (key !== "w" && key !== "t") || !hasBrowserShortcutFocus()) return false;
+    // Cancel both Chromium delivery and Electron menu accelerators synchronously.
+    event.preventDefault();
+    if (input.type !== "keyDown" || input.isAutoRepeat) return true;
+    if (key === "w") closeFocusedBrowserTab();
+    else runDetachedTask("reopen browser tab", reopenClosedBrowserTab);
+    return true;
+  }
+
+  function registerWindowShortcuts(host) {
+    host.webContents.on("before-input-event", (event, input) => {
+      if (host !== window()) return;
+      if (input.type === "keyDown" && (input.key === "Tab" || input.key === "Escape")) shortcutFocus = null;
+      handleBrowserShortcut(event, input);
+    });
+    host.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
+      if (isMainFrame) shortcutFocus = null;
+    });
+  }
+
   function requireTabOwner(tabId, sessionId) {
     if (!registry.has(tabId) || (sessionId !== null && !normalizeSessionId(sessionId)) || registry.ownerOf(tabId) !== sessionId) {
       throw new Error("Browser tab owner mismatch or unknown tab.");
@@ -1252,9 +1375,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
   }
 
-  function closeAllBrowserTabs() {
+  function closeAllBrowserTabs(remember = false) {
+    if (!remember) { closedTabs = []; shortcutFocus = null; }
     const closedTabIds = registry.list().map((tab) => tab.tabId);
-    for (const tabId of closedTabIds) closeBrowserTab(tabId);
+    for (const tabId of closedTabIds) {
+      if (remember) closeUserBrowserTab(tabId); else closeBrowserTab(tabId);
+    }
     return closedTabIds;
   }
 
@@ -1263,6 +1389,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // tabs or the currently visible conversation.
     const ownerSessionId = normalizeSessionId(sessionId);
     if (!ownerSessionId) return [];
+    closedTabs = closedTabs.filter((entry) => entry.ownerSessionId !== ownerSessionId);
+    if (shortcutFocus?.ownerSessionId === ownerSessionId) shortcutFocus = null;
     const closedTabIds = registry.list()
       .filter((tab) => tab.ownerSessionId === ownerSessionId)
       .map((tab) => tab.tabId);
@@ -1294,6 +1422,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (sessionId !== undefined) {
       const previous = registry.visibleSessionId();
       if (registry.setVisibleSession(sessionId) !== previous) {
+        shortcutFocus = null;
         hideContextMenu();
         applySurfacing();
       }
@@ -1312,7 +1441,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return true;
   }
 
-  function hideBrowserView() {
+  function hideBrowserView(preserveShortcutFocus = false) {
+    if (!preserveShortcutFocus && shortcutFocus?.tabId) shortcutFocus = null;
     hideContextMenu();
     browserViewVisible = false;
     if (!window()) return;
@@ -1337,6 +1467,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function registerIpc(ipcMain) {
+    ipcMain.on("openwork:browser:shortcut-focus", (event, tabId) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
+      setShortcutFocus(tabId);
+    });
     function authorizeManualNavigation(event) {
       const contents = window()?.webContents;
       if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) throw new Error("Use the browser toolbar to navigate.");
@@ -1347,7 +1482,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.handle("openwork:browser:show", (_event, bounds, sessionId) => (
       attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) })
     ));
-    ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
+    ipcMain.handle("openwork:browser:hide", (_event, options) => hideBrowserView(options?.preserveShortcutFocus === true));
     ipcMain.handle("openwork:browser:setVisibleSession", (_event, sessionId) => setVisibleSession(normalizeSessionId(sessionId)));
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider, options) => (
       openBrowserUrlForAutomation(url, provider, {
@@ -1397,7 +1532,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const tab = createBrowserTab(target, { select: true, ownerSessionId });
       return { tabId: tab.tabId };
     });
-    ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
+    ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeUserBrowserTab(tabId == null ? undefined : String(tabId)));
     ipcMain.handle("openwork:browser:suspendTab", (_event, tabId) => suspendBrowserTab(tabId));
     ipcMain.handle("openwork:browser:restoreTab", async (_event, tabId, sessionId) => {
       requireTabOwner(tabId, sessionId);
@@ -1464,12 +1599,19 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.on("openwork:webmcp:tools-changed", (event) => {
       const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
       if (!tab) return;
-      invalidateWebMcpTab(tab);
+      // The page relays this after a debounce, so it routinely arrives after a
+      // listing that already saw the same registrations. It is not a new
+      // document: only navigation bumps the revision. Listed handles stay
+      // valid, and execution revalidates each tool's live descriptor digest
+      // before asking for consent, so a changed or removed tool still fails
+      // as stale_tool while an unchanged one reaches the approval prompt.
       scheduleWebMcpToolCountRefresh(tab.tabId);
     });
   }
 
   return {
+    closeFocusedBrowserTab,
+    registerWindowShortcuts,
     destroy: destroyBrowserView,
     isMainWindowAllowedNavigation,
     browserTask: (args, options) => taskHost.request(args, options),

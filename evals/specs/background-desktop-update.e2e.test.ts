@@ -1,9 +1,48 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { backgroundUpdateWorld } from "../worlds/first-run.ts";
+import { backgroundUpdateWorld, revokedUpdateWorld } from "../worlds/first-run.ts";
 import { restartUpdateTaskWorld } from "../worlds/chat.ts";
 
 const test = spec.world(backgroundUpdateWorld);
+const revokedTest = spec.world(revokedUpdateWorld);
+
+revokedTest("a downloaded update is not installed once the organization revokes its version", async ({ world, user, probe }) => {
+  const readyText = "Ready to install: v9.9.9";
+  const blockedText = "OpenWork 9.9.9 is available, but this installation is not eligible for it yet.";
+  const downloaded = (count: number) => (value: unknown) =>
+    typeof value === "object" && value !== null && Reflect.get(value, "downloads") === count;
+
+  await world.openSettings();
+  await user.click({ role: "button", text: "Check now" });
+  await probe.eventually(world.snapshot, { within: 30_000, label: "the allowed version downloads", until: downloaded(1) });
+  await user.see({ text: readyText });
+  await user.see({ text: "Restart to update" });
+
+  // Negative half: the organization drops 9.9.9 after the download completed.
+  await world.allowVersions(["0.18.0"]);
+  await user.click("Restart to update");
+  await user.see({ text: "Restart OpenWork?" });
+  await user.click("Restart & update");
+  await user.see({ text: blockedText }, { timeoutMs: 30_000 });
+  await user.notSee({ text: readyText });
+  await user.notSee({ text: "Restart to update" });
+  await user.notSee({ text: "Install & restart" });
+  expect(await world.snapshot()).toMatchObject({ downloads: 1, installs: 0 });
+  await user.screenshot();
+
+  // Positive control: the same version approved again installs from Settings.
+  await world.allowVersions(["9.9.9"]);
+  await user.click({ role: "button", text: "Check now" });
+  await probe.eventually(world.snapshot, { within: 30_000, label: "the re-approved version downloads again", until: downloaded(2) });
+  await user.see({ text: readyText });
+  await user.notSee({ text: blockedText });
+  await user.click({ role: "button", text: "Install & restart" });
+  await probe.eventually(world.snapshot, {
+    within: 10_000, label: "install proceeds while the version stays allowed",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
+  });
+  expect(await world.snapshot()).toMatchObject({ downloads: 2, installs: 1 });
+});
 
 test("updates download outside Settings and offer a persistent, optional restart", async ({ world, user, probe }) => {
   await probe.eventually(world.snapshot, {
@@ -62,9 +101,18 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.see({ text: "Restart OpenWork?" });
   await user.see({ text: /Eligible running tasks resume gradually after restart/ });
   await user.click("Keep working");
-  await user.notSee({ text: "Restart OpenWork?" });
+  await probe.eventually(async () => {
+    await user.notSee({ text: "Restart OpenWork?" }, { timeoutMs: 100 });
+    return true;
+  }, { within: 5_000, label: "Keep working dismisses the restart dialog", until: Boolean });
   expect(await world.snapshot()).toMatchObject({ installs: 0, installAttempts: 0 });
 
+  // The background behavior above is proven. The first failed install below
+  // keeps "Check automatically" on: returning after the check interval is the
+  // trigger that used to restart the download loop, and only the updater's
+  // error/install guard keeps the counters still. The switch is then turned
+  // off so the second retry and the final install stay isolated from another
+  // background check after a fresh policy arrives.
   await world.setCustomBranding();
   await probe.eventually(world.snapshot, {
     within: 5_000, label: "custom logo is preserved instead of the default wordmark",
@@ -82,10 +130,23 @@ test("updates download outside Settings and offer a persistent, optional restart
     await user.click({ role: "button", label: /^Notifications/ });
     await user.see({ text: message });
     await user.press("Escape");
-    await user.notSee({ text: "Restart Studio?" });
+    await probe.eventually(async () => {
+      await user.notSee({ text: "Restart Studio?" }, { timeoutMs: 100 });
+      return true;
+    }, { within: 5_000, label: "the failed restart dismisses its dialog", until: Boolean });
     await user.notSee({ text: "Restart to update" });
-    expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0 });
+    // Automatic checks are still armed on the first failure and off on the second.
+    expect(await world.snapshot()).toMatchObject({ installAttempts: index + 1, installs: 0, automaticChecksEnabled: index === 0 });
+    // Coming back after the check interval must not restart the download loop
+    // on its own: the failure stays put until the person retries from Settings.
+    await world.returnToApp();
     await world.openSettings();
+    await user.see({ text: "Couldn't install the update" });
+    expect(await world.snapshot()).toMatchObject({ checks: index + 6, downloads: index + 3, installAttempts: index + 1, installs: 0 });
+    if (index === 0) {
+      await user.click({ role: "switch", label: "Check automatically" });
+      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 6, downloads: 3 });
+    }
     await user.click({ role: "button", text: "Check now" });
     await probe.eventually(world.snapshot, {
       within: 5_000, label: "the user re-downloads after the failed install through Settings",

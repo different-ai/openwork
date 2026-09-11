@@ -2,13 +2,20 @@ import { and, asc, count, eq, gt, inArray, isNotNull, isNull, sql } from "@openw
 import {
   AuthSessionTable,
   AuthUserTable,
+  ConfigObjectAccessGrantTable,
   ConnectedAccountTable,
+  ConnectorInstanceAccessGrantTable,
+  DashboardAccessGrantTable,
+  DesktopPolicyMemberTable,
+  ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
   LlmProviderAccessTable,
   LlmProviderMemberCredentialTable,
+  MarketplaceAccessGrantTable,
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
+  PluginAccessGrantTable,
   ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
@@ -21,6 +28,8 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js"
 import { cache } from "./cache.js"
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js"
+import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "./llm/inference-provider-lifecycle.js"
+import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import {
@@ -32,6 +41,7 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
+import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
 import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
 import {
@@ -544,6 +554,7 @@ async function insertMemberIfMissing(input: {
 
   const existingMember = existing[0] ?? null
   if (existingMember) {
+    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: existingMember.id })
     return existingMember
   }
 
@@ -554,6 +565,7 @@ async function insertMemberIfMissing(input: {
     defaultRole: input.role,
   })
   if (invitedMember) {
+    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: invitedMember.id })
     // Accepting an invite materializes membership data; cached org/member reads
     // must be invalidated here because hot cache hits do not re-check the DB.
     await cache.org.deleteMemberList(input.organizationId)
@@ -591,7 +603,7 @@ async function insertMemberIfMissing(input: {
   if (!created[0]) {
     throw new Error("failed_to_create_member")
   }
-
+  await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created[0].id })
   return created[0]
 }
 
@@ -1096,6 +1108,7 @@ async function createOrganizationRecord(input: {
     userId: input.userId,
     role: "owner",
   })
+  await ensureMemberGatewayKey({ organizationId, memberId: ownerMemberId })
 
   await ensureDefaultDesktopPolicyForOrganization({
     organizationId,
@@ -1193,6 +1206,11 @@ export async function ensureSingletonOrganizationForUser(userId: UserId, options
         throw new Error("failed_to_create_single_org")
       }
     }
+  }
+
+  // Single-org session creation must not re-admit an identity the IdP deprovisioned.
+  if (await isScimDeprovisionedIdentity({ organizationId: organization.id, userId, email: userEmail })) {
+    return null
   }
 
   const activeOwnerCount = await countActiveOwners(organization.id)
@@ -2007,6 +2025,7 @@ export async function removeOrganizationMember(input: {
   memberId: MemberRow["id"]
   removedByOrgMemberId?: MemberRow["id"]
 }): Promise<MemberMutationResult> {
+  let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
   const removed = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
@@ -2033,6 +2052,7 @@ export async function removeOrganizationMember(input: {
     }
 
     const member = memberRow.member
+    const removedAt = new Date()
 
     if (input.removedByOrgMemberId) {
       const adminTeams = await tx.select({ id: TeamTable.id }).from(TeamTable)
@@ -2045,6 +2065,7 @@ export async function removeOrganizationMember(input: {
       }
     }
 
+    gatewayCredentials = await revokeInferenceCredentialsForMembers(tx, [member.id])
     await tx
       .delete(ConnectedAccountTable)
       .where(and(
@@ -2072,8 +2093,67 @@ export async function removeOrganizationMember(input: {
       .where(eq(LlmProviderAccessTable.orgMembershipId, member.id))
 
     await tx
+      .delete(DesktopPolicyMemberTable)
+      .where(and(
+        eq(DesktopPolicyMemberTable.organizationId, input.organizationId),
+        eq(DesktopPolicyMemberTable.orgMemberId, member.id),
+      ))
+
+    await tx
+      .delete(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, member.id),
+      ))
+
+    await tx
+      .update(MarketplaceAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(MarketplaceAccessGrantTable.organizationId, input.organizationId),
+        eq(MarketplaceAccessGrantTable.orgMembershipId, member.id),
+        isNull(MarketplaceAccessGrantTable.removedAt),
+      ))
+
+    await tx
+      .update(ConfigObjectAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(ConfigObjectAccessGrantTable.organizationId, input.organizationId),
+        eq(ConfigObjectAccessGrantTable.orgMembershipId, member.id),
+        isNull(ConfigObjectAccessGrantTable.removedAt),
+      ))
+
+    await tx
+      .update(PluginAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(PluginAccessGrantTable.organizationId, input.organizationId),
+        eq(PluginAccessGrantTable.orgMembershipId, member.id),
+        isNull(PluginAccessGrantTable.removedAt),
+      ))
+
+    await tx
+      .update(ConnectorInstanceAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(ConnectorInstanceAccessGrantTable.organizationId, input.organizationId),
+        eq(ConnectorInstanceAccessGrantTable.orgMembershipId, member.id),
+        isNull(ConnectorInstanceAccessGrantTable.removedAt),
+      ))
+
+    await tx
+      .update(DashboardAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(DashboardAccessGrantTable.organizationId, input.organizationId),
+        eq(DashboardAccessGrantTable.orgMembershipId, member.id),
+        isNull(DashboardAccessGrantTable.removedAt),
+      ))
+
+    await tx
       .update(MemberTable)
-      .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null })
+      .set({ removedAt, removedByOrgMember: input.removedByOrgMemberId ?? null })
       .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
 
     return { ok: true, member }
@@ -2082,6 +2162,8 @@ export async function removeOrganizationMember(input: {
   if (!removed.ok) {
     return removed
   }
+
+  await revokeGoogleCredentials(gatewayCredentials)
 
   await revokeOrganizationApiKeysForMember({
     organizationId: input.organizationId,

@@ -46,6 +46,7 @@ beforeAll(async () => {
   seedRequiredEnv()
   mock.module("../src/capability-sources/native-provider-connections.js", () => ({
     listNativeProviderUsableEntries: () => Promise.resolve([entry]),
+    nativeProviderConnectionPolicyError: () => Promise.resolve(null),
   }))
   mock.module("../src/mcp/invoke.js", () => ({
     invokeMcpOperation: (input: unknown) => {

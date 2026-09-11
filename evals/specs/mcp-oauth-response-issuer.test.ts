@@ -469,3 +469,143 @@ test("Den keeps an administrator-supplied OAuth client when the provider rejects
   expect(await detail(id)).toMatchObject({ oauthClientConfigured: true, oauthClientId: "admin-configured-client" });
   evidence.recordAssertionEvidence("Den-created registrations are still discarded and re-registered", "The dynamically registered connection lost its client after the same rejection and registered a fresh client on the next sign-in, while the administrator-configured connection kept its client.", true);
 });
+
+test("Den OAuth callback distinguishes resource rejection from token exchange failure without restarting interactive authorization", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"] });
+  await using den = await server({
+    place, web: false,
+    mocks: { connector: mcpMock({ authorizationResponseIssuerSupported: true }) },
+    org: { name: `OAuth Callback Boundaries ${Date.now()}`, members: {} },
+  });
+  const provider = den.mocks.connector;
+  const headers = { authorization: `Bearer ${den.admin.token}` };
+  const secret = "synthetic-callback-secret";
+  for (const fault of ["resource-401", "resource-403", "token-400"]) {
+    const resourceStatus = fault === "resource-401" ? 401 : fault === "resource-403" ? 403 : undefined;
+    const expectedCode = resourceStatus === 401 ? "MCP_OAUTH_HTTP_401"
+      : resourceStatus === 403 ? "MCP_OAUTH_INSUFFICIENT_SCOPE" : "MCP_OAUTH_INVALID_GRANT";
+    const expectedPhase = resourceStatus === undefined ? "AUTH_TOKEN_ACQUISITION" : "AUTH_RESOURCE_VALIDATION";
+    await provider.configureOAuthCallback({
+      issueRefreshToken: resourceStatus !== undefined,
+      ...(resourceStatus === undefined
+        ? { tokenErrorDescription: `Synthetic code rejected; client_secret=${secret}` }
+        : { resourceStatus }),
+    });
+    const firstRequest = (await provider.requests()).length;
+    const created = await denFetch(den.admin, "/v1/mcp-connections", {
+      method: "POST", headers,
+      body: JSON.stringify({ name: `Callback ${fault}`, url: provider.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } }),
+    });
+    expect(created.response.status).toBe(200);
+    if (!isRecord(created.body) || typeof created.body.id !== "string") throw new Error("Connection id missing");
+    expect(created.body.connected).toBe(false);
+    const id = created.body.id;
+    const started = await denFetch(den.admin, `/v1/mcp-connections/${id}/connect/start`, { headers });
+    expect(started.response.status).toBe(200);
+    if (!isRecord(started.body) || typeof started.body.authorizeUrl !== "string") throw new Error("Authorization URL missing");
+    expect(started.body.status).toBe("needs_auth");
+    const redirect = await fetch(started.body.authorizeUrl, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    expect(redirect.status).toBe(302);
+    const location = redirect.headers.get("location");
+    if (!location) throw new Error("OAuth callback location missing");
+    const callback = new URL(location);
+    expect(callback.searchParams.get("iss")).toBe(provider.url);
+    expect(Boolean(callback.searchParams.get("code") && callback.searchParams.get("state"))).toBe(true);
+    const before = await provider.requests();
+    const setup = before.slice(firstRequest);
+    expect(setup.filter((entry) => entry.path === "/register").length).toBe(1);
+    expect(setup.filter((entry) => entry.path === "/authorize").length).toBe(1);
+    expect(setup.filter((entry) => entry.path === "/token").length).toBe(0);
+    evidence.recordAssertionEvidence(`${fault}: real authorization reaches a valid issuer callback`,
+      "Created a disconnected shared connection; connect/start returned needs_auth; one registration and authorization produced HTTP 302 with code, state, and the expected issuer; no exchange yet.", true);
+
+    const completed = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+    const html = await completed.text();
+    const referenceId = html.match(/Diagnostic reference:\s*<code>([^<]+)<\/code>/)?.[1];
+    const callbackRejected = completed.status === 400
+      && completed.headers.get("content-type")?.startsWith("text/html") === true
+      && html.includes('role="alert"') && html.includes("Connection failed")
+      && html.includes(resourceStatus === undefined
+        ? "The authorization server rejected the code or token refresh exchange."
+        : "The MCP resource rejected the supplied authorization.")
+      && !html.includes("Connection complete") && Boolean(referenceId);
+    evidence.recordAssertionEvidence(`${fault}: callback explains the failing boundary`,
+      `HTTP ${completed.status}; expected an HTML failure alert with a diagnostic reference and a ${expectedPhase} message, not a success page.`, callbackRejected);
+    expect(callbackRejected).toBe(true);
+    if (!referenceId) throw new Error("Callback diagnostic reference missing");
+
+    // Callback HTML exposes only a message/reference; connection JSON has no diagnostic.
+    // Match the real callback's structured log, never a fabricated JSON callback response.
+    const diagnostic = await eventually(async () => {
+      for (const line of (await den.apiLog()).split("\n")) {
+        if (!line.includes(referenceId)) continue;
+        let entry: unknown;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (!isRecord(entry) || entry.connection_id !== id
+          || entry.message !== "external_mcp_connect_callback_token_exchange_failed"
+          || !isRecord(entry.diagnostic) || entry.diagnostic.referenceId !== referenceId) continue;
+        return {
+          classified: entry.diagnostic.code === expectedCode && entry.diagnostic.phase === expectedPhase
+            && entry.diagnostic.httpStatus === (resourceStatus ?? 400),
+          missingAuthorizationId: line.includes("MCP_OAUTH_AUTHORIZATION_ID_REQUIRED"),
+          sdkInvalidGrant: Array.isArray(entry.causeChain) && entry.causeChain.some((cause) =>
+            isRecord(cause) && cause.name === "OAuthError" && cause.code === "invalid_grant"),
+          sanitized: !line.includes(secret),
+        };
+      }
+    }, { within: 5_000, intervalMs: 100, label: `${fault} callback diagnostic` });
+    if (!diagnostic) throw new Error("Callback diagnostic missing");
+    const classified = diagnostic.classified && !diagnostic.missingAuthorizationId
+      && (resourceStatus !== undefined || diagnostic.sdkInvalidGrant);
+    evidence.recordAssertionEvidence(`${fault}: reports ${expectedCode} in ${expectedPhase}`,
+      `Reference-matched Den diagnostic must carry HTTP ${resourceStatus ?? 400}, not a missing authorization ID; token failure must retain SDK v2 OAuthError.code=invalid_grant.`, classified);
+    expect(classified).toBe(true);
+
+    const connection = await denFetch(den.admin, `/v1/mcp-connections/${id}`, { headers });
+    expect(connection.response.status).toBe(200);
+    if (!isRecord(connection.body)) throw new Error("Connection missing after callback");
+    const disconnected = connection.body.connected === false && connection.body.connectedForMe === false
+      && connection.body.connectedAt === null && connection.body.oauthClientConfigured === true;
+    evidence.recordAssertionEvidence(`${fault}: failed callback does not commit a connected credential`,
+      "Connection GET reports connected=false, connectedForMe=false, connectedAt=null; the OAuth client registration remains configured.", disconnected);
+    expect(disconnected).toBe(true);
+
+    const observed = (await provider.requests()).slice(firstRequest);
+    const tokenRequests = observed.filter((entry) => entry.path === "/token");
+    const attempts = {
+      registrations: observed.filter((entry) => entry.path === "/register").length,
+      authorizations: observed.filter((entry) => entry.path === "/authorize" || entry.path === "/approve").length,
+      exchanges: tokenRequests.filter((entry) => entry.grantType === "authorization_code").length,
+      refreshes: tokenRequests.filter((entry) => entry.grantType === "refresh_token").length,
+      tokenRequests: tokenRequests.length,
+    };
+    const expectedExchanges = fault === "token-400" ? 2 : 1;
+    const bounded = attempts.registrations === 1 && attempts.authorizations === 1
+      && attempts.exchanges === expectedExchanges && attempts.refreshes === 0 && attempts.tokenRequests === expectedExchanges;
+    evidence.recordAssertionEvidence(`${fault}: bounded code exchange without interactive restart or refresh`,
+      `${JSON.stringify(attempts)}; ${fault === "token-400" ? "One SDK token-exchange retry is expected" : "Resource rejection must not retry the code exchange"}; no additional registration, interactive authorization, or refresh.`, bounded);
+    expect(bounded).toBe(true);
+    const exchange = tokenRequests[0];
+    if (!exchange) throw new Error("Code exchange witness missing");
+    const resources = observed.slice(before.length - firstRequest).filter((entry) => entry.path === "/mcp");
+    const providerRejected = resourceStatus === undefined
+      ? tokenRequests.every((entry) => entry.status === 400 && entry.oauthError === "invalid_grant"
+        && entry.tokenId === undefined) && resources.length === 0
+      : exchange.status === 200 && exchange.refreshTokenIssued === true
+        && typeof exchange.tokenId === "string" && resources.length > 0
+        && resources.every((entry) => entry.tokenId === exchange.tokenId && entry.status === resourceStatus
+          && entry.oauthError === (resourceStatus === 403 ? "insufficient_scope" : "invalid_token"));
+    evidence.recordAssertionEvidence(`${fault}: provider witnesses the actual rejection`,
+      resourceStatus === undefined
+        ? "Both code-exchange responses returned HTTP 400 invalid_grant; neither issued a candidate and no resource validation request followed."
+        : `Code exchange returned HTTP 200 with a refresh token; ${resources.length} resource requests used the issued candidate fingerprint and all returned HTTP ${resourceStatus}; none succeeded.`, providerRejected);
+    expect(providerRejected).toBe(true);
+
+    const sanitized = diagnostic.sanitized && !html.includes(secret) && !connection.text.includes(secret)
+      && !html.includes("mock-access-") && !html.includes("mock-refresh-")
+      && !html.includes(callback.href) && !html.includes(callback.searchParams.get("state")!);
+    evidence.recordAssertionEvidence(`${fault}: failure output excludes credentials and callback state`,
+      "Callback HTML, connection JSON, and the reference-matched diagnostic exclude the synthetic secret. HTML excludes token prefixes and the full callback/state; evidence retains only counts and booleans.", sanitized);
+    expect(sanitized).toBe(true);
+  }
+});

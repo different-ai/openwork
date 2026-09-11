@@ -27,7 +27,7 @@ spec:
       {{- end }}
       containers:
         - name: env-probe
-          image: "{{ .Values.denApi.image.repository }}:{{ default .Values.image.tag .Values.denApi.image.tag }}"
+          image: "{{ .Values.denApi.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.denApi.image.tag) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.customCa.enabled }}
           volumeMounts:
@@ -53,7 +53,11 @@ spec:
                 ["DEN_API_NODE_OPTIONS", process.env.OPENWORK_ENV_PROBE_EXPECTED_NODE_OPTIONS],
               ]);
               const required = [
+                {{- if eq .Values.config.databaseMode "mysql" }}
                 "DATABASE_URL",
+                {{- else }}
+                "DATABASE_HOST", "DATABASE_USERNAME", "DATABASE_PASSWORD",
+                {{- end }}
                 "DEN_DB_ENCRYPTION_KEY",
                 "BETTER_AUTH_SECRET",
                 "DEN_BASE_URL",
@@ -158,6 +162,7 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- include "openwork-ee.gatewayDeploymentEnv" (dict "root" . "env" .Values.denApi.env) | nindent 12 }}
             - name: OPENWORK_ENV_PROBE_EXPECTED_DB_MODE
               value: {{ .Values.config.databaseMode | quote }}
             - name: OPENWORK_ENV_PROBE_EXPECTED_DEN_ORG_MODE

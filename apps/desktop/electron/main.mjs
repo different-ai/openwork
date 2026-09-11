@@ -90,6 +90,7 @@ import {
   installSocketTypeOfServiceGuard,
   runDetachedTask,
 } from "./process-resilience.mjs";
+import { createQuitSequencer } from "./quit-sequence.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -166,6 +167,7 @@ const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
+  closeBrowserTab: (host) => browserPanel?.closeFocusedBrowserTab(host) ?? false,
 });
 
 let browserPanel = null;
@@ -396,7 +398,11 @@ async function resolveArchitectureInfo() {
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
   const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
-  const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
+  // The public release manifest only matters when the installed build does not
+  // match the machine; a matching install never shows a download, so it must
+  // not contact the release host (an unactivated enterprise install in
+  // particular has no business reaching anything before its Den is known).
+  const latestDownloadUrl = appArch === systemArch ? null : await resolveCorrectArchitectureDownloadUrl(targetArch);
   const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
   return {
     appArch,
@@ -409,6 +415,28 @@ async function resolveArchitectureInfo() {
     downloadUrl: latestDownloadUrl || `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,
     releaseUrl: RELEASE_PAGE_URL,
   };
+}
+
+// On Windows and Linux Chromium's spellchecker downloads its Hunspell
+// dictionary from Google (redirector.gvt1.com). Electron starts that load the
+// moment the default session object is first created, so an unactivated
+// install clears the dictionary list in the same synchronous step (the
+// download itself waits on a file-thread hop) and restores it once activation
+// completes. macOS uses the native spellchecker; these calls are no-ops there.
+// An empty persisted list is re-defaulted by Electron on the next boot, so a
+// quit before activation cannot leave the spellchecker off for good.
+let spellcheckerLanguagesHeldForActivation = null;
+function holdSpellcheckerUntilActivation(bootstrapConfig) {
+  if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) return;
+  const defaultSession = session.defaultSession;
+  spellcheckerLanguagesHeldForActivation = defaultSession.getSpellCheckerLanguages();
+  defaultSession.setSpellCheckerLanguages([]);
+}
+function releaseSpellcheckerAfterActivation() {
+  const languages = spellcheckerLanguagesHeldForActivation;
+  spellcheckerLanguagesHeldForActivation = null;
+  if (!languages || languages.length === 0) return;
+  session.defaultSession.setSpellCheckerLanguages(languages);
 }
 
 const APP_ICON_PATH = resolveAppIconPath();
@@ -1203,6 +1231,7 @@ async function persistConnectLinkClaims(claims) {
     desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
     && !desktopActivationRequired(DESKTOP_DISTRIBUTION, config)
   ) {
+    releaseSpellcheckerAfterActivation();
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
@@ -1366,12 +1395,7 @@ let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
 let runtimeBootstrapPromise = null;
 
-function showShutdownScreen() {
-  const win = mainWindow;
-  if (!win || win.isDestroyed()) return;
-  try {
-    win.show();
-    void win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+const SHUTDOWN_SCREEN_HTML = `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -1392,7 +1416,20 @@ function showShutdownScreen() {
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>
-</html>`)}`).catch(() => undefined);
+</html>`;
+
+// Replace the current document in place. Navigating to a data: URL instead
+// spawns a speculative renderer process, and Electron aborts any child launch
+// with CHECK_EQ(program, child_path) once the app bundle is gone from disk.
+function showShutdownScreen() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.show();
+    void win.webContents.executeJavaScript(
+      `document.open(); document.write(${JSON.stringify(SHUTDOWN_SCREEN_HTML)}); document.close();`,
+      true,
+    ).catch(() => undefined);
   } catch {
     // Ignore renderer teardown races during quit.
   }
@@ -1408,6 +1445,24 @@ async function disposeRuntimeBeforeQuit() {
     runtimeDisposeInProgress = false;
   }
 }
+
+const quitSequencer = createQuitSequencer({
+  stop: async () => {
+    showShutdownScreen();
+    desktopAutomationRunner.stop();
+    browserLoginSync.shutdown();
+    await Promise.all([
+      disposeRuntimeBeforeQuit(),
+      uiControlServer.stop(),
+    ]);
+  },
+  quit: () => {
+    scheduleBlankSlateProfileCleanup();
+    app.quit();
+  },
+  exit: () => app.exit(0),
+});
+const quitInProgress = () => quitSequencer.phase() !== "idle";
 
 function assertOpenworkServerReady(info) {
   if (!info?.running) {
@@ -1976,6 +2031,7 @@ const desktopCommandHandlers = {
         desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
         && !desktopActivationRequired(DESKTOP_DISTRIBUTION, next)
       ) {
+        releaseSpellcheckerAfterActivation();
         await uiControlServer.start().catch((error) => {
           console.warn("[ui-control] failed to start", error);
         });
@@ -2562,6 +2618,7 @@ async function createMainWindow() {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
   applicationMenu.applyVisibility(mainWindow);
+  browserPanel.registerWindowShortcuts(mainWindow);
 
   mainWindow.webContents.on("context-menu", (_event, params) => {
     void nativeContextMenus.showEditing(params).catch((error) => {
@@ -2600,6 +2657,7 @@ async function createMainWindow() {
     },
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    if (quitInProgress()) return;
     recoverRendererCrash(details);
   });
 
@@ -2742,6 +2800,19 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
 });
 
 browserPanel.registerIpc(ipcMain);
+// Native popups cannot be seen or clicked over CDP. In development only, let the
+// app's main frame read the open/last menu as plain data and choose an item.
+if (isDevMode && !app.isPackaged) {
+  const fromMainFrame = (event) => Boolean(mainWindow) && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame;
+  ipcMain.handle("openwork:context-menu:inspect", (event) => (fromMainFrame(event) ? nativeContextMenus.inspect() : null));
+  ipcMain.handle("openwork:context-menu:choose", (event, id) => fromMainFrame(event) && nativeContextMenus.choose(id));
+  ipcMain.handle("openwork:context-menu:dismiss", (event) => {
+    if (!fromMainFrame(event)) return false;
+    const { open } = nativeContextMenus.inspect();
+    nativeContextMenus.close();
+    return open;
+  });
+}
 const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
 const browserLoginSync = createBrowserLoginSync({
   statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),
@@ -2809,25 +2880,8 @@ or use: pnpm dev:worktree`);
     app.quit();
   }
 } else {
-  app.on("before-quit", (event) => {
-    if (runtimeDisposedForQuit) return;
-    event.preventDefault();
-    if (runtimeDisposeInProgress) return;
-    showShutdownScreen();
-    desktopAutomationRunner.stop();
-    browserLoginSync.shutdown();
-    runDetachedTask("stop services before quit", async () => {
-      try {
-        await Promise.all([
-          disposeRuntimeBeforeQuit(),
-          uiControlServer.stop(),
-        ]);
-      } finally {
-        scheduleBlankSlateProfileCleanup();
-        app.quit();
-      }
-    });
-  });
+  app.on("before-quit", (event) => quitSequencer.handleBeforeQuit(event));
+  app.on("will-quit", () => quitSequencer.handleWillQuit());
 
   app.on("second-instance", (_event, argv) => {
     runDetachedTask("focus second instance", async () => {
@@ -2851,6 +2905,7 @@ or use: pnpm dev:worktree`);
   });
 
   app.whenReady().then(async () => {
+    holdSpellcheckerUntilActivation(workspaceStore.readDesktopBootstrapConfigSync());
     const systemCaCertificates = await runtimeManager.systemCaCertificates();
     session.defaultSession.setCertificateVerifyProc(createSystemCaCertificateVerifyProc(systemCaCertificates));
     installMediaPermissionHandlers(session, () => mainWindow);
@@ -2944,6 +2999,10 @@ or use: pnpm dev:worktree`);
     runDetachedTask("initialize updater", ensureAutoUpdater);
   }).catch((error) => {
     console.error("[desktop] startup failed", error);
+    // A quit that arrives mid-startup aborts the pending window load and
+    // rejects this chain. showErrorBox is a synchronous modal: raised here it
+    // would block the main thread, and the quit, until someone dismissed it.
+    if (quitInProgress()) return;
     dialog.showErrorBox(
       `${APP_NAME} could not start`,
       "OpenWork hit an unexpected startup error. Quit and reopen the app. If it continues, switch to a Stable build and share the diagnostics with support.",

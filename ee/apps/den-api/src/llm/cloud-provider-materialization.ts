@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { catalogFastVariants, materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
 import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   LlmProviderModelTable,
@@ -330,7 +331,7 @@ function providerEnvEntries(provider: CloudProviderMaterializationProvider): Env
   return entries
 }
 
-function buildModelConfig(model: CloudProviderMaterializationProvider["models"][number]) {
+function buildModelConfig(model: CloudProviderMaterializationProvider["models"][number], providerNpm: unknown) {
   const next: JsonRecord = {
     id: model.modelId,
     name: model.name,
@@ -343,6 +344,8 @@ function buildModelConfig(model: CloudProviderMaterializationProvider["models"][
     }
   }
 
+  const variants = catalogFastVariants(model.modelConfig, providerNpm)
+  if (variants) next.variants = variants
   return next
 }
 
@@ -350,7 +353,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
   const models: JsonRecord = {}
   const sortedModels = [...provider.models].sort((left, right) => left.modelId.localeCompare(right.modelId))
   for (const model of sortedModels) {
-    models[model.modelId] = buildModelConfig(model)
+    models[model.modelId] = buildModelConfig(model, provider.providerConfig.npm)
   }
 
   const config: JsonRecord = {
@@ -631,12 +634,16 @@ function buildRuntimeProviderPatch(prepared: PreparedMaterialization, currentMan
 }
 
 function materializedProviderStateMatches(prepared: PreparedMaterialization, currentManagedProviders: JsonRecord) {
-  const desiredManagedProviders: JsonRecord = {}
+  const desiredManagedProviders: Record<string, JsonRecord> = {}
   for (const provider of prepared.providers) {
     desiredManagedProviders[provider.runtimeProviderId] = provider.config
   }
 
-  return stableJson(currentManagedProviders) === stableJson(desiredManagedProviders)
+  const current = stableJson(currentManagedProviders)
+  // New v1 engines expose the expanded config; older servers still expose the
+  // disabled import metadata. Accept either to avoid reloads on every resolve.
+  return current === stableJson(desiredManagedProviders)
+    || current === stableJson(materializeLegacyFastProviders(desiredManagedProviders))
 }
 
 function materializedEnvStateMatches(entries: EnvEntry[], snapshot: EnvSnapshot) {

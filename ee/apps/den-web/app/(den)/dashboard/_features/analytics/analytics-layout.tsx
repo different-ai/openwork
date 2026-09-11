@@ -26,7 +26,8 @@ export function AnalyticsPageHeader({ orgSlug, active, title, description, actio
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="max-w-2xl">
         <h1 className="text-[28px] font-semibold tracking-[-0.04em] text-[#07192C]">{title}</h1>
-        <p className="mt-1.5 text-sm leading-6 text-[#637291]">{description}</p>
+        {/* Two reserved lines keep the shared tab strip below at the same position on every Analytics page. */}
+        <p className="mt-1.5 min-h-12 text-sm leading-6 text-[#637291]">{description}</p>
         {caption ? <div className="mt-2 text-xs text-[#637291]">{caption}</div> : null}
       </div>
       {action}

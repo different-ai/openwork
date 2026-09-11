@@ -1,0 +1,217 @@
+---
+title: "Enable OpenWork Gateway"
+description: "Opt in to Gateway with matching images, explicit destinations, shared secrets, and a platform-admin dashboard grant."
+---
+
+OpenWork Gateway routes model requests to configured providers with server-held credentials, model groups, credential sets, and access grants. It runs from `ee/apps/gateway`, normally on port `8791`.
+
+It is **not** `den-gateway`, the separate OpenWork Web proxy, and it is not the [OpenWork MCP gateway](/cloud/run-in-the-cloud/cloud-mcp). **OpenWork Models** is still the managed model catalog and subscription product. Its billing, keys, and legacy API contracts are separate.
+
+<Warning>
+  This guide requires the Gateway-capable chart implementation introduced in chart `0.2.0` and matching Den API, Den Web, and Gateway images from this release. Chart version alone is not evidence that an image supports deployment capability version `1`. The checkout's `Chart.appVersion: "0.1.0"` is a packaging placeholder, not a compatible image recommendation. Older stable images do not gain support by using new values. For an existing database, complete [Upgrade Gateway safely](/self-host/gateway-upgrade) before starting the new images.
+</Warning>
+
+## Two independent controls
+
+| Control | Who changes it | Meaning |
+| --- | --- | --- |
+| `GATEWAY_ENABLED=true` | Deployment operator | Validated deployment intent; advertises `deploymentCapabilities: { version: 1, aiGateway: true }` and admits Gateway management requests. Helm sets it through `gateway.enabled: true`. |
+| `capabilities.gatewayDashboard: true` | Allowlisted platform administrator | Exposes the Gateway dashboard to organization admins and above. This existing organization flag defaults to false. |
+
+Neither organization mode, a running legacy inference service, nor the presence of billing/provider credentials opts a deployment in. With `GATEWAY_ENABLED` absent, the new capability is false and existing OpenWork Models behavior is preserved. Hosted operators explicitly set `GATEWAY_ENABLED=true` through their existing hosting environment mechanism on Den API and Gateway; hosted deployments are not assumed to use Helm.
+
+The organization flag is dashboard exposure, not runtime authorization. Do not create another flag, put deployment capabilities in organization metadata, or use ordinary organization metadata updates to grant dashboard access. Management APIs still enforce organization-admin permissions and fresh authentication for privileged writes independently of dashboard exposure.
+
+## Prepare the deployment
+
+1. Select matching, immutable release image tags for Den API, Den Web, and Gateway. Remove or reconcile component-specific image tags that would override the shared `image.tag`.
+2. Initialize or migrate the database with a reviewed procedure, and verify the release schema before starting application traffic. A new empty database can use this release's current-schema bootstrap; an existing database requires the [upgrade procedure](/self-host/gateway-upgrade).
+3. Precreate the database/authentication Secret in the release namespace using your secret manager. Den API and Gateway must use the same database and the same existing `DEN_DB_ENCRYPTION_KEY`; do not generate a new encryption key during an upgrade.
+4. Configure the internal Gateway origin and a separate desktop-reachable Gateway origin, DNS, trusted certificates, and network access.
+5. Render and inspect the values, deploy the matching images, verify the authenticated contract, then request the organization dashboard grant.
+
+### Helm values
+
+This fragment is for the Gateway-capable chart `0.2.0` or later **with the matching release images**. Merge it with the normal Den deployment values. Replace the image tag and precreated Secret name with your approved references, not secret values.
+
+```yaml
+image:
+  tag: REPLACE_MATCHING_RELEASE_IMAGE_TAG
+gateway:
+  enabled: true
+config:
+  databaseMode: mysql
+  internal:
+    gatewayProxyBaseUrl: http://openwork-ee-inference:8791
+    inferenceProxyBaseUrl: https://existing-models.example.com # Keep your existing Models endpoint.
+  public:
+    gatewayPublicBaseUrl: https://gateway.example.com
+secret:
+  create: false
+  existingSecret: REPLACE_PRECREATED_DEN_SECRET
+  keys:
+    databaseUrl: DATABASE_URL
+    betterAuthSecret: BETTER_AUTH_SECRET
+    denDbEncryptionKey: DEN_DB_ENCRYPTION_KEY
+```
+
+Use your release's actual retained Service name instead of assuming `openwork-ee-inference`. Gateway continues to use the `*-inference` Deployment, Service, container name, selectors, and default `ghcr.io/different-ai/openwork-inference` image repository. No resource rename is required.
+
+The chart does not create a Gateway ingress automatically. Provision its desktop-reachable HTTPS endpoint through your ingress, service mesh, or `gateway.service` load balancer configuration. Existing web/API ingress settings do not publish Gateway for you.
+
+### Database and encryption references
+
+| `config.databaseMode` | Required shared Secret key settings | Den API / Gateway runtime variables |
+| --- | --- | --- |
+| `mysql` | `secret.keys.databaseUrl` | `DATABASE_URL` |
+| `planetscale` | `secret.keys.databaseHost`, `databaseUsername`, `databasePassword` | `DATABASE_HOST`, `DATABASE_USERNAME`, `DATABASE_PASSWORD` |
+| Both modes | `secret.keys.denDbEncryptionKey` | `DEN_DB_ENCRYPTION_KEY` |
+
+The default key names match the runtime variables. Key remapping is supported: set each `secret.keys` entry to the corresponding data key in your precreated Secret. When explicitly enabled, Den API and Gateway receive required `secretKeyRef` entries; Helm cannot read or validate the contents of an existing Secret. Keep the normal Den authentication keys as well, including the key selected by `secret.keys.betterAuthSecret`.
+
+The encryption key must contain at least 32 characters after trimming. MySQL mode requires a valid `mysql://` URL with username, host, database name, and valid port. PlanetScale mode requires a valid database hostname and nonempty username/password. Production must not use loopback database hosts. Require verified database TLS and use [custom CA support](/start-here/certificate-trust-and-proxies) where needed.
+
+Migration connectivity is separate from runtime mode. Whenever `migrations.enabled: true`, the chart always supplies the Job's `DATABASE_URL` from the existing `secret.keys.databaseUrl` mapping, plus `DEN_DB_ENCRYPTION_KEY` from `secret.keys.denDbEncryptionKey`. This also applies with `config.databaseMode: planetscale`: runtime host/user/password credentials do not replace bootstrap's TCP MySQL connection. The mapped key in the precreated Secret must contain a TCP `mysql://` URL for the **same database**, including its database name, port, and approved TLS options. No new migration values are needed; the chart does not expose bootstrap's alternative `DATABASE_NAME`/`DATABASE_PORT` configuration. Verify TCP reachability, TLS trust, and migration privileges separately. With `migrations.enabled: false`, the chart skips this migration-specific validation, but the external [upgrade procedure](/self-host/gateway-upgrade) still needs its reviewed migration connection.
+
+Use `secret.create: false` for these examples. Chart-created Secrets use `secret.values`, and the current pre-install hook inlines their credentials into the Job. Do not place literal credentials in values, commands, documentation, or diagnostic output.
+
+### Internal and public origins
+
+- `GATEWAY_PROXY_BASE_URL` is the internal/service-to-service destination. Set it on Den API and Gateway. Internal HTTP is permitted across a trusted private boundary.
+- `GATEWAY_PUBLIC_BASE_URL` is the desktop-reachable destination, not the internal Service address. Den API uses it in member Gateway provider configurations. Configure it on both services for shared startup validation.
+- Models clients retain an explicit, valid desktop origin from `INFERENCE_PROXY_BASE_URL`; otherwise they use a valid `GATEWAY_PUBLIC_BASE_URL`. This selection is independent of `GATEWAY_ENABLED`: changing only management enablement does not replace a known public destination with the internal proxy. Preserve your existing Models HTTPS hostname, including for organizations without Gateway dashboard opt-in. No subscription, key, or upstream-routing changes are required.
+- Both must be explicit origins without credentials, non-root paths, queries, or fragments. A trailing `/` is allowed. Do not append `/api/v1` to either value.
+- Production public origins require HTTPS and a non-local qualified hostname or valid non-loopback IP address. Private DNS is possible, but member devices must resolve it, route to it, and trust its certificate. Internal `.svc` or `.internal` names are not valid production public origins.
+- Helm validates production-style origins statically; startup validation does not check DNS, TLS, network reachability, or schema readiness. Local development exceptions require `OPENWORK_DEV_MODE=1` and a non-production `NODE_ENV`, not a production workaround.
+
+`config.internal.gatewayProxyBaseUrl` wins over `config.internal.inferenceProxyBaseUrl` **by presence**. An explicitly empty canonical URL clears the legacy value and fails enabled-Gateway validation. If the canonical key is absent, an explicitly configured legacy URL can satisfy the internal requirement. The automatically generated legacy Service URL alone does not satisfy new opt-in. There is no inferred public fallback for enabled deployments.
+
+Helm preserves nonempty `config.internal.inferenceProxyBaseUrl` in `INFERENCE_PROXY_BASE_URL` when a canonical proxy or public destination is configured, and uses the configured public Gateway origin when the legacy value is unset/empty. Despite its legacy `internal` name, keep the existing Models client endpoint in this setting. Shared public configuration is retained when management is disabled. Internal proxy resolution still follows canonical presence, including an explicit empty clear. With no usable public destination, disabled deployments retain historical Models fallback behavior; invalid optional Gateway settings do not add new startup requirements. That compatibility fallback can be private or loopback, so configure a valid public destination for desktop clients. A URL change does not repair previously stored client configurations automatically.
+
+## Canonical environment reference
+
+These are native runtime variables, not values to inject indiscriminately through Helm per-app `env`. Helm owns shared enablement, URLs, database references, ports, and optional tokens; conflicting per-app overrides are rejected. Den Web consumes the authenticated API capability, not a separate Web environment toggle.
+
+| Variable | Required or default | Alias / scope |
+| --- | --- | --- |
+| `GATEWAY_ENABLED` | Required explicit `true` to opt in; absent or exact `false` disables capability. Empty, `1`, or other spellings fail startup. | No legacy enablement alias. Den API and Gateway. |
+| `GATEWAY_PROXY_BASE_URL` | Explicit internal origin required when enabled. | `INFERENCE_PROXY_BASE_URL` only when canonical is absent. Den API and Gateway. |
+| `GATEWAY_PUBLIC_BASE_URL` | Explicit desktop-reachable origin required when enabled. | No deprecated alias. Den API and Gateway. |
+| `DB_MODE` | `mysql` or `planetscale`; if absent, inferred as `mysql` when `DATABASE_URL` is set, otherwise `planetscale`. | Use explicit `config.databaseMode` with Helm. |
+| Database variables and `DEN_DB_ENCRYPTION_KEY` | Required as described above; Gateway requires its database and encryption configuration even when capability is disabled. | No `GATEWAY_*` replacement for these names. |
+| `GATEWAY_PORT` | `8791`; integer `1` through `65535`. | Precedence: `GATEWAY_PORT`, then `PORT`, then `INFERENCE_PORT`. Gateway only; use Helm `gateway.containerPort`. |
+| `GATEWAY_ADMIN_TOKEN` | Optional; absent/empty disables bearer access to internal admin/rollup endpoints. | `INFERENCE_ADMIN_TOKEN`. Gateway; not an organization-dashboard login token. |
+| `GATEWAY_WEBHOOK_SECRET` | Optional; absent/empty disables the webhook credential in production. | `INFERENCE_WEBHOOK_SECRET`. Gateway. |
+| `GATEWAY_UPSTREAM_TIMEOUT_MS` | Provider forwarding (`upstreamTimeoutMs`): `1800000`; managed Models chat (`managedUpstreamTimeoutMs`): `120000` when neither alias is set. Explicit configuration applies to both. Integer `1000` through `86400000`. | `INFERENCE_UPSTREAM_TIMEOUT_MS`. Gateway; see route-specific behavior below. |
+| `GATEWAY_STREAM_IDLE_MS` | `120000`; integer `1000` through `900000`. | `INFERENCE_STREAM_IDLE_MS`. Managed Models chat streaming, not the provider relay. |
+| `GATEWAY_CREDITS_PER_DOLLAR` | `1000000`; positive numeric value. | `INFERENCE_CREDITS_PER_DOLLAR`. Gateway accounting; does not enable a product. |
+| `GATEWAY_EGRESS_ALLOWED_ORIGINS` | Optional comma-separated exact origins; empty means no exceptions to public-HTTPS egress policy. | `INFERENCE_EGRESS_ALLOWED_ORIGINS`. Set the same policy on Den API and Gateway. |
+| `CORS_ORIGINS` | Optional comma-separated browser origins. Enabled Gateway requires exact origins (no wildcards); production opt-in requires non-local HTTPS. Disabled deployments retain legacy parsing, including `*`. | No new alias. Gateway CORS settings are not an egress allowlist. |
+| `OPENROUTER_UPSTREAM_URL` | Optional; defaults to `https://openrouter.ai/api/v1`. With opt-in, production requires non-local HTTPS, no credentials/query/fragment; a provider API path is allowed. | Existing Models upstream setting, not a renamed Gateway destination. |
+| `OPENAI_REALTIME_API_KEY` | Optional for the existing realtime integration; falls back to nonempty `OPENAI_API_KEY`. | Existing integration settings, not required for basic Gateway opt-in. Inject through secret management. |
+
+Canonical alias precedence is based on whether the variable is set, including an empty string. Empty token values disable that credential; an empty egress allowlist removes inherited exceptions rather than merging them. Invalid or empty canonical numeric values fail startup instead of falling back. An empty canonical proxy URL fails validation when enabled; legacy disabled behavior is not a supported opt-in shortcut. Keep `OPENWORK_INFERENCE_BASE_URL`, `STRIPE_INFERENCE_PRICE_ID`, and `config.inference.*` Models contracts unchanged.
+
+The timeout names describe different handlers, not interchangeable products. In `gateway.ts`, `/api/v1/providers/:inferenceProviderId/*` uses `env.upstreamTimeoutMs` for the upstream lifetime, including response relay. In `proxy.ts`, the retained `/api/v1/chat/completions` API uses `env.managedUpstreamTimeoutMs` for managed OpenWork Models: response headers and non-streaming bodies have separate timers, while successful streaming uses `env.streamIdleMs`. The shared timeout override sets both timeout fields, but does not make their timing behavior identical.
+
+Egress exceptions can permit private destinations or HTTP, so they require a security review of exact operator-owned origins. Do not use wildcards or confuse upstream egress exceptions with the internal/public Gateway URLs. Default egress checks reject private/reserved addresses and redirects.
+
+### Optional admin, webhook, and retention
+
+Canonical Helm enablement does not implicitly enable admin or webhook credentials. To opt in, reference keys in the same precreated shared Secret:
+
+```yaml
+gateway:
+  enabled: true
+  admin:
+    enabled: true
+  webhook:
+    enabled: true
+secret:
+  create: false
+  existingSecret: REPLACE_PRECREATED_DEN_SECRET
+  keys:
+    gatewayAdminToken: GATEWAY_ADMIN_TOKEN
+    gatewayWebhookSecret: GATEWAY_WEBHOOK_SECRET
+```
+
+The optional canonical key settings override `secret.keys.inferenceAdminToken` and `secret.keys.inferenceWebhookSecret` by presence. Without canonical settings, the default Secret data keys remain `INFERENCE_ADMIN_TOKEN` and `INFERENCE_WEBHOOK_SECRET`. Disabled features explicitly clear both runtime token aliases, preventing `envFrom` from enabling them accidentally. Do not set token values in `gateway.env` or `inference.env`.
+
+Enable retention only after verifying the accounting migrations and policy. It is a product maintenance CronJob, not a member Automation:
+
+```yaml
+gateway:
+  enabled: true
+  retention:
+    enabled: true
+    adminTokenSecret: REPLACE_PRECREATED_RETENTION_SECRET
+    adminTokenKey: GATEWAY_ADMIN_TOKEN
+```
+
+The retention Secret reference is authoritative for **both** `GATEWAY_ADMIN_TOKEN` and `INFERENCE_ADMIN_TOKEN` on the Gateway and CronJob, even if the shared Secret has different tokens. It enables admin access without `gateway.admin.enabled`. The inherited schedule is `0 3 * * *`, timezone `Etc/UTC`; the job calls the retained internal Service's `/internal/rollups/run`. Service enablement is also required. Non-Helm deployments must supply their own authorized maintenance caller.
+
+## Sparse Helm compatibility
+
+The default `gateway: {}` deliberately has no canonical defaults. An absent `gateway` root, including an older release upgraded with `--reuse-values`, is supported and treated as `{}`; an explicitly supplied non-map is rejected. The root empty map means no canonical overrides, not deletion of the legacy component. Legacy `inference.*` values still configure the component, but only explicit `gateway.enabled: true` opts in to capability version `1`.
+
+| Final values | Component | Capability intent |
+| --- | --- | --- |
+| Defaults | Absent | False |
+| `inference.enabled: true`, `gateway.enabled` absent | Retained | False; both services receive `GATEWAY_ENABLED=false` |
+| `gateway.enabled: false`, even with `inference.enabled: true` | Absent | False |
+| `gateway.enabled: true`, valid shared configuration | Present | True on Den API and Gateway |
+
+Structural settings such as image, replicas, service, env, probes, resources, pod metadata, and retention inherit from `inference.*` unless the canonical key is present. Nonempty maps merge recursively; explicit `{}`, `[]`, `false`, `0`, and `""` replace inherited values. These rules apply to the canonical-over-legacy merge **after Helm coalesces values**. For example, a new `gateway.env: {}` clears inherited `inference.env`, `gateway.probes: {}` removes inherited probes, and `gateway.replicaCount: 0` scales down without clearing capability intent. Clearing required fields fails validation when the component is enabled.
+
+An empty component image tag clears an inherited tag and falls back to shared `image.tag`, then `Chart.appVersion`. It does not select a compatible release for you.
+
+Clearing **saved canonical maps** is different. Helm can refill an empty map before templates run: after saving `gateway.env.SAVED`, `--reuse-values --set-json 'gateway.env={}'` retains that entry. Earlier values files can refill nested maps too. To clear previously canonical entries, use `--reset-values` with a complete, reviewed values file that omits the old entries and explicitly includes the desired empty maps. Preserve all other deployment settings and Secret references. A final empty override file or `--reset-then-reuse-values` does not reliably discard saved maps. Inspect the resulting render; `null` is Helm's deletion operator, not a supported chart clear value.
+
+## Grant dashboard access
+
+After deployment verification, an **allowlisted platform administrator** opens Den `/admin`, selects the organization, and enables **Gateway dashboard**. The existing platform API is `PUT /v1/admin/organizations/:organizationId/capabilities` with this partial body:
+
+```json
+{
+  "capabilities": {
+    "gatewayDashboard": true
+  }
+}
+```
+
+An ordinary organization owner/admin cannot grant this reserved capability. Ask the instance/platform administrator to enable the existing flag for the intended organization; do not request a competing feature flag or try a metadata-write workaround. Once granted, reload the dashboard and use **Models > Gateway** as an organization admin or above. Regular members do not gain shared credential administration.
+
+## Verify and troubleshoot
+
+Sign in to Den as an organization admin, select the intended organization, and inspect its authenticated **`GET /v1/org`** response using the browser's Network panel or your approved authenticated API client. Check the Den API response, not a health endpoint, organization metadata field, or Web runtime-config response. The relevant top-level fields are:
+
+```json
+{
+  "deploymentCapabilities": { "version": 1, "aiGateway": true },
+  "capabilities": { "gatewayDashboard": true }
+}
+```
+
+Do not export cookies, authorization headers, or the full organization response into tickets. Record only the capability fields and release image identifiers. A missing/malformed capability object, unsupported version, or value other than literal boolean `true` is unsupported and fails closed in the UI. Verify all API replicas serve the matching release; one response is not proof of a consistent rollout.
+
+| State | Expected result / action |
+| --- | --- |
+| Organization access is loading or switching | `Checking workspace access...`; management UI and requests wait. This is not a deployment-unavailable verdict. |
+| Organization admin with dashboard grant, but unsupported/disabled deployment | Exact notice below, with no provider editor or management fetch. Check images, the top-level contract, and operator configuration. |
+| No dashboard grant or insufficient organization role | Redirect to the dashboard; ask the platform admin for the grant or review membership. |
+| Organization-context request fails | An error notice, not a fabricated disabled capability. Resolve session/API failure. |
+| Enabled deployment with an upstream/provider outage | Diagnose credentials, DNS, TLS, egress, catalog warnings, and upstream errors. Availability is configuration intent, not an upstream health probe; do not relabel the deployment as unsupported. |
+
+The deployment-unavailable UI message is exactly:
+
+> This feature is not part of your deployment system, please ask an instance admin to configure deployment
+
+An authenticated, authorized management API request on a disabled deployment returns HTTP `403`, error `gateway_not_enabled`, and:
+
+> Gateway management is not enabled on this deployment. Ask your administrator to configure GATEWAY_ENABLED=true.
+
+Authentication, role, and fresh-session failures remain distinct. Member usable/connect/sign-in/revoke paths and OAuth callbacks are not governed by the dashboard flag or management gate.
+
+`/health` proves process liveness. Gateway `/ready` executes `select 1` to check database connectivity; it does **not** prove the Gateway schema or migrations exist. The capability response also does not prove schema health. Verify migration receipts and actual schema separately, then test an authorized provider path with approved non-sensitive data before reopening traffic.
+
+For eligible hosted organization admins, OpenWork Models navigation and command-palette entries are hidden, and its direct page redirects to Gateway, **only when both deployment support and the organization dashboard grant are effective**. A grant alone on an unsupported deployment leaves OpenWork Models available. Loading temporarily defers those decisions. Existing single-org behavior still routes Models to custom providers. This is a UI transition, not subscription cancellation, a billing change, Models-key revocation, or deletion of provider data. See [disable and recovery choices](/self-host/gateway-upgrade#disable-without-a-schema-downgrade) before turning anything off.

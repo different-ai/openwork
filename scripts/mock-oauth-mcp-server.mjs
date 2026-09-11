@@ -83,6 +83,7 @@ const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
 let agentRepliesHeld = false;
 const heldAgentReplies = new Set();
 let configuredTools = [];
+let oauthCallback = {};
 
 const gmailThreadId = "thread-q3-launch";
 
@@ -502,7 +503,7 @@ async function handleAgentResponse(req, res, entry) {
   const matched = agentWorkloads.filter((workload) => text.includes(workload.promptMarker));
   const model = body.model;
   const workload = matched[0];
-  const base = { model, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
+  const base = { model, reasoningEffort: body.reasoning?.effort ?? null, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
   if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
     entry.agentCompletion = { ...base, kind: "error" };
     json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
@@ -553,7 +554,7 @@ async function handleAgentCompletion(req, res, entry) {
   const workload = matched[0];
   const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
   const completedTools = scopedMessages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
-  const baseRequest = { model, matchedMarkers, completedTools };
+  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, matchedMarkers, completedTools };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
@@ -646,7 +647,7 @@ async function readForm(req) {
   return Object.fromEntries(new URLSearchParams(raw));
 }
 
-function record(req, url) {
+function record(req, url, res) {
   const entry = {
     id: requests.length + 1,
     method: req.method,
@@ -655,6 +656,7 @@ function record(req, url) {
     at: new Date().toISOString(),
   };
   requests.push(entry);
+  res.once("finish", () => { entry.status = res.statusCode; });
   console.log(`[mock-oauth-mcp] ${entry.method} ${entry.path}`);
   return entry;
 }
@@ -897,6 +899,7 @@ async function issueToken(req, res, entry) {
   if (grantType === "authorization_code") {
     const grant = codes.get(form.code);
     if (!grant) {
+      entry.oauthError = "invalid_grant";
       json(res, 400, { error: "invalid_grant" });
       return;
     }
@@ -914,6 +917,12 @@ async function issueToken(req, res, entry) {
         json(res, 400, { error: "invalid_grant", error_description: "PKCE verification failed" });
         return;
       }
+    }
+    if (oauthCallback.tokenErrorDescription !== undefined) {
+      codes.delete(form.code);
+      entry.oauthError = "invalid_grant";
+      json(res, 400, { error: "invalid_grant", error_description: oauthCallback.tokenErrorDescription });
+      return;
     }
   } else if (grantType === "refresh_token") {
     if (!requirePreregisteredTokenClient(req, res, form, null)) {
@@ -936,10 +945,13 @@ async function issueToken(req, res, entry) {
   const accessToken = `mock-access-${randomUUID()}`;
   tokens.add(accessToken);
   const refreshToken = `mock-refresh-${randomUUID()}`;
-  refreshTokens.add(refreshToken);
+  const issueRefreshToken = oauthCallback.issueRefreshToken !== false;
+  if (issueRefreshToken) refreshTokens.add(refreshToken);
+  entry.tokenId = createHash("sha256").update(accessToken).digest("hex").slice(0, 12);
+  entry.refreshTokenIssued = issueRefreshToken;
   await respond(200, {
     access_token: accessToken,
-    refresh_token: refreshToken,
+    ...(issueRefreshToken ? { refresh_token: refreshToken } : {}),
     token_type: "Bearer",
     expires_in: 3600,
     scope: grantedScope,
@@ -1186,6 +1198,17 @@ async function handleMcp(req, res, entry) {
     .map((message) => message.method);
 
   const authorized = isAuthorized(req);
+  entry.tokenId = tokenFingerprint(req);
+  if (tokens.has(bearerToken(req)) && oauthCallback.resourceStatus !== undefined) {
+    const error = oauthCallback.resourceStatus === 403 ? "insufficient_scope" : "invalid_token";
+    entry.oauthError = error;
+    json(res, oauthCallback.resourceStatus, { error }, {
+      "www-authenticate": oauthCallback.resourceStatus === 403
+        ? 'Bearer error="insufficient_scope", scope="mcp:read mcp:write"'
+        : `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
+    });
+    return;
+  }
   if (!authorized) {
     json(res, 401, { error: "missing_mcp_token" }, {
       "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
@@ -1205,7 +1228,6 @@ async function handleMcp(req, res, entry) {
   // Arguments + a token fingerprint make the connector the AUTHORITY on who
   // called it: a spec can prove two members each invoked a tool with their own
   // credential, without trusting the app's own UI state.
-  entry.tokenId = tokenFingerprint(req);
   entry.toolCalls = messages
     .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
     .map((message) => ({
@@ -1233,7 +1255,7 @@ async function handleMcp(req, res, entry) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", issuer);
-    const entry = record(req, url);
+    const entry = record(req, url, res);
 
     if (req.method === "OPTIONS") {
       json(res, 204, {});
@@ -1247,6 +1269,22 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/requests") {
       json(res, 200, { requests });
+      return;
+    }
+
+    if (url.pathname === "/admin/oauth-callback" && req.method === "POST") {
+      const body = await readJson(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)
+        || Object.keys(body).some((key) => !["issueRefreshToken", "resourceStatus", "tokenErrorDescription"].includes(key))
+        || (body.issueRefreshToken !== undefined && typeof body.issueRefreshToken !== "boolean")
+        || (body.resourceStatus !== undefined && ![401, 403].includes(body.resourceStatus))
+        || (body.tokenErrorDescription !== undefined && (typeof body.tokenErrorDescription !== "string"
+          || !body.tokenErrorDescription || body.tokenErrorDescription.length > 512))) {
+        json(res, 400, { error: "invalid_oauth_callback_options" });
+        return;
+      }
+      oauthCallback = body;
+      json(res, 200, { configured: true });
       return;
     }
 

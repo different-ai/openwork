@@ -16,6 +16,9 @@ ignorePaths = [
   "**/*.min.js",
 ]
 
+[defaults.scan]
+maxFileLines = 5000
+
 [defaults.agent]
 model = "openai/gpt-5.6-luna"
 

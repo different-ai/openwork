@@ -1,6 +1,5 @@
 import { browserScript, type Surface } from "@openwork/cdp";
 import { resolveEvalEngine, type Place, type Seed } from "@openwork/env";
-import type { MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 import { configureProvider } from "./chat.ts";
 
@@ -31,14 +30,6 @@ export const streamedContinuityChunks = [
   `${streamedContinuityBullets[6].slice(streamedContinuityPartialSeventh.length)}\n- ${streamedContinuityBullets[7]}\n- ${streamedContinuityBullets[8]}\n- ${streamedContinuityBullets[9]}`,
 ];
 
-function requestedSurface(): "electron" | "web" {
-  const value = process.env.OPENWORK_EVAL_APP_SURFACE?.trim() || "web";
-  if (value !== "electron" && value !== "web") {
-    throw new Error(`OPENWORK_EVAL_APP_SURFACE must be web or electron; received ${JSON.stringify(value)}.`);
-  }
-  return value;
-}
-
 function requestedPlacement(place: Place): Place["kind"] {
   const value = process.env.OPENWORK_WORLD_PLACE?.trim();
   if (value === undefined || value === "") return place.kind;
@@ -62,16 +53,15 @@ async function createSession(seed: Seed, app: Surface, title: string) {
   throw new Error(`Session creation did not settle: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
-/** Isolated CONT-01 fixture; legacy streamed-markdown cases keep their original desktop world. */
-export async function chatStreamContinuity(seed: Seed, context: { place: Place }) {
-  const surface = requestedSurface();
+/** Headless app-web CONT-01 fixture; legacy cases keep their original desktop world. */
+export async function chatStreamContinuityWeb(seed: Seed, context: { place: Place }) {
   const declaredPlacement = requestedPlacement(context.place);
   const engine = resolveEvalEngine();
   const providerId = "stream-continuity-mock";
   const modelId = "stream-continuity-model";
   const workspacePath = seed.tmpPath("chat-stream-continuity");
   const mock = seed.mock({
-    isolatedProcessEnv: surface === "web",
+    isolatedProcessEnv: true,
     agentWorkloads: [{
       promptMarker: streamedContinuityMarker,
       latestUserTurn: true,
@@ -82,28 +72,14 @@ export async function chatStreamContinuity(seed: Seed, context: { place: Place }
     }],
   });
 
-  let app: Surface;
-  let agentMock: MockMcpHandle;
-  let expectedOrigin: string | null = null;
-  if (surface === "web") {
-    const web = await seed.appWeb({
-      name: "chat-stream-continuity",
-      workspacePath,
-      mocks: { agent: mock },
-      headless: process.env.OPENWORK_EVAL_CHROME_HEADLESS === "1",
-    });
-    app = web;
-    const configured = web.mocks.agent;
-    if (!configured) throw new Error("The app-web fixture did not boot its stream-continuity model witness.");
-    agentMock = configured;
-    expectedOrigin = new URL(web.webUrl).origin;
-  } else {
-    const den = await seed.den({ mocks: { agent: mock } });
-    app = await seed.desktop({ name: "chat-stream-continuity", den, as: "admin", model: `${providerId}/${modelId}` });
-    const configured = den.mocks.agent;
-    if (!configured) throw new Error("The Electron fixture did not boot its stream-continuity model witness.");
-    agentMock = configured;
-  }
+  const app = await seed.appWeb({
+    name: "chat-stream-continuity",
+    workspacePath,
+    mocks: { agent: mock },
+  });
+  const agentMock = app.mocks.agent;
+  if (!agentMock) throw new Error("The app-web fixture did not boot its stream-continuity model witness.");
+  const expectedOrigin = new URL(app.webUrl).origin;
 
   const workspace = await seed.workspace(app, workspacePath);
   const continuity = chatContinuity(app, workspace.workspaceId);
@@ -125,7 +101,6 @@ export async function chatStreamContinuity(seed: Seed, context: { place: Place }
 
   return {
     app,
-    surface,
     engine,
     workspace,
     session,
@@ -174,6 +149,7 @@ export async function chatStreamContinuity(seed: Seed, context: { place: Place }
         syntheticModelInNativeResponse: nativeText.includes(providerId) && nativeText.includes(modelId),
       };
       }, [workspace.workspaceId, engine, providerId, modelId, expectedOrigin]), { awaitPromise: true, timeoutMs: 30_000 })),
+      actualSourceSha: app.actualSourceSha,
       requestedPlacement: declaredPlacement,
       resolvedPlacement: context.place.kind,
       actualHostKind: app.handle.hostKind,

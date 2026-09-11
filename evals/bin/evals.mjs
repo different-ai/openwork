@@ -5,13 +5,14 @@ import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { registeredCases } from "../scripts/journey-catalog.mjs";
+import { discoverWorlds, planWorlds, worldContract } from "../scripts/world-plan.ts";
 
 const evalsDir = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const worldsDir = join(evalsDir, "results/.worlds");
 
 function caseCommand(value) {
-  return `pnpm evals:e2e ${value.spec.replace(".e2e.test.ts", "")} ${value.example.placement} --engine ${value.example.engine} --surface ${value.example.surface} --case ${value.id}`;
+  return `pnpm evals:e2e ${value.spec.replace(".e2e.test.ts", "")} ${value.example.placement} --engine ${value.example.engine} --case ${value.id}`;
 }
 
 const caseExamples = registeredCases.map(caseCommand).join("\n");
@@ -23,8 +24,10 @@ Run E2E tests:
   --local            Force isolated local resources and clear inherited remote placement
   --daytona          Require Daytona (fails if the CLI is not authenticated)
   --den <url>        Set OPENWORK_EVAL_DEN_API_URL=<url>
+  --strict-ref       Fail when the runner HEAD differs from the ref the Daytona sandbox builds
+                     (OPENWORK_EVAL_REF, default dev); OPENWORK_EVAL_STRICT_REF=1 does the same
   --engine <v1|v2>   Select the app chat engine for a named test
-  --surface <value>  Override a registered case's default surface
+  --surface <value>  Validate declared app surface (web|electron); never switches implementation
   --case <prefix>    Run one registered case by its exact prefix
 
 Without a placement flag, Daytona is used when the daytona CLI is authenticated, otherwise local.
@@ -103,6 +106,7 @@ export function parseArgs(args) {
     else if (arg === "--list") options.list = true;
     else if (arg === "--local") options.local = true;
     else if (arg === "--daytona") options.daytona = true;
+    else if (arg === "--strict-ref") options.strictRef = true;
     else if (arg === "--publish") options.publish = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--force") options.force = true;
@@ -151,9 +155,6 @@ export function parseArgs(args) {
   if (!options.publish && options.case !== undefined && options.testNames.length === 0) {
     throw new Error("--case requires exactly one named test.");
   }
-  if (!options.publish && options.surface === "web" && options.case === undefined) {
-    throw new Error("--surface web requires a registered --case so a mixed-surface file cannot boot Electron.");
-  }
   if (options.list && (options.engine !== undefined || options.surface !== undefined || options.case !== undefined)) {
     throw new Error("--list is mutually exclusive with --engine, --surface, and --case.");
   }
@@ -166,6 +167,7 @@ export function parseArgs(args) {
     if (options.local) conflicts.push("--local");
     if (options.daytona) conflicts.push("--daytona");
     if (options.den !== undefined) conflicts.push("--den");
+    if (options.strictRef) conflicts.push("--strict-ref");
     if (options.engine !== undefined) conflicts.push("--engine");
     if (options.surface !== undefined) conflicts.push("--surface");
     if (options.case !== undefined) conflicts.push("--case");
@@ -198,6 +200,8 @@ const REMOTE_PLACEMENT_ENV = [
   "OPENWORK_EVAL_DAYTONA_SANDBOX",
   "OPENWORK_EVAL_DAYTONA_SANDBOX_ID",
   "OPENWORK_EVAL_DAYTONA_DEN_SANDBOX",
+  "OPENWORK_EVAL_DAYTONA_DEN_WEB_URL",
+  "OPENWORK_EVAL_DAYTONA_DEN_API_URL",
   "OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX",
   "OPENWORK_EVAL_DEN_API_URL",
   "OPENWORK_EVAL_DEN_WEB_URL",
@@ -267,6 +271,65 @@ export function resolveRunEnvironment(options, env = process.env, probe = dayton
   return { env: childEnv, placement: "local", reason: "daytona CLI missing or not authenticated" };
 }
 
+const GIT_SHA = /^[0-9a-f]{7,64}$/i;
+
+function gitOutput(args, exec, cwd, timeout = 10_000) {
+  const result = exec("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout });
+  return !result.error && result.status === 0 ? String(result.stdout).trim() : "";
+}
+
+function remoteSha(listing, ref) {
+  const rows = listing.split(/\r?\n/).map((line) => line.trim().split(/\s+/)).filter((row) => GIT_SHA.test(row[0] ?? ""));
+  const head = rows.find((row) => row[1] === `refs/heads/${ref}`) ?? rows.find((row) => row[1] === ref) ?? rows[0];
+  return head ? head[0].toLowerCase() : "";
+}
+
+/**
+ * Specs always execute from this checkout, but under Daytona the product is
+ * built from OPENWORK_EVAL_REF (default dev) inside the sandbox. Resolve that
+ * ref the way the provisioning gate does (against origin) so a runner/ref
+ * mismatch is named before any sandbox is provisioned.
+ */
+export function resolveRefAlignment(placement, env = process.env, exec = spawnSync, cwd = repoRoot) {
+  if (placement !== "daytona") return null;
+  const sandboxRef = env.OPENWORK_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
+  const runnerSha = gitOutput(["rev-parse", "HEAD"], exec, cwd).toLowerCase();
+  const runnerBranch = gitOutput(["rev-parse", "--abbrev-ref", "HEAD"], exec, cwd);
+  const sandboxSha = GIT_SHA.test(sandboxRef)
+    ? sandboxRef.toLowerCase()
+    : remoteSha(gitOutput(["ls-remote", "--quiet", "origin", sandboxRef], exec, cwd, 30_000), sandboxRef);
+  const mismatch = sandboxSha && runnerSha ? !runnerSha.startsWith(sandboxSha) : null;
+  return { sandboxRef, sandboxSha, runnerSha, runnerBranch, mismatch };
+}
+
+function shortSha(sha) {
+  return sha ? sha.slice(0, 9) : "unknown";
+}
+
+export function refAlignmentLabel(alignment) {
+  if (!alignment) return "";
+  const resolved = alignment.sandboxSha && alignment.sandboxSha !== alignment.sandboxRef ? `@${shortSha(alignment.sandboxSha)}` : "";
+  const state = alignment.mismatch === true ? " [RUNNER/REF MISMATCH]" : alignment.mismatch === null ? " [unresolved]" : "";
+  return ` ref=${alignment.sandboxRef}${resolved}${state}`;
+}
+
+export function refAlignmentWarning(alignment) {
+  if (!alignment || alignment.mismatch === false) return null;
+  const branch = alignment.runnerBranch && alignment.runnerBranch !== "HEAD" ? ` (${alignment.runnerBranch})` : "";
+  const runner = `runner HEAD ${shortSha(alignment.runnerSha)}${branch}`;
+  if (alignment.mismatch === null) {
+    return `could not resolve sandbox ref ${alignment.sandboxRef} against origin, so it cannot be confirmed to match ${runner}.`;
+  }
+  const resolved = alignment.sandboxSha !== alignment.sandboxRef ? ` (${shortSha(alignment.sandboxSha)})` : "";
+  return `${runner} differs from the ref the Daytona sandbox builds: ${alignment.sandboxRef}${resolved}. `
+    + "Specs run from this checkout while the sandbox builds that ref, so the verdict would judge another commit's product "
+    + "(test-run.json records both as gitSha and sandboxRef). Push this branch and export OPENWORK_EVAL_REF=$(git rev-parse HEAD).";
+}
+
+export function strictRefRequested(options, env = process.env) {
+  return Boolean(options.strictRef) || env.OPENWORK_EVAL_STRICT_REF?.trim() === "1";
+}
+
 export function resolveTestNames(names, files = journeyFiles()) {
   const entries = files.map((file) => ({
     file,
@@ -306,7 +369,7 @@ function literalPrefixPattern(value) {
   return `^${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`;
 }
 
-export function resolveExecutionSelection(options, resolved, env = process.env) {
+export function resolveExecutionSelection(options, resolved, env = process.env, sources) {
   const childEnv = { ...env, OPENWORK_EVAL_E2E_TESTS: "1" };
   let selectedCase;
   if (options.case !== undefined) {
@@ -321,38 +384,32 @@ export function resolveExecutionSelection(options, resolved, env = process.env) 
   }
 
   const engine = options.engine ?? (selectedCase ? (env.OPENWORK_EVAL_ENGINE || "v1").toLowerCase() : undefined);
-  const surface = options.surface ?? (selectedCase
-    ? (env.OPENWORK_EVAL_APP_SURFACE?.trim() || selectedCase.defaultSurface).toLowerCase()
-    : undefined);
   if (selectedCase && !["v1", "v2"].includes(engine)) {
     throw new Error(`Invalid effective engine ${JSON.stringify(engine)}; expected v1 or v2.`);
-  }
-  if (selectedCase && !["web", "electron"].includes(surface)) {
-    throw new Error(`Invalid effective surface ${JSON.stringify(surface)}; expected web or electron.`);
   }
   if (selectedCase && !selectedCase.engines.includes(engine)) {
     throw new Error(`--case ${selectedCase.id} does not support engine ${engine}.`);
   }
-  if (selectedCase && !selectedCase.surfaces.includes(surface)) {
-    throw new Error(`--case ${selectedCase.id} does not support surface ${surface}.`);
-  }
+  const testNamePattern = selectedCase ? literalPrefixPattern(selectedCase.id) : undefined;
+  const plan = planWorlds(resolved, { pattern: testNamePattern, casePrefix: selectedCase?.id, surface: options.surface, sources });
+  const surface = plan.legacy.length ? undefined : plan.surfaces.includes("appWeb") && !plan.surfaces.includes("desktop") ? "web" : plan.surfaces.includes("desktop") && !plan.surfaces.includes("appWeb") ? "electron" : undefined;
 
   if (engine !== undefined) childEnv.OPENWORK_EVAL_ENGINE = engine;
   if (engine !== undefined) delete childEnv.OPENWORK_ENGINE_V2_PREVIEW;
-  if (surface !== undefined) childEnv.OPENWORK_EVAL_APP_SURFACE = surface;
-  if (surface === "web") childEnv.OPENWORK_EVAL_CHROME_HEADLESS = "1";
+  if (options.surface !== undefined) childEnv.OPENWORK_EVAL_APP_SURFACE = options.surface;
   return {
     env: childEnv,
     engine,
     surface,
     caseId: selectedCase?.id,
     optIns: selectedCase?.optIns,
-    testNamePattern: selectedCase ? literalPrefixPattern(selectedCase.id) : undefined,
+    testNamePattern,
+    plan,
   };
 }
 
 export function buildChildEnvironment(options, resolved, sources, env = process.env, probe = daytonaAuthenticated) {
-  const selection = resolveExecutionSelection(options, resolved, env);
+  const selection = resolveExecutionSelection(options, resolved, env, sources);
   const placement = resolveRunEnvironment(options, selection.env, probe);
   const childEnv = { ...placement.env };
   const consented = new Set(["OPENWORK_EVAL_E2E_TESTS"]);
@@ -490,7 +547,7 @@ function publish(options) {
 
 function run(options) {
   const runStartedAt = Date.now();
-  const resolved = resolveTestNames(options.testNames);
+  const resolved = options.testNames.length ? resolveTestNames(options.testNames) : journeyFiles();
   const sources = resolved.map(file => readFileSync(file, "utf8"));
   const selection = buildChildEnvironment(options, resolved, sources);
   const { env: childEnv, placement, reason, consented } = selection;
@@ -509,7 +566,14 @@ function run(options) {
     ...(selection.testNamePattern ? ["--testNamePattern", selection.testNamePattern] : []),
     ...resolved.map((file) => relative(evalsDir, file).split(sep).join("/")),
   ];
-  process.stderr.write(`selection: engine=${selection.engine ?? "legacy"} surface=${selection.surface ?? "legacy"} case=${selection.caseId ?? "all"}; placement: ${placement} (${reason})\n`);
+  const alignment = resolveRefAlignment(placement, childEnv);
+  const refWarning = refAlignmentWarning(alignment);
+  process.stderr.write(`selection: engine=${selection.engine ?? "legacy"} surface=${selection.surface ?? "legacy"} case=${selection.caseId ?? "all"}; placement: ${placement} (${reason})${refAlignmentLabel(alignment)}\n`);
+  for (const world of selection.plan.worlds) process.stderr.write(`contract: ${testName(world.file)}:${world.line} ${worldContract(world)}\n`);
+  if (refWarning) {
+    if (strictRefRequested(options)) throw new Error(refWarning);
+    process.stderr.write(`warning: ${refWarning} Pass --strict-ref to fail instead of warning.\n`);
+  }
   const child = spawnSync("pnpm", vitestArgs, { cwd: evalsDir, env: childEnv, stdio: "inherit" });
   const status = childStatus(child);
   let report;
@@ -538,15 +602,19 @@ function run(options) {
     placement,
     engine: selection.engine ?? "legacy",
     surface: selection.surface ?? "legacy",
+    contract: selection.plan,
     case: selection.caseId ?? null,
     vision: options.withLlmVision ? "inline" : "defer",
     files: options.testNames.length > 0 ? options.testNames : ["all"],
+    sandboxRef: alignment?.sandboxRef ?? null,
+    sandboxSha: alignment?.sandboxSha || null,
+    refMismatch: alignment?.mismatch ?? null,
     ...summary,
     ...(selection.caseId ? { selectedCasePassed: verdict === "passed" } : {}),
     consented,
     verdict,
   })}\n`);
-  return exitCodeFor(verdict, { named: resolved.length > 0 });
+  return exitCodeFor(verdict, { named: options.testNames.length > 0 });
 }
 
 export function main(argv = process.argv.slice(2)) {
@@ -558,8 +626,10 @@ export function main(argv = process.argv.slice(2)) {
       return 0;
     }
     if (options.list) {
-      const cases = registeredCases.map(value => `${value.id}  ${value.spec}\n  engines: ${value.engines.join(", ")}\n  surfaces: ${value.surfaces.join(", ")}\n  ${caseCommand(value)}`);
-      process.stdout.write(["Registered cases:", ...cases, "", "Discoverable tests:", ...journeyFiles().map(testName)].join("\n") + "\n");
+      const cases = registeredCases.map(value => `${value.id}  ${value.spec}\n  engines: ${value.engines.join(", ")}\n  ${caseCommand(value)}`);
+      const files = options.testNames.length ? resolveTestNames(options.testNames) : journeyFiles();
+      const entries = files.map(file => `${testName(file)}\n${discoverWorlds(file).map(world => `  ${worldContract(world)}`).join("\n")}\n  pnpm evals:e2e ${testName(file)}`);
+      process.stdout.write(["Registered cases:", ...cases, "", "Discoverable tests:", ...entries].join("\n") + "\n");
       return 0;
     }
     return options.publish ? publish(options) : run(options);

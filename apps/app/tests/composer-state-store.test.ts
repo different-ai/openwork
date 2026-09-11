@@ -17,7 +17,7 @@ import {
 } from "../src/react-app/domains/session/surface/composer-state-store";
 
 function reset() {
-  useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });
+  useComposerStateStore.setState({ sessions: {}, queuedDrafts: {} });
 }
 
 function draft(text: string): ComposerDraft {

@@ -161,14 +161,18 @@ updateTest("a profile created by the previous release still boots after updating
 });
 
 /**
- * Wait for whatever interactive surface the persisted session produces, or for
- * a crash signature, then hand back the facts the caller asserts on.
+ * Wait for the persisted session to land on a settled surface, or for a crash
+ * signature, then hand back the facts the caller asserts on. The task UI can
+ * paint before the active workspace is hydrated, which reads as `no-workspace`
+ * for a moment; only a settled workspace, or the sign-in surface (which would
+ * mean the profile was lost), ends the wait, so a persistent `no-workspace` is
+ * reported by the bound with that last value instead of being sampled early.
  */
 async function settleSignedIn(launch: ReleasedLaunch, probe: Probe, label: string): Promise<Settled & { surface: string; route: string }> {
   const state = await probe.eventually(() => launch.state(), {
     within: 120_000,
     label: `${label}: interactive surface`,
-    until: (value) => (value.controlReady && value.surface !== null && (value.surface === "welcome" || value.transitional === null))
+    until: (value) => (value.controlReady && (value.surface === "welcome" || (value.surface === "workspace" && value.transitional === null)))
       || RECOVERY_HEADING.test(value.text) || launch.exceptions().some(isRenderCrash),
   });
   const rootText = await launch.rootText();

@@ -150,6 +150,9 @@ export interface DesktopSandbox {
   release?: InstalledDesktopRelease;
 }
 
+export type WebSandboxOptions = Omit<DesktopSandboxOptions, "release" | "releaseFetch">;
+export type WebSandbox = Omit<DesktopSandbox, "release">;
+
 export interface SandboxRepoSourceReceipt {
   requestedRef: string;
   expectedSha: string;
@@ -168,6 +171,12 @@ export interface PrepareSandboxRepoOptions extends ProvisionExecOptions {
 export interface DenSandboxOptions {
   ref: string;
   reuse?: string;
+  /**
+   * The reused sandbox's baked public identity, as handed back by the runner
+   * that provisioned it. Den signs setup links and OAuth metadata with these
+   * exact hosts, so a reuse without them can only offer fresh aliases.
+   */
+  reuseUrls?: { webUrl: string; apiUrl: string };
   repoRoot?: string;
   bootstrapAdminEmail?: string;
   /** Extra Den environment for a freshly provisioned sandbox; a reused Den is already running and cannot take it. */
@@ -646,19 +655,30 @@ function autoStopMinutes(value: number | undefined): string {
 }
 
 export async function provisionDesktopSandbox(options: DesktopSandboxOptions & ProvisionExecOptions): Promise<DesktopSandbox> {
+  return provisionSandbox(options, "desktop");
+}
+
+export async function provisionWebSandbox(options: WebSandboxOptions & ProvisionExecOptions): Promise<WebSandbox> {
+  return provisionSandbox(options, "web");
+}
+
+async function provisionSandbox(
+  options: DesktopSandboxOptions & ProvisionExecOptions,
+  surface: "desktop" | "web",
+): Promise<DesktopSandbox> {
   const exec = options.exec ?? defaultDaytonaExec;
   const log = options.log ?? console.error;
-  if (options.release && options.secrets === true) {
+  if (surface === "desktop" && options.release && options.secrets === true) {
     throw new Error("Published desktop release sandboxes cannot mount the shared eval secrets volume.");
   }
-  const release = options.release
+  const release = surface === "desktop" && options.release
     ? await resolvePublishedDesktopRelease(options.release, options.releaseFetch)
     : undefined;
   const ref = release ? "" : assertSafeRef(options.ref);
   const reused = options.reuse?.trim() || "";
   let sandbox = reused;
   let created = false;
-  let ownedReleaseSandbox = "";
+  let ownedSandbox = "";
   let installedRelease: InstalledDesktopRelease | undefined;
   let source: SandboxRepoSourceReceipt | undefined;
   try {
@@ -673,7 +693,8 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
           throw new Error(`Snapshot gate failed: snapshot ${snapshot} is missing. Output tail: ${outputTail(listed)}`);
         }
         sandbox = desktopSandboxName(options.name);
-        if (release) ownedReleaseSandbox = sandbox;
+        const requestedAutoStop = autoStopMinutes(options.autoStopMinutes);
+        ownedSandbox = sandbox;
         await checkedExec(
           exec,
           [
@@ -681,7 +702,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
             "--name", sandbox,
             "--snapshot", id,
             ...(options.secrets === true ? ["--volume", "openwork-eval-secrets:/daytona-secrets"] : []),
-            "--auto-stop", autoStopMinutes(options.autoStopMinutes),
+            "--auto-stop", requestedAutoStop,
             "--public",
             "--target", "us",
           ],
@@ -689,7 +710,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
           { timeoutMs: 300_000 },
         );
         created = true;
-        log(`==> desktop sandbox created: ${sandbox}`);
+        log(`==> ${surface} sandbox created: ${sandbox}`);
       }
       await waitForExecReady(exec, sandbox, options.sandboxReadyTimeoutMs);
     });
@@ -703,7 +724,9 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
         const result = await execInSandbox(
           exec,
           sandbox,
-          "rm -rf /workspace/.openwork-daytona/profiles /tmp/openwork-* 2>/dev/null; df -P /workspace | tail -1",
+          surface === "desktop"
+            ? "rm -rf /workspace/.openwork-daytona/profiles /tmp/openwork-* 2>/dev/null; df -P /workspace | tail -1"
+            : "df -P /workspace | tail -1",
           { timeoutMs: 60_000, context: `cleanup and disk gate for ${sandbox}` },
         );
         const dfLine = lastNonemptyLine(result.stdout);
@@ -722,6 +745,8 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
         throw new Error(`Cleanup and disk gate failed for ${sandbox}: workspace is ${useField} used. df: ${dfLine}\n${outputTail(sizes)}`);
       });
     }
+
+    if (surface === "web") return { sandbox, created, source };
 
     await timedStep(log, "display gate", async () => {
       const result = await execInSandbox(
@@ -878,9 +903,9 @@ echo detached`;
 
     return { sandbox, created, source };
   } catch (error) {
-    if (ownedReleaseSandbox) {
-      await deleteSandboxes([ownedReleaseSandbox], { exec, log }).catch((cleanupError: unknown) => {
-        log(`==> desktop sandbox cleanup failed: ${messageText(cleanupError)}`);
+    if (ownedSandbox) {
+      await deleteSandboxes([ownedSandbox], { exec, log }).catch((cleanupError: unknown) => {
+        log(`==> ${surface} sandbox cleanup failed: ${messageText(cleanupError)}`);
       });
     }
     throw error;
@@ -1079,7 +1104,15 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
   let webUrl: string;
   let apiUrl: string;
 
-  if (reused) {
+  if (reused && options.reuseUrls) {
+    // The runner that provisioned this sandbox kept its baked DEN_*_PUBLIC_URL
+    // identity. Den builds connector setup links and OAuth metadata from those
+    // hosts, and a desktop only opens a setup link on the Den it signed in to.
+    sandbox = reused;
+    webUrl = options.reuseUrls.webUrl;
+    apiUrl = options.reuseUrls.apiUrl;
+    log(`Den baked identity reused for ${sandbox}: ${webUrl}`);
+  } else if (reused) {
     sandbox = reused;
     // Reused sandboxes only get fresh signed aliases: their baked
     // DEN_*_PUBLIC_URL identity is unknown here, so RFC 9728 validating MCP

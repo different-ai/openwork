@@ -18,7 +18,7 @@ and organization. Runtime events must match that member's actual Models request.
 
 ```mermaid
 flowchart LR
-  App[OpenWork task] --> Inference[Existing OpenWork inference]
+  App[OpenWork task] --> Inference[OpenWork Gateway]
   Inference --> Router[Existing OpenRouter upstream]
   Inference -. provider usage .-> Events[Consented event history]
   App -. task and tool metadata .-> Events
@@ -75,7 +75,7 @@ settings route keeps analytics off and leaves chat running; failed checks are ca
 to avoid retrying on every streamed update.
 
 `pnpm evals:e2e models-analytics-upgrade` runs a continuous subscriber journey with
-an isolated Den database, real inference HTTP service, browser and desktop. Its
+an isolated Den database, real Gateway HTTP service, browser and desktop. Its
 upstream and Langfuse witnesses use synthetic credentials. The journey starts
 with an existing paid account before the analytics tables exist, applies the real
 migration, and checks the same model key, consent UI, accounting, tenant/member

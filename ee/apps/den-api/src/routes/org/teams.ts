@@ -6,6 +6,7 @@ import {
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
+  GatewayProviderAccessTable,
   LlmProviderAccessTable,
   MarketplaceAccessGrantTable,
   MemberTable,
@@ -18,6 +19,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
 import { withOrganizationTeamMutation } from "../../organization-team-roles.js"
 import {
@@ -242,6 +244,7 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     .where(eq(TeamMemberTable.teamId, team.id)))
     .map((row) => row.id)
 
+    if (memberIds) await invalidateTeamInferenceOAuth(tx, team.id)
     await tx.update(TeamTable).set({ name: nextName, updatedAt, grantsOrganizationAdmin: input.grantsOrganizationAdmin }).where(eq(TeamTable.id, team.id))
 
     if (memberIds) {
@@ -304,6 +307,8 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }
 
     const removedAt = new Date()
+    await invalidateTeamInferenceOAuth(tx, team.id)
+    await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.team_id, team.id))
 
     await tx
       .update(InvitationTable)
@@ -346,7 +351,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
 
   app.get(
     "/v1/teams/by-key/:externalKey",
-    describeRoute({ tags: ["Teams"], summary: "Read teams by stable key", responses: {
+    describeRoute({ tags: ["Teams"], summary: "Read teams by stable key", description: "Reads the team identified by the stable externalKey assigned through declarative provisioning.", responses: {
       200: jsonResponse("Resource configuration.", teamResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -365,7 +370,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
 
   app.get(
     "/v1/teams/:teamId",
-    describeRoute({ tags: ["Teams"], summary: "Read teams by id", responses: {
+    describeRoute({ tags: ["Teams"], summary: "Read teams by id", description: "Reads a single team by id.", responses: {
       200: jsonResponse("Resource configuration.", teamResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -428,6 +433,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Teams"],
       summary: "Delete teams by stable key",
+      description: "Deletes the team identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.",
       responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) },
     }),
     orgRoleRoute(["admin"]),

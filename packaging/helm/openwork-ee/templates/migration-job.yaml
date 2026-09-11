@@ -1,5 +1,6 @@
 {{- include "openwork-ee.customCa.validate" . }}
 {{- if .Values.migrations.enabled }}
+{{- include "openwork-ee.migrationDatabase.validate" . }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -37,7 +38,7 @@ spec:
       {{- end }}
       containers:
         - name: migrate
-          image: "{{ .Values.denApi.image.repository }}:{{ default .Values.image.tag .Values.denApi.image.tag }}"
+          image: "{{ .Values.denApi.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.denApi.image.tag) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.customCa.enabled }}
           volumeMounts:
@@ -50,24 +51,18 @@ spec:
           env:
             - name: DB_MODE
               value: {{ .Values.config.databaseMode | quote }}
-            - name: DATABASE_URL
-              {{- if .Values.secret.create }}
-              value: {{ .Values.secret.values.databaseUrl | quote }}
+            {{/* Bootstrap always needs TCP MySQL, even with the PlanetScale HTTP runtime. */}}
+            {{- range $name, $key := dict "DATABASE_URL" "databaseUrl" "DEN_DB_ENCRYPTION_KEY" "denDbEncryptionKey" }}
+            - name: {{ $name }}
+              {{- if $.Values.secret.create }}
+              value: {{ get $.Values.secret.values $key | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "openwork-ee.secretName" . }}
-                  key: {{ .Values.secret.keys.databaseUrl }}
+                  name: {{ include "openwork-ee.secretName" $ }}
+                  key: {{ get $.Values.secret.keys $key }}
               {{- end }}
-            - name: DEN_DB_ENCRYPTION_KEY
-              {{- if .Values.secret.create }}
-              value: {{ .Values.secret.values.denDbEncryptionKey | quote }}
-              {{- else }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "openwork-ee.secretName" . }}
-                  key: {{ .Values.secret.keys.denDbEncryptionKey }}
-              {{- end }}
+            {{- end }}
             {{- if .Values.customCa.enabled }}
             {{- include "openwork-ee.customCa.env" . | nindent 12 }}
             {{- end }}
