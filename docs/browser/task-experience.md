@@ -65,10 +65,11 @@ replay, including switching to another method to repeat the action.
 Navigation consent, browser read access, action approval and result disclosure
 are separate. Navigation grants are in-memory, tab-and-owner scoped, and are
 revoked on takeover, cancellation or closure. They are never inherited by a new
-tab or popup. Takeover stops pending task loads; subsequent manual address-bar
-navigation, browser controls or page input allow manual browsing without creating
-task grants. Resume requires new navigation consent. None of these approvals can
-expand the organization's managed policy. The existing async `checkPolicy`
+tab or popup. Takeover stops pending task loads; only explicit address-bar, Back,
+Forward or Reload actions enable manual navigation without creating task grants.
+Webpage mouse and keyboard input do not enable navigation. Resume requires new
+navigation consent. None of these approvals can expand the organization's managed
+policy. The existing async `checkPolicy`
 boundary checks task access, DOM actions, site-tool discovery and invocation,
 and result sharing. There is no renderer-managed website grant or parallel
 policy cache. `execution.browserOrigins` matches exact scheme, host and port

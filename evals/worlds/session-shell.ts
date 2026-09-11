@@ -68,8 +68,9 @@ async function observeInstantRenderer(
   workspaceId: string,
   kind: InstantMetricKind,
   marker = "",
+  requireStarting = false,
 ) {
-  await seed.evalIn(app, browserScript((workspaceId, kind, marker) => {
+  await seed.evalIn(app, browserScript((workspaceId, kind, marker, requireStarting) => {
     if (window.__instantSendMetric) throw new Error("An instant-send renderer observer is already active");
     const state: InstantRendererState = {
       kind, started: false, trusted: false, elapsedMs: null, frames: 0,
@@ -127,6 +128,11 @@ async function observeInstantRenderer(
         const hit = document.elementFromPoint(x, y);
         return hit instanceof Node && node.contains(hit);
       }
+      if (requireStarting) {
+        const starting = [...surface.root.querySelectorAll<HTMLElement>('[data-loading-message="starting"]')].filter(visibleInViewport);
+        if (starting.length !== 1 || starting[0]?.getAttribute("role") !== "status" || starting[0]?.innerText.trim() !== "Starting…"
+          || [...surface.root.querySelectorAll<HTMLElement>('[data-loading-message="working"]')].some(visibleInViewport)) return false;
+      }
       const composer = editor();
       return [...surface.root.querySelectorAll<HTMLElement>('[data-message-role="user"]')]
         .some((row) => visibleInViewport(row) && row.innerText.includes(marker)
@@ -167,7 +173,7 @@ async function observeInstantRenderer(
       window.removeEventListener(eventName, capture, true);
     }
     window.__instantSendMetric = { state, stop };
-  }, [workspaceId, kind, marker]));
+  }, [workspaceId, kind, marker, requireStarting]));
   let disposed = false;
   return {
     async read(): Promise<InstantRendererState> {
@@ -1182,6 +1188,15 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
   }, [workspace.workspaceId, point.x, point.y]));
   const prepareWorkspaceNewTask = async (): Promise<Point> => {
     const deadline = Date.now() + 5_000;
+    // A reload can leave the pointer over the replacement header. Leave it
+    // before entering again so the real hover transition is rearmed.
+    await hoverAt(app, { x: 0, y: 0 });
+    let outside = await newTaskGeometry({ x: 0, y: 0 });
+    while (outside.headerHover && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      outside = await newTaskGeometry({ x: 0, y: 0 });
+    }
+    if (outside.headerHover) throw new Error("New task header did not release hover before re-entry");
     const reset = await seed.evalIn(app, browserScript((workspaceId) => {
       const workspace = document.querySelector<HTMLElement>(`[data-sidebar-workspace-id="${workspaceId}"]`);
       const plus = workspace?.querySelector<HTMLElement>("[data-workspace-new-task]") ?? null;
@@ -1340,7 +1355,7 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     prepareWorkspaceNewTask,
     clickWorkspaceNewTask,
     accessibleRunTaskReady,
-    observeRenderer: (kind: InstantMetricKind, marker = "") => observeInstantRenderer(seed, app, workspace.workspaceId, kind, marker),
+    observeRenderer: (kind: InstantMetricKind, marker = "", requireStarting = false) => observeInstantRenderer(seed, app, workspace.workspaceId, kind, marker, requireStarting),
     [Symbol.asyncDispose]: () => resources.disposeAsync(),
   };
 }

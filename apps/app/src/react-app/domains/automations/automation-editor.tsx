@@ -306,9 +306,12 @@ export function AutomationEditor(props: AutomationEditorProps) {
             onSelect={(model) => {
               setInput((current) => ({
                 ...current,
-                // A different model has its own reasoning levels, so the old
-                // variant cannot carry over.
-                model: { providerId: model.providerID, modelId: model.modelID, variant: null },
+                model: {
+                  providerId: model.providerID,
+                  modelId: model.modelID,
+                  variant: current.model.providerId === model.providerID && current.model.modelId === model.modelID
+                    ? current.model.variant : null,
+                },
               }))
               setPickerOpen(false)
             }}

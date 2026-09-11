@@ -14,21 +14,10 @@ const WELL_KNOWN_VARIANT_ORDER = [
   "max",
 ] as const;
 
-const VARIANT_DEFAULT_TARGET = 3;
-const VARIANT_DEFAULT_SCORE: Record<string, number> = {
-  none: 0,
-  minimal: 1,
-  low: 2,
-  medium: VARIANT_DEFAULT_TARGET,
-  high: 4,
-  xhigh: 5,
-  max: 6,
-};
-
 function defaultBehaviorOption(): ModelBehaviorOption {
   return {
     value: null,
-    label: t("settings.provider_default_label"),
+    label: t("settings.default_label"),
     description: t("settings.provider_default_desc"),
   };
 }
@@ -39,13 +28,7 @@ export const normalizeModelBehaviorValue = (value: string | null) => {
   return value?.trim() ? value : null;
 };
 
-const getVariantKeys = (model: ProviderModel) => {
-  const keys = Object.keys(model.variants ?? {}).flatMap((key) => {
-    const normalized = normalizeModelBehaviorValue(key);
-    return normalized ? [normalized] : [];
-  });
-  return Array.from(new Set(keys));
-};
+const getVariantKeys = (model: ProviderModel | undefined) => Object.keys(model?.variants ?? {});
 
 const sortVariantKeys = (keys: string[]) =>
   keys.slice().sort((a, b) => {
@@ -58,30 +41,6 @@ const sortVariantKeys = (keys: string[]) =>
     }
     return a.localeCompare(b);
   });
-
-const getDefaultVariantKey = (keys: string[]) => {
-  let selected: string | null = null;
-  let selectedScore: number | null = null;
-
-  for (const key of keys) {
-    const score = VARIANT_DEFAULT_SCORE[key];
-    if (score == null) continue;
-    if (selectedScore == null) {
-      selected = key;
-      selectedScore = score;
-      continue;
-    }
-
-    const distance = Math.abs(score - VARIANT_DEFAULT_TARGET);
-    const selectedDistance = Math.abs(selectedScore - VARIANT_DEFAULT_TARGET);
-    if (distance < selectedDistance || (distance === selectedDistance && score > selectedScore)) {
-      selected = key;
-      selectedScore = score;
-    }
-  }
-
-  return selected ?? keys[0] ?? null;
-};
 
 const providerFamily = (providerID: string, providerName?: string | null) => {
   const normalizedId = providerID.trim().toLowerCase();
@@ -99,7 +58,7 @@ const providerFamily = (providerID: string, providerName?: string | null) => {
 
 const getBehaviorTitle = (
   providerID: string,
-  model: ProviderModel,
+  model: ProviderModel | undefined,
   variantKeys: string[],
   providerName?: string | null,
 ) => {
@@ -116,7 +75,7 @@ const getBehaviorTitle = (
     }
     return t("app.model_behavior_title");
   }
-  if (model.capabilities?.reasoning) return t("model_behavior.title_builtin_reasoning");
+  if (model?.capabilities?.reasoning) return t("model_behavior.title_builtin_reasoning");
   return t("model_behavior.title_standard_generation");
 };
 
@@ -128,25 +87,25 @@ export const formatGenericBehaviorLabel = (value: string | null) => {
   return getVariantLabel(normalized);
 };
 
-/** Return the next explicit thinking/reasoning variant, wrapping at the end. */
+/** Cycle supplied choices, including the provider's Default (null). */
 export const nextModelBehaviorValue = (
   options: readonly Pick<ModelBehaviorOption, "value">[],
   current: string | null,
 ) => {
-  const values = options.flatMap((option) => option.value == null ? [] : [option.value]);
+  const values = options.map((option) => option.value);
   if (values.length < 2) return null;
-  const currentIndex = current == null ? -1 : values.indexOf(current);
+  const currentIndex = values.indexOf(current);
   return values[(currentIndex + 1) % values.length] ?? null;
 };
 
-/** Return the previous explicit thinking/reasoning variant, wrapping at the start. */
+/** Cycle supplied choices backward, including Default. */
 export const previousModelBehaviorValue = (
   options: readonly Pick<ModelBehaviorOption, "value">[],
   current: string | null,
 ) => {
-  const values = options.flatMap((option) => option.value == null ? [] : [option.value]);
+  const values = options.map((option) => option.value);
   if (values.length < 2) return null;
-  const currentIndex = current == null ? -1 : values.indexOf(current);
+  const currentIndex = values.indexOf(current);
   if (currentIndex === -1) return values[values.length - 1] ?? null;
   return values[(currentIndex - 1 + values.length) % values.length] ?? null;
 };
@@ -175,74 +134,55 @@ const getVariantDescription = (
 
 export const getModelBehaviorOptions = (
   providerID: string,
-  model: ProviderModel,
+  model: ProviderModel | undefined,
   providerName?: string | null,
 ): ModelBehaviorOption[] => {
   const variantKeys = sortVariantKeys(getVariantKeys(model));
-  if (!variantKeys.length) return [];
-  return variantKeys.map((key) => {
+  return [defaultBehaviorOption(), ...variantKeys.map((key) => {
     const label = getVariantLabel(key);
     return {
       value: key,
       label,
       description: getVariantDescription(providerID, key, label, providerName),
     };
-  });
+  })];
 };
 
-const getDefaultModelBehaviorValue = (model: ProviderModel) =>
-  getDefaultVariantKey(sortVariantKeys(getVariantKeys(model)));
-
+/** For an explicit model switch only; never sanitize a saved same-model choice. */
 export const sanitizeModelBehaviorValue = (
   providerID: string,
   model: ProviderModel,
   value: string | null,
   providerName?: string | null,
 ) => {
-  const normalized = normalizeModelBehaviorValue(value);
-  if (!normalized) return null;
-  return getModelBehaviorOptions(providerID, model, providerName).some((option) => option.value === normalized)
-    ? normalized
+  return getModelBehaviorOptions(providerID, model, providerName).some((option) => option.value === value)
+    ? value
     : null;
+};
+
+/** Describe a saved choice without changing it or treating missing metadata as rejection. */
+export const getModelBehaviorSelection = (
+  suppliedOptions: readonly { value: string | null; label: string; description?: string }[],
+  value: string | null,
+) => {
+  const options = [defaultBehaviorOption(), ...suppliedOptions.filter((option) => option.value !== null)
+    .map((option) => ({ ...option, description: option.description ?? "" }))];
+  const selected = options.find((option) => option.value === value);
+  return {
+    value,
+    label: selected?.label ?? `${JSON.stringify(value)} (not in current catalog)`,
+    description: selected?.description ?? "This saved setting is not listed in the current model configuration. It is kept unchanged; choose Default or a listed setting to replace it.",
+    options,
+  };
 };
 
 export const getModelBehaviorSummary = (
   providerID: string,
-  model: ProviderModel,
+  model: ProviderModel | undefined,
   value: string | null,
   providerName?: string | null,
 ) => {
   const options = getModelBehaviorOptions(providerID, model, providerName);
-  const sanitized = sanitizeModelBehaviorValue(providerID, model, value, providerName);
-  const selectedValue = sanitized ?? getDefaultModelBehaviorValue(model);
-  const selected = options.find((option) => option.value === selectedValue) ?? options[0] ?? null;
   const title = getBehaviorTitle(providerID, model, getVariantKeys(model), providerName);
-
-  if (options.length > 0) {
-    return {
-      title,
-      label: selected?.label ?? defaultBehaviorOption().label,
-      description: selected?.description ?? defaultBehaviorOption().description,
-      value: selected?.value ?? null,
-      options,
-    };
-  }
-
-  if (model.capabilities?.reasoning) {
-    return {
-      title,
-      label: t("model_behavior.label_builtin"),
-      description: t("model_behavior.desc_builtin"),
-      value: null,
-      options,
-    };
-  }
-
-  return {
-    title,
-    label: t("model_behavior.label_standard"),
-    description: t("model_behavior.desc_standard"),
-    value: null,
-    options,
-  };
+  return { title, ...getModelBehaviorSelection(options, value) };
 };

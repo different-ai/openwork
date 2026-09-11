@@ -93,7 +93,7 @@ import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/trans
 import { setQueuedSendContext } from "@/react-app/domains/session/sync/queued-send-context";
 import { useSessionScrollController } from "./scroll-controller";
 import { getSessionScrollState, useSessionScrollStore } from "./scroll-store";
-import { SessionHistoryBoundary, useOpeningSessionHistory, type OpeningHistoryWindow } from "./session-history";
+import { sessionHistoryIdentity, SessionHistoryBoundary, SessionHistoryStatus, useOpeningSessionHistory, type OpeningHistoryWindow } from "./session-history";
 import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionFindBar } from "./find-bar";
 import { useSessionFindStore } from "./find-store";
@@ -107,7 +107,6 @@ import {
   markSessionSnapshotFetchStart,
   reconcileFailureDegradedThreshold,
   seedSessionState,
-  snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
   useWorkspaceSyncStreamStore,
@@ -158,7 +157,6 @@ import {
 } from "@/react-app/domains/connections/cloud-inventory-cache";
 import { connectPluginsForComposer, EMPTY_CONNECT_CAPABILITY_INVENTORY } from "@/react-app/domains/session/surface/connect-capability-inventory";
 import {
-  composerAutoSendScopeKey,
   consumeComposerAutoSend,
   consumeComposerAutoSendPayload,
   getComposerAutoSendPayload,
@@ -1150,12 +1148,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     : Boolean(props.modelUnavailable);
   // This surface is retained across navigation. Async completions must keep
   // their original owner, including when different servers reuse session IDs.
-  const sessionOwner = composerAutoSendScopeKey({
+  const { owner: sessionOwner, snapshotQueryKey } = useMemo(() => sessionHistoryIdentity({
     draftScope: props.draftScope,
     opencodeBaseUrl: props.opencodeBaseUrl,
-    workspaceId: props.workspaceId,
+    runtimeWorkspaceId: props.workspaceId,
     sessionId: props.sessionId,
-  });
+  }), [props.draftScope, props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
   const activeSessionOwnerRef = useRef(sessionOwner);
   activeSessionOwnerRef.current = sessionOwner;
   const snapshotTargetRef = useRef<NativeSessionSnapshotTarget>({
@@ -1230,10 +1228,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     [props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot],
   );
 
-  const snapshotQueryKey = useMemo(
-    () => reactSnapshotKey(props.workspaceId, props.sessionId),
-    [props.workspaceId, props.sessionId],
-  );
   const transcriptQueryKey = useMemo(
     () => reactTranscriptKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
@@ -1265,7 +1259,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       markSessionSnapshotFetchStart(item, startedAt);
       return item;
   }, [props.opencodeBaseUrl, props.openworkToken, props.sessionId, sessionOwner, useDesktopLoopbackSnapshotRetry]);
-  const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, snapshotQueryKey, readSnapshot });
+  const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, authToken: props.openworkToken, snapshotQueryKey, readSnapshot });
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: ({ signal }) => readSnapshot(signal),
@@ -1457,12 +1451,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!chatStreaming) setSteering(false);
   }, [chatStreaming]);
   const [evalThreadStatus, setEvalThreadStatus] = useState<ThreadStatus | null>(null);
+  const autoSendPayload = getComposerAutoSendPayload(props.sessionId, sessionOwner);
+  const autoSending = (Boolean(autoSendPayload)
+    || hasComposerAutoSend(props.sessionId))
+    && !sessionModelUnavailable;
   const status = useMemo((): ThreadStatus => {
     if (evalThreadStatus) return evalThreadStatus;
-    if (sending) {
-      return "submitted";
-    }
-
     if (liveStatus.type === "busy") {
       return "streaming";
     }
@@ -1471,8 +1465,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return "retrying";
     }
 
+    if (sending || autoSending) {
+      return "submitted";
+    }
+
     return "ready";
-  }, [evalThreadStatus, liveStatus, sending]);
+  }, [autoSending, evalThreadStatus, liveStatus, sending]);
   const [evalMarkdownMessages, setEvalMarkdownMessages] = useState<UIMessage[]>(EMPTY_TRANSCRIPT);
   useEffect(() => {
     setEvalMarkdownMessages(EMPTY_TRANSCRIPT);
@@ -1486,10 +1484,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
   const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
-  const autoSendPayload = getComposerAutoSendPayload(props.sessionId, sessionOwner);
-  const autoSending = (Boolean(autoSendPayload)
-    || hasComposerAutoSend(props.sessionId))
-    && !sessionModelUnavailable;
   const pendingReconciliation = useMemo(() => {
     const matchedIds = new Set<string>();
     const messages = [...baseRenderedMessages];
@@ -1795,7 +1789,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.onOpenTarget?.(target, options, props.sessionId);
   }, [props.onOpenTarget, props.sessionId]);
   const pendingSessionLoad = (!hasFullHistory && Boolean(revertMessageId))
-    || (!snapshot && !snapshotQuery.isError && renderedMessages.length === 0);
+    || (!snapshot && renderedMessages.length === 0);
   const assistantOutputAfterAwaitStart = useMemo(() => {
     if (awaitingAssistantBaseline === null) return false;
     return renderedMessages
@@ -3229,27 +3223,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
               />
             ) : null}
             <SessionHistoryBoundary owner={sessionOwner} pending={pendingSessionLoad}
-              onRetry={snapshotQuery.isError && !snapshotQuery.isFetching && snapshot && !fullSnapshot ? () => { void snapshotQuery.refetch(); } : undefined}
-              options={openingHistory.options} saved={initialScroll}>
-            {(snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
-              <div className="px-6 py-8">
-                {error ? (
-                  <SessionErrorCard
-                    developerMode={props.developerMode}
-                    error={error}
-                    onDismiss={handleDismissError}
-                    onChangeModel={handleModelChange}
-                    onOpenModelPicker={handleOpenModelPicker}
-                  />
-                ) : (
-                  <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
-                    {props.developerMode && snapshotQuery.error instanceof Error
-                      ? snapshotQuery.error.message
-                      : describeOpencodeSessionError(snapshotQuery.error, "Failed to load session.")}
-                  </div>
-                )}
-              </div>
-            ) : renderedMessages.length === 0 && effectiveActivityStatus !== "idle" && !error ? (
+              failed={snapshotQuery.isError && !snapshotQuery.isFetching} saved={initialScroll}>
+            {renderedMessages.length === 0 && effectiveActivityStatus !== "idle" && !error ? (
               <div className="px-6 py-12">
                 <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} />
               </div>
@@ -3278,6 +3253,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onApplyChanges={props.onApplyEnvironmentChanges}
                   >
                     <MessageListProvider
+                      uiStateOwner={props.draftScope ? sessionOwner : null}
+                      client={props.client}
+                      mcpAppEngine={isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1"}
                       readOnly={archived || !archiveStateKnown || archiveHeld}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}
@@ -3322,6 +3300,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : null}
           </div>
         </div>
+        <SessionHistoryStatus key={sessionOwner} complete={hasFullHistory} pending={pendingSessionLoad}
+          failed={snapshotQuery.isError && !snapshotQuery.isFetching} onRetry={() => snapshotQuery.refetch()} />
         <SessionScrollOverlay
           sessionId={props.sessionId}
           owner={sessionOwner}

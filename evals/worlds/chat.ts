@@ -2181,35 +2181,113 @@ export async function visualization(seed: Seed) {
 }
 
 
-/** A persisted workspace and conversation created before opting into the other engine. */
+/** One profile across engine switches; the journey, not the seed, creates its history. */
 export async function workspaceEngineUpgrade(seed: Seed) {
-  const providerId = "workspace-upgrade-mock";
-  const modelId = "workspace-upgrade-model";
-  const mock = seed.mock({ agentWorkloads: [{
-    promptMarker: "hi",
+  if (resolveEvalEngine() !== "v1") throw new SkipError("upgrade baseline requires OPENWORK_EVAL_ENGINE=v1");
+  const live = liveOpenAiEnabled();
+  const orgName = "Workspace engine upgrade";
+  const mocks: Record<string, ReturnType<Seed["mock"]>> = live ? {} : { agent: seed.mock({ agentWorkloads: [{
+    promptMarker: "upgrade conversation",
     finalReply: "Hello. Your upgrade conversation is working.",
     finalReplyChunkSize: 3,
     finalReplyDelayMs: 750,
     steps: [],
-  }] });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const primaryPath = seed.tmpPath("upgrade-primary");
-  const otherPath = seed.tmpPath("upgrade-existing");
-  const app = await seed.desktop({ den, as: "admin", workspacePath: primaryPath, model: `${providerId}/${modelId}` });
-  const primary = await seed.workspace(app, primaryPath);
-  const provider = { provider: { [providerId]: {
-    npm: "@ai-sdk/openai-compatible", name: "Upgrade mock",
-    options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-upgrade-fixture" },
-    models: { [modelId]: { name: "Upgrade model" } },
-  } } };
-  await configureProvider(seed, app, primary.workspaceId, providerId, modelId, provider);
-  const original = await seedSessionRetry(seed, app, { title: "Before engine upgrade" });
-  const other = await seed.workspace(app, otherPath, { create: true });
-  await configureProvider(seed, app, other.workspaceId, providerId, modelId, provider);
-  const otherOriginal = await seedSessionRetry(seed, app, { title: "Existing workspace history" });
-  return { app, den, primary, other, original, otherOriginal, providerId, modelId,
-    otherName: otherPath.split("/").at(-1),
-  };
+  }] }) };
+  const den = await seed.den({ org: { name: orgName }, mocks });
+  const managed = await provisionLiveOpenAi(den.admin, orgName);
+  try {
+    const primaryPath = seed.tmpPath("upgrade-primary");
+    const otherPath = seed.tmpPath("upgrade-after-switch");
+    const app = await seed.desktop({ den, as: "admin", workspacePath: primaryPath });
+    const request = async (path: string, method = "GET", body?: unknown) => {
+      const result = await seed.evalIn(app, browserScript(async (path, method, body) => {
+        const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + path, {
+          method, headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+          body, signal: AbortSignal.timeout(30_000),
+        });
+        const json: unknown = await response.json();
+        return { status: response.status, json };
+      }, [path, method, body === undefined ? null : JSON.stringify(body)]), { awaitPromise: true, timeoutMs: 35_000 });
+      assertNoLiveSecret(result);
+      return result;
+    };
+    const providerId = live ? await liveProviderId(request, managed.id) : "workspace-upgrade-mock";
+    const modelId = live ? liveOpenAiModel() : "workspace-upgrade-model";
+    const primary = await seed.workspace(app, primaryPath);
+    const provider = !live ? { provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Upgrade mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-upgrade-fixture" },
+      models: { [modelId]: { name: "Upgrade model" } },
+    } } } : {};
+    await configureProvider(seed, app, primary.workspaceId, providerId, modelId, provider, "v1");
+    const paletteShortcut = await seed.evalIn(app, browserScript(() =>
+      /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta+K" : "Control+K", []));
+    return {
+      app, den, primary, providerId, modelId, live, paletteShortcut,
+      async readFinalAnswerRows(): Promise<{ id: string; text: string }[]> {
+        // This journey requests plain-text answers. Reasoning folds into :steps;
+        // the answer keeps its native ID and has no timestamp/action children.
+        return seed.evalIn(app, browserScript(() => [...document.querySelectorAll<HTMLElement>(
+          '[data-message-role="assistant"][data-message-id]:not([data-message-id$=":steps"])',
+        )].filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
+          .map(node => ({ id: node.getAttribute("data-message-id") ?? "", text: node.innerText.replace(/\s+/g, " ").trim() })), []));
+      },
+      async readRendererLifetime(): Promise<{ timeOrigin: number; now: number }> {
+        return seed.evalIn(app, browserScript(() => ({ timeOrigin: performance.timeOrigin, now: Date.now() }), []));
+      },
+      async readWorkspaceInventoryRefresh(workspaceId: string, engine: "v1" | "v2", since: number): Promise<{
+        route: string;
+        selectedWorkspaceId: string | null;
+        loading: boolean | null;
+        error: string | null;
+        sessionIds: string[];
+        requests: { path: string; status: number; startedAt: number; completedAt: number }[];
+      }> {
+        // Observe only renderer-owned inventory reads and sidebar state, never
+        // issue an API request that could satisfy the refresh witness itself.
+        return seed.evalIn(app, browserScript((workspaceId, engine, since) => {
+          const sessionPath = `/workspace/${workspaceId}/${engine === "v2" ? "opencode2/api" : "opencode"}/session`;
+          const route = window.__openwork?.slice("route");
+          const workspace = route?.workspaces.find(workspace => workspace.id === workspaceId);
+          const requests = (window.__openwork?.events(200) ?? []).flatMap(event => {
+            const data = event.data;
+            if (event.name !== "log.fetch" || typeof data !== "object" || data === null
+              || !("url" in data) || typeof data.url !== "string"
+              || !("method" in data) || data.method !== "GET"
+              || !("status" in data) || data.status !== 200
+              || !("durationMs" in data) || typeof data.durationMs !== "number"
+              || event.at - data.durationMs < since) return [];
+            const path = new URL(data.url, location.href).pathname;
+            return path === sessionPath ? [{ path, status: data.status, startedAt: event.at - data.durationMs, completedAt: event.at }] : [];
+          });
+          return {
+            route: location.hash.replace(/^#/, ""), selectedWorkspaceId: route?.selectedWorkspaceId ?? null,
+            loading: workspace?.loading ?? null,
+            error: workspace?.error ?? null,
+            sessionIds: (route?.sessionsByWorkspaceId[workspaceId] ?? []).map(session => session.id).sort(),
+            requests,
+          };
+        }, [workspaceId, engine, since]));
+      },
+      async createOtherWorkspace() {
+        const status = await request("/experimental/engine-v2-preview/status");
+        if (!isRecord(status.json) || status.json.chatRouting !== true || status.json.running !== true) {
+          throw new Error("Workspace B must be created only after the Settings switch to v2");
+        }
+        const other = await seed.workspace(app, otherPath, { create: true });
+        // Hot-mirror the mock without reloading the renderer or clearing pending rows.
+        // Live mode inherits its managed provider through normal organization sync.
+        if (!live && (await request(`/workspace/${other.workspaceId}/config`, "PATCH", { opencode: provider })).status !== 200) {
+          throw new Error("Could not configure workspace B's model");
+        }
+        return other;
+      },
+      async [Symbol.asyncDispose]() { await managed[Symbol.asyncDispose](); },
+    };
+  } catch (error) {
+    await managed[Symbol.asyncDispose]();
+    throw error;
+  }
 }
 
 /** A running conversation whose workspace skills can change through OpenWork. */

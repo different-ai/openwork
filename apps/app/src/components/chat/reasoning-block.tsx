@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useWorkbenchDisclosure } from "@/react-app/domains/session/chat/workbench-ui-state"
 import { ChevronDown } from "lucide-react"
 
 import {
@@ -15,6 +15,7 @@ type ReasoningBlockProps = {
   text: string
   isStreaming: boolean
   className?: string
+  disclosureKey?: string
 }
 
 /**
@@ -22,8 +23,8 @@ type ReasoningBlockProps = {
  * line with a chevron; the full reasoning renders as markdown only
  * when the user opens it.
  */
-export function ReasoningBlock({ text, isStreaming, className }: ReasoningBlockProps) {
-  const [open, setOpen] = useState(false)
+export function ReasoningBlock({ text, isStreaming, className, disclosureKey }: ReasoningBlockProps) {
+  const [open, setOpen] = useWorkbenchDisclosure(disclosureKey)
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)} data-reasoning-block="">

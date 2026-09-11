@@ -6,6 +6,7 @@ import {
   __setCloudMcpUserStateStorageForTest,
   getCloudMcpScopeKey,
   readCloudMcpSyncMarker,
+  readCloudMcpUnhealthyRemintAttempt,
   writeCloudMcpSyncMarker,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
 import {
@@ -190,7 +191,7 @@ describe("OpenWork Cloud MCP reconciler", () => {
         baseUrl: scope.serverBaseUrl,
         getOpenworkCloudMcpHealth: async () => {
           getCount += 1;
-          return health({ usable: true });
+          return { ...health({ usable: true }), appHostAuthorizationReady: false };
         },
         reconcileOpenworkCloudMcp: async () => {
           postCount += 1;
@@ -244,6 +245,112 @@ describe("OpenWork Cloud MCP reconciler", () => {
     });
 
     expect(probeOptionsSeen).toEqual([{ probe: true }, undefined]);
+  });
+
+  test("healthy Cloud and a fresh marker still repair missing workspace App-host authorization once", async () => {
+    writeCloudMcpSyncMarker({ ...scope, expiresAt: token.expiresAt });
+    const missing = { ...health({ usable: true }), appHostAuthorizationReady: false };
+    let currentHealth = missing;
+    let mintCount = 0;
+    const posts: Array<{ workspaceId: string; payload: OpenworkCloudMcpReconcilePayload }> = [];
+    const client = {
+      baseUrl: scope.serverBaseUrl,
+      getOpenworkCloudMcpHealth: async () => currentHealth,
+      reconcileOpenworkCloudMcp: async (workspaceId: string, payload: OpenworkCloudMcpReconcilePayload) => {
+        posts.push({ workspaceId, payload });
+        currentHealth = { ...missing, appHostAuthorizationReady: true };
+        return currentHealth;
+      },
+    };
+    const input: Parameters<typeof runOpenworkCloudMcpReconciler>[0] = {
+      mode: "repair", client, context, now: NOW, refreshMarginMs: 1,
+      mintToken: async () => { mintCount += 1; return token; },
+    };
+    expect(await runOpenworkCloudMcpReconciler(input)).toMatchObject({
+      status: "repaired", attempts: 1, health: { usable: true, appHostAuthorizationReady: true },
+    });
+    expect(await runOpenworkCloudMcpReconciler(input)).toMatchObject({ status: "unchanged", attempts: 0 });
+    expect(mintCount).toBe(1);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.workspaceId).toBe(scope.workspaceId);
+    expect(posts[0]?.payload.appHostAuthorization).toBe(`Bearer ${token.appHostToken}`);
+    expect(posts[0]?.payload.config.headers).toEqual({ Authorization: `Bearer ${token.token}` });
+    expect(JSON.stringify(posts[0]?.payload.config)).not.toContain(token.appHostToken!);
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)).toBeNull();
+  });
+
+  test("unknown, ineligible and already-provisioned App hosts do not remint healthy Cloud", async () => {
+    for (const appHostAuthorizationReady of [undefined, null, true]) {
+      let mintCount = 0;
+      let postCount = 0;
+      const result = await runOpenworkCloudMcpReconciler({
+        mode: "repair", context, now: NOW, refreshMarginMs: 1,
+        client: {
+          baseUrl: scope.serverBaseUrl,
+          getOpenworkCloudMcpHealth: async () => ({ ...health({ usable: true }), appHostAuthorizationReady }),
+          reconcileOpenworkCloudMcp: async () => { postCount += 1; return health({ usable: true }); },
+        },
+        mintToken: async () => { mintCount += 1; return token; },
+      });
+      expect(result.status).toBe("unchanged");
+      expect(mintCount).toBe(0);
+      expect(postCount).toBe(0);
+    }
+  });
+
+  test("an unavailable private token has a scoped cooldown without blocking core repair or explicit retry", async () => {
+    let mintCount = 0;
+    let ordinaryUsable = true;
+    const client = {
+      baseUrl: scope.serverBaseUrl,
+      getOpenworkCloudMcpHealth: async () => ({ ...health({ usable: ordinaryUsable }), appHostAuthorizationReady: false }),
+      reconcileOpenworkCloudMcp: async () => ({ ...health({ usable: true }), appHostAuthorizationReady: false }),
+    };
+    const input: Parameters<typeof runOpenworkCloudMcpReconciler>[0] = {
+      mode: "repair", client, context, now: NOW, refreshMarginMs: 1,
+      mintToken: async () => {
+        mintCount += 1;
+        return { ...token, appHostToken: undefined, appHostExpiresAt: undefined };
+      },
+    };
+    const first = await runOpenworkCloudMcpReconciler(input);
+    expect(first).toMatchObject({ attempts: 1, health: { usable: true, appHostAuthorizationReady: false } });
+    expect(await runOpenworkCloudMcpReconciler(input)).toMatchObject({ status: "unchanged", attempts: 0 });
+    expect(mintCount).toBe(1);
+    expect(await runOpenworkCloudMcpReconciler({ ...input, context: { ...context, workspaceId: "ws_other" } })).toMatchObject({ attempts: 1 });
+    expect(await runOpenworkCloudMcpReconciler({ ...input, force: true })).toMatchObject({ attempts: 1 });
+    ordinaryUsable = false;
+    expect(await runOpenworkCloudMcpReconciler(input)).toMatchObject({ attempts: 1 });
+    ordinaryUsable = true;
+    expect(await runOpenworkCloudMcpReconciler({ ...input, now: NOW + 60 * 60 * 1_000 })).toMatchObject({ attempts: 1 });
+    expect(mintCount).toBe(5);
+  });
+
+  test("failed App-only mint/reconcile attempts retain ordinary health and respect the cooldown", async () => {
+    for (const failingStep of ["mint", "reconcile", "empty-token"]) {
+      installStorageStub();
+      let mintCount = 0;
+      const observed = { ...health({ usable: true }), appHostAuthorizationReady: false };
+      const input: Parameters<typeof runOpenworkCloudMcpReconciler>[0] = {
+        mode: "repair", context, now: NOW, refreshMarginMs: 1,
+        client: {
+          baseUrl: scope.serverBaseUrl,
+          getOpenworkCloudMcpHealth: async () => observed,
+          reconcileOpenworkCloudMcp: async () => { throw new Error("Synthetic reconcile unavailable"); },
+        },
+        mintToken: async () => {
+          mintCount += 1;
+          if (failingStep === "mint") throw new Error("Synthetic mint unavailable");
+          return failingStep === "empty-token" ? null : token;
+        },
+      };
+      const failed = await runOpenworkCloudMcpReconciler(input);
+      expect(failed).toMatchObject({ status: "failed", attempts: 1 });
+      expect(failed.health).toBe(observed);
+      expect(await runOpenworkCloudMcpReconciler(input)).toMatchObject({ status: "unchanged", attempts: 0 });
+      expect(mintCount).toBe(1);
+      expect(readCloudMcpUnhealthyRemintAttempt(scope)?.attemptedAt).toBe(NOW);
+    }
   });
 
   test("engine refresh maps the endpoint result and skips unsupported servers", async () => {
