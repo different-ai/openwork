@@ -39,7 +39,7 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
  */
 export const DEFAULT_INSTRUCTIONS = "Open Coworker's own tools for this coworker: documents, Workers, assignments, memory and soul, and the team. When to use each is in AGENTS.md (How I talk, Workers, My team, Keeping memory and soul current, Scheduling).";
 
-const DOCUMENT_ID_SCHEMA = { type: "string", description: "The document id, as listed in documents/index.md or returned when it was created." };
+const DOCUMENT_ID_SCHEMA = { type: "string", description: "Document id from documents/index.md or document_create." };
 
 /** What the coworker can do with its documents, described in its own plain words. */
 export function toolCatalog() {
