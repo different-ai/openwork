@@ -81,9 +81,9 @@ function fakeUpdaterHarness({ version, platform, manualNativeStaging }) {
 }
 
 /**
- * @param {{ version: string, platform?: string, manualNativeStaging?: boolean, nativeStagingTimeoutMs?: number }} options
+ * @param {{ version: string, platform?: string, manualNativeStaging?: boolean, nativeStagingTimeoutMs?: number, assertActivation?: () => void }} options
  */
-async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativeStaging = false, nativeStagingTimeoutMs }) {
+async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativeStaging = false, nativeStagingTimeoutMs, assertActivation }) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "openwork-updater-test-"));
   const handlers = new Map();
   const harness = fakeUpdaterHarness({ version, platform, manualNativeStaging });
@@ -109,6 +109,7 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativ
     nativeStagingTimeoutMs,
     shipItDefaultsDomain: "test.openwork.ShipIt",
     writeDefaults: async (args) => { defaultsWrites.push(args); },
+    ...(assertActivation ? { assertActivation } : {}),
   });
   return { tempDir, handlers, defaultsWrites, ...harness };
 }
@@ -530,6 +531,38 @@ describe("installAndRestart", () => {
       ok: false,
       reason: "update-not-downloaded",
     });
+  });
+});
+
+describe("pre-activation guard", () => {
+  it("rejects check, download, and install without touching the updater while activation is required", async () => {
+    let activationRequired = true;
+    const { tempDir, handlers, calls, feeds } = await registerFakeUpdaterIpc({
+      version: "9.9.9",
+      assertActivation: () => {
+        if (activationRequired) throw new Error("OpenWork must be activated from your Den portal before this command is available.");
+      },
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      const download = handlers.get("openwork:updater:download");
+      const install = handlers.get("openwork:updater:installAndRestart");
+      await assert.rejects(() => check(null, "stable"), /must be activated/, "check must reject before activation");
+      await assert.rejects(() => download(), /must be activated/, "download must reject before activation");
+      await assert.rejects(() => install(), /must be activated/, "installAndRestart must reject before activation");
+      // ensureAutoUpdater selects a feed as soon as electron-updater loads, so an
+      // empty feed list proves the updater was never even configured.
+      assert.deepEqual(feeds, [], "no update feed may be selected before activation");
+      assert.deepEqual(calls, [], "no download may start before activation");
+
+      // The same handlers work normally once the installation is activated.
+      activationRequired = false;
+      assert.equal((await check(null, "stable")).available, true);
+      assert.deepEqual(await download(), { ok: true });
+      assert.deepEqual(calls, ["download"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

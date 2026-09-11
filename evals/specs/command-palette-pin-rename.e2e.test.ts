@@ -2,11 +2,12 @@ import { spec } from "@openwork/testkit";
 import { paletteSessionActions } from "../worlds/chat.ts";
 
 const test = spec.world(paletteSessionActions);
-const shortcut = process.platform === "darwin" ? "Meta+K" : "Control+K";
 const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
 const paletteFooter = { text: "Arrow keys to navigate" };
 
-test("the command palette pins and renames the open session", async ({ world, user, probe, step }) => {
+test("the command palette pins and renames the open session", async ({ world, user, probe, step, place }) => {
+  // The shortcut belongs to the platform running the app (Linux on Daytona), not the runner's.
+  const shortcut = place.kind === "local" && process.platform === "darwin" ? "Meta+K" : "Control+K";
   await step("the palette offers Pin session for the open session", async () => {
     await user.notSee({ text: "Pinned" });
     await user.press(shortcut);

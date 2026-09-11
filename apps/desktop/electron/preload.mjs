@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+import { installBrowserShortcutFocusTracking } from "./browser-shortcut-focus.mjs";
 
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
@@ -68,6 +69,12 @@ function installMenuOverlayDismissListeners() {
   } catch {
     return false;
   }
+}
+
+if (process.isMainFrame) {
+  installBrowserShortcutFocusTracking(window, (tabId) => {
+    ipcRenderer.send("openwork:browser:shortcut-focus", tabId);
+  });
 }
 
 // Selected text and ordinary editors use Chromium's native context-menu event.
@@ -217,9 +224,9 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   },
   browser: {
     show(bounds, sessionId) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId); },
-    hide() {
+    hide(options) {
       lastBrowserGeometry = null;
-      return ipcRenderer.invoke("openwork:browser:hide");
+      return ipcRenderer.invoke("openwork:browser:hide", options);
     },
     openUrl(url, provider, options) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider, options); },
     setVisibleSession(sessionId) { return ipcRenderer.invoke("openwork:browser:setVisibleSession", sessionId); },

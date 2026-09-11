@@ -1,0 +1,248 @@
+# Spectral ruleset for the Den API OpenAPI document (packages/docs/openapi.json).
+#
+# This is the single API-quality gate: `pnpm api:lint` regenerates nothing, it
+# lints the committed snapshot; CI regenerates first (drift check) and then
+# lints. Errors fail the build; warnings are ratcheted against
+# .spectral-baseline.json and may not increase.
+#
+# Rule intent, exemptions and the protocol-adapter boundary are documented in
+# docs/api-style.md. Keep the two files in sync.
+
+extends: [[spectral:oas, recommended]]
+
+rules:
+  # ---- spectral:oas severity adjustments -------------------------------------
+  operation-tag-defined: error
+  operation-tags: error
+  operation-description: warn
+  oas3-unused-component: warn
+  info-contact: error
+  # prefixItems tuples are valid OpenAPI 3.1 / JSON Schema 2020-12 but the
+  # bundled array-items rule still expects `items`; keep the check without
+  # failing the build on the two tuple schemas.
+  array-items: warn
+
+  # ---- OpenWork house rules ---------------------------------------------------
+
+  # Every operation states how it is authenticated. `security: []` is the
+  # explicit marker for a public route; omitting the key is not allowed even
+  # though document-level security would apply, because generators and
+  # scanners commonly ignore the document-level default. Routes without a
+  # describeRoute() surface here.
+  ow-operation-security:
+    description: Every operation must declare `security` (an empty array marks a public route).
+    message: "{{path}} has no `security` array; declare one in describeRoute() (use [] for public routes)."
+    severity: error
+    given: "$.paths[*][get,post,put,patch,delete,head,options,trace]"
+    then:
+      field: security
+      function: defined
+
+  # Protected operations (non-empty security) document at least one 4xx so
+  # clients learn the failure envelope. Public health/metadata routes are
+  # exempt through their empty security array.
+  ow-operation-has-4xx:
+    description: Protected operations must document at least one 4xx response.
+    message: "{{path}} is protected but documents no 4xx response."
+    severity: error
+    given: "$.paths[*][get,post,put,patch,delete][?(@.security && @.security[0])].responses"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          anyOf:
+            - required: ["400"]
+            - required: ["401"]
+            - required: ["402"]
+            - required: ["403"]
+            - required: ["404"]
+            - required: ["405"]
+            - required: ["406"]
+            - required: ["408"]
+            - required: ["409"]
+            - required: ["410"]
+            - required: ["412"]
+            - required: ["413"]
+            - required: ["415"]
+            - required: ["422"]
+            - required: ["423"]
+            - required: ["428"]
+            - required: ["429"]
+
+  # A 200 without `content` leaves the response body undocumented. Use 204 when
+  # there is genuinely no body.
+  ow-200-has-content:
+    description: 200 responses must document their body; use 204 for empty responses.
+    message: "{{path}} is a 200 with no `content`; document the body or return 204."
+    severity: warn
+    given: "$.paths[*][*].responses['200']"
+    then:
+      field: content
+      function: truthy
+
+  # Timestamps end in `At` and are RFC 3339 `date-time` strings. Nullable
+  # timestamps are expressed as anyOf [date-time, null]; the second `given`
+  # checks the non-null branch.
+  ow-timestamps-date-time:
+    description: Properties ending in `At` must be RFC 3339 `string` / `date-time`.
+    message: "{{property}} ends in `At` but is not a string with format date-time (see docs/api-style.md#timestamps)."
+    severity: warn
+    given:
+      - "$..properties[?(@ && @property.match(/At$/) && !@.anyOf && !@.oneOf && !@.$ref)]"
+      - "$..properties[?(@property.match(/At$/))].anyOf[?(@ && @.type != 'null')]"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          properties:
+            type:
+              const: string
+            format:
+              const: date-time
+          required: [type, format]
+
+  # Collections paginate with cursor + limit and return nextCursor. A GET whose
+  # response carries `items` or that accepts `limit`/`offset` is a list.
+  ow-list-pagination:
+    description: List GET operations must accept `cursor` + `limit` and return `nextCursor`.
+    message: "{{path}} looks like a list but does not implement cursor + limit + nextCursor pagination (see docs/api-style.md#pagination)."
+    severity: warn
+    given: "$.paths[*].get"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          # A GET is a list when it accepts limit/offset or returns `items`.
+          if:
+            anyOf:
+              - required: [parameters]
+                properties:
+                  parameters:
+                    contains:
+                      type: object
+                      required: [in, name]
+                      properties:
+                        in: { const: query }
+                        name: { enum: [limit, offset] }
+              - required: [responses]
+                properties:
+                  responses:
+                    required: ["200"]
+                    properties:
+                      "200":
+                        required: [content]
+                        properties:
+                          content:
+                            required: [application/json]
+                            properties:
+                              application/json:
+                                required: [schema]
+                                properties:
+                                  schema:
+                                    required: [properties]
+                                    properties:
+                                      properties:
+                                        required: [items]
+          then:
+            required: [parameters, responses]
+            properties:
+              parameters:
+                allOf:
+                  - contains:
+                      type: object
+                      required: [in, name]
+                      properties: { in: { const: query }, name: { const: cursor } }
+                  - contains:
+                      type: object
+                      required: [in, name]
+                      properties: { in: { const: query }, name: { const: limit } }
+              responses:
+                required: ["200"]
+                properties:
+                  "200":
+                    required: [content]
+                    properties:
+                      content:
+                        required: [application/json]
+                        properties:
+                          application/json:
+                            required: [schema]
+                            properties:
+                              schema:
+                                required: [properties]
+                                properties:
+                                  properties:
+                                    required: [nextCursor]
+
+# ---- Documented exceptions ----------------------------------------------------
+# Protocol adapters follow their RFC verbatim and are exempt from house naming,
+# pagination and timestamp rules (they still need security, summary, tags and
+# responses). Pointers are JSON-pointer escaped (`/` -> `~1`) and, as Spectral
+# does, percent-encode path parameter braces (`{` -> `%7B`, `}` -> `%7D`).
+overrides:
+  # SCIM 2.0 (RFC 7643/7644): PascalCase resources, startIndex/count paging,
+  # `meta.lastModified` timestamps.
+  - files:
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1Schemas"
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1Schemas~1urn:ietf:params:scim:schemas:core:2.0:Group"
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1ResourceTypes"
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1ResourceTypes~1Group"
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1Groups"
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1Groups~1%7BgroupId%7D"
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1Users"
+      - "**/*.json#/paths/~1api~1auth~1scim~1v2~1Users~1%7BuserId%7D"
+    rules:
+      ow-list-pagination: "off"
+      ow-timestamps-date-time: "off"
+      operation-description: "off"
+
+  # OAuth 2.0 / OIDC discovery (RFC 8414, OIDC Discovery), dynamic client
+  # registration (RFC 7591, snake_case fields) and protected-resource metadata
+  # (RFC 9728): public by specification, bodies defined by the RFCs.
+  - files:
+      - "**/*.json#/paths/~1.well-known~1oauth-authorization-server"
+      - "**/*.json#/paths/~1.well-known~1oauth-authorization-server~1api~1auth"
+      - "**/*.json#/paths/~1.well-known~1openid-configuration"
+      - "**/*.json#/paths/~1.well-known~1openid-configuration~1api~1auth"
+      - "**/*.json#/paths/~1api~1auth~1.well-known~1oauth-authorization-server"
+      - "**/*.json#/paths/~1api~1auth~1.well-known~1openid-configuration"
+      - "**/*.json#/paths/~1register"
+      - "**/*.json#/paths/~1api~1auth~1oauth2~1register"
+      - "**/*.json#/paths/~1api~1auth~1oauth2~1authorize"
+      - "**/*.json#/paths/~1.well-known~1oauth-protected-resource"
+      - "**/*.json#/paths/~1.well-known~1oauth-protected-resource~1mcp"
+      - "**/*.json#/paths/~1.well-known~1oauth-protected-resource~1mcp~1agent"
+      - "**/*.json#/paths/~1.well-known~1oauth-protected-resource~1mcp~1admin"
+      - "**/*.json#/paths/~1mcp~1.well-known~1oauth-protected-resource"
+      - "**/*.json#/paths/~1mcp~1agent~1.well-known~1oauth-protected-resource"
+      - "**/*.json#/paths/~1mcp~1admin~1.well-known~1oauth-protected-resource"
+      - "**/*.json#/paths/~1oauth~1client-metadata.json"
+    rules:
+      ow-list-pagination: "off"
+      ow-timestamps-date-time: "off"
+      ow-operation-has-4xx: "off"
+
+  # Liveness probes have no failure envelope beyond the status code.
+  - files:
+      - "**/*.json#/paths/~1health"
+      - "**/*.json#/paths/~1ready"
+    rules:
+      ow-operation-has-4xx: "off"
+
+  # Deprecated tombstones intentionally answer only 410 (skill hubs, memory
+  # save). DELETE /v1/memory/{id} answers 401/404 only and is listed here for
+  # the same reason; whether it should also document a 2xx is tracked as a
+  # follow-up in docs/api-style.md.
+  - files:
+      - "**/*.json#/paths/~1v1~1skill-hubs"
+      - "**/*.json#/paths/~1v1~1skill-hubs~1%7BskillHubId%7D"
+      - "**/*.json#/paths/~1v1~1skill-hubs~1%7BskillHubId%7D~1skills"
+      - "**/*.json#/paths/~1v1~1skill-hubs~1%7BskillHubId%7D~1skills~1%7BskillId%7D"
+      - "**/*.json#/paths/~1v1~1skill-hubs~1%7BskillHubId%7D~1access"
+      - "**/*.json#/paths/~1v1~1skill-hubs~1%7BskillHubId%7D~1access~1%7BaccessId%7D"
+      - "**/*.json#/paths/~1v1~1memory"
+      - "**/*.json#/paths/~1v1~1memory~1%7Bid%7D"
+    rules:
+      operation-success-response: "off"

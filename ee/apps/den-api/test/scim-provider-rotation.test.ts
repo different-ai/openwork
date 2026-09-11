@@ -1,12 +1,6 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-
-function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_scim_provider_rotation"
-  process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
-  process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
-  process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
-}
+import { seedDatabaseTestEnv } from "./database-test-env"
 
 const organizationId = createDenTypeId("organization")
 const scimOnlyUserId = createDenTypeId("user")
@@ -34,11 +28,11 @@ async function cleanup() {
 }
 
 beforeAll(async () => {
-  seedRequiredEnv()
+  const databaseUrl = seedDatabaseTestEnv()
   mock.restore()
 
   const realDb = (await import("@openwork-ee/den-db")).createDenDb({
-    databaseUrl: process.env.DATABASE_URL,
+    databaseUrl,
     mode: "mysql",
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
@@ -48,7 +42,7 @@ beforeAll(async () => {
         generateSCIMToken: async (input: {
           body: {
             providerId: string
-            organizationId: string
+            organizationId: typeof organizationId
           }
         }) => {
           await realDb.insert(schema.ScimProviderTable).values({
@@ -138,6 +132,7 @@ beforeAll(async () => {
     id: groupId,
     organizationId,
     providerId: legacyProviderId,
+    scimGroupId: groupId,
     externalId: "legacy-group",
     displayName: "Legacy SCIM group",
   })

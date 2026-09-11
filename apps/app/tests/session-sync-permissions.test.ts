@@ -28,6 +28,8 @@ import {
   ensureWorkspaceSessionSync,
   permissionKey,
   markSessionSnapshotFetchStart,
+  snapshotKey,
+  statusKey,
   todoKey,
   questionKey,
   seedPermissionState,
@@ -784,8 +786,8 @@ describe("session transcript sync", () => {
     } finally { release(); cleanup(); }
   });
 
-  for (const declared of [true, false]) {
-    test(`snapshot reconciles buffered deltas exactly once (declared=${declared})`, () => {
+  for (const preview of [true, false]) for (const declared of [true, false]) {
+    test(`snapshot reconciles buffered deltas exactly once (declared=${declared}, preview=${preview})`, () => {
       const scheduled: Array<() => void> = [];
       __setSessionSyncDeltaFlushSchedulerForTest((_lane, run) => {
         scheduled.push(run);
@@ -825,7 +827,7 @@ describe("session transcript sync", () => {
           Object.freeze(message);
         }
         Object.freeze(projected);
-        seedSessionState("workspace-a", snapshot);
+        seedSessionState("workspace-a", snapshot, { preview });
         expect(projected[1]?.parts[0]).toMatchObject({ text: declared ? "hello world" : "hello" });
         expect(snapshotToUIMessages(snapshot)).toBe(projected);
         expect(queryClient.getQueryData<UIMessage[]>(key)?.find((message) => message.id === "history")).toEqual(projected[0]);
@@ -868,6 +870,51 @@ describe("session transcript sync", () => {
       } finally { releaseNeighbor(); release(); cleanup(); __setSessionSyncDeltaFlushSchedulerForTest(null); }
     });
   }
+
+  test("a preview supplies live part baselines without seeding status, todos, admission, or complete history", () => {
+    const scheduled: Array<() => void> = [];
+    __setSessionSyncDeltaFlushSchedulerForTest((_lane, run) => { scheduled.push(run); return () => {}; });
+    const input = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    const queryClient = getReactQueryClient();
+    const key = transcriptKey("workspace-a", "session-a");
+    try {
+      const preview = snapshotWithMessages([{ id: "answer", role: "assistant", text: "Existing answer" }]);
+      markSessionSnapshotFetchStart(preview, Date.now());
+      const activity = useSessionActivityStore.getState().recordsByWorkspaceId;
+      seedSessionState("workspace-a", preview, { preview: true });
+      expect(queryClient.getQueryData(snapshotKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(queryClient.getQueryData(statusKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId).toBe(activity);
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: {
+        sessionID: "session-a", messageID: "answer", partID: "part_answer", delta: " continues",
+      } });
+      for (const run of scheduled.splice(0)) run();
+      expect(deriveRenderedSessionMessages({ snapshot: preview, transcriptState: queryClient.getQueryData(key), historyComplete: false })[0]?.parts[0])
+        .toMatchObject({ text: "Existing answer continues" });
+      seedSessionState("workspace-a", snapshotWithMessages([
+        { id: "earlier", role: "user", text: "Earlier prompt" },
+        { id: "answer", role: "assistant", text: "Existing answer" },
+      ]));
+      for (const run of scheduled.splice(0)) run();
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.map((message) => message.id)).toEqual(["earlier", "answer"]);
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.[1]?.parts[0]).toMatchObject({ text: "Existing answer continues" });
+    } finally { release(); cleanup(); __setSessionSyncDeltaFlushSchedulerForTest(null); }
+  });
+
+  test("a reverted preview neither seeds its suffix nor truncates a known live transcript", () => {
+    const queryClient = getReactQueryClient();
+    const key = transcriptKey("workspace-a", "session-a");
+    const current = [uiMessage("before", "user", "Kept")];
+    queryClient.setQueryData(key, current);
+    const preview = snapshotWithMessages([{ id: "hidden", role: "assistant", text: "Reverted away" }]);
+    preview.session.revert = { messageID: "missing-cursor" };
+    seedSessionState("workspace-a", preview, { preview: true });
+    expect(queryClient.getQueryData(key)).toEqual(current);
+    expect(queryClient.getQueryData(snapshotKey("workspace-a", "session-a"))).toBeUndefined();
+  });
 
   test("keeps longer live text when an idle snapshot lags the event stream", () => {
     getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [

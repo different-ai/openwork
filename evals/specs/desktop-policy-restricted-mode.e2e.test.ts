@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { selectModel } from "@openwork/behaviors";
 import { spec, type Agent, type User } from "@openwork/testkit";
-import { defaultPolicyEditorAndMemberDesktop, managedPolicyRecovery, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
+import { defaultPolicyEditorAndMemberDesktop, managedPolicyRecovery, policyTransportRollback, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
 
 // An organization that wants a vanilla OpenWork picks one decision, Restricted,
 // in the Den policy editor. This spec drives the real editor as the admin and a
@@ -11,11 +11,17 @@ import { defaultPolicyEditorAndMemberDesktop, managedPolicyRecovery, readDefault
 const defaultJourney = "an admin restricts the default policy and the member desktop enforces it";
 const teamJourney = "team access overrides overlapping grants and restores only selected desktop capabilities";
 const recoveryJourney = "managed policy evaluation bounds transient Den retries and never reuses stale access";
+const rollbackJourney = "POLICY-ROLLBACK tools complete when policy HTTP fails and IPC is disconnected";
 // Register one fixture extension: Vitest 3 accumulates fixtures when the same
 // base is extended twice. Choose the setup at the test boundary, keeping the
 // worlds framework-free and each sequential journey isolated.
 const test = spec.world(async (seed) => {
   const name = expect.getState().currentTestName;
+  if (name?.endsWith(rollbackJourney)) {
+    const rollback = await policyTransportRollback(seed);
+    return { app: rollback.app, rollback, defaultPolicy: null, team: null, recovery: null,
+      [Symbol.asyncDispose]: () => rollback[Symbol.asyncDispose]() };
+  }
   if (name?.endsWith(defaultJourney)) {
     return { defaultPolicy: await defaultPolicyEditorAndMemberDesktop(seed), team: null, recovery: null };
   }
@@ -273,6 +279,13 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     await member.user.notSee(settingsMenuItem);
     const menuText = await member.probe.text();
     await member.user.press("Escape");
+    // The menu has no exit motion, but its unmount is still a React commit
+    // away from the key event. Observe the closed state, then hold it.
+    await member.probe.eventually(() => member.probe.eval(() => document.querySelector('[data-slot="dropdown-menu-content"]') === null), {
+      within: 10_000,
+      label: "account menu finishes closing",
+      until: (closed) => closed,
+    });
     await member.user.notSee(accountMenuItem, { timeoutMs: 10_000 });
     return menuText;
   });
@@ -322,6 +335,37 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Connection") && !restrictedMcpText.includes("Local MCP") && !restrictedMcpText.includes("Add workspace MCP"),
   );
 
+});
+
+test(rollbackJourney, { timeout: 300_000 }, async ({ world, user, agent, probe, step, evidence }) => {
+  if (!("rollback" in world) || !world.rollback) throw new Error("Expected the rollback world");
+  const rollback = world.rollback;
+  await step("the isolated engine starts with a failing policy transport", async () => {
+    expect(await rollback.faultReceipt()).toBe("HTTP fault configured; IPC fd closed");
+    expect(await rollback.checkFault()).toMatchObject({ status: 503 });
+    expect(rollback.policyRequests()).toHaveLength(1);
+  });
+  await user.type("composer", `Copy the supplied local file using the requested tools. ${rollback.marker}`);
+  await agent.run("composer.send");
+  const snapshot = await step("real read and command tools complete despite the fault", async () => {
+    return probe.eventually(async () => {
+      await rollback.approve();
+      return rollback.native();
+    }, {
+      within: 120_000, label: "read and shell completed in native engine history",
+      until: (snapshot) => snapshot.ok && snapshot.data.messages.flatMap((message) => message.parts)
+        .filter((part) => ["read", "bash", "shell"].includes(part.tool) && part.status === "completed").length === 2,
+    });
+  });
+  expect(snapshot.ok).toBe(true);
+  expect(await rollback.output()).toBe(rollback.content);
+  expect(rollback.policyRequests()).toHaveLength(1);
+  await user.see({ text: "The requested file was copied successfully." }, { timeoutMs: 30_000 });
+  evidence.recordAssertionEvidence(
+    `${rollback.engine} executes read and shell with policy HTTP 503 and disconnected IPC`,
+    JSON.stringify({ engine: rollback.engine, snapshot, output: await rollback.output(), policyRequests: rollback.policyRequests() }),
+    true,
+  );
 });
 
 test(recoveryJourney, { timeout: 300_000 }, async ({ world: selectedWorld, step, evidence }) => {

@@ -44,10 +44,11 @@ import {
   requestBrowserTask,
   readBrowserFixtureState,
   setBrowserFixtureDiscovery,
+  requireWorldResource,
+  validateWorldResources,
 } from "@openwork/env";
-import type { Den, Place } from "@openwork/env";
+import type { Den, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
-import { expectVisualEvidence } from "@openwork/test-evidence/vitest";
 import { screenshot, validate } from "@openwork/test-evidence";
 import type {
   StepRecord,
@@ -264,6 +265,18 @@ async function createSessionWhenReady(surface: Surface): Promise<string> {
   throw new Error("session.create_task returned no session ID after one retry.");
 }
 
+export function copyWorldResources(resources: WorldResources | undefined): WorldResources | undefined {
+  if (resources === undefined) return undefined;
+  validateWorldResources(resources);
+  const copy = {
+    surfaces: Object.freeze([...resources.surfaces]),
+    services: Object.freeze([...resources.services]),
+    ...(resources.nativeReason === undefined ? {} : { nativeReason: resources.nativeReason }),
+  };
+  validateWorldResources(copy);
+  return Object.freeze(copy);
+}
+
 export class SpecRuntime {
   stage: "world" | "body" = "world";
   acted = false;
@@ -272,18 +285,41 @@ export class SpecRuntime {
   readonly stack: AsyncDisposableStack;
   readonly place: Place;
   readonly adapters: SpecAdapters;
+  readonly #resources: WorldResources | undefined;
+
+  get resources(): WorldResources | undefined { return this.#resources; }
   #stepDepth = 0;
   #stepBlocked = false;
 
-  constructor(place: Place, stack: AsyncDisposableStack, sink: EvidenceSink, adapters: SpecAdapters = {}) {
+  constructor(place: Place, stack: AsyncDisposableStack, sink: EvidenceSink, adapters: SpecAdapters = {}, resources?: WorldResources) {
     this.place = place;
     this.stack = stack;
     this.sink = sink;
     this.adapters = adapters;
+    this.#resources = copyWorldResources(resources);
   }
 
   useSink(sink: EvidenceSink): void {
     this.sink = sink;
+  }
+
+  requireDen(den: Den): void {
+    requireWorldResource(this.resources, "den");
+    if (Object.keys(den.mocks).length > 0) requireWorldResource(this.resources, "mock");
+  }
+
+  async own<T extends AsyncDisposable>(resource: T, expectedKind?: "chrome" | "electron"): Promise<T> {
+    try {
+      if (expectedKind && (!isSurface(resource) || !isRecord(resource.handle) || resource.handle.kind !== expectedKind)) {
+        throw new Error(`World resource handle mismatch: expected ${expectedKind}.`);
+      }
+      return this.stack.use(resource);
+    } catch (error) {
+      // A timed-out world may finish launching after its stack was disposed.
+      try { await resource[Symbol.asyncDispose](); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], "Resource registration and cleanup failed"); }
+      throw error;
+    }
   }
 
   setPrimary(value: unknown): void {
@@ -303,6 +339,7 @@ export class SpecRuntime {
   }
 
   checkOrder(channel: TraceChannel, verb: string): void {
+    if (this.stack.disposed) throw new Error("World is disposed; refused before launch.");
     if (channel === "user" || channel === "agent") this.acted = true;
     if ((channel === "seed" || channel === "seed:raw") && this.stage === "body" && !this.acted) {
       throw new SeedBeforeActError(verb);
@@ -427,17 +464,25 @@ export class SeedChannel implements Seed {
   }
 
   den(options: Omit<import("@openwork/env").ServerOptions, "place"> = {}): Promise<Den> {
+    requireWorldResource(this.#runtime.resources, "den");
+    if (options.mocks && Object.keys(options.mocks).length > 0) requireWorldResource(this.#runtime.resources, "mock");
     return this.#runtime.call("seed", "den", `den(${this.#runtime.place.kind})`, null, async () => {
       const den = await server({ ...options, place: this.#runtime.place });
-      return this.#runtime.stack.use(den);
+      return this.#runtime.own(den);
     });
   }
 
   desktop(options: SeedDesktopOptions = {}) {
+    requireWorldResource(this.#runtime.resources, "desktop");
+    if (options.den) this.#runtime.requireDen(options.den);
+    const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim();
+    if (requestedSurface && requestedSurface !== "electron") {
+      throw new Error(`seed.desktop() conflicts with app surface ${requestedSurface}; select an explicit desktop world.`);
+    }
     return this.#runtime.call("seed", "desktop", `desktop(${options.den ? `as ${options.signIn === false ? "signed-out" : options.as ?? "admin"}` : this.#runtime.place.kind})`, null, async () => {
       if (options.den) {
         if (options.signIn === false) {
-          return this.#runtime.stack.use(await startApp({
+          return this.#runtime.own(await startApp({
             den: options.den,
             place: this.#runtime.place,
             signIn: false,
@@ -446,9 +491,9 @@ export class SeedChannel implements Seed {
             workspacePath: options.workspacePath,
             profileDir: options.profileDir,
             enterpriseActivated: options.enterpriseActivated,
-          }));
+          }), "electron");
         }
-        return this.#runtime.stack.use(await startApp({
+        return this.#runtime.own(await startApp({
           den: options.den,
           place: this.#runtime.place,
           as: options.as ?? "admin",
@@ -457,41 +502,46 @@ export class SeedChannel implements Seed {
           workspacePath: options.workspacePath,
           profileDir: options.profileDir,
           enterpriseActivated: options.enterpriseActivated,
-        }));
+        }), "electron");
       }
       if (options.as) throw new Error("seed.desktop({ as }) requires a Den.");
-      const app = this.#runtime.stack.use(await desktop({
+      const app = await this.#runtime.own(await desktop({
         name: options.name,
         host: this.#runtime.place.host(),
         profileDir: options.profileDir,
+        ownSandbox: options.ownSandbox,
         env: options.model
           ? { ...options.env, OPENWORK_EVAL_MODEL: options.model }
           : options.env,
-      }));
+      }), "electron");
       if (options.workspacePath) await this.workspace(app, options.workspacePath);
       return app;
     });
   }
 
   appWeb(options: SeedAppWebOptions) {
-    const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE;
-    if (requestedSurface !== undefined && requestedSurface.trim() !== "web") {
+    requireWorldResource(this.#runtime.resources, "appWeb");
+    if (options.mocks && Object.keys(options.mocks).length > 0) requireWorldResource(this.#runtime.resources, "mock");
+    const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim();
+    if (requestedSurface && requestedSurface !== "web") {
       throw new Error(`seed.appWeb() requires OPENWORK_EVAL_APP_SURFACE=web when a surface is explicitly requested; received ${JSON.stringify(requestedSurface)}.`);
     }
     return this.#runtime.call("seed", "appWeb", `appWeb(${this.#runtime.place.kind})`, null, async () => {
       const web = await startAppWeb({ ...options, place: this.#runtime.place });
-      return this.#runtime.stack.use(web);
+      return this.#runtime.own(web, "chrome");
     });
   }
 
   web(options: SeedWebOptions) {
+    requireWorldResource(this.#runtime.resources, "web");
+    this.#runtime.requireDen(options.den);
     return this.#runtime.call("seed", "web", `web(${options.signedInAs ? "signed in" : "signed out"})`, null, async () => {
-      const web = this.#runtime.stack.use(await chrome({
+      const web = await this.#runtime.own(await chrome({
         name: "spec-web",
         host: this.#runtime.place.host(),
         startUrl: options.signedInAs === undefined ? options.den.ref.webUrl : "about:blank",
         headless: options.headless,
-      }));
+      }), "chrome");
       if (options.viewport) await setViewport(web, {
         ...options.viewport,
         deviceScaleFactor: options.viewport.deviceScaleFactor ?? 1,
@@ -533,8 +583,8 @@ export class SeedChannel implements Seed {
     const title = options.title ?? "New task";
     return this.#runtime.call("seed", "session", `session(${JSON.stringify(title)})`, app, async () => {
       const sessionId = await createSessionWhenReady(app);
-      // A rename can be lost behind the new session's own title work; wait for it
-      // to be listed under the requested title, the same way sessions() does.
+      // Same contract as sessions(): the title is part of the arrangement, so
+      // hand back only once the app lists it (the sidebar renders that list).
       if (options.title) await renameSessionAndWait((action, args) => control(app, action, args), sessionId, title);
       return { sessionId, title };
     });
@@ -579,23 +629,26 @@ export class SeedChannel implements Seed {
   }
 
   mock(options: Parameters<typeof mcpMock>[0] = {}) {
+    requireWorldResource(this.#runtime.resources, "mock");
     return this.#runtime.sync("seed", "mock", "mock(mcp)", () => mcpMock(options));
   }
 
   faultProxy(den: Den) {
+    this.#runtime.requireDen(den);
     return this.#runtime.call("seed", "faultProxy", `faultProxy(${this.#runtime.place.kind})`, null, async () => {
       const proxy = await startFaultProxy(den.ref, {
         place: this.#runtime.place,
         sandbox: den.placement?.kind === "daytona" ? den.placement.sandboxId : undefined,
       });
-      return this.#runtime.stack.use(proxy);
+      return this.#runtime.own(proxy);
     });
   }
 
   denLink(den: Den, options: import("@openwork/env").SeedDenLinkOptions = {}) {
+    this.#runtime.requireDen(den);
     return this.#runtime.call("seed", "denLink", `denLink(${options.client ?? "public-preview"})`, null, async () => {
       const link = await startDenLink(den.ref, options);
-      return this.#runtime.stack.use(link);
+      return this.#runtime.own(link);
     });
   }
 
@@ -777,6 +830,7 @@ export class UserChannel implements User {
     return this.#runtime.call("vision", "looks", `looks(${expectations.length} expectations)`, surface, async () => {
       const artifact = await screenshot(surface);
       const result = await validate(artifact, expectations);
+      const { expectVisualEvidence } = await import("@openwork/test-evidence/vitest");
       expectVisualEvidence(result);
     });
   }
@@ -1070,6 +1124,9 @@ export function channels(runtime: SpecRuntime): { seed: Seed; user: User; agent:
   };
 }
 
-export function registerWorldDisposable(stack: AsyncDisposableStack, world: unknown): void {
-  if (isAsyncDisposable(world) && !isSurface(world)) stack.use(world);
+export async function registerWorldDisposable(stack: AsyncDisposableStack, world: unknown): Promise<void> {
+  if (isAsyncDisposable(world) && !isSurface(world)) {
+    if (stack.disposed) await world[Symbol.asyncDispose]();
+    else stack.use(world);
+  }
 }

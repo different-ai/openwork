@@ -15,6 +15,7 @@ import {
   parseConnectorE2eTestEnv,
   prepareSandboxRepo,
   provisionDesktopSandbox,
+  provisionWebSandbox,
   publishedDesktopReleaseInstallCommand,
   resolvePublishedDesktopRelease,
   renderConnectorE2eTestEnv,
@@ -143,6 +144,130 @@ test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in
   const sourceReceiptCall = calls.findIndex((call) => call.args[3]?.includes("source-receipt.json"));
   assert(sourceReceiptCall >= 0 && sourceReceiptCall < lastFirstBootCall, "source receipt must be verified before any app warmup starts");
   assertRemoteCommandsAreSingleArgument(calls);
+});
+
+test("provisionWebSandbox prepares owned and borrowed source without desktop gates or runtime cleanup", async () => {
+  for (const reuse of [undefined, "borrowed-web"]) {
+    const { exec, calls } = desktopFake("85%");
+    const result = await provisionWebSandbox({ ref: "dev", name: "web", reuse, autoStopMinutes: 0, exec, log: () => undefined });
+
+    assert.equal(result.created, reuse === undefined);
+    assert.equal(result.source?.actualSha, SOURCE_SHA);
+    assert.equal(result.source?.expectedSha, SOURCE_SHA);
+    assert.equal(result.source?.dependenciesInstalled, true);
+    assert(!("release" in result));
+    const create = calls.find((call) => call.args[0] === "create");
+    if (reuse) {
+      assert.equal(result.sandbox, reuse);
+      assert.deepEqual(calls[0]?.args, ["sandbox", "start", reuse]);
+      assert.equal(create, undefined);
+      assert(!calls.some((call) => call.args[0] === "snapshot"));
+    } else {
+      assert(create);
+      assert.equal(create.args[2], result.sandbox);
+      assert(create.args.includes("snapshot-123"));
+      assert.equal(create.args[create.args.indexOf("--auto-stop") + 1], "0");
+      assert(!create.args.includes("--volume"));
+    }
+    const scripts = calls.filter((call) => call.args[0] === "exec").map((call) => call.args[3] ?? "").join("\n");
+    for (const required of ["git status", "git fetch", "pnpm install --frozen-lockfile", "source-receipt.json", "df -P /workspace"]) {
+      assert(scripts.includes(required), `web provisioning must retain ${required}`);
+    }
+    for (const forbidden of ["start-daytona-vnc", "Xvfb", "xdg-open", "electron", "warmup", "vite-prewarm", "dev:ui", "rm -", "pkill", "/tmp/openwork-", "/profiles"]) {
+      assert(!scripts.includes(forbidden), `web provisioning must not run ${forbidden}`);
+    }
+    assert(!calls.some((call) => call.args[0] === "delete"));
+    assertRemoteCommandsAreSingleArgument(calls);
+  }
+});
+
+test("source provisioning failures delete newly owned sandboxes but never borrowed sandboxes", async () => {
+  for (const provision of [provisionDesktopSandbox, provisionWebSandbox]) {
+    for (const failure of ["create", "ready", "source", "disk", "disk-format"]) {
+      for (const reuse of [undefined, "borrowed-source"]) {
+        if (reuse && failure === "create") continue;
+        const base = desktopFake(failure === "disk" ? "92%" : failure === "disk-format" ? "unknown" : "40%");
+        const exec: DaytonaExec = async (args, opts) => {
+          if ((failure === "create" && args[0] === "create")
+            || (failure === "source" && args[3]?.includes("git status"))) {
+            base.calls.push({ args: [...args], opts });
+            return { stdout: "", stderr: `${failure} rejected`, code: 42 };
+          }
+          return base.exec(args, opts);
+        };
+        await assert.rejects(
+          provision({
+            ref: "dev", name: `source-${failure}`, reuse, exec, log: () => undefined,
+            ...(failure === "ready" ? { sandboxReadyTimeoutMs: 0 } : {}),
+          }),
+          failure === "disk" ? /92%/ : failure === "disk-format" ? /could not parse Use%/
+            : failure === "ready" ? /exec-ready gate failed/ : new RegExp(`${failure} rejected`),
+        );
+        const deletes = base.calls.filter((call) => call.args[0] === "delete");
+        if (reuse) {
+          assert.equal(deletes.length, 0);
+        } else {
+          const create = base.calls.find((call) => call.args[0] === "create");
+          assert(create);
+          assert.deepEqual(deletes.map((call) => call.args), [["delete", create.args[2]]]);
+        }
+        assert(!base.calls.some((call) => call.args[3]?.includes("start-daytona-vnc")));
+      }
+    }
+  }
+});
+
+test("source allocation gates never delete a sandbox before creation is attempted", async () => {
+  for (const provision of [provisionDesktopSandbox, provisionWebSandbox]) {
+    for (const options of [{ snapshot: "missing-snapshot" }, { autoStopMinutes: -1 }]) {
+      const { exec, calls } = desktopFake();
+      await assert.rejects(
+        provision({ ref: "dev", name: "allocation-gate", ...options, exec, log: () => undefined }),
+        /Snapshot gate failed|Daytona auto-stop/,
+      );
+      assert(!calls.some((call) => call.args[0] === "create" || call.args[0] === "delete"));
+    }
+  }
+});
+
+test("source provisioning preserves the original failure when owned sandbox cleanup fails", async () => {
+  for (const provision of [provisionDesktopSandbox, provisionWebSandbox]) {
+    const base = desktopFake();
+    const failure = new Error("source preparation failed");
+    const logs: string[] = [];
+    const exec: DaytonaExec = async (args, opts) => {
+      if (args[3]?.includes("git status")) throw failure;
+      if (args[0] === "delete") {
+        base.calls.push({ args: [...args], opts });
+        throw new Error("cleanup unavailable");
+      }
+      return base.exec(args, opts);
+    };
+    await assert.rejects(
+      provision({ ref: "dev", name: "cleanup-failure", exec, log: (line) => logs.push(line) }),
+      (error: unknown) => error === failure,
+    );
+    assert.equal(base.calls.filter((call) => call.args[0] === "delete").length, 1);
+    assert(logs.some((line) => line.includes("sandbox cleanup failed: cleanup unavailable")));
+  }
+});
+
+test("source desktop setup failures after preparation clean up only owned sandboxes", async () => {
+  for (const reuse of [undefined, "borrowed-desktop"]) {
+    const base = desktopFake();
+    const exec: DaytonaExec = async (args, opts) => {
+      if (args[3]?.includes("start-daytona-vnc")) {
+        base.calls.push({ args: [...args], opts });
+        return { stdout: "XVFB_FAIL", stderr: "", code: 0 };
+      }
+      return base.exec(args, opts);
+    };
+    await assert.rejects(
+      provisionDesktopSandbox({ ref: "dev", name: "display-failure", reuse, exec, log: () => undefined }),
+      /Display gate failed/,
+    );
+    assert.equal(base.calls.filter((call) => call.args[0] === "delete").length, reuse ? 0 : 1);
+  }
 });
 
 test("prepareSandboxRepo updates a wrong HEAD and verifies it before caller launch", async () => {
@@ -303,6 +428,8 @@ test("published desktop provisioning resolves exact GitHub metadata and skips ev
   assert.equal(create.args[create.args.indexOf("--auto-stop") + 1], "0");
   const remote = calls.map((call) => call.args[3] ?? "").join("\n");
   assert.match(remote, /install\.py/);
+  assert.match(remote, /start-daytona-vnc/);
+  assert.match(remote, /xdg-open-proof/);
   assert.match(remote, /openwork-enterprise-linux-x64-0\.18\.44\.tar\.gz/);
   for (const forbidden of ["git fetch", "pnpm install", "warmup-electron", "vite-prewarm", "dev:electron"]) {
     assert(!remote.includes(forbidden), `release provisioning must not run ${forbidden}`);
@@ -567,10 +694,12 @@ test("an unsafe ref is refused before it can reach a remote shell or a sourced f
   const { exec, calls } = desktopFake();
 
   for (const ref of ["dev\"; rm -rf /; #", "$(curl attacker)", "dev\nrm -rf /", "--upload-pack=evil"]) {
-    await assert.rejects(
-      provisionDesktopSandbox({ ref, name: "a", reuse: "existing-a", exec, log: () => undefined }),
-      /Unsafe git ref/,
-    );
+    for (const provision of [provisionDesktopSandbox, provisionWebSandbox]) {
+      await assert.rejects(
+        provision({ ref, name: "a", reuse: "existing-a", exec, log: () => undefined }),
+        /Unsafe git ref/,
+      );
+    }
     assert.throws(() => renderConnectorE2eTestEnv({
       denApiUrl: "https://a",
       denWebUrl: "https://w",

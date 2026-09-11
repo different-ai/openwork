@@ -1,5 +1,4 @@
 /** @jsxImportSource react */
-import { Dithering } from "@paper-design/shaders-react";
 import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 
 import {
@@ -14,6 +13,7 @@ import { enterpriseActivationRequired } from "@/app/lib/enterprise-activation";
 import { readDesktopDistributionInfo } from "@/app/lib/desktop";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { normalizeOrganizationServerInput } from "@/app/lib/organization-server-input";
+import { DitherBackdrop } from "@/components/dither-backdrop";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
@@ -161,17 +161,7 @@ function EnterpriseActivationPage() {
         className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert"
         data-testid="enterprise-activation-background"
       >
-        <Dithering
-          className="size-full"
-          speed={0.01}
-          shape="warp"
-          type="2x2"
-          size={20.3}
-          scale={1.19}
-          frame={264559.21}
-          colorBack="#00000000"
-          colorFront="#000000"
-        />
+        <DitherBackdrop />
       </div>
 
       <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />

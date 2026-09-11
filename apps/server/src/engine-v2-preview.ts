@@ -494,7 +494,6 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       bin: resolved.bin,
       rootDir,
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
-      checkPolicy: (action, input) => managedDesktopPolicy(config).assert(action, input),
       permissions: async () => executionRules((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy?.execution),
     });
     sidecar = managed;
