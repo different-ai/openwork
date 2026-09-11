@@ -101,7 +101,14 @@ type Generation = {
   handle: ManagedOpencodeServer;
   status: GenerationStatus;
   spawnedAt: number;
+  /** Config fingerprint this process was spawned with. */
   fingerprint: string;
+  /**
+   * Config fingerprint each directory's instance was last rebuilt against by
+   * an in-place reload. An in-place reload disposes ONE directory instance;
+   * the other directories keep serving what they read at build time.
+   */
+  reloadedDirectories: Map<string, string>;
   registryId: string | null;
   trustedIdentity: string | null;
   drainTimer: ReturnType<typeof setInterval> | null;
@@ -370,6 +377,11 @@ export async function computeEngineConfigFingerprint(template: EngineSpawnTempla
     .digest("hex");
 }
 
+/** The engine directory an in-place reload disposes for this workspace. */
+function directoryKey(workspace: WorkspaceInfo): string {
+  return workspace.directory?.trim() || workspace.path;
+}
+
 export class EnginePool {
   private readonly config: ServerConfig;
   private readonly template: EngineSpawnTemplate;
@@ -419,6 +431,7 @@ export class EnginePool {
       status: "primary",
       spawnedAt: Date.now(),
       fingerprint: input.fingerprint,
+      reloadedDirectories: new Map(),
       registryId: input.registryId,
       trustedIdentity: input.trustedIdentity,
       drainTimer: null,
@@ -637,9 +650,17 @@ export class EnginePool {
     const fingerprint = await this.currentFingerprint();
     const primary = this.generations.find((entry) => entry.status === "primary") ?? null;
 
-    if (!manual && primary && primary.fingerprint === fingerprint) {
-      // Nothing the engine reads at build time changed. Skipping here is what
-      // keeps a repeating no-op sync from spawning an engine every pass.
+    // Nothing this workspace's instance reads at build time changed: either
+    // the process was spawned on this config or this directory was already
+    // reloaded onto it. Skipping here is what keeps a repeating no-op sync
+    // from spawning an engine every pass. Other directories reloaded in place
+    // do not count: their dispose left this one serving the previous config.
+    const directory = directoryKey(workspace);
+    if (
+      !manual
+      && primary
+      && (primary.fingerprint === fingerprint || primary.reloadedDirectories.get(directory) === fingerprint)
+    ) {
       return { action: "skipped", reason: "unchanged" };
     }
 
@@ -648,7 +669,7 @@ export class EnginePool {
       : await this.hooks.engineBusy(this.config, workspace).catch(() => false);
     if (!busy) {
       await this.hooks.reloadInPlace(this.config, workspace, { awaitPostRefreshSync });
-      if (primary) primary.fingerprint = fingerprint;
+      if (primary) primary.reloadedDirectories.set(directory, fingerprint);
       this.hooks.logger?.log("info", "Engine reloaded in place (idle).", {
         "engine.rollover.reason": reason,
       });
@@ -714,6 +735,7 @@ export class EnginePool {
       status: "starting",
       spawnedAt: Date.now(),
       fingerprint,
+      reloadedDirectories: new Map(),
       registryId: null,
       trustedIdentity: null,
       drainTimer: null,
@@ -1105,6 +1127,7 @@ export class EnginePool {
         status: "starting",
         spawnedAt: this.now(),
         fingerprint: await this.currentFingerprint(),
+        reloadedDirectories: new Map(),
         registryId: null,
         trustedIdentity: null,
         drainTimer: null,

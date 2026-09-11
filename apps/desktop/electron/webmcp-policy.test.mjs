@@ -97,22 +97,66 @@ test("frame policy denies undelegated cross-origin tools and non-origin-keyed do
   });
 });
 
-test("an explicit ancestor tools=() response policy cannot be expanded by an iframe", async () => {
+test("same-origin frames honor explicit container policy while retaining default access", async () => {
+  const policy = createWebMcpFramePolicy({});
+  const top = fakeFrame("https://app.example");
+  const child = fakeFrame(top.origin, top);
+  for (const [allow, expected] of [
+    ["", true],
+    ["camera", true],
+    ["tools 'none'", false],
+    ["camera; tools 'none'; fullscreen", false],
+    ["tools 'self'", true],
+    ["tools https://app.example", true],
+    ["tools https://other.example", false],
+    ["tools", true],
+    ["tools 'src'", true],
+    ["tools *", true],
+  ]) {
+    top.embedding = { allow, sourceOrigin: top.origin };
+    assert.equal((await policy.checkFrame(child)).allowed, expected, `allow=${JSON.stringify(allow)}`);
+  }
+  top.embedding = { allow: "tools", sourceOrigin: "https://other.example" };
+  assert.equal((await policy.checkFrame(child)).allowed, false, "shorthand remains source-origin-bound");
+  top.embedding = null;
+  assert.equal((await policy.checkFrame(child)).allowed, false, "an unreadable container is not a default grant");
+});
+
+test("a same-origin ancestor container denial cannot be expanded by descendant delegation", async () => {
+  const policy = createWebMcpFramePolicy({});
+  const top = fakeFrame("https://app.example");
+  const child = fakeFrame(top.origin, top);
+  const descendant = fakeFrame(top.origin, child);
+  top.embedding = { allow: "tools 'none'", sourceOrigin: top.origin };
+  child.embedding = { allow: "tools *", sourceOrigin: top.origin };
+  assert.equal((await policy.checkFrame(top)).allowed, true);
+  assert.equal((await policy.checkFrame(child)).allowed, false);
+  assert.equal((await policy.checkFrame(descendant)).allowed, false);
+  top.embedding.allow = "tools 'self'";
+  assert.equal((await policy.checkFrame(descendant)).allowed, true);
+});
+
+test("an explicit ancestor tools=() response policy cannot be expanded by any iframe", async () => {
   let listener = null;
   const policy = createWebMcpFramePolicy({
     webRequest: { onHeadersReceived(_filter, candidate) { listener = candidate; } },
   });
   policy.install();
   const top = fakeFrame("https://app.example");
-  const child = fakeFrame("https://child.example", top);
-  top.embedding = { allow: "tools *", sourceOrigin: "https://child.example" };
   listener({
     resourceType: "mainFrame",
     frame: top,
     url: top.url,
     responseHeaders: { "permissions-policy": ["tools=()"] },
   }, () => {});
-  assert.equal((await policy.checkFrame(child)).allowed, false);
+  for (const origin of [top.origin, "https://child.example"]) {
+    const child = fakeFrame(origin, top);
+    const descendant = fakeFrame(origin, child);
+    top.embedding = { allow: "tools *", sourceOrigin: origin };
+    child.embedding = { allow: "tools *", sourceOrigin: origin };
+    assert.equal((await policy.checkFrame(child)).allowed, false);
+    assert.equal((await policy.checkFrame(descendant)).allowed, false);
+  }
 });
 
 test("page-supplied overrides cannot replace isolated runtime facts or response opt-outs", async () => {

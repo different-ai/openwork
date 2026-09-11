@@ -108,6 +108,14 @@ async function resolveWorkspaceId(app: Surface): Promise<string> {
   return workspaceIdFromRoute(await currentHash(app));
 }
 
+/** The folder the product reports for a workspace, or null when it is not listed yet. */
+async function workspacePath(app: Surface, workspaceId: string): Promise<string | null> {
+  const value = await evalIn(app, browserScript((id) => (
+    window.__openwork?.slice?.("route")?.workspaces?.find((workspace) => workspace.id === id)?.path ?? null
+  ), [workspaceId]));
+  return typeof value === "string" ? value : null;
+}
+
 /**
  * THE arrangement path for a workspace: the product's own onboarding, driven
  * the way a person drives it. A previous API seed (POST /workspaces/local +
@@ -140,7 +148,10 @@ export async function createAndSelectWorkspace(
   } else {
     if (route.includes("/onboarding")) await completeOrganizationOnboarding(app);
     workspaceId = await resolveWorkspaceId(app);
-    if (!workspaceId || input.create) {
+    // First launch selects a bootstrap "OpenWork Chat" workspace by itself, so a
+    // selected workspace only satisfies the caller when it sits at the requested folder.
+    const selectedPath = workspaceId ? await workspacePath(app, workspaceId) : null;
+    if (!workspaceId || input.create || selectedPath !== input.path) {
       await waitFor(app, () => (window.__openworkControl.listActions()
         .some((action) => action.id === "workspace.create" && !action.disabled)), {
         timeoutMs: 60_000,

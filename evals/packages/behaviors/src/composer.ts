@@ -46,7 +46,9 @@ export async function readComposerState(app: Surface): Promise<ComposerState> {
     const model = document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]');
     return {
       composerEditable: Boolean(editor),
-      draftText: editor?.innerText ?? "",
+      // An empty Lexical editor keeps one empty paragraph, which innerText
+      // reports as "\n"; the person sees no draft, so neither does the probe.
+      draftText: (editor?.innerText ?? "").replace(/\n$/, ""),
       route: location.hash,
       runTaskVisible: Boolean(run),
       runTaskEnabled: Boolean(run && !run.disabled),
