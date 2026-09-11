@@ -1486,6 +1486,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
   const pendingReconciliation = useMemo(() => {
     const matchedIds = new Set<string>();
+    const messageIdReplacements = new Map<string, string>();
     const messages = [...baseRenderedMessages];
     const remaining = (pendingMessages ?? []).flatMap((item) => {
       const { draft: pending, previousMessageIds } = item;
@@ -1503,6 +1504,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         return [item];
       }
       matchedIds.add(match.id);
+      if (match.id !== pending.messageId) messageIdReplacements.set(match.id, pending.messageId);
       messages[messages.indexOf(match)] = { ...match, parts };
       const textReady = !text.trim()
         || match.parts.some((part) => part.type === "text" && part.text.trim());
@@ -1511,7 +1513,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
     // A server turn can acknowledge only one pending send, even when two
     // consecutive prompts have identical text and v2 assigns its own IDs.
-    return { messages, remaining: remaining.map((item) => {
+    return { messages, messageIdReplacements, remaining: remaining.map((item) => {
       const claimed = [...matchedIds].filter((id) => id !== item.serverMessageId && !item.previousMessageIds.includes(id));
       return claimed.length ? { ...item, previousMessageIds: [...item.previousMessageIds, ...claimed] } : item;
     }) };
@@ -3287,6 +3289,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onMcpRetry={handleMcpRetry}
                     >
                       <MessageList
+                        messageIdReplacements={pendingReconciliation.messageIdReplacements}
                         viewport={messageViewport}
                         messages={renderedMessages}
                         status={status}

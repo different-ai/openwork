@@ -20,6 +20,7 @@ interface ProgressiveMessageListProps<T> {
   groups: readonly T[]
   getGroupKey: (group: T) => string
   getMessageIds: (group: T) => readonly string[]
+  groupKeyReplacements?: ReadonlyMap<string, string>
   renderGroup: (group: T, index: number) => React.ReactNode
   viewport?: MessageListViewport
   className?: string
@@ -115,10 +116,13 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
   static getDerivedStateFromProps<T>(props: PreparedGroupsProps<T>, state: MountState): MountState | null {
     const { keys, anchorIndex } = props
     if (!keys.length) return null
-    let mounted = state.mounted
+    const replacements = [...(props.groupKeyReplacements ?? [])]
+      .filter(([key, previous]) => state.mounted.has(previous) && !state.mounted.has(key) && keys.includes(key))
+      .map(([key]) => key)
+    let mounted = replacements.length ? new Set([...state.mounted, ...replacements]) : state.mounted
     const last = keys[keys.length - 1]
     if (!props.viewport || props.viewport.revealAll) {
-      if (keys.every((key) => mounted.has(key))) return null
+      if (keys.every((key) => state.mounted.has(key))) return null
       mounted = new Set(keys)
     } else if (!state.initialized || (anchorIndex >= 0 && (state.anchorPending || !mounted.has(keys[anchorIndex])))) {
       // Include the live tail without allowing the first mount to exceed eight groups.
@@ -133,7 +137,7 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
       mounted = nearby
     } else if (!mounted.has(last)) {
       mounted = new Set([...mounted, last])
-    } else return null
+    } else if (mounted === state.mounted) return null
     return { ...state, mounted, initialized: true, anchorPending: state.anchorPending && anchorIndex < 0 && !props.viewport?.historyComplete }
   }
 

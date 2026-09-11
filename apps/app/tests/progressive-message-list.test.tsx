@@ -131,11 +131,12 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   cleanups.push(unmount)
   return {
     container, ready, writes, rendered, key, ids, unmount,
-    async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode) {
+    async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode, groupKeyReplacements?: ReadonlyMap<string, string>) {
       data = next
       viewport = { ...viewport, ...update }
       const list = <ProgressiveMessageList
         groups={data} viewport={viewport} getGroupKey={key} getMessageIds={ids}
+        groupKeyReplacements={groupKeyReplacements}
         renderGroup={(group, index) => {
           rendered.push(index)
           if (renderer) return renderer(group, index)
@@ -309,6 +310,57 @@ describe("progressive whole-group rendering", () => {
     await view.render([...next, { id: "new-user", messages: [{ id: "new-user", height: 60 }] }])
     expect(view.message("new-user")).toBeDefined()
     expect(view.message("m79")).toBe(tail)
+  })
+
+  test.each([false, true])("keeps submitted text mounted when its native ID arrives with assistant already present: %s", async (assistantAlreadyPresent) => {
+    const history = groups()
+    const pending = { id: "pending-user", messages: [{ id: "pending-user", height: 60 }] }
+    const native = { id: "native-user", messages: [{ id: "native-user", height: 60 }] }
+    const assistant = { id: "assistant", messages: [{ id: "assistant", height: 60 }] }
+    const text = "Keep this submitted message visible."
+    const render = (group: Group) => group.messages.map((message) =>
+      <div key={message.id} data-message-id={message.id}>{group === pending || group === native ? text : message.id}</div>)
+    const view = fixture([...history, pending])
+    await view.render(undefined, {}, render)
+    const expectOneSubmission = () => expect(view.container.textContent?.split(text).length).toBe(2)
+    expectOneSubmission()
+    view.read("pending-user")
+    if (assistantAlreadyPresent) {
+      await view.render([...history, pending, assistant], {}, render)
+      expectOneSubmission()
+    }
+    await view.render([...history, native, assistant], {}, render, new Map([[native.id, pending.id]]))
+    expectOneSubmission()
+    expect(view.message("native-user")).toBeDefined()
+    expect(view.mounted).not.toContain("pending-user")
+    expect(view.mounted).not.toContain("g0")
+    await act(async () => runFrame())
+    expectOneSubmission()
+    await act(async () => runFrame())
+    expectOneSubmission()
+    await view.render([...history, native, assistant], {}, render)
+    expectOneSubmission()
+  })
+
+  test("replacement admission stays scoped to mounted groups in the same session, not new history", async () => {
+    const data = groups()
+    const view = fixture(data, { anchorMessageId: "m40" })
+    await view.render()
+    view.read("m40")
+    const next = data.map((group) => group.id === "g0" || group.id === "g40" ? { ...group, id: `native-${group.id}` } : group)
+    next.unshift({ id: "older-history", messages: [{ id: "older-history", height: 240 }] })
+    const replacements = new Map([["native-g0", "g0"], ["native-g40", "g40"]])
+    await view.render(next, { anchorMessageId: undefined }, undefined, replacements)
+    expect(view.mounted).toContain("native-g40")
+    expect(view.mounted).not.toContain("native-g0")
+    expect(view.mounted).not.toContain("older-history")
+    expect(view.mounted).toHaveLength(8)
+    await view.render(next)
+    expect(view.mounted).toContain("native-g40")
+    await view.render(next, { sessionKey: `replacement-${++sessionId}` }, undefined, replacements)
+    expect(view.mounted).not.toContain("native-g40")
+    expect(view.mounted).not.toContain("native-g0")
+    expect(view.mounted).toHaveLength(8)
   })
 
   test("keeps the exact visible message offset while estimates above it are replaced", async () => {
