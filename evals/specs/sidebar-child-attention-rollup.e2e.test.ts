@@ -25,7 +25,7 @@ test("a delegated child's pending permission turns the parent's sidebar row oran
     return {
       spinner: Boolean(row?.querySelector<HTMLElement>("[data-session-loading-indicator]")),
       dot: dot instanceof HTMLElement ? { title: dot.title, ariaLabel: dot.getAttribute("aria-label"), source: dot.dataset.sessionAttentionSource ?? null } : null,
-      ariaLabel: row?.getAttribute("aria-label") ?? null,
+      ariaLabel: row?.querySelector<HTMLElement>('[data-testid="sidebar-session-' + id + '"]')?.getAttribute("aria-label") ?? null,
     };
   }, [parentId]));
   const listedParent = async () => {
