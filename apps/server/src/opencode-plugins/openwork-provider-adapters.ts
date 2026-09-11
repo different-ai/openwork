@@ -10,18 +10,34 @@ import type {
 } from "@openwork/types/openwork-provider";
 import { z } from "zod";
 
+// Epoch milliseconds or an ISO-8601 string; resolve with sessionTimestampMs.
+const sessionTimestampArgSchema = z.union([z.number().int().nonnegative(), z.string().trim().min(1)])
+  .refine((value) => typeof value === "number" || Number.isFinite(Date.parse(value)), {
+    message: "Expected epoch milliseconds or an ISO-8601 date string.",
+  });
+
+export function sessionTimestampMs(value: z.infer<typeof sessionTimestampArgSchema>): number {
+  return typeof value === "number" ? value : Date.parse(value);
+}
+
 export const sessionSearchArgsSchema = z.object({
   query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name to limit the search."),
   limit: z.number().int().positive().max(20).optional().describe("Maximum matching sessions to return. Defaults to 10, max 20."),
-  scanLimit: z.number().int().positive().max(500).optional().describe("Maximum newest sessions to scan across matching workspaces. Defaults to 100, max 500."),
+  scanLimit: z.number().int().positive().max(500).optional().describe("Maximum newest sessions whose transcripts are scanned across matching workspaces; every root session's title is matched regardless. Defaults to 100, max 500."),
   messageLimit: z.number().int().positive().max(1000).optional().describe("Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
+  match: z.enum(["all", "any", "phrase"]).optional().describe("all (default): every whitespace-separated term must appear; any: one term suffices; phrase: the exact query text must appear."),
+  createdAfter: sessionTimestampArgSchema.optional().describe("Only sessions created at or after this time (epoch milliseconds or ISO-8601 string)."),
+  createdBefore: sessionTimestampArgSchema.optional().describe("Only sessions created at or before this time (epoch milliseconds or ISO-8601 string)."),
+  archived: z.enum(["include", "exclude", "only"]).optional().describe("Archived sessions: include (default), exclude, or only."),
 });
 
 export const sessionReadArgsSchema = z.object({
   sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by session.search."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
-  count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
+  count: z.number().int().positive().max(100).optional().describe("Number of transcript messages to return. Defaults to 30, max 100."),
+  from: z.enum(["start", "end"]).optional().describe("end (default): the last `count` messages; start: the first `count` messages."),
+  summary: z.boolean().optional().describe("When true, return only the first user message and the last assistant message plus session metadata."),
 });
 
 export const sessionCreateArgsSchema = z.object({
@@ -112,14 +128,18 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.search",
         kind: "query",
         title: "Find sessions",
-        description: "Search session titles and transcripts without changing the visible workbench. Only the `scanLimit` newest sessions are scanned; when the result's `truncated` is true, retry with a larger `scanLimit` (max 500).",
+        description: "Search session titles and transcripts without changing the visible workbench. Every root session's title is matched; transcripts are scanned for the `scanLimit` newest sessions only, so when the result's `truncated` is true, retry with a larger `scanLimit` (max 500). Title and phrase matches rank first, then newest `updatedAt`. Each result carries `createdAt`, `archived` and `parentId`.",
         provider,
         arguments: [
           argument("query", "string", true, "Text to find in session titles or messages."),
           argument("workspaceId", "string", false, "Optional workspace id or name."),
           argument("limit", "number", false, "Maximum matching sessions to return. Defaults to 10, max 20."),
-          argument("scanLimit", "number", false, "Maximum newest sessions to scan across matching workspaces. Defaults to 100, max 500."),
+          argument("scanLimit", "number", false, "Maximum newest sessions whose transcripts are scanned across matching workspaces; every root session's title is matched regardless. Defaults to 100, max 500."),
           argument("messageLimit", "number", false, "Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
+          argument("match", "string", false, "all (default): every whitespace-separated term must appear; any: one term suffices; phrase: the exact query text must appear."),
+          argument("createdAfter", "unknown", false, "Only sessions created at or after this time (epoch milliseconds or ISO-8601 string)."),
+          argument("createdBefore", "unknown", false, "Only sessions created at or before this time (epoch milliseconds or ISO-8601 string)."),
+          argument("archived", "string", false, "Archived sessions: include (default), exclude, or only."),
         ],
         effects: readEffects,
       }),
@@ -127,12 +147,14 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read recent messages from a session without opening it. The result also carries `status` (idle, busy, retry, waiting) and `working`; check `working` before session.archive.",
+        description: "Read messages from a session without opening it. The result also carries `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting) and `working`; check `working` before session.archive. Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),
           argument("workspaceId", "string", false, "Optional workspace id or name."),
-          argument("count", "number", false, "Number of recent messages to return."),
+          argument("count", "number", false, "Number of messages to return. Defaults to 30, max 100."),
+          argument("from", "string", false, "end (default): the last `count` messages; start: the first `count` messages."),
+          argument("summary", "boolean", false, "When true, return only the first user and last assistant messages plus metadata."),
         ],
         effects: readEffects,
       }),

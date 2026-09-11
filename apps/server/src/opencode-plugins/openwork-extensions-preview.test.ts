@@ -106,7 +106,7 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
   const workspaceTwo = { id: "ws_2", name: "Archive", displayName: "Archive", path: "/tmp/archive", workspaceType: "remote" };
   const sessionAlpha = { id: "ses_alpha", title: "Alpha planning", time: { created: 100, updated: 300 } };
   const sessionBeta = { id: "ses_beta", title: "Neon backlog", time: { created: 50, updated: 200 } };
-  const sessionArchive = { id: "ses_archive", title: "Archive decisions", directory: "/tmp/archive", time: { created: 10, updated: 100 } };
+  const sessionArchive = { id: "ses_archive", title: "Archive decisions", directory: "/tmp/archive", time: { created: 10, updated: 100, archived: 150 } };
   // Lives outside every workspace root: reads must refuse to expose it even
   // though the native engine route happily returns it (cross-workspace leak).
   const sessionForeign = { id: "ses_foreign", title: "Other tenant secrets", directory: "/tmp/elsewhere", time: { created: 20, updated: 120 } };
@@ -461,6 +461,56 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(sessionActivityFrom({ ses_other: { type: "busy" } }, [{ sessionID: "ses_other" }], [], "ses_x")).toEqual({ status: "idle", working: false });
   });
 
+  test("session.read returns session metadata and per-message timestamps", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const output = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_archive", count: 1 } });
+    const parsed = affordanceResultSchema("session.read", readResultSchema).parse(JSON.parse(output));
+
+    expect(parsed.result).toMatchObject({ createdAt: 10, updatedAt: 100, archived: true, parentId: null, from: "end" });
+    expect(parsed.result.messages).toEqual([expect.objectContaining({ id: "msg_latest", createdAt: 102 })]);
+  });
+
+  test("session.read from start returns the first messages and loads the whole transcript", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = async (args: Record<string, unknown>) => affordanceResultSchema("session.read", readResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", ...args } })))
+      .result;
+
+    expect((await read({ count: 1 })).messages.map((message) => message.role)).toEqual(["user"]);
+    const fromStart = await read({ count: 1, from: "start" });
+    expect(fromStart).toMatchObject({ from: "start", returned: 1, requested: 1, archived: false });
+    expect(fromStart.messages.map((message) => message.role)).toEqual(["assistant"]);
+    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message").map((request) => request.search)).toEqual(["?limit=1", "?limit=1000"]);
+  });
+
+  test("session.read summary returns only the first user and last assistant messages", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const output = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", summary: true } });
+    const parsed = affordanceResultSchema("session.read", z.object({
+      ok: z.literal(true),
+      sessionId: z.string(),
+      totalMessages: z.number(),
+      firstUser: z.object({ id: z.string(), role: z.string(), text: z.string() }).passthrough().nullable(),
+      lastAssistant: z.object({ id: z.string(), role: z.string(), text: z.string() }).passthrough().nullable(),
+    }).strict().extend({
+      workspaceId: z.string(), workspace: z.string(), title: z.string(), createdAt: z.number(), updatedAt: z.number(),
+      archived: z.boolean(), parentId: z.string().nullable(), status: z.string(), working: z.boolean(),
+    })).parse(JSON.parse(output));
+
+    expect(parsed.result).toMatchObject({
+      sessionId: "ses_alpha",
+      totalMessages: 2,
+      firstUser: { id: "msg_user", role: "user", text: "Please remember the raven launch checklist." },
+      lastAssistant: { id: "msg_assistant", role: "assistant", text: "The launch checklist can wait." },
+    });
+    expect(Object.keys(parsed.result)).not.toContain("messages");
+  });
+
   test("refuses to expose a session that lives outside the requested workspace", async () => {
     startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview();
@@ -497,8 +547,81 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       role: "user",
     });
     expect(parsed.result.results[0]?.snippet.match.toLowerCase()).toBe("raven launch");
-    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session" && request.search === "?roots=true&limit=10")).toBe(true);
+    // Titles are matched over every root session: the list call is not bounded by scanLimit.
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session" && request.search === "?roots=true&limit=5000")).toBe(true);
     expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message" && request.search === "?limit=400")).toBe(true);
+  });
+
+  test("matches titles of every root session even beyond the transcript scan window", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+
+    // scanLimit 1 reads only the newest session's transcript (alpha); archive
+    // sits far below the window and is still found by title.
+    const output = await plugin.tool.openwork_query.execute({
+      id: "session.search",
+      args: { query: "archive decisions", scanLimit: 1 },
+    });
+    const parsed = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(output));
+
+    expect(parsed.result).toMatchObject({ scannedSessions: 1, totalCandidateSessions: 3, truncated: true });
+    expect(parsed.result.results).toEqual([
+      expect.objectContaining({ sessionId: "ses_archive", kind: "title", phrase: true, createdAt: 10, updatedAt: 100, archived: true, parentId: null }),
+    ]);
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message")).toBe(true);
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_2/opencode/session/ses_archive/message")).toBe(false);
+  });
+
+  test("match modes: all requires every term, any accepts one, phrase requires the exact text", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const search = async (args: Record<string, unknown>) => affordanceResultSchema("session.search", searchResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args })))
+      .result.results.map((result) => `${result.sessionId}:${result.kind}`);
+
+    // "raven" is only in alpha's transcript, "backlog" only in beta's title.
+    expect(await search({ query: "raven backlog" })).toEqual([]);
+    expect(await search({ query: "raven backlog", match: "all" })).toEqual([]);
+    expect(await search({ query: "raven backlog", match: "any" })).toEqual(["ses_beta:title", "ses_alpha:message"]);
+    expect(await search({ query: "checklist raven", match: "all" })).toEqual(["ses_alpha:message"]);
+    expect(await search({ query: "checklist raven", match: "phrase" })).toEqual([]);
+    expect(await search({ query: "raven launch", match: "phrase" })).toEqual(["ses_alpha:message"]);
+  });
+
+  test("ranks title and phrase matches ahead of newer term-only transcript matches", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const output = await plugin.tool.openwork_query.execute({
+      id: "session.search",
+      args: { query: "checklist archive", match: "any" },
+    });
+    const parsed = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(output));
+
+    // archive (updated 100) matched by title (its message snippet is kept);
+    // alpha (updated 300) only matched one term in a message.
+    expect(parsed.result.results.map((result) => [result.sessionId, result.kind, result.phrase])).toEqual([
+      ["ses_archive", "message", false],
+      ["ses_alpha", "message", false],
+    ]);
+  });
+
+  test("filters sessions by creation time and archived state", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const search = async (args: Record<string, unknown>) => affordanceResultSchema("session.search", searchResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args })))
+      .result.results.map((result) => result.sessionId);
+
+    // "a" appears in every title; created: alpha 100, beta 50, archive 10 (archived).
+    expect(await search({ query: "a" })).toEqual(["ses_alpha", "ses_beta", "ses_archive"]);
+    expect(await search({ query: "a", createdAfter: 60 })).toEqual(["ses_alpha"]);
+    expect(await search({ query: "a", createdAfter: "1970-01-01T00:00:00.060Z" })).toEqual(["ses_alpha"]);
+    expect(await search({ query: "a", createdBefore: 60 })).toEqual(["ses_beta", "ses_archive"]);
+    expect(await search({ query: "a", createdAfter: 20, createdBefore: 60 })).toEqual(["ses_beta"]);
+    expect(await search({ query: "a", archived: "exclude" })).toEqual(["ses_alpha", "ses_beta"]);
+    expect(await search({ query: "a", archived: "only" })).toEqual(["ses_archive"]);
+    await expect(plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "a", createdAfter: "yesterday-ish" } })).rejects.toThrow();
   });
 
   test("keeps search results when one workspace native mount is unavailable", async () => {
@@ -627,6 +750,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
         index: 1,
         id: "msg_latest",
         role: "assistant",
+        createdAt: 102,
         text: "We decided to ship the archive importer first.",
       },
     ]);
