@@ -49,14 +49,19 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     { timeoutMs: 60_000, label: "signed-in Library" },
   );
 
-  // Advanced shows the built-in extension catalog. The regression
-  // this spec guards against fires on the Library route itself: repeated Den
-  // settings echoes retrigger provider sync and remove/re-add inventory cards.
-  await clickText(desktopApp, "Advanced", { selector: 'button[aria-expanded="false"]' });
+  // The repository workspace ships skills under .opencode/skills, so Skills is
+  // the deterministic card inventory for a fresh member. OpenWork's own
+  // runtimes (Browser, Computer Use) are no longer Library cards. The
+  // regression this spec guards against fires on the Library route itself:
+  // repeated Den settings echoes retrigger provider sync and remove/re-add
+  // inventory cards.
+  await clickText(desktopApp, "Skills", { selector: '[aria-label="Library filters"] button[aria-pressed]' });
   await waitFor(
     desktopApp,
-    () => (document.body.innerText.includes("READY TO USE")
-      && document.body.innerText.includes("OpenWork Browser")),
+    () => (document.body.innerText.includes("browser-automation")
+      && document.body.innerText.includes("create-plugin")
+      && !document.body.innerText.includes("OpenWork Browser")
+      && !document.body.innerText.includes("Computer Use")),
     { timeoutMs: 120_000, label: "signed-in Library inventory" },
   );
 
@@ -68,8 +73,8 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     window.__libraryStability.sampler = window.setInterval(() => {
       window.__libraryStability.samples.push({
         buttons: document.querySelectorAll("button").length,
-        contentVisible: document.body.innerText.includes("READY TO USE")
-          && document.body.innerText.includes("OpenWork Browser"),
+        contentVisible: document.body.innerText.includes("browser-automation")
+          && document.body.innerText.includes("create-plugin"),
       });
     }, 50);
     return true;

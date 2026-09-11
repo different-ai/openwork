@@ -23,15 +23,30 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
   "plugin",
 ];
 
-/** Legacy routes remain valid, but only these three categories are primary. */
+/**
+ * Legacy routes remain valid, but only these three categories are primary.
+ * Commands and agents stay composer capabilities (/command, @agent) with
+ * direct-link detail pages; their old routes land on Skills.
+ */
 export function primaryLibraryFilter(filter?: ExtensionInventoryFilter): ExtensionInventoryFilter {
-  return filter === "skill" || filter === "plugin" ? filter : "mcp";
+  if (filter === "skill" || filter === "command" || filter === "agent") return "skill";
+  return filter === "plugin" ? "plugin" : "mcp";
 }
 
 /** Built-ins ship with OpenWork and run here, so they are apps. Accounts arrive as org connections. */
 export function taxonomyForDirectoryEntry(entry: McpDirectoryInfo): ExtensionTaxonomy {
   if (isBuiltInOpenWorkExtension(entry) || entry.kind === "ui-control") return "app";
   return "mcp";
+}
+
+/**
+ * The MCPs category lists third-party servers only. OpenWork's own runtimes
+ * (Computer Use, the browser panel, Ollama, UI control) and auto-managed
+ * plumbing such as Cloud Control are app functionality, not MCPs to browse;
+ * their setup pages stay reachable by direct link.
+ */
+export function isLibraryMcpDirectoryEntry(entry: McpDirectoryInfo): boolean {
+  return taxonomyForDirectoryEntry(entry) === "mcp" && entry.defaultHidden !== true;
 }
 
 export function matchesExtensionFilter(

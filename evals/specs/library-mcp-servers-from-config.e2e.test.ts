@@ -12,17 +12,23 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     expect(world.configWrite).toMatchObject({ ok: true });
   });
 
-  await step("only Library Advanced lists the workspace's configured servers", async () => {
+  await step("the MCPs category lists the workspace's servers as local items under their live status", async () => {
     await agent.run("route.extensions.skills");
     await user.see({ text: "Library" });
     await user.click({ role: "button", label: "MCPs" });
+    // All three are written with enabled: false, so they wait under Disabled
+    // rather than claiming to be ready.
     await user.notSee({ text: "docs-helper" });
-    await user.notSee({ text: "files-helper" });
-    await user.notSee({ text: "remote-helper" });
-    await user.click({ role: "button", label: /^Advanced\b/ });
+    await user.click({ role: "tab", label: /^Disabled\b/ });
     await user.see({ text: "docs-helper" });
     await user.see({ text: "files-helper" });
     await user.see({ text: "remote-helper" });
+    await user.see({ text: "Local · this workspace" });
+    // Advanced still owns creation only; the inventory does not live there.
+    await user.click({ role: "button", label: /^Advanced\b/ });
+    await user.see({ role: "button", label: "Add workspace MCP" });
+    expect((await probe.dom('button[aria-expanded="true"]')).elements.filter((element) => /^Advanced\b/.test(element.text))).toHaveLength(1);
+    await user.click({ role: "button", label: /^Advanced\b/ });
     await user.screenshot();
   });
 
@@ -33,13 +39,14 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     expect(body.length).toBeGreaterThan(200);
     evidence.recordAssertionEvidence(
       "A Claude-style string command no longer blanks Settings",
-      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and Advanced listed all three names without exposing them in the primary MCPs inventory.",
+      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and the MCPs category listed all three as local items under Disabled while Advanced kept only workspace MCP creation.",
       true,
     );
   });
 
-  await step("expanding the string-command server shows its command line", async () => {
+  await step("opening the string-command server shows its command line", async () => {
     await user.click({ text: "docs-helper" });
+    await user.see({ text: "Local · this workspace" });
     await user.click({ text: "Technical details" });
     await user.see({ text: "python3 -m http.server 8321" });
     await user.notSee({ text: "python3,-m" });
