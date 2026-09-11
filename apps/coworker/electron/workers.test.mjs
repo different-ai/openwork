@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { build } from "esbuild";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import ts from "typescript";
 import { createCoworker, getCoworker, updateCoworker } from "./coworkers.mjs";
 import { createCoworkerToolsServer, handleMcpMessage } from "./coworker-tools.mjs";
 import { assertControlOrigin, assertWorkerSupervisor, createWorkerControls, WORKER_MANAGEMENT } from "./worker-controls.mjs";
@@ -550,13 +550,23 @@ test("steering and an admitted turn survive rereads, while pause and stop win se
 
 test("Stop attempts native abort across rejected writes and repairs terminal metadata without hiding unconfirmed cleanup", async () => {
   // The renderer typecheck excludes this JS entry point; resolve its bindings without booting Electron.
+  // TypeScript 7 ships the compiler as a native `tsc` executable without the in-process
+  // program API, so ask the CLI for the entry's diagnostics and keep only unbound names.
   const entry = fileURLToPath(new URL("./main.mjs", import.meta.url));
-  const program = ts.createProgram([entry], { allowJs: true, checkJs: true, noEmit: true, skipLibCheck: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, target: ts.ScriptTarget.ESNext });
-  const unbound = program.getSemanticDiagnostics(program.getSourceFile(entry)).filter((diagnostic) => diagnostic.code === 2304 || diagnostic.code === 2552);
-  assert.deepEqual(unbound.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")), [], "native Stop must not call an unbound runtime identifier");
+  const require = createRequire(import.meta.url);
+  const tsc = spawnSync(process.execPath, [
+    path.join(path.dirname(require.resolve("typescript/package.json")), "bin", "tsc"),
+    "--ignoreConfig", "--allowJs", "--checkJs", "--noEmit", "--skipLibCheck", "--pretty", "false",
+    "--module", "nodenext", "--moduleResolution", "nodenext", "--target", "esnext",
+    entry,
+  ], { encoding: "utf8", cwd: path.dirname(entry), maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(tsc.error, undefined, `tsc did not run: ${tsc.error?.message ?? ""}`);
+  const unbound = `${tsc.stdout}${tsc.stderr}`.split("\n")
+    .filter((line) => line.startsWith(`${path.basename(entry)}(`) && /error TS(2304|2552):/.test(line))
+    .map((line) => line.replace(/^.*error TS\d+:\s*/, ""));
+  assert.deepEqual(unbound, [], "native Stop must not call an unbound runtime identifier");
   const coworkersDir = await fixture();
   const worker = await createWorker(coworkersDir, "scout", { name: "Stop check", goal: "Check once.", spawnedBy: "person" });
-  const require = createRequire(import.meta.url);
   const compiled = await build({
     entryPoints: [fileURLToPath(new URL("../src/ui/worker-detail.tsx", import.meta.url))],
     bundle: true, write: false, platform: "node", format: "esm", logLevel: "silent",

@@ -24,5 +24,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+    // The renderer only runs inside this app's Electron (Chromium 152+), so no
+    // syntax or CSS lowering for older browsers is needed.
+    target: "esnext",
   },
 });

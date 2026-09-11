@@ -50,7 +50,7 @@ function buildElectron() {
     "--bundle",
     "--platform=node",
     "--format=esm",
-    "--target=node22",
+    "--target=node24",
     "--external:electron",
     "--external:@modelcontextprotocol/sdk",
     "--external:opencode-chrome-devtools",
@@ -58,7 +58,7 @@ function buildElectron() {
   ], coworkerRoot);
   run(pnpmCommand, [
     "exec", "esbuild", resolve(coworkerRoot, "electron", "maintenance-helper.mjs"),
-    "--bundle", "--platform=node", "--format=esm", "--target=node22",
+    "--bundle", "--platform=node", "--format=esm", "--target=node24",
     `--outfile=${resolve(packagedElectronRoot, "maintenance-helper.mjs")}`,
   ], coworkerRoot);
   copyFileSync(
