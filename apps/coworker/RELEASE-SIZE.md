@@ -62,6 +62,62 @@ and CI execution are **deferred / Incomplete**. No release or installed app chan
 An initial packaging attempt used the wrong hook context property; it was repaired
 to `context.packager.projectDir` before the successful package above.
 
+## Second Pass — September 11, 2026
+
+Local macOS ARM64 measurement of `open-coworker-optimization` (unsigned, helper
+ad-hoc signed) after the toolchain refresh and two runtime-dependency removals,
+against the September 10 candidate above. Electron 44.2.0 (Node 24.20), pnpm
+11.4.0 isolated collection, Node 24.11.1 and Bun 1.3.4 on the host. Same
+target-qualified engine `v1.18.18`. This is a local comparison, not CI or
+release proof; Windows and Linux were not packaged.
+
+| Bucket | September 10 | September 11 | Change |
+| --- | ---: | ---: | ---: |
+| Packaged regular-file bytes | 513,296,721 | 497,764,046 | −15,532,675 |
+| Packaged app (MiB) | 489.52 | 474.70 | −14.82 MiB |
+| Electron framework | 274.87 | 286.91 | +12.04 MiB (Electron 44; ANGLE statically linked) |
+| Unpacked dependencies | 26.08 | 0.00 | −26.08 MiB (`better-sqlite3` removed) |
+| Engine, plugins, helper | unchanged | unchanged | — |
+
+The dependency cleanup alone is about 27 MiB; the Electron 44 framework grew by
+12 MiB, so the net package is 14.8 MiB smaller than the September 10 candidate.
+`better-sqlite3` was never loaded on Electron: the embedded server opens its
+runtime database through `node:sqlite` (`runtime-db.ts`), and the Node path
+imports nothing from that package. `htmlparser2` and its `domhandler` /
+`domutils` tree only served `openwork-office-attachments`, which Bun bundles
+standalone into `opencode-plugins/`. Both were mirrors of `apps/server`'s
+manifest, not runtime imports of this package.
+
+Renderer (`vite build`, same source):
+
+| Metric | Vite 6.4.3 | Vite 8.2.2 + lazy screens | Change |
+| --- | ---: | ---: | ---: |
+| Startup JavaScript (entry + statically imported chunks) | 1,294 kB | 1,013 kB | −21.7% |
+| Startup JavaScript, gzip | 377 kB | ~297 kB | −21% |
+| Deferred chunks (settings, providers, apps, computer, browser, MCP host, reset, local mode) | 0 | ~259 kB | loaded on first use |
+| Production build | 1.23 s | 0.4–0.6 s | Rolldown/Oxc |
+| `typecheck` (both projects) | 4.5 s | ~1.0 s | TypeScript 7 native |
+
+Passed: frozen isolated install, coworker typecheck and unit tests (444 pass, 1
+skipped; the pre-existing `prompt-stack` tool-catalog budget failure at 18,039
+chars is unchanged from the base head), full `build:electron`, unsigned
+`--dir` package, `release-size --check --arch arm64`, isolated Electron-Node
+imports of `server/dist/embedded.js`, the URL guard (`undici`), the KV store
+(`drizzle-orm`) and `runtime-db` from an `app.asar` copy outside the repository,
+`node:sqlite` in Electron's Node, and a launched isolated-profile app whose
+lazily loaded local-setup screen mounted from the built chunks without console
+errors. Deferred / Incomplete: packaged user journeys, Windows and Linux
+packages, signed distribution and CI execution. No release or installed app
+changed.
+
+The 512 MiB budget is unchanged: a single Electron major can add 10–15 MiB of
+framework, and the remaining headroom is deliberate. Remaining dependency
+attribution after this pass: `drizzle-orm` 8.88 MiB (eager KV store import; a
+shared-server change), `@modelcontextprotocol/client` 6.28 MiB plus `core`
+1.25 MiB (the enterprise MCP client's runtime), `zod` 3.83 MiB (its packaged
+tree includes every locale and the v3/v4 compatibility surface), and
+`@modelcontextprotocol/sdk` 2.74 MiB.
+
 ## Measure One Package
 
 Run from the repository root after packaging has finished. Pass the exact `.app`

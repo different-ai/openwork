@@ -1171,6 +1171,28 @@ and require a measured payload cost before adding a production dependency.
 [Release size](RELEASE-SIZE.md) owns dependency classification, package reports,
 target budgets, and the checks run before release artifacts are uploaded.
 
+### Toolchain
+
+Open Coworker moves independently of the OpenWork desktop app where the
+dependency is its own: Electron 44 (Node 24, Chromium 152; macOS 13 or later),
+Vite 8 with Rolldown/Oxc and `@vitejs/plugin-react` 6, TypeScript 7 (the native
+`tsc`; there is no in-process compiler API, so tests that need diagnostics
+spawn the CLI), Tailwind 4 and marked 18. The renderer builds for `esnext`
+because it only ever runs inside this app's Chromium; `@types/node` follows the
+Electron runtime, not the newest release. Cold screens — local setup, Settings
+with the provider editor and model pickers, factory reset, onboarding replay,
+the connected-apps panel, and the computer, browser and MCP app hosts — are
+`React.lazy` chunks behind `Suspense`, so the startup chunk carries the team,
+discussions and groups only.
+
+Runtime libraries the embedded server imports at run time (`zod`,
+`@opencode-ai/sdk`, `@modelcontextprotocol/*`, `undici`, `drizzle-orm`, `yaml`,
+`minimatch`, `jsonc-parser`) stay on the workspace resolution shared with
+`apps/server` and the workspace packages this app bundles: a second copy costs
+renderer bytes and gives the server a version the desktop never ran. Refresh
+those together with `apps/server`, not here. `esbuild` stays on the repository
+override; it only bundles the main process and the maintenance helper.
+
 The macOS DMG is an Open Coworker-owned installation surface rather than the
 electron-builder default: two quiet installation stations hold the native app
 and Applications icons while three small, tilted coworkers carry the eye
