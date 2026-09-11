@@ -18,6 +18,7 @@ import {
   type EnginePoolConnection,
   type EngineEventProxyLease,
   type EngineSpawnTemplate,
+  rolloverOutcomeApplied,
   type RolloverOutcome,
   type RolloverReason,
 } from "./engine-pool.js";
@@ -2280,9 +2281,24 @@ function createRoutes(
   // the established busy deferral.
   const applyManagedProviderReload = async (workspace: WorkspaceInfo): Promise<"reloaded" | "deferred"> => {
     const reloadDeferred = await shouldDeferInPlaceEngineReload(config, workspace, engineHasActiveSessions);
-    if (!reloadDeferred) await reloadOpencodeEngine(config, workspace, engineMcpServerState, { reason: "managed_provider_reload" });
-    if (reloadDeferred) cloudProviderSync.markReloadPending();
-    return reloadDeferred ? "deferred" : "reloaded";
+    if (reloadDeferred) {
+      cloudProviderSync.markReloadPending();
+      return "deferred";
+    }
+    // A key-only rotation through this route never shows in the pool's
+    // config fingerprint, so an unforced request would be skipped and the
+    // engine would keep serving the previous credential while the route
+    // answered "reloaded". Force the standby path, mirroring cloud sync, and
+    // only report "reloaded" once the engine actually read the change.
+    const outcome = await reloadOpencodeEngine(config, workspace, engineMcpServerState, {
+      reason: "managed_provider_reload",
+      forceStandby: true,
+    });
+    if (rolloverOutcomeApplied(outcome)) return "reloaded";
+    // Parked or skipped inside the pool: keep it owed so the sync retry
+    // path lands it instead of the caller believing it is done.
+    cloudProviderSync.markReloadPending();
+    return "deferred";
   };
   registerCoreRoutes({
     routes,

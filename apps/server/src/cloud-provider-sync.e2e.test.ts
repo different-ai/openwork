@@ -227,7 +227,7 @@ describe("cloud provider sync gateway", () => {
         if (init?.method === "PUT") engineAuth.set(id, "synced-fixture-auth");
         return Response.json(true);
       }, { preconnect: globalThis.fetch.preconnect });
-      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => {} });
+      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace });
       stops.push(() => sync.stop());
       if (mode !== "cold cleanup") {
         await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
@@ -284,7 +284,7 @@ describe("cloud provider sync gateway", () => {
         return Response.json(true);
       }, { preconnect: globalThis.fetch.preconnect });
       if (ownership === "persisted sync") {
-        const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => {} });
+        const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace });
         stops.push(() => sync.stop());
         await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
         expect((await sync.run("genuine-ownership")).status).toBe("applied");
@@ -307,7 +307,7 @@ describe("cloud provider sync gateway", () => {
       engineRequests.length = 0;
       // New config and sync objects discard both in-memory ownership caches.
       const cold = new CloudProviderSync({ config: serverConfig(root, "https://engine.example.test"), env,
-        fetchImpl, reloadEngine: async () => {} });
+        fetchImpl, reloadEngine: reloadedInPlace });
       stops.push(() => cold.stop());
       await cold.clearSession();
       expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toBeUndefined();
@@ -892,7 +892,7 @@ describe("cloud provider sync gateway", () => {
       models: { model: { id: "model", name: "Model" } },
     } } }));
     const sync = new CloudProviderSync({
-      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: async () => {},
+      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: reloadedInPlace,
       fetchImpl: Object.assign(async (input: URL | RequestInfo) => {
         const { pathname } = new URL(String(input));
         if (pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
@@ -1044,7 +1044,7 @@ describe("cloud provider sync gateway", () => {
       config,
       env,
       fetchImpl,
-      reloadEngine: async () => undefined,
+      reloadEngine: reloadedInPlace,
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());

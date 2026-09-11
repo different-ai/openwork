@@ -418,7 +418,44 @@ test("a Den key-only rotation reaches the real managed engine through an applied
     expect(replyTexts(second)).toContain(replyB);
     // "Applied" must mean a generation actually replaced the one holding the
     // cached client, not a skipped rollover that only cleared the flag.
-    expect(flipCount()).toBeGreaterThan(flipsAfterMaterialization);
+    const flipsAfterDenRotation = flipCount();
+    expect(flipsAfterDenRotation).toBeGreaterThan(flipsAfterMaterialization);
+
+    // The same key-only rotation through the local `PUT /env` route. Config
+    // bytes are still identical, so an unforced rollover request was
+    // fingerprint-skipped here while the route answered ok: the engine kept
+    // sending the revoked key. Den mirrors the new key so a later sync pass
+    // cannot roll it back.
+    const keyC = "sk-rotation-eval-key-c";
+    const markerC = `ROTATION-LOCAL-${Date.now()}`;
+    const replyC = `REPLY-LOCAL-${Date.now()}`;
+    provider.apiKey = keyC;
+    const flippedLocal = await fetch(`${witness.url}/admin/agent-workloads`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workloads: [...workloads, { promptMarker: markerC, finalReply: replyC, steps: [] }],
+        requiredHeader: { name: "authorization", value: `Bearer ${keyC}` },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(flippedLocal.ok).toBe(true);
+    const localRotatedAt = new Date().toISOString();
+    const localPut = await fetch(`${base}/env`, {
+      method: "PUT", headers: host, body: JSON.stringify({ entries: [{ key: "ROTATION_PROVIDER_API_KEY", value: keyC }] }),
+    });
+    expect(localPut.status).toBe(200);
+    expect(await localPut.json()).toEqual({ ok: true, count: 1 });
+    expect(await (await fetch(`${base}/runtime-config/providers`, { headers: host })).text()).toBe(runtimeBefore);
+    await settledSync("local key rotation left nothing owed");
+
+    const third = await managed.engine("POST", `/session/${sessionId(await managed.engine("POST", "/session", {}))}/message`, {
+      model, parts: [{ type: "text", text: `Reply to the request marked ${markerC}.` }],
+    });
+    const afterLocalRotation = await witness.agentRequests({ promptMarker: markerC, sinceIso: localRotatedAt, atLeast: 1, timeoutMs: 10_000 });
+    expect(afterLocalRotation.filter((request) => request.kind === "error")).toEqual([]);
+    expect(afterLocalRotation.some((request) => request.kind === "final")).toBe(true);
+    expect(replyTexts(third)).toContain(replyC);
+    expect(flipCount()).toBeGreaterThan(flipsAfterDenRotation);
   } finally {
     await managed?.stop();
     await close(den);
