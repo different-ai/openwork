@@ -69,7 +69,7 @@ jobs:
       - name: Run core product regressions
         run: pnpm test:core
       - name: Check journey selection, reporting, and alerts
-        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs
+        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs evals/scripts/notify-journeys.test.mjs
 
   openwork-tests-build:
     needs: classify-changes
