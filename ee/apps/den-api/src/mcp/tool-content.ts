@@ -1,4 +1,5 @@
 import sharp from "sharp"
+import { ContentBlockSchema, type ContentBlock } from "@modelcontextprotocol/sdk/types.js"
 
 export type AgentToolContentPart =
   | { type: "text"; text: string }
@@ -95,20 +96,15 @@ function findImagePayload(value: unknown, seen = new WeakSet<object>()): (Record
   return undefined
 }
 
-export function isKnownToolContentPart(value: unknown): value is AgentToolContentPart {
-  if (!isRecord(value) || typeof value.type !== "string") return false
-  if (value.type === "text") return typeof value.text === "string"
-  if (value.type === "image") {
-    return typeof value.data === "string" && typeof value.mimeType === "string"
-  }
-  return false
+export function isKnownToolContentPart(value: unknown): value is ContentBlock {
+  return ContentBlockSchema.safeParse(value).success
 }
 
-export function externalToolContent(result: unknown): AgentToolContentPart[] {
+export function externalToolContent(result: unknown): ContentBlock[] {
   if (isRecord(result) && Array.isArray(result.content) && result.content.every(isKnownToolContentPart)) {
     return result.content
   }
-  return [{ type: "text", text: JSON.stringify(result) }]
+  return [{ type: "text", text: JSON.stringify(result, (key, value) => key === "_meta" ? undefined : value) }]
 }
 
 export async function buildRestToolContent(payload: unknown): Promise<AgentToolContentPart[]> {

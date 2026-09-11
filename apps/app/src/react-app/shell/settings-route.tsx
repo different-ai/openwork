@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "@/components/ui/sonner";
+import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 
 import {
   SUGGESTED_PLUGINS,
@@ -69,6 +70,14 @@ import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app
 import { cleanupOpenworkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
+import {
+  connectGatewayProvider,
+  gatewayConnectProviderKey,
+  isGatewaySetConnected,
+  type GatewayConnectProvider,
+  resolveGatewayConnectProviders,
+  resolveGatewayProviderIds,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
@@ -832,6 +841,51 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
+  const gatewayProviderIds = useMemo(
+    () => resolveGatewayProviderIds(providerAuthSnapshot.importedCloudProviders),
+    [providerAuthSnapshot.importedCloudProviders],
+  );
+  const gatewayConnectProviders = useMemo(
+    () => resolveGatewayConnectProviders(providerAuthSnapshot.cloudProviderServerSync?.skippedProviders),
+    [providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+  );
+  const [connectingGatewayProviderId, setConnectingGatewayProviderId] = useState<string | null>(null);
+  const gatewayConnectAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const cancel = () => {
+      gatewayConnectAbort.current?.abort();
+      setConnectingGatewayProviderId(null);
+    };
+    window.addEventListener(denSessionUpdatedEvent, cancel);
+    window.addEventListener(denSettingsChangedEvent, cancel);
+    return () => {
+      gatewayConnectAbort.current?.abort();
+      window.removeEventListener(denSessionUpdatedEvent, cancel);
+      window.removeEventListener(denSettingsChangedEvent, cancel);
+    };
+  }, []);
+  const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
+    gatewayConnectAbort.current?.abort();
+    const controller = new AbortController();
+    gatewayConnectAbort.current = controller;
+    setConnectingGatewayProviderId(gatewayConnectProviderKey(provider));
+    try {
+      await connectGatewayProvider({
+        provider,
+        signal: controller.signal,
+        startOAuth: providerAuthStore.startGatewayProviderOAuth,
+        openUrl: (url) => platform.openLink(url),
+        resync: () => providerAuthStore.runCloudProviderSync("manual"),
+        isConnected: () => {
+          return isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders);
+        },
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) toast.error(describeRouteError(error));
+    } finally {
+      if (!controller.signal.aborted) setConnectingGatewayProviderId(null);
+    }
+  }, [platform, providerAuthStore]);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
@@ -1039,7 +1093,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const workspaceSessionGroups = useMemo(
     // Settings has no per-workspace loading state; the empty set keeps the
     // previous behavior (error -> "error", otherwise "ready").
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(), new Set(Object.keys(sessionsByWorkspaceId))),
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set()),
     [errorsByWorkspaceId, sessionsByWorkspaceId, workspaces],
   );
 
@@ -2363,6 +2417,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
               ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
             ])}
+            gatewayProviderIds={gatewayProviderIds}
+            gatewayConnectProviders={gatewayConnectProviders}
+            connectingGatewayProviderId={connectingGatewayProviderId}
+            onConnectGatewayProvider={handleConnectGatewayProvider}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
@@ -2853,9 +2911,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       <ModelPickerModal
         open={modelPicker.open}
         options={modelPicker.options}
+        gatewayProviderIds={gatewayProviderIds}
+        gatewayConnectProviders={gatewayConnectProviders}
+        onConnectGatewayProvider={handleConnectGatewayProvider}
         query={modelPicker.query}
         setQuery={modelPicker.setQuery}
         target="default"
+        currentBehaviorValue={local.prefs.modelVariant ?? null}
         current={
           local.prefs.defaultModel ?? { providerID: "", modelID: "" }
         }
@@ -2869,7 +2931,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           }));
           modelPicker.setOpen(false);
         }}
-        onBehaviorChange={() => {}}
+        onBehaviorChange={(_model, value) => local.setPrefs((previous) => ({ ...previous, modelVariant: value }))}
         onOpenSettings={() => {}}
         onClose={() => modelPicker.setOpen(false)}
       />

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import { type DenOrgCapabilities, getOrgAccessFlags } from "../app/(den)/_lib/den-org";
+import type { getGatewayDashboardAccess } from "../app/(den)/dashboard/_lib/gateway-dashboard-access";
 import {
   buildDashboardNavSections,
   flattenNavigationForSearch,
@@ -17,6 +18,7 @@ const searchBar = readFileSync(
 );
 
 const baseCapabilities: DenOrgCapabilities = {
+  gatewayDashboard: false,
   cloud: true,
   installLinks: true,
   mcpConnections: true,
@@ -25,17 +27,60 @@ const baseCapabilities: DenOrgCapabilities = {
   workflows: false,
 };
 
-function buildFor(role: "member" | "admin", capabilities = baseCapabilities) {
+function buildFor(
+  role: "member" | "admin",
+  capabilities = baseCapabilities,
+  gatewayAccess: ReturnType<typeof getGatewayDashboardAccess> = capabilities.gatewayDashboard ? "unavailable" : "denied",
+  orgMode: "multi_org" | "single_org" = "multi_org",
+  runtimeConfigLoaded = true,
+) {
   return buildDashboardNavSections({
     orgSlug: "example",
     access: getOrgAccessFlags(role, false),
     capabilities,
-    orgMode: "multi_org",
-    runtimeConfigLoaded: true,
+    gatewayAccess,
+    orgMode,
+    runtimeConfigLoaded,
   });
 }
 
 describe("dashboard navigation index", () => {
+  test.each([false, true])("Gateway opt-in %s without deployment support changes only Gateway navigation and search", (gatewayDashboard) => {
+    const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard });
+    const models = sections.flatMap((section) => section.items).find((item) => item.label === "Models");
+    expect(models?.children?.some((child) => child.label === "Gateway")).toBe(gatewayDashboard);
+    const search = flattenNavigationForSearch(sections);
+    expect(search.some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(gatewayDashboard);
+    expect(search.some((entry) => entry.label === "Models › OpenWork Models")).toBe(true);
+    expect(search.some((entry) => entry.label === "Models › Bring Your Own Keys (Legacy)")).toBe(true);
+    expect(flattenNavigationForSearch(buildFor("member", { ...baseCapabilities, gatewayDashboard }))
+      .some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(false);
+  });
+
+  test.each(["checking", "denied", "unavailable", "enabled"] satisfies ReturnType<typeof getGatewayDashboardAccess>[])("Models navigation and search respect %s access without hiding BYOK or billing/keys", (gatewayAccess) => {
+    const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard: true }, gatewayAccess);
+    const entries = flattenNavigationForSearch(sections);
+    const hrefs = entries.map((entry) => entry.href);
+    expect(hrefs.includes("/dashboard/gateway-providers")).toBe(gatewayAccess === "enabled" || gatewayAccess === "unavailable");
+    expect(hrefs.includes("/dashboard/inference")).toBe(gatewayAccess === "denied" || gatewayAccess === "unavailable");
+    for (const href of ["/dashboard/custom-llm-providers", "/dashboard/billing", "/dashboard/api-keys"]) expect(hrefs).toContain(href);
+    if (gatewayAccess === "enabled" || gatewayAccess === "checking") {
+      expect(sections.flatMap((section) => section.items).some((item) => item.href === "/dashboard/inference")).toBe(false);
+    }
+  });
+
+  test("Models stays hidden for self-hosted or unresolved runtime config; members never receive either admin page", () => {
+    for (const sections of [
+      buildFor("admin", baseCapabilities, "denied", "single_org"),
+      buildFor("admin", baseCapabilities, "denied", "multi_org", false),
+      buildFor("member", { ...baseCapabilities, gatewayDashboard: true }, "enabled"),
+    ]) {
+      expect(flattenNavigationForSearch(sections).some((entry) => entry.href === "/dashboard/inference")).toBe(false);
+    }
+    expect(flattenNavigationForSearch(buildFor("member", { ...baseCapabilities, gatewayDashboard: true }, "unavailable"))
+      .some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(false);
+  });
+
   test("keeps members in Work while admins receive Manage, Observability, and Team", () => {
     expect(buildFor("member").map((section) => section.label)).toEqual(["Work"]);
     expect(buildFor("admin").map((section) => section.label)).toEqual([

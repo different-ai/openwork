@@ -76,6 +76,31 @@ app.kubernetes.io/component: {{ .component }}
 {{ include "openwork-ee.fullname" . }}-den-api
 {{- end -}}
 
+{{- define "openwork-ee.migrationDatabase.validate" -}}
+{{- if and (not .Values.secret.create) (not .Values.secret.existingSecret) -}}
+{{- fail "migrations.enabled=true requires secret.existingSecret when secret.create=false" -}}
+{{- end -}}
+{{- range $key := list "databaseUrl" "denDbEncryptionKey" -}}
+{{- if not (get $.Values.secret.keys $key | toString | trim) -}}
+{{- fail (printf "secret.keys.%s is required when migrations.enabled=true" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.secret.create -}}
+{{- $url := .Values.secret.values.databaseUrl | toString | trim -}}
+{{- if not (regexMatch `^mysql://[^/:@[:space:]][^/@[:space:]]*@[^/[:space:]]+/[^/?#[:space:]]+(\?[^#[:space:]]*)?$` $url) -}}
+{{- fail "migrations.enabled=true requires secret.values.databaseUrl to be a mysql:// TCP URL with host, username and database; PlanetScale HTTP credentials alone are insufficient" -}}
+{{- end -}}
+{{- if and (eq .Values.config.databaseMode "planetscale") (contains "change-me" $url) -}}
+{{- fail "Set secret.values.databaseUrl to an explicit migration TCP URL for the same PlanetScale database, or use secret.create=false with secret.existingSecret; the default placeholder is not a migration destination" -}}
+{{- end -}}
+{{- $host := regexReplaceAll `^mysql://[^/@]+@([^/]+)/.*$` $url "${1}" -}}
+{{- $port := regexFind `:[0-9]+$` $host | trimPrefix ":" -}}
+{{- if or (not (regexMatch `^([a-zA-Z0-9._-]+|\[[0-9a-fA-F:]+\])(:[0-9]+)?$` $host)) (and $port (or (lt (int $port) 1) (gt (int $port) 65535))) -}}
+{{- fail "secret.values.databaseUrl must have a valid migration TCP host and port (1-65535)" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "openwork-ee.denWebServiceName" -}}
 {{ include "openwork-ee.fullname" . }}-den-web
 {{- end -}}
@@ -93,7 +118,12 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
 {{- define "openwork-ee.inferenceInternalUrl" -}}
-{{- default (printf "http://%s:%v" (include "openwork-ee.inferenceServiceName" .) .Values.inference.service.port) .Values.config.internal.inferenceProxyBaseUrl -}}
+{{- $gateway := include "openwork-ee.gateway" . | fromYaml -}}
+{{- if hasKey .Values.config.internal "gatewayProxyBaseUrl" -}}
+{{- .Values.config.internal.gatewayProxyBaseUrl -}}
+{{- else -}}
+{{- default (printf "http://%s:%v" (include "openwork-ee.inferenceServiceName" .) $gateway.service.port) .Values.config.internal.inferenceProxyBaseUrl -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "openwork-ee.customCa.mountPath" -}}
@@ -121,8 +151,9 @@ app.kubernetes.io/component: {{ .component }}
 {{- if hasKey .Values.denWeb.env "NODE_EXTRA_CA_CERTS" -}}
 {{- fail "denWeb.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead" -}}
 {{- end -}}
-{{- if hasKey .Values.inference.env "NODE_EXTRA_CA_CERTS" -}}
-{{- fail "inference.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead" -}}
+{{- $gateway := include "openwork-ee.gateway" . | fromYaml -}}
+{{- if hasKey $gateway.env "NODE_EXTRA_CA_CERTS" -}}
+{{- fail "inference.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead (also applies to gateway.env)" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

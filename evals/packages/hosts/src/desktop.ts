@@ -57,6 +57,8 @@ export interface DesktopOptions {
   prepareSharedResources?: boolean;
   /** Exact caller-owned Electron profile root, for restart scenarios. */
   profileDir?: string;
+  /** Refuse a pooled sandbox: placement provisions one for this desktop alone. */
+  ownSandbox?: boolean;
   timeoutMs?: number;
 }
 
@@ -184,6 +186,7 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
       env: opts.env,
       devCommand: opts.devCommand,
       prepareSharedResources: opts.prepareSharedResources,
+      ownSandbox: opts.ownSandbox,
     });
   }
 

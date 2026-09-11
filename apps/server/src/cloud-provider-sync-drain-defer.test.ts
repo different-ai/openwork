@@ -28,10 +28,15 @@ type FakeEngine = {
 type Fixture = {
   engineA: FakeEngine;
   pool: EnginePool;
+  workspace: WorkspaceInfo;
   serverBaseUrl: string;
   spawnCount: () => number;
+  lastSpawnedUrl: () => string | null;
   releaseDrain: () => void;
   releaseProviderList: () => void;
+  /** Hold the next standby spawn until the returned release runs. */
+  holdNextSpawn: () => () => void;
+  setProviderApiKey: (value: string) => void;
 };
 
 const savedEnv = new Map<string, string | undefined>();
@@ -218,6 +223,7 @@ beforeEach(async () => {
   } as ServerConfig;
 
   let spawnCount = 0;
+  let spawnGate: Promise<void> | null = null;
   const pool = new EnginePool({
     config,
     template: {
@@ -234,6 +240,9 @@ beforeEach(async () => {
       registerTrusted: () => undefined,
       clearTrusted: () => undefined,
       spawn: async () => {
+        const gate = spawnGate;
+        spawnGate = null;
+        if (gate) await gate;
         const engine = await startFakeEngine();
         engines.push(engine);
         spawnCount += 1;
@@ -289,6 +298,8 @@ beforeEach(async () => {
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
+      // PUT /den-session verifies the organization's desktop policy first.
+      if (url.pathname === "/v1/me/desktop-config") return Response.json({});
       if (url.pathname === "/v1/llm-providers") {
         markProviderListReached();
         await providerListReleased;
@@ -316,14 +327,26 @@ beforeEach(async () => {
       orgId: "org_a",
     }),
   });
-  if (sessionResponse.status !== 204) throw new Error(`failed to set Den session: ${sessionResponse.status}`);
+  if (sessionResponse.status !== 204) throw new Error(`failed to set Den session: ${sessionResponse.status} ${await sessionResponse.text()}`);
   await providerListReached;
 
   fixture = {
     engineA,
     pool,
+    workspace,
     serverBaseUrl,
     spawnCount: () => spawnCount,
+    lastSpawnedUrl: () => engines[engines.length - 1]?.handle.url ?? null,
+    holdNextSpawn: () => {
+      let release: () => void = () => undefined;
+      spawnGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return () => release();
+    },
+    setProviderApiKey: (value) => {
+      provider.apiKey = value;
+    },
     releaseDrain: () => {
       if (heartbeat) clearInterval(heartbeat);
       heartbeat = null;
@@ -404,4 +427,63 @@ describe("cloud provider sync drain defer", () => {
     expect(settledStatus.reloadPending).toBe(false);
     expect(settledSpawnCount).toBe(2);
   }, 10_000);
+
+  test("credentialRotation: a key-only rotation rolls over although the config fingerprint is unchanged", async () => {
+    const { pool, releaseDrain, releaseProviderList, serverBaseUrl, setProviderApiKey, spawnCount } = currentFixture();
+    releaseDrain();
+    expect(await waitUntil(() => !pool.hasDrainingGeneration(), 5_000)).toBe(true);
+    releaseProviderList();
+    const materialized = await Promise.race([runSync(serverBaseUrl), timeout(5_000)]);
+    expect(materialized.status).toBe("applied");
+    expect(await waitUntil(async () => (await syncStatus(serverBaseUrl)).reloadPending === false, 5_000)).toBe(true);
+    expect(await waitUntil(() => !pool.hasDrainingGeneration(), 5_000)).toBe(true);
+    const spawnsBeforeRotation: number = spawnCount();
+    const primaryBeforeRotation = pool.primaryUrl();
+
+    // Den rotates only the key. The engine-visible config bytes are identical,
+    // so the pool's fingerprint cannot see the change; the forced rollover
+    // must still replace the generation holding the cached SDK client.
+    setProviderApiKey("sk-test-provider-rotated");
+    const rotated = await Promise.race([runSync(serverBaseUrl), timeout(5_000)]);
+    const status = await syncStatus(serverBaseUrl);
+
+    expect(rotated.status).toBe("applied");
+    expect(status.reloadPending).toBe(false);
+    expect(spawnCount()).toBe(spawnsBeforeRotation + 1);
+    expect(pool.primaryUrl()).not.toBe(primaryBeforeRotation);
+  }, 15_000);
+
+  test("inFlightCoalesce: a sync that coalesces into an in-flight rollover stays pending until its own rollover lands", async () => {
+    const { holdNextSpawn, lastSpawnedUrl, pool, releaseDrain, releaseProviderList, serverBaseUrl, spawnCount, workspace } = currentFixture();
+    releaseDrain();
+    expect(await waitUntil(() => !pool.hasDrainingGeneration(), 5_000)).toBe(true);
+
+    // Another caller's rollover is mid-spawn when the sync pass arrives.
+    const releaseSpawn = holdNextSpawn();
+    const inFlight = pool.requestRollover({ reason: "operation_route", workspace, manual: true });
+    const run = runSync(serverBaseUrl);
+    await sleep(25);
+    releaseProviderList();
+    await sleep(500);
+
+    // The coalesced acknowledgement is not a landed reload: the owed reload
+    // must stay visible while the queued rollover has not run yet.
+    const spawnsWhileHeld: number = spawnCount();
+    const heldStatus = await syncStatus(serverBaseUrl);
+    releaseSpawn();
+    expect(spawnsWhileHeld).toBe(1);
+    expect(heldStatus.reloadPending).toBe(true);
+
+    expect((await inFlight).action).toBe("rolled_over");
+    const result = await Promise.race([run, timeout(10_000)]);
+    expect(result.status).toBe("applied");
+    expect(await waitUntil(async () => (await syncStatus(serverBaseUrl)).reloadPending === false, 5_000)).toBe(true);
+    const settled = await syncStatus(serverBaseUrl);
+    const lastRun = isRecord(settled.lastRun) ? settled.lastRun : {};
+    expect(lastRun.status).toBe("applied");
+    // Initial standby, the in-flight rollover, then the sync's own queued
+    // rollover: the final primary is the last generation spawned.
+    expect(spawnCount()).toBe(3);
+    expect(pool.primaryUrl()).toBe(lastSpawnedUrl());
+  }, 20_000);
 });

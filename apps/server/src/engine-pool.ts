@@ -88,11 +88,36 @@ export type EnginePoolHooks = {
 
 export type RolloverReason = string;
 
+/**
+ * What a rollover request did. Only `reloaded_in_place` and `rolled_over`
+ * mean the engine now serves the requested config; `skipped` and `coalesced`
+ * leave the caller's change owed, so a caller tracking a pending reload must
+ * keep it pending until one of the applied outcomes arrives.
+ */
 export type RolloverOutcome =
-  | { action: "skipped"; reason: "unchanged" }
+  | { action: "skipped"; reason: "unchanged" | "disposed" }
   | { action: "reloaded_in_place" }
   | { action: "coalesced" }
   | { action: "rolled_over"; generationId: string; drainingSessions: number };
+
+export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "reloaded_in_place" | "rolled_over" }>;
+
+export function rolloverOutcomeApplied(outcome: RolloverOutcome): outcome is AppliedRolloverOutcome {
+  return outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
+}
+
+type RolloverRequest = {
+  reason: RolloverReason;
+  workspace: WorkspaceInfo;
+  manual: boolean;
+  awaitPostRefreshSync: boolean;
+  forceStandby: boolean;
+};
+
+type RolloverWaiter = {
+  resolve: (outcome: RolloverOutcome) => void;
+  reject: (error: unknown) => void;
+};
 
 type GenerationStatus = "starting" | "primary" | "draining" | "dead";
 
@@ -101,7 +126,14 @@ type Generation = {
   handle: ManagedOpencodeServer;
   status: GenerationStatus;
   spawnedAt: number;
+  /** Config fingerprint this process was spawned with. */
   fingerprint: string;
+  /**
+   * Config fingerprint each directory's instance was last rebuilt against by
+   * an in-place reload. An in-place reload disposes ONE directory instance;
+   * the other directories keep serving what they read at build time.
+   */
+  reloadedDirectories: Map<string, string>;
   registryId: string | null;
   trustedIdentity: string | null;
   drainTimer: ReturnType<typeof setInterval> | null;
@@ -181,6 +213,15 @@ function drainPollIntervalMs(): number {
 /** Grace given to aborted sessions to unwind before the engine is closed. */
 function abortSettleMs(): number {
   return nonNegativeIntFromEnv("OPENWORK_ENGINE_ABORT_SETTLE_MS", 5_000);
+}
+
+/**
+ * Budget for seeding a healthy standby (managed provider credentials) before
+ * it may become primary. A seed that hangs past this is a failed rollover,
+ * never a silent flip onto an engine without keys.
+ */
+function standbyPrepareTimeoutMs(): number {
+  return positiveIntFromEnv("OPENWORK_ENGINE_STANDBY_PREPARE_TIMEOUT_MS", 30_000);
 }
 
 function portOf(url: string): number {
@@ -370,19 +411,20 @@ export async function computeEngineConfigFingerprint(template: EngineSpawnTempla
     .digest("hex");
 }
 
+/** The engine directory an in-place reload disposes for this workspace. */
+function directoryKey(workspace: WorkspaceInfo): string {
+  return workspace.directory?.trim() || workspace.path;
+}
+
 export class EnginePool {
   private readonly config: ServerConfig;
   private readonly template: EngineSpawnTemplate;
   private readonly hooks: EnginePoolHooks;
   private generations: Generation[] = [];
   private inFlight: Promise<RolloverOutcome> | null = null;
-  private pendingRollover: {
-    reason: RolloverReason;
-    workspace: WorkspaceInfo;
-    manual: boolean;
-    awaitPostRefreshSync: boolean;
-    forceStandby: boolean;
-  } | null = null;
+  private pendingRollover: RolloverRequest | null = null;
+  /** Callers coalesced into `pendingRollover`; settled when that rollover runs. */
+  private pendingWaiters: RolloverWaiter[] = [];
   private lastSpawnAt = 0;
   private consecutiveConnectionFailures = 0;
   private lastRecoveryAt = Number.NEGATIVE_INFINITY;
@@ -419,6 +461,7 @@ export class EnginePool {
       status: "primary",
       spawnedAt: Date.now(),
       fingerprint: input.fingerprint,
+      reloadedDirectories: new Map(),
       registryId: input.registryId,
       trustedIdentity: input.trustedIdentity,
       drainTimer: null,
@@ -587,8 +630,8 @@ export class EnginePool {
     /** Apply a config change through a healthy standby even when the primary is idle. */
     forceStandby?: boolean;
   }): Promise<RolloverOutcome> {
-    if (this.disposed) return { action: "skipped", reason: "unchanged" };
-    const request = {
+    if (this.disposed) return { action: "skipped", reason: "disposed" };
+    const request: RolloverRequest = {
       reason: input.reason,
       workspace: input.workspace,
       manual: input.manual === true,
@@ -607,29 +650,43 @@ export class EnginePool {
       this.hooks.logger?.log("info", "Engine rollover coalesced into the in-flight request.", {
         "engine.rollover.reason": request.reason,
       });
-      return { action: "coalesced" };
+      // The in-flight spawn may have read config and credentials from before
+      // this request. Settle only when the queued rollover itself lands, so a
+      // caller never records a change as applied that the engine has not read.
+      return new Promise<RolloverOutcome>((resolve, reject) => {
+        this.pendingWaiters.push({ resolve, reject });
+      });
     }
+    const waiters = this.pendingWaiters;
+    this.pendingWaiters = [];
     const run = this.runRollover(request);
     this.inFlight = run;
     try {
-      return await run;
+      const outcome = await run;
+      for (const waiter of waiters) waiter.resolve(outcome);
+      return outcome;
+    } catch (error) {
+      for (const waiter of waiters) waiter.reject(error);
+      throw error;
     } finally {
       this.inFlight = null;
       const next = this.pendingRollover;
       this.pendingRollover = null;
       if (next && !this.disposed) {
         void this.requestRollover(next).catch(() => undefined);
+      } else if (this.disposed) {
+        this.settleWaitersOnDispose();
       }
     }
   }
 
-  private async runRollover(request: {
-    reason: RolloverReason;
-    workspace: WorkspaceInfo;
-    manual: boolean;
-    awaitPostRefreshSync: boolean;
-    forceStandby: boolean;
-  }): Promise<RolloverOutcome> {
+  private settleWaitersOnDispose(): void {
+    const waiters = this.pendingWaiters;
+    this.pendingWaiters = [];
+    for (const waiter of waiters) waiter.resolve({ action: "skipped", reason: "disposed" });
+  }
+
+  private async runRollover(request: RolloverRequest): Promise<RolloverOutcome> {
     const { workspace, reason, manual, awaitPostRefreshSync, forceStandby } = request;
     // The standby reads config from disk at spawn, so make sure the file is
     // current before deciding anything.
@@ -637,9 +694,21 @@ export class EnginePool {
     const fingerprint = await this.currentFingerprint();
     const primary = this.generations.find((entry) => entry.status === "primary") ?? null;
 
-    if (!manual && primary && primary.fingerprint === fingerprint) {
-      // Nothing the engine reads at build time changed. Skipping here is what
-      // keeps a repeating no-op sync from spawning an engine every pass.
+    // Nothing this workspace's instance reads at build time changed: either
+    // the process was spawned on this config or this directory was already
+    // reloaded onto it. Skipping here is what keeps a repeating no-op sync
+    // from spawning an engine every pass. Other directories reloaded in place
+    // do not count: their dispose left this one serving the previous config.
+    // A forced request is exempt: its caller knows an input the fingerprint
+    // cannot see changed (a rotated credential, a persisted policy), and
+    // skipping it left the engine serving with the old key.
+    const directory = directoryKey(workspace);
+    if (
+      !manual
+      && !forceStandby
+      && primary
+      && (primary.fingerprint === fingerprint || primary.reloadedDirectories.get(directory) === fingerprint)
+    ) {
       return { action: "skipped", reason: "unchanged" };
     }
 
@@ -648,7 +717,7 @@ export class EnginePool {
       : await this.hooks.engineBusy(this.config, workspace).catch(() => false);
     if (!busy) {
       await this.hooks.reloadInPlace(this.config, workspace, { awaitPostRefreshSync });
-      if (primary) primary.fingerprint = fingerprint;
+      if (primary) primary.reloadedDirectories.set(directory, fingerprint);
       this.hooks.logger?.log("info", "Engine reloaded in place (idle).", {
         "engine.rollover.reason": reason,
       });
@@ -662,7 +731,7 @@ export class EnginePool {
           "engine.rollover.reason": reason,
         });
         await this.waitForDrain();
-        if (this.disposed) return { action: "skipped", reason: "unchanged" };
+        if (this.disposed) return { action: "skipped", reason: "disposed" };
         return this.runRollover(request);
       }
       // Cap: one primary plus one draining. Park this change; it lands when
@@ -714,6 +783,7 @@ export class EnginePool {
       status: "starting",
       spawnedAt: Date.now(),
       fingerprint,
+      reloadedDirectories: new Map(),
       registryId: null,
       trustedIdentity: null,
       drainTimer: null,
@@ -738,20 +808,19 @@ export class EnginePool {
 
     if (this.hooks.prepareStandby) {
       try {
-        await this.hooks.prepareStandby(this.config, {
-          workspace,
-          generationId: generation.id,
-          baseUrl: handle.url,
-          username: handle.username,
-          password: handle.password,
-        });
+        await this.prepareStandbyBounded(generation, workspace);
       } catch (error) {
-        // The standby is healthy and the primary is still serving; a failed
-        // seed only means the next sync pass delivers credentials instead.
-        this.hooks.logger?.log("warn", "Engine standby preparation failed; flipping anyway.", {
+        // A standby without its credentials would answer every run with
+        // "API key is missing" while status called the reload landed. Keep
+        // the primary serving, close the standby, and let the caller's retry
+        // path bring the change back once seeding works.
+        this.generations = this.generations.filter((entry) => entry.id !== generation.id);
+        await handle.close().catch(() => undefined);
+        this.hooks.logger?.log("error", "Engine standby preparation failed; the live engine is untouched.", {
           "engine.rollover.reason": reason,
           "engine.rollover.failure": error instanceof Error ? error.message : String(error),
         });
+        throw error;
       }
     }
 
@@ -788,6 +857,34 @@ export class EnginePool {
     if (primary) this.startDrainMonitor(primary, workspace);
 
     return { action: "rolled_over", generationId: generation.id, drainingSessions: drainingSessions.length };
+  }
+
+  /** Seed the standby within a bounded budget; a hung seed is a failed rollover. */
+  private async prepareStandbyBounded(generation: Generation, workspace: WorkspaceInfo): Promise<void> {
+    const prepare = this.hooks.prepareStandby;
+    if (!prepare) return;
+    const standby: EnginePoolStandby = {
+      workspace,
+      generationId: generation.id,
+      baseUrl: generation.handle.url,
+      username: generation.handle.username,
+      password: generation.handle.password,
+    };
+    const budgetMs = standbyPrepareTimeoutMs();
+    let expire: (error: Error) => void = () => undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      expire = reject;
+    });
+    const timer = setTimeout(
+      () => expire(new Error(`Engine standby preparation did not complete within ${budgetMs}ms`)),
+      budgetMs,
+    );
+    timer.unref?.();
+    try {
+      await Promise.race([prepare(this.config, standby), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -1020,6 +1117,7 @@ export class EnginePool {
     this.disposed = true;
     this.hooks.onDisposed?.();
     this.pendingRollover = null;
+    this.settleWaitersOnDispose();
     if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
     this.recoveryTimer = null;
     this.abortEventProxies();
@@ -1105,6 +1203,7 @@ export class EnginePool {
         status: "starting",
         spawnedAt: this.now(),
         fingerprint: await this.currentFingerprint(),
+        reloadedDirectories: new Map(),
         registryId: null,
         trustedIdentity: null,
         drainTimer: null,

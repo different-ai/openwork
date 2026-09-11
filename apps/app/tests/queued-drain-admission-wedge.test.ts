@@ -166,6 +166,23 @@ test("unknown admission survives idle, busy, retry, Stop, and remount until the 
   resetQueuedDrainForTests();
 });
 
+test("an authoritative listing without the message halts an unknown admission for an explicit retry", () => {
+  let state = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "item-1" });
+  state = reduceQueuedDrain(state, { type: "send_unknown", itemId: "item-1", messageID: "msg_exact", at: t0 });
+  // Another item or message is not evidence about this admission.
+  expect(reduceQueuedDrain(state, { type: "admission_rejected", itemId: "item-1", messageID: "msg_other" })).toBe(state);
+  expect(reduceQueuedDrain(state, { type: "admission_rejected", itemId: "item-other", messageID: "msg_exact" })).toBe(state);
+  const halted = reduceQueuedDrain(state, { type: "admission_rejected", itemId: "item-1", messageID: "msg_exact" });
+  expect(halted.phase).toEqual({ kind: "halted", itemId: "item-1", reason: "terminal_failure" });
+  expect(halted.lastResolution).toEqual({ itemId: "item-1", resolution: "terminal_failure" });
+  // Negative half: the halt never resends on its own; only the person's retry releases it.
+  expect(canAdmitNextQueuedItem(halted)).toBe(false);
+  expect(canAdmitNextQueuedItem(reduceQueuedDrain(halted, { type: "user_retry" }))).toBe(true);
+  // Rejection is only meaningful while the admission is unknown.
+  const running = reduceQueuedDrain(reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "item-2" }), { type: "send_result", itemId: "item-2", outcome: "sent", at: t0 });
+  expect(reduceQueuedDrain(running, { type: "admission_rejected", itemId: "item-2", messageID: "msg_2" })).toBe(running);
+});
+
 test("observing a deferred command's user message cannot erase its terminal-evidence requirement", () => {
   let state = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "command" });
   state = reduceQueuedDrain(state, { type: "send_unknown", itemId: "command", messageID: "msg_command", at: t0, deferred: true });

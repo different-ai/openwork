@@ -41,6 +41,30 @@ Containerized production installs run the precompiled artifact directly:
 node /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
+## Local startup safety
+
+`pnpm dev:web-local` runs guarded loopback-only migrations before application
+services start. `db:migrate:local --check` reports the plan without writes and
+permits active connections for inspection; apply requires them to be stopped.
+An unjournaled 0096 schema may be repaired only when its remaining differences
+are missing non-unique prefix indexes `account_account_id_provider_id`,
+`oauth_access_token_token`, and/or `oauth_refresh_token_token`. Definitions are
+checked against 0096 and the individual CREATE INDEX statements in 0046/0073.
+Data guards run first; a durable interruption marker precedes index creation.
+Exact schema reinspection must succeed before recording the 0096 baseline and
+running 0097. This never replays 0073's email rewrite or baselines Gateway tables.
+Any differently defined index, other unknown drift, or interruption marker stops
+startup for deliberate recovery; do not clear the marker to force a retry.
+
+Consolidated 0097 assumes the eight intermediate inference tables introduced in
+the same PR are empty, as confirmed by the operator, so no backfills are needed.
+The local runner pins the generated SQL hash and rejects nonempty sources before
+writes. A verified 0095 baseline skips only its absent rollup lock, then checks
+all eight sources after 0096. Old 0097/0098/0099 receipts or partial schemas require
+explicit recovery, never automatic stamping. This is not production rollout
+approval: the production transaction runner and generated primary-key drop/add
+compatibility remain unresolved. See [0097 notes](drizzle/0097_gateway_access_matrix.md).
+
 ## Automated migrations (CI)
 
 Two GitHub Actions workflows keep schema and database in sync:

@@ -10,13 +10,11 @@ export type SidebarContextValue = {
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
   newTaskDisabled: boolean;
-  /** Account/organization scope of persisted composer drafts; null while unverified. */
-  newTaskDraftScope: string | null;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
-  onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
+  onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: (sessionId: string) => void;

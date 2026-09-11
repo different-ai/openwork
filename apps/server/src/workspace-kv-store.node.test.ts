@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,6 +71,45 @@ async function setSessionGroupSchemaVersion(dbPath: string, schemaVersion: numbe
 }
 
 if (typeof process.versions.bun !== "string") {
+  test("workspace kv getExisting uses Node SQLite without initializing storage or shared connections", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openwork-workspace-kv-node-existing-"));
+    const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+    const dbPath = join(root, "runtime.sqlite");
+    process.env.OPENWORK_RUNTIME_DB = dbPath;
+    try {
+      const config = { ...serverConfig(root), readOnly: true };
+      const store = recordStore("workspace_kv_node_existing");
+      assert.equal(await store.getExisting(config, WORKSPACE_ID), undefined);
+      assert.equal(existsSync(dbPath), false);
+
+      const { DatabaseSync } = await import("node:sqlite");
+      const sqlite = new DatabaseSync(dbPath);
+      try {
+        sqlite.exec("CREATE TABLE unrelated (value TEXT)");
+        const schema = sqlite.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY name").all();
+        assert.equal(await store.getExisting(config, WORKSPACE_ID), undefined);
+        assert.deepEqual(sqlite.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY name").all(), schema);
+        assert.deepEqual(workspaceKvStoreCacheStatsForTests(dbPath), { connectionEntries: 0, tableEntries: 0 });
+
+        sqlite.exec("CREATE TABLE workspace_kv_node_existing (workspace_id TEXT PRIMARY KEY, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+        sqlite.prepare("INSERT INTO workspace_kv_node_existing VALUES (?, ?, ?)").run(WORKSPACE_ID, JSON.stringify({ enabled: true }), 1);
+        const populatedSchema = sqlite.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY name").all();
+        assert.deepEqual(await store.getExisting(config, WORKSPACE_ID), { enabled: true });
+        assert.equal(await store.getExisting(config, "missing"), undefined);
+        sqlite.prepare("UPDATE workspace_kv_node_existing SET config_json = ? WHERE workspace_id = ?").run("{", WORKSPACE_ID);
+        assert.deepEqual(await store.getExisting(config, WORKSPACE_ID), {});
+        assert.deepEqual(sqlite.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY name").all(), populatedSchema);
+        assert.deepEqual(workspaceKvStoreCacheStatsForTests(dbPath), { connectionEntries: 0, tableEntries: 0 });
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("workspace kv store uses Node SQLite with one shared connection per runtime DB", async () => {
     const root = await mkdtemp(join(tmpdir(), "openwork-workspace-kv-node-"));
     const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;

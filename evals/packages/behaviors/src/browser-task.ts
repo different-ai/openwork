@@ -39,6 +39,7 @@ export interface BrowserState {
   activeTabId: string | null;
   visibleSessionId: string | null;
   visibleWindowCount: number;
+  backgroundWindowCount: number;
   backgroundWindowVisible: boolean;
   tabs: Array<{ id: string; label: string; ownerSessionId: string | null }>;
   nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
@@ -86,11 +87,13 @@ export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
 export async function readBrowserState(app: Surface): Promise<BrowserState> {
   const value = await evaluateOnSurface(app, () => window.__OPENWORK_ELECTRON__.browser.getState(), { awaitPromise: true });
   if (!record(value) || !Array.isArray(value.tabs) || !Array.isArray(value.nativeViews)
-    || typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowVisible !== "boolean") throw new Error("Missing native browser state.");
+    || typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowCount !== "number"
+    || typeof value.backgroundWindowVisible !== "boolean") throw new Error("Missing native browser state.");
   return {
     activeTabId: typeof value.activeTabId === "string" ? value.activeTabId : null,
     visibleSessionId: typeof value.visibleSessionId === "string" ? value.visibleSessionId : null,
     visibleWindowCount: value.visibleWindowCount,
+    backgroundWindowCount: value.backgroundWindowCount,
     backgroundWindowVisible: value.backgroundWindowVisible,
     tabs: value.tabs.map((tab: unknown) => {
       if (!record(tab)) throw new Error("Invalid browser tab.");
