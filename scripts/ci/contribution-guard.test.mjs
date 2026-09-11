@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CLA_LABEL, evaluate, isNoreplyFor, report } from "./contribution-guard.mjs";
+import { BOT_ALLOWLIST, CLA_LABEL, DCO_ENFORCED_FROM, evaluate, isNoreplyFor, report } from "./contribution-guard.mjs";
 
 const REPO = "different-ai/openwork";
 const FORK = "contributor/openwork";
 const LOGIN = "contributor";
+// Author dates on either side of the same-repository grace cutoff.
+const AFTER_CUTOFF = new Date(Date.parse(DCO_ENFORCED_FROM) + 60_000).toISOString();
+const BEFORE_CUTOFF = new Date(Date.parse(DCO_ENFORCED_FROM) - 60_000).toISOString();
 
-const commit = (sha, subject, { email = "dev@example.com", signoff = `Dev <${email}>`, parents = 1 } = {}) => ({
+const commit = (
+  sha,
+  subject,
+  { email = "dev@example.com", signoff = `Dev <${email}>`, parents = 1, date = AFTER_CUTOFF, githubAuthor = { login: LOGIN, type: "User" } } = {},
+) => ({
   sha,
   parents: Array.from({ length: parents }, (_, index) => ({ sha: `parent${index}` })),
+  author: githubAuthor,
   commit: {
-    author: { name: "Dev", email },
+    author: { name: "Dev", email, date },
     message: signoff ? `${subject}\n\nSigned-off-by: ${signoff}\n` : `${subject}\n`,
   },
 });
@@ -97,14 +105,111 @@ test("an ee/ file with the cla-signed label passes", () => {
   assert.deepEqual(result.ee, []);
 });
 
-test("same-repository pull requests are skipped even when unsigned and touching ee/", () => {
+test("fork commits get no grace: an old unsigned fork commit still fails", () => {
   const result = evaluate(forkPull({
-    headRepository: REPO,
-    commits: [commit("f".repeat(40), "wip", { signoff: null })],
-    files: [{ filename: "ee/LICENSE" }],
+    commits: [commit("f".repeat(40), "old fork work", { signoff: null, date: BEFORE_CUTOFF })],
   }));
-  assert.equal(result.verdict, "skipped");
-  assert.deepEqual(result.dco, []);
+  assert.equal(result.verdict, "fail");
+  assert.equal(result.exempt.legacy, 0);
+});
+
+// Same-repository pull requests: DCO applies to everyone, the ee/ label rule does not.
+
+const samePull = (overrides = {}) => forkPull({ headRepository: REPO, prAuthorLogin: "employee", ...overrides });
+
+test("same-repository: every commit signed off passes and the ee/ label is not required", () => {
+  const result = evaluate(samePull({ files: [{ filename: "ee/apps/den-api/src/index.ts" }] }));
+  assert.equal(result.verdict, "pass");
   assert.deepEqual(result.ee, []);
-  assert.match(report(result), /Skipped: same-repository pull request/);
+  assert.match(report(result), /same-repository pull request; the `ee\/` CLA-label rule applies to forks only/);
+});
+
+test("same-repository: a missing trailer fails and names the commit", () => {
+  const result = evaluate(samePull({
+    commits: [commit("a".repeat(40), "feat: one"), commit("b".repeat(40), "wip", { signoff: null })],
+  }));
+  assert.equal(result.verdict, "fail");
+  assert.deepEqual(result.dco, ['bbbbbbb "wip": missing Signed-off-by trailer']);
+});
+
+test("same-repository: a mismatched sign-off email fails", () => {
+  const result = evaluate(samePull({
+    commits: [commit("c".repeat(40), "chore: three", { signoff: "Other <other@example.com>" })],
+  }));
+  assert.equal(result.verdict, "fail");
+  assert.match(result.dco[0], /Signed-off-by email does not match/);
+});
+
+test("same-repository: the PR author's GitHub noreply address passes", () => {
+  const result = evaluate(samePull({
+    commits: [commit("d".repeat(40), "chore: four", { signoff: "Employee <686630+employee@users.noreply.github.com>" })],
+  }));
+  assert.equal(result.verdict, "pass");
+});
+
+test("same-repository: merge commits are skipped", () => {
+  const result = evaluate(samePull({
+    commits: [commit("e".repeat(40), "Merge branch 'dev'", { signoff: null, parents: 2 })],
+  }));
+  assert.equal(result.verdict, "pass");
+  assert.equal(result.exempt.merge, 1);
+});
+
+test("same-repository: commits authored before the cutoff are grandfathered; the cutoff itself is not", () => {
+  const legacy = evaluate(samePull({
+    commits: [commit("1".repeat(40), "pre-enforcement work", { signoff: null, date: BEFORE_CUTOFF })],
+  }));
+  assert.equal(legacy.verdict, "pass");
+  assert.equal(legacy.exempt.legacy, 1);
+  assert.match(report(legacy), /1 grandfathered/);
+
+  const boundary = evaluate(samePull({
+    commits: [commit("2".repeat(40), "at cutoff", { signoff: null, date: DCO_ENFORCED_FROM })],
+  }));
+  assert.equal(boundary.verdict, "fail");
+
+  // A missing author date fails closed.
+  const undated = evaluate(samePull({
+    commits: [commit("3".repeat(40), "no date", { signoff: null, date: undefined })],
+  }));
+  assert.equal(undated.verdict, "fail");
+});
+
+test("bot allow-list: sentry and dependabot commits on their own PRs are exempt", () => {
+  for (const login of BOT_ALLOWLIST) {
+    const result = evaluate(samePull({
+      prAuthorLogin: login,
+      commits: [commit("4".repeat(40), "fix: generated", {
+        signoff: null,
+        email: `123+${login}@users.noreply.github.com`,
+        githubAuthor: { login, type: "Bot" },
+      })],
+    }));
+    assert.equal(result.verdict, "pass", login);
+    assert.equal(result.exempt.bot, 1);
+  }
+  assert.deepEqual([...BOT_ALLOWLIST].sort(), ["dependabot[bot]", "sentry[bot]"]);
+});
+
+test("bot allow-list: a human commit on a bot PR, an unlisted bot, and a bot commit on a human PR are all checked", () => {
+  const humanOnBotBranch = evaluate(samePull({
+    prAuthorLogin: "dependabot[bot]",
+    commits: [
+      commit("5".repeat(40), "chore(deps): bump x", { signoff: null, githubAuthor: { login: "dependabot[bot]", type: "Bot" } }),
+      commit("6".repeat(40), "fix: allow transitive deps", { signoff: null, email: "maintainer@example.com" }),
+    ],
+  }));
+  assert.equal(humanOnBotBranch.verdict, "fail");
+  assert.deepEqual(humanOnBotBranch.dco, ['6666666 "fix: allow transitive deps": missing Signed-off-by trailer']);
+
+  const unlistedBot = evaluate(samePull({
+    prAuthorLogin: "github-actions[bot]",
+    commits: [commit("7".repeat(40), "docs(changelog): release notes", { signoff: null, githubAuthor: { login: "github-actions[bot]", type: "Bot" } })],
+  }));
+  assert.equal(unlistedBot.verdict, "fail");
+
+  const spoofedOnHumanPull = evaluate(samePull({
+    commits: [commit("8".repeat(40), "fix: looks generated", { signoff: null, githubAuthor: { login: "sentry[bot]", type: "Bot" } })],
+  }));
+  assert.equal(spoofedOnHumanPull.verdict, "fail");
 });

@@ -1,12 +1,16 @@
-# Contribution guard for fork pull requests.
+# Contribution guard for every pull request.
 #
-# Enforces CONTRIBUTING.md §1 and §2 on pull requests from forks:
-#   1. DCO: every commit carries a `Signed-off-by:` trailer whose email matches
-#      the commit author email or the PR author's GitHub noreply address.
-#   2. ee/: any change under ee/ requires the `cla-signed` label (a maintainer
-#      applies it once the CLA under legal/ is on file).
-# Same-repository pull requests exit green without checking anything —
-# employees are covered by their employment terms and must not be blocked.
+# Enforces CONTRIBUTING.md §1 and §2:
+#   1. DCO (all pull requests, forks and same-repository alike): every non-merge
+#      commit carries a `Signed-off-by:` trailer whose email matches the commit
+#      author email or the PR author's GitHub noreply address. Commits by the
+#      allow-listed bots that cannot sign (sentry[bot], dependabot[bot]) on
+#      their own PRs are exempt. Same-repository commits authored before
+#      DCO_ENFORCED_FROM (scripts/ci/contribution-guard.mjs) are grandfathered
+#      so in-flight internal branches are not blocked by the rollout.
+#   2. ee/ (fork pull requests only): any change under ee/ requires the
+#      `cla-signed` label (a maintainer applies it once the CLA under legal/ is
+#      on file). Same-repository authors are covered by their agreements.
 #
 # Security model (same as revert-fastlane.yml): this runs on
 # pull_request_target, so the workflow definition AND

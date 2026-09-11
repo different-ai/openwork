@@ -177,7 +177,7 @@ jobs:
           git config --local user.signingkey "$signing_key"
           git switch -c "$BRANCH_NAME"
           git add packages/docs/changelog.mdx changelog/
-          git commit -S -m "docs(changelog): release notes for $TAG"
+          git commit -S -s -m "docs(changelog): release notes for $TAG"
 
       - name: Open pull request
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'

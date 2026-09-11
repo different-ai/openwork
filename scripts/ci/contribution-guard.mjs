@@ -1,4 +1,11 @@
-// Contribution guard for fork pull requests (CONTRIBUTING.md §1 and §2).
+// Contribution guard (CONTRIBUTING.md §1 and §2).
+//
+//   §1 DCO: every pull request, from a fork or from this repository, must carry
+//      a matching `Signed-off-by:` trailer on every non-merge commit. On
+//      same-repository pull requests, commits authored before
+//      DCO_ENFORCED_FROM are grandfathered (see below); fork commits never are.
+//   §2 ee/ CLA label: fork pull requests only. Same-repository authors have
+//      write access and are covered by their agreements with Different AI.
 //
 // Pure decision logic is exported for `node --test`; `main` only reads PR
 // metadata through the GitHub REST API. It never fetches or executes PR code.
@@ -8,6 +15,26 @@ import { pathToFileURL } from "node:url";
 
 export const CLA_LABEL = "cla-signed";
 export const EE_PREFIX = "ee/";
+
+// Rollout grace for same-repository pull requests only: a commit whose *author*
+// date is older than this was written before sign-off was enforced internally
+// (~140 open same-repository PRs, including the merge train, predate it).
+// Author date survives `git rebase`, so in-flight branches stay green as they
+// rebase onto dev; anything authored from this instant on must be signed off.
+// Fork commits get no grace: CONTRIBUTING.md has required their sign-off all
+// along. Remove this constant once the last pre-cutoff branch has merged.
+export const DCO_ENFORCED_FROM = "2026-09-12T00:00:00Z";
+
+// Bots that open pull requests here and cannot sign off:
+//   sentry[bot]     — Seer autofix; generated commits carry no trailer.
+//   dependabot[bot] — signs as `support@github.com`, which never matches its
+//                     `49699333+dependabot[bot]@users.noreply.github.com`
+//                     author email and is not configurable.
+// A commit is exempt only when GitHub attributes it to that Bot account AND the
+// same bot opened the pull request, so a human commit pushed onto a bot branch
+// (or a human PR spoofing a bot email) is still checked. github-actions[bot]
+// PRs are not exempt: our workflows commit as a person and pass `-s`.
+export const BOT_ALLOWLIST = new Set(["sentry[bot]", "dependabot[bot]"]);
 
 const CLA_DOCUMENTS = [
   "legal/individual-contributor-license-agreement.md",
@@ -29,11 +56,23 @@ export function isNoreplyFor(email, login) {
   return new RegExp(`^(\\d+\\+)?${escaped}@users\\.noreply\\.github\\.com$`, "i").test(email);
 }
 
-export function checkSignoffs(commits, prAuthorLogin) {
+export function isExemptBotCommit(commit, prAuthorLogin) {
+  const login = commit.author?.login;
+  return commit.author?.type === "Bot" && BOT_ALLOWLIST.has(login) && login === prAuthorLogin;
+}
+
+// `enforcedFrom` is the grace cutoff for same-repository PRs; pass null for no grace (forks).
+export function checkSignoffs(commits, prAuthorLogin, enforcedFrom) {
   const problems = [];
+  const exempt = { merge: 0, bot: 0, legacy: 0 };
+  const cutoff = enforcedFrom ? Date.parse(enforcedFrom) : Number.NEGATIVE_INFINITY;
   for (const commit of commits) {
     // Merge commits carry no authorship of their own; the DCO app skips them too.
-    if ((commit.parents?.length ?? 0) > 1) continue;
+    if ((commit.parents?.length ?? 0) > 1) { exempt.merge++; continue; }
+    if (isExemptBotCommit(commit, prAuthorLogin)) { exempt.bot++; continue; }
+    // Missing or unparsable author dates are treated as new: fail closed.
+    const authored = Date.parse(commit.commit.author?.date ?? "");
+    if (!Number.isNaN(authored) && authored < cutoff) { exempt.legacy++; continue; }
     const author = (commit.commit.author?.email ?? "").toLowerCase();
     const emails = signoffEmails(commit.commit.message);
     if (emails.some((email) => email === author || isNoreplyFor(email, prAuthorLogin))) continue;
@@ -44,7 +83,7 @@ export function checkSignoffs(commits, prAuthorLogin) {
       : "missing Signed-off-by trailer";
     problems.push(`${commit.sha.slice(0, 7)} "${subject}": ${reason}`);
   }
-  return problems;
+  return { problems, exempt };
 }
 
 export function eePaths(files) {
@@ -53,24 +92,32 @@ export function eePaths(files) {
     .filter((path) => typeof path === "string" && path.startsWith(EE_PREFIX));
 }
 
-export function evaluate({ repository, headRepository, prAuthorLogin, labels, commits, files }) {
-  if (headRepository === repository) {
-    return { verdict: "skipped", dco: [], ee: [], reason: "same-repository pull request; employees are covered by their employment terms" };
-  }
-  const dco = checkSignoffs(commits, prAuthorLogin);
-  const ee = labels.includes(CLA_LABEL) ? [] : eePaths(files);
-  return { verdict: dco.length || ee.length ? "fail" : "pass", dco, ee };
+export function evaluate({ repository, headRepository, prAuthorLogin, labels, commits, files, enforcedFrom = DCO_ENFORCED_FROM }) {
+  const fork = headRepository !== repository;
+  const { problems: dco, exempt } = checkSignoffs(commits, prAuthorLogin, fork ? null : enforcedFrom);
+  // The CLA-label rule is fork-only: same-repository authors have write access
+  // and are covered by their agreements with Different AI (CONTRIBUTING.md §2).
+  const ee = fork && !labels.includes(CLA_LABEL) ? eePaths(files) : [];
+  return { verdict: dco.length || ee.length ? "fail" : "pass", fork, dco, ee, exempt };
 }
 
 export function report(result) {
   const lines = ["# Contribution guard", ""];
-  if (result.verdict === "skipped") {
-    lines.push(`Skipped: ${result.reason}.`);
-  } else if (result.verdict === "pass") {
-    lines.push("PASS: every commit carries a matching `Signed-off-by:` trailer and no `ee/` path is touched without the CLA label.");
+  if (result.verdict === "pass") {
+    lines.push(
+      result.fork
+        ? "PASS: every checked commit carries a matching `Signed-off-by:` trailer and no `ee/` path is touched without the CLA label."
+        : "PASS: every checked commit carries a matching `Signed-off-by:` trailer (same-repository pull request; the `ee/` CLA-label rule applies to forks only).",
+    );
+  }
+  const exempted = Object.entries(result.exempt).filter(([, count]) => count > 0);
+  if (exempted.length) {
+    const labels = { merge: "merge", bot: "allow-listed bot", legacy: "grandfathered (authored before enforcement)" };
+    lines.push("", `Not checked for sign-off: ${exempted.map(([kind, count]) => `${count} ${labels[kind]}`).join(", ")} commit(s).`);
   }
   if (result.dco.length) {
     lines.push(
+      "",
       "## DCO sign-off missing",
       "",
       "CONTRIBUTING.md §1: \"Every commit must be signed off, certifying the Developer Certificate of Origin v1.1. Pull requests with unsigned commits cannot be merged.\"",
@@ -126,13 +173,14 @@ async function main() {
   const prefix = `/repos/${repository}/pulls/${number}`;
   const pull = await api(prefix, token);
   const headRepository = pull.head.repo?.full_name ?? "";
-  let commits = [];
-  let files = [];
-  if (headRepository !== repository) {
-    [commits, files] = await Promise.all([api(`${prefix}/commits`, token, true), api(`${prefix}/files`, token, true)]);
-    if (commits.length !== pull.commits) {
-      throw new Error(`Listed ${commits.length} of ${pull.commits} commits; refusing to verify a partial commit list.`);
-    }
+  // Commits are checked on every pull request; changed files only matter for
+  // the fork-only ee/ rule, so same-repository runs skip that request.
+  const [commits, files] = await Promise.all([
+    api(`${prefix}/commits`, token, true),
+    headRepository !== repository ? api(`${prefix}/files`, token, true) : [],
+  ]);
+  if (commits.length !== pull.commits) {
+    throw new Error(`Listed ${commits.length} of ${pull.commits} commits; refusing to verify a partial commit list.`);
   }
   const result = evaluate({
     repository,
@@ -141,6 +189,8 @@ async function main() {
     labels: pull.labels.map((label) => label.name),
     commits,
     files,
+    // Local dry runs may move the grace cutoff; the workflow never sets this.
+    enforcedFrom: process.env.DCO_ENFORCED_FROM || DCO_ENFORCED_FROM,
   });
   const text = report(result);
   console.log(text);
