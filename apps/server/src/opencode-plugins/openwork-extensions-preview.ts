@@ -683,10 +683,12 @@ async function readSessionActivity(workspace: OpenWorkWorkspace, sessionId: stri
   return sessionActivityFrom(statuses, permissions, questions, sessionId, descendantIds);
 }
 
-async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {
-  const query = new URLSearchParams({ limit: String(limit) });
+// The engine returns the newest `limit` messages; without a limit it returns
+// the whole transcript, oldest first.
+async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit?: number): Promise<SessionMessage[]> {
+  const query = limit === undefined ? "" : `?${new URLSearchParams({ limit: String(limit) }).toString()}`;
   return z.array(sessionMessageSchema).parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}/message?${query.toString()}`),
+    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}/message${query}`),
   );
 }
 
@@ -785,11 +787,6 @@ function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
     .filter((message) => message.text.trim().length > 0);
 }
 
-// The engine's message route returns the newest `limit` messages. Reading
-// from the start or summarizing needs the whole transcript, so those modes
-// load up to the search-side message cap and slice locally.
-const SESSION_READ_FULL_LIMIT = 1000;
-
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   const args = sessionReadArgsSchema.parse(rawArgs);
   const count = args.count ?? 30;
@@ -803,9 +800,10 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   for (const workspace of workspaces) {
     try {
       const session = await readWorkspaceSession(workspace, args.sessionId);
+      // Reading from the start or summarizing needs the whole transcript.
       const needsFullTranscript = summary || from === "start";
       const [messages, activity] = await Promise.all([
-        readSessionMessages(workspace, args.sessionId, needsFullTranscript ? SESSION_READ_FULL_LIMIT : count),
+        readSessionMessages(workspace, args.sessionId, needsFullTranscript ? undefined : count),
         readSessionActivity(workspace, args.sessionId),
       ]);
       const readable = readableMessages(messages);

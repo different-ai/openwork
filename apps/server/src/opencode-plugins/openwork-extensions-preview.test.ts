@@ -483,7 +483,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     const fromStart = await read({ count: 1, from: "start" });
     expect(fromStart).toMatchObject({ from: "start", returned: 1, requested: 1, archived: false });
     expect(fromStart.messages.map((message) => message.role)).toEqual(["assistant"]);
-    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message").map((request) => request.search)).toEqual(["?limit=1", "?limit=1000"]);
+    // No limit: the engine then returns the whole transcript rather than the newest window.
+    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message").map((request) => request.search)).toEqual(["?limit=1", ""]);
   });
 
   test("session.read summary returns only the first user and last assistant messages", async () => {
