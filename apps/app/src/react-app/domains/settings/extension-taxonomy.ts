@@ -15,18 +15,18 @@ export type ExtensionInventoryFilter = "all" | ExtensionTaxonomy;
 
 export type ExtensionTransport = "mcp" | "native" | null;
 
-export type ExtensionInventoryState = "all" | "needs_signin" | "needs_admin_setup" | "ready";
+export type ExtensionInventoryState = "all" | "needs_signin" | "needs_admin_setup" | "ready" | "available" | "disabled";
 
 export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
-  "all",
-  "app",
-  "connection",
   "mcp",
   "skill",
-  "command",
-  "agent",
   "plugin",
 ];
+
+/** Legacy routes remain valid, but only these three categories are primary. */
+export function primaryLibraryFilter(filter?: ExtensionInventoryFilter): ExtensionInventoryFilter {
+  return filter === "skill" || filter === "plugin" ? filter : "mcp";
+}
 
 /** Built-ins ship with OpenWork and run here, so they are apps. Accounts arrive as org connections. */
 export function taxonomyForDirectoryEntry(entry: McpDirectoryInfo): ExtensionTaxonomy {
@@ -39,7 +39,7 @@ export function matchesExtensionFilter(
   taxonomy: ExtensionTaxonomy,
   transport: ExtensionTransport = null,
 ) {
-  return filter === "all" || filter === taxonomy || (filter === "mcp" && transport === "mcp");
+  return filter === "all" || filter === taxonomy || (filter === "mcp" && (taxonomy === "connection" || transport === "mcp"));
 }
 
 export function extensionFilterLabel(filter: ExtensionInventoryFilter) {

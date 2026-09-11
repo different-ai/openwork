@@ -4,6 +4,8 @@ import { MCP_QUICK_CONNECT, type McpDirectoryInfo } from "../src/app/constants";
 import { BUILT_IN_OPENWORK_EXTENSION_MANIFESTS } from "../src/app/extensions";
 import {
   matchesExtensionFilter,
+  extensionInventoryFilters,
+  primaryLibraryFilter,
   taxonomyForDirectoryEntry,
 } from "../src/react-app/domains/settings/extension-taxonomy";
 
@@ -14,6 +16,14 @@ function builtInEntry(id: string): McpDirectoryInfo {
 }
 
 describe("extension taxonomy", () => {
+  test("only MCPs, Skills, and Plugins are primary, with MCPs as the default", () => {
+    expect(extensionInventoryFilters).toEqual(["mcp", "skill", "plugin"]);
+    expect(primaryLibraryFilter()).toBe("mcp");
+    expect(primaryLibraryFilter("all")).toBe("mcp");
+    expect(primaryLibraryFilter("connection")).toBe("mcp");
+    expect(primaryLibraryFilter("skill")).toBe("skill");
+    expect(primaryLibraryFilter("plugin")).toBe("plugin");
+  });
   test("built-ins are apps because they run on this device", () => {
     for (const id of ["openwork-browser", "computer-use", "ollama"]) {
       expect(taxonomyForDirectoryEntry(builtInEntry(id))).toBe("app");
@@ -43,9 +53,9 @@ describe("extension taxonomy", () => {
     expect(matchesExtensionFilter("agent", "command")).toBe(false);
   });
 
-  test("the MCP filter includes MCP-backed connections but excludes native connections", () => {
+  test("the MCP filter includes both MCP-backed and native connections", () => {
     expect(matchesExtensionFilter("mcp", "connection", "mcp")).toBe(true);
-    expect(matchesExtensionFilter("mcp", "connection", "native")).toBe(false);
+    expect(matchesExtensionFilter("mcp", "connection", "native")).toBe(true);
     expect(matchesExtensionFilter("mcp", "mcp", null)).toBe(true);
   });
 });

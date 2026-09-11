@@ -1,7 +1,7 @@
 import { browserScript } from "@openwork/testkit";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { createAndSelectWorkspace, evalIn, waitFor } from "@openwork/behaviors";
+import { clickText, createAndSelectWorkspace, evalIn, waitFor } from "@openwork/behaviors";
 import { app, needs, server, test } from "@openwork/testkit";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -49,9 +49,10 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     { timeoutMs: 60_000, label: "signed-in Library" },
   );
 
-  // Signed-in inventory shows the built-in extension catalog. The regression
+  // Advanced shows the built-in extension catalog. The regression
   // this spec guards against fires on the Library route itself: repeated Den
   // settings echoes retrigger provider sync and remove/re-add inventory cards.
+  await clickText(desktopApp, "Advanced", { selector: 'button[aria-expanded="false"]' });
   await waitFor(
     desktopApp,
     () => (document.body.innerText.includes("READY TO USE")
