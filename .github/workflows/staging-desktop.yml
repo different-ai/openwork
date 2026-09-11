@@ -1,0 +1,416 @@
+name: Stage Desktop App
+
+on:
+  push:
+    tags:
+      - "v*-staging.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing staging tag to build (vX.Y.Z-staging.N)"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: staging-desktop-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-staging:
+    name: Prepare Staging Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      base_version: ${{ steps.version.outputs.base_version }}
+      source_version: ${{ steps.version.outputs.source_version }}
+    steps:
+      - name: Checkout staging tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Resolve staging version
+        id: version
+        env:
+          STAGING_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: node scripts/release/staging-version.mjs --tag "$STAGING_TAG" --github-output "$GITHUB_OUTPUT"
+
+      - name: Verify tag belongs to dev
+        env:
+          STAGING_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin dev --no-tags
+          tag_commit="$(git rev-list -n 1 "$STAGING_TAG")"
+          if [ -z "$tag_commit" ] || ! git merge-base --is-ancestor "$tag_commit" origin/dev; then
+            echo "Staging tag $STAGING_TAG must point to a commit reachable from dev." >&2
+            exit 1
+          fi
+
+      - name: Create draft staging prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGING_TAG: ${{ steps.version.outputs.tag }}
+          STAGING_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_VERSION: ${{ steps.version.outputs.source_version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$STAGING_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $STAGING_TAG already exists; reusing it."
+            exit 0
+          fi
+
+          body_file="$RUNNER_TEMP/staging-release.md"
+          {
+            echo "## OpenWork staging build"
+            echo
+            echo "Candidate version: \`$STAGING_VERSION\`"
+            echo "Source package version: \`$SOURCE_VERSION\`"
+            echo "Source commit: \`$GITHUB_SHA\`"
+            echo
+            echo "This prerelease contains public desktop artifacts for validation before a stable release."
+            echo "It does not publish npm packages, sidecar releases, Daytona snapshots, AUR updates, or stable updater metadata."
+          } > "$body_file"
+
+          gh release create "$STAGING_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OpenWork $STAGING_VERSION (staging)" \
+            --notes-file "$body_file" \
+            --verify-tag \
+            --draft \
+            --prerelease
+
+  build-staging:
+    name: Build Staging (${{ matrix.artifact }})
+    needs: prepare-staging
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 120
+    env:
+      STAGING_TAG: ${{ needs.prepare-staging.outputs.tag }}
+      STAGING_BUILD_VERSION: ${{ needs.prepare-staging.outputs.base_version }}
+      MACOS_NOTARIZE: ${{ vars.STAGING_MACOS_NOTARIZE || vars.MACOS_NOTARIZE || 'true' }}
+      SIGN_WINDOWS: ${{ vars.STAGING_SIGN_WINDOWS || 'false' }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID || vars.SIGNPATH_ORGANIZATION_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || vars.SIGNPATH_PROJECT_SLUG }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+      SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ secrets.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            os_type: macos
+            artifact: staging-macos-arm64
+            electron_args: "--mac --arm64"
+            target_triple: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            artifact: staging-macos-x64
+            electron_args: "--mac --x64"
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: staging-linux-x64
+            electron_args: "--linux --x64"
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            artifact: staging-linux-arm64
+            electron_args: "--linux --arm64"
+            target_triple: aarch64-unknown-linux-gnu
+          - platform: windows-2022
+            os_type: windows
+            artifact: staging-windows-x64
+            electron_args: "--win --x64"
+            target_triple: x86_64-pc-windows-msvc
+          - platform: windows-11-arm
+            os_type: windows
+            artifact: staging-windows-arm64
+            electron_args: "--win --arm64"
+            target_triple: aarch64-pc-windows-msvc
+
+    steps:
+      - name: Checkout staging tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.STAGING_TAG }}
+          fetch-depth: 0
+
+      - name: Enable git long paths (Windows)
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-staging-electron-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-staging-electron-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Stamp staging version
+        run: node scripts/release/staging-version.mjs --tag "$STAGING_TAG" --write
+
+      - name: Write Electron notary API key (macOS)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+        env:
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_NOTARY_API_KEY_P8_BASE64 \
+            APPLE_NOTARY_API_KEY_ID \
+            APPLE_NOTARY_API_ISSUER_ID \
+            APPLE_CODESIGN_CERT_P12_BASE64 \
+            APPLE_CODESIGN_CERT_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing staging macOS signing secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          notary_key_path="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$notary_key_path"
+          chmod 600 "$notary_key_path"
+          echo "NOTARY_KEY_PATH=$notary_key_path" >> "$GITHUB_ENV"
+
+      - name: Reject unnotarized macOS staging build
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
+        shell: bash
+        run: |
+          echo "macOS staging artifacts must be signed and notarized." >&2
+          exit 1
+
+      - name: Build Electron app
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target_triple }}
+        run: pnpm --filter @openwork/desktop build:electron
+
+      - name: Package Electron (macOS, signed + notarized)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            --config.buildVersion "$STAGING_BUILD_VERSION" \
+            ${{ matrix.electron_args }} \
+            --publish never
+
+      - name: Package Electron (Linux)
+        if: matrix.os_type == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            --config.buildVersion "$STAGING_BUILD_VERSION" \
+            ${{ matrix.electron_args }} \
+            --publish never
+
+      - name: Package Electron (Windows)
+        if: matrix.os_type == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            --config.buildVersion "$STAGING_BUILD_VERSION" \
+            ${{ matrix.electron_args }} \
+            --publish never
+
+      - name: Validate SignPath configuration (Windows)
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            SIGNPATH_API_TOKEN \
+            SIGNPATH_ORGANIZATION_ID \
+            SIGNPATH_PROJECT_SLUG \
+            SIGNPATH_SIGNING_POLICY_SLUG; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing staging Windows SignPath configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Stage unsigned Windows installer for SignPath
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/signpath-unsigned"
+          shopt -s nullglob
+          installers=(apps/desktop/dist-electron/openwork-win-*.exe)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            printf 'Expected exactly one unsigned Windows installer, found %s.\n' "${#installers[@]}" >&2
+            exit 1
+          fi
+          cp "${installers[0]}" "$RUNNER_TEMP/signpath-unsigned/"
+
+      - name: Upload unsigned Windows installer for SignPath
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        id: upload-unsigned-windows-installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-${{ matrix.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/signpath-unsigned/*.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Submit Windows signing request to SignPath
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true' && env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG == ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-windows-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed
+
+      - name: Submit Windows signing request (artifact configuration)
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true' && env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-windows-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed
+
+      - name: Apply signed Windows installer
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        shell: bash
+        run: node scripts/release/apply-signpath-windows-artifact.mjs "$RUNNER_TEMP/signpath-signed" apps/desktop/dist-electron
+
+      - name: Warn about unsigned Windows staging build
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS != 'true'
+        shell: bash
+        run: echo "::warning::Publishing an unsigned Windows staging installer because STAGING_SIGN_WINDOWS is not enabled."
+
+      - name: Upload staging release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(apps/desktop/dist-electron/openwork-*)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No Electron staging assets found." >&2
+            exit 1
+          fi
+          gh release upload "$STAGING_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Upload updater manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: apps/desktop/dist-electron/latest*.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-staging:
+    name: Publish Staging Prerelease
+    needs: [prepare-staging, build-staging]
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare-staging.outputs.tag }}
+    steps:
+      - name: Checkout staging tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-staging.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Download updater manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: staging-*
+          path: ${{ runner.temp }}/staging-electron-manifests
+
+      - name: Upload merged updater manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGING_TAG: ${{ needs.prepare-staging.outputs.tag }}
+        run: node scripts/release/publish-electron-assets.mjs --manifests-only "$RUNNER_TEMP/staging-electron-manifests" "$STAGING_TAG"
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGING_TAG: ${{ needs.prepare-staging.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$STAGING_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --prerelease
