@@ -13,7 +13,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-test("agents see which sessions are working, and archiving a working one asks the person while naming target and requester instead of stalling the bridge", async ({ world, user, agent, probe, step }) => {
+test("agents see which sessions are working, archiving a working one asks the person naming target and requester, and stopping one by id is attributed to the requester", async ({ world, user, agent, probe, step }) => {
   const { a1, a2, b1 } = world;
   const routeA = `#/workspace/${a1.workspaceId}/session/${a1.sessionId}`;
   const aborts = async () => (await world.facts()).requests.filter(request => request.action === "abort");
@@ -58,6 +58,7 @@ test("agents see which sessions are working, and archiving a working one asks th
     };
     expect(describe("session.list_sessions")).toContain("`working`");
     expect(describe("session.archive")).toContain("awaiting_user_confirmation");
+    expect(describe("session.stop")).toContain("attributes the stop to you");
   });
 
   await step("another agent archiving a working session gets awaiting_user_confirmation at once while the dialog names target and requester", async () => {
@@ -135,5 +136,41 @@ test("agents see which sessions are working, and archiving a working one asks th
     expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
     expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
     expect(await aborts()).toEqual([]);
+  });
+
+  await step("an agent stops a working other-session by id: its run ends, nothing navigates, and the notification names target and requester", async () => {
+    const stopVia = (origin: string, target: string) => bridged({ id: "session.stop", args: { sessionId: target }, origin: { sessionId: origin } });
+    expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    const result = await stopVia(a2.sessionId, b1.sessionId);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ ok: true, id: "session.stop", result: { ok: true, sessionId: b1.sessionId, title: b1.title, stopped: true } });
+    await user.notSee({ text: "This session is still working" });
+    await probe.eventually(() => session(b1.sessionId), { within: 30_000, label: "B's run ends", until: entry => entry?.status === "idle" });
+    expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "idle" });
+    expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    const stops = await aborts();
+    expect(stops.length).toBeGreaterThan(0);
+    expect(stops.every(request => request.sessionId === b1.sessionId)).toBe(true);
+    expect(await probe.hash()).toBe(routeA);
+
+    const attribution = `Requested by The agent in "${a2.title}" ${a2.sessionId}`;
+    await user.see({ text: `Session stopped: ${b1.title}` });
+    await user.see({ text: attribution });
+    await user.screenshot();
+    const persisted = await probe.storage("openwork:notifications:v1");
+    const entries = isRecord(persisted) && isRecord(persisted.state) && Array.isArray(persisted.state.notifications) ? persisted.state.notifications : [];
+    expect(entries).toContainEqual(expect.objectContaining({
+      kind: "system",
+      title: `Session stopped: ${b1.title}`,
+      body: attribution,
+      action: { type: "open-session", workspaceId: b1.workspaceId, sessionId: b1.sessionId },
+      actionLabel: "View",
+    }));
+
+    // Idempotent, and unknown ids are a structured error rather than a dialog.
+    expect((await stopVia(a2.sessionId, b1.sessionId)).body).toMatchObject({ ok: true, result: { ok: true, sessionId: b1.sessionId, alreadyIdle: true } });
+    expect((await stopVia(a2.sessionId, "ses_does_not_exist")).body).toMatchObject({ ok: false, error: "Session was not found in the current session list" });
+    expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    await user.notSee({ text: "This session is still working" });
   });
 });

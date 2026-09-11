@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
+import { notifyEvent } from "@/react-app/shell/notifications";
 import { workspaceLabel, type RouteSession, type RouteWorkspace } from "@/react-app/shell/route-workspaces";
 import { readLastSessionFor, writeLastSessionFor } from "@/react-app/shell/session-memory";
 import { workspaceSessionRoute } from "@/react-app/shell/workspace-routes";
@@ -42,6 +43,22 @@ export type ArchiveSessionOptions = {
   /** Called once when the "still working" dialog opens so a bridged caller can answer before the person does. */
   onAwaitingConfirmation?: (target: { sessionId: string; title: string; requestedBy: ArchiveRequester | null }) => void;
 };
+
+/** `session.stop`: the Stop button for any loaded session, without archiving or navigating. */
+export type StopSessionOutcome =
+  | { ok: true; sessionId: string; title: string; stopped: true }
+  | { ok: true; sessionId: string; title: string; alreadyIdle: true }
+  | { ok: false; sessionId: string; error: string };
+
+type ArchiveRun = ArchiveSessionOptions & { stopOnly?: (outcome: StopSessionOutcome) => void };
+
+function requesterLabel(requestedBy: ArchiveRequester, sessionId: string): string {
+  if (requestedBy.sessionId === sessionId) return t("session_management.archive_requested_by_self");
+  const who = requestedBy.title
+    ? t("session_management.archive_requested_by_agent", { title: requestedBy.title })
+    : t("session_management.archive_requested_by_agent_untitled");
+  return `${who} ${requestedBy.sessionId}`;
+}
 
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
@@ -130,9 +147,30 @@ export function useSessionArchive(input: {
     });
   }
 
-  async function archive(target: ArchiveTarget, confirmed: boolean, request?: ArchiveSessionOptions) {
-    if (busy.current) return;
+  /** Stopped on an agent's request: say so where the person will see it, durably. */
+  function announceStop(target: ArchiveTarget) {
+    const title = t("session_management.session_stopped", { title: target.title });
+    const requestedBy = target.requestedBy ? requesterLabel(target.requestedBy, target.sessionId) : null;
+    const body = requestedBy ? t("session_management.stopped_requested_by", { requester: requestedBy }) : undefined;
+    const view = () => { if (mounted.current) current.current.input.navigateToWorkspaceSession(target.workspace.id, target.sessionId); };
+    toast(<span title={title}>{title}</span>, { id: `session-stop:${target.sessionId}`, description: body, action: { label: t("common.view"), onClick: view } });
+    notifyEvent({
+      kind: "system",
+      severity: "info",
+      title,
+      body,
+      action: { type: "open-session", workspaceId: target.workspace.id, sessionId: target.sessionId },
+      actionLabel: t("common.view"),
+    });
+  }
+
+  async function archive(target: ArchiveTarget, confirmed: boolean, request?: ArchiveRun) {
+    if (busy.current) {
+      request?.stopOnly?.({ ok: false, sessionId: target.sessionId, error: "Another stop or archive is still in progress. Try again in a moment." });
+      return;
+    }
     busy.current = true;
+    const stopOnly = request?.stopOnly;
     const askUser = () => {
       if (!mounted.current) return closeDialog("cancelled");
       setTarget(target);
@@ -176,13 +214,14 @@ export function useSessionArchive(input: {
       // Native Stop reaches the root immediately, concurrent with discovery.
       // Archive also accounts for older/background subtasks that would be hidden.
       let rootStop: Promise<void> | undefined;
-      if (confirmed) {
-        if (mounted.current) { setStopping(true); setError(null); }
+      const beginStop = () => {
+        if (mounted.current && !stopOnly) { setStopping(true); setError(null); }
         hold(sessionId);
         cancelLocal(sessionId);
         rootStop = stop(sessionId);
         void rootStop.catch(() => {});
-      }
+      };
+      if (confirmed && !stopOnly) beginStop();
       const ids = await readTree();
       const readWorking = async () => {
         const [permissions, questions] = await Promise.all([
@@ -220,6 +259,13 @@ export function useSessionArchive(input: {
               useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[id]?.compacting);
         });
       };
+      if (stopOnly) {
+        // Idempotent: a session with nothing running, queued, or awaiting is left alone.
+        const active = (await readWorking()).length > 0
+          || ids.some(id => localWork(id) || sessionHasPendingSubmission(baseUrl, id) || getQueuedDrainState(id).phase.kind === "sending");
+        if (!active) { stopOnly({ ok: true, sessionId, title: target.title, alreadyIdle: true }); return; }
+        beginStop();
+      }
       if (!confirmed && (await readWorking()).length > 0) {
         askUser();
         return;
@@ -243,6 +289,11 @@ export function useSessionArchive(input: {
       if ((await readTree()).some(id => !ids.includes(id))) throw new Error("A new subtask appeared. Try again to include it.");
       controller.signal.throwIfAborted();
       for (const id of ids) cancelLocal(id);
+      if (stopOnly) {
+        announceStop(target);
+        stopOnly({ ok: true, sessionId, title: target.title, stopped: true });
+        return;
+      }
       await setSessionArchived(client, sessionId, true, workspace.path);
       archived = true;
       await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, true)));
@@ -260,7 +311,8 @@ export function useSessionArchive(input: {
       if (mounted.current) await current.current.input.reloadWorkspaceSessions(workspace.id);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (mounted.current && confirmed && !archived) setError(`The session has not been archived. ${message}`);
+      if (stopOnly) stopOnly({ ok: false, sessionId, error: `The session has not been stopped. ${message}` });
+      else if (mounted.current && confirmed && !archived) setError(`The session has not been archived. ${message}`);
       else {
         toast.error(archived ? "Could not refresh sessions" : t("session_management.archive_failed"), { description: message });
         closeDialog(archived ? "done" : "cancelled");
@@ -282,18 +334,31 @@ export function useSessionArchive(input: {
     return null;
   }
 
-  async function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
-    if (busy.current || pending.current) return "cancelled";
+  function resolveTarget(sessionId: string, options?: ArchiveSessionOptions): ArchiveTarget | { error: string } {
     const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
-    const endpoint = workspace && input.endpointForWorkspace(workspace);
-    if (!workspace || !endpoint || isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) {
-      toast.error(endpoint && isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : "The session's workspace is not connected.");
-      return "cancelled";
-    }
+    if (!workspace) return { error: "Session was not found in the current session list" };
+    const endpoint = input.endpointForWorkspace(workspace);
+    if (!endpoint) return { error: "The session's workspace is not connected." };
+    if (isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) return { error: V2_SESSION_ARCHIVE_UNAVAILABLE };
     const title = sessionTitle(sessionId) ?? t("session.default_title");
     const requester = options?.requester?.sessionId.trim();
     const requestedBy = requester ? { sessionId: requester, title: sessionTitle(requester) } : null;
-    const target = { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
+    return { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
+  }
+
+  function stopSession(sessionId: string, options?: ArchiveSessionOptions): Promise<StopSessionOutcome> {
+    const target = resolveTarget(sessionId, options);
+    if ("error" in target) return Promise.resolve({ ok: false, sessionId, error: target.error });
+    return new Promise<StopSessionOutcome>(resolve => { void archive(target, true, { ...options, stopOnly: resolve }); });
+  }
+
+  async function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
+    if (busy.current || pending.current) return "cancelled";
+    const target = resolveTarget(sessionId, options);
+    if ("error" in target) {
+      toast.error(target.error);
+      return "cancelled";
+    }
     if (!archived) return (await restore(target, true)) ? "done" : "cancelled";
     return new Promise<ArchiveSessionOutcome>(resolve => {
       pending.current = resolve;
@@ -303,6 +368,7 @@ export function useSessionArchive(input: {
 
   return {
     archiveSession,
+    stopSession,
     archiveDialog: (
       <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog("cancelled"); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
@@ -327,17 +393,7 @@ export function useSessionArchive(input: {
                   {target.requestedBy ? (
                     <div>
                       <dt>{t("session_management.archive_requested_by")}</dt>
-                      <dd className="select-text [overflow-wrap:anywhere]">
-                        {target.requestedBy.sessionId === target.sessionId
-                          ? t("session_management.archive_requested_by_self")
-                          : <>
-                            {target.requestedBy.title
-                              ? t("session_management.archive_requested_by_agent", { title: target.requestedBy.title })
-                              : t("session_management.archive_requested_by_agent_untitled")}
-                            {" "}
-                            <span className="font-mono">{target.requestedBy.sessionId}</span>
-                          </>}
-                      </dd>
+                      <dd className="select-text [overflow-wrap:anywhere]">{requesterLabel(target.requestedBy, target.sessionId)}</dd>
                     </div>
                   ) : null}
                 </dl>

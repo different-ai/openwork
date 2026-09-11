@@ -2058,6 +2058,8 @@ export default {
   "session_management.archive_requested_by_agent": "The agent in \"{title}\"",
   "session_management.archive_requested_by_agent_untitled": "The agent in session",
   "session_management.archive_requested_by_self": "This session itself, from its own running turn",
+  "session_management.session_stopped": "Session stopped: {title}",
+  "session_management.stopped_requested_by": "Requested by {requester}",
   "session_management.keep_session_open": "Keep session open",
   "session_management.stop_and_archive": "Stop and archive",
   "session_management.stopping": "Stopping...",
