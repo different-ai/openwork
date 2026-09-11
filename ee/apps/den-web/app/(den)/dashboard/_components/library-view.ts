@@ -13,12 +13,20 @@ export const LIBRARY_KINDS: readonly { value: LibraryKind; label: string }[] = [
   { value: "skills", label: "Skills" },
   { value: "plugins", label: "Plugins" },
 ];
+// Match Desktop's wording, but only show states supplied by Den's member
+// inventory. Local/hidden/disabled workspace items are not Den records.
 export const LIBRARY_STATES: readonly { value: LibraryState; label: string }[] = [
   { value: "ready", label: "Ready to use" },
   { value: "needs_signin", label: "Needs your sign-in" },
   { value: "needs_admin_setup", label: "Needs admin setup" },
-  { value: "needs_setup", label: "Needs setup" },
+  { value: "needs_setup", label: "Ready to set up" },
 ];
+
+export type LibraryEmptyState = {
+  title: string;
+  description: string;
+  action: "add" | "clear_filters" | LibraryState;
+};
 
 export function parseLibraryLayout(value: string | null): LibraryLayout {
   return value === "list" ? "list" : "grid";
@@ -83,8 +91,9 @@ export function getLibraryView(items: readonly LibraryItem[], kind: LibraryKind,
   const visibleItems = kindItems.filter((item) => getLibraryState(item) === activeState
     && (!normalizedQuery || item.name.toLowerCase().includes(normalizedQuery) || item.description?.toLowerCase().includes(normalizedQuery)));
   const label = kind === "mcps" ? "MCPs" : kind;
-  const empty = normalizedQuery
-    ? { title: `No ${label} match your search`, description: "Try a different search or clear it to see this tab.", action: "clear_search" }
+  const nextState = LIBRARY_STATES.find((tab) => counts[tab.value] > 0)?.value ?? "ready";
+  const empty: LibraryEmptyState = normalizedQuery
+    ? { title: "No library items match these filters.", description: "Try changing your search or filters.", action: "clear_filters" }
     : kindItems.length === 0
       ? {
           title: `No ${label} yet`,
@@ -98,15 +107,13 @@ export function getLibraryView(items: readonly LibraryItem[], kind: LibraryKind,
       : activeState === "ready"
         ? {
             title: `No ${label} ready to use`,
-            description: counts.needs_signin > 0
-              ? "Sign in to your account to start using them."
-              : "Setup needs to be completed before you can use them.",
-            action: counts.needs_signin > 0 ? "needs_signin" : counts.needs_admin_setup > 0 ? "needs_admin_setup" : "needs_setup",
+            description: "Your items need attention before they are ready. Choose a status to review the next step.",
+            action: nextState,
           }
         : {
-            title: `No ${label} need ${activeState === "needs_signin" ? "your sign-in" : activeState === "needs_admin_setup" ? "admin setup" : "setup"}`,
-            description: "Check another status tab for your items.",
-            action: "ready",
+            title: "No items in this state",
+            description: "Try changing your search or filters.",
+            action: nextState,
           };
   return { counts, tabs, activeState, visibleItems, empty };
 }

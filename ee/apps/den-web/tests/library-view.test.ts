@@ -4,7 +4,7 @@ import { act, createElement, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { LibraryConnectionItem, LibraryItem, LibraryPluginItem } from "../app/(den)/dashboard/_components/library-data";
-import { LibraryRow } from "../app/(den)/dashboard/_components/library-screen";
+import { LibraryAddControl, LibraryEmpty, LibraryRow } from "../app/(den)/dashboard/_components/library-screen";
 import { DashboardHeaderActions, DashboardHeaderActionsProvider, DashboardHeaderActionsSlot } from "../app/(den)/dashboard/_components/dashboard-header-actions";
 import {
   getLibraryAddAction,
@@ -15,6 +15,8 @@ import {
   LIBRARY_DEFAULT_KIND,
   LIBRARY_DEFAULT_STATE,
   LIBRARY_KINDS,
+  LIBRARY_STATES,
+  type LibraryLayout,
   parseLibraryLayout,
 } from "../app/(den)/dashboard/_components/library-view";
 
@@ -36,6 +38,8 @@ describe("My Library filters", () => {
     expect(LIBRARY_KINDS.map((kind) => kind.label)).toEqual(["MCPs", "Skills", "Plugins"]);
     expect(LIBRARY_DEFAULT_KIND).toBe("mcps");
     expect(LIBRARY_DEFAULT_STATE).toBe("ready");
+    // Den does not invent Desktop's local/hidden/disabled states.
+    expect(LIBRARY_STATES.map((state) => state.label)).toEqual(["Ready to use", "Needs your sign-in", "Needs admin setup", "Ready to set up"]);
     const view = getLibraryView(items, LIBRARY_DEFAULT_KIND, LIBRARY_DEFAULT_STATE, "");
     expect(view.tabs.map((tab) => tab.label)).toEqual(["Ready to use", "Needs your sign-in"]);
     expect(view.visibleItems).toEqual([mcp]);
@@ -74,8 +78,10 @@ describe("My Library filters", () => {
       expect(view.activeState).toBe(state);
       expect(view.visibleItems).toEqual([]);
     }
-    expect(getLibraryView([mcp], "mcps", "needs_admin_setup", "").empty.title).toBe("No MCPs need admin setup");
-    expect(getLibraryView([mcp], "mcps", "needs_setup", "").empty.title).toBe("No MCPs need setup");
+    expect(getLibraryView([mcp], "mcps", "needs_admin_setup", "").empty.title).toBe("No items in this state");
+    expect(getLibraryView([mcp], "mcps", "needs_setup", "").empty.title).toBe("No items in this state");
+    // Recovery goes to a populated state, not back to an equally empty Ready tab.
+    expect(getLibraryView([native], "mcps", "needs_setup", "").empty.action).toBe("needs_signin");
   });
 
   test("counts only the selected kind, independently of search, without a source filter", () => {
@@ -141,7 +147,7 @@ describe("My Library empty states and entry points", () => {
   });
 
   test("does not confuse search misses or unavailable records with an empty catalog", () => {
-    expect(getLibraryView([], "mcps", "ready", "missing").empty.action).toBe("clear_search");
+    expect(getLibraryView([], "mcps", "ready", "missing").empty).toEqual({ title: "No library items match these filters.", description: "Try changing your search or filters.", action: "clear_filters" });
     expect(getLibraryView([native], "mcps", "ready", "").empty).toMatchObject({ title: "No MCPs ready to use", action: "needs_signin" });
     expect(getLibraryView([{ ...mcp, state: "needs_admin_setup" }], "mcps", "ready", "").empty.action).toBe("needs_admin_setup");
     expect(getLibraryView([{ ...mcp, state: "available" }], "mcps", "ready", "").empty.action).toBe("needs_setup");
@@ -172,6 +178,80 @@ describe("My Library empty states and entry points", () => {
     }
   });
 
+  test("matches neutral connected cards without treating plugin bundles as connected MCPs", () => {
+    const connectedMarkup = renderToStaticMarkup(createElement(LibraryRow, { item: mcp, isFocused: false, orgName: "Workspace", orgSlug: null, layout: "grid" }));
+    const link = connectedMarkup.match(/<a\b[^>]*>/)?.[0];
+    expect(link).toContain("bg-white");
+    expect(link).toContain("border-gray-200");
+    expect(link).not.toMatch(/(?:bg|border|ring)-(?:green|emerald)-/);
+    expect(connectedMarkup).toContain('data-library-ready=""');
+    expect(connectedMarkup).toContain("Connected");
+    expect(connectedMarkup).toContain("View details");
+    expect(connectedMarkup).toContain("Cloud");
+    const bundleMarkup = renderToStaticMarkup(createElement(LibraryRow, { item: plugin, isFocused: false, orgName: "Workspace", orgSlug: null, layout: "grid" }));
+    expect(bundleMarkup).toContain("Ready to use");
+    expect(bundleMarkup).not.toContain("Connected");
+    const pendingMarkup = renderToStaticMarkup(createElement(LibraryRow, { item: { ...mcp, state: "available" }, isFocused: false, orgName: "Workspace", orgSlug: null, layout: "grid" }));
+    expect(pendingMarkup).toContain("Ready to set up");
+    expect(pendingMarkup).not.toContain("data-library-ready=");
+  });
+
+  test("keeps person, team, catalog, and organization provenance in cards and rows", () => {
+    for (const edges of [
+      [{ kind: "person", sharedBy: { orgMembershipId: "member-1", name: "Test Member" }, grantedAt: "2026-09-11T10:00:00Z" }],
+      plugin.edges,
+      [{ kind: "catalog", marketplace: { id: "catalog-1", name: "Tools" } }],
+      [{ kind: "org_wide" }],
+    ] satisfies LibraryPluginItem["edges"][]) {
+      for (const layout of ["grid", "list"] satisfies LibraryLayout[]) {
+        const markup = renderToStaticMarkup(createElement(LibraryRow, { item: { ...plugin, edges }, isFocused: false, orgName: "Workspace", orgSlug: null, layout }));
+        expect(markup).toContain("data-library-source");
+        expect(markup).toContain(edges[0].kind === "person" ? "Shared by Test" : edges[0].kind === "team" ? "Design" : edges[0].kind === "catalog" ? "Catalog" : "Workspace");
+        expect(markup.match(/<a\s/g)).toHaveLength(1);
+      }
+    }
+  });
+
+  test("header Add stays focusable but has no destination when Den permissions forbid authoring", () => {
+    const disabledReason = "An organization admin manages additions to this Library.";
+    const blocked = renderToStaticMarkup(createElement(LibraryAddControl, { action: null, label: "Create skill", disabledReason }));
+    expect(blocked).toContain('aria-label="Create skill"');
+    expect(blocked).toContain('aria-disabled="true"');
+    expect(blocked).toContain(disabledReason);
+    expect(blocked).not.toContain("href=");
+    expect(blocked).not.toContain('disabled=""');
+    const action = getLibraryAddAction({ kind: "mcps", isAdmin: false, mcpConnections: true, orgSlug: null });
+    const enabled = renderToStaticMarkup(createElement(LibraryAddControl, { action, label: "Add MCP", disabledReason }));
+    expect(enabled).toContain('aria-label="View available MCPs"');
+    expect(enabled).toContain('href="/dashboard/your-connections"');
+    expect(enabled).not.toContain("/dashboard/mcp-connections");
+    expect(enabled.match(/<a\s/g)).toHaveLength(1);
+  });
+
+  test("empty-state recovery distinguishes a failed load from an empty inventory", () => {
+    const props = {
+      empty: getLibraryView([], "mcps", "ready", "").empty,
+      addAction: { label: "Add MCP", href: "/dashboard/mcp-connections" },
+      disabledReason: "Connections are not enabled for this organization.",
+      onAction: () => {}, onRefresh: () => {},
+    };
+    const failed = renderToStaticMarkup(createElement(LibraryEmpty, { ...props, error: "Try again later." }));
+    expect(failed).toContain("Your Library is unavailable");
+    expect(failed).toContain("Refresh");
+    expect(failed).not.toContain("No MCPs yet");
+    expect(failed).not.toContain("Add MCP");
+    const normal = renderToStaticMarkup(createElement(LibraryEmpty, props));
+    expect(normal).toContain("No MCPs yet");
+    expect(normal).toContain('href="/dashboard/mcp-connections"');
+    expect(normal).not.toContain("Your Library is unavailable");
+    const blocked = renderToStaticMarkup(createElement(LibraryEmpty, { ...props, addAction: null }));
+    expect(blocked).toContain(props.disabledReason);
+    expect(blocked).not.toContain("href=");
+    const noMatches = renderToStaticMarkup(createElement(LibraryEmpty, { ...props, empty: getLibraryView(items, "mcps", "needs_signin", "missing").empty }));
+    expect(noMatches).toContain("Clear filters");
+    expect(noMatches).not.toContain("Add MCP");
+  });
+
   test("defaults to grid and respects a persisted explicit list selection", () => {
     expect(parseLibraryLayout(null)).toBe("grid");
     expect(parseLibraryLayout("invalid")).toBe("grid");
@@ -183,8 +263,10 @@ describe("My Library empty states and entry points", () => {
     for (const layout of ["grid", "list"] satisfies ("grid" | "list")[]) {
       const connectionMarkup = renderToStaticMarkup(createElement(LibraryRow, { item: native, isFocused: false, orgName: "Workspace", orgSlug: null, layout }));
       expect(connectionMarkup).toContain('href="/dashboard/your-connections?connectionId=native-1"');
-      expect(connectionMarkup).toContain("Connect your account");
+      expect(connectionMarkup).not.toContain("Connected");
       expect(connectionMarkup).toContain("Sign in");
+      expect(connectionMarkup).toContain("Native");
+      expect(connectionMarkup).not.toContain("Local ·");
       expect(connectionMarkup.match(/<a\s/g)).toHaveLength(1);
       const pluginMarkup = renderToStaticMarkup(createElement(LibraryRow, { item: plugin, isFocused: true, orgName: "Workspace", orgSlug: null, layout }));
       expect(pluginMarkup).toContain('href="/dashboard/library/plugins/plugin-1"');
