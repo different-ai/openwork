@@ -117,8 +117,12 @@ function readBody(request: IncomingMessage): Promise<string> {
 function bearerToken(request: IncomingMessage): string | null {
   const header = request.headers.authorization;
   if (typeof header !== "string") return null;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  return match?.[1]?.trim() || null;
+  // Linear scan, no backtracking: "Bearer" + at least one space, then the token.
+  const trimmed = header.trim();
+  const scheme = trimmed.slice(0, 6);
+  const rest = trimmed.slice(6);
+  if (scheme.toLowerCase() !== "bearer" || rest === rest.trimStart()) return null;
+  return rest.trim() || null;
 }
 
 export function mockCloudSkillUri(name: string): string {
@@ -332,7 +336,10 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
       response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", ...headers });
       response.end(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
     } catch (error) {
-      writeJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+      // Keep the exception detail on the fixture's own stderr; the wire only
+      // carries a stable code so no stack or internal path is disclosed.
+      console.error(`[mock-cloud-skills] request handler failed: ${error instanceof Error ? error.message : String(error)}`);
+      writeJson(response, 500, { error: "mock_cloud_skills_error" });
     }
   });
 

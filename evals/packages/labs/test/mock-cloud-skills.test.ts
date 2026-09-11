@@ -164,6 +164,18 @@ test("advertises the Connect routing tools and records every tools/call by name"
   assert.equal((await mock.handshakes()).length, 1);
   const stream = await fetch(mock.agentUrl, { headers: { authorization: `Bearer ${token}` } });
   assert.equal(stream.status, 405);
+  // Scheme parsing is case-insensitive and tolerant of extra spacing, but a
+  // token glued to the scheme or a non-bearer scheme is anonymous, not accepted.
+  for (const [authorization, expected] of [
+    [`bearer   ${token}  `, 405],
+    [`BEARER ${token}`, 405],
+    [`Bearer${token}`, 401],
+    [`Basic ${token}`, 401],
+    ["Bearer ", 401],
+  ] as const) {
+    const probe = await fetch(mock.agentUrl, { headers: { authorization } });
+    assert.equal(probe.status, expected, `authorization ${JSON.stringify(authorization)}`);
+  }
   const health = await fetch(`${mock.url}/health`);
   assert.equal(health.status, 200);
   assert.throws(() => mock.publishSkill("account-a", { name: "Not Kebab", description: "x", body: "y" }));
