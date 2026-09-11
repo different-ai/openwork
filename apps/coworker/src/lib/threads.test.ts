@@ -271,6 +271,21 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
   const chatOnly = { models: catalog.models.filter((model) => !model.toolCall) };
   assert.equal(recommendModel(chatOnly), null, "nothing is recommended when no connected model can use tools");
   assert.equal(recommendModel({ models: catalog.models.filter((model) => model.providerId === "openrouter") }), null, "a deprecated model is never recommended");
+
+  // OpenCode's own catalog is selectable but never recommended; OpenWork's free
+  // model is, once the engine reports its provider, and a key on this Mac beats it.
+  const withoutAccount = connectedModelCatalog(fixtureCatalog({
+    connected: ["opencode", "openwork-free"],
+    default: { opencode: "big-pickle" },
+    all: [
+      fixtureProvider({ id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": { name: "Big Pickle", capabilities: { toolcall: true, reasoning: true } } } }),
+      fixtureProvider({ id: "openwork-free", name: "OpenWork", source: "custom", env: [], options: {}, models: { "openai/gpt-5.6-luna": { name: "Luna", capabilities: { toolcall: true, reasoning: true } } } }),
+    ],
+  }));
+  assert.deepEqual(withoutAccount.models.map((model) => [model.id, model.tier]), [["openwork-free/openai/gpt-5.6-luna", "free"], ["opencode/big-pickle", "opencode"]], "OpenCode's catalog sorts last");
+  assert.equal(recommendModel(withoutAccount)?.id, "openwork-free/openai/gpt-5.6-luna", "OpenWork's free model fills a blank when nothing of the person's own is connected");
+  assert.equal(recommendModel({ models: withoutAccount.models.filter((model) => model.providerId === "opencode") }), null, "OpenCode's catalog alone recommends nothing: it stays a deliberate choice");
+  assert.equal(recommendModel({ models: [...withoutAccount.models, ...local.models] })?.id, "anthropic/claude-haiku-4-5", "a key on this Mac still comes before the free model");
 });
 
 test("a retry the engine never moved on from reads as idle once its next attempt is long past", () => {

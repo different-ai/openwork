@@ -855,8 +855,10 @@ and `src/lib/onboarding-team.test.ts`.
 
 *Use this Mac* (and the same screen under OpenWork › AI models) gets a person
 without an account to a working coworker in a minute, using what they already
-pay for. One component (`ui/local-providers.tsx`; the rules in
-`lib/local-providers.ts`, detection in `electron/local-providers.mjs`) shows:
+pay for. The models the app promotes are OpenWork's own: the account's models
+after *Continue with OpenWork*, and OpenWork's free model for people without an
+account once it is released. One component (`ui/local-providers.tsx`; the rules
+in `lib/local-providers.ts`, detection in `electron/local-providers.mjs`) shows:
 
 - **Found on this Mac** — one flat row per thing the app found, with one line
   saying what Connect does, and **Connect**. Detection is presence-only and
@@ -900,8 +902,22 @@ pay for. One component (`ui/local-providers.tsx`; the rules in
   OpenCode lose it too; a key from the environment cannot be disconnected here
   and says where to remove it. A stored API key is labelled as a key, not a
   ChatGPT subscription, even when Codex credentials are also detected.
-- **A free model is ready now** — the free provider's default model (nothing
-  to set up); the default until something else is connected.
+- **OpenWork's free model** — the row for people without an account. It is
+  driven by the engine's `openwork-free` provider (standard Luna,
+  `OPENWORK_FREE_PROVIDER_ID` / `OPENWORK_FREE_MODEL_ID` in `lib/threads.ts`,
+  the same ids as the desktop's free-access contract). Until that free service
+  is released and connected, the row reads *Coming soon* and explains that
+  coworkers without an account will start there for free; it offers no
+  action and states no allowance terms. Once the provider appears in the catalog the row names
+  the model and offers *Start with this* / *Use for ‹coworker›*. The row never
+  points at OpenCode's own catalog.
+- **OpenCode's catalog (`opencode`) is not promoted.** It gets no row here and
+  no recommendation anywhere; its models stay listed last in the model picker
+  (tagged *OpenCode*) so a person can still choose them in settings and for
+  testing. The tier `opencode` in `lib/threads.ts` carries this: it is absent
+  from `MODEL_TIER_ORDER`, so `recommendModel` and the implicit Automatic
+  anchor never pick it, and the picker says why nothing is recommended
+  ("sign in to OpenWork or connect an AI provider") instead of hiding it.
 - **Add another** — **Choose** lists the well-known providers the AI service
   offers (OpenAI,
   Anthropic, Google, OpenRouter, GitHub Copilot, xAI, Mistral, Groq, DeepSeek)
@@ -914,19 +930,27 @@ pay for. One component (`ui/local-providers.tsx`; the rules in
   banner. **Set up ChatGPT** requires supported sign-in metadata found on this
   Mac; a generic OAuth method or installed ChatGPT app is not detection.
   **Explore templates** requires the current OpenAI OAuth connection with models;
-  **Explore models** can appear when only the existing free catalog is available.
+  **Explore models** can appear when nothing of the person's own is connected
+  (only OpenWork's free model or OpenCode's catalog answers).
   These are navigation only, dismissed per context for the session. They never
   select a model, import credentials or send work. Ordinary OpenAI sign-in remains
   available manually under Add another. Replacing an existing OpenAI connection
   requires disconnect confirmation; a saved entry requires deliberate replacement,
   and environment keys must be removed outside the app. Zero models is not usable
-  ChatGPT evidence. Anonymous inference and no-login growth remain deferred to
-  #4621 and its rollout, not included in this alpha candidate.
+  ChatGPT evidence. The free service itself (allowance, sign-in-free
+  credentials, version floor) is the desktop stack's #4620/#4644 and its Den
+  rollout; this app only reads the resulting `openwork-free` provider and
+  presents it as unavailable until then. No allowance, billing or promotion
+  terms are hardcoded here.
 
 When nobody chose a model, `recommendModel` prefers the OpenWork account, then
-a subscription or key on this Mac, then a local model server, then the free
-model; a model chosen on the local mode screen before the first coworker
-existed becomes that coworker's model. Existing coworkers keep their choice.
+a subscription or key on this Mac, then a local model server, then OpenWork's
+free model — never OpenCode's catalog; a model chosen on the local mode screen
+before the first coworker existed becomes that coworker's model. When only
+OpenCode's catalog is connected nothing is recommended: the coworker's model
+stays blank, the composer explains that a model is needed, and the person can
+still choose an OpenCode model in Coworker settings. Existing coworkers keep
+their choice.
 `coworker.md` records who chose (`modelChosenBy`: the app, the person, or
 unsaid — read as the person's), so the rule reads the same after a relaunch:
 a model the app picked is explained under the AI model in Coworker settings in

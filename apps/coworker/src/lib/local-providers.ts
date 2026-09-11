@@ -1,6 +1,6 @@
 /**
  * Local mode: the rules behind the "AI on this Mac" screen — what to list under
- * Found on this Mac, what counts as connected, the free model row, which
+ * Found on this Mac, what counts as connected, OpenWork's free model row, which
  * providers Add another offers, the connect state machine, and the plain
  * words every line uses. Pure; exercised by `local-providers.test.ts`.
  */
@@ -12,18 +12,19 @@ import type {
   ProviderSignInStart,
   ProviderSignInStatus,
 } from "./bridge";
-import { FREE_PROVIDER_ID, type EngineModelCatalog, type EngineModelOption } from "./threads.ts";
+import { OPENCODE_PROVIDER_ID, OPENWORK_FREE_MODEL_ID, OPENWORK_FREE_MODEL_LABEL, OPENWORK_FREE_PROVIDER_ID, type EngineModelCatalog, type EngineModelOption } from "./threads.ts";
 import { chatgptEvidence } from "./model-growth.ts";
 
 /** Everything a person reads on the local mode screen, in plain words. */
 export const LOCAL_MODE_COPY = {
   found: "Found on this Mac",
-  nothingFound: "Nothing to connect was found on this Mac. The free model is ready, or add something below.",
+  nothingFound: "Nothing to connect was found on this Mac. Sign in to OpenWork for its models, or add something below.",
   waitingService: "AI is starting up…",
   connected: "Connected",
-  freeTitle: "A free model is ready now",
-  freeDetail: (name: string) => (name ? `${name}. No setup, no account; coworkers start here until you connect something.` : "No setup, no account; coworkers start here until you connect something."),
-  freeUnavailable: "The free model is not reachable right now. Check your connection, then Refresh.",
+  freeTitle: "OpenWork's free model",
+  freeDetail: (name: string) => `${name}. Free from OpenWork, no account needed; coworkers start here until you connect something.`,
+  freeUnavailable: (name: string) => `${name} is not available yet. Once released, coworkers without an account start here for free. Until then, sign in to OpenWork or connect your own AI.`,
+  freeComingSoon: "Coming soon",
   addAnother: "Add another",
   choose: "Choose…",
   addAnotherDetail: "A provider you pay for, a key you already have, or a server you run.",
@@ -110,6 +111,7 @@ export type ConnectedRow = {
 export type LocalModePlan = {
   found: LocalProviderFinding[];
   connected: ConnectedRow[];
+  /** OpenWork's free model: `available` once the engine reports its provider; the label names it either way. */
   free: { available: boolean; modelLabel: string };
   addable: AddableProvider[];
 };
@@ -135,9 +137,9 @@ function connectedDetail(provider: EngineProviderSummary, findings: LocalProvide
 /**
  * What the local mode screen shows. A finding whose provider is already
  * connected moves out of Found, except a ChatGPT sign-in not used by that
- * connection. The free
- * provider is its own row; account providers are left to the OpenWork Cloud
- * group above.
+ * connection. OpenWork's free model is its own row; OpenCode's own catalog
+ * gets no row (it stays in the model picker, unpromoted); account providers
+ * are left to the OpenWork Cloud group above.
  */
 export function planLocalMode(input: {
   findings: LocalProviderFinding[];
@@ -150,7 +152,8 @@ export function planLocalMode(input: {
   const found = input.findings.filter((finding) => !connectedIds.has(finding.providerId) || finding.how === "unavailable"
     || (chatgpt.kind === "detected" && finding.id === chatgpt.findingId));
   const connected = input.readiness.providers
-    .filter((provider) => provider.connected && provider.id !== FREE_PROVIDER_ID && localModels.some((model) => model.providerId === provider.id))
+    .filter((provider) => provider.connected && provider.id !== OPENCODE_PROVIDER_ID && provider.id !== OPENWORK_FREE_PROVIDER_ID
+      && localModels.some((model) => model.providerId === provider.id))
     .map((provider) => ({
       providerId: provider.id,
       label: provider.name,
@@ -178,7 +181,7 @@ export function planLocalMode(input: {
   return {
     found,
     connected,
-    free: { available: freeModel !== null, modelLabel: freeModel?.modelLabel ?? "" },
+    free: { available: freeModel !== null, modelLabel: freeModel?.modelLabel ?? OPENWORK_FREE_MODEL_LABEL },
     addable,
   };
 }
@@ -203,11 +206,17 @@ export function openAiSetupGuard(
   return null;
 }
 
-/** The free model a coworker starts on: the free provider's default, else its newest tool-capable model. */
+/**
+ * OpenWork's free model, once the engine reports its provider: the standard
+ * free model first, else that provider's default, else its newest tool-capable
+ * model. Null until the free service is released and connected.
+ */
 export function pickFreeModel(catalog: Pick<EngineModelCatalog, "models">): EngineModelOption | null {
-  const free = catalog.models.filter((model) => model.providerId === FREE_PROVIDER_ID && model.toolCall && model.status !== "deprecated");
+  const free = catalog.models.filter((model) => model.providerId === OPENWORK_FREE_PROVIDER_ID && model.toolCall && model.status !== "deprecated");
   return [...free].sort((left, right) =>
-    Number(right.isProviderDefault) - Number(left.isProviderDefault) || right.releaseDate.localeCompare(left.releaseDate),
+    Number(right.modelId === OPENWORK_FREE_MODEL_ID) - Number(left.modelId === OPENWORK_FREE_MODEL_ID)
+    || Number(right.isProviderDefault) - Number(left.isProviderDefault)
+    || right.releaseDate.localeCompare(left.releaseDate),
   )[0] ?? null;
 }
 

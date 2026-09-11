@@ -7,7 +7,7 @@ import type { ModelPurpose } from "@/lib/model-defaults";
 import { chooseIndexedModel, MODEL_INTELLIGENCE_INDEX, type ModelSelectionPreferences } from "@/lib/model-intelligence";
 import {
   createCoworkerThreads,
-  modelSourceLabel,
+  modelOriginLabel,
   recommendModel,
   type EngineModelCatalog,
   type EngineModelOption,
@@ -25,7 +25,7 @@ export const AUTOMATIC_BLURB = "Picks a quick, standard, or deep model for each 
 function selectedDescription(option: EngineModelOption | undefined, value: string): string {
   if (!value) return "Choose a connected model, or use the recommendation below.";
   if (!option) return "This saved model is not currently available from a connected provider.";
-  return `${option.providerLabel} · ${option.modelId} · ${modelSourceLabel(option.source)}`;
+  return `${option.providerLabel} · ${option.modelId} · ${modelOriginLabel(option)}`;
 }
 
 /**
@@ -67,15 +67,15 @@ function ModelFacts({ model }: { model: EngineModelOption | undefined }) {
   );
 }
 
-function SourceTag({ source }: { source: EngineModelOption["source"] }) {
+function SourceTag({ source, tier }: Pick<EngineModelOption, "source" | "tier">) {
   return (
     <span
       className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] ${
-        source === "cloud" ? "bg-spark/14 text-[#b8caff]" : "bg-white/7 text-mist"
+        source === "cloud" || tier === "free" ? "bg-spark/14 text-[#b8caff]" : "bg-white/7 text-mist"
       }`}
       data-testid={`model-source-${source}`}
     >
-      {modelSourceLabel(source)}
+      {modelOriginLabel({ source, tier })}
     </span>
   );
 }
@@ -186,15 +186,17 @@ export function ModelPicker({
   });
   const groups = Array.from(
     visible.reduce((byProvider, option) => {
-      const group = byProvider.get(option.providerId) ?? { label: option.providerLabel, source: option.source, models: [] };
+      const group = byProvider.get(option.providerId) ?? { label: option.providerLabel, source: option.source, tier: option.tier, models: [] };
       group.models.push(option);
       byProvider.set(option.providerId, group);
       return byProvider;
-    }, new Map<string, { label: string; source: EngineModelOption["source"]; models: EngineModelOption[] }>()),
+    }, new Map<string, { label: string; source: EngineModelOption["source"]; tier: EngineModelOption["tier"]; models: EngineModelOption[] }>()),
   );
   const variants = selected?.variants ?? [];
   const variantUnavailable = Boolean(modelVariant && !variants.includes(modelVariant));
   const recommended = recommendModel(catalog);
+  // OpenCode's own catalog is listed, never recommended: say why nothing is recommended without hiding it.
+  const onlyUnpromoted = !recommended && catalog.models.some((option) => option.tier === "opencode" && option.toolCall && option.status !== "deprecated");
   const allowsDefault = forWorker || Boolean(defaultPurpose);
   const defaultLabel = defaultPurpose ? "Automatic (role-appropriate)" : "Use app default";
   const defaultDescription = defaultPurpose
@@ -328,7 +330,7 @@ export function ModelPicker({
               <StatusDot tone={!automatic && !value ? "mint" : "mist"} />
               <span className="min-w-0 flex-1">
                 <span className="block text-xs font-semibold text-snow">{allowsDefault ? defaultLabel : "Use recommended model"}</span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">{allowsDefault ? defaultDescription : recommended ? `Select ${recommended.modelLabel} from your connected models. You can change it any time.` : "No connected model can use tools yet."}</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">{allowsDefault ? defaultDescription : recommended ? `Select ${recommended.modelLabel} from your connected models. You can change it any time.` : onlyUnpromoted ? "Nothing to recommend yet: sign in to OpenWork or connect an AI provider. Any model listed below can still be chosen." : "No connected model can use tools yet."}</span>
               </span>
             </button>
 
@@ -342,7 +344,7 @@ export function ModelPicker({
               <div key={providerId} className="mt-2 border-t border-line pt-2" data-testid={`model-provider-${providerId}`}>
                 <p className="flex items-center gap-2 px-2 pb-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-mist">
                   <span className="truncate">{group.label}</span>
-                  <SourceTag source={group.source} />
+                  <SourceTag source={group.source} tier={group.tier} />
                 </p>
                 {group.models.map((option) => (
                   <button

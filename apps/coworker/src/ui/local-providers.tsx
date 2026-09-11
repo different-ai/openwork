@@ -373,7 +373,8 @@ export function LocalProviders({
   const offer = found && !refreshing && !error ? modelGrowthOffer({
     findings,
     readiness,
-    usingFreeModel: plan.free.available && catalog.models.every((model) => model.tier === "free"),
+    // Nothing of the person's own is connected: only OpenWork's free model or OpenCode's catalog answers.
+    usingFreeModel: catalog.models.length > 0 && catalog.models.every((model) => model.tier === "free" || model.tier === "opencode"),
     dismissedOfferIds: dismissed,
   }) : null;
 
@@ -653,10 +654,12 @@ export function LocalProviders({
         <FlatRow
           icon={<GiftIcon />}
           title={COPY.freeTitle}
-          line={loaded ? (plan.free.available ? COPY.freeDetail(plan.free.modelLabel) : COPY.freeUnavailable) : COPY.waitingService}
-          tone={loaded && !plan.free.available ? "amber" : undefined}
+          line={loaded ? (plan.free.available ? COPY.freeDetail(plan.free.modelLabel) : COPY.freeUnavailable(plan.free.modelLabel)) : COPY.waitingService}
           testId="free-model-row"
         >
+          {loaded && !plan.free.available ? (
+            <span className="text-[11px] text-mist" data-testid="free-model-coming-soon">{COPY.freeComingSoon}</span>
+          ) : null}
           {onStartModel && chooseLabel && freeModel ? (
             <Button variant="default" onClick={() => onStartModel(freeModel.id)} data-testid="free-model-choose">{chooseLabel}</Button>
           ) : null}

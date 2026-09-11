@@ -13,7 +13,7 @@ import {
 import { buildDenAccountUrl, denApiBase, describeSkippedProvider, type DenSession } from "@/lib/den";
 import {
   createCoworkerThreads,
-  modelSourceLabel,
+  modelOriginLabel,
   type EngineModelCatalog,
   type EngineModelOption,
   type ProgressModelOption,
@@ -37,7 +37,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = 
   { id: "general", label: "General", detail: "Coworker models, effort and activity preferences" },
   { id: "model-defaults", label: "Model defaults", detail: "Shared models for conversation, Workers and chat turn assignment" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
-  { id: "models", label: "AI models", detail: "What every coworker can use: your account, this Mac, and the free model" },
+  { id: "models", label: "AI models", detail: "What every coworker can use: your OpenWork account, this Mac, and OpenWork's free model" },
   { id: "engine", label: "AI & local setup", detail: "AI service, responsibilities on this Mac, and storage" },
   { id: "fresh-start", label: "Fresh start", detail: "A tour, a tune-up, or a new beginning" },
 ];
@@ -56,7 +56,7 @@ function modelLabel(coworker: CoworkerSummary, models: EngineModelOption[], cata
   if (usesAppConversationDefault(coworker)) return "App conversation default";
   if (!coworker.model) return "No model selected yet";
   const match = models.find((model) => model.id === coworker.model);
-  if (match) return `${match.label} · ${modelSourceLabel(match.source)}`;
+  if (match) return `${match.label} · ${modelOriginLabel(match)}`;
   return catalogLoaded ? `${coworker.model} · unavailable` : coworker.model;
 }
 

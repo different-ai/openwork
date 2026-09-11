@@ -86,7 +86,7 @@ export function OnboardingWelcome(props: WelcomeProps) {
                   <span className="text-[13px] font-semibold text-snow">Continue with OpenWork</span>
                   <span className="rounded-full bg-spark/15 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-[#b8caff]">Recommended</span>
                 </span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">Get your connected apps and available AI models. Cloud responsibilities are set up separately.</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">OpenWork's own AI models and your connected apps. Cloud responsibilities are set up separately.</span>
               </span>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 text-mist transition-colors group-hover:border-white/18 group-hover:text-snow">
                 <ArrowIcon />

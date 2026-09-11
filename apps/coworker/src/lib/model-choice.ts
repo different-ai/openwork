@@ -77,7 +77,9 @@ export function describeModelPick(model: Pick<EngineModelOption, "tier">): strin
       ? "from a subscription or key on this Mac"
       : model.tier === "local-server"
         ? "from a model server on this Mac"
-        : "the free model, nothing to set up";
+        : model.tier === "free"
+          ? "OpenWork's free model, no account needed"
+          : "from OpenCode's catalog";
   return `Chosen for you, ${source}. It stays until you pick one; if it can't answer, a model from the same provider may take over once at the same or lower known token prices.`;
 }
 
@@ -262,7 +264,9 @@ export function describeModelTier(model: Pick<EngineModelOption, "tier">): strin
     case "local-server":
       return "a local model server";
     case "free":
-      return "the free model";
+      return "OpenWork's free model";
+    case "opencode":
+      return "OpenCode's catalog";
   }
 }
 

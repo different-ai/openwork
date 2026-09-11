@@ -1,5 +1,12 @@
-import type { EngineModelOption } from "./threads.ts";
+import type { EngineModelOption, ModelTier } from "./threads.ts";
 import { MODEL_INTELLIGENCE_INDEX, normalizeModelSelectionPreferences, type ModelLane, type ModelSelectionPreferences, type RankingCriterion } from "./model-intelligence-index.ts";
+
+/**
+ * Tiers an implicit anchor may come from, best first; mirrors `MODEL_TIER_ORDER`
+ * in `threads.ts` (kept local to avoid a module cycle). OpenCode's own catalog
+ * is absent on purpose: it is selectable, never chosen for the person.
+ */
+const IMPLICIT_ANCHOR_TIERS: readonly ModelTier[] = ["cloud", "key", "local-server", "free"];
 
 export { modelSelectionDefaults, normalizeModelSelectionPreferences, MODEL_INTELLIGENCE_INDEX } from "./model-intelligence-index.ts";
 export type { ModelSelectionPreferences } from "./model-intelligence-index.ts";
@@ -98,12 +105,15 @@ function choose(catalog: { models: EngineModelOption[] }, lane: ModelLane, optio
   const excluded = new Set([...(options.exclude ?? []), ...preferences.avoided]);
   const decision = (model: EngineModelOption | null, reason: string): ModelSelectionDecision => ({ model, reason, indexVersion: MODEL_INTELLIGENCE_INDEX.version });
   const reasoning = (model: EngineModelOption) => model.intelligence ? model.intelligence.reasoning : booleanFact(model.reasoning);
-  const tiers = ["cloud", "key", "local-server", "free"];
   const anchor = options.standard !== undefined ? catalog.models.find((model) => model.id === options.standard)
-    : catalog.models.filter((model) => usable(model) && !excluded.has(model.id)).sort((a, b) =>
-      tiers.indexOf(a.tier) - tiers.indexOf(b.tier) || Number(b.isProviderDefault) - Number(a.isProviderDefault)
+    : catalog.models.filter((model) => usable(model) && !excluded.has(model.id) && IMPLICIT_ANCHOR_TIERS.includes(model.tier)).sort((a, b) =>
+      IMPLICIT_ANCHOR_TIERS.indexOf(a.tier) - IMPLICIT_ANCHOR_TIERS.indexOf(b.tier) || Number(b.isProviderDefault) - Number(a.isProviderDefault)
       || Number(reasoning(b) === true) - Number(reasoning(a) === true) || a.id.localeCompare(b.id))[0];
-  if (!anchor) return decision(null, "The standard model is unavailable; no implicit replacement was selected.");
+  if (!anchor) {
+    return decision(null, options.standard === undefined
+      ? "No model is set and none is recommended yet. Sign in to OpenWork or connect an AI provider, or choose a model in Coworker settings."
+      : "The standard model is unavailable; no implicit replacement was selected.");
+  }
   if (fallback && (preferences.avoided.includes(anchor.id) || !costsNoMoreThan(anchor, anchor))) return decision(null, "The original standard is avoided or lacks both known token prices; no fallback was selected.");
   if (!fallback && (!usable(anchor, true) || excluded.has(anchor.id))) return decision(null, "The standard model is excluded, avoided, deprecated, or reports unsupported tools/text.");
   if (lane === "standard" && !fallback) return decision(anchor, "Ordinary work keeps the standard model.");

@@ -68,7 +68,7 @@ export function ModelsMembershipCard({ session, baseUrl, onConnect, onRefreshMod
       <p className="mt-1 text-xs leading-5 text-mist">
         A separate monthly subscription for managed AI models. Keep your coworkers, conversations, and documents as you choose a model for the work.
       </p>
-      {!session ? <p className="mt-3 text-xs text-mist">Sign in to check your membership, or compare the current models and pricing. Your own provider and the free model remain available.</p> : null}
+      {!session ? <p className="mt-3 text-xs text-mist">Sign in to check your membership, or compare the current models and pricing. Your own providers stay available.</p> : null}
       {session && state.kind === "loading" ? <p className="mt-3 text-xs text-mist" role="status">Checking membership…</p> : null}
       {session && state.kind === "admin" ? <p className="mt-3 text-xs text-mist">Your workspace admin manages the membership and shared usage. Models already available to you can still be used here.</p> : null}
       {session && state.kind === "unavailable" ? <p className="mt-3 text-xs text-mist">Membership status is unavailable. Check in OpenWork or refresh; this does not mean you need another subscription.</p> : null}

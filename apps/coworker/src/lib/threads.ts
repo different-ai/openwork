@@ -99,15 +99,29 @@ export type ModelSource = "cloud" | "local";
 /**
  * What stands behind a model, in the order a coworker should prefer when
  * nobody chose: the OpenWork account, a subscription or key on this Mac, a
- * model server running on this Mac, and last the free model that needs
- * nothing at all.
+ * model server running on this Mac, and last OpenWork's free model that needs
+ * no account. OpenCode's own catalog (`opencode`) is a tier of its own: it
+ * stays selectable in settings and for testing, but the app never promotes it
+ * or picks it by itself.
  */
-export type ModelTier = "cloud" | "key" | "local-server" | "free";
+export type ModelTier = "cloud" | "key" | "local-server" | "free" | "opencode";
 
+/** The tiers the app may choose from on its own; `opencode` is deliberately absent. */
 export const MODEL_TIER_ORDER: readonly ModelTier[] = ["cloud", "key", "local-server", "free"];
 
-/** The provider whose models cost nothing and need no setup. */
-export const FREE_PROVIDER_ID = "opencode";
+/**
+ * OpenWork's free model for people without an account. The engine reports it
+ * as its own provider once the free service is connected; until that service
+ * is released the provider is absent and the app says the model is not
+ * available yet. The ids match the desktop's free-access contract (provider
+ * `openwork-free`, standard Luna) so both apps read the same catalog entry.
+ */
+export const OPENWORK_FREE_PROVIDER_ID = "openwork-free";
+export const OPENWORK_FREE_MODEL_ID = "openai/gpt-5.6-luna";
+export const OPENWORK_FREE_MODEL_LABEL = "Luna";
+
+/** The engine's own catalog provider: selectable, never recommended. */
+export const OPENCODE_PROVIDER_ID = "opencode";
 
 function isPrivateHost(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -133,8 +147,9 @@ export function isLocalServerProvider(provider: { id: string; options?: Record<s
 }
 
 export function modelTier(provider: { id: string; options?: Record<string, unknown> }, source: ModelSource): ModelTier {
+  if (provider.id === OPENWORK_FREE_PROVIDER_ID) return "free";
   if (source === "cloud") return "cloud";
-  if (provider.id === FREE_PROVIDER_ID) return "free";
+  if (provider.id === OPENCODE_PROVIDER_ID) return "opencode";
   return isLocalServerProvider(provider) ? "local-server" : "key";
 }
 
@@ -201,6 +216,16 @@ export function isCloudManagedProviderId(providerId: string): boolean {
 
 export function modelSourceLabel(source: ModelSource): string {
   return source === "cloud" ? "OpenWork Cloud" : "This Mac";
+}
+
+/**
+ * Where a model comes from, as a person reads it: the account, OpenWork's free
+ * model, OpenCode's own catalog, or something configured on this Mac.
+ */
+export function modelOriginLabel(model: Pick<EngineModelOption, "source" | "tier">): string {
+  if (model.tier === "free") return "OpenWork · free";
+  if (model.tier === "opencode") return "OpenCode";
+  return modelSourceLabel(model.source);
 }
 
 const VARIANT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
@@ -311,8 +336,10 @@ export function connectedModelCatalog(
     }),
   );
   // Account providers first: they are what "Continue with OpenWork" promised.
+  // OpenCode's own catalog last: listed, never promoted.
   models.sort((left, right) =>
     Number(right.source === "cloud") - Number(left.source === "cloud") ||
+    Number(left.tier === "opencode") - Number(right.tier === "opencode") ||
     left.providerLabel.localeCompare(right.providerLabel) ||
     Number(right.isProviderDefault) - Number(left.isProviderDefault) ||
     left.modelLabel.localeCompare(right.modelLabel),
@@ -324,10 +351,12 @@ export function connectedModelCatalog(
  * The model a coworker should start on when nobody chose one: a connected,
  * tool-capable, non-deprecated model from the best tier available — the
  * OpenWork account, then a subscription or key on this Mac, then a local model
- * server, and only then the free model — preferring the provider's own
- * default, then the newest release. Returns null when no connected model can
- * use tools, so the caller can say so instead of picking something that would
- * fail. Coworkers that chose a model keep it; this only fills a blank.
+ * server, and only then OpenWork's free model — preferring the provider's own
+ * default, then the newest release. OpenCode's own catalog is never
+ * recommended: a person can still choose it in settings. Returns null when no
+ * connected model in those tiers can use tools, so the caller can say so
+ * instead of picking something that would fail. Coworkers that chose a model
+ * keep it; this only fills a blank.
  */
 export function recommendModel(
   catalog: Pick<EngineModelCatalog, "models">,

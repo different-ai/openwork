@@ -24,8 +24,8 @@ const model = (name: string, extra: { release_date?: string; capabilities?: { to
   release_date: extra.release_date ?? "2026-01-01",
 });
 
-test("planLocalMode keeps findings out of Found once their provider is connected, lists connected local providers, and names the free model", () => {
-  const catalog = connectedModelCatalog(fixtureCatalog({
+test("planLocalMode keeps findings out of Found once their provider is connected, lists connected local providers, and names OpenWork's free model only once its provider is connected", () => {
+  const fixture = fixtureCatalog({
     connected: ["opencode", "openai", "google", "ollama"],
     default: { opencode: "big-pickle" },
     all: [
@@ -36,7 +36,8 @@ test("planLocalMode keeps findings out of Found once their provider is connected
       fixtureProvider({ id: "anthropic", name: "Anthropic", source: "custom", env: ["ANTHROPIC_API_KEY"], options: {}, models: { claude: model("Claude") } }),
       fixtureProvider({ id: "github-copilot", name: "GitHub Copilot", source: "custom", env: ["GITHUB_TOKEN"], options: {}, models: { gpt: model("GPT") } }),
     ],
-  }));
+  });
+  const catalog = connectedModelCatalog(fixture);
   const providers = [
     { id: "opencode", name: "OpenCode Zen", env: [], source: "custom", connected: true, modelCount: 2 },
     { id: "openai", name: "OpenAI", env: ["OPENAI_API_KEY"], source: "custom", connected: true, modelCount: 2 },
@@ -54,8 +55,23 @@ test("planLocalMode keeps findings out of Found once their provider is connected
   ];
   const plan = planLocalMode({ findings, readiness: { providers, signIns: { openai: [{ index: 0, label: "ChatGPT" }], "github-copilot": [{ index: 0, label: "Copilot" }] } }, catalog });
   assert.deepEqual(plan.found.map((entry) => entry.id), ["claude-code", "copilot"], "the Codex and key findings moved under Connected");
-  assert.deepEqual(plan.connected.map(({ providerId, canDisconnect }) => [providerId, canDisconnect]), [["google", false], ["ollama", true], ["openai", true]]);
-  assert.deepEqual(plan.free, { available: true, modelLabel: "Big Pickle" }, "the free provider's default is the free model");
+  assert.deepEqual(plan.connected.map(({ providerId, canDisconnect }) => [providerId, canDisconnect]), [["google", false], ["ollama", true], ["openai", true]], "OpenCode's own catalog gets no Connected row");
+  assert.deepEqual(plan.free, { available: false, modelLabel: "Luna" }, "OpenCode's free tier is not OpenWork's free model: until the free service is connected the row is named but unavailable");
+  assert.equal(pickFreeModel(catalog), null, "OpenCode's default is never picked as the free model");
+  const released = connectedModelCatalog(fixtureCatalog({
+    ...fixture,
+    connected: [...(fixture.connected ?? []), "openwork-free"],
+    all: [
+      ...(fixture.all ?? []),
+      fixtureProvider({ id: "openwork-free", name: "OpenWork", source: "custom", env: [], options: {}, models: { "openai/gpt-5.6-luna": model("Luna"), "openai/gpt-5.6-luna-mini": model("Luna mini", { release_date: "2026-09-10" }) } }),
+    ],
+  }));
+  const releasedPlan = planLocalMode({ findings, readiness: { providers: [...providers, { id: "openwork-free", name: "OpenWork", env: [], source: "custom", connected: true, modelCount: 2 }], signIns: {} }, catalog: released });
+  assert.deepEqual(releasedPlan.free, { available: true, modelLabel: "Luna" }, "once the engine reports OpenWork's free provider, the standard free model is the one offered");
+  assert.equal(pickFreeModel(released)?.id, "openwork-free/openai/gpt-5.6-luna");
+  assert.deepEqual(releasedPlan.connected.map(({ providerId }) => providerId), ["google", "ollama", "openai"], "the free provider keeps its own row rather than a Connected row");
+  assert.equal(released.models.find((entry) => entry.providerId === "openwork-free")?.tier, "free");
+  assert.equal(released.models.find((entry) => entry.providerId === "opencode")?.tier, "opencode");
   assert.deepEqual(plan.addable.map((entry) => [entry.id, entry.envName, entry.canSignIn, entry.acceptsKey, entry.connected]), [
     ["openai", "OPENAI_API_KEY", true, true, true],
     ["anthropic", "ANTHROPIC_API_KEY", false, true, false],
@@ -68,7 +84,7 @@ test("planLocalMode keeps findings out of Found once their provider is connected
   assert.deepEqual(noCopilotSignIn.addable.map((entry) => entry.id), ["openai", "anthropic", "google"], "a subscription-only provider without a sign-in is not offered");
   assert.equal(pickFreeModel({ models: [] }), null);
   const withoutFree = planLocalMode({ findings: [], readiness: { providers: [], signIns: {} }, catalog: { models: [] } });
-  assert.deepEqual(withoutFree, { found: [], connected: [], free: { available: false, modelLabel: "" }, addable: [] });
+  assert.deepEqual(withoutFree, { found: [], connected: [], free: { available: false, modelLabel: "Luna" }, addable: [] });
 });
 
 test("ChatGPT evidence requires supported credential metadata and the current OAuth connection with models", () => {

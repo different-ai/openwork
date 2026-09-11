@@ -6,8 +6,9 @@ import { LocalProviders } from "@/ui/local-providers";
 
 /**
  * The step after "Use this Mac": what this Mac already has, one Connect per
- * row, the free model that needs nothing, and Add another. Continue goes on
- * to the first coworker; choosing a model here is what that coworker starts on.
+ * row, OpenWork's free model (not available until released), and Add another.
+ * Continue goes on to the first coworker; choosing a model here is what that
+ * coworker starts on.
  */
 type LocalModeProps = {
   runtime: RuntimeInfo;
@@ -42,7 +43,7 @@ export function LocalModeScreen(props: LocalModeProps) {
           <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-spark">{props.replay ? "Your AI setup" : "Use this Mac"}</p>
           <h1 tabIndex={-1} className="mt-2 text-[28px] font-semibold leading-[1.1] tracking-[-0.04em] text-snow outline-none md:text-[32px]">AI on this Mac</h1>
           <p className="mt-2 max-w-[520px] text-sm leading-6 text-mist">
-            {props.replay ? "Your coworkers can use AI from OpenWork or providers on this Mac. This tour keeps your account and model choices exactly as they are." : "Coworkers can use what you already pay for. Connect what was found, or start with the free model and connect later."}
+            {props.replay ? "Your coworkers can use AI from OpenWork or providers on this Mac. This tour keeps your account and model choices exactly as they are." : "Coworkers can use what you already pay for. Connect what was found, or sign in to OpenWork for its models. OpenWork's free model, for people without an account, is coming."}
           </p>
           <div className="mt-6">
             {props.replay ? <div className="divide-y divide-line rounded-2xl border border-line bg-panel/45" data-testid="onboarding-replay-setup">
