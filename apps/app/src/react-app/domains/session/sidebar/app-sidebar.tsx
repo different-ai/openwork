@@ -124,7 +124,6 @@ import {
   partitionArchivedSessions,
   workspaceKindLabel,
   workspaceLabel,
-  workspaceConversationCount,
 } from "./utils";
 import type { FlattenedSessionRow, GlobalArchivedSessionEntry, SessionListItem } from "./utils";
 import {
@@ -1284,7 +1283,6 @@ function WorkspaceReorderItem({
 
 type WorkspaceHeaderProps = {
   workspace: WorkspaceInfo;
-  conversationCount: number | undefined;
   statusLabel: string;
   isError: boolean;
   isLoading: boolean;
@@ -1293,7 +1291,6 @@ type WorkspaceHeaderProps = {
 
 function WorkspaceHeader({
   workspace,
-  conversationCount,
   statusLabel,
   isError,
   isLoading,
@@ -1301,7 +1298,6 @@ function WorkspaceHeader({
 }: WorkspaceHeaderProps) {
   const ctx = useSidebarContext();
   const label = workspaceLabel(workspace);
-  const countDescription = conversationCount === undefined ? undefined : t("workspace_list.conversation_count", { count: conversationCount });
   // Same reveal pattern as task rows: the name fades only where text is
   // hidden and scrolls into view on mouse hover or keyboard focus.
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
@@ -1336,7 +1332,6 @@ function WorkspaceHeader({
         // text, which put the fade on the last letters of every name.
         className="min-w-0 flex h-full flex-1 cursor-grab touch-none flex-col items-stretch justify-center border-0 bg-transparent p-0 text-left text-inherit active:cursor-grabbing pr-8 group-hover/workspace-header:pr-20 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-20 group-has-data-popup-open/workspace-header:pr-20"
         aria-label={statusLabel ? `${label}, ${statusLabel}` : label}
-        aria-description={countDescription}
         onPointerDown={onTitlePointerDown}
         onPointerEnter={(event) => {
           if (event.pointerType === "mouse") setIsTitleHovered(true);
@@ -1346,13 +1341,8 @@ function WorkspaceHeader({
         onBlur={() => setIsTitleFocused(false)}
         onClick={handleSelectWorkspace}
       >
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 items-center">
           <SessionTitle intent={titleIntent} title={label} tooltip={label} />
-          {conversationCount !== undefined ? (
-            <span data-testid={`workspace-conversation-count-${workspace.id}`} aria-hidden="true" title={countDescription} className="shrink-0 text-[10px] font-normal tabular-nums text-muted-foreground/70">
-              {conversationCount}
-            </span>
-          ) : null}
         </span>
         {statusLabel ? (
           <span className={cn("block text-xs", isError ? "text-destructive" : "text-muted-foreground")}>
@@ -1456,7 +1446,6 @@ function WorkspaceSidebarGroup({
             <div className="group/workspace-header relative max-md:hidden">
               <WorkspaceHeader
                 workspace={workspace}
-                conversationCount={isConnectionActionBusy || connectionState.status === "error" ? undefined : workspaceConversationCount(group)}
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
                 isLoading={isConnecting}
