@@ -1486,6 +1486,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const failedDraft = useComposerStateStore((state) => state.failedDrafts[sessionOwner]?.[0]);
   const pendingReconciliation = useMemo(() => {
     const matchedIds = new Set<string>();
+    const messageIdReplacements = new Map<string, string>();
     const messages = [...baseRenderedMessages];
     const remaining = (pendingMessages ?? []).flatMap((item) => {
       const { draft: pending, previousMessageIds } = item;
@@ -1503,6 +1504,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         return [item];
       }
       matchedIds.add(match.id);
+      if (match.id !== pending.messageId) messageIdReplacements.set(match.id, pending.messageId);
       messages[messages.indexOf(match)] = { ...match, parts };
       const textReady = !text.trim()
         || match.parts.some((part) => part.type === "text" && part.text.trim());
@@ -1511,7 +1513,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
     // A server turn can acknowledge only one pending send, even when two
     // consecutive prompts have identical text and v2 assigns its own IDs.
-    return { messages, remaining: remaining.map((item) => {
+    return { messages, messageIdReplacements, remaining: remaining.map((item) => {
       const claimed = [...matchedIds].filter((id) => id !== item.serverMessageId && !item.previousMessageIds.includes(id));
       return claimed.length ? { ...item, previousMessageIds: [...item.previousMessageIds, ...claimed] } : item;
     }) };
@@ -2631,7 +2633,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.set_text",
     label: "Type into the composer",
-    description: "Replace the current session draft and type the supplied text visibly.",
+    description: "Replace the draft of the composer the person currently has focused and type the supplied text visibly. Focus-bound: it targets whichever pane is focused when it runs, never a session by id. To message another session use session.send.",
     effects: { data: "none", ui: "focus", external: false },
     sideEffect: "none",
     disabled: archived || !archiveStateKnown || archiveHeld,
@@ -2652,7 +2654,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.send",
     label: "Send the composer prompt",
-    description: "Send the currently visible composer draft to the active session.",
+    description: "Send the draft of the composer the person currently has focused to that session. Focus-bound: if focus moved since composer.set_text, the draft goes to the newly focused session. Disabled while that session is mid-turn. To message another session use session.send.",
     sideEffect: "mutation",
     disabled: archived || !archiveStateKnown || archiveHeld || sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
     targetRef: composerShellRef,
@@ -2666,7 +2668,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.stop",
     label: "Stop the current run",
-    description: "Stop the current streaming session run.",
+    description: "Stop the run of the session the person currently has focused. Focus-bound: it never targets a session by id.",
     sideEffect: "mutation",
     disabled: stopping || (!chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown"),
     targetRef: composerShellRef,
@@ -3287,6 +3289,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onMcpRetry={handleMcpRetry}
                     >
                       <MessageList
+                        messageIdReplacements={pendingReconciliation.messageIdReplacements}
                         viewport={messageViewport}
                         messages={renderedMessages}
                         status={status}

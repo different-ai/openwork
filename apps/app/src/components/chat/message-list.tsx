@@ -1488,6 +1488,7 @@ export interface RunSyncHealth {
 
 interface MessageListProps {
   messages: UIMessage[]
+  messageIdReplacements?: ReadonlyMap<string, string>
   status: ThreadStatus
   activityStatus: SessionActivityStatus
   retryStatus?: RetryStatus | null
@@ -1509,7 +1510,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, status, activityStatus, retryStatus, syncHealth, viewport }: MessageListProps) {
+export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport }: MessageListProps) {
   const { workspaceId, sessionId } = useMessageList()
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
@@ -1599,6 +1600,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
     >
       <ProgressiveMessageList
         groups={items}
+        groupKeyReplacements={messageIdReplacements}
         viewport={viewport}
         className="@container/message-list"
         getGroupKey={(item) => isMessageGroup(item) ? item.messages[0]?.message.id ?? "empty-assistant-group" : item.message.id}

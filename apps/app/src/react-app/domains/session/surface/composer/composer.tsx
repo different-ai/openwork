@@ -1457,6 +1457,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     aria-expanded={toolMenuOpen}
                     aria-haspopup="dialog"
                     title={t("composer.tools_label")}
+                    aria-label={t("composer.tools_label")}
                   >
                     <Plus size={16} />
                   </button>

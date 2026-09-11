@@ -43,12 +43,18 @@ type ModelBinding = {
 type PromptPart = {
   type?: unknown;
   text?: unknown;
+  synthetic?: unknown;
+  metadata?: unknown;
 };
+
+function selectedSkill(part: PromptPart): Record<string, unknown> | null {
+  return part.type === "text" && part.synthetic === true ? readRecord(part.metadata, "openworkSelectedSkill") : null;
+}
 
 /** The exact native prompt body, also used to correlate text-only user acknowledgements. */
 export function v2PromptText(parts: readonly PromptPart[]): string {
   return parts
-    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .filter((part) => part.type === "text" && typeof part.text === "string" && !selectedSkill(part))
     .map((part) => typeof part.text === "string" ? part.text : "")
     .join("");
 }
@@ -1883,6 +1889,43 @@ export function createClientV2(
           response: new Response(null, { status: 400 }),
         };
       }
+      const selections = (parameters.parts ?? []).flatMap((part) => {
+        const selection = selectedSkill(part);
+        return selection ? [selection] : [];
+      });
+      const skills: { id: string }[] = [];
+      if (selections.length) {
+        // Resolve against the same workspace's live registry, never guess an ID
+        // from prose or silently fall back to asking the model to load a skill.
+        const catalog = await request("GET", "/api/skill", undefined, options?.signal);
+        if (!catalog.response.ok) return failedResult(catalog);
+        for (const selection of selections) {
+          const id = readString(selection, "id");
+          const name = readString(selection, "name");
+          const matches = responseItems(catalog.payload).filter((skill) => id
+            ? readString(skill, "id") === id : Boolean(name) && readString(skill, "name") === name);
+          const resolvedID = matches.length === 1 ? readString(matches[0], "id") : undefined;
+          if (!resolvedID) {
+            return unsupportedResult(baseUrl, "skill.attachment", `Selected skill ${name ?? id ?? "(unknown)"} is unavailable or ambiguous in OpenCode v2. Nothing was sent.`);
+          }
+          if (!skills.some((skill) => skill.id === resolvedID)) skills.push({ id: resolvedID });
+        }
+        // The pinned native prompt materializes attachments without running the
+        // skill tool's permission check. Ask the engine (including its policy
+        // hooks) rather than treating catalog membership as authorization.
+        const permission = await request("POST",
+          `/api/session/${encodeURIComponent(parameters.sessionID)}/permission`,
+          { action: "skill", resources: skills.map((skill) => skill.id), save: skills.map((skill) => skill.id) },
+          options?.signal);
+        if (!permission.response.ok) return failedResult(permission);
+        const effect = readString(responseData(permission.payload), "effect");
+        if (effect !== "allow") {
+          const message = effect === "ask"
+            ? "Selected skills require permission. Nothing was sent. Choose Always allow for these skills in the permission request, then send again."
+            : "Selected skills are not permitted in OpenCode v2. Nothing was sent.";
+          return unsupportedResult(baseUrl, "skill.attachment", message);
+        }
+      }
       const modelResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/model`,
@@ -1904,7 +1947,7 @@ export function createClientV2(
       const promptResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,
-        { text },
+        { text, ...(skills.length ? { skills } : {}) },
         options?.signal,
       );
       return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);

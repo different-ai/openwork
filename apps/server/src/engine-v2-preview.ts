@@ -7,6 +7,13 @@ import { join } from "node:path";
 
 import constants from "../../../constants.json" with { type: "json" };
 import {
+  CloudNativeSkillSyncError,
+  createCloudNativeSkillSync,
+  EMPTY_CLOUD_NATIVE_SKILL_STATE,
+  type CloudNativeSkillState,
+  type CloudNativeSkillSyncCode,
+} from "./cloud-native-skills.js";
+import {
   createManagedOpencodeV2Server,
   installOpencodeV2Binary,
   type ManagedOpencodeV2Server,
@@ -17,6 +24,7 @@ import { runtimeStorageDir } from "./runtime-db.js";
 import {
   isEngineGlobalRuntimeConfigId,
   onRuntimeOpencodeConfigWrite,
+  readGlobalRuntimeMcpConfig,
   readGlobalRuntimeOpencodeConfig,
   readEffectiveRuntimeOpencodeConfig,
   runtimeMcpMap,
@@ -29,6 +37,8 @@ import type { ServerConfig } from "./types.js";
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
 const PREVIEW_STATE_FILE = "engine-v2-preview.json";
 const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
+/** Reserved Connect MCP name; kept in sync with OPENWORK_CLOUD_MCP_NAME in cloud-mcp-health.ts. */
+const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 // A cold sidecar can return HTTP 503 while its model catalog initializes for 17–20 seconds.
 const CATALOG_MIRROR_TIMEOUT_MS = 60_000;
 
@@ -64,6 +74,8 @@ export interface EngineV2Preview {
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
   syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
+  /** Fresh materialization of authorized Cloud skills as native skills. `failure` is set when they failed closed (cleared) for this admission. */
+  syncCloudSkills(): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }>;
   stop(): Promise<void>;
 }
 
@@ -323,6 +335,28 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   const workspaceMcp = new Map<string, Map<string, string>>();
   const mcpInFlight = new Map<string, Promise<void>>();
   const mcpWorkspaces = new Map<string, string>();
+  const cloudSkillsRoot = join(rootDir, "cloud-skills");
+  const cloudSkills = createCloudNativeSkillSync({
+    root: cloudSkillsRoot,
+    readCloudConfig: () => readGlobalRuntimeMcpConfig(config, OPENWORK_CLOUD_MCP_NAME),
+    register: async (directory) => {
+      const active = sidecar;
+      if (!active) throw new CloudNativeSkillSyncError("cloud_skill_engine_unavailable", "OpenCode v2 is not running");
+      await active.setSkills(directory ? [directory] : []);
+    },
+  });
+
+  async function syncCloudSkills(): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }> {
+    if (!sidecar) throw new CloudNativeSkillSyncError("cloud_skill_engine_unavailable", "OpenCode v2 is not running");
+    try {
+      return { root: cloudSkillsRoot, state: await cloudSkills.sync() };
+    } catch (error) {
+      if (!(error instanceof CloudNativeSkillSyncError)) throw error;
+      // Skills fail closed, the conversation does not: sync() already cleared
+      // and unregistered the root, so the caller admits without Cloud skills.
+      return { root: cloudSkillsRoot, state: EMPTY_CLOUD_NATIVE_SKILL_STATE, failure: error.code };
+    }
+  }
 
   async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
     mcpWorkspaces.set(directory, workspaceId);
@@ -489,6 +523,9 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     binSource = resolved.source;
     if (!enabled || !allowRunning) return;
     await mkdir(workspaceDir, { recursive: true });
+    // A previous process may have left materialized cloud skills behind. The
+    // fresh engine config registers none until the first sync succeeds.
+    await cloudSkills.reset();
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
     const managed = await createManagedOpencodeV2Server({
       bin: resolved.bin,
@@ -509,6 +546,11 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
         const global = isEngineGlobalRuntimeConfigId(workspaceId);
         if (global) scheduleMirror();
+        // A replaced or removed openwork-cloud config invalidates the
+        // materialized skills before the next prompt can register a new scope.
+        if (global) void cloudSkills.reconcileScope().catch((error) => {
+          if (sidecar) lastError = `Cloud skills: ${errorMessage(error)}`;
+        });
         // Connections installed through OpenWork also update already-open
         // locations while a conversation is active. Request admission joins
         // the same serialized reconciliation rather than racing it.
@@ -626,5 +668,5 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, stop };
+  return { start: startWhenReady, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, syncCloudSkills, stop };
 }

@@ -513,6 +513,7 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
   });
 
   await step("one real send admits once and renders only the initially released first bullet", async () => {
+    await using transcript = await observeTranscript(probe, [{ role: "user", text: streamedContinuityPrompt }]);
     await user.type("composer", streamedContinuityPrompt);
     await user.click("Run task");
     await user.see({ text: streamedContinuityPrompt }, { timeoutMs: 2_000 });
@@ -533,6 +534,9 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
     await expectOneUserAdmission();
     expect(await promptPosts()).toBe(1);
     expect(await world.providerFinalRequests()).toHaveLength(1);
+    const admission = await transcript.finish();
+    evidence.recordJsonArtifact("CONT-01 submitted user text continuity", admission);
+    expect(admission).toMatchObject({ seen: [true], violations: [], stopped: false });
   });
 
   await step("B remains empty while bullet two and partial bullet three advance only in A", async () => {

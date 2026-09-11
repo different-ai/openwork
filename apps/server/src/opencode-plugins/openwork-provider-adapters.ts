@@ -48,11 +48,19 @@ export const sessionCreateArgsSchema = z.object({
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
 });
 
+export const sessionSendArgsSchema = z.object({
+  sessionId: z.string().trim().min(1).describe("Session ID of the existing session to message, from session.search, session.read, or session.list_sessions."),
+  text: z.string().trim().min(1).max(100_000).describe("Prompt text appended to that session as a new user message."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
+  reveal: z.boolean().optional().describe("true to also open that session in the person's focused pane after sending. Defaults to false: nothing on screen changes."),
+});
+
 /** Argument schemas by affordance id; sessionContribution must advertise exactly these keys. */
 export const sessionAffordanceArgsSchemas = {
   "session.search": sessionSearchArgsSchema,
   "session.read": sessionReadArgsSchema,
   "session.create": sessionCreateArgsSchema,
+  "session.send": sessionSendArgsSchema,
 };
 
 export type ConnectSkillDescriptor = {
@@ -167,6 +175,20 @@ function sessionContribution(): OpenworkFeatureContribution {
         arguments: [
           argument("sessions", "array", true, "Session titles and self-contained prompts."),
           argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the requesting session's workspace."),
+        ],
+        effects: writeEffects,
+      }),
+      affordance({
+        id: "session.send",
+        kind: "command",
+        title: "Send a prompt to a session",
+        description: "Append a prompt to an existing session by id without opening it. The message is written immediately; a session that is mid-turn handles it at its next step. Nothing on screen changes unless reveal is true. This is the way to talk to another session: composer.set_text and composer.send only reach the composer the person has focused.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id from session.search, session.read, or session.list_sessions."),
+          argument("text", "string", true, "Prompt text appended as a new user message."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+          argument("reveal", "boolean", false, "true to also open that session in the person's focused pane after sending. Defaults to false."),
         ],
         effects: writeEffects,
       }),

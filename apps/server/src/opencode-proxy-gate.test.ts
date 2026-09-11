@@ -4,6 +4,7 @@ import {
   assertOpencodeProxyAllowed,
   normalizeOpencodeDirectory,
   proxyOpencodeRequest,
+  proxyOpencodeV2Request,
   scopeWorkspaceOpencodeRequest,
 } from "./server.js";
 import { ApiError } from "./errors.js";
@@ -139,6 +140,49 @@ describe("proxyOpencodeRequest read-only guard", () => {
       request: new Request(url, { method }),
     });
   };
+
+  test("native Cloud catalog reads expose metadata, not private bodies or paths, to shared clients", async () => {
+    const cloud = {
+      id: "openwork-cloud-0123456789abcdef", name: "briefing", description: "Prepare a briefing", slash: true,
+      content: "OWNER_PRIVATE_INSTRUCTIONS", location: "/private/cloud-skills/scope/SKILL.md",
+      futurePrivateField: "OWNER_PRIVATE_INSTRUCTIONS",
+    };
+    const local = { id: "local-briefing", name: "local", content: "Workspace instructions", location: "/workspace/.opencode/skills/local/SKILL.md" };
+    const engine = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch(request) {
+        const path = decodeURIComponent(new URL(request.url).pathname);
+        return Response.json({ data: path.includes(cloud.id) ? cloud : [local, cloud] });
+      },
+    });
+    try {
+      for (const scope of ["viewer", "collaborator", undefined, "owner"] as const) {
+        for (const suffix of ["/api/skill", "/api/skill/", "/api/%73kill", `/api/skill/${cloud.id}`]) {
+          const proxyPath = `/opencode2${suffix}`;
+          const url = new URL(`http://openwork.invalid/workspace/ws_ro${proxyPath}`);
+          const response = await proxyOpencodeV2Request({
+            actor: actor(scope), config: readOnlyConfig, workspace, proxyPath, url,
+            request: new Request(url),
+            connection: { url: `http://127.0.0.1:${engine.port}`, username: "opencode", password: "fixture-only" },
+            syncCloudSkills: async () => { throw new Error("Catalog reads must not sync or alter Cloud skills"); },
+          });
+          expect(response.status).toBe(200);
+          const payload = await response.json();
+          const entry = Array.isArray(payload.data) ? payload.data[1] : payload.data;
+          expect(entry).toEqual(scope === "owner" ? cloud : {
+            id: cloud.id, name: cloud.name, description: cloud.description, slash: true,
+          });
+          if (Array.isArray(payload.data)) expect(payload.data[0]).toEqual(local);
+          if (scope !== "owner") {
+            expect(JSON.stringify(payload)).not.toContain("OWNER_PRIVATE_INSTRUCTIONS");
+            expect(JSON.stringify(payload)).not.toContain("/private/cloud-skills");
+          }
+        }
+      }
+    } finally {
+      await engine.stop(true);
+    }
+  });
 
   test("rejects native proxy writes on a read-only server (parity with the removed ensureWritable wrapper routes)", async () => {
     for (const method of ["POST", "DELETE", "PATCH", "PUT"]) {

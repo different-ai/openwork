@@ -64,6 +64,17 @@ const definitions = {
   'saved-app-creation.e2e.test.ts': {
     cases: [{ id: 'APP-ISOLATION', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
+  // Its Cloud endpoint is an in-process loopback MCP fixture reachable only from the spec process.
+  'opencode-v2-skill-jit.e2e.test.ts': {
+    name: 'Use Cloud and workspace skills just in time', placement: 'local',
+    cases: [
+      { id: 'SKILL-ATTACH', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
+      { id: 'SKILL-MISSING', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
+      { id: 'SKILL-CLOUD-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
+      { id: 'SKILL-CLOUD-02', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
+      { id: 'SKILL-NATIVE-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
+    ],
+  },
 };
 
 export const registeredCases = Object.freeze(Object.entries(definitions).flatMap(([spec, definition]) =>

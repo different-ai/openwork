@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ApiError } from "../errors.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
@@ -24,6 +25,7 @@ import {
   sessionCreateArgsSchema,
   sessionReadArgsSchema,
   sessionSearchArgsSchema,
+  sessionSendArgsSchema,
   sessionTimestampMs,
   type ConnectSkillDescriptor,
   type EngineMcpDescriptor,
@@ -124,6 +126,7 @@ For lightweight UI mockups, wireframes, and design iterations, use openwork_visu
 Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
 Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
+Messaging another session does not require opening it either: use session.send { sessionId, text } to append a prompt to that session by id; nothing on screen changes unless you pass reveal: true. composer.set_text and composer.send type into whichever composer the person currently has focused, so never use them to reach a different session.
 To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
 
 // External-web mechanics only: the app-surface section above owns the rule
@@ -213,6 +216,9 @@ function preserveMcpResult(output: unknown): void {
 const affordanceReadEffects: OpenworkAffordanceEffects = { data: "read", ui: "none", external: false };
 const affordanceWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: false };
 const affordanceExternalWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: true };
+// session.send with reveal=true: the message is written headlessly, then the
+// target session is opened in the person's pane on their behalf.
+const affordanceWriteNavigateEffects: OpenworkAffordanceEffects = { data: "write", ui: "navigate", external: false };
 // A proposal writes nothing anywhere: it is rendered for a person to act on.
 const affordanceProposalEffects: OpenworkAffordanceEffects = { data: "none", ui: "none", external: false };
 
@@ -432,6 +438,14 @@ async function executeOpenworkAffordance(
       request.id,
       await createOpenWorkSessions(request.args ?? {}, context),
       affordanceWriteEffects,
+    );
+  }
+  if (request.id === "session.send") {
+    const sent = await sendToOpenWorkSession(request.args ?? {}, context);
+    return affordanceResult(
+      request.id,
+      sent,
+      sent.ok && sent.revealed === true ? affordanceWriteNavigateEffects : affordanceWriteEffects,
     );
   }
   if (request.id === "automation.propose") {
@@ -836,6 +850,87 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   }
 
   return { ok: false, error: `Session ${args.sessionId} was not found in matching OpenWork workspaces` };
+}
+
+/**
+ * Resolve an existing session by id to the workspace that owns it. Same
+ * lookup as session.read: every matching workspace is probed and the
+ * ownership check in readWorkspaceSession refuses foreign sessions.
+ */
+async function locateOpenWorkSession(
+  sessionId: string,
+  workspaceId: string | undefined,
+): Promise<{ workspace: OpenWorkWorkspace; session: SessionInfo } | { error: string }> {
+  const workspaces = filterWorkspaces(await listOpenWorkWorkspaces(), workspaceId);
+  if (!workspaces.length) {
+    return { error: workspaceId ? `No workspace matched ${workspaceId}` : "No OpenWork workspaces are available" };
+  }
+  for (const workspace of workspaces) {
+    try {
+      return { workspace, session: await readWorkspaceSession(workspace, sessionId) };
+    } catch {
+      if (workspaceId) break;
+    }
+  }
+  return { error: `Session ${sessionId} was not found in matching OpenWork workspaces` };
+}
+
+let lastSendMessageStamp = 0;
+
+/** Same shape the desktop composer uses (see app/lib/opencode.ts createPromptMessageID). */
+function createSendMessageId(): string {
+  lastSendMessageStamp = Math.max(Date.now() * 0x1000, lastSendMessageStamp + 1);
+  return `msg_${lastSendMessageStamp.toString(16).padStart(12, "0").slice(-12)}${randomUUID().replaceAll("-", "").slice(0, 14)}`;
+}
+
+type SendToOpenWorkSessionResult =
+  | { ok: false; error: string }
+  | {
+    ok: true;
+    accepted: true;
+    sessionId: string;
+    workspaceId: string;
+    workspace: string;
+    title: string;
+    messageId: string;
+    revealed?: boolean;
+  };
+
+/**
+ * Append a prompt to an existing session by id through the engine's
+ * prompt_async, exactly as session.create starts a new one. The engine
+ * persists the user message immediately and returns 204; when that session
+ * is mid-turn its running loop picks the message up at the next step instead
+ * of rejecting it. Nothing on screen changes unless `reveal` is true, in
+ * which case the desktop is asked to open the session afterwards (best
+ * effort: the message is already sent if that fails).
+ */
+async function sendToOpenWorkSession(rawArgs: unknown, context: OpenCodeContext): Promise<SendToOpenWorkSessionResult> {
+  const args = sessionSendArgsSchema.parse(rawArgs);
+  const located = await locateOpenWorkSession(args.sessionId, args.workspaceId);
+  if ("error" in located) return { ok: false, error: located.error };
+  const { workspace, session } = located;
+  const messageId = createSendMessageId();
+  await postJson(
+    `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(session.id)}/prompt_async`,
+    { messageID: messageId, parts: [{ type: "text", text: args.text }] },
+  );
+  const result: SendToOpenWorkSessionResult = {
+    ok: true,
+    accepted: true,
+    sessionId: session.id,
+    workspaceId: workspace.id,
+    workspace: workspaceLabel(workspace),
+    title: sessionTitle(session),
+    messageId,
+  };
+  if (args.reveal !== true) return result;
+  const opened = await uiControlRequest("command", {
+    id: "session.open",
+    args: { sessionId: session.id },
+    ...affordanceOrigin(context),
+  });
+  return { ...result, revealed: isRecord(opened) && opened.ok === true };
 }
 
 function serverUrl(): string {
