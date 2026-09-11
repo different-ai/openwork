@@ -157,13 +157,14 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
       );
     }
 
+    const running = server;
     const baseline = await eventually(
-      () => server?.fetchJson("/api/model", { directory }),
+      () => running.fetchJson("/api/model", { directory }),
       {
         within: 60_000,
         intervalMs: 250,
         label: "cold model catalog to initialize",
-        until: (result) => result?.status === 200,
+        until: (result) => result.status === 200,
       },
     );
     const catalogReadinessMs = Date.now() - catalogStartedAt;

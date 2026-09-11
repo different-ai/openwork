@@ -57,7 +57,7 @@
     "test:admin-scale": "pnpm --filter @openwork-ee/den-api test:admin-scale",
     "benchmark:admin-scale:mysql": "pnpm --filter @openwork-ee/den-db benchmark:admin-scale:mysql",
     "evals:e2e": "node evals/bin/evals.mjs",
-    "evals:typecheck": "tsc -p evals",
+    "evals:typecheck": "pnpm --dir evals typecheck",
     "evals:test": "pnpm --dir evals test",
     "evals:pr": "pnpm --dir evals run test:pr",
     "world": "node evals/bin/world.mjs",

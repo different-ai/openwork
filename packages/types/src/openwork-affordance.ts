@@ -87,11 +87,32 @@ const openworkAffordanceSuccessSchema = z.object({
   effects: openworkAffordanceEffectsSchema,
 })
 
+/**
+ * Structured outcomes an action can report so the agent can decide instead of
+ * retrying a transport-looking error. Warnings travel back through the channel
+ * the request came from: an agent never gets a dialog, it gets one of these.
+ * - `target_working`: the target session is still working; ask the person to
+ *   stop it if they want it closed, otherwise leave it running.
+ * - `self_archive_while_working`: a session asked to archive itself (or its
+ *   parent) from inside its own running turn; finish the turn, the reviewer
+ *   archives.
+ */
+export const openworkAffordanceFailureCodeSchema = z.enum([
+  "unavailable",
+  "invalid-args",
+  "conflict",
+  "failed",
+  "target_working",
+  "self_archive_while_working",
+])
+export type OpenworkAffordanceFailureCode = z.infer<typeof openworkAffordanceFailureCodeSchema>
+
 const openworkAffordanceFailureSchema = z.object({
   ok: z.literal(false),
   id: z.string(),
   error: z.string(),
-  code: z.enum(["unavailable", "invalid-args", "conflict", "failed"]),
+  code: openworkAffordanceFailureCodeSchema,
+  hint: z.string().optional(),
   revision: z.number().int().nonnegative().optional(),
 })
 

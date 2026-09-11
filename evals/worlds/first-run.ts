@@ -1010,7 +1010,7 @@ export async function toolTesterWorld(seed: Seed) {
   const web = await seed.web({
     den,
     signedInAs: "admin",
-    startPath: "/dashboard/mcp-connections",
+    startPath: "/dashboard/mcp-connections/configured",
     headless: true,
     viewport: { width: 1440, height: 1000 },
   });

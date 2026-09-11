@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { selectModel } from "@openwork/behaviors";
-import { spec, type Agent, type User } from "@openwork/testkit";
+import { spec, type Agent, type Target, type User } from "@openwork/testkit";
 import { defaultPolicyEditorAndMemberDesktop, managedPolicyRecovery, policyTransportRollback, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
 
 // An organization that wants a vanilla OpenWork picks one decision, Restricted,
@@ -684,7 +684,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     ["allowAlphaUpdates", "Try experimental updates"],
   ];
   const choose = async (label: string, allowed: boolean) => {
-    const target = { role: "combobox", label };
+    const target: Target = { role: "combobox", label };
     await admin.user.click(target);
     await admin.user.press(allowed ? "Home" : "End");
     await admin.user.press("Enter");
@@ -1176,7 +1176,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
           // A rejected unadvertised call can end the turn without another
           // model response. Require the attempted call and file witnesses
           // below in either case; the control must finish and write its file.
-          return index === 0 && desktop.probe.has(/denied|blocked|no such tool|unknown tool|invalid tool|unavailable tool|tool.*(?:not found|not available|invalid)/i);
+          return index === 0 && /denied|blocked|no such tool|unknown tool|invalid tool|unavailable tool|tool.*(?:not found|not available|invalid)/i.test(await desktop.probe.text());
         }, { within: 120_000, label: "real engine finishes the command attempt", until: Boolean });
       } catch (error) {
         const screen = await desktop.probe.text();

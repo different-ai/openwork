@@ -94,7 +94,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read recent messages from a session without opening it.",
+        description: "Read recent messages from a session without opening it. The result also carries `status` (idle, busy, retry, waiting) and `working`; check `working` before session.archive.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),

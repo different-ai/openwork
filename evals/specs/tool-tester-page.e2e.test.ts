@@ -21,7 +21,7 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
   await user.click({ testId: `test-mcp-tools-${world.connection.id}` });
   // The sidebar also reads "Tool Tester", so wait on the route and the page description instead of the title.
   const testerHref = await probe.eventually(() => world.location(), {
-    timeoutMs: 60_000,
+    within: 60_000,
     label: "tool tester route",
     until: (href) => href.includes("/dashboard/tool-tester?connectionId="),
   });

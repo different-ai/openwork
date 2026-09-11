@@ -3,6 +3,7 @@ import { ApiError } from "../errors.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
+import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
 import { visualizationSchema } from "@openwork/types/visualization";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
@@ -625,6 +626,13 @@ async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: str
   return session;
 }
 
+async function readSessionActivity(workspace: OpenWorkWorkspace, sessionId: string): Promise<SessionActivity> {
+  const base = `/workspace/${encodeURIComponent(workspace.id)}/opencode`;
+  const probe = (path: string) => serverGet(`${base}${path}`).catch(() => null);
+  const [statuses, permissions, questions] = await Promise.all([probe("/session/status"), probe("/permission"), probe("/question")]);
+  return sessionActivityFrom(statuses, permissions, questions, sessionId);
+}
+
 async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   return z.array(sessionMessageSchema).parse(
@@ -713,7 +721,10 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   for (const workspace of workspaces) {
     try {
       const session = await readWorkspaceSession(workspace, args.sessionId);
-      const messages = await readSessionMessages(workspace, args.sessionId, count);
+      const [messages, activity] = await Promise.all([
+        readSessionMessages(workspace, args.sessionId, count),
+        readSessionActivity(workspace, args.sessionId),
+      ]);
       const readable = messages
         .map((message, index) => ({
           index,
@@ -729,6 +740,8 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
         sessionId: session.id,
         title: sessionTitle(session),
         updatedAt: sessionUpdatedAt(session),
+        status: activity.status,
+        working: activity.working,
         returned: readable.length,
         requested: count,
         messages: readable,

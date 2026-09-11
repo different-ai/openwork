@@ -302,7 +302,7 @@ test("Daytona LiteLLM disposal retries a transient sandbox deletion failure", as
     fetchImpl: fake.fetchImpl,
   });
 
-  await assert.rejects(gateway[Symbol.asyncDispose](), /Sandbox deletion gate failed/);
+  await assert.rejects(async () => { await gateway[Symbol.asyncDispose](); }, /Sandbox deletion gate failed/);
   await gateway[Symbol.asyncDispose]();
   assert.equal(fake.calls.filter((call) => call.args[0] === "delete").length, 2);
 });

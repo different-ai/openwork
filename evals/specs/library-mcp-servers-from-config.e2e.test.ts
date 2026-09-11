@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { spec } from "@openwork/testkit";
+import { browserScript, spec } from "@openwork/testkit";
 import { emptySession } from "../worlds/desktop.ts";
 
 const test = spec.world(emptySession);
@@ -18,10 +18,10 @@ const handWrittenConfig = {
 
 test("the Library lists MCP servers written by hand into opencode.json, whichever command shape they use", async ({ world, seed, user, agent, probe, step, evidence }) => {
   await step("a person writes three servers into the workspace's opencode.json", async () => {
-    const written = await seed.evalIn(world.app, `async (workspacePath, content) => {
+    const written = await seed.evalIn(world.app, browserScript(async (workspacePath: string, content: string) => {
       const result = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("writeOpencodeConfig", "project", workspacePath, content);
       return result ?? { ok: false, stderr: "desktop bridge unavailable" };
-    }`, { args: [world.workspacePath, `${JSON.stringify(handWrittenConfig, null, 2)}\n`], awaitPromise: true });
+    }, [world.workspacePath, `${JSON.stringify(handWrittenConfig, null, 2)}\n`]), { awaitPromise: true });
     expect(written).toMatchObject({ ok: true });
   });
 

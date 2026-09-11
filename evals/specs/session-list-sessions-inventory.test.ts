@@ -29,6 +29,7 @@ const state = {
     ws_beta: sessions("beta", 20, 5_000),
   },
   pinnedIds: [],
+  statusFor: () => "idle" as const,
 };
 
 test("session.list_sessions returns every loaded session instead of a silent 30-row cap", async ({ evidence }) => {
@@ -95,6 +96,7 @@ test("session.list_sessions keeps pinned sessions first and skips entries withou
       ws_beta: sessions("beta", 2, 5_000),
     },
     pinnedIds: ["alpha_0"],
+    statusFor: () => "idle" as const,
   });
 
   expect(listed.map((session) => session.sessionId)).toEqual(["alpha_0", "beta_1", "beta_0", "alpha_2", "alpha_1"]);

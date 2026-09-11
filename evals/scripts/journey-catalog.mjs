@@ -48,6 +48,8 @@ const definitions = {
   // Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
   'scim-okta-lifecycle.e2e.test.ts': { name: 'Provision members from an Okta-shaped SCIM client', placement: 'local' },
   'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
+  // Drives the real error boundary and web error monitor in a standalone Chrome; needs no Den or Electron.
+  'crash-recovery.e2e.test.ts': { name: 'Recover from a render crash without leaking secrets' },
   // Serves the model mock from the spec process's 127.0.0.1; only the local lane can reach it.
   'v2-sessionless-first-send.e2e.test.ts': { name: 'Send the first prompt from the New task route', placement: 'local' },
   'streamed-markdown-answer.e2e.test.ts': {

@@ -116,7 +116,7 @@ export function buildDashboardNavSections({
   // Hosted deployments expose OpenWork Models; self-hosted deployments only
   // expose their own providers. Keep hidden until runtime config is known.
   const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org"
-    && gatewayAccess !== "checking" && gatewayAccess !== "enabled";
+    && gatewayAccess !== "checking";
   const modelsGroup: DashboardNavItem | null = access.isAdmin && orgSlug
     ? {
         href: showOpenWorkModels

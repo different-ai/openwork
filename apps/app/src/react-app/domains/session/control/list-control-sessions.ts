@@ -1,4 +1,5 @@
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
+import type { SessionActivityStatus } from "../status/session-activity-store";
 
 export type ControlSessionWorkspace = {
   id: string;
@@ -22,13 +23,23 @@ export type ListedControlSession = {
   workspace: string;
   updatedAt: number;
   pinned: boolean;
+  /** Live activity, the same source as the sidebar indicator. */
+  status: SessionActivityStatus;
+  /** True while a turn, subtask, compaction, permission, or question is still open. */
+  working: boolean;
 };
 
 export type ListControlSessionsState = {
   workspaces: ControlSessionWorkspace[];
   sessionsByWorkspaceId: Record<string, ControlSessionLike[]>;
   pinnedIds: readonly string[];
+  statusFor: (workspaceId: string, sessionId: string) => SessionActivityStatus;
 };
+
+/** Anything but a finished or failed turn still needs Stop before archive. */
+export function isWorkingStatus(status: SessionActivityStatus): boolean {
+  return status !== "idle" && status !== "error";
+}
 
 export function controlWorkspaceLabel(workspace: ControlSessionWorkspace) {
   return workspace.displayName?.trim() || workspace.name?.trim() || workspace.path?.trim() || "workspace";
@@ -60,12 +71,15 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
     for (const session of state.sessionsByWorkspaceId[workspace.id] ?? []) {
       const sessionId = session.id?.trim() ?? "";
       if (!sessionId) continue;
+      const status = state.statusFor(workspace.id, sessionId);
       out.push({
         sessionId,
         title: getDisplaySessionTitle(session.title ?? ""),
         workspace: controlWorkspaceLabel(workspace),
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
+        status,
+        working: isWorkingStatus(status),
       });
     }
   }
