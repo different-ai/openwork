@@ -65,6 +65,8 @@ export interface MockAgentWorkload {
 export interface MockAgentRequest {
   model: string;
   reasoningEffort?: string | null;
+  /** Provider credential header as received (for example `Bearer <key>`); null when absent. */
+  authorization: string | null;
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
@@ -537,6 +539,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       completions.push({
         model: completion.model,
         reasoningEffort: typeof completion.reasoningEffort === "string" ? completion.reasoningEffort : null,
+        authorization: typeof completion.authorization === "string" ? completion.authorization : null,
         promptMarker: marker,
         matchedMarkers: completion.matchedMarkers.filter((value): value is string => typeof value === "string"),
         completedTools: completion.completedTools,

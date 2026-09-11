@@ -482,6 +482,45 @@ describe("Cloud provider materialization", () => {
     expect(writeCalls(instance.calls).map((call) => call.method)).toEqual(["PUT", "PATCH"])
   })
 
+  test("forwards the catalog identity and explicit variants verbatim without synthesizing effort choices", async () => {
+    // Den has no variant rules of its own: the catalog identity (`id`) lets the
+    // desktop engines derive reasoning variants, while an explicit `variants`
+    // record, even an empty one, reaches the runtime untouched so it can win.
+    const provider = makeAnthropicProvider({ apiKey: "sk-anthropic" })
+    provider.models = [
+      {
+        modelId: "claude-fable-5",
+        name: "Reasoner",
+        modelConfig: { id: "claude-fable-5", name: "Reasoner", reasoning: true, release_date: "2026-02-05", tool_call: true, apiKey: "leaked-into-model" },
+      },
+      {
+        modelId: "claude-quiet-5",
+        name: "Silenced",
+        modelConfig: { id: "claude-quiet-5", name: "Silenced", reasoning: true, variants: {} },
+      },
+      {
+        modelId: "claude-tuned-5",
+        name: "Tuned",
+        modelConfig: { id: "claude-tuned-5", name: "Tuned", reasoning: true, variants: { high: { reasoningEffort: "high" }, off: { disabled: true } } },
+      },
+    ]
+    const instance = makeInstance()
+
+    const result = await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })
+
+    expect(result.ok).toBe(true)
+    const patch = providerPatchFromBody(instance.calls.find((call) => call.method === "PATCH")?.body)
+    const block = patch[provider.id]
+    expect(isRecord(block) && isRecord(block.models) ? block.models : null).toEqual({
+      "claude-fable-5": { id: "claude-fable-5", name: "Reasoner", reasoning: true, release_date: "2026-02-05", tool_call: true },
+      "claude-quiet-5": { id: "claude-quiet-5", name: "Silenced", reasoning: true, variants: {} },
+      "claude-tuned-5": { id: "claude-tuned-5", name: "Tuned", reasoning: true, variants: { high: { reasoningEffort: "high" }, off: { disabled: true } } },
+    })
+    expect(isRecord(block) ? block.id : null).toBe("anthropic")
+    expect(JSON.stringify(patch)).not.toContain("leaked-into-model")
+    expect(JSON.stringify(patch)).not.toContain("sk-anthropic")
+  })
+
   test("writes Azure resource name and API key env while preserving the provider env config", async () => {
     const provider = makeAzureProvider({
       AZURE_RESOURCE_NAME: "resource-name",

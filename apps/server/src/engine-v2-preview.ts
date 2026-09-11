@@ -166,6 +166,50 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
   }
 }
 
+/**
+ * Reasoning effort choices ("variants") for managed models.
+ *
+ * Fix layer: the desktop v2 mirror, not Den. Den's catalog carries no
+ * `variants` (ee/apps/inference/src/models/base.json, openwork-models.json),
+ * and the rules that turn a model into effort choices live only inside the
+ * engines: v1 computes them from npm package + model id + release date
+ * (upstream packages/opencode/src/provider/transform.ts `variants()`), while the
+ * pinned v2 sidecar computes them from its own models.dev catalog
+ * (`reasoning_options` + npm package). Reproducing either table in Den or here
+ * would fork engine behavior, so instead the mirror describes each managed
+ * provider in catalog terms and lets the engine enrich it:
+ *
+ * - `canonical`: the catalog provider (Den's `id`, e.g. `openai`) behind a Den
+ *   `lpr_*` key. The sidecar copies that provider's catalog models, variants
+ *   included, onto our models with the same wire `modelID`.
+ * - an `aisdk:<npm>` package identity instead of the native
+ *   `@opencode-ai/ai/providers/*` package. The sidecar resolves both to the same
+ *   native adapter without installing anything, but only the AI SDK identity
+ *   routes catalog variant settings (`reasoningEffort`, `thinking`, ...)
+ *   through its settings translation. Under the native package the picker
+ *   would list the variants while requests ignored them.
+ *
+ * Catalog enrichment is additive in the engine: config variants merge into the
+ * copied ones and cannot remove them. So when Den supplies an explicit
+ * `variants` record for any model of a provider (including an empty or fully
+ * disabled one), Den owns variants for that provider: no catalog identity is
+ * declared and writeProviders emits exactly the enabled entries on the native
+ * package path. Providers without a catalog `id` keep that native path too.
+ */
+function catalogIdentity(
+  runtimeId: string,
+  value: Record<string, unknown>,
+  models: OpencodeV2ProviderSpec["models"],
+): { package: string; canonical?: string } | undefined {
+  const identity = typeof value.id === "string" && value.id.trim() ? value.id.trim() : undefined;
+  if (identity === undefined || typeof value.npm !== "string") return undefined;
+  if (models.some((model) => isRecord(model.config?.variants))) return undefined;
+  return {
+    package: `aisdk:${value.npm}`,
+    ...(identity === runtimeId ? {} : { canonical: identity }),
+  };
+}
+
 export function mapRuntimeProvidersToV2Specs(
   providerMap: Record<string, unknown>,
   storedCredentials: ReadonlyMap<string, string> = new Map(),
@@ -235,11 +279,16 @@ export function mapRuntimeProvidersToV2Specs(
         }))
         .sort((left, right) => left.id.localeCompare(right.id))
       : [];
+    // Only allowlisted AI SDK packages reach here, so the `aisdk:` identity
+    // never asks the sidecar to install a package.
+    const catalog = packageName ? catalogIdentity(id, value, models) : undefined;
     specs.push({
       id,
       name: typeof value.name === "string" ? value.name : id,
       ...(baseUrl ? { baseUrl } : {}),
-      ...(packageName ? { package: packageName } : {}),
+      ...(catalog
+        ? { package: catalog.package, ...(catalog.canonical ? { canonical: catalog.canonical } : {}) }
+        : packageName ? { package: packageName } : {}),
       ...(Object.keys(settings).length ? { settings } : {}),
       ...(isRecord(headers) ? { headers } : {}),
       apiKey: resolvedKey ?? UNSET_API_KEY,

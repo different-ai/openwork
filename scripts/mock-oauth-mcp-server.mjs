@@ -503,7 +503,7 @@ async function handleAgentResponse(req, res, entry) {
   const matched = agentWorkloads.filter((workload) => text.includes(workload.promptMarker));
   const model = body.model;
   const workload = matched[0];
-  const base = { model, reasoningEffort: body.reasoning?.effort ?? null, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
+  const base = { model, reasoningEffort: body.reasoning?.effort ?? null, authorization: req.headers.authorization ?? null, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
   if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
     entry.agentCompletion = { ...base, kind: "error" };
     json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
@@ -514,7 +514,10 @@ async function handleAgentResponse(req, res, entry) {
     json(res, 400, { error: { message: "Responses witness requires one plain-text workload" } });
     return;
   }
-  entry.agentCompletion = { ...base, kind: workload ? "final" : "utility" };
+  // Like Chat Completions, a tool-less request (title generation, summaries)
+  // is a utility turn even when its input quotes the workload prompt.
+  const offersTools = Array.isArray(body.tools) && body.tools.length > 0;
+  entry.agentCompletion = { ...base, kind: workload && offersTools ? "final" : "utility" };
   const reply = workload?.finalReply ?? "Active session workload";
   const item = { id: `msg_${randomUUID()}`, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: reply, annotations: [] }] };
   const response = { id: `resp_${randomUUID()}`, object: "response", created_at: Math.floor(Date.now() / 1000), model, status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } };
@@ -554,7 +557,7 @@ async function handleAgentCompletion(req, res, entry) {
   const workload = matched[0];
   const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
   const completedTools = scopedMessages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
-  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, matchedMarkers, completedTools };
+  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, authorization: req.headers.authorization ?? null, matchedMarkers, completedTools };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
