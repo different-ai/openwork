@@ -106,7 +106,7 @@ test("session archive is honest about availability and can be undone when suppor
     expect(sidebar.active).not.toContain(candidateId);
     expect(sidebar.active).toContain(neighborId);
     expect(sidebar.archivedSection).toBe(true);
-    await user.see({ role: "button", label: "Archived1", exact: true });
+    await user.see({ role: "button", label: /^Archived\s*1$/ });
     await user.notSee({ testId: `workspace-conversation-count-${world.workspace.workspaceId}` });
   });
 
@@ -128,7 +128,7 @@ test("session archive is honest about availability and can be undone when suppor
     expect(sidebar.active).toContain(candidateId);
     expect(sidebar.active).toContain(neighborId);
     expect(sidebar.archivedSection).toBe(false);
-    await user.notSee({ role: "button", label: "Archived1", exact: true });
+    await user.notSee({ role: "button", label: /^Archived\s*1$/ });
     await user.notSee({ testId: `workspace-conversation-count-${world.workspace.workspaceId}` });
     await user.notSee({ text: "Session unarchived" });
     await user.notSee(undoButton);
