@@ -1055,14 +1055,30 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     const currentState = useComposerStateStore.getState();
     const currentDraft = getComposerDraft(currentState, props.sessionId);
-    const nextDraft = persistedDraftSnapshot?.text ?? "";
-    const needsHydration = composerDraftNeedsHydration({
+    const storedDraft = persistedDraftSnapshot?.text ?? "";
+    // Follow-ups that were still waiting behind a running task when the last
+    // renderer went away come back as unsent composer text, ahead of whatever
+    // was typed after them. They are never re-queued: across a restart nobody
+    // can vouch that "the agent finished" still means what it meant, so the
+    // person reviews and sends. A queue this renderer already holds for the
+    // conversation is the live truth and its mirror is left alone.
+    const restoredQueue = getComposerQueuedDrafts(currentState, props.sessionId).length === 0
+      ? persistedDraftSnapshot?.queued ?? []
+      : [];
+    const nextDraft = restoredQueue.length > 0
+      ? [...restoredQueue, storedDraft].filter((text) => text.length > 0).join("\n\n")
+      : storedDraft;
+    const needsHydration = restoredQueue.length > 0 || composerDraftNeedsHydration({
       claimedScopeKey,
       nextScopeKey: persistedDraftKey,
       currentText: currentDraft,
       storedText: nextDraft,
     });
 
+    if (restoredQueue.length > 0) {
+      persistDraft({ text: nextDraft, mode: persistedDraftSnapshot?.mode ?? "prompt", queued: [] });
+      toast.info(t("composer.queue_restored_as_draft", { count: restoredQueue.length }));
+    }
     if (needsHydration) {
       for (const attachment of getComposerAttachments(currentState, props.sessionId)) {
         revokeAttachmentPreview(attachment);
@@ -1070,7 +1086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       hydrateComposerDraft(props.sessionId, nextDraft);
     }
     setHydratedDraftScopeKey(persistedDraftKey);
-  }, [hydrateComposerDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
+  }, [hydrateComposerDraft, persistDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
   // Queued follow-up drafts live in the shared composer store keyed by session
   // id. That keeps a queued message in session A from being drained into
   // session B when the route swaps the same surface component to another
