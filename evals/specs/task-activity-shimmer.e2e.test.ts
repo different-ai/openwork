@@ -39,7 +39,7 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
       text: row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ").trim() : "",
       hasSpinner: Boolean(row?.querySelector<HTMLElement>(".animate-spin")),
       hasShimmer: Boolean(row?.querySelector<HTMLElement>(".ow-text-shimmer")),
-      liveCards: document.querySelectorAll('[data-subagent-run]').length,
+      liveCards: document.querySelectorAll('[data-message-id] [data-subagent-run]').length,
       historyEntries: document.querySelectorAll('[data-subagent-history]').length,
       messageId: original?.getAttribute("data-message-id"),
       carriedSummaries: document.querySelectorAll('[data-testid="active-subagents"]').length,
@@ -102,15 +102,41 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   evidence.recordJsonArtifact("Delegated task hover", { rendered, hovered, restored });
   evidence.recordAssertionEvidence("Running task titles use the normal hover foreground",
     "Hover replaces the title shimmer with solid inherited text; pointer leave restores its running treatment without recoloring the agent label or status.", true);
-  await user.click({ role: "button", label: /Build isolated Azure repro/ });
+  // The persistent composer overview is a navigation index. It must not move
+  // the original activity row, submit a draft, or open a different child.
+  await user.type("composer", "", { replace: true });
+  await user.see({ role: "button", label: "Show 1 subagent" });
+  await user.notSee({ role: "list", label: "Subagent tasks" });
+  await user.click({ testId: "subagent-overview-toggle" });
+  await user.press("ArrowUp");
+  await user.see("composer", { text: "" });
+  await user.type("composer", "Keep this parent follow-up", { replace: true });
+  await user.see({ role: "list", label: "Subagent tasks" });
+  expect((await probe.dom('[data-testid="subagent-overview"] [data-subagent-run]')).elements).toHaveLength(1);
+  expect((await probe.dom(`[data-testid="subagent-overview"] [data-subagent-session-id="${native.childId}"][data-subagent-run="${native.callId}"]`)).elements).toHaveLength(1);
+  expect((await probe.dom(`[data-message-id="${native.messageId}"] [data-subagent-run="${native.callId}"]`)).elements).toHaveLength(1);
+  await user.see("composer", { text: "Keep this parent follow-up" });
+  await user.click({ testId: "subagent-overview-toggle" });
+  await user.notSee({ role: "list", label: "Subagent tasks" });
+  await user.see("composer", { text: "Keep this parent follow-up" });
+  await user.click({ testId: "subagent-overview-toggle" });
+  await user.click({ testId: `subagent-overview-open-${native.callId}` });
   await user.see({ text: /ACTIVITY_CHILD_HOLD/ });
   await user.see({ text: /Working/ });
+  await user.see({ role: "navigation", label: "Conversation breadcrumb" });
   await user.reload();
   await user.see({ text: /ACTIVITY_CHILD_HOLD/ }, { timeoutMs: 30_000 });
   await user.see({ text: /Working/ });
   expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(1);
   expect((await world.replyState()).deliveredChunks).toBe(1);
   await user.notSee({ text: "Activity child finished." });
+  expect((await probe.dom(`[data-parent-session-back="${world.session.sessionId}"]`)).elements).toHaveLength(1);
+  expect((await probe.dom('[aria-label="Conversation breadcrumb"] [data-session-breadcrumb-separator]')).elements).toHaveLength(1);
+  expect((await probe.dom('[aria-label="Conversation breadcrumb"] [aria-current="page"] h1')).elements).toHaveLength(1);
+  await user.click({ testId: "session-parent-breadcrumb" });
+  await user.see("composer", { text: "Keep this parent follow-up" });
+  await user.notSee({ role: "navigation", label: "Conversation breadcrumb" });
+  expect((await probe.dom(`[data-session-surface-id="${world.session.sessionId}"]`)).elements).toHaveLength(1);
   evidence.recordAssertionEvidence("Delegated activity opens the exact live child across reload",
-    "Original row shimmers before follow-up; opening it and reloading preserves the child session, prompt and Working state while the provider remains held.", true);
+    "The composer overview preserves the original row and parent draft. Opening its exact child and reloading preserves the live child; the parent › child breadcrumb returns to the original parent with its draft intact.", true);
 });

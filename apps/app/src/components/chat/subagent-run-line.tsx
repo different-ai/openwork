@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ArrowUpRight, ShieldAlert } from "lucide-react"
+import { ArrowUpRight, CircleAlert, CircleHelp, GitBranch, ShieldAlert } from "lucide-react"
 
 import {
   Collapsible,
@@ -24,6 +24,13 @@ type SubagentRunLineProps = {
   part: TaskToolPart
   className?: string
   parentActive?: boolean
+}
+
+type SubagentRunLineViewProps = SubagentRunLineProps & {
+  workspaceId: string
+  syncDegraded?: boolean
+  onOpenSubagentSession?: (sessionId: string) => void
+  compact?: boolean
 }
 
 export function subagentRunActivity(input: {
@@ -69,8 +76,29 @@ function agentName(slug: string): string {
  * to safe task/output labels, never raw prompts or payloads.
  */
 export function SubagentRunLine({ part, className, parentActive = true }: SubagentRunLineProps) {
-  const [open, setOpen] = useState(false)
   const { onOpenSubagentSession, syncDegraded, workspaceId } = useMessageList()
+  return (
+    <SubagentRunLineView
+      part={part}
+      className={className}
+      parentActive={parentActive}
+      workspaceId={workspaceId}
+      syncDegraded={syncDegraded}
+      onOpenSubagentSession={onOpenSubagentSession}
+    />
+  )
+}
+
+export function SubagentRunLineView({
+  part,
+  className,
+  parentActive = true,
+  workspaceId,
+  syncDegraded,
+  onOpenSubagentSession,
+  compact = false,
+}: SubagentRunLineViewProps) {
+  const [open, setOpen] = useState(false)
   const childSessionId = taskChildSessionId(part)
   const child = useSessionActivityStore((state) => (
     childSessionId
@@ -128,7 +156,46 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
       ? "Task failed"
       : "Completed"
 
-  const lines = (
+  const triggerClassName = compact
+    ? "group flex w-full min-w-0 max-w-full cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-start text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+    : "group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
+
+  const lines = compact ? (
+    <>
+      <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
+        {permissionPending ? (
+          <ShieldAlert
+            data-subagent-permission-icon
+            aria-label={t("session.subagent_permission_needed")}
+            className="size-4 text-amber-10"
+          />
+        ) : questionPending ? (
+          <CircleHelp aria-label="Waiting for your answer" className="size-4 text-amber-10" />
+        ) : activity === "failed" ? (
+          <CircleAlert aria-label="Task reported an error" className="size-4 text-destructive" />
+        ) : (
+          <GitBranch aria-hidden="true" className="size-4" />
+        )}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className={cn("line-clamp-2 whitespace-normal break-words leading-5", activity === "shimmer" && "ow-text-shimmer")}>
+          {title}
+        </span>
+        <span className={cn("whitespace-normal break-words text-xs leading-5", permissionPending ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
+          {status}
+          {!inFlight && !isFailed && duration ? ` · ${duration}` : ""}
+        </span>
+        {inFlight && child?.latestActivity ? (
+          <span className="whitespace-normal break-words text-xs leading-5 text-muted-foreground/70">Last activity: {child.latestActivity}{child.lastProgressAt > 0 ? ` · ${formatElapsedSeconds(Math.max(0, Math.floor((Date.now() - child.lastProgressAt) / 1000)))} ago` : ""}</span>
+        ) : null}
+      </span>
+      <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
+        {childSessionId && onOpenSubagentSession ? (
+          <ArrowUpRight aria-hidden="true" className="size-3.5 text-muted-foreground/70" />
+        ) : null}
+      </span>
+    </>
+  ) : (
     <>
       <span className="flex min-w-0 items-center gap-2">
         <span className={cn("min-w-0 truncate", activity === "shimmer" && "ow-text-shimmer")}>
@@ -166,11 +233,12 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
         data-subagent-session-id={childSessionId}
         data-subagent-activity={activity}
         data-subagent-permission={permissionPending ? "pending" : undefined}
-        className={cn("min-w-0 max-w-full", className)}
+        className={cn("min-w-0 max-w-full", compact && "w-full", className)}
       >
         <button
           type="button"
-          className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
+          data-testid={compact ? `subagent-overview-open-${part.toolCallId}` : undefined}
+          className={triggerClassName}
           aria-label={`${title}. Open sub-agent chat`}
           onClick={() => onOpenSubagentSession(childSessionId)}
         >
@@ -187,10 +255,10 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
       data-subagent-permission={permissionPending ? "pending" : undefined}
       open={open}
       onOpenChange={setOpen}
-      className={cn("min-w-0 max-w-full", className)}
+      className={cn("min-w-0 max-w-full", compact && "w-full", className)}
     >
       <CollapsibleTrigger
-        className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className={triggerClassName}
         aria-label={open ? `${title}. Hide details` : `${title}. Show details`}
       >
         {lines}

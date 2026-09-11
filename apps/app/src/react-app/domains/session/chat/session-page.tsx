@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -63,6 +63,7 @@ import {
 } from "@/components/ui/resizable";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { SessionEmptyHero } from "./session-empty-hero";
+import { SessionTitleBreadcrumb } from "./session-title-breadcrumb";
 import type { NewTaskComposerContext, NewTaskComposerHandoff } from "./new-task-composer";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import { OwDotTicker } from "../../../shell/dot-ticker";
@@ -1457,37 +1458,22 @@ export function SessionPage(props: SessionPageProps) {
           <header className="z-10 flex h-9 shrink-0 items-center justify-between border-b border-border px-3 max-lg:h-12 lg:px-6 mac:titlebar-drag @container/titlebar">
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
-              {parentSessionLink && !props.primarySlot && !hasMainContentTakeover ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag"
-                        data-parent-session-back={parentSessionLink.sessionId}
-                        aria-label={`Back to ${parentSessionLink.title || "parent chat"}`}
-                        onClick={() => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId)}
-                      >
-                        <ArrowLeft size={14} />
-                        <span className="max-w-40 truncate max-lg:hidden">
-                          {parentSessionLink.title || t("session.default_title")}
-                        </span>
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>Back to parent chat</TooltipContent>
-                </Tooltip>
-              ) : null}
-              <h1 className="truncate text-[13px] font-medium text-dls-text">
-                {props.primaryTitle
-                  ? props.primaryTitle
-                  : props.mainContentTitle
-                  ? props.mainContentTitle
-                  : showWorkspaceSetupEmptyState
-                  ? t("session.create_or_connect_workspace")
-                  : selectedSessionTitle || t("session.default_title")}
-              </h1>
+              <SessionTitleBreadcrumb
+                parent={!props.primarySlot && !hasMainContentTakeover ? parentSessionLink : null}
+                onOpenParent={() => {
+                  if (parentSessionLink) openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId);
+                }}
+              >
+                <h1 className="truncate text-[13px] font-medium text-dls-text">
+                  {props.primaryTitle
+                    ? props.primaryTitle
+                    : props.mainContentTitle
+                    ? props.mainContentTitle
+                    : showWorkspaceSetupEmptyState
+                    ? t("session.create_or_connect_workspace")
+                    : selectedSessionTitle || t("session.default_title")}
+                </h1>
+              </SessionTitleBreadcrumb>
               {!props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState ? (
                 // Pinned and archived sessions are listed across workspaces, so
                 // the header names the workspace the open session belongs to.

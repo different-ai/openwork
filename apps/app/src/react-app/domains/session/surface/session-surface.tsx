@@ -129,6 +129,8 @@ import {
   useComposerStateStore,
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
+import { SubagentOverview } from "@/components/chat/subagent-overview";
+import { activeDelegatedTasks } from "@/react-app/domains/session/status/session-progress";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
 import type {
   ChatToolReconnectAction,
@@ -1524,6 +1526,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     autoSendComposer: autoSendPayload?.composer,
     composer: { draft, attachments, pasteParts },
   });
+  const delegatedTasks = useMemo(() => activeDelegatedTasks(renderedMessages), [renderedMessages]);
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;
@@ -3341,6 +3344,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
         {attachmentsUploading ? <div role="status" className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status="uploading">
           Preparing attachments...
         </div> : null}
+        {delegatedTasks.length > 0 ? (
+          // Keep navigation outside the editor's keyboard shortcuts so arrow
+          // keys in this list cannot recall or replace the parent's draft.
+          <div className="px-4 pb-2 max-lg:px-3 lg:px-8">
+            <div className="mx-auto max-w-[800px]">
+              <SubagentOverview
+                key={sessionOwner}
+                tasks={delegatedTasks}
+                workspaceId={props.workspaceId}
+                parentActive={status === "submitted" || status === "streaming" || status === "retrying"}
+                syncDegraded={runSyncHealth.degraded}
+                onOpenSubagentSession={props.onOpenSubagentSession}
+              />
+            </div>
+          </div>
+        ) : null}
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={chatStreaming || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}
