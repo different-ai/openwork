@@ -20,8 +20,12 @@ isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initia
   });
   for (const label of ["A", "B"]) {
     expect(reports.find(value => value.label === label)).toMatchObject({
-      input: { marker: `input-${label}` }, result: [{ type: "text", text: `initial-${label}` }],
-      helper: [{ type: "text", text: `helper-${label}` }], complete: true,
+      input: { marker: `input-${label}` },
+      result: { content: [{ type: "text", text: `initial-${label}` }], isError: false,
+        structuredContent: { serverTools: { provider: label }, schemaGuidance: `provider-${label}` }, _meta: { privateFixture: `view-only-${label}` } },
+      helper: { content: [{ type: "text", text: `helper-${label}` }], isError: label === "A", _meta: { privateFixture: `helper-only-${label}` } },
+      order: ["input", "result"], capabilities: { serverTools: {}, openLinks: {} },
+      displayModes: [{ mode: "inline" }, { mode: "inline" }, { mode: "inline" }], complete: true,
     });
   }
   expect(reports.find(value => value.label === "A")).toMatchObject({
@@ -33,6 +37,7 @@ isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initia
   expect(secondCalls.map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);
   evidence.recordAssertionEvidence("Sibling Apps cannot read or inject into each other", "App A attempted sibling DOM reads, proxy script injection, and a forged helper request; both DOM operations raised SecurityError and neither provider observed the forged call.", true);
   evidence.recordAssertionEvidence("Opaque Apps retain the standard SDK round trip", "Both real SDK Apps initialized through the shared renderer, received their distinct launch input and result, and completed exactly one legitimate helper call on their own provider.", true);
+  evidence.recordAssertionEvidence("Launch delivery preserves provider data and truthfully reports inline-only display", "Complete input arrived before the result; provider structured fields, view-only metadata, and explicit false survived. The helper error flag survived too. The host advertised tools and links and returned inline for all three valid display-mode requests.", true);
 });
 
 // The v2 engine does not expose a native archive mutation yet.
@@ -51,9 +56,14 @@ isolationTest.skipIf(process.env.OPENWORK_EVAL_ENGINE === "v2")("APP-ARCHIVE arc
     until: values => values.length === 2 && values.every(value => value.complete === true && typeof value.helperError === "string"),
   });
   for (const label of ["A", "B"]) {
-    expect(archived.find(value => value.label === label)).toMatchObject({
-      input: { marker: `input-${label}` }, result: [{ type: "text", text: `initial-${label}` }], helper: null,
+    const report = archived.find(value => value.label === label);
+    expect(report).toMatchObject({
+      input: { marker: `input-${label}` },
+      result: { content: [{ type: "text", text: `initial-${label}` }], isError: false,
+        structuredContent: { serverTools: { provider: label }, schemaGuidance: `provider-${label}` }, _meta: { privateFixture: `view-only-${label}` } },
+      order: ["input", "result"], helper: null,
     });
+    expect(report?.capabilities).toEqual({});
   }
   expect((await world.first.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-A" }]);
   expect((await world.second.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);

@@ -56,6 +56,7 @@ const ACTIONABLE_MCP_APP_RESOLUTION_CODES = new Set([
 
 export type PreservedMcpAppResult = {
   content: Array<Record<string, unknown>>
+  isError?: boolean
   structuredContent?: Record<string, unknown>
   _meta?: Record<string, unknown>
 }
@@ -77,6 +78,7 @@ function preservedResult(part: DynamicToolUIPart): PreservedMcpAppResult | null 
   if (content.length !== result.content.length) return null
   return {
     content,
+    ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
     ...(isRecord(result.structuredContent) ? { structuredContent: result.structuredContent } : {}),
     ...(isRecord(result._meta) ? { _meta: result._meta } : {}),
   }
@@ -340,16 +342,19 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
     const bridge = new AppBridge(
       null,
       { name: "OpenWork", version: "1.0.0" },
-      readOnly ? {} : { serverTools: {} },
+      readOnly ? {} : { serverTools: {}, openLinks: {} },
       {
         hostContext: {
           theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
           displayMode: "inline",
+          availableDisplayModes: ["inline"],
           styles: { variables: hostStyleVariables() },
         },
       },
     )
-    bridge.onopenlink = async ({ url }) => {
+    // Unregistered requests use the SDK's MethodNotFound response. Its default
+    // display-mode handler returns our current inline mode without changing it.
+    if (!readOnly) bridge.onopenlink = async ({ url }) => {
       try {
         actions.assertActive()
         await openDesktopUrl(url)
@@ -402,7 +407,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
       actions.dispose()
       teardownRef.current?.()
     }
-    bridge.oncalltool = async ({ name, arguments: args }) => {
+    if (!readOnly) bridge.oncalltool = async ({ name, arguments: args }) => {
       try {
         return mcpToolResult(await actions.callTool(name, args))
       } catch (cause) {
@@ -421,6 +426,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
         arguments: inputArguments,
       }).then(() => bridge.sendToolResult({
         content: result.content as CallToolResult["content"],
+        ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
         ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
         ...(result._meta ? { _meta: result._meta } : {}),
       })).catch((cause) => {

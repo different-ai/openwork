@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js"
-import { beforeAll, expect, test } from "bun:test"
+import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/agent.js"
 import {
   BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY,
@@ -13,6 +13,25 @@ import {
   searchBuiltinSkillCapabilities,
 } from "../src/mcp/builtin-skills.js"
 import { compareCapabilityMatches, type CapabilityMatch } from "../src/mcp/search.js"
+
+// These unit tests exercise protocol/result shaping, not authentication or HTML
+// rendering. Avoid auth's startup database writes and generated bundle imports.
+mock.module("../src/auth.js", () => ({
+  auth: {},
+  DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "ow_mcp_at_",
+  DEN_MCP_FIRST_PARTY_CLIENT_ID: "openwork-desktop",
+  DEN_MCP_FIRST_PARTY_RESOURCES: ["http://127.0.0.1:8790/mcp/agent"],
+  DEN_MCP_GRANT_ID_CLAIM: "https://openworklabs.com/grant_id",
+  DEN_MCP_ORG_ID_CLAIM: "https://openworklabs.com/org_id",
+  DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp/agent",
+  DEN_MCP_RESOURCE: "http://127.0.0.1:8790/mcp",
+  DEN_MCP_RESOURCE_CLAIM: "https://openworklabs.com/resource",
+  DEN_MCP_RESOURCES: ["http://127.0.0.1:8790/mcp"],
+  DEN_MCP_TOKEN_USE_CLAIM: "https://openworklabs.com/token_use",
+}))
+mock.module("@openwork/mcp-apps/plugin-flow", () => ({ pluginFlowAppHtml: "<html></html>" }))
+mock.module("@openwork/mcp-apps/skill-created", () => ({ skillCreatedAppHtml: "<html></html>" }))
+afterAll(() => mock.restore())
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -422,12 +441,17 @@ test("invalid capability arguments preserve corrective retry instructions", () =
   })
 })
 
-test("successful provider output preserves advisory schema guidance as additional content", () => {
+test.each([true, false, undefined])("provider output preserves schema guidance without overwriting provider data (isError=%s)", (isError) => {
+  const provider = {
+    content: [{ type: "text", text: "Provider result." }],
+    structuredContent: { serverTools: ["provider-tool"], schemaGuidance: { provider: true } },
+    _meta: { privateFixture: "view-only" },
+    ...(isError === undefined ? {} : { isError }),
+  }
   const result = agentModule.externalCapabilitySuccessToolResult({
     ok: true,
-    result: {
-      content: [{ type: "text", text: "Provider accepted the request." }],
-    },
+    result: provider,
+    mcpApp: { connectionId: "emc_fixture", toolName: "render", resourceUri: "ui://fixture/view.html", arguments: {} },
     schemaGuidance: {
       advisory: true,
       providerCallAttempted: true,
@@ -445,15 +469,24 @@ test("successful provider output preserves advisory schema guidance as additiona
     },
   })
 
-  expect(result.isError).toBeUndefined()
-  expect(result.content[0]).toEqual({ type: "text", text: "Provider accepted the request." })
+  expect(result.isError).toBe(isError)
+  expect(result.content[0]).toEqual(provider.content[0])
+  expect(result.structuredContent).toEqual(provider.structuredContent)
+  expect(result._meta).toMatchObject({
+    privateFixture: "view-only",
+    "openwork/serverTools": { searchCapabilities: "search_capabilities", executeCapability: "execute_capability" },
+    "openwork/schemaGuidance": { advisory: true },
+  })
+  expect(JSON.stringify(result.content)).not.toContain("view-only")
+  expect(JSON.stringify(result.content)).not.toContain("openwork/serverTools")
   expect(JSON.parse(result.content[1]?.text ?? "{}")).toMatchObject({
-    schemaGuidance: {
+    "openwork/schemaGuidance": {
       advisory: true,
       providerCallAttempted: true,
       warnings: [{ code: "arguments_schema_mismatch" }],
     },
   })
+  expect(agentModule.externalCapabilitySuccessToolResult({ ok: true, result: provider })).toEqual(provider)
 })
 
 test("structured search output remains compatible with marketplace match kinds and statuses", () => {

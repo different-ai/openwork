@@ -361,6 +361,32 @@ export async function delegatedQuestionHandoff(seed: Seed) {
   return { ...base, engine, delegationTool, followup, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
 }
 
+/** A real native question whose turn is stopped and superseded by a follow-up prompt, as another agent's STOP does. */
+export async function abandonedQuestion(seed: Seed) {
+  const engine = resolveEvalEngine();
+  if (engine !== "v1") throw new SkipError("Abandoned-question archive requires v1; v2 has no session archive.");
+  const ask = {
+    prompt: "Help me choose the abandoned task format",
+    question: "Which format should the abandoned task use?",
+    answer: "Abandoned outline",
+    alternative: "Abandoned checklist",
+  };
+  const followup = { prompt: "Skip the format question and summarize instead", reply: "Summary finished without the format answer." };
+  const base = await splitPaneQuestions(seed, "abandoned-question", [
+    {
+      promptMarker: ask.prompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual question result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: "Task format", question: ask.question,
+        options: [{ label: ask.answer, description: "Use this format" }, { label: ask.alternative, description: "Use the other format" }],
+      }] } }],
+    },
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
+  ]);
+  const session = await seedSessionRetry(seed, base.app, { title: "Abandoned question task" });
+  return { ...base, engine, ask, followup, session };
+}
+
 /** Real native permissions and a provider retry, without synthetic UI events. */
 export async function permissionStopRecovery(seed: Seed) {
   const engine = resolveEvalEngine();

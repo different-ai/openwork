@@ -172,11 +172,12 @@ describe("tool part mapper", () => {
     });
   });
 
-  test("preserves MCP Apps result metadata for the chat host", () => {
+  test.each([true, false, undefined])("preserves MCP Apps result metadata for the chat host (isError=%s)", (isError) => {
     const part = writeToolPart("completed", { configObjectId: "script_1" });
     if (part.state.status !== "completed") throw new Error("Expected completed fixture");
     part.state.metadata = {
       openworkMcpApp: {
+        ...(isError === undefined ? {} : { isError }),
         content: [{ type: "text", text: "Fallback" }],
         structuredContent: { schemaVersion: "1", value: 42 },
         _meta: { receiptId: "receipt_1" },
@@ -187,6 +188,7 @@ describe("tool part mapper", () => {
       opencode: { partId: "part-write" },
       openwork: {
         mcpResult: {
+          ...(isError === undefined ? {} : { isError }),
           content: [{ type: "text", text: "Fallback" }],
           structuredContent: { schemaVersion: "1", value: 42 },
           _meta: { receiptId: "receipt_1" },
@@ -259,6 +261,7 @@ describe("tool part mapper", () => {
       callProviderMetadata: {
         openwork: {
           mcpResult: {
+            isError: true,
             structuredContent: {
               schemaVersion: "1",
               connectionId: "emc_acme",
