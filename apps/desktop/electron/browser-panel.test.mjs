@@ -108,6 +108,10 @@ export class WebContentsView {
       isCurrentlyAudible() { return this.audible; },
       canGoBack() { return false; },
       canGoForward() { return false; },
+      // Site tools the document currently registers, as the main-world getTools
+      // reader would report them. The single main frame is origin-keyed.
+      siteTools: [],
+      siteToolCalls: [],
       destinations: [],
       stops: 0,
       async request(url, details = {}) {
@@ -138,6 +142,24 @@ export class WebContentsView {
         this.destroyed = true; this.emit("destroyed");
       },
     };
+    const contents = this.webContents;
+    const frame = {
+      get url() { return contents.url; },
+      get origin() { try { return new URL(contents.url).origin; } catch { return "null"; } },
+      parent: null, frames: [], detached: false,
+      isDestroyed() { return contents.destroyed; },
+      ipc: new EventEmitter(),
+      send(_channel, replyChannel) {
+        frame.ipc.emit(replyChannel, { senderFrame: frame }, { originAgentCluster: true, domainMatchesHost: true, embedding: null });
+      },
+      async executeJavaScript(code) {
+        if (code.includes("OPENWORK_WEBMCP_LIST")) return contents.siteTools.map((tool) => ({ ...tool, origin: frame.origin }));
+        if (code.includes("OPENWORK_WEBMCP_EXECUTE")) { contents.siteToolCalls.push(code); return JSON.stringify({ saved: contents.siteToolCalls.length }); }
+        return true;
+      },
+    };
+    frame.framesInSubtree = [frame];
+    contents.mainFrame = frame;
   }
   setBounds(bounds) { this.bounds = bounds; }
   setVisible(visible) { this.visible = visible; }
@@ -1751,6 +1773,47 @@ test("a first task open stays blank through asynchronous panel mounting and loca
   assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval.title, "Allow website access?", "navigation did not grant reading or action access");
   approve(false);
   assert.equal((await reading).code, "user_denied");
+});
+
+test("a late tool-change relay after discovery still asks for consent before running a listed site tool", async () => {
+  const { invoke, emit, panel, views, approve } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "http://127.0.0.1:4173/" } });
+  await flush();
+  approve();
+  const opened = await opening;
+  assert.equal(opened.ok, true);
+  const contents = views()[0].webContents;
+  // The document registered its tool during load; the preload relays that
+  // registration to the host only after its debounce.
+  contents.siteTools = [{ name: "save_draft", description: "Save the draft in this controlled project." }];
+  const listing = panel.browserTask({ sessionId: "A", operation: "site_tools", args: { tabId: opened.tabId } });
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval.title, "Allow website access?");
+  approve();
+  const listed = await listing;
+  assert.equal(listed.ok, true);
+  assert.equal(listed.tools.length, 1);
+  emit("openwork:webmcp:tools-changed", { sender: contents });
+  const executing = panel.browserTask({ sessionId: "A", operation: "site_tool", args: { tabId: opened.tabId, toolId: listed.tools[0].toolId, input: {} } });
+  await flush();
+  const review = invoke("openwork:browser:state").tabs[0].browserApproval;
+  assert.equal(review?.title, "Allow website action?", "the relay did not retire the listed handle before the consent prompt");
+  assert.deepEqual(contents.siteToolCalls, [], "nothing runs before approval");
+  approve();
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval?.title, "Share website result?");
+  approve();
+  const result = await executing;
+  assert.equal(result.ok, true);
+  assert.equal(result.dispatched, true);
+  assert.equal(contents.siteToolCalls.length, 1);
+  // A tool the page changed or removed after listing is still refused as stale.
+  contents.siteTools = [];
+  const removed = await panel.browserTask({ sessionId: "A", operation: "site_tool", args: { tabId: opened.tabId, toolId: listed.tools[0].toolId, input: {} } });
+  assert.equal(removed.code, "stale_tool");
+  assert.equal(contents.siteToolCalls.length, 1);
+  invoke("openwork:browser:closeTab", opened.tabId);
 });
 
 test("denied, canceled, closed and background task opens never load and release their blank tabs", async () => {
