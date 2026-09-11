@@ -50,7 +50,7 @@ export async function requestGoogleAction(
   if (!context) return { ok: false, reply: c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401) }
   const token = await dependencies.token({ organizationId: context.organization.id, orgMembershipId: context.currentMember.id })
   if (token.kind !== "ok") {
-    return { ok: false, reply: c.json({ error: token.kind, message: token.message }, token.kind === "needs_connection" ? 409 : 502) }
+    return { ok: false, reply: c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : token.kind === "needs_connection" ? 409 : 502) }
   }
   if (requiredFeatures && !token.enabledFeatures?.some((feature) => requiredFeatures.includes(feature))) {
     return { ok: false, reply: c.json({ error: "needs_connection", message: "The administrator has not enabled this action for the selected Google connector. Enable it in connector setup before using it." }, 409) }

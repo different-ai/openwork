@@ -1,0 +1,5 @@
+{
+  "extends": "../../../evals/tsconfig.primitives.json",
+  "compilerOptions": { "types": ["node"], "typeRoots": ["../../../node_modules/@types"] },
+  "include": ["../../../evals/specs/inference-gateway-lifecycle.test.ts", "../../../evals/packages/cdp/src/browser-globals.d.ts"]
+}

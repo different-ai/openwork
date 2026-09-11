@@ -299,6 +299,7 @@ function isListedExternalConnection(value: ListedExternalConnection | undefined)
 export async function buildExternalMcpToolTree(input: {
   organizationId: string
   member: McpMemberIdentity | null
+  scopes: ReadonlySet<string>
   redirectUriBase: string
   namespaceContext?: CodemodeConnectionNamespaceContext
 }): Promise<BuiltCodemodeTools> {
@@ -338,6 +339,7 @@ export async function buildExternalMcpToolTree(input: {
       run: (args) => Effect.promise(() => executeExternalCapability({
         organizationId: input.organizationId,
         member: memberIdentity,
+        scopes: input.scopes,
         connectionId: connection.id,
         toolName: tool.name,
         args: stripUndefinedEntries(args),
@@ -358,7 +360,8 @@ export async function buildExternalMcpToolTree(input: {
         .map((tool) => ({
           scriptPath: codemodeScriptPath(namespace, tool.name),
           capabilityName: buildExternalCapabilityName(connection.id, tool.name),
-          readOnly: tool.annotations?.readOnlyHint === true,
+          // Descriptive only: external dispatch always requires the caller's write scope.
+          readOnly: tool.annotations?.readOnlyHint === true && tool.annotations?.destructiveHint !== true,
           authority: "external" as const,
         }))
     }),

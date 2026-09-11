@@ -589,34 +589,67 @@ export async function transcriptLinkWorld(seed: Seed) {
       return evaluate(app.client, () => (navigator.clipboard.readText()), { awaitPromise: true });
     },
 
-    /** Attach to the real WebContentsView, never invoke its choice/close bridge. */
-    async menuOverlay(): Promise<AttachedSurface | null> {
-      const target = (await listTargets(app.handle.cdpUrl))
-        .find(target => target.type === "page" && /\/overlay\.html(?:[?#]|$)/.test(target.url));
-      if (!target) return null;
-      const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+    /**
+     * The native popup as the development seam describes it. Native menus are
+     * OS widgets with no CDP target, so this is the only observation of them.
+     */
+    async nativeMenu(): Promise<NativeMenuState> {
+      return parseNativeMenuState(await evaluate(app.client, () => (window.__OPENWORK_ELECTRON__.contextMenu.inspect()), { awaitPromise: true }));
+    },
+
+    /** What the OS does when the user clicks one entry of the open popup. */
+    async chooseMenuItem(id: string): Promise<boolean> {
+      return await evaluate(app.client, browserScript((id) => window.__OPENWORK_ELECTRON__.contextMenu.choose(id), [id]), { awaitPromise: true }) === true;
+    },
+
+    /** What the OS does when the user clicks away from or escapes the open popup. */
+    async dismissMenu(): Promise<boolean> {
+      return await evaluate(app.client, () => (window.__OPENWORK_ELECTRON__.contextMenu.dismiss()), { awaitPromise: true }) === true;
+    },
+  };
+}
+
+export interface NativeMenuItem {
+  type: "item" | "separator";
+  id: string | null;
+  label: string | null;
+  enabled: boolean;
+}
+
+export interface NativeMenuPopup {
+  requestId: string | null;
+  items: NativeMenuItem[];
+}
+
+export interface NativeMenuState {
+  open: boolean;
+  current: NativeMenuPopup | null;
+  last: (NativeMenuPopup & { selectedId: string | null }) | null;
+}
+
+function parseNativeMenuPopup(value: unknown): NativeMenuPopup {
+  if (!isRecord(value) || !Array.isArray(value.items)) throw new Error("The desktop bridge reported a malformed native menu.");
+  return {
+    requestId: typeof value.requestId === "string" ? value.requestId : null,
+    items: value.items.map((entry) => {
+      if (!isRecord(entry) || (entry.type !== "item" && entry.type !== "separator")) throw new Error("The desktop bridge reported a malformed native menu item.");
       return {
-        handle: { ...app.handle, name: "link-context-menu" },
-        client,
-        async stop() { client.close(); },
-        async [Symbol.asyncDispose]() { client.close(); },
+        type: entry.type,
+        id: typeof entry.id === "string" ? entry.id : null,
+        label: typeof entry.label === "string" ? entry.label : null,
+        enabled: entry.enabled !== false,
       };
-    },
+    }),
+  };
+}
 
-    async menuLabels(surface: Surface) {
-      return evaluate(surface.client, () => (Array.from(document.querySelectorAll<HTMLElement>('[role="menu"]'),
-        menu => menu.getAttribute("aria-label"))));
-    },
-
-    async menuShown(surface: Surface) {
-      // Chromium can retain document.hasFocus() on a detached native view. The
-      // renderer clears its menu on dismissal, so stale choices cannot persist.
-      return await evaluate(surface.client, () => (Boolean(document.querySelector<HTMLElement>('[role="menu"]')))) === true;
-    },
-
-    async closePopup(targetId: string) {
-      await app.client.send("Target.closeTarget", { targetId });
-    },
+function parseNativeMenuState(value: unknown): NativeMenuState {
+  if (!isRecord(value) || typeof value.open !== "boolean") throw new Error("The desktop bridge did not report native menu state.");
+  return {
+    open: value.open,
+    current: value.current === null ? null : parseNativeMenuPopup(value.current),
+    last: value.last === null || !isRecord(value.last) ? null
+      : { ...parseNativeMenuPopup(value.last), selectedId: typeof value.last.selectedId === "string" ? value.last.selectedId : null },
   };
 }
 

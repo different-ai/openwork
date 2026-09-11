@@ -64,9 +64,10 @@ const RUNTIME_ENV_TAG_LENGTH = 5
  * `LPR_` plus the last five alphanumerics of the row id, upper-cased
  * (`lpr_01kx…120jv` → `LPR_120JV`). It is a pure function of the id, so the
  * same row always yields the same names and nothing has to be stored or
- * migrated.
+ * migrated. Gateway rows use the full normalized IPR identity to avoid tail collisions.
  */
 export function runtimeProviderEnvTag(providerRowId: string): string {
+  if (providerRowId.startsWith("ipr_")) return providerRowId.toUpperCase().replace(/[^A-Z0-9]/g, "_")
   const tail = providerRowId.replace(/[^0-9A-Za-z]/g, "").toUpperCase().slice(-RUNTIME_ENV_TAG_LENGTH)
   return `LPR_${tail}`
 }
@@ -87,7 +88,7 @@ export type RuntimeEnvProvider = {
  * OpenWork provider keeps `OPENWORK_API_KEY`.
  */
 export function usesRuntimeProviderEnvTag(provider: Pick<RuntimeEnvProvider, "source">): boolean {
-  return provider.source === "models_dev"
+  return provider.source === "models_dev" || provider.source === "openwork_gateway"
 }
 
 /** The env name a member's machine or a cloud worker sees for one declared name. */

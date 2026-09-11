@@ -58,6 +58,16 @@ test('registered case metadata names exact files, supported execution axes, and 
   const entries = await catalog();
   assert.deepEqual(registeredCases.map(({ spec, id, engines }) => ({ spec, id, engines })), [
     {
+      spec: 'composer-model-picker-no-subscribe-promo.e2e.test.ts',
+      id: 'MODEL-01',
+      engines: ['v2'],
+    },
+    {
+      spec: 'task-activity-shimmer.e2e.test.ts',
+      id: 'ACT-01',
+      engines: ['v1', 'v2'],
+    },
+    {
       spec: 'desktop-policy-restricted-mode.e2e.test.ts',
       id: 'POLICY-ROLLBACK',
       engines: ['v1', 'v2'],
@@ -70,6 +80,16 @@ test('registered case metadata names exact files, supported execution axes, and 
     {
       spec: 'live-tool-visible-after-session-switch.e2e.test.ts',
       id: 'SWITCH-10',
+      engines: ['v1', 'v2'],
+    },
+    {
+      spec: 'unfinished-tool-lifecycle.e2e.test.ts',
+      id: 'STOP-01',
+      engines: ['v1', 'v2'],
+    },
+    {
+      spec: 'saved-app-creation.e2e.test.ts',
+      id: 'APP-ISOLATION',
       engines: ['v1', 'v2'],
     },
   ]);

@@ -1,3 +1,4 @@
+{{- include "openwork-ee.gateway.validate" . }}
 {{- include "openwork-ee.customCa.validate" . }}
 apiVersion: v1
 kind: Service
@@ -129,6 +130,7 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- include "openwork-ee.gatewayDeploymentEnv" (dict "root" . "env" .Values.denApi.env) | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /health

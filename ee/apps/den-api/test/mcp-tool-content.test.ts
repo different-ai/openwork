@@ -128,7 +128,7 @@ test("buildRestToolContent compacts JSON only after the model-visible result gro
   expect(text).toBe(JSON.stringify({ ok: true, body: "x".repeat(3_000) }))
 })
 
-test("known content validation and external content passthrough preserve text and images", () => {
+test("external content passthrough preserves every standard MCP content block", () => {
   const textResult = { content: [{ type: "text", text: "hello" }] }
   const imageResult = {
     content: [
@@ -136,15 +136,25 @@ test("known content validation and external content passthrough preserve text an
       { type: "image", data: "AAAA", mimeType: "image/png" },
     ],
   }
-  const unknownResult = { content: [{ type: "audio", data: "AAAA", mimeType: "audio/wav" }] }
+  const richResult = { content: [
+    { type: "audio", data: "AAAA", mimeType: "audio/wav" },
+    { type: "resource_link", uri: "data://fixture/detail", name: "Detail" },
+    { type: "resource", resource: { uri: "data://fixture/inline", text: "Inline detail" } },
+  ], _meta: { privateFixture: "view-only" } }
 
   expect(isKnownToolContentPart(textResult.content[0])).toBe(true)
   expect(isKnownToolContentPart(imageResult.content[1])).toBe(true)
-  expect(isKnownToolContentPart(unknownResult.content[0])).toBe(false)
+  expect(richResult.content.every(isKnownToolContentPart)).toBe(true)
   expect(externalToolContent(textResult)).toBe(textResult.content)
   expect(externalToolContent(imageResult)).toBe(imageResult.content)
+  expect(externalToolContent(richResult)).toBe(richResult.content)
+})
+
+test("malformed external content fallback never serializes private metadata into model text", () => {
+  const unknownResult = { content: [{ type: "unknown", value: "fallback", _meta: { nested: "private" } }], _meta: { privateFixture: "view-only" } }
+  expect(isKnownToolContentPart(unknownResult.content[0])).toBe(false)
   expect(externalToolContent(unknownResult)).toEqual([{
     type: "text",
-    text: JSON.stringify(unknownResult),
+    text: JSON.stringify({ content: [{ type: "unknown", value: "fallback" }] }),
   }])
 })

@@ -1,4 +1,5 @@
 import { legacyExecutionPermissions } from "./managed-policy-rules.js";
+import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
 import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
 /**
  * Runtime OpenCode configuration injected via a server-managed config file
@@ -61,11 +62,11 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   const permissions = legacyExecutionPermissions(runtimeConfig.managedPolicy?.execution);
   const { managedPolicy: _managedPolicy, ...engineConfig } = runtimeConfig;
-  const provider = runtimeProviderMap(runtimeConfig);
+  const provider = materializeLegacyFastProviders(runtimeProviderMap(runtimeConfig));
   return {
     ...engineConfig,
     ...(runtimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: [
-      ...Object.keys(provider).filter((id) => /^(?:lpr_|openwork$)/i.test(id)),
+      ...Object.keys(provider).filter((id) => /^(?:lpr_|ipr_|openwork$)/i.test(id)),
       ...(runtimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
     ] } : {}),
     permission: { ...engineConfig.permission, ...permissions },

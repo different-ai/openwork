@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { useSessionFindStore } from "./find-store";
 import { SEARCH_HIGHLIGHT_SELECTOR } from "./text-highlights";
+import { SESSION_SCROLL_NAVIGATION_EVENT } from "./scroll-controller";
 
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 150;
@@ -19,10 +20,9 @@ const SEARCH_HIGHLIGHT_ACTIVE_CLASSES = ["bg-amber-7", "ring-1", "ring-amber-9"]
 type SessionFindBarProps = {
   sessionId: string;
   scrollRef: RefObject<HTMLDivElement | null>;
+  historyComplete?: boolean;
   onBeforeJump?: () => void;
 };
-
-type CollectReason = "query" | "mutation";
 
 function collectHighlightMarks(container: HTMLDivElement): HTMLElement[] {
   const marks: HTMLElement[] = [];
@@ -83,6 +83,7 @@ function firstMatchInMessage(matches: HTMLElement[], messageId: string) {
 export function SessionFindBar({
   sessionId,
   scrollRef,
+  historyComplete = true,
   onBeforeJump,
 }: SessionFindBarProps) {
   const open = useSessionFindStore((state) => state.open);
@@ -100,6 +101,7 @@ export function SessionFindBar({
   const activeIndexRef = useRef(0);
   const activeElementRef = useRef<HTMLElement | null>(null);
   const targetStartedAtRef = useRef<number | null>(null);
+  const pendingQueryRef = useRef<string | null>(null);
   const [matches, setMatchesState] = useState<HTMLElement[]>([]);
   const [activeIndex, setActiveIndexState] = useState(0);
   const activeQuery = appliedQuery.trim();
@@ -117,6 +119,7 @@ export function SessionFindBar({
   }, []);
 
   const jumpToElement = useCallback((element: HTMLElement) => {
+    pendingQueryRef.current = null;
     onBeforeJump?.();
     element.scrollIntoView({ block: "center" });
   }, [onBeforeJump]);
@@ -146,14 +149,18 @@ export function SessionFindBar({
     activateMatchAtIndex(currentIndex - 1, true);
   }, [activateMatchAtIndex]);
 
-  const collectMatches = useCallback((reason: CollectReason) => {
+  const collectMatches = useEffectEvent(() => {
     const container = scrollRef.current;
-    if (!owned || activeQuery.length < MIN_QUERY_LENGTH || !container) {
+    const current = useSessionFindStore.getState();
+    if (!owned || !current.open || current.sessionId !== sessionId || activeQuery.length < MIN_QUERY_LENGTH || !container) {
       setMatches([]);
       setActiveIndex(0);
       setActiveHighlight(activeElementRef, null);
       return;
     }
+    // Query edits supersede the previous request immediately, before debounce
+    // changes the rendered highlights. Never jump to those stale marks.
+    if (current.query.trim() !== activeQuery || current.appliedQuery.trim() !== activeQuery) return;
 
     const nextMatches = collectHighlightMarks(container);
     const previousActive = activeElementRef.current;
@@ -193,7 +200,7 @@ export function SessionFindBar({
       }
     } else {
       targetStartedAtRef.current = null;
-      if (reason === "query" && nextMatches.length > 0) {
+      if (pendingQueryRef.current === activeQuery && nextMatches.length > 0) {
         nextIndex = 0;
         shouldScroll = true;
       }
@@ -206,7 +213,7 @@ export function SessionFindBar({
     if (shouldScroll && nextActive) {
       jumpToElement(nextActive);
     }
-  }, [activeQuery.length, jumpToElement, owned, scrollRef, sessionId, setActiveIndex, setMatches]);
+  });
 
   useEffect(() => {
     if (!owned) return;
@@ -232,13 +239,48 @@ export function SessionFindBar({
     }
 
     if (activeQuery.length < MIN_QUERY_LENGTH) {
-      collectMatches("query");
+      collectMatches();
       return;
     }
 
-    const timer = window.setTimeout(() => collectMatches("query"), COLLECT_AFTER_RENDER_MS);
+    const timer = window.setTimeout(() => collectMatches(), COLLECT_AFTER_RENDER_MS);
     return () => window.clearTimeout(timer);
-  }, [activeQuery, collectMatches, owned, setActiveIndex, setMatches]);
+  }, [activeQuery, focusNonce, owned, setActiveIndex, setMatches]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const armQuery = () => {
+      const current = useSessionFindStore.getState();
+      const rawQuery = current.query.trim();
+      pendingQueryRef.current = current.open && current.sessionId === sessionId && rawQuery.length >= MIN_QUERY_LENGTH ? rawQuery : null;
+    };
+    armQuery();
+    // Own the request from its raw edit, not its delayed highlight commit.
+    // Synchronous subscription also covers input before React renders the edit.
+    const unsubscribe = useSessionFindStore.subscribe((current, previous) => {
+      if (current.open !== previous.open || current.sessionId !== previous.sessionId
+        || current.query.trim() !== previous.query.trim() || current.focusNonce !== previous.focusNonce) armQuery();
+    });
+    const cancelNavigation = (event: Event) => {
+      const current = useSessionFindStore.getState();
+      if (!current.open || current.sessionId !== sessionId) return;
+      const nested = event.target instanceof Element ? event.target.closest("[data-scrollable]") : null;
+      if (nested && nested !== container) return;
+      if (event instanceof KeyboardEvent) {
+        if (event.defaultPrevented || event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
+        if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+      }
+      pendingQueryRef.current = null;
+      if (useSessionFindStore.getState().target?.sessionId === sessionId) useSessionFindStore.setState({ target: null });
+    };
+    const events = ["wheel", "touchmove", "pointerdown", "keydown", SESSION_SCROLL_NAVIGATION_EVENT];
+    for (const event of events) container.addEventListener(event, cancelNavigation, { passive: true });
+    return () => {
+      unsubscribe();
+      for (const event of events) container.removeEventListener(event, cancelNavigation);
+    };
+  }, [scrollRef, sessionId]);
 
   useEffect(() => {
     if (!searchActive) return;
@@ -252,7 +294,7 @@ export function SessionFindBar({
       }
       timer = window.setTimeout(() => {
         timer = undefined;
-        collectMatches("mutation");
+        collectMatches();
       }, MUTATION_DEBOUNCE_MS);
     });
 
@@ -263,7 +305,7 @@ export function SessionFindBar({
         window.clearTimeout(timer);
       }
     };
-  }, [collectMatches, scrollRef, searchActive]);
+  }, [scrollRef, searchActive]);
 
   useEffect(() => {
     if (!searchActive || target?.sessionId !== sessionId) {
@@ -272,9 +314,9 @@ export function SessionFindBar({
     }
 
     targetStartedAtRef.current = performance.now();
-    const timer = window.setTimeout(() => collectMatches("mutation"), TARGET_RESOLVE_TIMEOUT_MS);
+    const timer = window.setTimeout(() => collectMatches(), TARGET_RESOLVE_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [collectMatches, searchActive, sessionId, target]);
+  }, [searchActive, sessionId, target]);
 
   useEffect(() => () => {
     setActiveHighlight(activeElementRef, null);
@@ -288,7 +330,7 @@ export function SessionFindBar({
   const counterText = activeQuery.length < MIN_QUERY_LENGTH
     ? ""
     : totalMatches === 0
-      ? "No matches"
+      ? historyComplete ? "No matches" : "Searching..."
       : `${activeIndex + 1}/${totalMatches}`;
 
   return (

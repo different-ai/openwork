@@ -10,7 +10,7 @@ type OrganizationRepair = {
 
 type ColumnNullability = "YES" | "NO"
 
-const ORGANIZATION_REPAIRS: OrganizationRepair[] = [
+export const ORGANIZATION_REPAIRS: OrganizationRepair[] = [
   { table: "config_object_version", parentTable: "config_object", foreignKey: "config_object_id" },
   { table: "config_object_access_grant", parentTable: "config_object", foreignKey: "config_object_id" },
   { table: "plugin_config_object", parentTable: "plugin", foreignKey: "plugin_id" },
