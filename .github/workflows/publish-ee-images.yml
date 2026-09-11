@@ -243,6 +243,7 @@ jobs:
           echo "den_web_upload=$den_web_upload" >> "$GITHUB_OUTPUT"
 
       - name: Build and optionally push without Sentry source-map upload
+        id: build
         # Build every image except the ones whose Sentry-enabled step below owns
         # them. Stated as an exclusion so a newly added matrix entry builds by
         # default instead of silently skipping and failing the smoke step.
@@ -265,6 +266,7 @@ jobs:
             ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
 
       - name: Build and push with Sentry source-map upload
+        id: build_sentry
         if: ${{ (matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true') }}
         uses: docker/build-push-action@v6
         with:
@@ -290,6 +292,32 @@ jobs:
             sentry_url=${{ secrets.SENTRY_URL }}
             sentry_release=${{ secrets.SENTRY_RELEASE }}
             sentry_dist=${{ secrets.SENTRY_DIST }}
+
+      # The compose pin job consumes the digest this build produced, not
+      # whatever the mutable version tag resolves to later.
+      - name: Record pushed image digest
+        if: ${{ needs.artifact-version.outputs.publish == 'true' && github.ref_type == 'tag' && (matrix.image == 'openwork-den-api' || matrix.image == 'openwork-den-web') }}
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest || steps.build_sentry.outputs.digest }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Build did not report a digest for $IMAGE: '$DIGEST'" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ee-image-digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/ee-image-digests/$IMAGE"
+
+      - name: Upload pushed image digest
+        if: ${{ needs.artifact-version.outputs.publish == 'true' && github.ref_type == 'tag' && (matrix.image == 'openwork-den-api' || matrix.image == 'openwork-den-web') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ee-image-digest-${{ matrix.image }}
+          path: ${{ runner.temp }}/ee-image-digests/${{ matrix.image }}
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Assert Den DB migration assets
         if: ${{ github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
@@ -462,3 +490,214 @@ jobs:
             echo
             echo "Triggered a den-gateway deploy so it pulls the fresh dev image."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # After a stable tag publishes den-api and den-web, pin the pull-only
+  # evaluation stack (packaging/docker/docker-compose.eval.yml) and its
+  # documented download to the new images. Same bot-PR path as update-models.yml:
+  # github-actions[bot] pushes and authors, the diff-warden App approves as a
+  # distinct identity, auto-merge squashes once openwork-tests-required passes.
+  # compose-pins-drift.yml catches the PR failing to land.
+  pin-eval-compose:
+    name: Pin evaluation compose stack
+    needs: [artifact-version, ee-images]
+    if: ${{ github.repository == 'different-ai/openwork' && github.event_name == 'push' && github.ref_type == 'tag' && needs.artifact-version.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: warden-clearance
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BASE_BRANCH: dev
+      VERSION: ${{ needs.artifact-version.outputs.chart_version }}
+      BRANCH_NAME: automation/compose-pins-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Require the highest stable tag
+        id: guard
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Skipping compose pins: $GITHUB_REF_NAME is not a stable release tag."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest="$(node scripts/release/versions.mjs latest)"
+          if [ "$latest" != "$VERSION" ]; then
+            echo "Skipping compose pins: $VERSION is not the highest stable tag ($latest); refusing to move the pins backwards."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download pushed image digests
+        if: steps.guard.outputs.release == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ee-image-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ee-image-digests
+
+      # Use the digest the build job recorded; the registry lookup only confirms
+      # the version tag still points at that same build.
+      - name: Verify published image digests
+        if: steps.guard.outputs.release == 'true'
+        id: digests
+        run: |
+          set -euo pipefail
+
+          for image in openwork-den-api openwork-den-web; do
+            built="$(tr -d '[:space:]' < "$RUNNER_TEMP/ee-image-digests/$image")"
+            if [[ ! "$built" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Recorded digest for ${image} is malformed: '$built'" >&2
+              exit 1
+            fi
+            registry="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' \
+              "${REGISTRY}/${GITHUB_REPOSITORY_OWNER}/${image}:${VERSION}")"
+            if [ "$registry" != "$built" ]; then
+              echo "${image}:${VERSION} resolves to ${registry} but this run pushed ${built}; refusing to pin." >&2
+              exit 1
+            fi
+            echo "${image}=${built}" >> "$GITHUB_OUTPUT"
+            echo "${image}:${VERSION} -> ${built}"
+          done
+
+      - name: Rewrite compose pins
+        if: steps.guard.outputs.release == 'true'
+        id: changes
+        env:
+          DEN_API_DIGEST: ${{ steps.digests.outputs.openwork-den-api }}
+          DEN_WEB_DIGEST: ${{ steps.digests.outputs.openwork-den-web }}
+        run: |
+          set -euo pipefail
+
+          node scripts/release/pin-compose-images.mjs pin \
+            --version "$VERSION" \
+            --digest "openwork-den-api=$DEN_API_DIGEST" \
+            --digest "openwork-den-web=$DEN_WEB_DIGEST"
+
+          if git diff --quiet -- packaging/docker/docker-compose.eval.yml; then
+            echo "Compose stack already pins $VERSION."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Two commits: the docs download the compose file by commit sha, so the
+      # pin commit must exist before its sha and checksum can be written into
+      # the docs. After the squash merge that sha stays fetchable through the
+      # pull request's refs/pull/<n>/head, which is how the existing pins were
+      # made as well.
+      - name: Commit compose pins and doc references
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+
+          signing_key="$RUNNER_TEMP/commit-signing-key"
+          trap 'rm -f "$signing_key"' EXIT
+          umask 077
+          printf '%s\n' "$COMMIT_SIGNING_KEY" > "$signing_key"
+          chmod 600 "$signing_key"
+
+          git config --local user.email "11430621+benjaminshafii@users.noreply.github.com"
+          git config --local user.name "benjaminshafii"
+          git config --local gpg.format ssh
+          git config --local user.signingkey "$signing_key"
+          git switch -c "$BRANCH_NAME"
+          git add packaging/docker/docker-compose.eval.yml
+          git commit -S -m "fix(packaging): pin the compose evaluation stack to the $VERSION images"
+
+          node scripts/release/pin-compose-images.mjs docs --commit "$(git rev-parse HEAD)"
+          git add packaging/docker/README.md packages/docs/self-host/evaluate-with-docker-compose.mdx
+          git commit -S -m "docs(packaging): point the evaluation download at the $VERSION compose file"
+
+          node scripts/release/check-compose-pins.mjs
+
+      - name: Open pull request
+        if: steps.changes.outputs.changed == 'true'
+        id: pr
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git push --set-upstream origin "$BRANCH_NAME"
+          printf '%s\n\n%s\n' \
+            "Pins \`packaging/docker/docker-compose.eval.yml\` to the \`$VERSION\` den-api and den-web images published by this workflow run (OCI index digests from GHCR) and points the evaluation docs at the new compose commit and checksum." \
+            "Machine-generated by the Publish EE Artifacts workflow from \`scripts/release/pin-compose-images.mjs\`; \`scripts/release/check-compose-pins.mjs\` verified the result." > "$RUNNER_TEMP/pr_body.txt"
+          pr_url="$(gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH_NAME" \
+            --title "fix(packaging): pin the compose evaluation stack to the $VERSION images" \
+            --body-file "$RUNNER_TEMP/pr_body.txt")"
+          {
+            echo "pr_url=$pr_url"
+            echo "pr_number=$(gh pr view "$pr_url" --json number --jq .number)"
+            echo "head_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Mint approval token
+        if: steps.changes.outputs.changed == 'true'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+
+      - name: Approve compose pins
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          expected_files="$(printf '%s\n' \
+            packaging/docker/README.md \
+            packaging/docker/docker-compose.eval.yml \
+            packages/docs/self-host/evaluate-with-docker-compose.mdx | LC_ALL=C sort)"
+          changed_files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' | LC_ALL=C sort)"
+          if [ "$changed_files" != "$expected_files" ]; then
+            echo "Refusing to approve PR #$PR: changed files must be exactly the compose stack and its docs; found:"
+            echo "$changed_files"
+            exit 1
+          fi
+
+          current_head="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
+          if [ "$current_head" != "$HEAD_SHA" ]; then
+            echo "Refusing to approve PR #$PR: head moved from $HEAD_SHA to $current_head."
+            exit 1
+          fi
+
+          BODY="Machine-generated pin of \`packaging/docker/docker-compose.eval.yml\` and its documented download to the \`$VERSION\` images this workflow run published, verified by \`scripts/release/check-compose-pins.mjs\` before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
+          gh api "repos/$REPO/pulls/$PR/reviews" \
+            -f event=APPROVE \
+            -f commit_id="$HEAD_SHA" \
+            -f body="$BODY"
+
+      - name: Enable auto-merge
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+        run: |
+          set -euo pipefail
+
+          gh pr merge "$PR_URL" --auto --squash --delete-branch
