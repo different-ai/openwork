@@ -103,7 +103,7 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", arch, distr
   const { registerUpdaterIpc: registerIsolatedUpdaterIpc } = await import(
     updaterModuleUrl.href
   );
-  registerIsolatedUpdaterIpc({
+  const { ensureAutoUpdater } = registerIsolatedUpdaterIpc({
     app: {
       isPackaged: true,
       getVersion: () => "0.17.0",
@@ -123,8 +123,32 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", arch, distr
     ...(assertActivation ? { assertActivation } : {}),
     readUpdatePolicy: readUpdatePolicy ?? (async () => distribution === "public" ? UNMANAGED_UPDATER_POLICY : policySnapshot({})),
   });
-  return { tempDir, handlers, defaultsWrites, ...harness };
+  return { tempDir, handlers, defaultsWrites, ensureAutoUpdater, ...harness };
 }
+
+describe("startup updater load", () => {
+  for (const distribution of /** @type {Array<"public" | "enterprise">} */ (["public", "enterprise"])) {
+    for (const platform of ["darwin", "linux"]) {
+      it(`${distribution} ${platform} loads the native updater with install-on-quit disarmed and without consulting the policy authority`, async () => {
+        const run = await registerFakeUpdaterIpc({
+          version: "0.17.23", platform, distribution,
+          readUpdatePolicy: async () => { throw new Error("the policy authority must not be read at startup"); },
+        });
+        try {
+          // electron-updater's constructor default is true; startup must never
+          // let that default survive into a process that has read no policy.
+          run.updater.autoInstallOnAppQuit = true;
+          assert.equal(await run.ensureAutoUpdater(), run.updater);
+          assert.equal(run.updater.autoInstallOnAppQuit, false);
+          assert.equal(run.updater.autoDownload, false);
+          assert.deepEqual(run.calls, []);
+        } finally {
+          await rm(run.tempDir, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+});
 
 describe("managed deferred native staging", () => {
   /** @type {Array<"enterprise" | "public">} */

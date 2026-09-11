@@ -442,7 +442,10 @@ export function registerUpdaterIpc({
           autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
           if (autoUpdaterInstance) {
             autoUpdaterInstance.autoDownload = false;
-            autoUpdaterInstance.autoInstallOnAppQuit = automaticInstallOnQuit;
+            // Startup loads the updater before any policy read. Install-on-quit
+            // is armed only at the policy-gated download boundary
+            // (downloadAndStageUpdate / stageMacUpdate), never from a default.
+            autoUpdaterInstance.autoInstallOnAppQuit = false;
             // Differential (blockmap) downloads reconstruct the update zip from the
             // installed app + a diff. On macOS that reconstructed bundle is what
             // feeds Squirrel's fragile move-based install, and is a common trigger
