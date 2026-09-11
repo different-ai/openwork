@@ -271,6 +271,37 @@ describe("native OpenCode session operations", () => {
     expect(receivedEndpoint).toEqual(endpoint);
   });
 
+  test.each(["opencode", "opencode2"])("%s newest session/messages reads need no status or todos", async (engine) => {
+    const target = { ...endpoint, opencodeBaseUrl: endpoint.opencodeBaseUrl.replace("opencode", engine) };
+    const controller = new AbortController();
+    const history = Array.from({ length: 30 }, (_, index) => ({
+      info: { ...messages[0]!.info, id: `msg_${index}`, time: { created: index } },
+      parts: [],
+    }));
+    await withSessionFetch((request) => {
+      const url = new URL(request.url);
+      expect(request.headers.get("authorization")).toBe(`Bearer ${target.token}`);
+      if (url.pathname.endsWith(`/session/${session.id}`)) {
+        return Response.json(engine === "opencode2" ? { data: session } : session);
+      }
+      if (url.pathname.endsWith("/message")) {
+        expect(url.searchParams.get("limit")).toBe("24");
+        return Response.json(engine === "opencode2" ? {
+          data: history.slice(-24).map(({ info }) => ({ ...info, type: "user", content: [] })),
+        } : history.slice(-24));
+      }
+      throw new Error(`Unexpected newest-read dependency: ${url.pathname}`);
+    }, async (requests) => {
+      const [current, newest] = await Promise.all([
+        getNativeSession(target, session.id, { signal: controller.signal }),
+        getNativeSessionMessages(target, session.id, { signal: controller.signal, limit: 24 }),
+      ]);
+      expect(current.id).toBe(session.id);
+      expect(newest.map(({ info }) => info.id)).toEqual(history.slice(-24).map(({ info }) => info.id));
+      expect(requests).toHaveLength(2);
+    });
+  });
+
   test("composes get, messages, todo, and status in parallel with limit and signal", async () => {
     const calls: string[] = [];
     const controller = new AbortController();

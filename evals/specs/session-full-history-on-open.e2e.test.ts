@@ -5,10 +5,13 @@ import {
   longHistoryCount,
   longHistoryFirst,
   longHistoryLast,
+  longHistoryOtherTitle,
   longHistoryTitle,
+  warmCachedLongHistory,
 } from "../worlds/chat.ts";
 
 const test = spec.world((seed) => longHistory(seed, { holdAncillaryReads: true }), { timeout: 600_000 });
+const warmTest = spec.world(warmCachedLongHistory, { timeout: 600_000 });
 
 /** The page size the transcript read used to request; OpenCode returns the newest n. */
 const oldPageSize = 140;
@@ -217,5 +220,137 @@ test("opening a long conversation shows the latest and full history while ancill
     const source = await probe.desktopApi(messagesPath);
     expect(source.status).toBe(200);
     expect(messageTexts(source.body)).toHaveLength(longHistoryCount);
+  });
+});
+
+warmTest("returning to a fully cached conversation refreshes its persisted tail before the uncapped read completes", async ({ user, agent, probe, step, world }) => {
+  const messagesPath = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode/session/${encodeURIComponent(world.session.sessionId)}/message`;
+  const surface = `[data-session-surface-id="${world.session.sessionId}"]`;
+  const historyDom = async () => {
+    const { elements } = await probe.dom(`${surface} [data-thread-scroll], ${surface} [data-message-id]`);
+    return { viewport: elements[0], rows: elements.slice(1) };
+  };
+  const persisted = await step("the complete tail is persisted before reload, without submitting a prompt", async () => {
+    const stored = await probe.desktopApi(messagesPath);
+    expect(stored.status).toBe(200);
+    const texts = messageTexts(stored.body);
+    expect(texts).toHaveLength(longHistoryCount);
+    expect(texts[0]).toBe(longHistoryFirst);
+    expect(texts.at(-1)).toBe(longHistoryLast);
+    const latest = await probe.desktopApi(`${messagesPath}?limit=24`);
+    expect(latest.status).toBe(200);
+    expect(messageTexts(latest.body)).toEqual(texts.slice(-24));
+    await user.reload();
+    await user.see({ role: "button", label: new RegExp(`^${longHistoryOtherTitle}`) }, { timeoutMs: 60_000 });
+    expect((await probe.dom(surface)).elements).toHaveLength(0);
+    return texts;
+  });
+
+  await using fault = await world.startHistoryFault();
+  const cached = await step("an earlier uncapped response fills the full cache but omits the already persisted last message", async () => {
+    await user.click({ role: "button", label: new RegExp(`^${longHistoryTitle}`) });
+    const initial = await probe.eventually(() => fault.read(), {
+      within: 60_000,
+      label: "the earlier full snapshot is cached and idle",
+      until: (value) => value.snapshot?.sessionId === world.session.sessionId && value.snapshot.count === longHistoryCount - 1
+        && value.snapshot.status === "success" && value.snapshot.fetchStatus === "idle",
+    });
+    expect(initial.reads).toContainEqual({
+      warm: false, limit: null, nativeCount: longHistoryCount, count: longHistoryCount - 1, hasTail: false, delivered: true,
+    });
+    expect(initial).toMatchObject({ armed: false, released: false, expired: false, held: 0, mutations: 0 });
+    expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount - 1);
+    await probe.eventually(() => probe.dom(`${surface} [data-thread-history-complete="true"]`), {
+      within: 30_000, label: "all earlier history is mounted", until: (value) => value.elements.length === 1,
+    });
+    const { rows } = await historyDom();
+    expect(rows).toHaveLength(longHistoryCount - 1);
+    rows.forEach((row, index) => expect(row.text).toContain(persisted[index]));
+    expect(rows.some((row) => row.text.includes(longHistoryLast))).toBe(false);
+    expect((await probe.dom(`${surface} [data-lexical-editor="true"]`)).elements.map((element) => element.text)).toEqual([""]);
+
+    await agent.run("session.scroll_top");
+    let previous = Number.NaN;
+    let stable = 0;
+    const anchor = await probe.eventually(async () => {
+      const { viewport, rows } = await historyDom();
+      const first = rows[0];
+      expect(first.text).toContain(longHistoryFirst);
+      expect(first.rect.height).toBeGreaterThan(0);
+      const offset = first.rect.top - viewport.rect.top;
+      stable = offset >= 0 && offset < viewport.rect.height && Math.abs(offset - previous) <= 1 ? stable + 1 : 0;
+      previous = offset;
+      return { offset, stable };
+    }, { within: 30_000, intervalMs: 100, label: "manual reading anchor settled at the first message", until: (value) => value.stable >= 3 });
+    return { texts: rows.map((row) => row.text), offset: anchor.offset };
+  });
+
+  let maxAnchorDrift = 0;
+  const observeReturn = async () => {
+    const { viewport, rows } = await historyDom();
+    const first = rows.find((row) => row.text.includes(longHistoryFirst));
+    if (first && viewport && first.rect.height > 0) {
+      maxAnchorDrift = Math.max(maxAnchorDrift, Math.abs(first.rect.top - viewport.rect.top - cached.offset));
+    }
+    return { viewport, rows };
+  };
+  const refreshed = await step("the warm newest-24 read adds the missing tail while the uncapped response stays held", async () => {
+    await user.click({ role: "button", label: new RegExp(`^${longHistoryOtherTitle}`) });
+    await probe.eventually(() => probe.dom(surface), {
+      within: 30_000, label: "the long conversation is unmounted, not reloaded", until: (value) => value.elements.length === 0,
+    });
+    await fault.arm();
+    await user.click({ role: "button", label: new RegExp(`^${longHistoryTitle}`) });
+    const returned = await probe.eventually(async () => {
+      const dom = await observeReturn();
+      const state = await fault.read();
+      return { ...dom, state };
+    }, {
+      within: 30_000,
+      label: "persisted tail rendered before delivery of any warm uncapped response",
+      until: ({ rows, state }) => rows.length === longHistoryCount && rows.some((row) => row.text.includes(longHistoryLast)) && state.held > 0,
+    });
+    expect(returned.state).toMatchObject({
+      armed: true, released: false, expired: false, mutations: 0,
+      snapshot: { sessionId: world.session.sessionId, count: longHistoryCount - 1, status: "success", fetchStatus: "fetching" },
+    });
+    expect(returned.state.reads).toContainEqual({ warm: true, limit: "24", nativeCount: 24, count: 24, hasTail: true, delivered: true });
+    expect(returned.state.reads).toContainEqual({ warm: true, limit: null, nativeCount: longHistoryCount, count: longHistoryCount, hasTail: true, delivered: false });
+    expect(returned.state.reads.filter((read) => read.warm && read.limit === null && read.delivered)).toHaveLength(0);
+    expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount);
+    expect(returned.rows.slice(0, -1).map((row) => row.text)).toEqual(cached.texts);
+    expect(returned.rows.filter((row) => row.text.includes(longHistoryLast))).toHaveLength(1);
+    expect(returned.rows.at(-1)?.text).toContain(longHistoryLast);
+    expect(returned.rows[0].rect.top).toBeGreaterThanOrEqual(returned.viewport.rect.top);
+    expect(returned.rows[0].rect.bottom).toBeLessThanOrEqual(returned.viewport.rect.bottom);
+    expect(maxAnchorDrift).toBeLessThanOrEqual(1);
+    expect((await fault.read()).held).toBeGreaterThan(0);
+    return returned.rows.map((row) => row.text);
+  });
+
+  await step("releasing full history neither duplicates nor rolls back messages or the manual anchor", async () => {
+    await fault.release();
+    let historyChanged = false;
+    const complete = await probe.eventually(async () => {
+      const dom = await observeReturn();
+      historyChanged ||= dom.rows.length !== refreshed.length || dom.rows.some((row, index) => row.text !== refreshed[index]);
+      return { ...dom, state: await fault.read() };
+    }, {
+      within: 30_000,
+      label: "the released full snapshot is applied without losing the fresh tail",
+      until: ({ state }) => state.held === 0 && state.snapshot?.count === longHistoryCount && state.snapshot.fetchStatus === "idle",
+    });
+    expect(complete.state).toMatchObject({ released: true, expired: false, mutations: 0 });
+    expect(complete.state.reads).toContainEqual({ warm: true, limit: null, nativeCount: longHistoryCount, count: longHistoryCount, hasTail: true, delivered: true });
+    expect(historyChanged).toBe(false);
+    expect(complete.rows.map((row) => row.text)).toEqual(refreshed);
+    expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount);
+    expect((await probe.dom(`${surface} [data-thread-history-complete="true"]`)).elements).toHaveLength(1);
+    expect((await probe.dom(`${surface} [data-thread-loading]`)).elements).toHaveLength(0);
+    const stored = await probe.desktopApi(messagesPath);
+    expect(stored.status).toBe(200);
+    expect(messageTexts(stored.body)).toEqual(persisted);
+    expect((await observeReturn()).rows.map((row) => row.text)).toEqual(refreshed);
+    expect(maxAnchorDrift).toBeLessThanOrEqual(1);
   });
 });

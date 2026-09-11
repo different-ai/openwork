@@ -1,6 +1,9 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CancelledError, queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
+import type { UIMessage } from "ai";
+import { applyHistorySourceChanges, mergeHistoryWindow, projectHistoryRead, reconcileHistoryRead, type LatestSessionHistory } from "./session-render-state";
+import { snapshotToUIMessages } from "../sync/usechat-adapter";
 import type { OpenworkSessionHistory } from "@/app/lib/openwork-server";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types";
 import { snapshotKey } from "../sync/session-sync";
@@ -49,6 +52,27 @@ type OpeningHistoryInput = {
 // prevent an in-flight speculative read surviving a credential change as a hit.
 const openingCredentials = new Map<string | null, number>();
 let nextOpeningCredential = 0;
+const hydratingTranscripts = new WeakSet<object>();
+const EMPTY_HISTORY: UIMessage[] = [];
+
+async function readLatestHistory<T>(read: (signal: AbortSignal) => Promise<T>, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const deadline = new AbortController();
+  const readSignal = AbortSignal.any([signal, deadline.signal]);
+  let rejectAborted: (reason: unknown) => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
+  const onAbort = () => rejectAborted(readSignal.reason);
+  readSignal.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => deadline.abort(new Error("Latest history read timed out.")), 2_000);
+  try {
+    // Some transports cannot abort an already-dispatched request. The optional
+    // newest read must still release full-history loading at its deadline.
+    return await Promise.race([read(readSignal), aborted]);
+  } finally {
+    clearTimeout(timer);
+    readSignal.removeEventListener("abort", onAbort);
+  }
+}
 
 export function openingSessionHistoryOptions(input: OpeningHistoryInput, saved = getSessionScrollState(
   useSessionScrollStore.getState().sessions, input.sessionId, input.owner,
@@ -112,7 +136,10 @@ export function useSessionPrefetchIntent(intent: boolean, prefetch: () => void |
   return () => { committed.current = true; };
 }
 
-export function useOpeningSessionHistory(input: OpeningHistoryInput) {
+export function useOpeningSessionHistory(input: OpeningHistoryInput & {
+  transcriptQueryKey?: readonly unknown[];
+  readLatest?: (signal: AbortSignal) => Promise<Pick<OpenworkSessionHistory, "session" | "messages">>;
+}) {
   const client = useQueryClient();
   const hasLegacyPosition = useSessionScrollStore((state) => Boolean(state.sessions[input.sessionId]));
   const saved = useMemo(() => {
@@ -121,6 +148,95 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
   const hasFullSnapshot = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey)?.session.id === input.sessionId;
   const options = openingSessionHistoryOptions(input, saved);
   const query = useQuery({ ...options, enabled: !hasFullSnapshot });
+  const credential = options.queryKey[2];
+  const latestKey = useMemo(() => ["react-session-latest", ...input.snapshotQueryKey, input.owner, credential], [input.owner, input.sessionId, credential]);
+  const entry = useMemo<{
+    warm: boolean;
+    fullRead: { baseline: UIMessage[]; updateCount: number } | null;
+  }>(() => ({
+    warm: client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey)?.session.id === input.sessionId,
+    fullRead: null,
+  }), [client, input.owner, input.sessionId, credential]);
+  const readSource = useCallback(() => input.transcriptQueryKey
+    ? client.getQueryData<UIMessage[]>(input.transcriptQueryKey) ?? EMPTY_HISTORY : EMPTY_HISTORY,
+  [client, input.transcriptQueryKey]);
+  const latestQuery = useQuery({
+    queryKey: latestKey,
+    enabled: entry.warm && Boolean(input.readLatest),
+    queryFn: async ({ signal }): Promise<LatestSessionHistory> => {
+      const full = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
+      if (!input.readLatest || !full) throw new Error("Latest conversation history is unavailable.");
+      const initial = client.getQueryData<LatestSessionHistory>(latestKey) ?? {
+        messages: mergeHistoryWindow(projectHistoryRead(full), readSource()), source: readSource(),
+      };
+      const history = await readLatestHistory(input.readLatest, signal);
+      signal.throwIfAborted();
+      if (history.session.id !== input.sessionId || history.messages.some(({ info, parts }) =>
+        info.sessionID !== input.sessionId || parts.some((part) =>
+          part.sessionID !== input.sessionId || part.messageID !== info.id))) {
+        throw new Error("Conversation history belongs to another session.");
+      }
+      const current = applyHistorySourceChanges(client.getQueryData<LatestSessionHistory>(latestKey) ?? initial, readSource());
+      if (history.session.revert?.messageID || client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey)?.session.revert?.messageID) return current;
+      return {
+        messages: reconcileHistoryRead(current.messages, projectHistoryRead({ ...full, messages: history.messages }), initial.messages),
+        source: current.source,
+      };
+    },
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnReconnect: "always",
+    refetchOnWindowFocus: false,
+    structuralSharing: false,
+    networkMode: "always",
+  });
+  useEffect(() => {
+    if (!entry.warm || !input.readLatest) return;
+    const sourceKey = input.transcriptQueryKey;
+    const reconcile = () => client.setQueryData<LatestSessionHistory>(latestKey,
+      (current) => current ? applyHistorySourceChanges(current, readSource()) : current);
+    reconcile();
+    return client.getQueryCache().subscribe((event) => {
+      if (sourceKey && event.query.queryKey.length === sourceKey.length
+        && sourceKey.every((part, index) => part === event.query.queryKey[index])
+        && event.type === "updated" && event.action.type === "success"
+        && !hydratingTranscripts.has(client)) reconcile();
+    });
+  }, [client, entry, input.readLatest, input.transcriptQueryKey, latestKey, latestQuery.isSuccess, readSource]);
+  const readFullSnapshot = useCallback(async (signal: AbortSignal) => {
+    const cached = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
+    const baseline = client.getQueryData<LatestSessionHistory>(latestKey)?.messages
+      ?? (cached ? snapshotToUIMessages(cached) : EMPTY_HISTORY);
+    const snapshot = await input.readSnapshot(signal);
+    signal.throwIfAborted();
+    entry.fullRead = { baseline, updateCount: (client.getQueryState(input.snapshotQueryKey)?.dataUpdateCount ?? 0) + 1 };
+    return snapshot;
+  }, [client, entry, input.readSnapshot, input.snapshotQueryKey, latestKey]);
+  const seedSnapshot = useCallback((snapshot: OpenworkSessionHistory, seed: () => void) => {
+    if (snapshot.session.id !== input.sessionId) return;
+    if (!entry.warm || !input.readLatest || !input.transcriptQueryKey) { seed(); return; }
+    if (latestQuery.isFetching) return;
+    const current = client.getQueryData<LatestSessionHistory>(latestKey);
+    hydratingTranscripts.add(client);
+    try {
+      seed();
+      if (!current) return;
+      const source = readSource();
+      const fullRead = entry.fullRead;
+      const baseline = fullRead && fullRead.updateCount === client.getQueryState(input.snapshotQueryKey)?.dataUpdateCount
+        ? fullRead.baseline : EMPTY_HISTORY;
+      client.setQueryData<LatestSessionHistory>(latestKey, {
+        messages: reconcileHistoryRead(current.messages, source, baseline),
+        source,
+      });
+    } finally {
+      hydratingTranscripts.delete(client);
+    }
+  }, [client, entry, input.readLatest, input.sessionId, input.snapshotQueryKey, input.transcriptQueryKey, latestKey, latestQuery.isFetching, readSource]);
+  const latestHistory = entry.warm ? latestQuery.data ?? null : null;
+  const fullReader = entry.warm ? readFullSnapshot : input.readSnapshot;
   const activeOwner = useRef<string | null>(input.owner);
   activeOwner.current = input.owner;
   useEffect(() => {
@@ -130,7 +246,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
   const ensureFullSnapshot = useCallback(async () => {
     const options = {
       queryKey: input.snapshotQueryKey,
-      queryFn: ({ signal }: { signal: AbortSignal }) => input.readSnapshot(signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fullReader(signal),
       networkMode: "always" as const,
     };
     try {
@@ -147,7 +263,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
       if (!query || query.getObserversCount() === 0) throw error;
       return client.fetchQuery(options);
     }
-  }, [client, input.snapshotQueryKey, input.readSnapshot]);
+  }, [client, input.snapshotQueryKey, fullReader]);
   const runWithFullSnapshot = useCallback(async (
     action: (snapshot: OpenworkSessionHistory) => void | Promise<unknown>,
     options: { fresh?: boolean } = {},
@@ -185,11 +301,16 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
     saved,
     options,
     snapshot,
+    latestHistory,
+    readFullSnapshot: fullReader,
+    seedSnapshot,
     // A newest window that came back shorter than its limit already holds the
     // whole conversation. Only a full window, a saved-position window, or an
     // unavailable preview can still be missing earlier messages.
     partial: snapshot === null || limit === undefined || snapshot.messages.length >= limit,
-    backgroundReady: hasFullSnapshot || backgroundOwner === input.owner,
+    backgroundReady: hasFullSnapshot
+      ? !entry.warm || !input.readLatest || !latestQuery.isFetching
+      : backgroundOwner === input.owner,
     ensureFullSnapshot,
     runWithFullSnapshot,
   };

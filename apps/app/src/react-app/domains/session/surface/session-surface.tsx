@@ -1260,10 +1260,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
       markSessionSnapshotFetchStart(item, startedAt);
       return item;
   }, [props.opencodeBaseUrl, props.openworkToken, props.sessionId, sessionOwner, useDesktopLoopbackSnapshotRetry]);
-  const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, authToken: props.openworkToken, snapshotQueryKey, readSnapshot });
+  const readLatest = useCallback(async (signal: AbortSignal) => {
+    const endpoint = { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken };
+    const [session, messages] = await Promise.all([
+      opencodeSessionNative.getNativeSession(endpoint, props.sessionId, { signal }),
+      opencodeSessionNative.getNativeSessionMessages(endpoint, props.sessionId, { signal, limit: 24 }),
+    ]);
+    return { session, messages };
+  }, [props.opencodeBaseUrl, props.openworkToken, props.sessionId]);
+  const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, authToken: props.openworkToken, snapshotQueryKey, transcriptQueryKey, readSnapshot, readLatest });
   const snapshotQuery = useQuery<OpenworkSessionHistory>({
     queryKey: snapshotQueryKey,
-    queryFn: ({ signal }) => readSnapshot(signal),
+    queryFn: ({ signal }) => openingHistory.readFullSnapshot(signal),
     enabled: openingHistory.backgroundReady,
     staleTime: 500,
     networkMode: useDesktopLoopbackSnapshotRetry ? "always" : undefined,
@@ -1413,8 +1421,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (!currentSnapshot) return;
-    seedSessionState(props.workspaceId, currentSnapshot, { preview: !hasFullHistory });
-  }, [currentSnapshot, hasFullHistory, props.sessionId, props.workspaceId]);
+    openingHistory.seedSnapshot(currentSnapshot, () => seedSessionState(props.workspaceId, currentSnapshot, { preview: !hasFullHistory }));
+  }, [currentSnapshot, hasFullHistory, openingHistory.seedSnapshot, props.sessionId, props.workspaceId]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
@@ -1479,8 +1487,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId]);
 
   const baseRenderedMessages = useMemo(
-    () => deriveRenderedSessionMessages({ transcriptState, snapshot, historyComplete: hasFullHistory }),
-    [snapshot, transcriptState, hasFullHistory],
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot, historyComplete: hasFullHistory, latestHistory: openingHistory.latestHistory }),
+    [snapshot, transcriptState, hasFullHistory, openingHistory.latestHistory],
   );
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
   const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);

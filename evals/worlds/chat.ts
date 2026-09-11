@@ -19,6 +19,26 @@ declare global {
     __modelEffortRequests?: unknown[];
     __openworkSubmissionFault?: { attempts: number; release: () => void };
     __openworkLongHistoryFault?: { dispose: () => void };
+    __openworkWarmHistoryFault?: {
+      state: {
+        armed: boolean;
+        released: boolean;
+        expired: boolean;
+        held: number;
+        mutations: number;
+        reads: {
+          warm: boolean;
+          limit: string | null;
+          nativeCount: number;
+          count: number;
+          hasTail: boolean;
+          delivered: boolean;
+        }[];
+      };
+      arm: () => void;
+      release: () => void;
+      dispose: () => void;
+    };
     __openworkStoppingFault?: {
       state: {
         attempts: number;
@@ -2080,6 +2100,139 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
       if (!ancillaryFault) return;
       try { await evalIn(app, () => window.__openworkLongHistoryFault?.dispose(), { timeoutMs: 5_000, reattachAttempts: 0 }); }
       finally { await ancillaryFault.dispose(); }
+    },
+  };
+}
+
+export async function warmCachedLongHistory(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 stored history (OPENWORK_EVAL_ENGINE=v1)");
+  const base = await longHistory(seed, { holdAncillaryReads: false });
+  return {
+    ...base,
+    startHistoryFault: () => warmHistoryFault(seed, base.app, base.workspace.workspaceId, base.session.sessionId),
+  };
+}
+
+async function warmHistoryFault(seed: Seed, app: Surface, workspaceId: string, sessionId: string) {
+  await seed.evalIn(app, browserScript((workspaceId, sessionId, tail) => {
+    if (window.__openworkWarmHistoryFault) throw new Error("A warm history fault is already active");
+    const port = localStorage.getItem("openwork.server.port");
+    if (!port) throw new Error("Warm history fault requires the local server port");
+    const origin = `http://127.0.0.1:${port}`;
+    const paths = ["workspace", "w"].map((mount) =>
+      `/${mount}/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}`);
+    const originalFetch = window.fetch;
+    const state: NonNullable<Window["__openworkWarmHistoryFault"]>["state"] = {
+      armed: false, released: false, expired: false, held: 0, mutations: 0, reads: [],
+    };
+    const pending = new Set<() => void>();
+    let expiry: ReturnType<typeof setTimeout>;
+    const release = () => {
+      state.released = true;
+      clearTimeout(expiry);
+      for (const resume of pending) resume();
+    };
+    const dispose = () => {
+      release();
+      if (window.fetch === wrappedFetch) window.fetch = originalFetch;
+    };
+    const expire = () => { state.expired = true; dispose(); };
+    const hasTail = (message: unknown) => {
+      if (!message || typeof message !== "object" || !("parts" in message) || !Array.isArray(message.parts)) return false;
+      return message.parts.some((part: unknown) => part && typeof part === "object"
+        && "type" in part && part.type === "text" && "text" in part && part.text === tail);
+    };
+    const wrappedFetch: typeof window.fetch = async (...args) => {
+      const [input, init] = args;
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      const owned = url.origin === origin && paths.some((path) => url.pathname === path || url.pathname.startsWith(`${path}/`));
+      if (owned && method !== "GET") state.mutations += 1;
+      if (state.released || !owned || method !== "GET" || !paths.some((path) => url.pathname === `${path}/message`)) {
+        return originalFetch.apply(window, args);
+      }
+      const warm = state.armed;
+      const signal = init?.signal !== undefined ? init.signal : input instanceof Request ? input.signal : undefined;
+      const response = await originalFetch.apply(window, args);
+      if (!response.ok) throw new Error(`Warm history read failed: HTTP ${response.status}`);
+      const messages: unknown = await response.clone().json();
+      signal?.throwIfAborted();
+      if (!Array.isArray(messages)) throw new Error("Warm history read did not return native messages");
+      const returned = warm ? messages : messages.filter((message: unknown) => !hasTail(message));
+      const read = {
+        warm, limit: url.searchParams.get("limit"), nativeCount: messages.length,
+        count: returned.length, hasTail: returned.some(hasTail), delivered: false,
+      };
+      state.reads.push(read);
+      if (warm && read.limit === null && !state.released) {
+        state.held += 1;
+        try {
+          await new Promise<void>((resolveHold, rejectHold) => {
+            const cleanup = () => { pending.delete(resume); signal?.removeEventListener("abort", abort); };
+            const resume = () => { cleanup(); resolveHold(); };
+            const abort = () => { cleanup(); rejectHold(signal?.reason ?? new DOMException("Aborted", "AbortError")); };
+            pending.add(resume);
+            signal?.addEventListener("abort", abort, { once: true });
+            if (signal?.aborted) abort();
+          });
+        } finally {
+          state.held -= 1;
+        }
+      }
+      signal?.throwIfAborted();
+      read.delivered = true;
+      if (warm) return response;
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      headers.delete("content-encoding");
+      return new Response(JSON.stringify(returned), { status: response.status, statusText: response.statusText, headers });
+    };
+    window.fetch = wrappedFetch;
+    expiry = setTimeout(expire, 120_000);
+    window.__openworkWarmHistoryFault = {
+      state,
+      arm: () => {
+        if (state.armed || state.released) throw new Error("Warm history fault cannot be armed again");
+        state.armed = true;
+        clearTimeout(expiry);
+        expiry = setTimeout(expire, 120_000);
+      },
+      release,
+      dispose,
+    };
+  }, [workspaceId, sessionId, longHistoryLast]));
+
+  return {
+    read: () => seed.evalIn(app, () => {
+      const fault = window.__openworkWarmHistoryFault;
+      if (!fault) throw new Error("Warm history fault lost its document");
+      const composer: unknown = window.__openwork?.slice("composer");
+      const snapshot = composer && typeof composer === "object" && "snapshotQuery" in composer ? composer.snapshotQuery : null;
+      return {
+        ...fault.state,
+        snapshot: snapshot && typeof snapshot === "object" ? {
+          sessionId: "dataSessionId" in snapshot && typeof snapshot.dataSessionId === "string" ? snapshot.dataSessionId : null,
+          count: "dataMessageCount" in snapshot && typeof snapshot.dataMessageCount === "number" ? snapshot.dataMessageCount : null,
+          status: "status" in snapshot && typeof snapshot.status === "string" ? snapshot.status : null,
+          fetchStatus: "fetchStatus" in snapshot && typeof snapshot.fetchStatus === "string" ? snapshot.fetchStatus : null,
+        } : null,
+      };
+    }),
+    arm: () => seed.evalIn(app, () => {
+      const fault = window.__openworkWarmHistoryFault;
+      if (!fault) throw new Error("Warm history fault lost its document");
+      fault.arm();
+    }),
+    release: () => seed.evalIn(app, () => {
+      const fault = window.__openworkWarmHistoryFault;
+      if (!fault || fault.state.held < 1 || fault.state.expired) throw new Error("No uncapped history response is held");
+      fault.release();
+    }),
+    async [Symbol.asyncDispose]() {
+      await seed.evalIn(app, () => {
+        window.__openworkWarmHistoryFault?.dispose();
+        delete window.__openworkWarmHistoryFault;
+      });
     },
   };
 }

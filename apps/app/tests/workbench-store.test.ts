@@ -77,8 +77,76 @@ describe("workbench store", () => {
     state = openWorkbenchTab(state, { workspaceId: "workspace-b", sessionId: "session-shared" });
     state = setWorkbenchSplit(state, { workspaceId: "workspace-b", sessionId: "session-shared" });
 
+    const sideChats = state.sideChats;
+    state = syncWorkbenchSnapshot(state, {
+      workspaceId: "workspace-a",
+      primarySessionId: "session-shared",
+      sessionsKnown: true,
+      sessions: [
+        { workspaceId: "workspace-b", sessionId: "session-shared", title: "Other workspace" },
+        { workspaceId: "workspace-a", sessionId: "session-shared", title: "First match" },
+        { workspaceId: "workspace-a", sessionId: "session-shared", title: "Later duplicate" },
+      ],
+    });
+
     expect(state.tabs).toHaveLength(2);
-    expect(state.secondary?.workspaceId).toBe("workspace-b");
+    expect(state.tabs.map((tab) => tab.title)).toEqual(["First match", "Other workspace"]);
+    expect(state.primary?.title).toBe("First match");
+    expect(state.secondary).toMatchObject({ workspaceId: "workspace-b", title: "Other workspace" });
+    expect(state.sideChats).toBe(sideChats);
+    expect(state.focusedPane).toBe("secondary");
+  });
+
+  test("keeps workspace and session key separators distinct during metadata refresh", () => {
+    const owner = { workspaceId: "workspace:a", sessionId: "shared", title: "Owner" };
+    const side = { workspaceId: "workspace", sessionId: "a:shared", title: "Side" };
+    const input = {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [owner, side],
+    };
+    let state = syncWorkbenchSnapshot(emptyWorkbench, input);
+    state = setWorkbenchSplit(openWorkbenchTab(state, side), side);
+    const refreshed = syncWorkbenchSnapshot(state, input);
+
+    expect(refreshed.primary).toMatchObject(owner);
+    expect(refreshed.secondary).toMatchObject(side);
+    expect(refreshed.tabs.map((tab) => tab.title)).toEqual(["Owner", "Side"]);
+    expect(refreshed.sideChats).toBe(state.sideChats);
+  });
+
+  test("bounds retained identity reads with a large inventory and preserves no-op snapshot identity", () => {
+    const sessions = Array.from({ length: 10_000 }, (_, index) => ({
+      workspaceId: "workspace-a", sessionId: `session-${index}`, title: `Session ${index}`,
+    }));
+    let identityReads = 0;
+    const tabs = sessions.slice(-128).map((session) => ({
+      ...session,
+      workspaceTitle: "Workspace A",
+      get workspaceId() { identityReads++; return session.workspaceId; },
+      get sessionId() { identityReads++; return session.sessionId; },
+    }));
+    const current: WorkbenchSnapshot = { ...emptyWorkbench, primary: tabs[0]!, tabs };
+    const input = {
+      workspaceId: "workspace-a", workspaceTitle: "Workspace A",
+      primarySessionId: sessions[sessions.length - tabs.length]!.sessionId,
+      sessionsKnown: true, sessions,
+    };
+    const unchanged = syncWorkbenchSnapshot(current, input);
+
+    expect(identityReads).toBeLessThanOrEqual(tabs.length * 12);
+    expect(unchanged).toBe(current);
+    expect(unchanged.tabs).toBe(tabs);
+    identityReads = 0;
+    const switchedInput = { ...input, primarySessionId: sessions.at(-1)!.sessionId };
+    const switched = syncWorkbenchSnapshot(current, switchedInput);
+
+    expect(identityReads).toBeLessThanOrEqual(tabs.length * 12);
+    expect(switched.primary?.sessionId).toBe(switchedInput.primarySessionId);
+    expect(switched.tabs).toHaveLength(tabs.length);
+    expect(switched.tabs.map((tab) => tab.sessionId)).toEqual(sessions.slice(-128).map((session) => session.sessionId));
+    expect(switched.revision).toBe(current.revision + 1);
+    expect(switched.sideChats).toBe(current.sideChats);
+    expect(syncWorkbenchSnapshot(switched, switchedInput)).toBe(switched);
   });
 
   test("focuses and closes a secondary by its full workspace reference", () => {
@@ -243,6 +311,8 @@ describe("workbench store", () => {
       sessions: [],
     });
 
+    expect(loading).toBe(state);
+    expect(loading.sideChats).toBe(state.sideChats);
     expect(loading.tabs.map((tab) => tab.sessionId)).toEqual(["session-a", "session-b"]);
     expect(loading.secondary?.sessionId).toBe("session-b");
   });

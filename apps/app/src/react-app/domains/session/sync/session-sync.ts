@@ -29,6 +29,7 @@ import {
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
+import type { LatestSessionHistory } from "../surface/session-render-state";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
@@ -950,7 +951,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     // renderer derives the visible transcript from this cursor, so a revert
     // (or its cleanup on the next prompt) must reach the snapshot cache or
     // the transcript stays frozen on stale history.
-    queryClient.setQueryData<OpenworkSessionSnapshot>(
+    queryClient.setQueryData<OpenworkSessionHistory>(
       snapshotKey(workspaceId, update.sessionId),
       (current) => {
         if (!current) return current;
@@ -1201,10 +1202,19 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { sessionID?: string; messageID?: string };
     if (!props.sessionID || !props.messageID) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
+    const fullKey = snapshotKey(workspaceId, props.sessionID);
+    const latestKey = ["react-session-latest", ...fullKey];
+    void queryClient.cancelQueries({ queryKey: latestKey });
+    void queryClient.cancelQueries({ queryKey: fullKey, exact: true });
+    const keep = (message: UIMessage) => message.id !== props.messageID
+      && message.id !== `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${props.messageID}`;
+    queryClient.setQueriesData<LatestSessionHistory>({ queryKey: latestKey }, (current) => current ? {
+      messages: current.messages.filter(keep), source: current.source.filter(keep),
+    } : current);
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
-      current.filter((message) => message.id !== props.messageID),
+      current.filter(keep),
     );
-    queryClient.setQueryData<OpenworkSessionSnapshot>(
+    queryClient.setQueryData<OpenworkSessionHistory>(
       snapshotKey(workspaceId, props.sessionID),
       (current) => {
         if (!current) return current;
@@ -1789,7 +1799,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
       };
     },
     onResolved: (sessionId, title) => {
-      getReactQueryClient().setQueryData<OpenworkSessionSnapshot>(
+      getReactQueryClient().setQueryData<OpenworkSessionHistory>(
         snapshotKey(input.workspaceId, sessionId),
         (current) => current
           ? { ...current, session: { ...current.session, title } }
@@ -2002,7 +2012,7 @@ export function applySessionRevert(workspaceId: string, session: Session) {
   const queryClient = getReactQueryClient();
   const revertMessageId = session.revert?.messageID ?? null;
 
-  queryClient.setQueryData<OpenworkSessionSnapshot>(
+  queryClient.setQueryData<OpenworkSessionHistory>(
     snapshotKey(workspaceId, session.id),
     (current) => (current ? { ...current, session: { ...current.session, revert: session.revert } } : current),
   );
@@ -2019,7 +2029,7 @@ export async function applySessionArchived(workspaceId: string, sessionId: strin
   const queryKey = snapshotKey(workspaceId, sessionId);
   // An older in-flight snapshot must not put the archived flag back after Restore.
   await queryClient.cancelQueries({ queryKey, exact: true });
-  queryClient.setQueryData<OpenworkSessionSnapshot>(queryKey, current => current ? {
+  queryClient.setQueryData<OpenworkSessionHistory>(queryKey, current => current ? {
     ...current,
     session: { ...current.session, time: { ...current.session.time, archived: archived ? Date.now() : 0 } },
   } : current);
@@ -2030,7 +2040,7 @@ export async function applySessionArchived(workspaceId: string, sessionId: strin
 export function applySessionUnrevert(workspaceId: string, sessionId: string) {
   const queryClient = getReactQueryClient();
   void queryClient.cancelQueries({ queryKey: snapshotKey(workspaceId, sessionId) });
-  queryClient.setQueryData<OpenworkSessionSnapshot>(
+  queryClient.setQueryData<OpenworkSessionHistory>(
     snapshotKey(workspaceId, sessionId),
     (current) => (current ? { ...current, session: { ...current.session, revert: undefined } } : current),
   );

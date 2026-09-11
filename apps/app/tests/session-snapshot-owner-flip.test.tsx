@@ -8,7 +8,7 @@ import { createRoot } from "react-dom/client";
 
 import type { FieldsResult } from "../src/app/lib/opencode";
 import type { NativeSessionOperations, NativeSessionSnapshotTarget } from "../src/app/lib/opencode-session-native";
-import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import type { Platform } from "../src/react-app/kernel/platform";
 
 const workspaceId = "workspace-snapshot-owner-flip";
@@ -144,6 +144,7 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
 
   const readEndpoints: string[] = [];
   const historyWindows: Array<number | undefined> = [];
+  const readLimits: (number | undefined)[] = [];
   let releaseRetry: (() => void) | null = null;
   const snapshot = createSnapshot();
   const operationsFor = (endpoint: { opencodeBaseUrl: string }): NativeSessionOperations => {
@@ -172,15 +173,18 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
     composeNativeSessionHistoryWithRetry: (
       expectedOwner: string,
       readCurrentTarget: () => NativeSessionSnapshotTarget,
-      options: { signal?: AbortSignal },
-    ) => composeWithRetry(expectedOwner, readCurrentTarget, options, {
-      createOperations: operationsFor,
-      // The first (v1) read parks here until the test flips the owner.
-      waitForSnapshotRetry: (_delayMs, signal) => new Promise<void>((resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-        releaseRetry = resolve;
-      }),
-    }),
+      options: { signal?: AbortSignal; limit?: number },
+    ) => {
+      readLimits.push(options.limit);
+      return composeWithRetry(expectedOwner, readCurrentTarget, options, {
+        createOperations: operationsFor,
+        // The first (v1) read parks here until the test flips the owner.
+        waitForSnapshotRetry: (_delayMs, signal) => new Promise<void>((resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          releaseRetry = resolve;
+        }),
+      });
+    },
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey } = await import("../src/react-app/domains/session/sync/session-sync");
@@ -257,6 +261,10 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
     // The abandoned owner must never retry or populate either result.
     expect(readEndpoints).toEqual([v1BaseUrl, v2BaseUrl, v2BaseUrl]);
     expect(historyWindows).toEqual([24, 24, undefined]);
+    expect(readLimits).toEqual([24, 24, undefined]);
+    const cached = queryClient.getQueryData<OpenworkSessionHistory>(key);
+    expect(cached?.status).toBeUndefined();
+    expect(cached?.todos).toBeUndefined();
   } finally {
     await act(async () => root.unmount());
     useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });
