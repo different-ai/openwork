@@ -1,16 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, LayoutGrid, List, Plus, RefreshCw, Search } from "lucide-react";
+import { ChevronRight, LayoutGrid, List, Plus, RefreshCw, Search, TriangleAlert } from "lucide-react";
 
 import { DenBrandMark } from "../../_components/ui/brand-mark";
-import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenButton } from "../../_components/ui/button";
 import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
-import { DenList, DenListRow } from "../../_components/ui/list-row";
-import { DenNotice } from "../../_components/ui/notice";
+import { DenList } from "../../_components/ui/list-row";
 import { UnderlineTabs } from "../../_components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../_components/ui/tooltip";
 import { getLibraryPluginRoute, getOrgAccessFlags, getYourConnectionsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type LibraryItem, useLibrary } from "./library-data";
@@ -25,6 +26,8 @@ import {
   LIBRARY_DEFAULT_STATE,
   LIBRARY_KINDS,
   LIBRARY_LAYOUT_KEY,
+  LIBRARY_STATES,
+  type LibraryEmptyState,
   type LibraryKind,
   type LibraryLayout,
   type LibraryState,
@@ -75,14 +78,11 @@ export function LibraryRow({ item, isFocused, orgName, orgSlug, layout }: {
 }) {
   const state = getLibraryState(item);
   const source = getSource(item, orgName);
-  const connectionHref = item.type === "connection"
-    ? `${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`
-    : undefined;
   const rowHref = item.type === "plugin"
     ? getLibraryPluginRoute(orgSlug, item.id)
     : item.type === "workflow"
       ? `/dashboard/library/workflows/${encodeURIComponent(item.id)}`
-      : connectionHref;
+      : `${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`;
   const iconUrl = item.type === "connection" && item.provider === "google-workspace"
     ? "/integrations/google.svg"
     : item.type === "plugin"
@@ -90,64 +90,115 @@ export function LibraryRow({ item, isFocused, orgName, orgSlug, layout }: {
       : undefined;
   const simpleIconSlug = item.type === "connection" && item.provider === "microsoft-365" ? "microsoft" : undefined;
   const serviceUrl = item.type === "connection" && item.transport === "mcp" ? item.url : undefined;
-  const nonPersonSource = source && !source.isPerson ? source : null;
+  const ready = state === "ready";
+  const kindLabel = item.type === "connection" ? "MCP" : item.type === "workflow" ? "Workflow"
+    : hasLibraryComponent(item, "skill") && !hasLibraryComponent(item, "mcp") ? "Skill" : "Plugin";
+  const statusLabel = ready ? item.type === "connection" ? "Connected" : "Ready to use" : kindLabel;
+  const nextAction = state === "needs_signin" ? "Sign in"
+    : state === "needs_admin_setup" ? "Needs admin setup"
+      : state === "needs_setup" ? "Ready to set up" : "View details";
+  const meta = (
+    <span data-library-source>
+      {item.type === "connection" ? <span>{item.transport === "native" ? "Native" : "Cloud"} · </span> : null}
+      {source?.label ?? orgName}
+    </span>
+  );
+  const kindBadge = <DenChip data-library-chip="" className="!rounded-md !px-1.5 !text-[10px]">{kindLabel}</DenChip>;
 
+  // Keep web links and Den provenance while matching Desktop's neutral card
+  // anatomy. A plugin's availability must never claim its MCPs are connected.
   return (
-    <DenListRow
-      layout={layout}
-      leading={(
-        <DenBrandMark
-          name={item.name}
-          iconUrl={iconUrl}
-          simpleIconSlug={simpleIconSlug}
-          serviceUrl={serviceUrl}
-          className="h-10 w-10 shrink-0 rounded-[12px] border border-gray-100 bg-white"
-        />
-      )}
-      title={item.name}
-      chips={(
-        <>
-          <DenChip data-library-chip="" tone={item.type === "connection" ? "info" : "neutral"}>
-            {item.type === "connection" ? "MCP" : item.type === "workflow" ? "Workflow" : hasLibraryComponent(item, "skill") && !hasLibraryComponent(item, "mcp") ? "Skill" : "Plugin"}
-          </DenChip>
-          {item.type === "connection" ? (
-            <DenChip data-library-chip="" tone={item.transport === "mcp" ? "neutral" : "teal"}>
-              {item.transport === "mcp" ? "Cloud" : "Native"}
-            </DenChip>
-          ) : null}
-          {state !== "ready" ? (
-            <DenChip data-library-chip="" tone="warning">
-              {state === "needs_signin" ? "Connect your account" : state === "needs_admin_setup" ? "Waiting on your admin" : "Needs setup"}
-            </DenChip>
-          ) : null}
-          {source?.isPerson ? <DenChip data-library-chip="" data-library-source="" tone="info">{source.label}</DenChip> : null}
-        </>
-      )}
-      meta={item.description || nonPersonSource ? (
-        <>
-          {item.description}
-          {nonPersonSource ? (
-            <>
-              {item.description ? <span aria-hidden> · </span> : null}
-              <span data-library-source>{nonPersonSource.label}</span>
-            </>
-          ) : null}
-        </>
-      ) : undefined}
-      action={state !== "ready" && connectionHref ? (
-        <span className={buttonVariants({ size: "xs", variant: state === "needs_signin" ? "primary" : "ghost" })}>
-          {state === "needs_signin" ? "Sign in" : "Details"}
-        </span>
-      ) : <ChevronRight aria-hidden className="h-4 w-4 text-gray-400" />}
+    <Link
       href={rowHref}
-      focused={isFocused}
-      dataAttributes={{
-        "data-library-item-type": item.type,
-        "data-library-item-state": item.type === "connection" || item.type === "workflow" ? item.state : undefined,
-        "data-library-item-key": `${item.type}-${item.id}`,
-        "data-library-focused": isFocused ? "" : undefined,
-      }}
-    />
+      data-library-item-type={item.type}
+      data-library-item-state={item.type === "connection" || item.type === "workflow" ? item.state : undefined}
+      data-library-item-key={`${item.type}-${item.id}`}
+      data-library-focused={isFocused ? "" : undefined}
+      className={`group flex min-w-0 w-full gap-3 text-left transition-colors hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${layout === "grid" ? "h-full items-start rounded-xl border border-gray-200 bg-white p-4" : "items-center px-3.5 py-2"} ${isFocused ? "ring-2 ring-inset ring-blue-200" : ""}`}
+    >
+      <DenBrandMark
+        name={item.name}
+        iconUrl={iconUrl}
+        simpleIconSlug={simpleIconSlug}
+        serviceUrl={serviceUrl}
+        className={`${layout === "grid" ? "size-10" : "size-8"} rounded-lg`}
+        imageClassName={layout === "grid" ? "size-6" : "size-5"}
+      />
+      {layout === "grid" ? (
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="min-w-0 break-words text-sm font-semibold text-gray-900">{item.name}</h3>
+            <DenChip data-library-chip="" data-library-ready={ready ? "" : undefined} tone={ready ? "success" : "neutral"} className="!rounded-md !px-1.5 !text-[10px]">
+              {statusLabel}
+            </DenChip>
+            {ready && item.type === "workflow" ? kindBadge : null}
+          </div>
+          {item.description ? <p className="mt-0.5 line-clamp-2 break-words text-xs text-gray-500">{item.description}</p> : null}
+          <div className="mt-1 text-[11px] text-gray-500">{meta}</div>
+          <div className="mt-2 text-[11px] font-medium text-gray-900 group-hover:opacity-80">{nextAction}</div>
+        </div>
+      ) : (
+        <>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:w-44 sm:flex-none">
+            <span className="truncate text-[13px] font-medium text-gray-900">{item.name}</span>
+            {ready ? <span data-library-ready="" className="size-1.5 shrink-0 rounded-full bg-emerald-600"><span className="sr-only">{statusLabel}</span></span> : null}
+          </div>
+          <div className="flex w-20 shrink-0">{kindBadge}</div>
+          <p className="hidden min-w-0 flex-1 truncate text-xs text-gray-500 sm:block">{item.description}</p>
+          <div className="hidden max-w-40 shrink-0 truncate text-[11px] text-gray-500 lg:block">{meta}</div>
+          {ready ? <ChevronRight aria-hidden className="size-3.5 shrink-0 text-gray-400" /> : (
+            <span className="inline-flex h-7 shrink-0 items-center rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-900">{nextAction}</span>
+          )}
+        </>
+      )}
+    </Link>
+  );
+}
+
+export function LibraryAddControl({ action, label, disabledReason }: {
+  action: ReturnType<typeof getLibraryAddAction>;
+  label: string;
+  disabledReason: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={action ? <a href={action.href} /> : <button type="button" aria-disabled="true" />}
+        aria-label={action?.label ?? label}
+        title={action?.label ?? disabledReason}
+        className={`inline-flex size-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 ${action ? "" : "cursor-not-allowed opacity-70"}`}
+      >
+        <Plus aria-hidden className="size-5" />
+      </TooltipTrigger>
+      <TooltipContent>{action?.label ?? disabledReason}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function LibraryEmpty({ empty, addAction, disabledReason, error, onAction, onRefresh }: {
+  empty: LibraryEmptyState;
+  addAction: ReturnType<typeof getLibraryAddAction>;
+  disabledReason: string;
+  error?: string;
+  onAction: (action: LibraryEmptyState["action"]) => void;
+  onRefresh: () => void;
+}) {
+  const actionLabel = empty.action === "clear_filters" ? "Clear filters"
+    : LIBRARY_STATES.find((tab) => tab.value === empty.action)?.label;
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-[10px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center" data-library-empty={error ? "refresh" : empty.action}>
+      <h2 className="text-[15px] font-medium text-gray-900">{error ? "Your Library is unavailable" : empty.title}</h2>
+      <p className="max-w-md text-[13px] text-gray-500">{error ?? empty.description}</p>
+      {error ? (
+        <DenButton variant="secondary" onClick={onRefresh}>Refresh</DenButton>
+      ) : empty.action === "add" ? addAction ? (
+        <DenButton href={addAction.href} variant="secondary">{addAction.label}</DenButton>
+      ) : (
+        <p className="text-[13px] text-gray-500">{disabledReason}</p>
+      ) : (
+        <DenButton variant="secondary" onClick={() => onAction(empty.action)}>{actionLabel}</DenButton>
+      )}
+    </div>
   );
 }
 
@@ -165,6 +216,11 @@ export function LibraryScreen() {
   const requestedFocus = searchParams.get("focus");
   const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.roles);
   const addAction = getLibraryAddAction({ kind: activeKind, isAdmin: access.isAdmin, mcpConnections: orgContext?.capabilities.mcpConnections === true, orgSlug });
+  const addLabel = activeKind === "mcps" ? "Add MCP" : activeKind === "skills" ? "Create skill" : "Add plugin";
+  const disabledReason = !orgContext ? "Loading your organization…"
+    : activeKind === "mcps" && !orgContext.capabilities.mcpConnections ? "Connections are not enabled for this organization."
+      : "An organization admin manages additions to this Library.";
+  const errorMessage = error ? error instanceof Error ? error.message : "Failed to load library." : undefined;
   const view = getLibraryView(items, activeKind, activeState, query);
 
   useEffect(() => {
@@ -210,35 +266,33 @@ export function LibraryScreen() {
   ));
 
   return (
+    <TooltipProvider>
     <div className="px-4 pb-7 pt-5 sm:px-8" data-testid="den-library" data-library-kind={activeKind} data-library-layout={layout}>
       <DashboardHeaderActions>
-      {addAction ? (
-        <DenButton href={addAction.href} variant="ghost" size="sm" className="!h-8 w-8 !p-0 hover:bg-gray-100 focus-visible:outline-2 focus-visible:outline-offset-2" aria-label={addAction.label} title={addAction.label}>
-          <Plus aria-hidden className="h-5 w-5" />
-        </DenButton>
-      ) : (
-        <DenButton variant="ghost" size="sm" className="!h-8 w-8 !p-0" disabled aria-label="Add to My Library" title="A workspace admin manages additions to this Library.">
-          <Plus aria-hidden className="h-5 w-5" />
-        </DenButton>
-      )}
+        <LibraryAddControl action={addAction} label={addLabel} disabledReason={disabledReason} />
       </DashboardHeaderActions>
 
-      <div className="mb-5 flex min-w-0 flex-wrap items-center justify-between gap-x-7 gap-y-3 border-b border-gray-200">
-        <div className="min-w-0 flex-1 overflow-x-auto">
+      <div className="mb-4 flex h-12 min-w-0 items-end justify-between gap-x-7 border-b border-gray-200">
+        <div className="-mb-px min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <UnderlineTabs
-            className="!border-0 [&>nav]:!m-0 [&>nav]:!flex-nowrap [&>nav]:!gap-7 [&_[role=tab]]:h-12 [&_[role=tab]]:shrink-0 [&_[role=tab]]:!pb-0 [&_[role=tab]]:!text-[14px] [&_[role=tab]]:!font-normal [&_[role=tab]]:!leading-5 [&_[role=tab]]:!text-gray-500 [&_[role=tab][aria-selected=true]]:!border-gray-900 [&_[role=tab][aria-selected=true]]:!text-gray-900"
-            tabs={view.tabs.map((tab) => ({ ...tab, count: view.counts[tab.value], countClassName: "!h-[22px] min-w-6 justify-center !px-1.5 !py-0 !text-[12px]" }))}
+            className="!border-0 [&>nav]:!m-0 [&>nav]:!flex-nowrap [&>nav]:!gap-7 [&_[role=tab]]:h-12 [&_[role=tab]]:shrink-0 [&_[role=tab]]:!pb-0 [&_[role=tab]]:!text-sm [&_[role=tab]]:!leading-5 [&_[role=tab]]:focus-visible:outline-2 [&_[role=tab]]:focus-visible:outline-gray-900 [&_[role=tab][aria-selected=true]]:!border-gray-900 [&_[role=tab][aria-selected=true]]:!text-gray-900"
+            tabs={view.tabs.map((tab) => ({
+              ...tab,
+              count: view.counts[tab.value],
+              countTone: tab.value === "needs_signin" || tab.value === "needs_setup" ? "warning" : tab.value === "needs_admin_setup" ? "danger" : "neutral",
+              countClassName: `!h-[22px] min-w-6 justify-center !px-1.5 !py-0 !text-xs ${view.counts[tab.value] === 0 ? "!bg-gray-100 !text-gray-500" : ""}`,
+            }))}
             activeTab={view.activeState}
             onChange={setActiveState}
             showZeroCounts
           />
         </div>
-        <div className="w-full shrink-0 pb-3 lg:w-[280px] lg:pb-0">
+        <div className="w-[min(280px,40%)] shrink-0 self-center sm:ml-auto sm:w-[280px]">
           <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your library" aria-label="Search your library" className="!h-9 !rounded-[10px]" />
         </div>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3" aria-label="Library filters">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2" aria-label="Library filters">
         <div className="flex items-center gap-2">
           {LIBRARY_KINDS.map((filter) => (
             <button
@@ -246,7 +300,7 @@ export function LibraryScreen() {
               type="button"
               aria-pressed={activeKind === filter.value}
               onClick={() => { setActiveKind(filter.value); setActiveState(LIBRARY_DEFAULT_STATE); }}
-              className={`inline-flex h-[30px] items-center rounded-full border px-3 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 ${activeKind === filter.value ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-900"}`}
+              className={`inline-flex h-[30px] items-center rounded-full border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 ${activeKind === filter.value ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-900"}`}
             >
               {filter.label}
             </button>
@@ -254,45 +308,51 @@ export function LibraryScreen() {
         </div>
         <div className="ml-auto flex items-center gap-1" role="group" aria-label="Library view">
           {([{ value: "grid", label: "Card view", icon: LayoutGrid }, { value: "list", label: "List view", icon: List }] satisfies { value: LibraryLayout; label: string; icon: typeof List }[]).map(({ value, label, icon: Icon }) => (
-            <button key={value} type="button" aria-label={label} title={label} aria-pressed={layout === value} onClick={() => selectLayout(value)} className={`flex h-[30px] w-8 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 ${layout === value ? "bg-gray-100 text-gray-900" : "text-gray-500 hover:bg-gray-100"}`}>
-              <Icon aria-hidden className="h-4 w-4" />
-            </button>
+            <Tooltip key={value}>
+              <TooltipTrigger type="button" aria-label={label} title={label} aria-pressed={layout === value} onClick={() => selectLayout(value)} className={`flex h-[30px] w-8 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 ${layout === value ? "bg-gray-100 text-gray-900" : "text-gray-500 hover:bg-gray-100"}`}>
+                <Icon aria-hidden className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>{label}</TooltipContent>
+            </Tooltip>
           ))}
-          <button type="button" aria-label="Refresh" title="Refresh" disabled={isFetching} onClick={() => void refetch()} className="flex h-[30px] w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50">
-            <RefreshCw aria-hidden className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+          <button type="button" aria-label="Refresh" title="Refresh" disabled={isFetching} onClick={() => void refetch()} className="flex h-[30px] w-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50">
+            <RefreshCw aria-hidden className={`size-4 ${isFetching ? "animate-spin" : ""}`} />
           </button>
+          {errorMessage && items.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger aria-label="Library refresh failed" className="flex h-[30px] w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100">
+                <TriangleAlert aria-hidden className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>{errorMessage} Use Refresh to try again.</TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
       </div>
 
-      {error ? (
-        <DenNotice tone="error" message={error instanceof Error ? error.message : "Failed to load library."} />
-      ) : isLoading ? (
-        <div role="status" className="rounded-[10px] border border-gray-200 bg-white px-6 py-10 text-[14px] text-gray-500">Loading your library...</div>
-      ) : view.visibleItems.length === 0 ? (
-        <div className="rounded-[10px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center" data-library-empty={view.empty.action}>
-          <h2 className="text-[15px] font-medium text-gray-900">{view.empty.title}</h2>
-          <p className="mt-2 text-[13px] text-gray-500">{view.empty.description}</p>
-          <div className="mt-4 flex justify-center">
-            {view.empty.action === "add" ? addAction ? (
-              <DenButton href={addAction.href} size="sm">{addAction.label}</DenButton>
-            ) : (
-              <p className="text-[13px] text-gray-500">Ask a workspace admin to add {activeKind === "mcps" ? "MCPs" : activeKind}.</p>
-            ) : (
-              <DenButton size="sm" variant="secondary" onClick={() => {
-                if (view.empty.action === "clear_search") setQuery("");
-                else if (view.empty.action === "needs_signin" || view.empty.action === "needs_admin_setup" || view.empty.action === "needs_setup") setActiveState(view.empty.action);
-                else setActiveState("ready");
-              }}>
-                {view.empty.action === "clear_search" ? "Clear search" : view.empty.action === "needs_signin" ? "Needs your sign-in" : view.empty.action === "ready" ? "Ready to use" : "View setup needed"}
-              </DenButton>
-            )}
-          </div>
+      {isLoading ? (
+        <div role="status" aria-label="Loading your library" className={layout === "list" ? "flex flex-col gap-2" : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3"}>
+          {[0, 1, 2].map((index) => <div key={index} aria-hidden className={`bg-gray-100 motion-safe:animate-pulse ${layout === "list" ? "h-[42px] rounded-lg" : "h-[104px] rounded-xl"}`} />)}
         </div>
+      ) : view.visibleItems.length === 0 ? (
+        <LibraryEmpty
+          empty={view.empty}
+          addAction={addAction}
+          disabledReason={disabledReason}
+          error={items.length === 0 ? errorMessage : undefined}
+          onRefresh={() => void refetch()}
+          onAction={(action) => {
+            if (action === "clear_filters") {
+              setQuery("");
+              setActiveState(LIBRARY_DEFAULT_STATE);
+            } else if (action !== "add") setActiveState(action);
+          }}
+        />
       ) : (
         <section data-library-section={view.activeState} aria-label={view.tabs.find((tab) => tab.value === view.activeState)?.label}>
-          {layout === "grid" ? <div data-library-grid className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">{rows}</div> : <div data-library-list><DenList>{rows}</DenList></div>}
+          {layout === "grid" ? <div data-library-grid className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3">{rows}</div> : <div data-library-list className="overflow-x-auto"><DenList className="min-w-[560px] !rounded-xl">{rows}</DenList></div>}
         </section>
       )}
     </div>
+    </TooltipProvider>
   );
 }

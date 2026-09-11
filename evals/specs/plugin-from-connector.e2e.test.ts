@@ -223,6 +223,7 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
     // Follow the existing organization-scoped navigation rather than inventing a slug.
     await user.click({ role: "link", label: "My Library" });
     await user.see({ testId: "den-library" }, { timeoutMs: 90_000 });
+    await user.see({ role: "heading", label: "My Library" });
     expect((await probe.dom('[data-testid="den-library"][data-library-kind="mcps"][data-library-layout="grid"]')).elements).toHaveLength(1);
     const filters = await probe.dom('[aria-label="Library filters"] button[aria-pressed]:not([aria-label])');
     expect(filters.elements.map((element) => element.text)).toEqual(["MCPs", "Skills", "Plugins"]);
@@ -232,13 +233,48 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
     await user.notSee({ role: "button", label: /^All$/ });
     await user.notSee({ role: "tab", label: /^All\b/ });
     await user.notSee({ role: "button", label: "Show hidden" });
+    await user.notSee({ role: "tab", label: /^Disabled\b/ });
+    await user.notSee({ role: "button", label: /^Advanced\b/ });
+    await user.notSee({ text: "Add workspace MCP" });
+    await user.notSee({ text: "Local · this workspace" });
     await user.see({ role: "link", label: "Add MCP" });
     expect((await probe.dom('a[aria-label="Add MCP"]')).elements).toMatchObject([{ text: "" }]);
     const pluginKey = `plugin-${resolved.plugin?.pluginId}`;
+    const connectionLink = `a[data-library-item-key="connection-${world.connection.id}"][data-library-item-type="connection"][data-library-item-state="connected"][href="/dashboard/your-connections?connectionId=${world.connection.id}"]`;
+    const pluginLink = `a[data-library-item-key="${pluginKey}"][data-library-item-type="plugin"][href="/dashboard/library/plugins/${resolved.plugin?.pluginId}"]`;
     await user.see({ text: world.connection.name });
     expect((await probe.dom(`[data-library-grid] [data-library-item-key="connection-${world.connection.id}"]`)).elements).toHaveLength(1);
     expect((await probe.dom(`[data-library-item-key="${pluginKey}"]`)).elements).toHaveLength(0);
     expect((await probe.dom('[data-library-list]')).elements).toHaveLength(0);
+    expect((await probe.dom(`${connectionLink}[class~="bg-white"][class~="border-gray-200"]`)).elements).toMatchObject([{ text: expect.stringContaining("View details") }]);
+    expect((await probe.dom(`${connectionLink}[class*="emerald"], ${connectionLink}[class*="green"]`)).elements).toHaveLength(0);
+    expect((await probe.dom(`${connectionLink} [data-library-ready][class~="bg-emerald-50"][class~="text-emerald-700"]`)).elements.map((element) => element.text)).toEqual(["Connected"]);
+
+    await step("list layout survives reload and can be switched back to cards", async () => {
+      await user.click({ role: "button", label: "List view" });
+      expect(await probe.storage("openwork:den:library:layout")).toBe("list");
+      expect((await probe.dom('[data-testid="den-library"][data-library-kind="mcps"][data-library-layout="list"]')).elements).toHaveLength(1);
+      expect((await probe.dom(`[data-library-list] ${connectionLink}`)).elements).toHaveLength(1);
+      expect((await probe.dom('[data-library-grid]')).elements).toHaveLength(0);
+      await user.reload();
+      await user.see({ text: world.connection.name }, { timeoutMs: 90_000 });
+      expect(await probe.storage("openwork:den:library:layout")).toBe("list");
+      expect((await probe.dom('button[aria-label="List view"][aria-pressed="true"]')).elements).toHaveLength(1);
+      expect((await probe.dom('[data-testid="den-library"][data-library-kind="mcps"][data-library-layout="list"]')).elements).toHaveLength(1);
+      expect((await probe.dom(`[data-library-list] ${connectionLink}`)).elements).toHaveLength(1);
+      expect((await probe.dom('[data-library-grid]')).elements).toHaveLength(0);
+      expect((await probe.dom(`[data-library-item-key="${pluginKey}"]`)).elements).toHaveLength(0);
+      await user.click({ role: "button", label: "Card view" });
+      expect(await probe.storage("openwork:den:library:layout")).toBe("grid");
+      expect((await probe.dom('button[aria-label="Card view"][aria-pressed="true"]')).elements).toHaveLength(1);
+      expect((await probe.dom(`[data-library-grid] ${connectionLink}`)).elements).toHaveLength(1);
+      expect((await probe.dom('[data-library-list]')).elements).toHaveLength(0);
+    });
+
+    await user.click({ role: "button", label: "Skills" });
+    await user.see({ text: "No skills yet" });
+    expect((await probe.dom('[data-testid="den-library"][data-library-kind="skills"] [data-library-item-key]')).elements).toHaveLength(0);
+    expect((await probe.dom('a[aria-label="Create skill"]')).elements).toMatchObject([{ text: "" }]);
 
     await user.click({ role: "button", label: "Plugins" });
     await user.see({ text: world.pluginName });
@@ -248,6 +284,40 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
     expect((await probe.dom(`[data-library-grid] [data-library-item-key="${pluginKey}"]`)).elements).toHaveLength(1);
     expect((await probe.dom('[data-testid="den-library"] [data-library-item-type="connection"]')).elements).toHaveLength(0);
     expect((await probe.dom('a[aria-label="Add plugin"]')).elements).toMatchObject([{ text: "" }]);
+    expect((await probe.dom(pluginLink)).elements).toMatchObject([{ text: expect.stringContaining("View details") }]);
+    expect((await probe.dom(`${pluginLink} [data-library-ready]`)).elements.map((element) => element.text)).toEqual(["Ready to use"]);
+
+    await step("Clear filters restores Plugins without changing the selected kind", async () => {
+      await user.type({ placeholder: "Search your library" }, "no-such-library-item");
+      await user.see({ text: "No library items match these filters." });
+      expect((await probe.dom('[data-testid="den-library"] [data-library-item-key]')).elements).toHaveLength(0);
+      await user.click({ role: "button", label: "Clear filters" });
+      await user.see({ placeholder: "Search your library" }, { value: "" });
+      await user.see({ text: world.pluginName });
+      await user.notSee({ text: "No library items match these filters." });
+      await user.notSee({ role: "button", label: "Clear filters" });
+      expect((await probe.dom('[data-testid="den-library"][data-library-kind="plugins"][data-library-layout="grid"]')).elements).toHaveLength(1);
+      expect((await probe.dom('[data-testid="den-library"] [role="tab"][aria-selected="true"]')).elements).toMatchObject([{ text: expect.stringMatching(/^Ready to use\b/) }]);
+      expect((await probe.dom(`[data-library-grid] ${pluginLink}`)).elements).toHaveLength(1);
+      expect((await probe.dom('[data-testid="den-library"] [data-library-item-type="connection"]')).elements).toHaveLength(0);
+    });
+
+    await step("the plugin card opens its details and My Library returns to the inventory", async () => {
+      await user.click({ role: "link", label: new RegExp(world.pluginName) });
+      await user.see({ role: "heading", label: world.pluginName });
+      await user.see({ text: "MCP Servers" });
+      await user.see({ text: world.connection.name });
+      await user.notSee({ testId: "den-library" });
+      await user.click({ role: "link", label: "My Library" });
+      await user.see({ testId: "den-library" }, { timeoutMs: 90_000 });
+      await user.see({ text: world.connection.name });
+      expect((await probe.dom(`[data-library-grid] ${connectionLink}`)).elements).toHaveLength(1);
+      expect((await probe.dom(`[data-library-item-key="${pluginKey}"]`)).elements).toHaveLength(0);
+      await user.click({ role: "button", label: "Plugins" });
+      await user.see({ text: world.pluginName });
+      expect((await probe.dom(`[data-library-grid] ${pluginLink}`)).elements).toHaveLength(1);
+      expect((await probe.dom('[data-testid="den-library"] [data-library-item-type="connection"]')).elements).toHaveLength(0);
+    });
     await user.screenshot();
   });
 });
