@@ -23,6 +23,12 @@ declare global {
         pause(): Promise<unknown>;
       };
       invokeDesktop<C extends DesktopCommandName>(command: C, ...args: DesktopCommandArgs<C>): Promise<DesktopCommandResult<C>>;
+      /** Development-only native popup observation; absent from packaged builds. */
+      contextMenu: {
+        inspect(): Promise<unknown>;
+        choose(id: string): Promise<unknown>;
+        dismiss(): Promise<unknown>;
+      };
       browser: {
         openUrl(url: string, provider?: string, options?: { sessionId?: string | null }): Promise<{ tab_id: string; target_id: string; [key: string]: unknown }>;
         createTab(url?: string, sessionId?: string | null): Promise<{ tabId: string }>;
@@ -55,7 +61,7 @@ declare global {
       };
       slice(name: "route"): {
         selectedWorkspaceId: string | null;
-        workspaces: { id: string; name?: string; displayName?: string; displayNameResolved?: string; loading?: boolean; error?: string | null }[];
+        workspaces: { id: string; name?: string; path?: string; displayName?: string; displayNameResolved?: string; loading?: boolean; error?: string | null }[];
         sessionsByWorkspaceId: Record<string, { id: string; title?: string }[]>;
       };
     };

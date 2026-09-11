@@ -33,6 +33,7 @@ export type SidebarSessionItem = {
 export type WorkspaceSessionGroup = {
   workspace: WorkspaceInfo;
   sessions: SidebarSessionItem[];
+  sessionsLoaded?: boolean;
   status: "idle" | "loading" | "ready" | "error";
   error?: string | null;
 };

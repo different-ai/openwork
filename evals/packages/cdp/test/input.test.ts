@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { assertAbsent, locate, TargetNotFoundError, mapKey, parseTarget, readDom, waitForLocated } from "../src/input.ts";
+import { assertAbsent, clickTarget, DisabledTargetError, locate, TargetNotFoundError, mapKey, parseTarget, pressKey, readDom, waitForLocated } from "../src/input.ts";
 import type { Surface } from "../src/surface.ts";
 
 function surfaceReturning(value: unknown): Surface {
@@ -72,6 +72,42 @@ test("locate reports visible button and link names when no target matches", asyn
   );
 });
 
+test("key dispatch leaves native codes to Chrome and retains explicit editing commands", async () => {
+  const surface = surfaceReturning(null);
+  const events: unknown[] = [];
+  surface.client.send = async (method, params) => {
+    assert.equal(method, "Input.dispatchKeyEvent");
+    events.push(params);
+    return {};
+  };
+  await pressKey(surface, "Meta+ArrowDown");
+  await pressKey(surface, "Escape");
+  assert.deepEqual(events, [
+    { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, modifiers: 4, commands: ["moveToEndOfDocument"] },
+    { type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, modifiers: 4 },
+    { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
+    { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
+  ]);
+});
+
+test("click readiness waits for stable geometry rather than hitting a moving menu option", async () => {
+  const surface = surfaceReturning(null);
+  let inspections = 0;
+  surface.client.send = async (method) => {
+    if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+    assert.equal(method, "Runtime.callFunctionOn");
+    const y = Math.min(inspections++, 2) * 20;
+    return { result: { value: {
+      center: { x: 50, y: y + 25 }, rect: { x: 0, y, width: 100, height: 50 },
+      tag: "button", name: "CustomExact", visible: true, hitTestOk: true,
+      editable: false, disabled: null, value: "", text: "CustomExact", covering: null,
+    } } };
+  };
+  const target = await waitForLocated(surface, "CustomExact", { mustHitTest: true, timeoutMs: 2_000 });
+  assert.equal(inspections, 4);
+  assert.equal(target.rect.y, 40);
+});
+
 test("waitForLocated identifies the element covering a visible target", async () => {
   const surface = surfaceReturning({
     center: { x: 50, y: 25 },
@@ -81,6 +117,7 @@ test("waitForLocated identifies the element covering a visible target", async ()
     visible: true,
     hitTestOk: false,
     editable: false,
+    disabled: null,
     value: "",
     text: "Run task",
     covering: { tag: "div", role: "dialog", text: "Blocking overlay" },
@@ -113,7 +150,7 @@ test("absence never turns disconnection or malformed browser results into a pass
 });
 
 test("absence distinguishes a hidden target from a visible target", async () => {
-  const target = { center: { x: 1, y: 1 }, rect: { x: 0, y: 0, width: 2, height: 2 }, tag: "div", name: "Error", visible: false, hitTestOk: false, editable: false, value: "", text: "Error", covering: null };
+  const target = { center: { x: 1, y: 1 }, rect: { x: 0, y: 0, width: 2, height: 2 }, tag: "div", name: "Error", visible: false, hitTestOk: false, editable: false, disabled: null, value: "", text: "Error", covering: null };
   await assertAbsent(surfaceReturning(target), "Error", 10);
   await assert.rejects(assertAbsent(surfaceReturning({ ...target, visible: true }), "Error", 10), /remained visible/);
 });
@@ -140,4 +177,77 @@ test("DOM inspection projects geometry and focus without exposing input values",
   assert.equal(input.value, "private-password");
   await assert.rejects(readDom(surfaceReturning(null), "input"), /invalid snapshot/);
   await assert.rejects(readDom(surfaceReturning({ viewportWidth: 390, documentWidth: 390, elements: [{}] }), "input"), /invalid snapshot/);
+});
+
+const enabledButton = {
+  center: { x: 50, y: 25 },
+  rect: { x: 0, y: 0, width: 100, height: 50 },
+  tag: "button",
+  name: "Run task",
+  visible: true,
+  hitTestOk: true,
+  editable: false,
+  disabled: null,
+  value: "",
+  text: "Run task",
+  covering: null,
+};
+
+function surfaceLocating(values: unknown[]): { surface: Surface; mouse: Array<Record<string, unknown>> } {
+  const mouse: Array<Record<string, unknown>> = [];
+  const queue = [...values];
+  const surface: Surface = {
+    handle: { name: "input-test", kind: "electron", hostKind: "test", cdpUrl: "http://127.0.0.1:1" },
+    client: {
+      async send(method, params = {}) {
+        if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+        if (method === "Runtime.callFunctionOn") return { result: { value: queue.length > 1 ? queue.shift() : queue[0] } };
+        if (method === "Input.dispatchMouseEvent") { mouse.push(params); return {}; }
+        throw new Error(`Unexpected CDP method ${method}.`);
+      },
+      close() {},
+    },
+  };
+  return { surface, mouse };
+}
+
+test("clickTarget refuses a disabled or aria-disabled control by name instead of dispatching a click", async () => {
+  for (const disabled of ["disabled", 'aria-disabled="true"']) {
+    const { surface, mouse } = surfaceLocating([{ ...enabledButton, disabled }]);
+    // waitForLocated needs two inspections with stable geometry before it can hand the target over.
+    await assert.rejects(clickTarget(surface, "Run task", { timeoutMs: 500 }), (error: unknown) =>
+      error instanceof DisabledTargetError
+      && error.message.includes('disabled button "Run task"')
+      && error.message.includes(`(${disabled})`));
+    assert.deepEqual(mouse, []);
+  }
+});
+
+test("clickTarget rejects a malformed disabled state instead of guessing", async () => {
+  const { surface, mouse } = surfaceLocating([{ ...enabledButton, disabled: false }]);
+  await assert.rejects(clickTarget(surface, "Run task", { timeoutMs: 20 }), /invalid located-element geometry/);
+  assert.deepEqual(mouse, []);
+});
+
+test("clickTarget re-locates immediately before dispatch and clicks the fresh center", async () => {
+  const moved = { ...enabledButton, center: { x: 50, y: 49 }, rect: { x: 0, y: 24, width: 100, height: 50 } };
+  // Two stable inspections satisfy waitForLocated; the third is the re-locate right before dispatch.
+  const { surface, mouse } = surfaceLocating([enabledButton, enabledButton, moved]);
+  const clicked = await clickTarget(surface, "Run task", { clickCount: 2 });
+  assert.deepEqual(clicked.rect, moved.rect);
+  assert.deepEqual(mouse.map((event) => [event.type, event.x, event.y, event.clickCount]), [
+    ["mouseMoved", 50, 49, undefined],
+    ["mousePressed", 50, 49, 2],
+    ["mouseReleased", 50, 49, 2],
+  ]);
+});
+
+test("clickTarget fails with both rects when the target moves out of reach before dispatch", async () => {
+  const covered = { ...enabledButton, rect: { x: 0, y: 24, width: 100, height: 50 }, hitTestOk: false, covering: { tag: "div", role: "", text: "Loading" } };
+  const { surface, mouse } = surfaceLocating([enabledButton, enabledButton, covered]);
+  await assert.rejects(clickTarget(surface, "Run task"), /"Run task" moved before the click could be dispatched: 0,0 100×50 → 0,24 100×50 \(visible=true, hitTestOk=false\)\. Covered by div text="Loading"/);
+  assert.deepEqual(mouse, []);
+  const disabledLate = surfaceLocating([enabledButton, enabledButton, { ...enabledButton, disabled: "disabled" }]);
+  await assert.rejects(clickTarget(disabledLate.surface, "Run task"), DisabledTargetError);
+  assert.deepEqual(disabledLate.mouse, []);
 });

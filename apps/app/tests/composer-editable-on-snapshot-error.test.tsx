@@ -79,6 +79,7 @@ test("the composer stays editable when snapshot refresh fails or the model is un
     { getReactQueryClient },
     { LocalProvider },
     { ShellConfigProvider },
+    { PlatformProvider, createDefaultPlatform },
   ] = await Promise.all([
     import("../src/app/lib/openwork-server"),
     import("../src/react-app/domains/connections/cloud-mcp-submit-readiness"),
@@ -86,6 +87,7 @@ test("the composer stays editable when snapshot refresh fails or the model is un
     import("../src/react-app/infra/query-client"),
     import("../src/react-app/kernel/local-provider"),
     import("../src/react-app/shell/shell-config"),
+    import("../src/react-app/kernel/platform"),
   ]);
   const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
   if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -104,6 +106,7 @@ test("the composer stays editable when snapshot refresh fails or the model is un
   let rejectSnapshot = false;
   let fetchedSnapshot = createSnapshot(sessionId, "Cached transcript remains visible.");
   mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
+  mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
   mock.module("@/app/lib/opencode-session-native", () => ({
     composeNativeSessionSnapshot: async () => {
       if (rejectSnapshot) throw new Error("snapshot refresh failed");
@@ -123,9 +126,12 @@ test("the composer stays editable when snapshot refresh fails or the model is un
   document.body.append(container, unavailableContainer);
   const root = createRoot(container);
   const unavailableRoot = createRoot(unavailableContainer);
+  const platform = createDefaultPlatform();
   let sendCount = 0;
+  const platform = createDefaultPlatform();
 
   const surface = (targetSessionId: string, modelUnavailable: boolean) => (
+    <PlatformProvider value={platform}>
     <QueryClientProvider client={queryClient}>
       <LocalProvider>
         <ShellConfigProvider>
@@ -172,10 +178,11 @@ test("the composer stays editable when snapshot refresh fails or the model is un
         </ShellConfigProvider>
       </LocalProvider>
     </QueryClientProvider>
+    </PlatformProvider>
   );
 
   try {
-    await act(async () => root.render(surface(sessionId, false)));
+    await act(async () => root.render(<PlatformProvider value={platform}>{surface(sessionId, false)}</PlatformProvider>));
     await waitFor(() => container.textContent?.includes("Cached transcript remains visible.") === true, "the cached transcript");
 
     rejectSnapshot = true;
@@ -198,7 +205,7 @@ test("the composer stays editable when snapshot refresh fails or the model is un
     rejectSnapshot = false;
     fetchedSnapshot = createSnapshot(unavailableSessionId, "Unavailable model transcript.");
     queryClient.setQueryData(snapshotKey(workspaceId, unavailableSessionId), fetchedSnapshot);
-    await act(async () => unavailableRoot.render(surface(unavailableSessionId, true)));
+    await act(async () => unavailableRoot.render(<PlatformProvider value={platform}>{surface(unavailableSessionId, true)}</PlatformProvider>));
     await waitFor(
       () => unavailableContainer.querySelector('[contenteditable="true"][data-lexical-editor="true"]') !== null,
       "the unavailable-model Lexical editor",
@@ -209,7 +216,7 @@ test("the composer stays editable when snapshot refresh fails or the model is un
       root.unmount();
       unavailableRoot.unmount();
     });
-    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });
+    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {} });
     queryClient.clear();
     container.remove();
     unavailableContainer.remove();

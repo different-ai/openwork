@@ -75,8 +75,13 @@ class ManagedDesktopPolicy {
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   }
   async setSession(session: CloudProviderDenSession): Promise<void> {
+    // The desktop re-delivers the same identity on every launch, reload, and
+    // resume. Only a different account may invalidate in-flight verifications.
+    const current = this.session;
+    if (!current || current.baseUrl !== session.baseUrl || current.token !== session.token || current.orgId !== session.orgId) {
+      this.generation++;
+    }
     this.session = session;
-    this.generation++;
     await this.current();
   }
   async clearSession(): Promise<void> {

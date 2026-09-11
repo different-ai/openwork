@@ -1,7 +1,7 @@
 import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "alert";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {
@@ -26,6 +26,8 @@ export interface Located {
   visible: boolean;
   hitTestOk: boolean;
   editable: boolean;
+  /** What disables the control (`disabled`, `aria-disabled="true"`), or null when it accepts input. */
+  disabled: string | null;
   value: string;
   text: string;
   covering: { tag: string; text: string; role: string } | null;
@@ -216,7 +218,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       ? '[contenteditable="true"][data-lexical-editor="true"]'
       : target.text && !target.role && !target.label && !target.placeholder && !target.testId
         ? 'body *'
-        : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [data-testid]';
+        : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [data-testid]';
     const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
@@ -268,6 +270,10 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     const inViewport = center.x >= 0 && center.y >= 0 && center.x <= innerWidth && center.y <= innerHeight;
     const hit = inViewport ? document.elementFromPoint(center.x, center.y) : null;
     const hitTestOk = Boolean(hit && (hit === element || element.contains(hit)));
+    const disabledBy = [
+      element.matches(":disabled") ? "disabled" : "",
+      element.getAttribute("aria-disabled") === "true" ? 'aria-disabled="true"' : "",
+    ].filter(Boolean).join(" ");
     return {
       center,
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -276,6 +282,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk,
       editable: element instanceof HTMLSelectElement ? !element.matches(":disabled") : (element instanceof HTMLElement && element.isContentEditable) || (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) && !element.readOnly,
+      disabled: disabledBy || null,
       value: (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) ? element.value : (element instanceof HTMLElement && element.isContentEditable) ? element.innerText : "",
       text: ((element instanceof HTMLElement && element.isContentEditable) ? element.innerText : element.innerText ?? element.textContent ?? "").trim(),
       covering: hit && !hitTestOk ? {
@@ -313,6 +320,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     || typeof value.tag !== "string" || typeof value.name !== "string"
     || typeof value.visible !== "boolean" || typeof value.hitTestOk !== "boolean"
     || typeof value.editable !== "boolean" || typeof value.value !== "string" || typeof value.text !== "string"
+    || (value.disabled !== null && typeof value.disabled !== "string")
     || covering === undefined) {
     throw new Error("CDP returned invalid located-element geometry.");
   }
@@ -324,6 +332,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     visible: value.visible,
     hitTestOk: value.hitTestOk,
     editable: value.editable,
+    disabled: value.disabled,
     value: value.value,
     text: value.text,
     covering,
@@ -358,11 +367,11 @@ const EDITING_COMMANDS: Record<string, string[]> = {
 
 export async function pressKey(surface: Surface, key: string): Promise<void> {
   const descriptor = mapKey(key);
+  // Let Chrome derive native codes: Windows VK values are different macOS keys.
   const params = {
     key: descriptor.key,
     code: descriptor.code,
     windowsVirtualKeyCode: descriptor.windowsVirtualKeyCode,
-    nativeVirtualKeyCode: descriptor.windowsVirtualKeyCode,
     modifiers: descriptor.modifiers,
   };
   const commands = EDITING_COMMANDS[key];
@@ -397,23 +406,65 @@ export async function waitForLocated(
   const timeoutMs = options.timeoutMs ?? 30_000;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
+  let previous: Located | null = null;
   while (Date.now() < deadline) {
     try {
       // locate() centers the element on every attempt, so smooth scrolling and
       // transient overlays are re-evaluated instead of preserving stale geometry.
       const found = await locate(surface, target);
-      if (found.visible && (!options.mustHitTest || found.hitTestOk)) return found;
+      const stable = previous && Math.abs(found.rect.x - previous.rect.x) < 0.5
+        && Math.abs(found.rect.y - previous.rect.y) < 0.5
+        && Math.abs(found.rect.width - previous.rect.width) < 0.5
+        && Math.abs(found.rect.height - previous.rect.height) < 0.5;
+      if (found.visible && (!options.mustHitTest || (found.hitTestOk && stable))) return found;
+      // Hit testing alone can select a neighboring option as an animated menu moves.
+      previous = found;
       const covering = found.covering
         ? ` Covered by ${found.covering.tag}${found.covering.role ? ` role=${JSON.stringify(found.covering.role)}` : ""}${found.covering.text ? ` text=${JSON.stringify(found.covering.text)}` : ""}.`
         : "";
       lastError = new Error(`Located element was visible=${found.visible}, hitTestOk=${found.hitTestOk}.${covering}`);
     } catch (error) {
       lastError = error;
+      previous = null;
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
   }
   const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
   throw new Error(`Timed out after ${timeoutMs}ms locating target.${detail}`);
+}
+
+/** The target was found but is disabled, so a click would be silently ignored by the page. */
+export class DisabledTargetError extends Error {}
+
+function describeRect(rect: Located["rect"]): string {
+  return `${Math.round(rect.x)},${Math.round(rect.y)} ${Math.round(rect.width)}×${Math.round(rect.height)}`;
+}
+
+function assertInteractive(found: Located): void {
+  if (found.disabled === null) return;
+  throw new DisabledTargetError(`Refused to click disabled ${found.tag} ${JSON.stringify(found.name)} (${found.disabled}); the page would ignore the click.`);
+}
+
+/**
+ * Wait for a visible target, then re-inspect it immediately before dispatching so
+ * a disabled state or a layout shift after the first inspection cannot absorb the click.
+ */
+export async function clickTarget(
+  surface: Surface,
+  target: Target,
+  options: { timeoutMs?: number; mustHitTest?: boolean; button?: "left" | "right" | "middle"; clickCount?: number } = {},
+): Promise<Located> {
+  const mustHitTest = options.mustHitTest ?? true;
+  const found = await waitForLocated(surface, target, { timeoutMs: options.timeoutMs, mustHitTest });
+  assertInteractive(found);
+  const fresh = await locate(surface, target);
+  assertInteractive(fresh);
+  if (!fresh.visible || (mustHitTest && !fresh.hitTestOk)) {
+    const covering = fresh.covering ? ` Covered by ${fresh.covering.tag}${fresh.covering.text ? ` text=${JSON.stringify(fresh.covering.text)}` : ""}.` : "";
+    throw new Error(`Target ${JSON.stringify(fresh.name)} moved before the click could be dispatched: ${describeRect(found.rect)} → ${describeRect(fresh.rect)} (visible=${fresh.visible}, hitTestOk=${fresh.hitTestOk}).${covering}`);
+  }
+  await clickAt(surface, fresh.center, { button: options.button, clickCount: options.clickCount });
+  return fresh;
 }
 
 /** Require every inspection in the interval to observe a missing or hidden target. */
@@ -423,7 +474,7 @@ export async function assertAbsent(surface: Surface, target: Target, timeoutMs =
   do {
     try {
       const found = await locate(surface, target);
-      if (found.visible) throw new Error(`Target remained visible: ${JSON.stringify(target)}`);
+      if (found.visible) throw new Error(`Target remained visible: ${JSON.stringify(target)}; text ${JSON.stringify(found.text)}`);
     } catch (error) {
       if (!(error instanceof TargetNotFoundError)) throw error;
     }

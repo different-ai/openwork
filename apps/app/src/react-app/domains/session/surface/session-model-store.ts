@@ -6,7 +6,7 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 
-import { formatGenericBehaviorLabel, getModelBehaviorSummary } from "@/app/lib/model-behavior";
+import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import type { ModelRef } from "@/app/types";
 
 type BehaviorOption = { value: string | null; label: string };
@@ -158,15 +158,13 @@ export function useSessionModelSelection(input: UseSessionModelSelectionInput): 
       };
     }
     const providerModel = providerCatalog?.[selection.model.providerID]?.[selection.model.modelID];
-    const summary = providerModel
-      ? getModelBehaviorSummary(selection.model.providerID, providerModel, selection.variant)
-      : null;
+    const summary = getModelBehaviorSummary(selection.model.providerID, providerModel, selection.variant);
     return {
       selectedModel: selection.model,
       modelLabel: providerModel?.name || resolveModelDisplayName(selection.model.modelID),
-      modelVariant: summary ? summary.value : selection.variant,
-      modelVariantLabel: summary?.label ?? formatGenericBehaviorLabel(selection.variant),
-      modelBehaviorOptions: summary?.options ?? [],
+      modelVariant: summary.value,
+      modelVariantLabel: summary.label,
+      modelBehaviorOptions: summary.options,
       hasSessionOverride: true,
       setModel,
       setVariant: (value: string | null) => useSessionModelStore.getState().setVariant(sessionId, value),

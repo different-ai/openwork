@@ -124,4 +124,18 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
     expect(delay).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledTimes(1);
   });
+
+  test("re-delivering the same identity during backoff keeps the in-flight verification", async () => {
+    externalFetch.mockImplementationOnce(async () => new Response(null, { status: 503 }));
+    const result = service.setSession(session);
+    expect(await waiting.promise).toBe(200);
+    const redelivered = service.setSession({ ...session });
+    release.resolve();
+    await expect(result).resolves.toBeUndefined();
+    await expect(redelivered).resolves.toBeUndefined();
+    await turn();
+    expect(externalFetch).toHaveBeenCalledTimes(2);
+    expect(externalFetch.mock.calls.every(([, init]) => init?.headers && "Authorization" in init.headers && init.headers.Authorization === "Bearer old-token")).toBe(true);
+    expect(write).toHaveBeenCalledTimes(1);
+  });
 }
