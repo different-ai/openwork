@@ -2583,18 +2583,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setComposerDraft(props.sessionId, draft.replaceAll(`[attachment ${id}]`, ""));
   }, [attachments, draft, props.sessionId, setComposerAttachments, setComposerDraft]);
 
-  const handleInsertMention = useCallback((kind: ComposerMentionKind, value: string) => {
+  const handleInsertMention = useCallback((kind: ComposerMentionKind, value: string, nextDraft?: string) => {
     // @agent mentions switch the session agent instead of inserting an agent
     // part. Agent parts are treated as *subagent* (task tool) calls by the
     // engine, which silently fails for primary agents and left every reply
     // coming from the default agent (#2101).
     if (kind === "agent") {
-      setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, ""));
+      setComposerDraft(props.sessionId, nextDraft ?? draft.replace(/@([^\s@]*)$/, ""));
       props.onSelectAgent(value);
       toast.success(t("composer.agent_selected", { agent: value }));
       return;
     }
-    setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
+    setComposerDraft(props.sessionId, nextDraft ?? draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
     setComposerMentions(props.sessionId, { ...mentions, [value]: kind });
     // Pre-flight Computer Use permissions when an app is mentioned so missing
     // Accessibility / Screen Recording grants surface before send, not as a

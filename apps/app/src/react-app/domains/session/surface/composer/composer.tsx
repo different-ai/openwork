@@ -104,7 +104,7 @@ type ComposerProps = {
   onOpenSettingsSection?: (section: ComposerSettingsSection) => void;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
-  onInsertMention: (kind: ComposerMentionKind, value: string) => void;
+  onInsertMention: (kind: ComposerMentionKind, value: string, draft?: string) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
   onPasteText: (text: string) => void;
@@ -248,6 +248,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [toolMenuLayout, setToolMenuLayout] = useState<ToolMenuLayout | null>(null);
   const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
+  const [activeMentionQuery, setActiveMentionQuery] = useState<string | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -366,9 +367,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const slashCommandQuery = getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
   const slashQuery = slashCommandQuery ?? "";
-  const mentionMatch = props.draft.match(/@([^\s@]*)$/);
-  const mentionOpenNext = Boolean(mentionMatch);
-  const mentionQuery = mentionMatch?.[1] ?? "";
+  const mentionOpenNext = activeMentionQuery !== null;
+  const mentionQuery = activeMentionQuery ?? "";
   const nonDefaultAgents = useMemo(() => agents.filter(isNonDefaultAgent), [agents]);
   const showAgentPicker = props.selectedAgent !== null;
 
@@ -960,6 +960,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     props.onOpenSettingsSection?.(composerConfigureSectionForMenu(toolMenuSection));
   };
 
+  const applyMentionSelection = (item: MentionItem) => {
+    const draft = editorRef.current?.insertMentionAtSelection(item.kind, item.value);
+    if (draft == null) return false;
+    props.onInsertMention(item.kind, item.value, draft);
+    setMentionOpen(false);
+    return true;
+  };
+
   const acceptActiveItem = () => {
     if (!activeItems.length) return false;
     if (activeMenu === "slash") {
@@ -971,9 +979,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (activeMenu === "mention") {
       const item = mentionFiltered[menuIndex];
       if (!item) return false;
-      props.onInsertMention(item.kind, item.value);
-      setMentionOpen(false);
-      return true;
+      return applyMentionSelection(item);
     }
     return false;
   };
@@ -1252,8 +1258,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${activeMenu === "mention" && mentionFiltered[menuIndex]?.id === item.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
                   onMouseEnter={() => setMenuIndex(index)}
                   onClick={() => {
-                    props.onInsertMention(item.kind, item.value);
-                    setMentionOpen(false);
+                    applyMentionSelection(item);
                   }}
                 >
                   {item.kind === "computer" ? (
@@ -1336,6 +1341,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               submitDisabled={props.disabled}
               placeholder={t("composer.placeholder")}
               onChange={props.onDraftChange}
+              onMentionQueryChange={setActiveMentionQuery}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
               onExpandAttachment={setExpandedAttachmentId}
