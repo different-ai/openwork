@@ -35,7 +35,6 @@ describe("OpenWork provider adapters", () => {
     expect(read?.description).toContain("variant");
     expect(create?.arguments.map((argument) => [argument.name, argument.type, argument.required])).toEqual([
       ["sessions", "array", true],
-      ["workspaceId", "string", false],
       ["model", "object", false],
     ]);
     expect(create?.arguments.find((argument) => argument.name === "model")?.description).toContain("variant");

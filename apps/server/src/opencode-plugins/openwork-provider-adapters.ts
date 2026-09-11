@@ -111,7 +111,6 @@ function sessionContribution(): OpenworkFeatureContribution {
         provider,
         arguments: [
           argument("sessions", "array", true, "Session titles and self-contained prompts; an entry may carry its own `model`."),
-          argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the requesting session's workspace."),
           argument("model", "object", false, "Optional providerId, modelId and variant (reasoning effort) for every created session. Omit to use the engine default."),
         ],
         effects: writeEffects,
