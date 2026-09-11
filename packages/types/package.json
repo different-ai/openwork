@@ -4,7 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./cloud-model-fast": "./src/cloud-model-fast.ts",
+    "./cloud-model-fast": {
+      "types": "./src/cloud-model-fast.ts",
+      "development": "./src/cloud-model-fast.ts",
+      "bun": "./src/cloud-model-fast.ts",
+      "browser": "./src/cloud-model-fast.ts",
+      "default": "./dist/cloud-model-fast.js"
+    },
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",
