@@ -77,6 +77,104 @@ jobs:
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 15
     steps:
+      # Bootstrap before checkout or any action can execute repository code.
+      - name: Prepare virtual display
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C
+          unset APT_CONFIG
+          . /etc/os-release
+          if [[ "${ID:-}" != ubuntu || "${VERSION_ID:-}" != 22.04 || "${VERSION_CODENAME:-}" != jammy ]] \
+            || [[ "$(/usr/bin/dpkg --print-architecture)" != amd64 ]] \
+            || [[ ! -r /usr/share/keyrings/ubuntu-archive-keyring.gpg || ! -s /usr/share/keyrings/ubuntu-archive-keyring.gpg ]]; then
+            echo 'Virtual display bootstrap requires Ubuntu 22.04/jammy amd64 and its archive keyring.' >&2
+            exit 1
+          fi
+          if command -v xvfb-run >/dev/null && command -v xdpyinfo >/dev/null; then
+            echo 'Virtual display commands already installed; skipping APT.'
+            exit 0
+          fi
+
+          umask 077
+          apt_dir=$(mktemp -d /tmp/openwork-apt.XXXXXXXX)
+          trap 'rm -rf -- "$apt_dir"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          mkdir "$apt_dir/sourceparts"
+          printf '%s\n' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy main universe' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy-updates main universe' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu jammy-security main universe' \
+            > "$apt_dir/sources.list"
+          chmod 0755 "$apt_dir" "$apt_dir/sourceparts"
+          chmod 0644 "$apt_dir/sources.list"
+          # Keep trusted image APT settings, but select only these signed Ubuntu sources.
+          apt_options=(-o "Dir::Etc::sourcelist=$apt_dir/sources.list" -o "Dir::Etc::sourceparts=$apt_dir/sourceparts"
+            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1)
+
+          retryable_update() {
+            local line pending_error=false saw_transport=false
+            local transport='TLSWaitFd|Could not wait for server fd|Connection timed out|Connection failed|Could not connect to|Unable to connect to|Connection refused|Connection reset by peer|Temporary failure resolving|Could not resolve|Network is unreachable'
+            local fatal='[Cc]ertificate|[Ss]ignature|NO_PUBKEY|BADSIG|EXPKEYSIG|REVKEYSIG|[Nn]ot signed|[Rr]elease file|[Hh]ash [Ss]um mismatch|[Cc]onflicting values|[Mm]alformed|[Ss]yntax error|[Ii]nvalid operation|[Pp]ermission denied'
+            [[ "$status" == 100 || "$status" == 124 || "$status" == 137 ]] || return 1
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              [[ ! "$line" =~ $fatal ]] || return 1
+              if [[ "$pending_error" == true ]]; then
+                [[ "$line" =~ $transport ]] || return 1
+                pending_error=false
+                saw_transport=true
+                continue
+              fi
+              case "$line" in
+                ''|Hit:*|Get:*|Ign:*|'Reading package lists...'*|'Fetched '*) ;;
+                Err:*) pending_error=true ;;
+                'E: Some index files failed to download. They have been ignored, or old ones used instead.') ;;
+                E:*|W:*|'  '*)
+                  [[ "$line" =~ $transport ]] || return 1
+                  saw_transport=true
+                  ;;
+                *) return 1 ;;
+              esac
+            done < "$apt_dir/update.log"
+            [[ "$pending_error" == false ]] && { [[ "$saw_transport" == true ]] || [[ "$status" == 124 || "$status" == 137 ]]; }
+          }
+
+          updated=false
+          source_mode=security
+          for attempt in 1 2 3; do
+            if [[ "$attempt" == 2 ]]; then sleep 5; fi
+            if [[ "$attempt" == 3 ]]; then
+              sleep 10
+              # Same signed jammy-security pocket; DNS may still select the same backend.
+              sources=$(<"$apt_dir/sources.list")
+              printf '%s\n' "${sources/security.ubuntu.com/archive.ubuntu.com}" > "$apt_dir/sources.list"
+              source_mode=archive-security-fallback
+            fi
+            echo "APT update attempt $attempt/3 source=$source_mode"
+            if sudo /usr/bin/timeout --signal=TERM --kill-after=5s 60s /usr/bin/apt-get "${apt_options[@]}" update --error-on=any > "$apt_dir/update.log" 2>&1; then
+              status=0
+            else
+              status=$?
+            fi
+            cat "$apt_dir/update.log"
+            echo "APT update attempt $attempt/3 source=$source_mode status=$status"
+            if [[ "$status" == 0 ]]; then
+              updated=true
+              break
+            fi
+            if ! retryable_update || [[ "$attempt" == 3 ]]; then
+              echo 'APT update failed; refusing to install from stale or unverified indexes.' >&2
+              exit "$status"
+            fi
+          done
+          [[ "$updated" == true ]] || exit 1
+          sudo /usr/bin/timeout --signal=TERM --kill-after=5s 120s /usr/bin/apt-get "${apt_options[@]}" install -y xvfb x11-utils
+          command -v xvfb-run >/dev/null && command -v xdpyinfo >/dev/null || {
+            echo 'Virtual display installation did not provide both required commands.' >&2
+            exit 1
+          }
       - name: Checkout
         uses: actions/checkout@v6
         with:
@@ -101,18 +199,8 @@ jobs:
           pnpm --filter openwork-server build
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
-      - name: Prepare virtual display
-        timeout-minutes: 4
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --test scripts/ci/ubuntu-apt-https.test.mjs
-          if ! command -v xvfb-run >/dev/null || ! command -v xdpyinfo >/dev/null; then
-            sudo "$(command -v node)" scripts/ci/ubuntu-apt-https.mjs
-            apt_options=(-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1)
-            sudo apt-get "${apt_options[@]}" update --error-on=any -qq
-            sudo apt-get "${apt_options[@]}" install -y xvfb x11-utils
-          fi
+      - name: Check virtual display bootstrap contract
+        run: node --test scripts/ci/ubuntu-apt-https.test.mjs
       - name: Package and smoke-test the installed desktop
         timeout-minutes: 7
         env:
