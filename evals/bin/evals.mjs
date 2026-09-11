@@ -24,6 +24,8 @@ Run E2E tests:
   --local            Force isolated local resources and clear inherited remote placement
   --daytona          Require Daytona (fails if the CLI is not authenticated)
   --den <url>        Set OPENWORK_EVAL_DEN_API_URL=<url>
+  --strict-ref       Fail when the runner HEAD differs from the ref the Daytona sandbox builds
+                     (OPENWORK_EVAL_REF, default dev); OPENWORK_EVAL_STRICT_REF=1 does the same
   --engine <v1|v2>   Select the app chat engine for a named test
   --surface <value>  Validate declared app surface (web|electron); never switches implementation
   --case <prefix>    Run one registered case by its exact prefix
@@ -104,6 +106,7 @@ export function parseArgs(args) {
     else if (arg === "--list") options.list = true;
     else if (arg === "--local") options.local = true;
     else if (arg === "--daytona") options.daytona = true;
+    else if (arg === "--strict-ref") options.strictRef = true;
     else if (arg === "--publish") options.publish = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--force") options.force = true;
@@ -164,6 +167,7 @@ export function parseArgs(args) {
     if (options.local) conflicts.push("--local");
     if (options.daytona) conflicts.push("--daytona");
     if (options.den !== undefined) conflicts.push("--den");
+    if (options.strictRef) conflicts.push("--strict-ref");
     if (options.engine !== undefined) conflicts.push("--engine");
     if (options.surface !== undefined) conflicts.push("--surface");
     if (options.case !== undefined) conflicts.push("--case");
@@ -263,6 +267,65 @@ export function resolveRunEnvironment(options, env = process.env, probe = dayton
   }
   childEnv.OPENWORK_WORLD_PLACE = "local";
   return { env: childEnv, placement: "local", reason: "daytona CLI missing or not authenticated" };
+}
+
+const GIT_SHA = /^[0-9a-f]{7,64}$/i;
+
+function gitOutput(args, exec, cwd, timeout = 10_000) {
+  const result = exec("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout });
+  return !result.error && result.status === 0 ? String(result.stdout).trim() : "";
+}
+
+function remoteSha(listing, ref) {
+  const rows = listing.split(/\r?\n/).map((line) => line.trim().split(/\s+/)).filter((row) => GIT_SHA.test(row[0] ?? ""));
+  const head = rows.find((row) => row[1] === `refs/heads/${ref}`) ?? rows.find((row) => row[1] === ref) ?? rows[0];
+  return head ? head[0].toLowerCase() : "";
+}
+
+/**
+ * Specs always execute from this checkout, but under Daytona the product is
+ * built from OPENWORK_EVAL_REF (default dev) inside the sandbox. Resolve that
+ * ref the way the provisioning gate does (against origin) so a runner/ref
+ * mismatch is named before any sandbox is provisioned.
+ */
+export function resolveRefAlignment(placement, env = process.env, exec = spawnSync, cwd = repoRoot) {
+  if (placement !== "daytona") return null;
+  const sandboxRef = env.OPENWORK_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
+  const runnerSha = gitOutput(["rev-parse", "HEAD"], exec, cwd).toLowerCase();
+  const runnerBranch = gitOutput(["rev-parse", "--abbrev-ref", "HEAD"], exec, cwd);
+  const sandboxSha = GIT_SHA.test(sandboxRef)
+    ? sandboxRef.toLowerCase()
+    : remoteSha(gitOutput(["ls-remote", "--quiet", "origin", sandboxRef], exec, cwd, 30_000), sandboxRef);
+  const mismatch = sandboxSha && runnerSha ? !runnerSha.startsWith(sandboxSha) : null;
+  return { sandboxRef, sandboxSha, runnerSha, runnerBranch, mismatch };
+}
+
+function shortSha(sha) {
+  return sha ? sha.slice(0, 9) : "unknown";
+}
+
+export function refAlignmentLabel(alignment) {
+  if (!alignment) return "";
+  const resolved = alignment.sandboxSha && alignment.sandboxSha !== alignment.sandboxRef ? `@${shortSha(alignment.sandboxSha)}` : "";
+  const state = alignment.mismatch === true ? " [RUNNER/REF MISMATCH]" : alignment.mismatch === null ? " [unresolved]" : "";
+  return ` ref=${alignment.sandboxRef}${resolved}${state}`;
+}
+
+export function refAlignmentWarning(alignment) {
+  if (!alignment || alignment.mismatch === false) return null;
+  const branch = alignment.runnerBranch && alignment.runnerBranch !== "HEAD" ? ` (${alignment.runnerBranch})` : "";
+  const runner = `runner HEAD ${shortSha(alignment.runnerSha)}${branch}`;
+  if (alignment.mismatch === null) {
+    return `could not resolve sandbox ref ${alignment.sandboxRef} against origin, so it cannot be confirmed to match ${runner}.`;
+  }
+  const resolved = alignment.sandboxSha !== alignment.sandboxRef ? ` (${shortSha(alignment.sandboxSha)})` : "";
+  return `${runner} differs from the ref the Daytona sandbox builds: ${alignment.sandboxRef}${resolved}. `
+    + "Specs run from this checkout while the sandbox builds that ref, so the verdict would judge another commit's product "
+    + "(test-run.json records both as gitSha and sandboxRef). Push this branch and export OPENWORK_EVAL_REF=$(git rev-parse HEAD).";
+}
+
+export function strictRefRequested(options, env = process.env) {
+  return Boolean(options.strictRef) || env.OPENWORK_EVAL_STRICT_REF?.trim() === "1";
 }
 
 export function resolveTestNames(names, files = journeyFiles()) {
@@ -501,8 +564,14 @@ function run(options) {
     ...(selection.testNamePattern ? ["--testNamePattern", selection.testNamePattern] : []),
     ...resolved.map((file) => relative(evalsDir, file).split(sep).join("/")),
   ];
-  process.stderr.write(`selection: engine=${selection.engine ?? "legacy"} surface=${selection.surface ?? "legacy"} case=${selection.caseId ?? "all"}; placement: ${placement} (${reason})\n`);
+  const alignment = resolveRefAlignment(placement, childEnv);
+  const refWarning = refAlignmentWarning(alignment);
+  process.stderr.write(`selection: engine=${selection.engine ?? "legacy"} surface=${selection.surface ?? "legacy"} case=${selection.caseId ?? "all"}; placement: ${placement} (${reason})${refAlignmentLabel(alignment)}\n`);
   for (const world of selection.plan.worlds) process.stderr.write(`contract: ${testName(world.file)}:${world.line} ${worldContract(world)}\n`);
+  if (refWarning) {
+    if (strictRefRequested(options)) throw new Error(refWarning);
+    process.stderr.write(`warning: ${refWarning} Pass --strict-ref to fail instead of warning.\n`);
+  }
   const child = spawnSync("pnpm", vitestArgs, { cwd: evalsDir, env: childEnv, stdio: "inherit" });
   const status = childStatus(child);
   let report;
@@ -535,6 +604,9 @@ function run(options) {
     case: selection.caseId ?? null,
     vision: options.withLlmVision ? "inline" : "defer",
     files: options.testNames.length > 0 ? options.testNames : ["all"],
+    sandboxRef: alignment?.sandboxRef ?? null,
+    sandboxSha: alignment?.sandboxSha || null,
+    refMismatch: alignment?.mismatch ?? null,
     ...summary,
     ...(selection.caseId ? { selectedCasePassed: verdict === "passed" } : {}),
     consented,

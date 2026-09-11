@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, X, Zap } from "lucide-react";
 
 import { DEFAULT_MODEL } from "@/app/constants";
@@ -82,9 +82,17 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   // draft owner, so the initial read is the only hydration needed.
   const persistedDraft = useNewTaskDraftState(props.composer?.draftScope, props.composer?.workspaceId);
   const [prompt, setPromptState] = useState(() => persistedDraft.snapshot?.text ?? "");
+  const promptRef = useRef(prompt);
+  // Once a send is in flight the composer has cleared the slot, and anything
+  // typed until its route lands is carried into the created session as the
+  // continuation. Persisting it here would pre-fill the next new task. On
+  // success this hero unmounts, so the flag only resets when the send fails.
+  const sendInFlightRef = useRef(false);
   const persistPrompt = persistedDraft.save;
   const setPrompt = useCallback((value: string) => {
     setPromptState(value);
+    promptRef.current = value;
+    if (sendInFlightRef.current) return;
     // Attachment chips only exist in memory (File objects); the stored text drops their tokens.
     persistPrompt({ text: persistableComposerDraftText(value), mode: "prompt" });
   }, [persistPrompt]);
@@ -138,14 +146,23 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     })
     : DEFAULT_SUGGESTIONS;
 
-  const submit = (
+  const submit = async (
     resolvedPrompt: string,
     attachments: ComposerAttachment[],
     handoff?: NewTaskComposerHandoff,
   ) => {
     const trimmedPrompt = resolvedPrompt.trim();
     if ((!trimmedPrompt && !attachments.length) || props.busy) return;
-    return props.onRunTask(trimmedPrompt, attachments, handoff);
+    sendInFlightRef.current = true;
+    try {
+      await props.onRunTask(trimmedPrompt, attachments, handoff);
+    } catch (error) {
+      // The composer stays on this route, so whatever it holds now is once
+      // again the unsent new-task prompt and must stay reachable.
+      sendInFlightRef.current = false;
+      persistPrompt({ text: persistableComposerDraftText(promptRef.current), mode: "prompt" });
+      throw error;
+    }
   };
 
   const fillPrompt = (value: string) => {

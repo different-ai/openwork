@@ -131,7 +131,7 @@ import {
 import { draftToParts } from "@/react-app/domains/session/sync/draft-parts";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
-import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorValue } from "@/app/lib/model-behavior";
+import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorValue, sanitizeModelBehaviorValue } from "@/app/lib/model-behavior";
 import { computeModelAvailability, createUnavailableConfirmationGate, type ModelAvailability } from "@/react-app/domains/session/surface/model-availability";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
@@ -1021,6 +1021,9 @@ export function SessionRoute() {
   // the picker edits the global default (e.g. opened from the new-providers
   // toast). Composer "All models" carries the session id on the open event.
   const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
+  const modelPickerSelection = useSessionModelStore((state) =>
+    modelPickerSessionId ? state.bySessionId[modelPickerSessionId] ?? null : null,
+  );
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
@@ -2399,10 +2402,10 @@ export function SessionRoute() {
       : null;
     const options = selection ? (summary?.options ?? []) : modelBehaviorOptions;
     const current = selection ? (summary?.value ?? selection.variant) : modelVariantValue;
+    if (options.length < 2) return null;
     const next = direction === "reverse"
       ? previousModelBehaviorValue(options, current)
       : nextModelBehaviorValue(options, current);
-    if (!next) return null;
 
     if (activeSessionId && selection) {
       useSessionModelStore.getState().setVariant(activeSessionId, next);
@@ -2436,10 +2439,9 @@ export function SessionRoute() {
     if (!next) return null;
 
     const providerModel = providerCatalog?.[next.providerID]?.[next.modelID];
-    const summary = providerModel
-      ? getModelBehaviorSummary(next.providerID, providerModel, selection?.variant ?? modelVariantValue)
+    const variant = providerModel
+      ? sanitizeModelBehaviorValue(next.providerID, providerModel, selection ? selection.variant : modelVariantValue)
       : null;
-    const variant = summary && summary.options.length > 0 ? summary.value : null;
     if (activeSessionId) {
       useSessionModelStore.getState().setModel(activeSessionId, next, variant);
     }
@@ -3842,7 +3844,7 @@ export function SessionRoute() {
       setQuery={modelPicker.setQuery}
       subtitle={
         resolveModelAvailability(
-          (modelPickerSessionId ? getSessionModelSelection(modelPickerSessionId)?.model : null)
+          modelPickerSelection?.model
             ?? local.prefs.defaultModel
             ?? null,
         ).status === "unavailable"
@@ -3850,8 +3852,11 @@ export function SessionRoute() {
           : undefined
       }
       target="default"
+      currentBehaviorValue={modelPickerSelection
+        ? modelPickerSelection.variant
+        : local.prefs.modelVariant ?? null}
       current={
-        (modelPickerSessionId ? getSessionModelSelection(modelPickerSessionId)?.model : null)
+        modelPickerSelection?.model
           ?? local.prefs.defaultModel
           ?? ({ providerID: "", modelID: "" } satisfies ModelRef)
       }
@@ -3861,7 +3866,15 @@ export function SessionRoute() {
         modelPicker.setOpen(false);
       }}
       disabledProviders={disabledProviderIds}
-      onBehaviorChange={() => {}}
+      onBehaviorChange={(model, value) => {
+        if (modelPickerSessionId) {
+          const store = useSessionModelStore.getState();
+          store.setModel(modelPickerSessionId, model, value);
+          // Same-model selection preserves settings; explicit effort edits do not.
+          store.setVariant(modelPickerSessionId, value);
+        }
+        local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
+      }}
       onToggleProvider={async (providerId, enable) => {
         if (!opencodeClient) return;
         try {

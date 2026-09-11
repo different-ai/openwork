@@ -1,4 +1,5 @@
 import { Tool, toolError } from "@openwork/codemode"
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { Effect } from "effect"
 import type { Hono } from "hono"
@@ -77,7 +78,6 @@ import {
   type CapabilityMatch,
   type SearchCapabilityType,
 } from "./search.js"
-import type { AgentToolContentPart } from "./tool-content.js"
 import { externalToolContent } from "./tool-content.js"
 
 export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "admin"] as const
@@ -94,7 +94,7 @@ export type ParsedCapability =
 
 export type ExecuteCapabilityToolResult = {
   isError?: boolean
-  content: AgentToolContentPart[]
+  content: CallToolResult["content"]
   structuredContent?: Record<string, unknown>
   _meta?: Record<string, unknown>
 }
@@ -297,38 +297,28 @@ export function externalCapabilitySuccessToolResult(
     && isRecord(result.result.structuredContent)
     ? result.result.structuredContent
     : undefined
-  const structuredContent = result.mcpApp
-    ? {
-        ...(providerStructuredContent ?? {}),
-        serverTools: {
-          searchCapabilities: SEARCH_CAPABILITIES_TOOL_NAME,
-          executeCapability: EXECUTE_CAPABILITY_TOOL_NAME,
-        },
-      }
-    : providerStructuredContent
   const providerMeta = isRecord(result.result) && isRecord(result.result._meta)
     ? result.result._meta
     : {}
   const meta = {
     ...providerMeta,
-    ...(result.mcpApp ? { "openwork/mcpApp": result.mcpApp } : {}),
-  }
-  if (!result.schemaGuidance) {
-    return {
-      content,
-      ...(structuredContent ? { structuredContent } : {}),
-      ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
-    }
+    ...(result.mcpApp ? {
+      "openwork/mcpApp": result.mcpApp,
+      "openwork/serverTools": {
+        searchCapabilities: SEARCH_CAPABILITIES_TOOL_NAME,
+        executeCapability: EXECUTE_CAPABILITY_TOOL_NAME,
+      },
+    } : {}),
+    ...(result.schemaGuidance ? { "openwork/schemaGuidance": result.schemaGuidance } : {}),
   }
   return {
+    ...(isRecord(result.result) && typeof result.result.isError === "boolean" ? { isError: result.result.isError } : {}),
     content: [
       ...content,
-      ...textContent(JSON.stringify({ schemaGuidance: result.schemaGuidance })),
+      // Only the advisory is model-visible; never serialize provider _meta.
+      ...(result.schemaGuidance ? textContent(JSON.stringify({ "openwork/schemaGuidance": result.schemaGuidance })) : []),
     ],
-    structuredContent: {
-      ...(structuredContent ?? {}),
-      schemaGuidance: result.schemaGuidance,
-    },
+    ...(providerStructuredContent ? { structuredContent: providerStructuredContent } : {}),
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   }
 }

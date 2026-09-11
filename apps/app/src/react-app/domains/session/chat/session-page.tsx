@@ -1064,8 +1064,6 @@ export function SessionPage(props: SessionPageProps) {
       props.surface,
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSession);
-  const showConversationPanes = !props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface;
-  const showSecondaryPane = showConversationPanes && canRenderSplitSurface && (!isMobile || narrowPane === "split");
   const splitWorkspaceTitle = splitSession
     ? splitSession.workspaceTitle ?? workspaceTitleForId(props.sidebar.workspaceSessionGroups, splitSession.workspaceId)
     : "";
@@ -1371,7 +1369,6 @@ export function SessionPage(props: SessionPageProps) {
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
           developerMode={props.sidebar.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
-          visibleSecondarySessionId={showSecondaryPane && splitPaneRuntime?.status === "ready" ? splitSession?.sessionId : null}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
@@ -1726,7 +1723,7 @@ export function SessionPage(props: SessionPageProps) {
                 )
               ) : null}
 
-              {showConversationPanes ? (
+              {!props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <div className="flex h-full min-h-0 flex-col">
                   <WorkbenchPanelGroup
                     owner={props.surface?.draftScope ? JSON.stringify([
@@ -1793,7 +1790,7 @@ export function SessionPage(props: SessionPageProps) {
                       </div>
                       </ResizablePanel>
                     ) : null}
-                    {showSecondaryPane && splitSession && splitPaneRuntime ? (
+                    {canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split") ? (
                       <>
                         {!isMobile ? <ResizableHandle /> : null}
                         <ResizablePanel

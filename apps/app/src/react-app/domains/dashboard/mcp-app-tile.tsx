@@ -299,6 +299,7 @@ export function McpAppTile({
         cachedAt: Date.now(),
         result: {
           content: result.content,
+          ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
           ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
           ...(result._meta ? { _meta: result._meta } : {}),
         },

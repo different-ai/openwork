@@ -30,6 +30,7 @@ import {
 } from "./parse-tool-parts";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
+import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
@@ -83,8 +84,6 @@ type SyncEntry = {
   // parked in auth backoff restarts immediately with the new credential.
   notifyStreamGenerationChanged: (() => void) | null;
   refs: number;
-  // Visibility belongs to attachments, not focus or background retention.
-  visibleSessionRefs: Map<string, number>;
   dispose: () => void;
   disposeTimer: ReturnType<typeof setTimeout> | null;
   trackedSessionRefs: Map<string, number>;
@@ -666,6 +665,27 @@ export function settleQuestionState(workspaceId: string, sessionId: string, requ
   useSessionActivityStore.getState().setWaitingRequest(workspaceId, sessionId, "question", requestId, false);
 }
 
+/**
+ * Settle every cached question/permission whose tool call is in
+ * `terminalCallIds`. OpenCode never publishes a rejection for a request whose
+ * turn was aborted or superseded, so the terminal tool part is the only
+ * signal; settling also keeps a later list read from resurrecting it.
+ */
+function settleOrphanedInteractions(workspaceId: string, sessionId: string, terminalCallIds: ReadonlySet<string>) {
+  if (terminalCallIds.size === 0) return;
+  const queryClient = getReactQueryClient();
+  for (const question of queryClient.getQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId)) ?? []) {
+    if (isOrphanedInteraction(question.tool, terminalCallIds)) settleQuestionState(workspaceId, sessionId, question.id);
+  }
+  for (const permission of queryClient.getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId)) ?? []) {
+    if (isOrphanedInteraction(permission.tool, terminalCallIds)) settlePermissionState(workspaceId, sessionId, permission.id);
+  }
+}
+
+function terminalTranscriptCallIds(workspaceId: string, sessionId: string) {
+  return terminalTranscriptToolCallIds(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? []);
+}
+
 export function seedPermissionState(
   workspaceId: string,
   sessionId: string,
@@ -675,6 +695,10 @@ export function seedPermissionState(
   const queryClient = getReactQueryClient();
   const now = Date.now();
   const settled = new Set(queryClient.getQueryData<string[]>(settledPermissionsKey(workspaceId, sessionId)) ?? []);
+  const terminalCallIds = terminalTranscriptCallIds(workspaceId, sessionId);
+  for (const permission of permissions) {
+    if (!isV2PermissionRequest(permission) && isOrphanedInteraction(permission.tool, terminalCallIds)) settled.add(permission.id);
+  }
   const changedDuringRead = options.snapshotRevision === undefined
     || options.snapshotRevision !== (queryClient.getQueryState(permissionKey(workspaceId, sessionId))?.dataUpdateCount ?? 0);
   const snapshotKey = [...permissionKey(workspaceId, sessionId), "snapshot-started-at"];
@@ -724,6 +748,10 @@ export function seedQuestionState(
   const queryClient = getReactQueryClient();
   const now = Date.now();
   const settled = new Set(queryClient.getQueryData<string[]>(settledQuestionsKey(workspaceId, sessionId)) ?? []);
+  const terminalCallIds = terminalTranscriptCallIds(workspaceId, sessionId);
+  for (const question of questions) {
+    if (isOrphanedInteraction(question.tool, terminalCallIds)) settled.add(question.id);
+  }
   const nextQuestions = queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((question) => [question.id, question.receivedAt]));
     const seeded = questions.flatMap((question) =>
@@ -1212,6 +1240,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       clearSessionRetry(entry, workspaceId, part.sessionID);
       useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
+    if (isTerminalToolPart(part)) settleOrphanedInteractions(workspaceId, part.sessionID, new Set([part.callID]));
     if (!isTrackedSession(entry, part.sessionID)) return;
     const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
@@ -1309,8 +1338,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
 function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
   if (entry.deltaFlushBuffer.length === 0) return;
-  const lane = selectDeltaFlushLane(entry.deltaFlushBuffer, entry.visibleSessionRefs);
-  if (entry.deltaFlushLane === lane) return;
+  const lane = selectDeltaFlushLane(entry.deltaFlushBuffer, entry.input.visibleSessionId);
+  if (entry.deltaFlushLane === lane || entry.deltaFlushLane === "foreground") return;
 
   entry.cancelDeltaFlush?.();
   entry.deltaFlushLane = lane;
@@ -1327,7 +1356,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string, lane: DeltaFlushLane
   const pending = coalescePendingDeltas(entry.deltaFlushBuffer);
   const { flushing, deferred } = partitionPendingDeltasByLane(
     pending,
-    entry.visibleSessionRefs,
+    entry.input.visibleSessionId,
     lane,
   );
   entry.deltaFlushBuffer = deferred;
@@ -1707,7 +1736,6 @@ export function __resetWorkspaceSyncReconcileHealthForTest() {
 }
 
 export function ensureWorkspaceSessionSync(input: SyncOptions) {
-  input = { ...input, visibleSessionId: input.visibleSessionId?.trim() || undefined };
   const key = syncKey(input);
   const existing = syncs.get(key);
   if (existing) {
@@ -1728,9 +1756,8 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     retainListener(existing.sessionDeletedListeners, input.onSessionDeleted);
     retainListener(existing.sessionStatusListeners, input.onSessionStatus);
     existing.refs += 1;
-    retainListener(existing.visibleSessionRefs, input.visibleSessionId ?? undefined);
     scheduleDeltaFlush(existing, input.workspaceId);
-    return workspaceSyncRelease(input, existing);
+    return () => releaseWorkspaceSessionSync(input);
   }
 
   const created: SyncEntry = {
@@ -1738,7 +1765,6 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     openworkToken: input.openworkToken,
     notifyStreamGenerationChanged: null,
     refs: 1,
-    visibleSessionRefs: createListenerRegistry(input.visibleSessionId ?? undefined),
     dispose: () => {},
     disposeTimer: null,
     trackedSessionRefs: new Map(),
@@ -1802,28 +1828,17 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   syncs.set(key, created);
   created.dispose = startSync(input, created);
 
-  return workspaceSyncRelease(input, created);
+  return () => releaseWorkspaceSessionSync(input);
 }
 
-function workspaceSyncRelease(input: SyncOptions, owner: SyncEntry) {
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    releaseWorkspaceSessionSync(input, owner);
-  };
-}
-
-function releaseWorkspaceSessionSync(input: SyncOptions, owner: SyncEntry) {
+function releaseWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
   const existing = syncs.get(key);
-  if (!existing || existing !== owner) return;
+  if (!existing) return;
   releaseListener(existing.sessionCreatedListeners, input.onSessionCreated);
   releaseListener(existing.sessionUpdatedListeners, input.onSessionUpdated);
   releaseListener(existing.sessionDeletedListeners, input.onSessionDeleted);
   releaseListener(existing.sessionStatusListeners, input.onSessionStatus);
-  releaseListener(existing.visibleSessionRefs, input.visibleSessionId ?? undefined);
-  scheduleDeltaFlush(existing, input.workspaceId);
   existing.refs = Math.max(0, existing.refs - 1);
   if (existing.refs > 0) return;
   // A status fetch can discover work that no transcript owner ever mounted.
@@ -1925,6 +1940,7 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     }),
     snapshot.session.revert?.messageID ?? null,
   ));
+  settleOrphanedInteractions(workspaceId, snapshot.session.id, terminalToolCallIds(snapshot.messages));
 
   const todosKey = todoKey(workspaceId, snapshot.session.id);
   // Remember first observation for unmarked snapshots too, so reselecting a
@@ -2051,7 +2067,6 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     openworkToken: input.openworkToken,
     notifyStreamGenerationChanged: null,
     refs: 1,
-    visibleSessionRefs: createListenerRegistry(input.visibleSessionId?.trim() || undefined),
     dispose: () => {},
     disposeTimer: null,
     trackedSessionRefs: new Map(),
