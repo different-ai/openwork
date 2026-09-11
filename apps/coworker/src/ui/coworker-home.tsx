@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo, type TeamStates } from "@/lib/bridge";
 import { describeHeaderStatus, describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
@@ -10,7 +10,6 @@ import { CoworkerModelSettings } from "@/ui/coworker-model-settings";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { acknowledgeCoworker, AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
-import { CapabilitiesPanel } from "@/ui/capabilities";
 import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import { PanelContent, PanelHeader, PanelLevel, usePanelNavigation } from "@/ui/panel-nav";
@@ -40,6 +39,9 @@ import { AssignmentsPanel } from "@/ui/assignments";
 import type { WorkerSummary } from "@/lib/workers";
 import { Row, RowList, useReturnFocus } from "@/ui/rows";
 import type { SettingsSection } from "@/ui/openwork-settings";
+
+// Connected apps and tools open on request; the panel loads the first time it is shown.
+const CapabilitiesPanel = lazy(() => import("@/ui/capabilities").then((module) => ({ default: module.CapabilitiesPanel })));
 
 const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
 const CONTEXT_PANEL_DEFAULT_WIDTH = 360;
@@ -498,6 +500,7 @@ export function CoworkerHome({
             </IconButton>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <Suspense fallback={null}>
             <CapabilitiesPanel
               mode="beside"
               runtime={runtime}
@@ -515,6 +518,7 @@ export function CoworkerHome({
               onPush={(crumb) => setBesidePath(pushCrumb({ view: "settings", path: besidePath }, crumb).path)}
               onSetPath={(path) => setBesidePath(path)}
             />
+            </Suspense>
           </div>
         </section>
       ) : null}
@@ -668,6 +672,7 @@ export function CoworkerHome({
             </PanelLevel>
           ) : null}
           {contextView === "settings" && settingsLevel.kind === "apps-tools" ? (
+            <Suspense fallback={null}>
             <CapabilitiesPanel
               runtime={runtime}
               session={session}
@@ -695,6 +700,7 @@ export function CoworkerHome({
                 },
               }}
             />
+            </Suspense>
           ) : null}
         </PanelContent>
           </>

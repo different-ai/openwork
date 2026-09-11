@@ -1,7 +1,7 @@
 import { patternDrafts, workPattern } from "@/lib/work-patterns";
 import { AllHandsOverview, allHandsContext } from "@/ui/all-hands";
 import type { AllHandsSettings } from "@/lib/bridge";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerSummary, type CoworkerTemplateSync, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { acknowledgeCoworker } from "@/ui/coworker-avatar";
 import { publishGroupRun } from "@/lib/group-runs";
@@ -37,17 +37,22 @@ import type { PanelBounds } from "@/lib/panel-layout";
 
 /** The team rail: drag it narrower than a row can show and it folds to avatars. */
 const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 88, collapseBelow: 170 };
-import { LocalModeScreen } from "@/ui/local-mode";
 import { OnboardingWelcome } from "@/ui/onboarding";
 import { OnboardingIntents } from "@/ui/onboarding-intents";
 import { OnboardingTeam } from "@/ui/onboarding-team";
 import { emptyOnboardingDraft, loadOnboardingDraft, saveOnboardingDraft, toggleIntent, type OnboardingDraft } from "@/lib/onboarding-team";
 import type { TeamRole } from "@/lib/bridge";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
-import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
-import { FactoryResetScreen } from "@/ui/factory-reset";
-import { OnboardingReplay } from "@/ui/onboarding-replay";
+import type { SettingsSection } from "@/ui/openwork-settings";
 import { VoiceContext } from "@/ui/use-voice";
+
+// Whole-window or rarely opened screens load on first use so the startup chunk
+// carries the team, discussions and groups only. Local setup shares the provider
+// editor with Settings; the root loader covers it, the shell covers the rest.
+const LocalModeScreen = lazy(() => import("@/ui/local-mode").then((module) => ({ default: module.LocalModeScreen })));
+const OpenWorkSettings = lazy(() => import("@/ui/openwork-settings").then((module) => ({ default: module.OpenWorkSettings })));
+const FactoryResetScreen = lazy(() => import("@/ui/factory-reset").then((module) => ({ default: module.FactoryResetScreen })));
+const OnboardingReplay = lazy(() => import("@/ui/onboarding-replay").then((module) => ({ default: module.OnboardingReplay })));
 
 /** How long a freshly (re)started workspace may stay silent before it is a problem worth naming. */
 const WORKSPACE_WARMUP_MS = 45_000;
@@ -1004,6 +1009,7 @@ export default function App() {
           data-testid="openwork-settings-pane"
           data-active={settingsActive ? "true" : "false"}
         >
+          <Suspense fallback={null}>
           <OpenWorkSettings
             onAllHandsChanged={(settings) => { setAllHandsSettings(settings); if (!settings.enabled && selectedGroupId === settings.groupId) setSelectedGroupId(""); }}
             active={settingsActive}
@@ -1035,13 +1041,16 @@ export default function App() {
               setFactoryResetOpen(true);
             }}
           />
+          </Suspense>
         </div>
       ) : null}
-      {factoryResetOpen ? <FactoryResetScreen coworkers={coworkers} onBack={() => setFactoryResetOpen(false)} /> : null}
-      {replayOnboarding ? <OnboardingReplay step={replayOnboarding} onStep={setReplayOnboarding} runtime={runtime} session={session} onExit={() => {
-        setReplayOnboarding(null);
-        setGlobalSettings(null);
-      }} /> : null}
+      <Suspense fallback={null}>
+        {factoryResetOpen ? <FactoryResetScreen coworkers={coworkers} onBack={() => setFactoryResetOpen(false)} /> : null}
+        {replayOnboarding ? <OnboardingReplay step={replayOnboarding} onStep={setReplayOnboarding} runtime={runtime} session={session} onExit={() => {
+          setReplayOnboarding(null);
+          setGlobalSettings(null);
+        }} /> : null}
+      </Suspense>
     </div>
     </VoiceContext.Provider>
   );

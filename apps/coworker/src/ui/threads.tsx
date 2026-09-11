@@ -1,5 +1,5 @@
 import { ActionMenu } from "@/ui/kit";
-import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
@@ -54,8 +54,6 @@ import {
 } from "@/lib/discussions";
 import type { EffortStop } from "@/lib/effort";
 import { EffortDial } from "@/ui/effort-dial";
-import { ComputerControl } from "@/ui/computer-control";
-import { DiscussionBrowser } from "@/ui/browser-panel";
 import { PopoverDisclosure, TechnicalText } from "@/ui/details-popover";
 import { carryVariant, chooseFallbackModel, describeModelChoice, markAutoPicked, resolveDiscussionModel, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
 import { usesAppConversationDefault, type ModelDefaults } from "@/lib/model-defaults";
@@ -117,11 +115,16 @@ import { DocumentCard } from "@/ui/documents";
 import { documentCardsFromCalls, isDocumentTool, shouldFoldReply, splitReplyLead } from "@/lib/documents";
 import { newcomerLine, teamCardsFromCalls } from "@/lib/team";
 import { TeamCardsForTurn, type TeamHooks } from "@/ui/team-cards";
-import { McpAppFrame } from "@/ui/mcp-app-frame";
 import { WorkPopover, workPopoverPlacement, type WorkPopoverPlacement } from "@/ui/work-popover";
 import { appendVoiceDraft, privateVoiceReply, type VoiceExpectation } from "@/lib/voice";
 import { useVoice, type VoiceActivation, type VoiceController, type VoicePreparation } from "@/ui/use-voice";
 import { VoicePanel, VoiceToggle } from "@/ui/voice";
+
+// Computer, browser and interactive app hosts are discussion-time features;
+// their views (and the MCP app bridge) load when a discussion first needs them.
+const ComputerControl = lazy(() => import("@/ui/computer-control").then((module) => ({ default: module.ComputerControl })));
+const DiscussionBrowser = lazy(() => import("@/ui/browser-panel").then((module) => ({ default: module.DiscussionBrowser })));
+const McpAppFrame = lazy(() => import("@/ui/mcp-app-frame").then((module) => ({ default: module.McpAppFrame })));
 
 type TranscriptToolCall = {
   partId: string;
@@ -2204,7 +2207,7 @@ function ThreadView({
           </>
         )}
       />
-      {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={computerOpenRequest} onOpenRequestHandled={() => setComputerOpenRequest(0)} onBackToConversation={() => voice.fieldRef.current?.focus()} />, headerSlots.tools) : null}
+      {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<Suspense fallback={null}><ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={computerOpenRequest} onOpenRequestHandled={() => setComputerOpenRequest(0)} onBackToConversation={() => voice.fieldRef.current?.focus()} /></Suspense>, headerSlots.tools) : null}
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
       <div className="@container/discussion min-h-0 min-w-0 flex-1">
       <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
@@ -2371,7 +2374,7 @@ function ThreadView({
         />
       )}
       </div>
-      {kind === "discussion" && browserEligible ? <DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.tools} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={browserOpenRequest} /> : null}
+      {kind === "discussion" && browserEligible ? <Suspense fallback={null}><DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.tools} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={browserOpenRequest} /></Suspense> : null}
       </div>
       </div>
     </section>
@@ -3034,14 +3037,16 @@ function ToolAppFrame({ call, client }: { call: TranscriptToolCall; client: Cowo
   if (app && result) {
     return (
       <div className="mt-1.5">
-        <McpAppFrame
-          client={client}
-          app={app}
-          toolName={call.tool}
-          input={inputRef.current.value}
-          result={result}
-          onClose={() => { releaseRef.current?.(); setApp(null); }}
-        />
+        <Suspense fallback={null}>
+          <McpAppFrame
+            client={client}
+            app={app}
+            toolName={call.tool}
+            input={inputRef.current.value}
+            result={result}
+            onClose={() => { releaseRef.current?.(); setApp(null); }}
+          />
+        </Suspense>
       </div>
     );
   }

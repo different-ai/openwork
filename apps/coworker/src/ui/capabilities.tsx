@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import {
@@ -54,9 +54,11 @@ import {
 } from "@/lib/mcp";
 import type { PanelCrumb } from "@/lib/panel-route";
 import { AppsIcon, Button, IconButton, StatusDot, ToolIcon, inputClass } from "@/ui/kit";
-import { McpAppFrame } from "@/ui/mcp-app-frame";
 import { PanelLevel, type PanelDirection, type ReturnFocus } from "@/ui/panel-nav";
 import { Fact, GroupLabel, QuietLine, Row, RowList, SkeletonRows, TechnicalDetails, useReturnFocus } from "@/ui/rows";
+
+// The interactive app host (and its MCP app bridge) loads when a tool first shows an app.
+const McpAppFrame = lazy(() => import("@/ui/mcp-app-frame").then((module) => ({ default: module.McpAppFrame })));
 
 /** Remembered per machine once the person asks not to see the full explanation again. */
 export const CONNECT_PITCH_KEY = "open-coworker.connect-pitch";
@@ -1294,14 +1296,16 @@ function AppDetail({
 
       {resource && result ? (
         <div className="px-1">
-          <McpAppFrame
-            client={client}
-            app={resource}
-            toolName={catalog.projectedToolName}
-            input={argumentsValue}
-            result={result}
-            onClose={closeApp}
-          />
+          <Suspense fallback={null}>
+            <McpAppFrame
+              client={client}
+              app={resource}
+              toolName={catalog.projectedToolName}
+              input={argumentsValue}
+              result={result}
+              onClose={closeApp}
+            />
+          </Suspense>
           {beside ? (
             <div className="mt-2 flex justify-end">
               <Button variant="ghost" className="text-xs" onClick={beside} data-testid="apps-tools-open-beside">Open beside</Button>
