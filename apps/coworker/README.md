@@ -1161,6 +1161,11 @@ pnpm --filter @openwork/coworker installer:background # regenerate the macOS DMG
 pnpm --filter @openwork/coworker package:electron     # platform installers
 ```
 
+Keep releases size-aware: prefer existing/native APIs, bundle build-only inputs,
+and require a measured payload cost before adding a production dependency.
+[Release size](RELEASE-SIZE.md) owns dependency classification, package reports,
+target budgets, and the checks run before release artifacts are uploaded.
+
 The macOS DMG is an Open Coworker-owned installation surface rather than the
 electron-builder default: two quiet installation stations hold the native app
 and Applications icons while three small, tilted coworkers carry the eye
