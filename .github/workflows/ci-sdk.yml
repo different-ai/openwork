@@ -54,7 +54,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       # Loading the live app initializes OAuth's resource registry.
       - name: Prepare the isolated schema-export database
-        run: pnpm --filter @openwork-ee/den-db exec drizzle-kit push --force
+        run: pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --force
         env:
           NODE_OPTIONS: --conditions=development
       - run: pnpm sdk:check

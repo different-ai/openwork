@@ -51,6 +51,7 @@ const fakeSurface: Surface = {
               visible: true,
               hitTestOk: true,
               editable: true,
+              disabled: null,
               value: "",
               text: "Running 1 command, reading 1 file · Keep this draft",
               covering: null,

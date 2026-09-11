@@ -5,6 +5,7 @@ import { startMockIdpLab } from "@openwork/labs";
 import type { StartedMockIdpLab } from "@openwork/labs";
 import { createAdmin, eventually, inviteMember, queryDenDatabase, server, test } from "@openwork/testkit";
 import type { Den } from "@openwork/testkit";
+import { seedMemberGrantFixture } from "./helpers/member-grant-fixture.ts";
 import { enableScimFixtureSso } from "./helpers/scim-fixture.ts";
 
 // One IdP-shaped lifecycle that Okta's Provision Users + SSO combination
@@ -170,6 +171,7 @@ async function registerEnabledOidcSso(den: Den, idp: StartedMockIdpLab): Promise
 interface JourneyFacts {
   refusal: { claim: string; detail: string; passed: boolean };
   reprovision: { claim: string; detail: string; passed: boolean };
+  cleanup: { claim: string; detail: string; passed: boolean };
 }
 
 async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts> {
@@ -198,10 +200,21 @@ async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts
   if (created.response.status !== 201 || !scimUserId) {
     throw new Error(`SCIM user creation failed: HTTP ${created.response.status} ${created.text.slice(0, 500)}`);
   }
-  await eventually(
+  const orgBeforeDeprovision = await eventually(
     () => denFetch(den.ref, "/v1/org", { headers: orgHeaders }),
     { within: 90_000, label: "SCIM-created member to appear in organization context", until: ({ response, body }) => response.ok && orgHasJoinedMember(body, managedEmail) },
   );
+  const members = recordsField(orgBeforeDeprovision.body, "members");
+  const managedMemberId = stringField(members.find((member) => isRecord(member.user) && member.user.email === managedEmail), "id");
+  const controlMemberId = stringField(members.find((member) => isRecord(member.user) && member.user.email === controlEmail), "id");
+  if (!managedMemberId || !controlMemberId || managedMemberId === controlMemberId) throw new Error("Grant fixture requires distinct joined managed and control members");
+  const readGrants = await seedMemberGrantFixture(databaseUrl, organizationId, managedMemberId, controlMemberId);
+  const grantsBeforeDeprovision = await readGrants();
+  expect(grantsBeforeDeprovision).toHaveLength(7);
+  for (const grant of grantsBeforeDeprovision) {
+    expect(grant.rows, `${grant.table}: managed, control, team and shared grants before deactivation`).toHaveLength(4);
+    expect(grant.rows).toEqual(expect.arrayContaining(grant.expectedRows.map((row) => expect.objectContaining(row))));
+  }
 
   // The IdP deactivates the assignment. Den removes the member and tombstones
   // the identity; the global user goes with its last active membership.
@@ -216,6 +229,19 @@ async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts
   );
   const userRowsAfterDeprovision = await queryDenDatabase(databaseUrl, "SELECT id FROM `user` WHERE email = ?", [managedEmail]);
   expect(userRowsAfterDeprovision, "deprovisioned user row").toHaveLength(0);
+  const grantsAfterDeprovision = await readGrants();
+  for (const grant of grantsAfterDeprovision) {
+    const managed = grant.rows.filter((row) => stringField(row, "id") === grant.managedGrantId);
+    if (grant.softDelete) {
+      expect(managed, `${grant.table}: retain the revoked direct grant`).toHaveLength(1);
+      expect(managed[0]).toMatchObject({ memberId: managedMemberId, removedAt: expect.any(Date) });
+    } else {
+      expect(managed, `${grant.table}: hard-delete the direct assignment`).toHaveLength(0);
+    }
+    const before = grantsBeforeDeprovision.find((entry) => entry.table === grant.table);
+    expect(grant.rows.filter((row) => stringField(row, "id") !== grant.managedGrantId), `${grant.table}: other member and shared grants remain unchanged`)
+      .toEqual(before?.rows.filter((row) => stringField(row, "id") !== grant.managedGrantId));
+  }
 
   // ── The deactivated person still tries the SSO link ──────────────────────
   const ssoAttempt = await attemptSsoSignIn(den, managedEmail);
@@ -272,6 +298,13 @@ async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts
   expect(userRowsAfterReprovision, "exactly one user row after re-provision").toHaveLength(1);
   expect(passwordAfterReprovision.response.ok).toBe(false);
   expect(orgMemberRole(orgAfterReprovision.body, controlEmail)).toBe(controlRole);
+  const grantsAfterReprovision = await readGrants();
+  expect(grantsAfterReprovision, "reprovision must not revive, copy or retarget old grants, or alter control/shared grants").toEqual(grantsAfterDeprovision);
+  const cleanup = {
+    claim: `SCIM deactivation removes direct access without disturbing other members or shared grants, and reprovision does not restore old grants (${mode})`,
+    detail: "Before PATCH /Users active=false, all seven assignment types had a managed-member grant, a control-member grant, a team grant and a shared grant (role-scoped for desktop, org-wide otherwise). After HTTP 204, desktop/MCP direct rows were absent and marketplace/config/plugin/connector/dashboard direct rows remained with revocation timestamps. All 21 control/shared rows were unchanged, including grants created by the removed member. After POST /Users returned 201, every fixture resource's assignments exactly matched the post-deactivation snapshot, with no revived or copied grants.",
+    passed: true,
+  };
   const reprovision = {
     claim: `The IdP's re-provision restores access after the refused SSO attempt (${mode})`,
     detail: `POST /Users for ${managedEmail} returned ${reprovisioned.response.status} with id ${reprovisionedId}; GET reports active=${isRecord(reprovisionedGet.body) ? String(reprovisionedGet.body.active) : "?"}, /v1/org lists the member as ${orgMemberRole(orgAfterReprovision.body, managedEmail)}, exactly ${userRowsAfterReprovision.length} user row exists, password sign-in returned ${passwordAfterReprovision.response.status}, and ${controlEmail} is still ${orgMemberRole(orgAfterReprovision.body, controlEmail)}.`,
@@ -285,7 +318,7 @@ async function runDeprovisionedSsoJourney(org: JourneyOrg): Promise<JourneyFacts
       && !passwordAfterReprovision.response.ok
       && orgMemberRole(orgAfterReprovision.body, controlEmail) === controlRole,
   };
-  return { refusal, reprovision };
+  return { refusal, reprovision, cleanup };
 }
 
 test("a SCIM-deactivated member who tries SSO is refused without a ghost identity, so the IdP can re-provision them (multi-org Den)", { timeout: 600_000 }, async ({ evidence, place }) => {
@@ -312,6 +345,7 @@ test("a SCIM-deactivated member who tries SSO is refused without a ghost identit
   });
   evidence.recordAssertionEvidence(facts.refusal.claim, facts.refusal.detail, facts.refusal.passed);
   evidence.recordAssertionEvidence(facts.reprovision.claim, facts.reprovision.detail, facts.reprovision.passed);
+  evidence.recordAssertionEvidence(facts.cleanup.claim, facts.cleanup.detail, facts.cleanup.passed);
 });
 
 test("a SCIM-deactivated member who tries SSO is refused without a ghost identity, so the IdP can re-provision them (single-org Den)", { timeout: 600_000 }, async ({ evidence, place }) => {
@@ -347,4 +381,5 @@ test("a SCIM-deactivated member who tries SSO is refused without a ghost identit
   });
   evidence.recordAssertionEvidence(facts.refusal.claim, facts.refusal.detail, facts.refusal.passed);
   evidence.recordAssertionEvidence(facts.reprovision.claim, facts.reprovision.detail, facts.reprovision.passed);
+  evidence.recordAssertionEvidence(facts.cleanup.claim, facts.cleanup.detail, facts.cleanup.passed);
 });

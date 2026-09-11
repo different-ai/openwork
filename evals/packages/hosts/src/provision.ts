@@ -171,6 +171,12 @@ export interface PrepareSandboxRepoOptions extends ProvisionExecOptions {
 export interface DenSandboxOptions {
   ref: string;
   reuse?: string;
+  /**
+   * The reused sandbox's baked public identity, as handed back by the runner
+   * that provisioned it. Den signs setup links and OAuth metadata with these
+   * exact hosts, so a reuse without them can only offer fresh aliases.
+   */
+  reuseUrls?: { webUrl: string; apiUrl: string };
   repoRoot?: string;
   bootstrapAdminEmail?: string;
   /** Extra Den environment for a freshly provisioned sandbox; a reused Den is already running and cannot take it. */
@@ -1098,7 +1104,15 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
   let webUrl: string;
   let apiUrl: string;
 
-  if (reused) {
+  if (reused && options.reuseUrls) {
+    // The runner that provisioned this sandbox kept its baked DEN_*_PUBLIC_URL
+    // identity. Den builds connector setup links and OAuth metadata from those
+    // hosts, and a desktop only opens a setup link on the Den it signed in to.
+    sandbox = reused;
+    webUrl = options.reuseUrls.webUrl;
+    apiUrl = options.reuseUrls.apiUrl;
+    log(`Den baked identity reused for ${sandbox}: ${webUrl}`);
+  } else if (reused) {
     sandbox = reused;
     // Reused sandboxes only get fresh signed aliases: their baked
     // DEN_*_PUBLIC_URL identity is unknown here, so RFC 9728 validating MCP

@@ -15,6 +15,7 @@ import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import {
   attachmentNoteToUIParts,
+  textPartToUIPart,
   createSessionErrorUIMessage,
   snapshotToUIMessages,
 } from "./usechat-adapter";
@@ -29,6 +30,7 @@ import {
 } from "./parse-tool-parts";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
+import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
@@ -663,6 +665,27 @@ export function settleQuestionState(workspaceId: string, sessionId: string, requ
   useSessionActivityStore.getState().setWaitingRequest(workspaceId, sessionId, "question", requestId, false);
 }
 
+/**
+ * Settle every cached question/permission whose tool call is in
+ * `terminalCallIds`. OpenCode never publishes a rejection for a request whose
+ * turn was aborted or superseded, so the terminal tool part is the only
+ * signal; settling also keeps a later list read from resurrecting it.
+ */
+function settleOrphanedInteractions(workspaceId: string, sessionId: string, terminalCallIds: ReadonlySet<string>) {
+  if (terminalCallIds.size === 0) return;
+  const queryClient = getReactQueryClient();
+  for (const question of queryClient.getQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId)) ?? []) {
+    if (isOrphanedInteraction(question.tool, terminalCallIds)) settleQuestionState(workspaceId, sessionId, question.id);
+  }
+  for (const permission of queryClient.getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId)) ?? []) {
+    if (isOrphanedInteraction(permission.tool, terminalCallIds)) settlePermissionState(workspaceId, sessionId, permission.id);
+  }
+}
+
+function terminalTranscriptCallIds(workspaceId: string, sessionId: string) {
+  return terminalTranscriptToolCallIds(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? []);
+}
+
 export function seedPermissionState(
   workspaceId: string,
   sessionId: string,
@@ -672,6 +695,10 @@ export function seedPermissionState(
   const queryClient = getReactQueryClient();
   const now = Date.now();
   const settled = new Set(queryClient.getQueryData<string[]>(settledPermissionsKey(workspaceId, sessionId)) ?? []);
+  const terminalCallIds = terminalTranscriptCallIds(workspaceId, sessionId);
+  for (const permission of permissions) {
+    if (!isV2PermissionRequest(permission) && isOrphanedInteraction(permission.tool, terminalCallIds)) settled.add(permission.id);
+  }
   const changedDuringRead = options.snapshotRevision === undefined
     || options.snapshotRevision !== (queryClient.getQueryState(permissionKey(workspaceId, sessionId))?.dataUpdateCount ?? 0);
   const snapshotKey = [...permissionKey(workspaceId, sessionId), "snapshot-started-at"];
@@ -721,6 +748,10 @@ export function seedQuestionState(
   const queryClient = getReactQueryClient();
   const now = Date.now();
   const settled = new Set(queryClient.getQueryData<string[]>(settledQuestionsKey(workspaceId, sessionId)) ?? []);
+  const terminalCallIds = terminalTranscriptCallIds(workspaceId, sessionId);
+  for (const question of questions) {
+    if (isOrphanedInteraction(question.tool, terminalCallIds)) settled.add(question.id);
+  }
   const nextQuestions = queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((question) => [question.id, question.receivedAt]));
     const seeded = questions.flatMap((question) =>
@@ -797,13 +828,7 @@ function toFileUIParts(part: FilePart): UIMessage["parts"] {
 
 function toUIPart(part: Part): UIMessage["parts"][number] | null {
   if (part.type === "text") {
-    if (part.synthetic || part.ignored) return null;
-    return {
-      type: "text",
-      text: part.text,
-      state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
-    };
+    return textPartToUIPart(part);
   }
   if (part.type === "reasoning") {
     return {
@@ -1215,6 +1240,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       clearSessionRetry(entry, workspaceId, part.sessionID);
       useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
+    if (isTerminalToolPart(part)) settleOrphanedInteractions(workspaceId, part.sessionID, new Set([part.callID]));
     if (!isTrackedSession(entry, part.sessionID)) return;
     const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
@@ -1828,7 +1854,9 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   }, workspaceSyncDisposeGraceMs);
 }
 
-export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
+export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot, options: { preview?: boolean } = {}) {
+  // A reverted window cannot establish which messages are still visible.
+  if (options.preview && snapshot.session.revert?.messageID) return;
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
   const projected = snapshotToUIMessages(snapshot);
@@ -1863,6 +1891,16 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     }
   }
   const existing = queryClient.getQueryData<UIMessage[]>(key);
+
+  if (options.preview) {
+    // Supply declaration baselines for live deltas, not whole-session truth.
+    // In particular, a partial turn must not settle admission or seed idle.
+    queryClient.setQueryData(key, reconcileTranscriptMessages({
+      currentMessages: existing ?? [],
+      snapshotMessages: incoming,
+    }));
+    return;
+  }
 
   const snapshotStartedAt = sessionSnapshotFetchStarts.get(snapshot);
   if (typeof snapshotStartedAt === "number") {
@@ -1902,6 +1940,7 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     }),
     snapshot.session.revert?.messageID ?? null,
   ));
+  settleOrphanedInteractions(workspaceId, snapshot.session.id, terminalToolCallIds(snapshot.messages));
 
   const todosKey = todoKey(workspaceId, snapshot.session.id);
   // Remember first observation for unmarked snapshots too, so reselecting a
@@ -1915,6 +1954,21 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   }
   useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id,
     queryClient.getQueryData<UIMessage[]>(key) ?? [], true);
+}
+
+/**
+ * A session the app just created has no history to load, so its surface must
+ * not spend the first snapshot round trip in the "switching" state where the
+ * composer refuses to send. Seed the cache from the create response and leave
+ * it stale, so the first real fetch runs as a background refresh of a session
+ * that is already on screen.
+ */
+export function seedCreatedSessionSnapshot(workspaceId: string, session: Session) {
+  getReactQueryClient().setQueryData<OpenworkSessionSnapshot>(
+    snapshotKey(workspaceId, session.id),
+    { session, messages: [], todos: [], status: { type: "idle" } },
+    { updatedAt: 0 },
+  );
 }
 
 /**

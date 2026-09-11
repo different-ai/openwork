@@ -4,6 +4,7 @@ import { enginePoolForConfig } from "./engine-pool.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { readGlobalRuntimeOpencodeConfig, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
+import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 
 /**
@@ -48,6 +49,8 @@ export type ManagedProviderAuthInput = {
   logger?: ManagedProviderAuthLogger;
   /** Deliver to this standby instead of the current primary. */
   target?: ManagedProviderAuthStandbyTarget;
+  /** Previously materialized cloud rows recovered before their runtime removal. */
+  retiredProviderIds?: string[];
 };
 
 export type ManagedProviderAuthResult = {
@@ -94,6 +97,18 @@ const stateByConfig = new WeakMap<ServerConfig, ManagedProviderAuthState>();
 let cacheEpoch = 0;
 
 const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
+
+/**
+ * Budget for one engine auth PUT/DELETE. The engine answers these on the
+ * loopback in milliseconds; a request that hangs (instance rebuild wedged,
+ * half-open socket) must surface as a failed delivery so the caller can keep
+ * the reload owed and retry, instead of stalling the sync queue or a standby
+ * flip forever.
+ */
+function authRequestTimeoutMs(): number {
+  const raw = Number(process.env.OPENWORK_PROVIDER_AUTH_TIMEOUT_MS ?? "");
+  return Number.isFinite(raw) && raw > 0 ? raw : 10_000;
+}
 
 function stateForConfig(config: ServerConfig): ManagedProviderAuthState {
   const current = stateByConfig.get(config);
@@ -272,6 +287,15 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
   if (target.authHeader) headers.authorization = target.authHeader;
 
   const managedIds = new Set(Object.keys(providers));
+  const ownershipKey = `__managed_provider_auth__:${target.ownershipScope}`;
+  const persisted = await readOpenworkWorkspaceConfig(input.config, ownershipKey);
+  const savedIds = Array.isArray(persisted.providerIds)
+    ? persisted.providerIds.filter((id): id is string => typeof id === "string") : [];
+  const ownedProviderIds = state.ownedProviderIdsByScope.get(target.ownershipScope) ?? new Set<string>();
+  for (const id of [...savedIds, ...(input.retiredProviderIds ?? [])]) ownedProviderIds.add(id);
+  state.ownedProviderIdsByScope.set(target.ownershipScope, ownedProviderIds);
+  const persist = () => writeOpenworkWorkspaceConfig(input.config, ownershipKey, () => ({ providerIds: [...ownedProviderIds] }));
+  await persist();
 
   for (const [providerId, entry] of Object.entries(providers)) {
     if (!isCurrent()) return result;
@@ -303,6 +327,7 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
         method: "PUT",
         headers,
         body: JSON.stringify({ type: "api", key: credential }),
+        signal: AbortSignal.timeout(authRequestTimeoutMs()),
       });
       if (!isCurrent()) return result;
       if (!response.ok) {
@@ -316,12 +341,8 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
       state.deliveredFingerprints.set(providerId, next);
       if (state.lastDeliveredValueFingerprints.get(providerId) !== next) result.rotated.push(providerId);
       state.lastDeliveredValueFingerprints.set(providerId, next);
-      let ownedProviderIds = state.ownedProviderIdsByScope.get(target.ownershipScope);
-      if (!ownedProviderIds) {
-        ownedProviderIds = new Set();
-        state.ownedProviderIdsByScope.set(target.ownershipScope, ownedProviderIds);
-      }
       ownedProviderIds.add(providerId);
+      await persist();
       result.delivered.push(providerId);
     } catch (error) {
       if (!isCurrent()) return result;
@@ -333,9 +354,7 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
     }
   }
 
-  // Only ever remove ids this process delivered. Desktop users authenticate
-  // providers themselves and those must never be touched here.
-  const ownedProviderIds = state.ownedProviderIdsByScope.get(target.ownershipScope) ?? new Set<string>();
+  // Delivery provenance survives restart and stays bound to this engine target.
   for (const providerId of [...ownedProviderIds]) {
     if (managedIds.has(providerId)) continue;
     if (!isCurrent()) return result;
@@ -343,6 +362,7 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
       const response = await fetchImpl(`${target.baseUrl}/auth/${encodeURIComponent(providerId)}`, {
         method: "DELETE",
         headers,
+        signal: AbortSignal.timeout(authRequestTimeoutMs()),
       });
       if (!isCurrent()) return result;
       if (!response.ok) {
@@ -354,6 +374,7 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
       }
       state.deliveredFingerprints.delete(providerId);
       ownedProviderIds.delete(providerId);
+      await persist();
       result.removed.push(providerId);
     } catch (error) {
       if (!isCurrent()) return result;

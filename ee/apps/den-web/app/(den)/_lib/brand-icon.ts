@@ -25,6 +25,13 @@ const BUNDLED_ICONS_BY_APEX: Record<string, string> = {
   "sentry.io": "/integrations/sentry.svg",
   "context7.com": "/integrations/context7.png",
   "google.com": "/integrations/google.svg",
+  "openai.com": "/integrations/openai.svg",
+  "openworklabs.com": "/openwork-mark.svg",
+};
+
+const BUNDLED_ICONS_BY_SLUG: Record<string, string> = {
+  openai: "/integrations/openai.svg",
+  openwork: "/openwork-mark.svg",
 };
 
 const SIMPLE_ICON_SLUG_BY_APEX: Record<string, string> = {
@@ -76,10 +83,12 @@ export function brandIconCandidates(input: {
   const iconUrl = safeBrandImageUrl(input.iconUrl);
   if (iconUrl) candidates.push(iconUrl);
   const apex = apexDomain(input.serviceUrl);
-  const bundled = apex ? BUNDLED_ICONS_BY_APEX[apex] : undefined;
   const simpleIconSlug = input.simpleIconSlug ?? (apex ? SIMPLE_ICON_SLUG_BY_APEX[apex] : undefined);
+  const bundledBySlug = simpleIconSlug ? BUNDLED_ICONS_BY_SLUG[simpleIconSlug.toLowerCase()] : undefined;
+  const bundled = bundledBySlug ?? (apex ? BUNDLED_ICONS_BY_APEX[apex] : undefined);
   if (bundled) candidates.push(bundled);
-  const simpleIcon = simpleIconUrl(simpleIconSlug);
+  // These brands aren't available on Simple Icons; don't request known 404s.
+  const simpleIcon = bundledBySlug ? undefined : simpleIconUrl(simpleIconSlug);
   if (simpleIcon) candidates.push(simpleIcon);
   if (apex) candidates.push(`https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(apex)}`);
   return candidates;

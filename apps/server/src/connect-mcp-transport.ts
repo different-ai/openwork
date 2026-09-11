@@ -18,15 +18,54 @@ function parseJsonOrText(raw: string): unknown {
   try { return JSON.parse(raw); } catch { return raw; }
 }
 
-export async function readMcpPayload(response: Response): Promise<unknown> {
-  const raw = await response.text();
-  if (!raw.trim()) return null;
-  if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return parseJsonOrText(raw);
-  for (const frame of raw.split(/\r?\n\r?\n/)) {
-    const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
-    if (data) return parseJsonOrText(data);
+export async function readMcpPayload(response: Response, requestId?: string | number): Promise<unknown> {
+  const matches = (payload: unknown) => requestId === undefined || (
+    isRecord(payload) && payload.jsonrpc === "2.0" && payload.id === requestId &&
+    (payload.result !== undefined || payload.error !== undefined)
+  );
+  if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+    const raw = await response.text();
+    const payload = raw.trim() ? parseJsonOrText(raw) : null;
+    return matches(payload) ? payload : null;
   }
-  return null;
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  let data: string[] = [];
+  let skipLf = false;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) return null;
+      pending += decoder.decode(chunk.value, { stream: true });
+      // Parse lines incrementally: CR, LF and CRLF are legal, including across chunks.
+      while (pending.length) {
+        if (skipLf) {
+          if (pending.startsWith("\n")) pending = pending.slice(1);
+          skipLf = false;
+        }
+        const end = pending.search(/[\r\n]/);
+        if (end === -1) break;
+        const line = pending.slice(0, end);
+        skipLf = pending[end] === "\r";
+        pending = pending.slice(end + 1);
+        if (line === "") {
+          if (data.length) {
+            const payload = parseJsonOrText(data.join("\n"));
+            data = [];
+            if (matches(payload)) return payload;
+          }
+        } else if (line === "data" || line.startsWith("data:")) {
+          data.push(line.slice(5).replace(/^ /, ""));
+        }
+      }
+    }
+  } finally {
+    // A server may keep the stream open after the result. Never wait for EOF.
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 export function jsonRpcResult(payload: unknown): Record<string, unknown> | null {
@@ -42,7 +81,8 @@ export async function mcpPost(fetcher: McpFetch, url: string, headers: Record<st
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(5_000),
   });
-  return { response, payload: await readMcpPayload(response) };
+  const requestId = isRecord(body) && (typeof body.id === "string" || typeof body.id === "number") ? body.id : undefined;
+  return { response, payload: await readMcpPayload(response, requestId) };
 }
 
 /**
@@ -69,13 +109,19 @@ export async function readMcpResourceText(input: {
       protocolVersion: "2025-06-18",
     },
   });
-  if (!initialized.response.ok || !jsonRpcResult(initialized.payload)) return null;
+  if (!initialized.response.ok) return null;
+  const protocolVersion = jsonRpcResult(initialized.payload)?.protocolVersion;
+  // These are the Streamable HTTP revisions supported by this discovery client.
+  if (protocolVersion !== "2025-06-18" && protocolVersion !== "2025-03-26") return null;
+  const sessionId = initialized.response.headers.get("mcp-session-id");
+  // Normalize header names so configured casing cannot duplicate session headers.
   const sessionHeaders = {
-    ...baseHeaders,
-    ...(initialized.response.headers.get("mcp-session-id") ? { "mcp-session-id": initialized.response.headers.get("mcp-session-id")! } : {}),
-    ...(initialized.response.headers.get("mcp-protocol-version") ? { "mcp-protocol-version": initialized.response.headers.get("mcp-protocol-version")! } : {}),
+    ...Object.fromEntries(new Headers(baseHeaders)),
+    ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+    "mcp-protocol-version": protocolVersion,
   };
-  await mcpPost(input.fetcher, url, sessionHeaders, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+  const notification = await mcpPost(input.fetcher, url, sessionHeaders, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+  if (notification.response.status !== 202 || notification.payload !== null) return null;
   const resource = await mcpPost(input.fetcher, url, sessionHeaders, {
     id: 2,
     jsonrpc: "2.0",

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
@@ -14,10 +15,12 @@ import { organizationInstallLinksEnabled } from "../../capability-sources/instal
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
+import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
+import { organizationHasCapability } from "../../organization-capabilities.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
@@ -169,6 +172,8 @@ const organizationContextResponseSchema = z.object({
   }).passthrough(),
   currentMember: z.object({}).passthrough(),
   currentMemberTeams: z.array(z.object({}).passthrough()),
+  capabilities: z.object({ gatewayDashboard: z.boolean() }).passthrough(),
+  deploymentCapabilities: deploymentCapabilitiesSchema,
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
 const userEmailRequiredSchema = z.object({
@@ -284,6 +289,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/org",
     describeRoute({
       tags: ["Organizations"],
+      security: [{ bearerAuth: [] }],
       hide: true,
       summary: "Create organization",
       description: "Creates a new organization for the signed-in user. Billing is enforced only when launching shared cloud workspaces.",
@@ -329,6 +335,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/invitations/preview",
     describeRoute({
       tags: ["Invitations"],
+      security: [],
       summary: "Preview organization invitation",
       description: "Returns invitation preview details so a user can inspect an organization invite before accepting it.",
       responses: {
@@ -355,6 +362,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/invitations/accept",
     describeRoute({
       tags: ["Invitations"],
+      security: [{ bearerAuth: [] }],
       summary: "Accept organization invitation",
       description: "Accepts an organization invitation for the current signed-in user and switches their active organization to the accepted workspace.",
       responses: {
@@ -529,6 +537,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/sso/singleton",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       hide: true,
       summary: "Resolve singleton organization SSO status",
       description: "Returns whether the singleton organization has SSO configured for single-org deployments.",
@@ -552,6 +561,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/sso/resolve",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       hide: true,
       summary: "Resolve sign-in method by email",
       description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting.",
@@ -696,9 +706,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
             : null,
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
+        deploymentCapabilities: deploymentCapabilities(),
         plan: parseOrganizationPlan(payload.organization.metadata),
         entitlements: getOrganizationEntitlements(payload.organization.metadata),
         capabilities: {
+          // Dashboard exposure only; inference and provider synchronization are unaffected.
+          gatewayDashboard: organizationHasCapability(payload.organization.metadata, "gatewayDashboard"),
           // Protocol capability: clients must see this explicit signal before
           // calling the dashboard routes. Older Den versions omit the field,
           // allowing newer Desktop builds to fail closed during a staggered

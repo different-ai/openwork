@@ -50,13 +50,6 @@ export function useModelBehavior(input: UseModelBehaviorInput) {
       };
     }
     const model = providerCatalog[defaultModel.providerID]?.[defaultModel.modelID];
-    if (!model) {
-      return {
-        modelVariantLabel: variant ?? t("settings.default_label"),
-        modelBehaviorOptions: emptyModelBehaviorOptions,
-        modelVariantValue: variant,
-      };
-    }
     const summary = getModelBehaviorSummary(defaultModel.providerID, model, variant);
     return {
       modelVariantLabel: summary.label,

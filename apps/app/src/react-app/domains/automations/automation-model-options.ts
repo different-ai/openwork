@@ -153,24 +153,22 @@ export function automationPickerOptions(input: {
     const isSelected = option.providerId === input.selected.providerId
       && option.modelId === input.selected.modelId
     const model = input.catalog[option.providerId]?.[option.modelId]
-    const summary = model
-      ? getModelBehaviorSummary(
-        option.providerId,
-        model,
-        isSelected ? input.selected.variant ?? null : null,
-        option.providerName,
-      )
-      : null
+    const summary = getModelBehaviorSummary(
+      option.providerId,
+      model,
+      isSelected ? input.selected.variant ?? null : null,
+      option.providerName,
+    )
     return {
       providerID: option.providerId,
       modelID: option.modelId,
       title: option.modelName,
       description: option.providerName,
-      behaviorTitle: summary?.title ?? "Reasoning",
-      behaviorLabel: summary?.label ?? "Default",
-      behaviorDescription: summary?.description ?? "",
-      behaviorValue: summary?.value ?? null,
-      behaviorOptions: summary?.options ?? [],
+      behaviorTitle: summary.title,
+      behaviorLabel: summary.label,
+      behaviorDescription: summary.description,
+      behaviorValue: summary.value,
+      behaviorOptions: summary.options,
       isFree: option.accessKind === "free",
     }
   })

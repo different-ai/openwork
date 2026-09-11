@@ -17,6 +17,7 @@ export function registerStripeWebhookRoutes<T extends Env>(app: Hono<T>) {
     "/v1/webhooks/stripe",
     describeRoute({
       tags: ["Webhooks"],
+      security: [],
       hide: true,
       summary: "Stripe webhook ingress",
       responses: {

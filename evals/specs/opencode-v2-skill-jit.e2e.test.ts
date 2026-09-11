@@ -46,7 +46,8 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     expect(visibleUserMessages).toHaveLength(submitted.length);
     visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
     expect(await readTranscriptMessages(probe, "system")).toEqual([]);
-    if (world.live) expect(await world.usedConfiguredModel()).toBe(true);
+    // A silent swap to an organization model must fail here, not as a text mismatch.
+    expect(await world.usedConfiguredModel()).toBe(true);
     if (!record(response) || typeof response.text !== "string") throw new Error("Missing visible answer");
     for (const code of previousCodes) expect(response.text).not.toContain(code);
     expect(await transcript.finish()).toMatchObject({ seen: [true], violations: [], stopped: false });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
+import { catalogFastVariants, fastVariantId } from "@openwork/types/cloud-model-fast";
 
 import {
   buildOpenworkRuntimeConfig,
@@ -58,6 +59,35 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
+  test("restricted runtime enables materialized org gateway rows, not ordinary custom providers", () => {
+    const provider = { lpr_legacy: {}, ipr_gateway: {}, openwork: {}, personal: {}, opencode: {} };
+    const restricted = buildOpenworkRuntimeConfigObjectFromSnapshot({
+      managedPolicy: { allowCustomProviders: false, allowZenModel: false }, provider,
+    });
+    expect(restricted.enabled_providers).toEqual(["lpr_legacy", "ipr_gateway", "openwork"]);
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({
+      managedPolicy: { allowCustomProviders: false }, provider,
+    }).enabled_providers).toEqual(["lpr_legacy", "ipr_gateway", "openwork", "opencode"]);
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({ provider }).enabled_providers).toBeUndefined();
+  });
+
+  test("expands Fast for the pinned v1 engine only in the emitted config", () => {
+    const variants = catalogFastVariants({
+      reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+      experimental: { modes: { fast: { provider: { body: { service_tier: "priority" } } } } },
+    }, "@ai-sdk/openai");
+    const snapshot = { provider: { lpr_synthetic: { npm: "@ai-sdk/openai", models: { "gpt-6-astra": { variants } } } } };
+    const before = JSON.stringify(snapshot);
+    const rendered = buildOpenworkRuntimeConfigObjectFromSnapshot(snapshot);
+    expect(rendered).toMatchObject({ provider: { lpr_synthetic: { models: { "gpt-6-astra": { variants: {
+      high: { reasoningEffort: "high" },
+      [fastVariantId("high")]: { reasoningEffort: "high", serviceTier: "priority" },
+      [fastVariantId("low")]: { reasoningEffort: "low", serviceTier: "priority" },
+      [fastVariantId(null)]: { serviceTier: "priority" },
+    } } } } } });
+    expect(JSON.stringify(snapshot)).toBe(before);
+    expect(JSON.stringify(rendered.provider)).not.toContain("openworkNativeFast");
+  });
   test("managed browser restrictions use scalar actions in global and agent permissions", () => {
     const parsed = buildOpenworkRuntimeConfigObjectFromSnapshot({
       plugin: [managedPolicyPluginPath(), pathToFileURL(managedPolicyPluginPath(true)).href,

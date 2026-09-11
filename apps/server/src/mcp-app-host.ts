@@ -1,15 +1,21 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createHash, randomUUID } from "node:crypto";
+import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   CONNECT_MCP_APP_HOST_CAPABILITY,
   CONNECT_MCP_APP_HOST_CAPABILITY_HEADER,
+  CONNECT_MCP_APP_HOST_NAME_PREFIX,
   connectMcpAppHostName,
   findOpenWorkConnectMcpAppHostServer,
   readOpenWorkConnectMcpAppHostAuthorization,
+  readOpenWorkConnectMcpAppHostAuthorizationRevision,
   readOpenWorkConnectMcpAppHostCatalog,
   refreshOpenWorkConnectMcpAppHostCatalog,
+  type ConnectMcpCatalogDiagnostic,
 } from "./connect-mcp-server-catalog.js";
 import type { ServerConfig } from "./types.js";
 import {
@@ -18,7 +24,8 @@ import {
   LocalManagedMcpPrivateUrlError,
 } from "./local-managed-mcp-url-guard.js";
 import { diagnoseMcpToolDenies, listMcpFromRuntimeSnapshot } from "./mcp.js";
-import { readEffectiveRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readEffectiveRuntimeOpencodeConfig, readRuntimeMcpConfigRevisions } from "./runtime-opencode-config-store.js";
+import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
 
 async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string) {
   // Account-scoped gateways live in the engine-global runtime layer. Resolve
@@ -44,6 +51,7 @@ type McpAppCsp = {
 };
 
 export type McpAppResource = {
+  launchId?: string;
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -51,6 +59,71 @@ export type McpAppResource = {
   csp: McpAppCsp;
   prefersBorder: boolean;
 };
+
+export type McpAppLaunchContext = { sessionId: string | null; readOnly: boolean; engine?: "v1" | "v2" };
+
+type McpAppLaunch = {
+  workspaceId: string;
+  workspaceRoot: string;
+  sessionId: string | null;
+  engine: "v1" | "v2";
+  serverName: string;
+  toolName: string;
+  resourceUri: string;
+  fingerprint: string;
+  expiresAt: number;
+};
+
+const MAX_LIVE_LAUNCHES = 256;
+const LAUNCH_TTL_MS = 30 * 60_000;
+const launchesByServer = new WeakMap<ServerConfig, Map<string, McpAppLaunch>>();
+
+function liveLaunches(config: ServerConfig) {
+  let launches = launchesByServer.get(config);
+  if (!launches) {
+    launches = new Map();
+    launchesByServer.set(config, launches);
+  }
+  for (const [id, launch] of launches) if (launch.expiresAt <= Date.now()) launches.delete(id);
+  return launches;
+}
+
+export function releaseMcpAppLaunch(serverConfig: ServerConfig, workspaceId: string, launchId: string): boolean {
+  const launches = liveLaunches(serverConfig);
+  return launches.get(launchId)?.workspaceId === workspaceId && launches.delete(launchId);
+}
+
+function staleLaunch(): McpAppHostError {
+  return new McpAppHostError("stale_launch_context", "This App launch has expired, closed, or changed. Reopen the App in its original conversation before trying again.");
+}
+
+/** Values and private credential revisions stay on the host, never in the resource response. */
+async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceId: string }, serverName: string, config: Record<string, unknown>): Promise<string> {
+  const managed = await localManagedMcpAppIdentity(input.serverConfig, input.workspaceId, serverName, config.url);
+  const runtimeRevisions = readRuntimeMcpConfigRevisions(input.serverConfig, input.workspaceId,
+    serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX) ? "openwork-cloud" : serverName);
+  const privateRevision = serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)
+    ? await readOpenWorkConnectMcpAppHostAuthorizationRevision(input.serverConfig, input.workspaceId) : null;
+  return createHash("sha256").update(JSON.stringify({ config, managed, runtimeRevisions, privateRevision })).digest("hex");
+}
+
+function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext }, app: McpAppResource, fingerprint: string): McpAppResource {
+  // Old clients can read HTML, but cannot manufacture an actionable launch from a server name.
+  if (!input.context || input.context.readOnly) return app;
+  const launches = liveLaunches(input.serverConfig);
+  while (launches.size >= MAX_LIVE_LAUNCHES) {
+    const oldest = launches.keys().next().value;
+    if (oldest) launches.delete(oldest);
+  }
+  const launchId = randomUUID();
+  launches.set(launchId, {
+    workspaceId: input.workspaceId, workspaceRoot: input.workspaceRoot, sessionId: input.context.sessionId,
+    engine: input.context.engine ?? "v1",
+    serverName: app.serverName, toolName: app.toolName, resourceUri: app.resourceUri,
+    fingerprint, expiresAt: Date.now() + LAUNCH_TTL_MS,
+  });
+  return { ...app, launchId };
+}
 
 export type ConnectMcpAppLaunchReference = {
   connectionId: string;
@@ -188,6 +261,30 @@ function clientOptions() {
   };
 }
 
+/** Transport messages can echo URLs, headers and arbitrary provider bodies. Only
+ * expose typed statuses and fixed categories, never their raw messages. */
+function connectionFailure(error: unknown): string {
+  if ((error instanceof StreamableHTTPError || error instanceof SseError)
+    && typeof error.code === "number" && error.code >= 100 && error.code <= 599) {
+    return `HTTP ${error.code}`;
+  }
+  if (error instanceof UnauthorizedError) return "authentication failed";
+  if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) return "request timed out";
+  let cause = error;
+  for (let depth = 0; depth < 4 && cause instanceof Error; depth += 1) {
+    if (cause.name === "TimeoutError" || cause.name === "AbortError") return "request timed out or aborted";
+    if ("code" in cause && typeof cause.code === "string") {
+      if (["CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN",
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID"].includes(cause.code)) return "TLS certificate validation failed";
+      if (["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"].includes(cause.code)) return "request timed out";
+      if (["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"].includes(cause.code)) return "network connection failed";
+    }
+    cause = cause.cause;
+  }
+  if (error instanceof McpError) return "MCP initialization rejected";
+  return "connection or protocol negotiation failed";
+}
+
 async function withRemoteClient<T>(
   config: Record<string, unknown>,
   run: (client: Client) => Promise<T>,
@@ -210,8 +307,8 @@ async function withRemoteClient<T>(
     () => new StreamableHTTPClientTransport(url, { requestInit, fetch: guardedFetch }),
     () => new SSEClientTransport(url, { requestInit, fetch: guardedFetch }),
   ];
-  let lastError: unknown;
-  for (const createTransport of attempts) {
+  const failures: string[] = [];
+  for (const [index, createTransport] of attempts.entries()) {
     const client = new Client({ name: "openwork-mcp-app-host", version: "1.0.0" }, clientOptions());
     let connected = false;
     try {
@@ -220,14 +317,20 @@ async function withRemoteClient<T>(
       return await run(client);
     } catch (error) {
       if (connected) throw error;
-      lastError = error;
+      failures.push(`${index === 0 ? "Streamable HTTP POST" : "Legacy SSE fallback"}: ${connectionFailure(error)}`);
+      // MCP 2025-11-25 backwards compatibility applies only to a rejected
+      // InitializeRequest, not auth/network errors or the initialized notification.
+      // The SDK handles optional-stream GET 405 itself; it is not a fallback signal.
+      if (index !== 0 || client.getServerVersion() !== undefined
+        || !(error instanceof StreamableHTTPError)
+        || (error.code !== 400 && error.code !== 404 && error.code !== 405)) break;
     } finally {
       await client.close().catch(() => undefined);
     }
   }
   throw new McpAppHostError(
     "mcp_unreachable",
-    lastError instanceof Error ? lastError.message : "The MCP server could not be reached.",
+    failures.join("; "),
   );
 }
 
@@ -281,12 +384,25 @@ function decodeResourceHtml(content: { text?: string; blob?: string }): { html: 
   throw new McpAppHostError("invalid_resource", "The MCP App resource must contain exactly one of text or blob HTML.");
 }
 
+function connectCatalogError(diagnostic: Exclude<ConnectMcpCatalogDiagnostic, "ready" | "empty">): McpAppHostError {
+  const messages = {
+    missing_app_host_auth: "The Connect MCP App host needs a fresh private authorization. Sync OpenWork Connect and try again.",
+    untrusted_origin: "The Connect MCP catalog origin is not trusted. Activate the enterprise Den origin before loading Apps.",
+    invalid_catalog: "The Connect MCP catalog is invalid. Ask your administrator to check the Den catalog.",
+    invalid_proxy_descriptor: "The Connect MCP catalog contains an invalid provider proxy descriptor. Ask your administrator to correct it in Den.",
+    discovery_unavailable: "The Connect MCP catalog could not be discovered. Try again; this does not establish that the connection is missing.",
+  };
+  return new McpAppHostError(`connect_catalog_${diagnostic}`, messages[diagnostic]);
+}
+
 async function privateConnectMcpConfig(input: {
   serverConfig: ServerConfig;
   workspaceId: string;
   connectionId?: string;
   serverName?: string;
 }): Promise<{ serverName: string; config: Record<string, unknown> } | null> {
+  // Ordinary user-configured servers do not depend on Connect discovery.
+  if (input.connectionId === undefined && !input.serverName?.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)) return null;
   let descriptor = await findOpenWorkConnectMcpAppHostServer(
     input.serverConfig,
     input.workspaceId,
@@ -294,6 +410,9 @@ async function privateConnectMcpConfig(input: {
   );
   if (!descriptor) {
     const refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
+    if (refreshed.diagnostic !== "ready" && refreshed.diagnostic !== "empty") {
+      throw connectCatalogError(refreshed.diagnostic);
+    }
     if (refreshed.status === "synced") {
       descriptor = await findOpenWorkConnectMcpAppHostServer(
         input.serverConfig,
@@ -308,7 +427,7 @@ async function privateConnectMcpConfig(input: {
     input.workspaceId,
     descriptor.url,
   );
-  if (!appHostAuthorization) return null;
+  if (!appHostAuthorization) throw connectCatalogError("missing_app_host_auth");
   return {
     serverName: connectMcpAppHostName(descriptor.connectionId),
     config: {
@@ -550,6 +669,7 @@ export async function listMcpAppCatalog(input: {
 }
 
 export async function resolveMcpAppResource(input: {
+  context?: McpAppLaunchContext;
   serverConfig: ServerConfig;
   workspaceId: string;
   workspaceRoot: string;
@@ -563,10 +683,11 @@ export async function resolveMcpAppResource(input: {
     item.config.enabled !== false
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
-  const matches: McpAppResource[] = [];
+  const matches: Array<{ app: McpAppResource; fingerprint: string }> = [];
   const resolutionErrors: McpAppHostError[] = [];
   for (const item of candidates) {
     if (!remoteUrl(item.config)) continue;
+    const fingerprint = await launchFingerprint(input, item.name, item.config);
     const match = await withRemoteClient(item.config, async (client) => {
       const tool = (await listTools(client)).find((candidate) => (
         projectedMcpToolName(item.name, candidate.name) === input.projectedToolName
@@ -600,13 +721,13 @@ export async function resolveMcpAppResource(input: {
         : new McpAppHostError("mcp_app_resolution_failed", "The MCP App resource could not be resolved."));
       return null;
     });
-    if (match) matches.push(match);
+    if (match) matches.push({ app: match, fingerprint });
   }
   if (matches.length > 1) {
     throw new McpAppHostError("ambiguous_tool", "More than one configured MCP App matches this projected tool name.");
   }
   if (matches.length === 0 && resolutionErrors[0]) throw resolutionErrors[0];
-  return matches[0] ?? null;
+  return matches[0] ? bindLaunch(input, matches[0].app, matches[0].fingerprint) : null;
 }
 
 /**
@@ -616,6 +737,7 @@ export async function resolveMcpAppResource(input: {
  * UI binding to match before reading or executing any resource.
  */
 export async function resolveConnectMcpAppResource(input: {
+  context?: McpAppLaunchContext;
   serverConfig: ServerConfig;
   workspaceId: string;
   workspaceRoot: string;
@@ -640,8 +762,9 @@ export async function resolveConnectMcpAppResource(input: {
     throw new McpAppHostError("server_unavailable", "The originating Connect MCP server is not available to this workspace.");
   }
   const { serverName } = item;
+  const fingerprint = await launchFingerprint(input, serverName, item.config);
 
-  return await withRemoteClient(item.config, async (client) => {
+  const app = await withRemoteClient(item.config, async (client) => {
     const tool = (await listTools(client)).find((candidate) => candidate.name === input.launch.toolName);
     if (!tool) {
       throw new McpAppHostError("tool_not_found", "The originating MCP App tool is no longer advertised.");
@@ -673,6 +796,7 @@ export async function resolveConnectMcpAppResource(input: {
       ...presentation,
     };
   });
+  return bindLaunch(input, app, fingerprint);
 }
 
 /** Resolve an indirect launch against the same MCP server that owns the
@@ -680,6 +804,7 @@ export async function resolveConnectMcpAppResource(input: {
  * app-visible, but its standard UI binding and resource are revalidated live.
  */
 export async function resolveSameServerMcpAppResource(input: {
+  context?: McpAppLaunchContext;
   serverConfig: ServerConfig;
   workspaceId: string;
   workspaceRoot: string;
@@ -702,8 +827,9 @@ export async function resolveSameServerMcpAppResource(input: {
     && remoteUrl(item.config)
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
-  const matches: McpAppResource[] = [];
+  const matches: Array<{ app: McpAppResource; fingerprint: string }> = [];
   for (const item of candidates) {
+    const fingerprint = await launchFingerprint(input, item.name, item.config);
     const match = await withRemoteClient(item.config, async (client) => {
       const tools = await listTools(client);
       const gatewayTool = tools.find((tool) => projectedMcpToolName(item.name, tool.name) === input.projectedToolName);
@@ -733,16 +859,19 @@ export async function resolveSameServerMcpAppResource(input: {
         ...resourcePresentationMeta(resource.meta),
       } satisfies McpAppResource;
     });
-    if (match) matches.push(match);
+    if (match) matches.push({ app: match, fingerprint });
   }
   if (matches.length > 1) {
     throw new McpAppHostError("ambiguous_tool", "More than one configured MCP server matches this capability gateway launch.");
   }
   if (!matches[0]) throw new McpAppHostError("server_unavailable", "The MCP server that produced this App launch is unavailable.");
-  return matches[0];
+  return bindLaunch(input, matches[0].app, matches[0].fingerprint);
 }
 
 export async function callMcpAppTool(input: {
+  launchId?: string;
+  sessionId?: string | null;
+  engine?: "v1" | "v2";
   serverConfig: ServerConfig;
   workspaceId: string;
   workspaceRoot: string;
@@ -751,19 +880,53 @@ export async function callMcpAppTool(input: {
   resourceUri?: string;
   arguments?: Record<string, unknown>;
   approved?: boolean;
+  /** Required for conversation leases; the HTTP host checks current ownership/archive state. */
+  assertSessionActive?: () => Promise<void>;
 }): Promise<CallToolResult> {
-  const privateItem = await privateConnectMcpConfig({
-    serverConfig: input.serverConfig,
-    workspaceId: input.workspaceId,
-    serverName: input.serverName,
-  });
-  const configured = privateItem ? [] : await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
-  const item = privateItem ?? configured.find((candidate) => candidate.name === input.serverName);
-  if (!item || item.config.enabled === false) {
-    throw new McpAppHostError("server_unavailable", "The originating MCP server is not available to this workspace.");
-  }
-  return await withRemoteClient(item.config, async (client) => {
-    const tool = (await listTools(client)).find((candidate) => candidate.name === input.name);
+  if (!input.launchId) throw new McpAppHostError("missing_launch_context", "This App has no live launch context. Update OpenWork and reopen the App before using its actions.");
+  const launchId = input.launchId;
+  const launch = liveLaunches(input.serverConfig).get(launchId);
+  const assertLive = () => {
+    if (!launch || liveLaunches(input.serverConfig).get(launchId) !== launch
+      || launch.workspaceId !== input.workspaceId || launch.workspaceRoot !== input.workspaceRoot
+      || launch.sessionId !== input.sessionId || launch.serverName !== input.serverName
+      || launch.engine !== (input.engine ?? "v1")
+      || launch.resourceUri !== input.resourceUri) throw staleLaunch();
+  };
+  assertLive();
+  if (!launch) throw staleLaunch();
+  const currentConfig = async () => {
+    const privateItem = await privateConnectMcpConfig({
+      serverConfig: input.serverConfig,
+      workspaceId: input.workspaceId,
+      serverName: input.serverName,
+    });
+    const configured = privateItem ? [] : await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
+    // A reserved private host must never fall back to a same-name workspace configuration.
+    const item = input.serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)
+      ? privateItem : configured.find((candidate) => candidate.name === input.serverName);
+    if (!item || item.config.enabled === false) {
+      throw new McpAppHostError("server_unavailable", "The originating MCP server is not available to this workspace. Reopen the App after restoring the connection.");
+    }
+    if (await launchFingerprint(input, input.serverName, item.config) !== launch.fingerprint) {
+      releaseMcpAppLaunch(input.serverConfig, input.workspaceId, launchId);
+      throw staleLaunch();
+    }
+    assertLive();
+    return item.config;
+  };
+  const config = await currentConfig();
+  return await withRemoteClient(config, async (client) => {
+    const tools = await listTools(client);
+    const original = tools.find((candidate) => candidate.name === launch.toolName);
+    if (!original || !toolVisibility(original, "app") || toolUiResourceUri(original) !== launch.resourceUri) throw staleLaunch();
+    findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
+      throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
+    }));
+    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedMcpToolName(input.serverName, original.name)])).length > 0) {
+      throw new McpAppHostError("tool_denied", "The originating App tool is denied. Reopen it after reviewing the workspace tool policy.");
+    }
+    const tool = tools.find((candidate) => candidate.name === input.name);
     if (!tool) throw new McpAppHostError("tool_not_found", "The requested same-server MCP tool was not found.");
     if (!toolVisibility(tool, "app")) {
       throw new McpAppHostError("tool_not_visible", "The requested MCP tool is not visible to apps.");
@@ -779,12 +942,18 @@ export async function callMcpAppTool(input: {
     if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedName])).length > 0) {
       throw new McpAppHostError("tool_denied", "This same-server MCP tool is denied by the workspace tool policy.");
     }
+    if (launch.sessionId !== null && !input.assertSessionActive) {
+      throw new McpAppHostError("inactive_session", "The original conversation cannot be verified. Reopen it before using App actions.");
+    }
+    await input.assertSessionActive?.();
     if (toolRequiresApproval(tool) && !input.approved) {
       throw new McpAppHostError(
         "tool_requires_approval",
         "This MCP App tool requires user approval before OpenWork can call it.",
       );
     }
+    await currentConfig();
+    assertLive();
     // A provider that rejects the call (for example JSON-RPC -32602 for a
     // missing required argument) must reach the member as that rejection,
     // not as an unhandled 500 "Unexpected server error". The text is
