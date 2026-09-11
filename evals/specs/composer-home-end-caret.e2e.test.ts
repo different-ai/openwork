@@ -49,10 +49,12 @@ test("Home and End move the caret inside a multi-line draft instead of being swa
   });
 
   await step("PageUp and PageDown are left to the browser and the transcript", async () => {
+    // Where the caret lands is the platform's call (macOS scrolls, Linux and
+    // Windows page the caret); the composer must not claim either key.
     for (const key of ["PageUp", "PageDown"]) {
       await user.press(key);
       expect(await lastKeydown()).toEqual({ key, prevented: false });
-      expect(await caret()).toEqual({ anchor: `${secondLine}@${secondLine.length}`, focus: `${secondLine}@${secondLine.length}` });
+      expect(await caret()).not.toBeNull();
     }
   });
 
