@@ -177,6 +177,29 @@ gh release view vX.Y.Z --repo different-ai/openwork   # published, not draft
 fallback snapshot only; refresh it occasionally with
 `node scripts/release/generate-desktop-versions.mjs --version <latest>`.
 
+One file does carry a released version by design: the pull-only evaluation
+stack `packaging/docker/docker-compose.eval.yml` pins den-api and den-web by
+`<version>@<digest>`, and the docs download it by commit sha + checksum. After
+`Publish EE Artifacts` has pushed a stable tag's images, bump the pins on a
+branch from `dev` (the sequence #4756 used for 0.18.46):
+
+```bash
+V=X.Y.Z
+API=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ghcr.io/different-ai/openwork-den-api:$V)
+WEB=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ghcr.io/different-ai/openwork-den-web:$V)
+node scripts/release/pin-compose-images.mjs pin --version $V --digest openwork-den-api=$API --digest openwork-den-web=$WEB
+git commit -S -s -am "fix(packaging): pin the compose evaluation stack to the $V images"
+node scripts/release/pin-compose-images.mjs docs --commit $(git rev-parse HEAD)
+git commit -S -s -am "docs: point the compose download at the $V pin"
+node scripts/release/check-compose-pins.mjs      # {"ok":true,...} once the tag exists
+```
+
+`check-compose-pins.mjs` fails when a pinned tag lags the highest stable `v*`
+tag, when a doc checksum does not match the compose file, or when the two docs
+point at different commits; `--expected X.Y.Z` overrides the tag lookup for a
+dry run. Like the changelog PR, that pin PR follows the release; it is not part
+of cutting it.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

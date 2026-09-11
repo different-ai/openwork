@@ -235,17 +235,17 @@ test("migration ownership collects all same-line rename destinations within each
   assert.deepEqual(renamedTableDestinations(sql), ["new_a", "new_b", "new_c"])
 })
 
-test("migration ownership collects all multiline 0097 rename destinations", async () => {
+test("migration ownership collects all generated 0097 rename destinations", async () => {
   const sql = await readFile(join(migrationsFolder, "0097_gateway_access_matrix.sql"), "utf8")
   assert.deepEqual(renamedTableDestinations(sql), [
-    "gateway_providers",
-    "gateway_provider_models",
-    "gateway_provider_credentials",
-    "gateway_provider_access",
-    "gateway_provider_oauth_states",
     "gateway_request_logs",
-    "gateway_usage_rollups",
     "gateway_rollup_lock",
+    "gateway_usage_rollups",
+    "gateway_provider_access",
+    "gateway_provider_credentials",
+    "gateway_provider_models",
+    "gateway_provider_oauth_states",
+    "gateway_providers",
   ])
 })
 

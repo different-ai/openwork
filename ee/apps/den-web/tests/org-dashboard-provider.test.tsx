@@ -628,10 +628,12 @@ test.each(unsupportedDeployments)("BYOK still works but migration is not mounted
 });
 
 test.each([
-  { name: "effective gateway", metadata: enabledMetadata, target: "/dashboard/gateway-providers" },
   { name: "self-hosted", metadata: "{}", singleOrg: true, target: "/dashboard/custom-llm-providers" },
+  { name: "self-hosted with Gateway", metadata: enabledMetadata, singleOrg: true, target: "/dashboard/custom-llm-providers" },
   { name: "nonadmin", metadata: "{}", role: "member", target: "/dashboard" },
+  { name: "nonadmin with Gateway", metadata: enabledMetadata, role: "member", target: "/dashboard" },
   { name: "runtime checking", metadata: "{}", runtimeConfigLoaded: false, target: null },
+  { name: "runtime checking with Gateway", metadata: enabledMetadata, runtimeConfigLoaded: false, target: null },
 ])("Models direct URL blocks $name before inference fetches or checkout controls mount", async ({ target, ...options }) => {
   await withDashboard(async ({ container, calls, replace }) => {
     expect(featureCalls(calls)).toEqual([]);
@@ -640,6 +642,20 @@ test.each([
     if (target) expect(replace).toHaveBeenCalledWith(target);
     else expect(replace).not.toHaveBeenCalled();
   }, { ...options, pathname: "/dashboard/inference", outsideGateway: true, page: <InferencePage /> });
+});
+
+test.each(["admin", "super-admin", "owner"])("hosted %s mounts the real Models page alongside an effectively enabled Gateway", async (role) => {
+  await withDashboard(async ({ state, container, calls, replace }) => {
+    expect(getGatewayDashboardAccess(state())).toBe("enabled");
+    expect(container.querySelector("[data-testid=models-access-state]")).toBeNull();
+    expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(1);
+    expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers"))).toBe(false);
+    expect(container.querySelector("h1")?.textContent).toBe("OpenWork Models");
+    expect(container.textContent).toContain("Manage subscription");
+    expect(container.querySelector("table")).not.toBeNull();
+    expect(replace).not.toHaveBeenCalled();
+  }, { role, pathname: "/dashboard/inference", outsideGateway: true,
+    page: <AdminDashboardLayout><InferencePage /></AdminDashboardLayout> });
 });
 
 test.each([
@@ -658,7 +674,7 @@ test.each([
 
 test("Models waits for context and survives hosted-to-gateway-to-hosted switches without leaking requests or controls", async () => {
   const initialContext = deferred<Reply>();
-  await withDashboard(async ({ state, hold, container, calls }) => {
+  await withDashboard(async ({ state, hold, container, calls, replace }) => {
     expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
     expect(featureCalls(calls)).toEqual([]);
     await act(async () => initialContext.resolve(context("org-a", "{}")));
@@ -667,13 +683,20 @@ test("Models waits for context and survives hosted-to-gateway-to-hosted switches
     await act(async () => state().switchOrganization("b"));
     expect(container.textContent).not.toContain("Manage subscription");
     expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
-    await act(async () => next.resolve(context("org-b")));
-    expect(container.textContent).not.toContain("Manage subscription");
     expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(1);
-    const last = hold("/v1/org", "org-c");
-    await act(async () => state().switchOrganization("c"));
-    await act(async () => last.resolve(context("org-c", "{}")));
+    await act(async () => next.resolve(context("org-b")));
+    expect(getGatewayDashboardAccess(state())).toBe("enabled");
     expect(container.textContent).toContain("Manage subscription");
     expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(2);
+    const last = hold("/v1/org", "org-c");
+    await act(async () => state().switchOrganization("c"));
+    expect(container.textContent).not.toContain("Manage subscription");
+    expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
+    expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(2);
+    await act(async () => last.resolve(context("org-c", "{}")));
+    expect(container.textContent).toContain("Manage subscription");
+    expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(3);
+    expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers"))).toBe(false);
+    expect(replace).not.toHaveBeenCalledWith("/dashboard/gateway-providers");
   }, { pathname: "/dashboard/inference", outsideGateway: true, page: <InferencePage />, initialContext });
 });

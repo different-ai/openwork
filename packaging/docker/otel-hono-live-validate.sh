@@ -47,6 +47,10 @@ export OTEL_LGTM_GRAFANA_PORT="${OTEL_LGTM_GRAFANA_PORT:-$((port_base + 4))}"
 export OTEL_LGTM_OTLP_GRPC_PORT="${OTEL_LGTM_OTLP_GRPC_PORT:-$((port_base + 5))}"
 export OTEL_LGTM_OTLP_HTTP_PORT="${OTEL_LGTM_OTLP_HTTP_PORT:-$((port_base + 6))}"
 
+# The compose default OPENWORK_DEV_MODE=1 re-execs den-api with
+# --conditions=development, which resolves @openwork-ee/den-db to TypeScript
+# sources the image cannot load. Validate the built dist instead.
+export OPENWORK_DEV_MODE="${OPENWORK_DEV_MODE:-0}"
 export DEN_OBSERVABILITY_BACKEND="${DEN_OBSERVABILITY_BACKEND:-otel}"
 export NEXT_PUBLIC_DEN_OBSERVABILITY_BACKEND="${NEXT_PUBLIC_DEN_OBSERVABILITY_BACKEND:-otel}"
 export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}"

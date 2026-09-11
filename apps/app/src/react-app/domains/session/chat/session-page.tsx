@@ -1433,7 +1433,10 @@ export function SessionPage(props: SessionPageProps) {
         />
         <SidebarInset
           className={cn(
-            "min-h-0 overflow-hidden bg-sidebar mac:bg-transparent mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-34 mac:max-md:[&_header]:pl-34",
+            // Below `lg` the sidebar is a mobile sheet, not an inline `peer`, so
+            // the collapsed-peer rule never matches there and the header must
+            // reserve the titlebar clearance itself.
+            "min-h-0 overflow-hidden bg-sidebar mac:bg-transparent mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-34 mac:max-lg:[&_header]:pl-34",
             !shellConfig.sidebar && "mac:[&_header]:pl-34",
           )}
         >

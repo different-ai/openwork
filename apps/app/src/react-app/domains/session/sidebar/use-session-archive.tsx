@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
-import { workspaceLabel, type RouteSession, type RouteWorkspace } from "@/react-app/shell/route-workspaces";
+import type { RouteSession, RouteWorkspace } from "@/react-app/shell/route-workspaces";
 import { readLastSessionFor, writeLastSessionFor } from "@/react-app/shell/session-memory";
 import { workspaceSessionRoute } from "@/react-app/shell/workspace-routes";
 import { useWorkbenchStore } from "../chat/workbench-store";
@@ -27,7 +27,24 @@ import { clearQueuedSendContext } from "../sync/queued-send-context";
 import { isOrphanedInteraction, terminalToolCallIds } from "../sync/orphaned-interactions";
 import { applySessionArchived } from "../sync/session-sync";
 
-type ArchiveTarget = { workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; title: string; draftScope: string | null };
+/** The agent conversation that asked, when the request came through the agent bridge. */
+export type ArchiveRequester = { sessionId: string; title: string | null };
+
+type ArchiveTarget = {
+  workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; title: string; draftScope: string | null;
+  requestedBy: ArchiveRequester | null;
+};
+
+export type ArchiveSessionOutcome =
+  | { kind: "done" | "cancelled" }
+  /** Agent path: the warning goes back through the agent's conversation, never a dialog. */
+  | { kind: "target_working" | "self_archive_while_working"; sessionId: string; title: string };
+
+export type ArchiveSessionOptions = {
+  requester?: { sessionId: string };
+  /** Agent path: a working target (or the requester's own tree) is refused instead of asking the person. */
+  refuseWorking?: boolean;
+};
 
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
@@ -48,7 +65,8 @@ export function useSessionArchive(input: {
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
   const mounted = useRef(true);
-  const pending = useRef<((archived: boolean) => void) | null>(null);
+  const pending = useRef<((outcome: ArchiveSessionOutcome) => void) | null>(null);
+  const settle = (kind: "done" | "cancelled"): ArchiveSessionOutcome => ({ kind });
   const undoNavigation = useRef<{
     workspaceId: string; sessionId: string; fromKey: string; landingKey: string | null;
   } | null>(null);
@@ -65,14 +83,14 @@ export function useSessionArchive(input: {
     return () => {
       mounted.current = false;
       undoNavigation.current = null;
-      pending.current?.(false);
+      pending.current?.(settle("cancelled"));
       pending.current = null;
     };
   }, []);
 
-  function closeDialog(archived: boolean) {
+  function closeDialog(outcome: ArchiveSessionOutcome) {
     if (mounted.current) { setTarget(null); setError(null); }
-    pending.current?.(archived);
+    pending.current?.(outcome);
     pending.current = null;
   }
 
@@ -116,9 +134,16 @@ export function useSessionArchive(input: {
     });
   }
 
-  async function archive(target: ArchiveTarget, confirmed: boolean) {
+  async function archive(target: ArchiveTarget, confirmed: boolean, request?: ArchiveSessionOptions) {
     if (busy.current) return;
     busy.current = true;
+    const refusal = (kind: "target_working" | "self_archive_while_working"): ArchiveSessionOutcome =>
+      ({ kind, sessionId: target.sessionId, title: target.title });
+    const askUser = () => {
+      if (!mounted.current) return closeDialog(settle("cancelled"));
+      if (request?.refuseWorking) return closeDialog(refusal("target_working"));
+      setTarget(target);
+    };
     const { workspace, endpoint, sessionId, draftScope } = target;
     const baseUrl = endpoint.opencodeBaseUrl;
     const client = createClient(baseUrl, workspace.path, { token: endpoint.token, mode: "openwork" });
@@ -165,6 +190,12 @@ export function useSessionArchive(input: {
         void rootStop.catch(() => {});
       }
       const ids = await readTree();
+      // The requester is running by construction (it is issuing this call), so
+      // archiving itself or an ancestor would stop its own turn mid-conclusion.
+      if (!confirmed && request?.refuseWorking && target.requestedBy && ids.includes(target.requestedBy.sessionId)) {
+        closeDialog(refusal("self_archive_while_working"));
+        return;
+      }
       const readWorking = async () => {
         const [permissions, questions] = await Promise.all([
           client.permission.list({ directory: workspace.path }, options).then(unwrap),
@@ -202,15 +233,13 @@ export function useSessionArchive(input: {
         });
       };
       if (!confirmed && (await readWorking()).length > 0) {
-        if (mounted.current) setTarget(target);
-        else closeDialog(false);
+        askUser();
         return;
       }
       for (const id of ids) hold(id);
       if (!confirmed && ids.some(id => localWork(id) || sessionHasPendingSubmission(baseUrl, id)
         || getQueuedDrainState(id).phase.kind === "sending")) {
-        if (mounted.current) setTarget(target);
-        else closeDialog(false);
+        askUser();
         return;
       }
       if (confirmed) {
@@ -220,7 +249,7 @@ export function useSessionArchive(input: {
       }
       const remaining = await readWorking();
       if (remaining.length) {
-        if (!confirmed) { if (mounted.current) setTarget(target); else closeDialog(false); return; }
+        if (!confirmed) { askUser(); return; }
         throw new Error("A task, approval, or message acceptance is still unresolved. Retry Stop when it can be verified.");
       }
       if ((await readTree()).some(id => !ids.includes(id))) throw new Error("A new subtask appeared. Try again to include it.");
@@ -238,7 +267,7 @@ export function useSessionArchive(input: {
       const undo = navigated ? { workspaceId: workspace.id, sessionId, fromKey: route.location.key, landingKey: null } : null;
       if (undo) undoNavigation.current = undo;
       if (navigated) route.input.navigateToWorkspaceSession(workspace.id, null, { replace: true });
-      closeDialog(true);
+      closeDialog(settle("done"));
       showUndo(target, true, undo);
       if (mounted.current) await current.current.input.reloadWorkspaceSessions(workspace.id);
     } catch (error) {
@@ -246,7 +275,7 @@ export function useSessionArchive(input: {
       if (mounted.current && confirmed && !archived) setError(`The session has not been archived. ${message}`);
       else {
         toast.error(archived ? "Could not refresh sessions" : t("session_management.archive_failed"), { description: message });
-        closeDialog(archived);
+        closeDialog(settle(archived ? "done" : "cancelled"));
       }
     } finally {
       clearTimeout(timer);
@@ -257,49 +286,50 @@ export function useSessionArchive(input: {
     }
   }
 
-  async function archiveSession(sessionId: string, archived: boolean): Promise<boolean> {
-    if (busy.current || pending.current) return false;
-    const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
-    const endpoint = workspace && input.endpointForWorkspace(workspace);
-    if (!workspace || !endpoint || isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) {
-      toast.error(endpoint && isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : "The session's workspace is not connected.");
-      return false;
+  function sessionTitle(sessionId: string): string | null {
+    for (const workspace of input.workspaces) {
+      const session = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId);
+      if (session) return session.title?.trim() || t("session.default_title");
     }
-    const title = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId)?.title?.trim() || t("session.default_title");
-    const target = { workspace, endpoint, sessionId, title, draftScope: input.draftScope };
-    if (!archived) return restore(target, true);
-    return new Promise<boolean>(resolve => {
+    return null;
+  }
+
+  function resolveTarget(sessionId: string, options?: ArchiveSessionOptions): ArchiveTarget | { error: string } {
+    const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
+    if (!workspace) return { error: "Session was not found in the current session list" };
+    const endpoint = input.endpointForWorkspace(workspace);
+    if (!endpoint) return { error: "The session's workspace is not connected." };
+    if (isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) return { error: V2_SESSION_ARCHIVE_UNAVAILABLE };
+    const title = sessionTitle(sessionId) ?? t("session.default_title");
+    const requester = options?.requester?.sessionId.trim();
+    const requestedBy = requester ? { sessionId: requester, title: sessionTitle(requester) } : null;
+    return { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
+  }
+
+  async function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
+    if (busy.current || pending.current) return settle("cancelled");
+    const target = resolveTarget(sessionId, options);
+    if ("error" in target) {
+      toast.error(target.error);
+      return settle("cancelled");
+    }
+    if (!archived) return settle((await restore(target, true)) ? "done" : "cancelled");
+    return new Promise<ArchiveSessionOutcome>(resolve => {
       pending.current = resolve;
-      void archive(target, false);
+      void archive(target, false, options);
     });
   }
 
   return {
     archiveSession,
     archiveDialog: (
-      <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(false); }}>
+      <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(settle("cancelled")); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle className="min-w-0 max-w-full [overflow-wrap:anywhere]">
               {target ? t("session_management.archive_working_title", { title: target.title }) : null}
             </AlertDialogTitle>
-            <AlertDialogDescription render={<div />} className="space-y-4">
-              <p>{t("session_management.archive_working_description")}</p>
-              {target ? (
-                <dl className="min-w-0 space-y-2 text-xs text-muted-foreground">
-                  <div>
-                    <dt>{t("session_management.archive_workspace")}</dt>
-                    <dd className="select-text [overflow-wrap:anywhere]">
-                      {workspaceLabel({ ...target.workspace, path: target.workspace.path.split(/[\\/]/).filter(Boolean).pop() ?? "" })}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{t("session_management.archive_session_id")}</dt>
-                    <dd className="select-text font-mono [overflow-wrap:anywhere]">{target.sessionId}</dd>
-                  </div>
-                </dl>
-              ) : null}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t("session_management.archive_working_description")}</AlertDialogDescription>
           </AlertDialogHeader>
           {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
           <AlertDialogFooter>

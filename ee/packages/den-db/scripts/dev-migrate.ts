@@ -27,29 +27,35 @@ export function localConnectionConfig(databaseUrl: string) {
   return config
 }
 
-export function matrixPreflightQueries(plan: MigrationPlan) {
+export function matrixPreflightQueries(plan: MigrationPlan, completeSchema = true) {
   const migration = plan.find((entry) => entry.tag === "0097_gateway_access_matrix")
   if (!migration) throw new MigrationSafetyError("Missing 0097 preflight")
-  const statements = migration.sql.map((sql) => sql.replace(/^\s*--[^\n]*$/gm, "").trim())
-  const rename = statements.findIndex((sql) => /^RENAME TABLE\b/i.test(sql))
-  const queries = statements.slice(0, rename).flatMap((sql) => {
-    const match = /^INSERT INTO `__gateway_0097_preflight` \(`failure`\)\s+(SELECT '(0097_[a-z0-9_]+)'[\s\S]*)$/.exec(sql)
-    return match ? [{ name: match[2], sql: match[1] }] : []
-  })
-  const seed = statements.find((sql) => /^INSERT INTO `__gateway_0097_preflight` \(`failure`\) VALUES/.test(sql))
-  const names = seed ? [...seed.matchAll(/'(0097_[a-z0-9_]+)'/g)].map((match) => match[1]) : []
-  if (rename < 0 || names.length < 10 || queries.length !== names.length
-    || new Set(queries.map((query) => query.name)).size !== names.length
-    || names.some((name) => !queries.some((query) => query.name === name))) {
-    throw new MigrationSafetyError("0097 preflight layout changed; review local startup integration before execution.")
+  // Keep generated SQL untouched; the local runner owns the empty-source guard.
+  // Reconstruct the bytes rather than trusting a caller-supplied plan hash.
+  const sourceHash = createHash("sha256").update(migration.sql.join("--> statement-breakpoint")).digest("hex")
+  if (sourceHash !== "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470") {
+    throw new MigrationSafetyError("0097 source changed; review local startup integration before execution.")
   }
-  return queries
+  const snapshot = plan.find((entry) => entry.tag === (completeSchema
+    ? "0096_inference_accounting_observations" : "0095_inference_gateway_providers"))?.snapshot
+  if (!snapshot) throw new MigrationSafetyError("Missing 0097 prerequisite snapshot")
+  // The caller has already verified this baseline. At 0095 only the rollup
+  // lock is absent; 0096 creates it before the full guard runs again.
+  return [
+    "inference_providers", "inference_provider_models", "inference_provider_credentials",
+    "inference_provider_access", "inference_provider_oauth_states",
+    "inference_request_logs", "inference_usage_rollups", "inference_rollup_lock",
+  ].filter((table) => {
+    if (snapshot.tables[table]) return true
+    if (!completeSchema && table === "inference_rollup_lock") return false
+    throw new MigrationSafetyError(`Missing 0097 prerequisite table ${table}`)
+  }).map((table) => ({ name: table, sql: `SELECT 1 FROM \`${table}\` LIMIT 1` }))
 }
 
 export async function preflightMatrix(executor: Executor, plan: MigrationPlan, completeSchema = true) {
-  for (const query of matrixPreflightQueries(plan)) {
-    if (!completeSchema && query.name === "0097_requires_complete_0096_schema") continue
-    if ((await executor.query(query.sql)).length) throw new MigrationSafetyError(`Preflight rejected ${query.name}; no rows were changed. ${recovery}`)
+  for (const query of matrixPreflightQueries(plan, completeSchema)) {
+    const rows = await executor.query(query.sql)
+    if (rows.length) throw new MigrationSafetyError(`Preflight rejected nonempty ${query.name}; consolidated 0097 requires empty source tables. ${recovery}`)
   }
 }
 
@@ -101,7 +107,7 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     matrixPreflightQueries(plan)
     if (pending.some((entry) => entry.tag === "0097_gateway_access_matrix") && shape.has("table:inference_providers")) {
       await preflightMatrix(executor, plan, plan[applied - 1].tag.startsWith("0096_"))
-      console.log("[den-db] 0097 read-only data/schema guards passed")
+      console.log("[den-db] 0097 read-only empty-source guards passed against the verified baseline")
     }
     const seed = empty ? await foundationSql(plan) : []
     for (const repair of lookupRepairs) console.log(`[den-db] Planned additive auth lookup index: ${repair.key.slice("index:".length)}`)

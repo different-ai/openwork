@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { act, useEffect } from "react";
+import { act, StrictMode, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -39,6 +39,9 @@ afterAll(async () => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
   if (ownedDom) await GlobalRegistrator.unregister();
 });
+
+// A newest window that fills its limit may still be missing earlier messages.
+const fullWindow = Array.from({ length: 24 }, (_, index) => `w${index}`);
 
 function snapshot(id: string, title: string, ids: string[] = [], revert?: string): OpenworkSessionSnapshot {
   return {
@@ -78,13 +81,15 @@ function fixture() {
     });
     return { owner: cacheOwner, sessionId: owner, authToken, snapshotQueryKey: snapshotKey("workspace", owner), readSnapshot };
   }
-  function Harness({ options }: { options: ReturnType<typeof input> }) {
+  function Harness({ options, onMount }: { options: ReturnType<typeof input>; onMount?: (ensure: () => Promise<OpenworkSessionSnapshot>) => void }) {
     const { sessionId: owner, owner: cacheOwner } = options;
     const key = options.snapshotQueryKey;
     const workspaceId = key[1];
     const opening = useOpeningSessionHistory(options);
     ensureFullSnapshot = opening.ensureFullSnapshot;
     runWithFullSnapshot = opening.runWithFullSnapshot;
+    // The hero's one-step auto-send fires from a mount effect, before any read settled.
+    useEffect(() => { onMount?.(opening.ensureFullSnapshot); }, [onMount, opening.ensureFullSnapshot]);
     const full = useQuery({ queryKey: key, queryFn: ({ signal }) => options.readSnapshot(signal), enabled: opening.backgroundReady, staleTime: 500, retry: false });
     const current = full.data ?? opening.snapshot;
     useEffect(() => {
@@ -95,10 +100,11 @@ function fixture() {
     const failed = full.isError && !full.isFetching;
     return <><span>Composer {owner}</span><input aria-label="Draft" /><div className="relative"><div data-thread-scroll><SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
       <div>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.id}</div>)}
-    </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} failed={failed} onRetry={() => full.refetch()} /></div></>;
+    </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} loading={full.isFetching && opening.partial} failed={failed} onRetry={() => full.refetch()} /></div></>;
   }
-  async function renderInput(options: ReturnType<typeof input>) {
-    await act(async () => flushSync(() => root.render(<QueryClientProvider client={client}><Harness options={options} /></QueryClientProvider>)));
+  async function renderInput(options: ReturnType<typeof input>, mount: { strict?: boolean; onMount?: (ensure: () => Promise<OpenworkSessionSnapshot>) => void } = {}) {
+    const tree = <QueryClientProvider client={client}><Harness options={options} onMount={mount.onMount} /></QueryClientProvider>;
+    await act(async () => flushSync(() => root.render(mount.strict ? <StrictMode>{tree}</StrictMode> : tree)));
   }
   cleanups.push(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
   return {
@@ -336,27 +342,34 @@ describe("opening a thread", () => {
   test("partial, failed, retrying, and complete history status stays outside the reader's scroll geometry", async () => {
     const view = fixture();
     await view.render();
-    await view.resolve(0, snapshot("a", "Reading preview", ["anchor"]));
+    await view.resolve(0, snapshot("a", "Reading preview", [...fullWindow, "anchor"]));
     const scroller = view.host.querySelector<HTMLDivElement>("[data-thread-scroll]");
     if (!scroller) throw new Error("Missing scroll viewport");
     scroller.scrollTop = 800;
     const anchor = scroller.querySelector('[data-message-id="anchor"]');
-    const checkGeometry = () => {
+    const checkGeometry = (status: string | null) => {
       expect(view.host.querySelector("[data-thread-scroll]")).toBe(scroller);
       expect(scroller.scrollTop).toBe(800);
       expect(scroller.querySelector('[data-message-id="anchor"]')).toBe(anchor);
       expect(scroller.querySelector("[data-thread-history-status]")).toBeNull();
-      expect(view.host.querySelector("[data-thread-history-status]")?.className).toContain("absolute");
+      const element = view.host.querySelector("[data-thread-history-status]");
+      if (status === null) expect(element).toBeNull();
+      else {
+        expect(element?.className).toContain("absolute");
+        expect(element?.textContent).toContain(status);
+      }
     };
-    checkGeometry();
+    // Nothing is in flight until the uncapped read is staged.
+    checkGeometry(null);
     await paint();
     await paint();
+    checkGeometry("Loading earlier messages…");
     await act(async () => view.reads[1].reject(new Error("Full read unavailable")));
     await settle();
-    checkGeometry();
+    checkGeometry("could not be loaded");
     await act(async () => view.host.querySelector("button")?.click());
-    checkGeometry();
-    await view.resolve(2, snapshot("a", "Full history", ["before", "anchor", "after"]));
+    checkGeometry("Retrying…");
+    await view.resolve(2, snapshot("a", "Full history", ["before", ...fullWindow, "anchor", "after"]));
     expect(scroller.scrollTop).toBe(800);
     expect(scroller.querySelector('[data-message-id="anchor"]')).toBe(anchor);
     expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
@@ -534,6 +547,27 @@ describe("opening a thread", () => {
     expect(view.reads).toHaveLength(2);
   });
 
+  test("a send started from a mount effect survives StrictMode dropping and re-adding the reader mid-read", async () => {
+    // Development builds run every mount effect twice (StrictMode simulates an
+    // unmount). The hero's auto-send starts the uncapped read in the first pass;
+    // the simulated unmount removes the surface's only observer and TanStack
+    // cancels that read. The send must still receive complete history.
+    const view = fixture();
+    let send: Promise<{ snapshot: OpenworkSessionSnapshot } | { error: unknown }> | null = null;
+    await view.renderInput(view.input(), { strict: true, onMount: (ensure) => {
+      send ??= ensure().then((snapshot) => ({ snapshot }), (error: unknown) => ({ error }));
+    } });
+    if (!send) throw new Error("The mount effect did not start a send");
+    const uncapped = view.reads.filter((read) => read.window === undefined);
+    expect(uncapped[0]?.signal.aborted).toBe(true);
+    await settle();
+    const reissued = view.reads.filter((read) => read.window === undefined && !read.signal.aborted);
+    expect(reissued).toHaveLength(1);
+    await view.resolve(view.reads.indexOf(reissued[0]), "Complete history for the send");
+    const outcome = await send;
+    expect("snapshot" in outcome ? outcome.snapshot.session.title : outcome.error).toBe("Complete history for the send");
+  });
+
   test("announces immediately, reveals fast content without a spinner, and stages the uncapped read", async () => {
     const view = fixture();
     await view.render();
@@ -541,10 +575,12 @@ describe("opening a thread", () => {
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
     expect(view.host.textContent).toContain("Composer a");
     expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }]);
-    await view.resolve(0, "Latest messages");
+    await view.resolve(0, snapshot("a", "Latest messages", fullWindow));
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
     expect(view.host.textContent).toContain("Latest messages");
     expect(view.reads).toHaveLength(1);
+    // The window is full, yet nothing is loading until the read is staged.
+    expect(view.host.querySelector('[role="status"]')).toBeNull();
     await paint();
     expect(view.reads).toHaveLength(1);
     await paint();
@@ -558,6 +594,46 @@ describe("opening a thread", () => {
     expect(view.host.querySelector('[role="status"]')).toBeNull();
     await act(async () => { jest.advanceTimersByTime(150); });
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
+  });
+
+  test("a short preview never announces earlier messages, and a reverted read does not stay announced", async () => {
+    // A newest window shorter than its limit is the whole conversation: the
+    // uncapped read still runs, but there are no earlier messages to announce
+    // over the first one.
+    const short = fixture();
+    await short.render();
+    await short.resolve(0, snapshot("a", "Whole conversation", ["first", "second"]));
+    await paint();
+    await paint();
+    expect(short.reads.map((read) => read.window)).toEqual([{ limit: 24 }, undefined]);
+    expect(short.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(short.host.querySelectorAll("[data-message-id]")).toHaveLength(2);
+    await short.resolve(1, snapshot("a", "Whole conversation", ["first", "second"]));
+    expect(short.host.querySelector("[data-thread-history-status]")).toBeNull();
+    await cleanups.pop()?.();
+
+    // A cancelled read reverts to idle without history. The announcement must
+    // follow the read, not the missing history, or it never clears.
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, snapshot("a", "Partial window", fullWindow));
+    await paint();
+    await paint();
+    expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
+    await act(async () => { await view.client.cancelQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await settle();
+    expect(view.reads[1].signal.aborted).toBe(true);
+    expect(view.client.getQueryState(snapshotKey("workspace", "a"))).toMatchObject({ status: "pending", fetchStatus: "idle" });
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.host.querySelector('[role="alert"]')).toBeNull();
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(24);
+    await act(async () => { void view.client.refetchQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await settle();
+    expect(view.reads).toHaveLength(3);
+    expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
+    await view.resolve(2, snapshot("a", "Complete history", ["earlier", ...fullWindow]));
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(25);
   });
 
   test("saved positions request their own region, while a late previous-thread preview cannot render in the destination", async () => {

@@ -40,7 +40,8 @@
     "@vitest/coverage-v8": "^4.1.11",
     "dependency-cruiser": "18.1.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "xml-crypto": "6.1.2"
   },
   "packageManager": "pnpm@11.4.0"
 }

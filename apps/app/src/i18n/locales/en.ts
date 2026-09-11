@@ -2051,7 +2051,7 @@ export default {
   "session_management.session_archived": "Session archived: {title}",
   "session_management.session_unarchived": "Session unarchived",
   "session_management.archive_working_title": "This session is still working: {title}",
-  "session_management.archive_working_description": "Stop the current task and all its subtasks, cancel queued messages, and archive this conversation? Changes already made won't be undone. Actions already submitted to external services may still complete. Restoring this conversation won't restart stopped work.",
+  "session_management.archive_working_description": "Stop the current task and archive?",
   "session_management.archive_workspace": "Workspace",
   "session_management.archive_session_id": "Session ID",
   "session_management.keep_session_open": "Keep session open",
