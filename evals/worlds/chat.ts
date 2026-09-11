@@ -156,8 +156,16 @@ export async function configureProvider(
   }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   await seed.evalIn(app, () => { location.reload(); return true; });
-  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId) => {
+  // The display name the app gives the configured model once its provider list
+  // contains it; a fixture provider declares it in opencode.json, a live one is
+  // read from the engine catalog.
+  const configuredModel = recordValue(recordValue(recordValue(opencode, "provider"), providerId), "models");
+  const configuredNameValue = recordValue(recordValue(configuredModel, modelId), "name");
+  const configuredName = typeof configuredNameValue === "string" ? configuredNameValue : null;
+  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId, configuredName) => {
     const deadline = Date.now() + 60000;
+    const expectedRef = providerId + "/" + modelId;
+    let observed = "";
     while (Date.now() < deadline) {
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
       const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
@@ -172,16 +180,37 @@ export async function configureProvider(
         const mounted = base + "/workspace/" + encodeURIComponent(workspaceId);
         const response = await fetch(mounted + (engine === "v2" ? "/opencode2/api/model" : "/opencode/session"), { headers });
         if (response.ok && window.__openworkControl) {
-          if (engine === "v1") return true;
-          const catalog = JSON.stringify(await response.json());
-          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+          let catalogName: string | null = null;
+          if (engine === "v2") {
+            const record = (value: unknown): value is Record<string, unknown> =>
+              typeof value === "object" && value !== null && !Array.isArray(value);
+            const catalog: unknown = await response.json();
+            const items: unknown[] = Array.isArray(catalog) ? catalog : record(catalog) && Array.isArray(catalog.data) ? catalog.data : [];
+            const entry = items.find((item) => record(item) && item.id === modelId && item.providerID === providerId);
+            if (!record(entry)) throw new Error("catalog pending");
+            catalogName = typeof entry.name === "string" ? entry.name : null;
+          }
+          // The engine lists the provider; now the app must too. Its composer
+          // shows the model's display name only once the app's own provider
+          // list contains the configured model, and the stored default must
+          // have survived boot rather than being replaced by an organization
+          // model while that list was still loading.
+          const name = configuredName ?? catalogName ?? modelId;
+          const chip = document.querySelector<HTMLElement>('button[aria-label="Change model"]');
+          const chipText = chip?.innerText.trim() ?? "";
+          const stored = localStorage.getItem("openwork.defaultModel");
+          observed = JSON.stringify({ composerModel: chipText, storedDefault: stored, expected: { name, ref: expectedRef } });
+          if (stored === expectedRef && chipText.startsWith(name)) return true;
         }
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return false;
-  }, [workspaceId, engine, providerId, modelId]), { awaitPromise: true, timeoutMs: 120_000 });
-  if (ready !== true) throw new Error(`Selected ${engine} engine did not become ready after provider configuration.`);
+    return observed || false;
+  }, [workspaceId, engine, providerId, modelId, configuredName]), { awaitPromise: true, timeoutMs: 120_000 });
+  if (ready !== true) {
+    throw new Error(`Selected ${engine} engine did not become ready after provider configuration`
+      + (typeof ready === "string" ? `; last observed ${ready}` : "."));
+  }
 }
 
 async function seedControls(
@@ -250,6 +279,7 @@ async function splitPaneQuestions(
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
   surface: AppSurface = "electron",
+  options: { createWorkspace?: boolean } = {},
 ) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
@@ -277,7 +307,14 @@ async function splitPaneQuestions(
     app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
     agentMock = den.mocks.agent;
   }
-  const workspace = await seed.workspace(app, workspacePath);
+  // Worlds whose `policy` must govern the agent create the workspace at the
+  // declared tmp path. Without `create`, the seed adopts the first-launch
+  // default workspace, which the dev profile places inside the repo checkout on
+  // Daytona; the engine then merges the repo's `.opencode/opencode.json`
+  // (`"permission": "allow"`) after the workspace's own opencode.json, so a
+  // workspace `bash: "ask"` never holds (observed agent ruleset
+  // `[* allow, bash ask, * allow]`; the last match wins).
+  const workspace = await seed.workspace(app, workspacePath, options.createWorkspace ? { create: true } : {});
   // Arrange an allowed native question tool independently of custom-agent defaults.
   // TODO(primitive): write workspace fixture files through a first-class seed API.
   const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
@@ -353,6 +390,32 @@ export async function delegatedQuestionHandoff(seed: Seed) {
   return { ...base, engine, delegationTool, followup, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
 }
 
+/** A real native question whose turn is stopped and superseded by a follow-up prompt, as another agent's STOP does. */
+export async function abandonedQuestion(seed: Seed) {
+  const engine = resolveEvalEngine();
+  if (engine !== "v1") throw new SkipError("Abandoned-question archive requires v1; v2 has no session archive.");
+  const ask = {
+    prompt: "Help me choose the abandoned task format",
+    question: "Which format should the abandoned task use?",
+    answer: "Abandoned outline",
+    alternative: "Abandoned checklist",
+  };
+  const followup = { prompt: "Skip the format question and summarize instead", reply: "Summary finished without the format answer." };
+  const base = await splitPaneQuestions(seed, "abandoned-question", [
+    {
+      promptMarker: ask.prompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual question result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: "Task format", question: ask.question,
+        options: [{ label: ask.answer, description: "Use this format" }, { label: ask.alternative, description: "Use the other format" }],
+      }] } }],
+    },
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
+  ]);
+  const session = await seedSessionRetry(seed, base.app, { title: "Abandoned question task" });
+  return { ...base, engine, ask, followup, session };
+}
+
 /** Real native permissions and a provider retry, without synthetic UI events. */
 export async function permissionStopRecovery(seed: Seed) {
   const engine = resolveEvalEngine();
@@ -369,7 +432,7 @@ export async function permissionStopRecovery(seed: Seed) {
       } }],
     })),
     { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
-  ], { permission: { bash: "ask" } });
+  ], { permission: { bash: "ask" } }, "electron", { createWorkspace: true });
   const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
   const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
   return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
@@ -2346,13 +2409,18 @@ export async function skillLifecycle(seed: Seed) {
         });
         if (!result.ok) throw new Error("Could not arrange model response");
       },
+      /**
+       * Every completed reply in the conversation came from the arranged
+       * provider and model, never from an organization model that replaced it.
+       * Only a live provider reports token usage; the fixture model streams none.
+       */
       async usedConfiguredModel() {
         const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
         const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
         const replies = messages.filter(message => message.type === "assistant" && message.finish === "stop");
         return replies.length > 0 && replies.every(message => isRecord(message.model)
           && message.model.id === modelId && message.model.providerID === providerId
-          && isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0);
+          && (!live || (isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0)));
       },
       async runtimeIdentity() {
         const result = await request("/experimental/engine-v2-preview/status");

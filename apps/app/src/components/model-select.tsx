@@ -4,7 +4,7 @@ import * as React from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Settings2, Star } from "lucide-react";
 
 import type { ModelBehaviorOption, ModelOption, ModelRef } from "@/app/types";
-import { getModelBehaviorSelection, getModelBehaviorSummary } from "@/app/lib/model-behavior";
+import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection, getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import {
   Popover,
@@ -361,6 +361,7 @@ export function ModelSelect({
     thinkingFor && isSameModel(value, thinkingFor)
       ? behaviorValue
       : (thinkingFor?.behaviorValue ?? null);
+  const thinkingControls = getModelBehaviorControls(thinkingOptions, thinkingValue);
 
   const applyThinking = (option: ModelBehaviorOption) => {
     if (!thinkingFor) return;
@@ -453,7 +454,7 @@ export function ModelSelect({
                 setPane("effort");
               }}
             >
-              <span className="min-w-0 flex-1 font-medium text-foreground">Effort</span>
+              <span className="min-w-0 flex-1 font-medium text-foreground">{getModelBehaviorControls(selectedThinkingOptions, behaviorValue).hasFast ? "Effort and speed" : "Effort"}</span>
               <span className="max-w-24 truncate text-muted-foreground">
                 {selectedThinkingOptions.length > 0 ? effectiveBehaviorLabel : "Unavailable"}
               </span>
@@ -543,8 +544,21 @@ export function ModelSelect({
             <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
               {getModelBehaviorSelection(thinkingOptions, thinkingValue).description}
             </p>
+            {thinkingControls.hasFast ? (
+              <div className="border-b border-border px-3 pb-2">
+                <button type="button" aria-pressed={thinkingControls.fast}
+                  disabled={thinkingControls.toggleValue === undefined}
+                  className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-accent disabled:opacity-50"
+                  onClick={() => {
+                    if (thinkingControls.toggleValue !== undefined) applyThinking({ value: thinkingControls.toggleValue, label: "Fast", description: FAST_PRICING_WARNING });
+                  }}>
+                  <span>Fast</span><span>{thinkingControls.fast ? "On" : "Off"}</span>
+                </button>
+                <p className="text-xs text-muted-foreground">{FAST_PRICING_WARNING}</p>
+              </div>
+            ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
-              {thinkingOptions.map((option) => {
+              {thinkingControls.options.map((option) => {
                 const selected = option.value === thinkingValue;
                 return (
                   <button

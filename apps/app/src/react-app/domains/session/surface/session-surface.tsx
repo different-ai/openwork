@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
-import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
+import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
@@ -1270,6 +1270,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ? false
       : (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
+  // The owner can change under an unchanged (workspace, session) key: chat
+  // routing resolves to /opencode2 after boot, and the draft scope resolves once
+  // identity verifies. An in-flight owned read rejects on that flip and nothing
+  // else refetches, so re-read under the new owner instead of leaving the error.
+  // A first load has no data yet, and a refetch alone then joins the doomed
+  // in-flight read instead of cancelling it, so cancel explicitly first.
+  const snapshotOwnerRef = useRef({ queryKey: snapshotQueryKey, owner: sessionOwner });
+  useEffect(() => {
+    const previous = snapshotOwnerRef.current;
+    snapshotOwnerRef.current = { queryKey: snapshotQueryKey, owner: sessionOwner };
+    if (previous.queryKey !== snapshotQueryKey || previous.owner === sessionOwner) return;
+    const filters = { queryKey: snapshotQueryKey, exact: true };
+    void queryClient.cancelQueries(filters).then(() => queryClient.invalidateQueries(filters));
+  }, [queryClient, sessionOwner, snapshotQueryKey]);
 
   const fullSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
   const hasFullHistory = fullSnapshot !== null;
@@ -1716,6 +1730,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
           : undefined;
         const withFollowup = Boolean(args && typeof args === "object" && Reflect.get(args, "withFollowup") === true);
         setEvalMarkdownMessages(createSubagentActivityEvalMessages(props.sessionId, childSessionId, withFollowup));
+        // A delegating parent is mid-run. Without a streaming thread status the
+        // list reads the parent as stopped and the unobserved child shows
+        // "Waiting for task result" instead of the Working shimmer.
+        setEvalThreadStatus("streaming");
         useSessionActivityStore.getState().setRunStatus(
           props.workspaceId,
           props.sessionId,
@@ -2052,6 +2070,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
         if (options.consumeQueuedItem) removeQueuedDraftFromStore(props.sessionId, itemId);
         dispatchQueuedDrain(props.sessionId, { type: "send_unknown", itemId, messageID: messageId, at: Date.now(), deferred: Boolean(nextDraft.command) });
         if (activeSessionOwnerRef.current === sessionOwner) setAwaitingAssistantBaseline(null);
+        // A server that answered with a failure has explained itself: show that
+        // now. The hold above still keeps the prompt from being resent until
+        // its acceptance is known.
+        const failure = promptAdmissionFailure(nextError);
+        if (failure !== undefined && !(failure instanceof Error)) {
+          const parsed = parseSessionError(typeof failure === "string" ? failure : JSON.stringify(failure));
+          setError(parsed);
+          useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
+        }
         return { outcome: "unknown" };
       }
       if (getQueuedSendGeneration(props.sessionId) !== generation) {
@@ -2110,6 +2137,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ...state.pendingMessages,
         [sessionOwner]: [...(state.pendingMessages[sessionOwner] ?? []), {
           draft: nextDraft,
+          composer: savedComposer,
           previousMessageIds: baseRenderedMessages.map((message) => message.id),
           settled: false,
         }],
@@ -2314,18 +2342,35 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const phase = getQueuedDrainState(props.sessionId).phase;
     if (phase.kind !== "admission_unknown") return;
     try {
-      if (await hasAcceptedPromptMessage(opencodeClient, props.sessionId, phase.messageID)) {
+      const admission = await readPromptAdmission(opencodeClient, props.sessionId, phase.messageID);
+      if (admission === "accepted") {
         dispatchQueuedDrain(props.sessionId, {
           type: "admission_observed", itemId: phase.itemId, messageID: phase.messageID, at: Date.now(),
         });
+        // The server's failure answer did not describe this prompt after all.
+        setError(null);
+        useSessionActivityStore.getState().clearError(props.workspaceId, props.sessionId);
         if (notify) toast.success("Message acceptance confirmed. Nothing was resent.");
+      } else if (admission === "absent") {
+        dispatchQueuedDrain(props.sessionId, { type: "admission_rejected", itemId: phase.itemId, messageID: phase.messageID });
+        // Same outcome as a send that failed outright: the pending row goes and
+        // the submitted composer is kept as an unsent message to restore.
+        const state = useComposerStateStore.getState();
+        const pending = (state.pendingMessages[sessionOwner] ?? []).find((item) => item.draft.messageId === phase.messageID);
+        if (pending) {
+          useComposerStateStore.setState({
+            pendingMessages: { ...state.pendingMessages, [sessionOwner]: (state.pendingMessages[sessionOwner] ?? []).filter((item) => item !== pending) },
+            failedDrafts: { ...state.failedDrafts, [sessionOwner]: [...(state.failedDrafts[sessionOwner] ?? []), pending.composer] },
+          });
+        }
+        if (notify) toast.error("The message was not accepted. Your unsent message is saved.");
       } else if (notify) {
         toast.info("Acceptance is still unknown. The message has not been resent; check again later.");
       }
     } catch {
       if (notify) toast.error("Could not check acceptance. The message has not been resent; check again when connected.");
     }
-  }, [opencodeClient, props.sessionId]);
+  }, [opencodeClient, props.sessionId, props.workspaceId, sessionOwner, setError]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -3148,13 +3193,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
             sessionScroll.markScrollGesture(event.currentTarget);
           }}
           onScroll={sessionScroll.handleScroll}
-          // Extra top padding while the find bar is open so it never covers
-          // the first message (short transcripts cannot scroll it clear).
-          className={`absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
+          className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 pt-4 sm:px-5"
         >
           {/* Chat column: tighter than the composer (800px) so messages
                keep a comfortable reading width and don't feel "too big". */}
           <div ref={contentRef} className="mx-auto w-full max-w-[720px]">
+            {/* Clearance so the find bar never covers the first message (short
+                 transcripts cannot scroll it clear). It lives in the content
+                 flow rather than as scroller padding: a padding change on the
+                 scroller suppresses scroll anchoring, so the transcript would
+                 shift under the reader and the saved reading anchor go stale. */}
+            {findOwned ? <div aria-hidden className="h-12" /> : null}
             {queuedDrainState.phase.kind === "admission_unknown" ? (
               <div role="alert" className="mb-4 rounded-xl border border-dls-border bg-dls-hover/60 px-4 py-3 text-sm">
                 <p className="font-medium">Message acceptance is unknown</p>
@@ -3260,6 +3309,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         </div>
         <SessionHistoryStatus key={sessionOwner} complete={hasFullHistory} pending={pendingSessionLoad}
+          loading={snapshotQuery.isFetching && openingHistory.partial}
           failed={snapshotQuery.isError && !snapshotQuery.isFetching} onRetry={() => snapshotQuery.refetch()} />
         <SessionScrollOverlay
           sessionId={props.sessionId}

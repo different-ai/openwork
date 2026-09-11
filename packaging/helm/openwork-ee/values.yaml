@@ -29,6 +29,8 @@ config:
     appId: ""
     clientId: ""
   public:
+    # Required, explicit desktop-reachable HTTPS origin when gateway.enabled=true.
+    gatewayPublicBaseUrl: ""
     # Single public Den web origin. The chart passes this as DEN_BASE_URL; den-api
     # derives Better Auth, CORS/trusted origins, web-app hosts, API defaults, and
     # MCP resource defaults from it unless the compatibility overrides below are set.
@@ -67,6 +69,8 @@ config:
     installerReleaseRepo: ""
     authCallbackUrl: https://openwork.example.com
   internal:
+    # gatewayProxyBaseUrl is intentionally absent: when present (even ""), it
+    # overrides inferenceProxyBaseUrl. Gateway opt-in requires an explicit origin.
     apiBaseUrl: ""
     authFallbackBaseUrl: ""
     inferenceProxyBaseUrl: ""
@@ -165,6 +169,9 @@ secret:
   existingSecret: ""
   keys:
     databaseUrl: DATABASE_URL
+    databaseHost: DATABASE_HOST
+    databaseUsername: DATABASE_USERNAME
+    databasePassword: DATABASE_PASSWORD
     databaseRedisUrl: DATABASE_REDIS_URL
     betterAuthSecret: BETTER_AUTH_SECRET
     denDbEncryptionKey: DEN_DB_ENCRYPTION_KEY
@@ -186,6 +193,9 @@ secret:
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
+    databaseHost: ""
+    databaseUsername: ""
+    databasePassword: ""
     databaseRedisUrl: ""
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
     denDbEncryptionKey: CHANGE_ME_32_CHARS_MINIMUM_DB_ENCRYPTION
@@ -268,8 +278,23 @@ denWeb:
       timeoutSeconds: 10
       failureThreshold: 18
 
+# Sparse canonical overrides. Do not add defaults here: they would mask legacy
+# inference values. Only explicit enabled: true advertises the Gateway capability.
+# Same structural keys as inference; nonempty maps merge recursively, empty maps
+# and lists clear inherited values. See README for admin/webhook opt-in.
+gateway: {}
+
+# Legacy runtime defaults. Resource names, selectors and image repo stay stable.
 inference:
   enabled: false
+  # Opt-in after applying the accounting migration. This is product retention,
+  # not a member Automation. Non-Helm deployments must supply their own caller.
+  retention:
+    enabled: false
+    schedule: "0 3 * * *"
+    timeZone: "Etc/UTC"
+    adminTokenSecret: ""
+    adminTokenKey: "INFERENCE_ADMIN_TOKEN"
   replicaCount: 1
   image:
     repository: ghcr.io/different-ai/openwork-inference
@@ -298,6 +323,9 @@ inference:
       failureThreshold: 12
 
 migrations:
+  # Bootstrap always needs TCP DATABASE_URL from secret.keys/values.databaseUrl,
+  # even when config.databaseMode=planetscale (runtime HTTP credentials alone
+  # lack the database name needed for the committed-migration phase).
   enabled: true
   hook: true
   hookDeletePolicy: before-hook-creation,hook-succeeded

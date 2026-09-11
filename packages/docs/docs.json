@@ -101,6 +101,8 @@
             "group": "Install and operate",
             "pages": [
               "start-here/enterprise-desktop-deployment",
+              "self-host/gateway",
+              "self-host/gateway-upgrade",
               "self-host/declarative-configuration",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",

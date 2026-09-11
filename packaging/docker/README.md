@@ -47,7 +47,7 @@ What it does:
 Production-oriented EE images:
 - `Dockerfile.den` -> `ghcr.io/different-ai/openwork-den-api`
 - `Dockerfile.den-web` -> `ghcr.io/different-ai/openwork-den-web`
-- `Dockerfile.inference` -> `ghcr.io/different-ai/openwork-inference`
+- `Dockerfile.gateway` -> `ghcr.io/different-ai/openwork-inference` (OpenWork Gateway; image repository retained for existing deployments)
 
 These images are intended for Terraform, Helm, ECS, EKS, and customer-cloud deployments. Prefer immutable tags or digests in production.
 
@@ -58,7 +58,7 @@ Publish flow:
 
 Health and smoke expectations:
 - Published service images include shallow Docker healthchecks for the HTTP process only.
-- Den API and inference probe `GET /health`; Den web probes `GET /api/health`.
+- Den API and Gateway probe `GET /health`; Den web probes `GET /api/health`.
 - The publish workflow loads each PR image locally and probes the same endpoint without cloud secrets. Production deployments should still add dependency-aware readiness checks where needed.
 
 ### Demo org seed
@@ -127,12 +127,15 @@ bash packaging/docker/otel-hono-live-validate.sh
 The validator merges `docker-compose.den-dev.yml` and
 `docker-compose.otel-lgtm.yml`, configures both Den services for OTLP/HTTP,
 builds and starts the stack, waits for health, and makes a real request to
-`/api/den/openapi.json?token=super-secret`. It then polls Grafana's Tempo,
-Loki, and Prometheus datasource proxy APIs with a bounded timeout. The JSON
-report proves the connected `den-web` → `den-api` trace, normalized Hono route
-and request ID, secret redaction, correlated Den Web and Den API OTLP request
-logs, Hono duration and active-request metric series, and absence of unhandled
-runtime errors.
+`/api/auth/get-session?token=super-secret`. That path is served by Den Web's
+server-side upstream proxy, so one trace spans both services (`/api/den/*` is a
+307 redirect to Den API and would never reach the proxy; the validator rejects
+redirects). It then polls Grafana's Tempo, Loki, and Prometheus datasource
+proxy APIs with a bounded timeout. The JSON report proves the connected
+`den-web` → `den-api` trace, normalized Hono route (`/api/auth/*`) and request
+ID, secret redaction, correlated Den Web and Den API OTLP request logs, Hono
+duration and active-request metric series, and absence of unhandled runtime
+errors.
 
 After the OTEL phase passes, the same validator recreates only `den` and `web`
 with `DEN_OBSERVABILITY_BACKEND=none` while keeping MySQL and LGTM running. It

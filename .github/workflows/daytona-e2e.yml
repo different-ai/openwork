@@ -183,7 +183,7 @@ jobs:
           else
             MODEL="big-pickle"
           fi
-          OPENWORK_EVAL_MODEL="${MODEL}" pnpm evals:e2e "${SPEC_SLUG}" --daytona 2>&1 | tee /tmp/daytona-e2e.log
+          OPENWORK_EVAL_MODEL="${MODEL}" pnpm evals:e2e "${SPEC_SLUG}" --daytona --strict-ref 2>&1 | tee /tmp/daytona-e2e.log
 
       - name: Judge deferred vision claims
         id: vision

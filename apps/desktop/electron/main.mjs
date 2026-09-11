@@ -2800,6 +2800,19 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
 });
 
 browserPanel.registerIpc(ipcMain);
+// Native popups cannot be seen or clicked over CDP. In development only, let the
+// app's main frame read the open/last menu as plain data and choose an item.
+if (isDevMode && !app.isPackaged) {
+  const fromMainFrame = (event) => Boolean(mainWindow) && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame;
+  ipcMain.handle("openwork:context-menu:inspect", (event) => (fromMainFrame(event) ? nativeContextMenus.inspect() : null));
+  ipcMain.handle("openwork:context-menu:choose", (event, id) => fromMainFrame(event) && nativeContextMenus.choose(id));
+  ipcMain.handle("openwork:context-menu:dismiss", (event) => {
+    if (!fromMainFrame(event)) return false;
+    const { open } = nativeContextMenus.inspect();
+    nativeContextMenus.close();
+    return open;
+  });
+}
 const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
 const browserLoginSync = createBrowserLoginSync({
   statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),

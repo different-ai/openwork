@@ -58,6 +58,7 @@ async function loadModelsDevCatalog() {
   }
 
   const response = await fetch(MODELS_DEV_API_URL, {
+    signal: AbortSignal.timeout(10_000),
     headers: {
       Accept: "application/json",
       "User-Agent": "OpenWork Den API",
@@ -76,17 +77,18 @@ async function loadModelsDevCatalog() {
   const providers = Object.entries(payload)
     .map(([providerKey, rawProvider]) => {
       if (!isRecord(rawProvider)) {
-        return null
+        throw new Error("models.dev returned an invalid provider")
       }
 
       const providerId = asString(rawProvider.id) ?? providerKey
       const name = asString(rawProvider.name) ?? providerId
-      const modelsRecord = isRecord(rawProvider.models) ? rawProvider.models : {}
+      if (!isRecord(rawProvider.models)) throw new Error("models.dev returned an invalid model catalog")
+      const modelsRecord = rawProvider.models
       const { models: _models, ...providerConfig } = rawProvider
       const models = Object.entries(modelsRecord)
         .map(([modelKey, rawModel]) => {
           if (!isRecord(rawModel)) {
-            return null
+            throw new Error("models.dev returned an invalid model")
           }
 
           const modelId = asString(rawModel.id) ?? modelKey
@@ -97,7 +99,6 @@ async function loadModelsDevCatalog() {
             config: rawModel,
           } satisfies ModelsDevModel
         })
-        .filter((entry): entry is ModelsDevModel => entry !== null)
         .sort((left, right) => left.name.localeCompare(right.name))
 
       return {
@@ -111,7 +112,6 @@ async function loadModelsDevCatalog() {
         models,
       } satisfies ModelsDevProvider
     })
-    .filter((entry): entry is ModelsDevProvider => entry !== null)
     .sort((left, right) => left.name.localeCompare(right.name))
 
   const nextCache = {
@@ -140,4 +140,13 @@ export async function listModelsDevProviders(): Promise<ModelsDevProviderSummary
 export async function getModelsDevProvider(providerId: string): Promise<ModelsDevProvider | null> {
   const catalog = await loadModelsDevCatalog()
   return catalog.providersById.get(providerId) ?? null
+}
+
+/** Resolve several providers from a single cached catalog read. */
+export async function getModelsDevProviders(providerIds: readonly string[]): Promise<ModelsDevProvider[]> {
+  const catalog = await loadModelsDevCatalog()
+  return [...new Set(providerIds)].flatMap((id) => {
+    const provider = catalog.providersById.get(id)
+    return provider ? [provider] : []
+  })
 }

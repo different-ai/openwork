@@ -1,4 +1,5 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
+import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
@@ -212,13 +213,7 @@ export async function createManagedOpencodeV2Server(
           ...(typeof config.family === "string" ? { family: config.family } : {}),
           ...(isRecord(config.options) ? { settings: config.options } : {}),
           ...(isRecord(config.variants) ? {
-            variants: Object.entries(config.variants).flatMap(([id, value]) => {
-              if (!isRecord(value) || value.disabled === true) return [];
-              const { disabled, ...settings } = value;
-              // Mirrored adapters are native: unlike v1 AI SDK options, their
-              // model settings take generation options under providerOptions.
-              return [{ id, settings: { providerOptions: settings } }];
-            }),
+            variants: nativeModelVariants(config.variants, provider.package),
           } : {}),
           ...(isRecord(config.headers) ? { headers: config.headers } : {}),
           ...(config.status === "deprecated" ? { disabled: true } : {}),

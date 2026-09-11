@@ -26,7 +26,7 @@ function assertObserved(assertion: string, observed: Record<string, unknown>, pa
   expect(passed, assertion).toBe(true);
 }
 
-test("an unsent new-task prompt survives opening another session and is reachable from the sidebar", async ({ user, probe, step, world }) => {
+test("an unsent new-task prompt survives navigation without a sidebar draft row", async ({ user, probe, step, world }) => {
   const draft = "Ask about the deploy checklist before Friday";
   const existing = { testId: `sidebar-session-${world.session.sessionId}` };
   const draftRow = { testId: `sidebar-new-task-draft-${world.workspace.workspaceId}` };
@@ -40,7 +40,7 @@ test("an unsent new-task prompt survives opening another session and is reachabl
     await user.see("composer", { editable: true, text: "" });
     await user.notSee(draftRow);
     await user.type("composer", draft, { verify: true });
-    await user.see(draftRow, { text: `Draft: ${draft}` });
+    await user.notSee(draftRow);
     const keys = await draftKeys();
     assertObserved("The new-task draft belongs only to its reserved slot, not the existing conversation",
       { keys, excludedSessionId: world.session.sessionId },
@@ -50,25 +50,25 @@ test("an unsent new-task prompt survives opening another session and is reachabl
   await step("open the existing conversation to look something up", async () => {
     await user.click(existing);
     await user.see("composer", { editable: true, text: "" });
-    await user.see(draftRow, { text: `Draft: ${draft}` });
+    await user.notSee(draftRow);
     const otherComposer = (await probe.composer()).draftText;
     const rows = (await probe.dom(`[data-testid="${draftRow.testId}"]`)).elements;
-    assertObserved("Opening another conversation keeps one reachable draft without leaking its text into that composer",
-      { otherComposer, rows }, otherComposer.trim() === "" && rows.length === 1 && rows[0]!.text === `Draft: ${draft}`);
+    assertObserved("Opening another conversation shows no draft row and does not leak its text into that composer",
+      { otherComposer, rows }, otherComposer.trim() === "" && rows.length === 0);
   });
 
-  await step("come back to the draft from the sidebar", async () => {
-    await user.click(draftRow);
+  await step("come back to the draft with New session", async () => {
+    await user.click(newSession);
     await user.see("composer", { editable: true, text: draft });
     const recovered = (await probe.composer()).draftText;
-    assertObserved("The sidebar draft restores the exact unsent prompt", { recovered, expected: draft }, recovered === draft);
+    assertObserved("New session restores the exact unsent prompt", { recovered, expected: draft }, recovered === draft);
     await user.screenshot();
   });
 
   await step("the draft also survives a restart of the renderer", async () => {
     await user.reload();
-    await user.see(draftRow, { text: `Draft: ${draft}` });
-    await user.click(draftRow);
+    await user.notSee(draftRow);
+    await user.click(newSession);
     await user.see("composer", { editable: true, text: draft });
     const recovered = (await probe.composer()).draftText;
     const keys = await draftKeys();
@@ -77,7 +77,7 @@ test("an unsent new-task prompt survives opening another session and is reachabl
       recovered === draft && keys.length === 1 && !keys[0]!.includes(world.session.sessionId));
   });
 
-  await step("clearing the prompt removes the draft and its sidebar row", async () => {
+  await step("clearing the prompt removes the stored draft", async () => {
     await user.type("composer", " ", { replace: true });
     await user.press("Backspace");
     await user.see("composer", { editable: true, text: "" });
@@ -85,7 +85,7 @@ test("an unsent new-task prompt survives opening another session and is reachabl
     const keys = await draftKeys();
     const rows = (await probe.dom(`[data-testid="${draftRow.testId}"]`)).elements;
     const remainingConversation = (await probe.dom(`[data-testid="${existing.testId}"]`)).elements;
-    assertObserved("Clearing removes the new-task storage and row, not the existing conversation",
+    assertObserved("Clearing removes the new-task storage, not the existing conversation, with no draft row",
       { keys, rows, remainingConversation }, keys.length === 0 && rows.length === 0 && remainingConversation.length === 1);
   });
 });
@@ -94,14 +94,13 @@ const existingDraftTest = spec.world(existingSessionDraft, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-existingDraftTest("an existing conversation keeps its title and an accessible draft marker through navigation and reload", async ({ user, probe, step, world }) => {
+existingDraftTest("an existing conversation restores drafts without sidebar markers through navigation and reload", async ({ user, probe, step, world }) => {
   const draft = "Check the release notes\nKeep the rollback instructions too.";
   const newDraft = "Plan a separate task";
   const existing = { testId: `sidebar-session-${world.session.sessionId}` };
   const neighbor = { testId: `sidebar-session-${world.neighbor.sessionId}` };
   const reference = { testId: `sidebar-session-${world.reference.sessionId}` };
   const draftRow = { testId: `sidebar-new-task-draft-${world.workspace.workspaceId}` };
-  const marked = { ...existing, role: "button" as const, label: /Release checklist, .*Draft$/ };
   const rowSelector = `[data-testid="${existing.testId}"]`;
   const marker = { testId: `sidebar-session-draft-${world.session.sessionId}` };
   const seeRestoredDraft = async () => {
@@ -125,57 +124,56 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     await user.notSee(marker);
   });
 
-  await step("an unsent follow-up marks only its existing conversation without replacing its title", async () => {
+  await step("an unsent follow-up preserves the conversation title without a draft marker", async () => {
     await user.type("composer", draft, { verify: true });
     await user.click(neighbor);
     await user.see("composer", { editable: true, text: "" });
-    await user.see(marked);
-    await user.see(marker, { text: "Draft" });
+    await user.see(existing);
+    await user.notSee(marker);
     const rows = (await probe.dom(rowSelector)).elements;
     const titles = (await probe.dom(`${rowSelector} [data-session-title-slot]`)).elements;
     const accessible = (await probe.dom(`${rowSelector}[aria-label$=", Draft"]`)).elements;
     const unrelatedDrafts = (await probe.dom(`[data-testid="${neighbor.testId}"][aria-label*="Draft"]`)).elements;
-    assertObserved("One existing row keeps its title and accessible Draft marker without a prompt preview or unrelated marker",
+    assertObserved("One existing row keeps its title without a draft label, prompt preview or unrelated marker",
       { rows, titles, accessible, unrelatedDrafts, expectedTitle: world.session.title, excludedPreview: draft },
       rows.length === 1 && titles[0]?.text === world.session.title && !rows[0]!.text.includes(draft)
-        && accessible.length === 1 && unrelatedDrafts.length === 0);
+        && accessible.length === 0 && unrelatedDrafts.length === 0);
     await user.notSee({ ...neighbor, label: /Draft/ });
     await user.notSee(draftRow);
   });
 
-  await step("new-task drafts remain independent and both are discoverable after reloading elsewhere", async () => {
+  await step("new-task drafts remain independent without indicators after reloading elsewhere", async () => {
     await user.click(newSession);
     await user.see("composer", { editable: true, text: "" });
     await user.type("composer", newDraft, { verify: true });
-    await user.see(draftRow, { text: `Draft: ${newDraft}` });
+    await user.notSee(draftRow);
     await user.click(neighbor);
     await user.reload();
     await user.see("composer", { editable: true, text: "" });
     await user.see(reference);
     await user.notSee({ ...reference, label: /Draft/ });
-    await user.see(marked);
-    await user.see(marker, { text: "Draft" });
-    await user.see(draftRow, { text: `Draft: ${newDraft}` });
+    await user.see(existing);
+    await user.notSee(marker);
+    await user.notSee(draftRow);
     const keys = await draftKeys();
     const referenceRows = (await probe.dom(`[data-testid="${reference.testId}"]`)).elements;
     const referenceDrafts = (await probe.dom(`[data-testid="${reference.testId}"][aria-label*="Draft"]`)).elements;
     const markers = (await probe.dom(`[data-testid="${marker.testId}"]`)).elements;
     const newTaskRows = (await probe.dom(`[data-testid="${draftRow.testId}"]`)).elements;
-    assertObserved("Reload elsewhere exposes both independent drafts and preserves an unselected conversation without a draft",
+    assertObserved("Reload preserves both independent drafts without indicators and retains an unselected conversation",
       { keys, markers, newTaskRows, referenceRows, referenceDrafts, sessionId: world.session.sessionId },
       keys.length === 2 && keys.some((key) => key.includes(world.session.sessionId))
-        && keys.some((key) => key.includes("__new-task__")) && markers[0]?.text === "Draft"
-        && newTaskRows[0]?.text === `Draft: ${newDraft}` && referenceRows.length === 1 && referenceDrafts.length === 0);
+        && keys.some((key) => key.includes("__new-task__")) && markers.length === 0
+        && newTaskRows.length === 0 && referenceRows.length === 1 && referenceDrafts.length === 0);
     await user.click(existing);
     await seeRestoredDraft();
     await user.see({ text: world.history.reply });
     await user.screenshot();
   });
 
-  await step("whitespace and clearing remove the marker but keep the conversation and the other draft", async () => {
+  await step("whitespace and clearing keep the conversation and the other draft", async () => {
     await user.type("composer", " ", { replace: true });
     await user.notSee(marker);
-    await user.notSee(marked);
     const whitespaceMarkers = (await probe.dom(`[data-testid="${marker.testId}"]`)).elements;
     const whitespaceText = (await probe.composer()).draftText;
     assertObserved("Whitespace does not mark an existing conversation as a draft",
@@ -183,7 +181,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     await user.press("Backspace");
     await user.see("composer", { editable: true, text: "" });
     await user.see(existing);
-    await user.see(draftRow, { text: `Draft: ${newDraft}` });
+    await user.notSee(draftRow);
     const keys = await draftKeys();
     assertObserved("Clearing the follow-up removes only its persisted draft, retaining the new-task draft",
       { keys, excludedSessionId: world.session.sessionId },
@@ -192,7 +190,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
 
   await step("sending clears the draft while a subsequent draft coexists with activity", async () => {
     await user.type("composer", world.followup.prompt, { verify: true });
-    await user.see(marker, { text: "Draft" });
+    await user.notSee(marker);
     await user.press("Enter");
     await user.see({ text: world.followup.reply });
     await user.see("composer", { editable: true, text: "" });
@@ -200,21 +198,21 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     const sentKeys = await draftKeys();
     const sentComposer = (await probe.composer()).draftText;
     const sentMarkers = (await probe.dom(`[data-testid="${marker.testId}"]`)).elements;
-    assertObserved("Sending clears the follow-up composer, marker and storage without consuming the independent draft",
+    assertObserved("Sending clears the follow-up composer and storage without consuming the independent draft or showing a marker",
       { sentKeys, sentComposer, sentMarkers, excludedSessionId: world.session.sessionId },
       sentKeys.length === 1 && sentKeys[0]!.includes("__new-task__") && !sentKeys[0]!.includes(world.session.sessionId)
         && sentComposer.trim() === "" && sentMarkers.length === 0);
     await user.type("composer", draft, { verify: true });
     await user.click(neighbor);
-    await user.see({ ...existing, label: /Release checklist, Responding, Draft$/ });
-    await user.see(marker, { text: "Draft" });
-    const activity = (await probe.dom(`${rowSelector}[aria-label="Release checklist, Responding, Draft"] [role="status"]`)).elements;
+    await user.see({ ...existing, label: /Release checklist, Responding$/ });
+    await user.notSee(marker);
+    const activity = (await probe.dom(`${rowSelector}[aria-label="Release checklist, Responding"] [role="status"]`)).elements;
     const activeMarkers = (await probe.dom(`[data-testid="${marker.testId}"]`)).elements;
-    assertObserved("An unsent follow-up coexists with the responding indicator and accessible state",
-      { activity, activeMarkers }, activity.length === 1 && activeMarkers[0]?.text === "Draft");
+    assertObserved("An unsent follow-up leaves the responding indicator and accessible state unchanged",
+      { activity, activeMarkers }, activity.length === 1 && activeMarkers.length === 0);
     await world.releaseReply();
-    await user.see({ ...existing, label: /Release checklist, Unread result, Draft$/ });
-    const unread = (await probe.dom(`${rowSelector}[aria-label="Release checklist, Unread result, Draft"] [data-session-attention-indicator]`)).elements;
+    await user.see({ ...existing, label: /Release checklist, Unread result$/ });
+    const unread = (await probe.dom(`${rowSelector}[aria-label="Release checklist, Unread result"] [data-session-attention-indicator]`)).elements;
     const staleActivity = (await probe.dom(`${rowSelector} [role="status"]`)).elements;
     assertObserved("Completion preserves the draft alongside unread state without a stale running indicator",
       { unread, staleActivity }, unread.length === 1 && staleActivity.length === 0);
@@ -222,7 +220,7 @@ existingDraftTest("an existing conversation keeps its title and an accessible dr
     await seeRestoredDraft();
     await user.type("composer", " ", { replace: true });
     await user.press("Backspace");
-    await user.click(draftRow);
+    await user.click(newSession);
     await user.see("composer", { editable: true, text: newDraft });
     await user.notSee(marker);
   });

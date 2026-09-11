@@ -7,7 +7,7 @@ import { gmailAttachmentFixtures, gmailDraftAttachments, gmailReplyFixtures } fr
 test("Gmail attachments cross the real MCP, engine hook, host and Den boundaries without sending or changing identity", { timeout: 600_000 }, async ({ place, evidence }) => {
   needs({ commands: ["bun", "pnpm"], placement: "local" });
   await using world = await gmailDraftAttachments(place);
-  console.log(`placement: ${place.kind} (real managed OpenCode 1.18.18, isolated Den, synthetic Google and model)`);
+  console.log(`placement: ${place.kind} (pinned managed OpenCode, isolated Den, synthetic Google and model)`);
   const uploads = () => world.requests().filter((entry) => entry.path === "/v1/direct-uploads/google-workspace/gmail-drafts");
   async function finish(id: string) {
     const messages = await eventually(async () => {

@@ -1599,7 +1599,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.on("openwork:webmcp:tools-changed", (event) => {
       const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
       if (!tab) return;
-      invalidateWebMcpTab(tab);
+      // The page relays this after a debounce, so it routinely arrives after a
+      // listing that already saw the same registrations. It is not a new
+      // document: only navigation bumps the revision. Listed handles stay
+      // valid, and execution revalidates each tool's live descriptor digest
+      // before asking for consent, so a changed or removed tool still fails
+      // as stale_tool while an unchanged one reaches the approval prompt.
       scheduleWebMcpToolCountRefresh(tab.tabId);
     });
   }

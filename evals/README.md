@@ -96,6 +96,15 @@ Daytona settings. `--daytona` uses provided slot environment as advanced
 configuration, runs one selected case per sandbox, and checks the immutable
 ref/source guard before launch.
 
+Under Daytona the spec files run from this checkout while the sandbox builds
+`OPENWORK_EVAL_REF` (default `dev`). The CLI resolves that ref against `origin`,
+appends `ref=<ref>` to the placement line, and warns on stderr when it differs
+from the runner `HEAD`; `--strict-ref` (or `OPENWORK_EVAL_STRICT_REF=1`) turns
+the warning into a failure before any sandbox is provisioned. Evidence records
+both commits: `gitSha` is the runner checkout and `sandboxRef` is the ref the
+sandbox built. To test a branch, push it and export
+`OPENWORK_EVAL_REF=$(git rev-parse HEAD)`.
+
 `--case` filters Vitest by the registered literal case prefix. A passing result
 means that selected case passed; other cases in the file are reported as not
 run. A selected skip, unknown result, zero matches, or missing JSON report is

@@ -92,6 +92,7 @@ interface SyncStatusFacts {
   lastRunAt: string;
   lastRunMessage: string;
   reloadDeferred: boolean;
+  reloadPending: boolean;
   providers: ProviderStatusEntry[];
   raw: Record<string, unknown>;
 }
@@ -175,6 +176,7 @@ function parseSyncStatus(payload: Record<string, unknown>): SyncStatusFacts {
     lastRunAt: typeof lastRun.at === "string" ? lastRun.at : "",
     lastRunMessage: typeof lastRun.message === "string" ? lastRun.message : "",
     reloadDeferred: detail.reloadDeferred === true,
+    reloadPending: payload.reloadPending === true,
     providers: providers.map((entry) => ({
       cloudProviderId: typeof entry.cloudProviderId === "string" ? entry.cloudProviderId : "",
       providerId: typeof entry.providerId === "string" ? entry.providerId : "",
@@ -351,9 +353,16 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   await using desktopApp = await app({ den, as: "member", place });
 
   // ── Claim 1: terminal status ────────────────────────────────────────────
-  const isTerminal = (status: SyncStatusFacts): boolean =>
-    published.every((provider) => status.providers.some((entry) => entry.cloudProviderId === provider.cloudId))
-    && (status.lastRunStatus === "applied" || status.lastRunStatus === "noop");
+  // A terminal status reflects the providers assigned *right now*: every
+  // expected id present, every id deleted since publication absent, and the
+  // last run settled with nothing still pending against the engine.
+  const terminalFor = (expectedIds: readonly string[], absentIds: readonly string[]) =>
+    (status: SyncStatusFacts): boolean =>
+      expectedIds.every((id) => status.providers.some((entry) => entry.cloudProviderId === id))
+      && absentIds.every((id) => status.providers.every((entry) => entry.cloudProviderId !== id))
+      && (status.lastRunStatus === "applied" || status.lastRunStatus === "noop")
+      && !status.reloadPending;
+  const isTerminal = terminalFor(published.map((provider) => provider.cloudId), []);
   const terminalDeadline = Date.now() + TERMINAL_BUDGET_MS;
   let latestStatus: SyncStatusFacts | null = null;
   let terminalReached = false;
@@ -727,6 +736,10 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   // identity even when the server reuses the same loopback address. Do not
   // navigate, focus, manually sync, or reload the renderer to repair it.
   const beforeRestart = parseSyncStatus(await readSyncStatusPayload(desktopApp));
+  // The catalog provider was deleted earlier in this journey; a correct
+  // replacement server must restore exactly the surviving assignments and
+  // never resurrect the deleted one.
+  const isTerminalAfterRestart = terminalFor([customProviderId, thirdProviderId], [catalogProviderId]);
   const restart = await evalIn(desktopApp, async () => {
     const invoke = window.__OPENWORK_ELECTRON__?.invokeDesktop;
     if (!invoke) throw new Error("Desktop runtime bridge unavailable");
@@ -750,13 +763,15 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     within: 30_000,
     intervalMs: 500,
     label: "automatic session redelivery after same-address runtime replacement",
-    until: (status) => status.hasSession && isTerminal(status) && status.lastRunAt !== beforeRestart.lastRunAt,
+    until: (status) => status.hasSession && isTerminalAfterRestart(status) && status.lastRunAt !== beforeRestart.lastRunAt,
   });
+  expect(redelivered.providers.some((entry) => entry.cloudProviderId === catalogProviderId)).toBe(false);
+  expect([customProviderId, thirdProviderId].every((id) => redelivered.providers.some((entry) => entry.cloudProviderId === id))).toBe(true);
   expect(await evalIn(desktopApp, () => ({ timeOrigin: performance.timeOrigin, route: location.hash })))
     .toMatchObject({ timeOrigin: restart.timeOrigin, route: restart.route });
   evidence.recordAssertionEvidence(
     "same-address runtime replacement automatically restores the signed-in session",
-    `Runtime generation changed without renderer reload, navigation or account change; the replacement server reached ${redelivered.lastRunStatus} within 30 seconds with both assigned providers restored.`,
+    `Runtime generation changed without renderer reload, navigation or account change; the replacement server reached ${redelivered.lastRunStatus} within 30 seconds with the two surviving assignments restored and the deleted catalog provider still absent.`,
     true,
   );
 });

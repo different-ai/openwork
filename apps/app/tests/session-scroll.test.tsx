@@ -445,6 +445,36 @@ describe("session reading position", () => {
     expect(view.container.scrollTop).toBe(900);
   });
 
+  test("a focus reveal away from the tail becomes the reading position instead of being undone by follow", async () => {
+    const view = fixture();
+    await view.render();
+    runFrames();
+    expect(view.container.scrollTop).toBe(800);
+    // Live-tail clamping after content shrinks is not a reveal.
+    view.layout.height -= 100;
+    view.scroll(700);
+    expect(state().mode).toBe("stickyBottom");
+    view.layout.height += 100;
+    view.scroll(800);
+    // Keyboard focus (or scrollIntoView) moves an older message into view
+    // without a wheel, key or pointer gesture.
+    view.scroll(325);
+    expect(state()).toMatchObject({ mode: "manual", scrollTop: 325, anchor: { messageId: "reading", offset: -25 } });
+    expect(view.container.style.overflowAnchor).toBe("auto");
+    const message = view.container.querySelector('[data-message-id="reading"]');
+    if (!message) throw new Error("Missing click target");
+    message.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, isPrimary: true, pointerId: 1 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+    runFrames();
+    expect(view.container.scrollTop).toBe(325);
+    view.scrollWrites.length = 0;
+    view.layout.height += 100;
+    view.resize();
+    runFrames();
+    expect(view.scrollWrites).toEqual([]);
+    expect(view.container.scrollTop).toBe(325);
+  });
+
   test("uses legacy pixels or a missing anchor once without persisting clamps or locking manual mode", async () => {
     for (const anchor of [undefined, { messageId: "evicted", offset: -25 }]) {
       useSessionScrollStore.getState().setManualScroll("a", 900, null, anchor);
