@@ -20,10 +20,10 @@ type OrganizationMemberChangeHookInput = {
 type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
 
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
+  syncInferenceAfterMemberChange,
   syncSeatSubscriptionQuantityAfterMemberChange,
   syncInferenceSubscriptionQuantityAfterMemberChange,
   syncWebSubscriptionQuantityAfterMemberChange,
-  syncInferenceAfterMemberChange,
 ]
 
 async function countOrganizationMembers(organizationId: OrgId) {

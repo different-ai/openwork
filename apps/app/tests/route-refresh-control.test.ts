@@ -3,11 +3,123 @@ import { describe, expect, test } from "bun:test";
 import {
   commitRouteWorkspaceSelection,
   createLatestWorkspaceCommitter,
+  createRouteWorkspaceLoadCoalescer,
   createRouteWorkspaceSelectionCommitter,
   createRouteRefreshLifecycle,
   planRouteConnectionGap,
   planRouteWorkspaceLoads,
+  routeWorkspaceSessionLoadScope,
 } from "../src/react-app/shell/route-refresh-control";
+import { resolveWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
+import type { RouteWorkspace } from "../src/react-app/shell/route-workspaces";
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  let reject: (reason: Error) => void = () => undefined;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("workspace inventory scope", () => {
+  const workspace: RouteWorkspace = {
+    id: "ws_1", name: "One", displayNameResolved: "One", path: "/tmp/one", workspaceType: "local",
+  };
+  const endpoint = resolveWorkspaceEndpoint(workspace, { baseUrl: "http://localhost:4100", token: "token-1" });
+
+  test("unknown local routing is not v1, but remote inventory does not wait for it", () => {
+    expect(routeWorkspaceSessionLoadScope(workspace, endpoint, undefined)).toBeNull();
+    expect(routeWorkspaceSessionLoadScope(workspace, null, false)).toBeNull();
+    expect(routeWorkspaceSessionLoadScope(workspace, endpoint, false)).not.toBeNull();
+    const remote: RouteWorkspace = { ...workspace, workspaceType: "remote" };
+    expect(routeWorkspaceSessionLoadScope(remote, endpoint, undefined)).toBe(routeWorkspaceSessionLoadScope(remote, endpoint, true));
+    // A missing remote URL still reaches the loader's connection diagnostic.
+    expect(routeWorkspaceSessionLoadScope(remote, null, undefined)).not.toBeNull();
+  });
+
+  test("engine, endpoint, credentials, mount and directory changes produce a fresh scope", () => {
+    if (!endpoint) throw new Error("Expected a local endpoint");
+    const scope = routeWorkspaceSessionLoadScope(workspace, endpoint, false);
+    expect(routeWorkspaceSessionLoadScope(workspace, endpoint, true)).not.toBe(scope);
+    expect(routeWorkspaceSessionLoadScope(workspace, { ...endpoint, token: "token-2" }, false)).not.toBe(scope);
+    expect(routeWorkspaceSessionLoadScope(workspace, { ...endpoint, mountedBaseUrl: "http://localhost:4200/workspace/ws_1" }, false)).not.toBe(scope);
+    expect(routeWorkspaceSessionLoadScope(workspace, { ...endpoint, mountedBaseUrl: "http://localhost:4100/workspace/ws_2" }, false)).not.toBe(scope);
+    expect(routeWorkspaceSessionLoadScope({ ...workspace, path: "/tmp/two" }, endpoint, false)).not.toBe(scope);
+  });
+});
+
+describe("workspace inventory switching", () => {
+  for (const staleCompletesFirst of [true, false]) {
+    test(`a delayed v1 list cannot commit or swallow v2 (stale completes ${staleCompletesFirst ? "first" : "last"})`, async () => {
+      const coalescer = createRouteWorkspaceLoadCoalescer();
+      const v1 = deferred<string[]>();
+      const v2 = deferred<string[]>();
+      const starts: string[] = [];
+      let inventory = ["cached"];
+      const load = (engine: string, response: Promise<string[]>) => coalescer.run("ws_1", engine, async (isCurrent) => {
+        starts.push(engine);
+        const items = await response;
+        if (isCurrent()) inventory = items;
+      });
+      const oldLoad = load("v1", v1.promise);
+      await Promise.resolve();
+      const freshLoad = load("v2", v2.promise);
+      expect(load("v2", v2.promise)).toBe(freshLoad);
+      expect(freshLoad).not.toBe(oldLoad);
+      await Promise.resolve();
+      expect(starts).toEqual(["v1", "v2"]);
+
+      if (staleCompletesFirst) {
+        v1.resolve(["obsolete"]);
+        await oldLoad;
+        expect(inventory).toEqual(["cached"]);
+        expect(coalescer.isInFlight("ws_1")).toBe(true);
+        expect(load("v2", v2.promise)).toBe(freshLoad);
+      }
+      v2.resolve(["fresh"]);
+      await freshLoad;
+      v1.resolve(["obsolete"]);
+      await oldLoad;
+      expect(inventory).toEqual(["fresh"]);
+      expect(coalescer.isInFlight("ws_1")).toBe(false);
+    });
+  }
+
+  test("an invalidated failed chain cannot diagnose, retry, or release a fresh chain", async () => {
+    const coalescer = createRouteWorkspaceLoadCoalescer();
+    const old = deferred<void>();
+    const fresh = deferred<void>();
+    const effects: string[] = [];
+    const oldLoad = coalescer.run("ws_1", "endpoint-1", async (isCurrent) => {
+      try {
+        await old.promise;
+      } catch {
+        if (isCurrent()) effects.push("diagnose or retry");
+      }
+    });
+    await Promise.resolve();
+    coalescer.invalidate("ws_1");
+    // Even returning to the same endpoint cannot resurrect its old chain.
+    const freshLoad = coalescer.run("ws_1", "endpoint-1", () => fresh.promise);
+    old.reject(new Error("obsolete connection failed"));
+    await oldLoad;
+    expect(effects).toEqual([]);
+    expect(coalescer.isInFlight("ws_1")).toBe(true);
+    fresh.resolve();
+    await freshLoad;
+  });
+
+  test("delayed warm-up retries lose ownership when the inventory is replaced", async () => {
+    const coalescer = createRouteWorkspaceLoadCoalescer();
+    let mayRetry = () => false;
+    await coalescer.run("ws_1", "v1", async (isCurrent) => { mayRetry = isCurrent; });
+    expect(mayRetry()).toBe(true);
+    await coalescer.run("ws_1", "v2", async () => undefined);
+    expect(mayRetry()).toBe(false);
+  });
+});
 
 describe("createLatestWorkspaceCommitter", () => {
   test("coalesces an in-flight switching burst to the last route", async () => {

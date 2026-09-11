@@ -215,6 +215,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "List dashboards",
+      description: "Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.",
       responses: {
         200: jsonResponse("Dashboards returned successfully.", dashboardListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -238,6 +239,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "Create dashboard",
+      description: "Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.",
       responses: {
         201: jsonResponse("Dashboard created successfully.", dashboardResponseSchema),
         400: jsonResponse("The dashboard request was invalid.", invalidRequestSchema),
@@ -271,6 +273,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "Get dashboard",
+      description: "Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.",
       responses: {
         200: jsonResponse("Dashboard returned successfully.", dashboardResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -296,6 +299,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "Update dashboard",
+      description: "Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.",
       responses: {
         200: jsonResponse("Dashboard updated successfully.", dashboardResponseSchema),
         400: jsonResponse("The dashboard request was invalid.", invalidRequestSchema),
@@ -335,6 +339,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "Delete dashboard",
+      description: "Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.",
       responses: {
         204: emptyResponse("Dashboard deleted successfully."),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -364,6 +369,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "List dashboard access grants",
+      description: "Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.",
       responses: {
         200: jsonResponse("Dashboard access grants returned successfully.", dashboardAccessListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -482,6 +488,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "Revoke dashboard access",
+      description: "Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.",
       responses: {
         204: emptyResponse("Dashboard access revoked successfully."),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -527,6 +534,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "List dashboards granted to the current member",
+      description: "Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.",
       responses: {
         200: jsonResponse("Granted dashboards returned successfully.", meDashboardListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),

@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { existsSync } from "node:fs";
-import { openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
+import { stat } from "node:fs/promises";
+import { importNodeSqlite, openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 
 type WorkspaceKvSchemaVersionColumn = {
@@ -242,6 +243,27 @@ export function createWorkspaceKvStore<T>(options: WorkspaceKvStoreOptions<T>) {
     getRow,
     get: async (serverConfig: ServerConfig, workspaceId: string): Promise<T | undefined> => {
       return (await getRow(serverConfig, workspaceId))?.value;
+    },
+    /** Reads existing state without initializing the DB, table, or shared write cache. */
+    getExisting: async (serverConfig: ServerConfig, workspaceId: string): Promise<T | undefined> => {
+      const path = runtimeDbPath(serverConfig);
+      try {
+        await stat(path);
+      } catch (error) {
+        if (isRecord(error) && error.code === "ENOENT") return undefined;
+        throw error;
+      }
+      const sqlite = typeof process.versions.bun === "string"
+        ? new (await import("bun:sqlite")).Database(path, { readonly: true, create: false })
+        : new (await importNodeSqlite()).DatabaseSync(path, { readOnly: true });
+      try {
+        const table = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE").get(config.tableName);
+        if (!table) return undefined;
+        const row = rowFromUnknown(sqlite.prepare(config.selectSql).get(workspaceId));
+        return row ? options.parse(row.valueJson) : undefined;
+      } finally {
+        sqlite.close();
+      }
     },
     has: async (serverConfig: ServerConfig, workspaceId: string): Promise<boolean> => {
       const db = await readableWorkspaceKvDb(runtimeDbPath(serverConfig), config);

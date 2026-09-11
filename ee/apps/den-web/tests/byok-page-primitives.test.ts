@@ -14,7 +14,7 @@ const navigation = readComponent("dashboard", "_lib", "dashboard-navigation.ts")
 
 describe("Bring your Own Keys page", () => {
   test("sidebar and page title use the product name", () => {
-    expect(navigation).toContain('label: "Bring your Own Keys"');
+    expect(navigation).toContain('label: "Bring Your Own Keys (Legacy)"');
     expect(shell).toContain('return "Bring your Own Keys";');
     expect(shell).not.toContain('"LLM Providers"');
     expect(screen).toContain('title="Bring your Own Keys"');

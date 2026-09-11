@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "free-model-limit" | "disk-full" | "database-error" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-selection-required" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -11,7 +11,17 @@ export type OpencodeSessionErrorPresentation = {
   description: string | null;
   technicalDetails: string;
   recoveryPrompt: string | null;
+  /**
+   * `gateway-auth-required` only: the OpenWork Gateway's OAuth start URL for
+   * this member (`error.auth_url` in the 401 body). Null when the body omitted
+   * it — the renderer then deep-links to Settings > AI providers. Additive.
+   */
+  connectUrl?: string | null;
 };
+
+/** Error code the OpenWork inference gateway returns when the member's own sign-in is missing or revoked. */
+export const GATEWAY_AUTH_REQUIRED_ERROR_CODE = "openwork_auth_required";
+export const GATEWAY_AUTH_REQUIRED_TITLE = "Sign in to this OpenWork Gateway provider to keep using it";
 
 export const interruptedTaskRecoveryPrompt = [
   "Continue the interrupted task from the current state.",
@@ -60,6 +70,7 @@ function sessionErrorKind(
   responseBody: string | null,
 ): OpencodeSessionErrorKind {
   const searchable = [name, message, code, responseBody].filter(Boolean).join(" ");
+  if (searchable.includes("gateway_selection_required")) return "gateway-selection-required";
   if (/\b(?:ENOSPC|EDQUOT|SQLITE_FULL)\b|no space left on device|database or disk is full|disk quota exceeded/i.test(searchable)) {
     return "disk-full";
   }
@@ -94,10 +105,13 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "provider-timeout") return "Provider did not respond in time";
   if (kind === "provider-incomplete") return "The model response was interrupted";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
+  if (kind === "gateway-auth-required") return GATEWAY_AUTH_REQUIRED_TITLE;
+  if (kind === "gateway-selection-required") return "Choose a Gateway model group and credential set";
   return fallback;
 }
 
-function errorDescription(kind: OpencodeSessionErrorKind) {
+function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAuthRequired | null) {
+  if (kind === "gateway-selection-required") return "More than one access rule can apply. Open the model picker and select the model with the group and credential set you want, then retry. No credential is selected automatically.";
   if (kind === "disk-full") {
     return "A storage limit was reported by the task runtime or a connected service. This does not necessarily mean your computer is full. Check the affected service or workspace before freeing local disk space.";
   }
@@ -114,7 +128,44 @@ function errorDescription(kind: OpencodeSessionErrorKind) {
   if (kind === "free-model-limit") {
     return "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own model provider in Settings → AI Providers to keep working.";
   }
+  if (kind === "gateway-auth-required") {
+    return gatewayAuth?.message ?? "Your sign-in for this provider is missing or was revoked. Connect it again, then retry.";
+  }
   return null;
+}
+
+type GatewayAuthRequired = { connectUrl: string | null; message: string | null };
+
+/**
+ * Detects the gateway's in-band `401 { error: { code: "openwork_auth_required",
+ * message, auth_url?, provider_id } }`. The body reaches us as a string on
+ * whichever field the SDK error exposes (message / responseBody / cause), so
+ * match the code and message tolerantly. URLs from upstream errors are never
+ * authorization targets; the Connect action navigates to provider Settings.
+ */
+function detectGatewayAuthRequired(error: unknown, fields: { message: string | null; code: string | null; responseBody: string | null }): GatewayAuthRequired | null {
+  const haystack = [fields.message, fields.responseBody, safeStringify(error)].filter(Boolean).join("\n");
+  if (!haystack.includes(GATEWAY_AUTH_REQUIRED_ERROR_CODE)) return null;
+  for (const candidate of [fields.responseBody, fields.message]) {
+    if (!candidate) continue;
+    const start = candidate.indexOf("{");
+    if (start < 0) continue;
+    try {
+      const parsed: unknown = JSON.parse(candidate.slice(start));
+      const body = recordValue(parsed, "error");
+      if (recordValue(body, "code") !== GATEWAY_AUTH_REQUIRED_ERROR_CODE) continue;
+      return {
+        connectUrl: null,
+        message: firstStringValue([body], ["message"]),
+      };
+    } catch {
+      // Not a clean JSON body: retain only the error classification below.
+    }
+  }
+  return {
+    connectUrl: null,
+    message: fields.code === GATEWAY_AUTH_REQUIRED_ERROR_CODE ? fields.message : null,
+  };
 }
 
 function errorRecoveryPrompt(kind: OpencodeSessionErrorKind) {
@@ -197,14 +248,17 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
   const fields = sessionErrorFields(error, fallback);
-  const kind = sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody);
+  const gatewayAuth = detectGatewayAuthRequired(error, fields);
+  const gatewaySelection = safeStringify(error)?.includes("gateway_selection_required") === true;
+  const kind = gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody);
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
   return {
     kind,
     title: errorTitle(kind, fallbackTitle),
-    description: errorDescription(kind),
-    technicalDetails: technicalErrorDetails(error, fallback, fields),
+    description: errorDescription(kind, gatewayAuth),
+    technicalDetails: kind === "gateway-selection-required" ? "Error code: gateway_selection_required\nStatus: 409" : gatewayAuth ? "Error code: openwork_auth_required\nStatus: 401" : technicalErrorDetails(error, fallback, fields),
     recoveryPrompt: errorRecoveryPrompt(kind),
+    ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl } : {}),
   };
 }
 
@@ -230,7 +284,8 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
     typeof candidate.title !== "string" ||
     !(typeof candidate.description === "string" || candidate.description === null) ||
     typeof candidate.technicalDetails !== "string" ||
-    !(typeof candidate.recoveryPrompt === "string" || candidate.recoveryPrompt === null)
+    !(typeof candidate.recoveryPrompt === "string" || candidate.recoveryPrompt === null) ||
+    !(candidate.connectUrl === undefined || candidate.connectUrl === null || typeof candidate.connectUrl === "string")
   ) {
     return null;
   }

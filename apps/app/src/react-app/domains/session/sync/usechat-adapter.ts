@@ -141,6 +141,20 @@ export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
   });
 }
 
+export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | null {
+  if (part.synthetic || part.ignored) return null;
+  const composerToken = part.metadata?.openworkComposerToken;
+  return {
+    type: "text",
+    text: part.text,
+    state: "done",
+    providerMetadata: { opencode: {
+      partId: part.id,
+      ...(typeof composerToken === "string" ? { composerToken } : {}),
+    } },
+  };
+}
+
 type SnapshotMessages = OpenworkSessionSnapshot["messages"];
 const snapshotMessagesCache = new WeakMap<SnapshotMessages, UIMessage[]>();
 const snapshotMessageCache = new WeakMap<SnapshotMessages[number], UIMessage[]>();
@@ -165,13 +179,8 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
         : {}),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
-          if (part.synthetic || part.ignored) return attachmentNoteToUIParts(part);
-          return [{
-            type: "text",
-            text: getTextPartValue(part),
-            state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
-          }];
+          const mapped = textPartToUIPart(part);
+          return mapped ? [mapped] : attachmentNoteToUIParts(part);
         }
         if (part.type === "reasoning") {
           return [{

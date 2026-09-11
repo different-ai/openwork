@@ -11,7 +11,7 @@ const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
 
-export function createApplicationMenu({ appName, docsUrl, getWindow }) {
+export function createApplicationMenu({ appName, docsUrl, getWindow, closeBrowserTab }) {
   let applicationMenuVisible = process.platform === "darwin";
   let currentAppName = appName;
 
@@ -47,6 +47,14 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
 
   function install() {
     const isMac = process.platform === "darwin";
+    const closeItem = {
+      label: "Close",
+      accelerator: "CommandOrControl+W",
+      click: (_item, focusedWindow) => {
+        const host = focusedWindow ?? BrowserWindow.getFocusedWindow();
+        if (host && !closeBrowserTab?.(host)) host.close();
+      },
+    };
     const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
       ...(isMac
         ? [
@@ -95,7 +103,7 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
                 },
                 { type: "separator" },
               ]),
-          { role: "close" },
+          closeItem,
         ],
       },
       {
@@ -188,7 +196,7 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
                 { role: "window" },
               ]
             : [
-                { role: "close" },
+                closeItem,
               ]),
         ],
       },

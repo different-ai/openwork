@@ -9,6 +9,7 @@ const organizationId = createDenTypeId("organization")
 const ownerUserId = createDenTypeId("user")
 const ownerMemberId = createDenTypeId("member")
 const removedUserId = createDenTypeId("user")
+const accessUserId = createDenTypeId("user")
 const bootstrapUserId = createDenTypeId("user")
 const reviveUserId = createDenTypeId("user")
 const legacyReviveUserId = createDenTypeId("user")
@@ -17,13 +18,23 @@ const scimUserId = createDenTypeId("user")
 
 const ownerEmail = `owner+${ownerUserId}@member-removal.test`
 const removedEmail = `removed+${removedUserId}@member-removal.test`
+const accessEmail = `access+${accessUserId}@member-removal.test`
 const bootstrapEmail = `bootstrap+${bootstrapUserId}@member-removal.test`
 const reviveEmail = `revive+${reviveUserId}@member-removal.test`
 const legacyReviveEmail = `legacy-revive+${legacyReviveUserId}@member-removal.test`
 const oldInviteEmail = `old-invite+${oldInviteUserId}@member-removal.test`
 const scimEmail = `scim+${scimUserId}@member-removal.test`
 
-const userIds = [ownerUserId, removedUserId, bootstrapUserId, reviveUserId, legacyReviveUserId, oldInviteUserId, scimUserId]
+const userIds = [
+  ownerUserId,
+  removedUserId,
+  accessUserId,
+  bootstrapUserId,
+  reviveUserId,
+  legacyReviveUserId,
+  oldInviteUserId,
+  scimUserId,
+]
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -53,6 +64,13 @@ async function cleanup() {
   const organizationIds = [...staleOrgs.map((row) => row.id), organizationId]
 
   await db.delete(schema.DesktopPolicyMemberTable).where(drizzle.inArray(schema.DesktopPolicyMemberTable.organizationId, organizationIds))
+  await db.delete(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.inArray(schema.ExternalMcpConnectionAccessGrantTable.organizationId, organizationIds))
+  await db.delete(schema.DashboardAccessGrantTable).where(drizzle.inArray(schema.DashboardAccessGrantTable.organizationId, organizationIds))
+  await db.delete(schema.MarketplaceAccessGrantTable).where(drizzle.inArray(schema.MarketplaceAccessGrantTable.organizationId, organizationIds))
+  await db.delete(schema.ConfigObjectAccessGrantTable).where(drizzle.inArray(schema.ConfigObjectAccessGrantTable.organizationId, organizationIds))
+  await db.delete(schema.PluginAccessGrantTable).where(drizzle.inArray(schema.PluginAccessGrantTable.organizationId, organizationIds))
+  await db.delete(schema.PluginTable).where(drizzle.inArray(schema.PluginTable.organizationId, organizationIds))
+  await db.delete(schema.ConnectorInstanceAccessGrantTable).where(drizzle.inArray(schema.ConnectorInstanceAccessGrantTable.organizationId, organizationIds))
   await db.delete(schema.DesktopPolicyTable).where(drizzle.inArray(schema.DesktopPolicyTable.organizationId, organizationIds))
   await db.delete(schema.ScimUserTombstoneTable).where(drizzle.inArray(schema.ScimUserTombstoneTable.organizationId, organizationIds))
   await db.delete(schema.ExternalIdentityTable).where(drizzle.inArray(schema.ExternalIdentityTable.organizationId, organizationIds))
@@ -145,6 +163,7 @@ beforeAll(async () => {
   await db.insert(schema.AuthUserTable).values([
     { id: ownerUserId, name: "Removal Owner", email: ownerEmail, emailVerified: true },
     { id: removedUserId, name: "Removed User", email: removedEmail, emailVerified: true },
+    { id: accessUserId, name: "Access User", email: accessEmail, emailVerified: true },
     { id: bootstrapUserId, name: "Bootstrap Removed", email: bootstrapEmail, emailVerified: true },
     { id: reviveUserId, name: "Revive Removed", email: reviveEmail, emailVerified: true },
     { id: legacyReviveUserId, name: "Legacy Revive Removed", email: legacyReviveEmail, emailVerified: true },
@@ -183,6 +202,220 @@ test("removeOrganizationMember keeps userId while setting removedAt", async () =
   expect(row?.userId).toBe(removedUserId)
   expect(row?.removedAt).toBeInstanceOf(Date)
   expect(row?.removedByOrgMember).toBe(ownerMemberId)
+})
+
+test("member removal revokes direct access and rejoining preserves only newly assigned grants", async () => {
+  if (!db || !schema || !orgs || !drizzle) {
+    throw new Error("test modules not initialized")
+  }
+
+  const memberId = createDenTypeId("member")
+  const oldPluginId = createDenTypeId("plugin")
+  const newPluginId = createDenTypeId("plugin")
+  const previouslyRevokedGrantId = createDenTypeId("pluginAccessGrant")
+  await db.insert(schema.MemberTable).values({
+    id: memberId,
+    organizationId,
+    userId: accessUserId,
+    role: "member",
+  })
+  await db.insert(schema.PluginTable).values([
+    { id: oldPluginId, name: "Old member access" },
+    { id: newPluginId, name: "New invitation access" },
+  ].map((plugin) => ({ ...plugin, organizationId, createdByOrgMembershipId: ownerMemberId })))
+  for (const assignmentMemberId of [memberId, ownerMemberId]) {
+    await db.insert(schema.DashboardAccessGrantTable).values({
+      id: createDenTypeId("dashboardAccessGrant"),
+      organizationId,
+      dashboardId: createDenTypeId("dashboard"),
+      orgMembershipId: assignmentMemberId,
+      role: "viewer",
+      createdByOrgMembershipId: memberId,
+    })
+    await db.insert(schema.DesktopPolicyMemberTable).values({
+      id: createDenTypeId("desktopPolicyMember"),
+      organizationId,
+      desktopPolicyId: createDenTypeId("desktopPolicy"),
+      orgMemberId: assignmentMemberId,
+    })
+    await db.insert(schema.ExternalMcpConnectionAccessGrantTable).values({
+      id: createDenTypeId("externalMcpConnectionAccessGrant"),
+      organizationId,
+      externalMcpConnectionId: createDenTypeId("externalMcpConnection"),
+      orgMembershipId: assignmentMemberId,
+      createdByOrgMembershipId: memberId,
+    })
+    await db.insert(schema.MarketplaceAccessGrantTable).values({
+      id: createDenTypeId("marketplaceAccessGrant"),
+      organizationId,
+      marketplaceId: createDenTypeId("marketplace"),
+      orgMembershipId: assignmentMemberId,
+      role: "viewer",
+      createdByOrgMembershipId: memberId,
+    })
+    await db.insert(schema.ConfigObjectAccessGrantTable).values({
+      id: createDenTypeId("configObjectAccessGrant"),
+      organizationId,
+      configObjectId: createDenTypeId("configObject"),
+      orgMembershipId: assignmentMemberId,
+      role: "viewer",
+      createdByOrgMembershipId: memberId,
+    })
+    await db.insert(schema.PluginAccessGrantTable).values({
+      id: createDenTypeId("pluginAccessGrant"),
+      organizationId,
+      pluginId: oldPluginId,
+      orgMembershipId: assignmentMemberId,
+      role: "viewer",
+      createdByOrgMembershipId: memberId,
+    })
+    await db.insert(schema.ConnectorInstanceAccessGrantTable).values({
+      id: createDenTypeId("connectorInstanceAccessGrant"),
+      organizationId,
+      connectorInstanceId: createDenTypeId("connectorInstance"),
+      orgMembershipId: assignmentMemberId,
+      role: "viewer",
+      createdByOrgMembershipId: memberId,
+    })
+  }
+
+  const sharedPluginId = createDenTypeId("plugin")
+  await db.insert(schema.PluginAccessGrantTable).values([
+    { teamId: createDenTypeId("team") },
+    { orgWide: true },
+  ].map((target) => ({
+    id: createDenTypeId("pluginAccessGrant"),
+    organizationId,
+    pluginId: sharedPluginId,
+    role: "viewer",
+    createdByOrgMembershipId: memberId,
+    ...target,
+  })))
+
+  await db.insert(schema.PluginAccessGrantTable).values({
+    id: previouslyRevokedGrantId,
+    organizationId,
+    pluginId: newPluginId,
+    orgMembershipId: memberId,
+    role: "viewer",
+    createdByOrgMembershipId: ownerMemberId,
+    removedAt: past,
+  })
+  const { resolvePluginArchResourceRole } = await import("../src/routes/org/plugin-system/access.js")
+  const originalContext = await orgs.getOrganizationContextForUser({ organizationId, userId: accessUserId })
+  if (!originalContext) throw new Error("original member context missing")
+  const originalAccess = { organizationContext: originalContext, memberTeams: [], session: null }
+  expect(await resolvePluginArchResourceRole({ context: originalAccess, resourceKind: "plugin", resourceId: oldPluginId })).toBe("viewer")
+  expect(await resolvePluginArchResourceRole({ context: originalAccess, resourceKind: "plugin", resourceId: newPluginId })).toBeNull()
+
+  const removed = await orgs.removeOrganizationMember({
+    organizationId,
+    memberId,
+    removedByOrgMemberId: ownerMemberId,
+  })
+  if (!removed.ok) {
+    throw new Error(removed.message)
+  }
+
+  const [desktopAssignments, externalMcpAssignments] = await Promise.all([
+    db
+      .select()
+      .from(schema.DesktopPolicyMemberTable)
+      .where(drizzle.eq(schema.DesktopPolicyMemberTable.orgMemberId, memberId)),
+    db
+      .select()
+      .from(schema.ExternalMcpConnectionAccessGrantTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.orgMembershipId, memberId)),
+  ])
+  expect(desktopAssignments).toHaveLength(0)
+  expect(externalMcpAssignments).toHaveLength(0)
+
+  const [marketplaceGrants, configObjectGrants, pluginGrants, connectorGrants, dashboardGrants] = await Promise.all([
+    db
+      .select()
+      .from(schema.MarketplaceAccessGrantTable)
+      .where(drizzle.eq(schema.MarketplaceAccessGrantTable.orgMembershipId, memberId)),
+    db
+      .select()
+      .from(schema.ConfigObjectAccessGrantTable)
+      .where(drizzle.eq(schema.ConfigObjectAccessGrantTable.orgMembershipId, memberId)),
+    db
+      .select()
+      .from(schema.PluginAccessGrantTable)
+      .where(drizzle.eq(schema.PluginAccessGrantTable.orgMembershipId, memberId)),
+    db
+      .select()
+      .from(schema.ConnectorInstanceAccessGrantTable)
+      .where(drizzle.eq(schema.ConnectorInstanceAccessGrantTable.orgMembershipId, memberId)),
+    db.select().from(schema.DashboardAccessGrantTable).where(drizzle.eq(schema.DashboardAccessGrantTable.orgMembershipId, memberId)),
+  ])
+  const revokedGrants = [
+    ...marketplaceGrants,
+    ...configObjectGrants,
+    ...pluginGrants.filter((grant) => grant.id !== previouslyRevokedGrantId),
+    ...connectorGrants,
+    ...dashboardGrants,
+  ]
+  expect(revokedGrants).toHaveLength(5)
+  expect(revokedGrants.every((grant) => grant.removedAt instanceof Date)).toBe(true)
+
+  const member = await memberById(memberId)
+  expect(member?.removedAt).toBeInstanceOf(Date)
+  expect(revokedGrants.every((grant) => grant.removedAt?.getTime() === member?.removedAt?.getTime())).toBe(true)
+  expect(pluginGrants.find((grant) => grant.id === previouslyRevokedGrantId)?.removedAt?.getTime()).toBe(past.getTime())
+  expect(await orgs.getOrganizationContextForUser({ organizationId, userId: accessUserId })).toBeNull()
+  expect(await resolvePluginArchResourceRole({ context: originalAccess, resourceKind: "plugin", resourceId: oldPluginId })).toBeNull()
+
+  const [otherDesktop, otherMcp, otherMarketplace, otherConfig, otherPlugin, otherConnector, sharedPlugin, otherDashboard] = await Promise.all([
+    db.select().from(schema.DesktopPolicyMemberTable).where(drizzle.eq(schema.DesktopPolicyMemberTable.orgMemberId, ownerMemberId)),
+    db.select().from(schema.ExternalMcpConnectionAccessGrantTable).where(drizzle.eq(schema.ExternalMcpConnectionAccessGrantTable.orgMembershipId, ownerMemberId)),
+    db.select().from(schema.MarketplaceAccessGrantTable).where(drizzle.eq(schema.MarketplaceAccessGrantTable.orgMembershipId, ownerMemberId)),
+    db.select().from(schema.ConfigObjectAccessGrantTable).where(drizzle.eq(schema.ConfigObjectAccessGrantTable.orgMembershipId, ownerMemberId)),
+    db.select().from(schema.PluginAccessGrantTable).where(drizzle.eq(schema.PluginAccessGrantTable.orgMembershipId, ownerMemberId)),
+    db.select().from(schema.ConnectorInstanceAccessGrantTable).where(drizzle.eq(schema.ConnectorInstanceAccessGrantTable.orgMembershipId, ownerMemberId)),
+    db.select().from(schema.PluginAccessGrantTable).where(drizzle.eq(schema.PluginAccessGrantTable.pluginId, sharedPluginId)),
+    db.select().from(schema.DashboardAccessGrantTable).where(drizzle.eq(schema.DashboardAccessGrantTable.orgMembershipId, ownerMemberId)),
+  ])
+  for (const grants of [otherDesktop, otherMcp, otherMarketplace, otherConfig, otherPlugin, otherConnector, otherDashboard]) {
+    expect(grants).toHaveLength(1)
+  }
+  expect(sharedPlugin).toHaveLength(2)
+  expect([...otherMarketplace, ...otherConfig, ...otherPlugin, ...otherConnector, ...sharedPlugin, ...otherDashboard].every((grant) => grant.removedAt === null)).toBe(true)
+
+  const invitationId = createDenTypeId("invitation")
+  const placeholderId = createDenTypeId("member")
+  const newGrantId = createDenTypeId("pluginAccessGrant")
+  await createInvitation({ invitationId, memberId: placeholderId, email: accessEmail, role: "member" })
+  await db.insert(schema.PluginAccessGrantTable).values({
+    id: newGrantId,
+    organizationId,
+    pluginId: newPluginId,
+    orgMembershipId: placeholderId,
+    role: "viewer",
+    createdByOrgMembershipId: ownerMemberId,
+  })
+  const accepted = await orgs.acceptInvitationForUser({ userId: accessUserId, email: accessEmail, invitationId })
+  if (!accepted || accepted.status !== "accepted") throw new Error("rejoin invitation was not accepted")
+  expect(accepted.member.id).toBe(placeholderId)
+  expect(accepted.member.id).not.toBe(memberId)
+  expect((await memberById(memberId))?.userId).toBeNull()
+  expect((await memberById(memberId))?.removedAt?.getTime()).toBe(member?.removedAt?.getTime())
+
+  const rejoinedContext = await orgs.getOrganizationContextForUser({ organizationId, userId: accessUserId })
+  if (!rejoinedContext) throw new Error("rejoined member context missing")
+  expect(rejoinedContext.currentMember.id).toBe(placeholderId)
+  expect(rejoinedContext.currentMember.role).toBe("member")
+  const rejoinedAccess = { organizationContext: rejoinedContext, memberTeams: [], session: null }
+  expect(await resolvePluginArchResourceRole({ context: rejoinedAccess, resourceKind: "plugin", resourceId: oldPluginId })).toBeNull()
+  expect(await resolvePluginArchResourceRole({ context: rejoinedAccess, resourceKind: "plugin", resourceId: newPluginId })).toBe("viewer")
+  const grantsAfterRejoin = await db.select().from(schema.PluginAccessGrantTable)
+    .where(drizzle.eq(schema.PluginAccessGrantTable.orgMembershipId, memberId))
+  expect(grantsAfterRejoin).toHaveLength(pluginGrants.length)
+  expect(grantsAfterRejoin).toEqual(expect.arrayContaining(pluginGrants))
+  const newGrants = await db.select().from(schema.PluginAccessGrantTable)
+    .where(drizzle.eq(schema.PluginAccessGrantTable.orgMembershipId, placeholderId))
+  expect(newGrants).toHaveLength(1)
+  expect(newGrants[0]).toMatchObject({ id: newGrantId, pluginId: newPluginId, role: "viewer", removedAt: null })
 })
 
 test("bootstrap returns null for a user with a removed member row", async () => {

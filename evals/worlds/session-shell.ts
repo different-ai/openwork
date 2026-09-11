@@ -1,10 +1,10 @@
 import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText, waitForLocated } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
-import { daytonaSandbox, desktop as launchDesktop, startMockOnSandbox } from "@openwork/hosts";
+import { daytonaSandbox, defaultDaytonaExec, desktop as launchDesktop, execInSandbox, startMockOnSandbox } from "@openwork/hosts";
 import { startMockMcp } from "@openwork/labs";
 
 const stormProviderId = "active-session-storm-mock";
@@ -68,8 +68,9 @@ async function observeInstantRenderer(
   workspaceId: string,
   kind: InstantMetricKind,
   marker = "",
+  requireStarting = false,
 ) {
-  await seed.evalIn(app, browserScript((workspaceId, kind, marker) => {
+  await seed.evalIn(app, browserScript((workspaceId, kind, marker, requireStarting) => {
     if (window.__instantSendMetric) throw new Error("An instant-send renderer observer is already active");
     const state: InstantRendererState = {
       kind, started: false, trusted: false, elapsedMs: null, frames: 0,
@@ -127,6 +128,11 @@ async function observeInstantRenderer(
         const hit = document.elementFromPoint(x, y);
         return hit instanceof Node && node.contains(hit);
       }
+      if (requireStarting) {
+        const starting = [...surface.root.querySelectorAll<HTMLElement>('[data-loading-message="starting"]')].filter(visibleInViewport);
+        if (starting.length !== 1 || starting[0]?.getAttribute("role") !== "status" || starting[0]?.innerText.trim() !== "Starting…"
+          || [...surface.root.querySelectorAll<HTMLElement>('[data-loading-message="working"]')].some(visibleInViewport)) return false;
+      }
       const composer = editor();
       return [...surface.root.querySelectorAll<HTMLElement>('[data-message-role="user"]')]
         .some((row) => visibleInViewport(row) && row.innerText.includes(marker)
@@ -167,7 +173,7 @@ async function observeInstantRenderer(
       window.removeEventListener(eventName, capture, true);
     }
     window.__instantSendMetric = { state, stop };
-  }, [workspaceId, kind, marker]));
+  }, [workspaceId, kind, marker, requireStarting]));
   let disposed = false;
   return {
     async read(): Promise<InstantRendererState> {
@@ -590,7 +596,8 @@ export async function sidebarOverflow(seed: Seed) {
   const longTitle = "Reading Google Drive documents for the quarterly workspace review";
   const app = await seed.desktop({ name: "sidebar-title-overflow-fade" });
   const workspacePath = "/tmp/Yonder";
-  const workspace = await seed.workspace(app, workspacePath);
+  // The desktop already owns its default first-launch workspace; the title under test is this folder's name.
+  const workspace = await seed.workspace(app, workspacePath, { create: true });
   const sessions = await seed.sessions(app, [longTitle]);
   return { app, workspace, workspacePath, sessions, longTitle };
 }
@@ -1182,6 +1189,15 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
   }, [workspace.workspaceId, point.x, point.y]));
   const prepareWorkspaceNewTask = async (): Promise<Point> => {
     const deadline = Date.now() + 5_000;
+    // A reload can leave the pointer over the replacement header. Leave it
+    // before entering again so the real hover transition is rearmed.
+    await hoverAt(app, { x: 0, y: 0 });
+    let outside = await newTaskGeometry({ x: 0, y: 0 });
+    while (outside.headerHover && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      outside = await newTaskGeometry({ x: 0, y: 0 });
+    }
+    if (outside.headerHover) throw new Error("New task header did not release hover before re-entry");
     const reset = await seed.evalIn(app, browserScript((workspaceId) => {
       const workspace = document.querySelector<HTMLElement>(`[data-sidebar-workspace-id="${workspaceId}"]`);
       const plus = workspace?.querySelector<HTMLElement>("[data-workspace-new-task]") ?? null;
@@ -1340,7 +1356,7 @@ export async function workspaceNewTask(seed: Seed, { place }: { place: Place }) 
     prepareWorkspaceNewTask,
     clickWorkspaceNewTask,
     accessibleRunTaskReady,
-    observeRenderer: (kind: InstantMetricKind, marker = "") => observeInstantRenderer(seed, app, workspace.workspaceId, kind, marker),
+    observeRenderer: (kind: InstantMetricKind, marker = "", requireStarting = false) => observeInstantRenderer(seed, app, workspace.workspaceId, kind, marker, requireStarting),
     [Symbol.asyncDispose]: () => resources.disposeAsync(),
   };
 }
@@ -1738,6 +1754,35 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     commandSetup,
     paletteShortcut,
     facts,
+    archiveAccessibleDescription: async () => {
+      const tree = await app.client.send("Accessibility.getFullAXTree");
+      if (!isRecord(tree) || !Array.isArray(tree.nodes)) throw new Error("Archive accessibility tree is unavailable");
+      const dialog = tree.nodes.find(node => isRecord(node) && isRecord(node.role) && node.role.value === "alertdialog" && node.ignored !== true);
+      if (!isRecord(dialog) || !isRecord(dialog.description) || typeof dialog.description.value !== "string") {
+        throw new Error("Archive dialog has no computed accessible description");
+      }
+      return dialog.description.value;
+    },
+    archiveConfirmation: () => seed.evalIn(app, () => {
+      const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+      const title = dialog?.querySelector<HTMLElement>('[data-slot="alert-dialog-title"]');
+      const bounds = dialog?.getBoundingClientRect();
+      return {
+        title: title?.textContent,
+        text: dialog?.innerText,
+        metadata: [...(dialog?.querySelectorAll("dl > div") ?? [])].map(row => ({
+          label: row.querySelector("dt")?.textContent,
+          value: row.querySelector("dd")?.textContent,
+          selectable: getComputedStyle(row.querySelector("dd") ?? row).userSelect === "text",
+        })),
+        titleUnclipped: Boolean(title && title.scrollWidth <= title.clientWidth && title.scrollHeight <= title.clientHeight
+          && getComputedStyle(title).textOverflow !== "ellipsis" && getComputedStyle(title).webkitLineClamp === "none"),
+        fitsViewport: Boolean(bounds && bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight),
+        noHorizontalOverflow: Boolean(dialog && dialog.scrollWidth <= dialog.clientWidth),
+        contentReachable: Boolean(dialog && (dialog.scrollHeight <= dialog.clientHeight || getComputedStyle(dialog).overflowY === "auto")),
+      };
+    }),
+    resize: (width: number, height: number) => app.client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }),
     networkFault,
     faultObservation: () => seed.evalIn(app, browserScript(async (workspaceIds) => {
       const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
@@ -1817,11 +1862,81 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
 }
 
 export async function archiveSessions(seed: Seed) {
-  const engine = resolveEvalEngine();
   const app = await seed.desktop({ name: "session-archive-undo" });
-  const workspacePath = seed.tmpPath("session-archive-undo");
-  const workspace = await seed.workspace(app, workspacePath);
-  const [candidate, neighbor] = await seed.sessions(app, ["Archive candidate", "Archive neighbor"]);
+  return archiveWorld(seed, app, seed.tmpPath("session-archive-undo"), ["Archive candidate", "Archive neighbor"]);
+}
+
+/**
+ * Archive in a workspace the desktop stores by a linked path. The folder does
+ * not exist when the workspace is added, so the desktop keeps the path as
+ * given (`<root>/link/OpenWork Chat`) while the engine resolves it and stamps
+ * every session with the real path (`<root>/real/OpenWork Chat`) — the shape a
+ * fresh macOS profile has under `/var` -> `/private/var`.
+ */
+export async function archiveSessionsInLinkedWorkspace(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("Archive is unavailable in the v2 preview; session-archive-undo covers that.");
+  const app = await seed.desktop({ name: "session-archive-linked-path" });
+  const root = seed.tmpPath("session-archive-linked");
+  const real = `${root}/real`;
+  const link = `${root}/link`;
+  // The real parent as the app host resolves it; `seed.tmpPath` itself may sit behind a symlink (macOS /tmp).
+  let resolvedReal: string;
+  if (app.handle.sandboxId) {
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const script = `mkdir -p ${quote(real)} && ln -sfn ${quote(real)} ${quote(link)} && readlink -f ${quote(real)}`;
+    const result = await execInSandbox(defaultDaytonaExec, app.handle.sandboxId, `printf %s ${Buffer.from(script).toString("base64")} | base64 -d | bash`, { timeoutMs: 15_000, context: "Arrange the linked workspace parent" });
+    resolvedReal = result.stdout.trim();
+    if (result.code !== 0 || !resolvedReal.startsWith("/")) throw new Error(`Linked workspace parent arrangement failed: ${result.stderr || result.stdout}`);
+  } else {
+    await mkdir(real, { recursive: true });
+    await symlink(real, link);
+    resolvedReal = await realpath(real);
+  }
+  const world = await archiveWorld(seed, app, `${link}/OpenWork Chat`, ["Split pane conversation", "Other pane"], { create: true });
+  return {
+    ...world,
+    realWorkspacePath: `${resolvedReal}/OpenWork Chat`,
+    /** The path the desktop persisted for the workspace, exactly as it will address the engine. */
+    storedWorkspacePath: async () => {
+      const value = await seed.evalIn(app, browserScript((workspaceId) =>
+        window.__openwork?.slice?.("route")?.workspaces?.find(item => item.id === workspaceId)?.path ?? null, [world.workspace.workspaceId]));
+      if (typeof value !== "string") throw new Error(`Stored workspace path was malformed: ${JSON.stringify(value)}`);
+      return value;
+    },
+    /** The directory the engine stamped on each session, read through the workspace mount. */
+    engineDirectories: async (): Promise<Record<string, string>> => {
+      const value = await seed.evalIn(app, browserScript(async (workspaceId) => {
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
+        const response = await fetch(`${String(info.baseUrl).replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session?limit=200`, {
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") }, signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) throw new Error("Workspace session listing failed with HTTP " + response.status);
+        const sessions = await response.json();
+        if (!Array.isArray(sessions)) throw new Error("Workspace session listing was not an array");
+        return Object.fromEntries(sessions.filter((session) => typeof session?.id === "string" && typeof session?.directory === "string")
+          .map((session) => [session.id, session.directory]));
+      }, [world.workspace.workspaceId]), { awaitPromise: true, timeoutMs: 20_000 });
+      if (!isRecord(value) || !Object.values(value).every((directory) => typeof directory === "string")) {
+        throw new Error(`Engine directories were malformed: ${JSON.stringify(value)}`);
+      }
+      return Object.fromEntries(Object.entries(value).map(([id, directory]) => [id, String(directory)]));
+    },
+    splitFacts: () => seed.evalIn(app, () => {
+      const layout = window.__openworkControl?.context?.()?.conversations?.layout;
+      return {
+        primarySessionId: (layout?.kind === "split" ? layout.primarySessionId : undefined) ?? (layout?.kind === "single" ? layout.sessionId : undefined) ?? "",
+        secondarySessionId: (layout?.kind === "split" ? layout.secondarySessionId : undefined) ?? "",
+        secondaryPaneCount: document.querySelectorAll('[data-workbench-pane="secondary"]').length,
+      };
+    }),
+  };
+}
+
+async function archiveWorld(seed: Seed, app: Surface, workspacePath: string, titles: [string, string], options: { create?: boolean } = {}) {
+  const engine = resolveEvalEngine();
+  const workspace = await seed.workspace(app, workspacePath, options);
+  const [candidate, neighbor] = await seed.sessions(app, titles);
   if (!candidate || !neighbor) throw new Error("Archive world did not create both sessions.");
   await seed.evalIn(app, browserScript((workspaceId) => {
     const original = window.fetch.bind(window);
@@ -1910,6 +2025,36 @@ export async function archiveSessions(seed: Seed) {
   }
 
   return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled,
+    // The rename UI rejects blank input; arrange persisted legacy titles through the native API.
+    setCandidateTitle: (title: string) => seed.evalIn(app, browserScript(async (workspaceId, sessionId, title) => {
+      const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+      if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
+      const response = await fetch(`${info.baseUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${info.ownerToken ?? info.clientToken ?? ""}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Setting fixture title failed with HTTP ${response.status}`);
+      const session = await response.json();
+      if (session.id !== sessionId || typeof session.title !== "string") throw new Error("Unexpected session title response");
+      return session.title;
+    }, [workspace.workspaceId, candidate.sessionId, title]), { awaitPromise: true, timeoutMs: 20_000 }),
+    archiveToast: () => seed.evalIn(app, () => {
+      const pill = document.querySelector<HTMLElement>("[data-undo-toast]");
+      const message = pill?.querySelector("p");
+      const bounds = pill?.getBoundingClientRect();
+      return {
+        text: message?.textContent,
+        fullTitle: message?.querySelector("[title]")?.getAttribute("title"),
+        truncated: Boolean(message && message.scrollWidth > message.clientWidth && getComputedStyle(message).textOverflow === "ellipsis"),
+        fitsViewport: Boolean(bounds && bounds.left >= 0 && bounds.right <= window.innerWidth),
+        actionsInside: Boolean(pill && bounds && [...pill.querySelectorAll("button")].every(button => {
+          const action = button.getBoundingClientRect();
+          return action.width > 0 && action.left >= bounds.left && action.right <= bounds.right;
+        })),
+      };
+    }),
     hoverArchiveButton: async () => {
       // Disabled buttons reject pointer hits; hover their visible bounds without clicking.
       const button = await waitForLocated(app, { testId: `session-archive-${candidate.sessionId}` }, { timeoutMs: 10_000 });

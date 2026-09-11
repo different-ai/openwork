@@ -26,6 +26,36 @@
       "development": "./src/den-urls.ts",
       "default": "./dist/den-urls.js"
     },
+    "./inference-egress": {
+      "types": "./src/inference-egress.ts",
+      "development": "./src/inference-egress.ts",
+      "default": "./dist/inference-egress.js"
+    },
+    "./inference-credentials": {
+      "types": "./src/inference-credentials.ts",
+      "development": "./src/inference-credentials.ts",
+      "default": "./dist/inference-credentials.js"
+    },
+    "./gateway-bearer-key": {
+      "types": "./src/gateway-bearer-key.ts",
+      "development": "./src/gateway-bearer-key.ts",
+      "default": "./dist/gateway-bearer-key.js"
+    },
+    "./gateway-env": {
+      "types": "./src/gateway-env.ts",
+      "development": "./src/gateway-env.ts",
+      "default": "./dist/gateway-env.js"
+    },
+    "./gateway-routing": {
+      "types": "./src/gateway-routing.ts",
+      "development": "./src/gateway-routing.ts",
+      "default": "./dist/gateway-routing.js"
+    },
+    "./gateway-rollups": {
+      "types": "./src/gateway-rollups.ts",
+      "development": "./src/gateway-rollups.ts",
+      "default": "./dist/gateway-rollups.js"
+    },
     "./inference-bearer-key": {
       "types": "./src/inference-bearer-key.ts",
       "development": "./src/inference-bearer-key.ts",

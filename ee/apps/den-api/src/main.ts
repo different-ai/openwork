@@ -1,3 +1,6 @@
+// Dev scripts install the condition before tsx watch and set this marker so
+// the watched process imports the server directly, rather than hiding its
+// dependencies in an untracked child process.
 const DEVELOPMENT_CONDITIONS_REEXEC = "OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC"
 
 export {}
