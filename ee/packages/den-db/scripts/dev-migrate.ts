@@ -34,13 +34,22 @@ export function matrixPreflightQueries(plan: MigrationPlan) {
   const rename = statements.findIndex((sql) => /^RENAME TABLE\b/i.test(sql))
   const queries = statements.slice(0, rename).flatMap((sql) => {
     const match = /^INSERT INTO `__gateway_0097_preflight` \(`failure`\)\s+(SELECT '(0097_[a-z0-9_]+)'[\s\S]*)$/.exec(sql)
-    return match ? [{ name: match[2], sql: match[1] }] : []
+    if (match) return [{ name: match[2], sql: match[1], json: false }]
+    const json = /^SELECT JSON_EXTRACT\(IF\(COUNT\((?:\*|DISTINCT TABLE_NAME, INDEX_NAME)\) = \d+, '\{\}', '(0097_[a-z0-9_]+)'\), '\$'\) AS preflight\s+FROM information_schema\.(?:TABLES|COLUMNS|STATISTICS)\s+WHERE TABLE_SCHEMA = DATABASE\(\) AND [\s\S]+;$/.exec(sql)
+    return json ? [{ name: json[1], sql, json: true }] : []
   })
   const seed = statements.find((sql) => /^INSERT INTO `__gateway_0097_preflight` \(`failure`\) VALUES/.test(sql))
   const names = seed ? [...seed.matchAll(/'(0097_[a-z0-9_]+)'/g)].map((match) => match[1]) : []
-  if (rename < 0 || names.length < 10 || queries.length !== names.length
+  // Only the reviewed recovery SQL has this mixed result contract. Reconstruct
+  // the original bytes, rather than trusting a caller-supplied plan hash, so
+  // unknown predicates, packets or layouts cannot silently lose a guard.
+  const sourceHash = createHash("sha256").update(migration.sql.join("--> statement-breakpoint")).digest("hex")
+  if (sourceHash !== "2882d271052bd27a6281e5a1b161056546c817d27e218ba69fecd5f00cb4db9a"
+    || rename < 0 || names.length !== 10 || new Set(names).size !== 10 || queries.length !== 12
+    || queries.filter((query) => query.json).length !== 5
     || new Set(queries.map((query) => query.name)).size !== names.length
-    || names.some((name) => !queries.some((query) => query.name === name))) {
+    || names.some((name) => queries.filter((query) => query.name === name).length
+      !== (name === "0097_requires_complete_0096_schema" ? 3 : 1))) {
     throw new MigrationSafetyError("0097 preflight layout changed; review local startup integration before execution.")
   }
   return queries
@@ -49,7 +58,17 @@ export function matrixPreflightQueries(plan: MigrationPlan) {
 export async function preflightMatrix(executor: Executor, plan: MigrationPlan, completeSchema = true) {
   for (const query of matrixPreflightQueries(plan)) {
     if (!completeSchema && query.name === "0097_requires_complete_0096_schema") continue
-    if ((await executor.query(query.sql)).length) throw new MigrationSafetyError(`Preflight rejected ${query.name}; no rows were changed. ${recovery}`)
+    const rows = await executor.query(query.sql)
+    let passed = rows.length === 0
+    if (query.json) {
+      let value: unknown = rows[0]?.preflight
+      if (typeof value === "string") {
+        try { value = JSON.parse(value) } catch { value = undefined }
+      }
+      passed = rows.length === 1 && record(value) && Object.keys(value).length === 0
+        && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+    }
+    if (!passed) throw new MigrationSafetyError(`Preflight rejected ${query.name}; no rows were changed. ${recovery}`)
   }
 }
 

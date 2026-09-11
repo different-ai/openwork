@@ -66,7 +66,14 @@ export type MigrationPlan = ReturnType<typeof loadMigrationPlan>
 export function historyPrefix(plan: MigrationPlan, rows: Record<string, unknown>[]) {
   for (const [index, row] of rows.entries()) {
     const entry = plan[index]
-    if (!entry || row.hash !== entry.hash || Number(row.created_at) !== entry.folderMillis) {
+    // 0097 changed only metadata preflights and comment placement. Recognize
+    // its original receipt only against this exact reviewed replacement;
+    // retain the receipt and applied prefix, never replay or restamp it.
+    const originalGatewayReceipt = entry?.tag === "0097_gateway_access_matrix"
+      && entry.folderMillis === 1788895934602
+      && entry.hash === "2882d271052bd27a6281e5a1b161056546c817d27e218ba69fecd5f00cb4db9a"
+      && row.hash === "dec021c8b3bb9fb139b3e0737ac5618ab1ed74d64d82fe36e1fcfe71306f378d"
+    if (!entry || (row.hash !== entry.hash && !originalGatewayReceipt) || Number(row.created_at) !== entry.folderMillis) {
       throw new MigrationSafetyError(`Migration history is not an exact hash/timestamp prefix at receipt ${index + 1}. ${recovery}`)
     }
   }

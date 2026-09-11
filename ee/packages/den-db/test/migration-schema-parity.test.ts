@@ -575,6 +575,69 @@ test("migrations replay to exported schema and config object version inserts", {
   }
 })
 
+test("0097 metadata JSON guards accept 0096 and reject missing or conflicting metadata", { skip: !mysqlUrl, timeout: 120_000 }, async () => {
+  if (!mysqlUrl) return
+
+  const root = await mysql.createConnection(mysqlUrl)
+  const database = scratchDatabaseName()
+  let connection: mysql.Connection | undefined
+
+  try {
+    await root.query(`CREATE DATABASE ${quoteIdentifier(database)}`)
+    connection = await mysql.createConnection(databaseUrlFor(mysqlUrl, database))
+    await connection.query("CREATE TABLE `inference_keys` (`id` varchar(64) PRIMARY KEY)")
+    for (const file of ["0095_inference_gateway_providers.sql", "0096_inference_accounting_observations.sql"]) {
+      const sql = await readFile(join(migrationsFolder, file), "utf8")
+      await applyStatements(connection, sql.split("--> statement-breakpoint").map((packet) => packet.trim()).filter(Boolean))
+    }
+    const sql = await readFile(join(migrationsFolder, "0097_gateway_access_matrix.sql"), "utf8")
+    const guards = sql.split("--> statement-breakpoint")
+      .map((packet) => packet.replace(/^\s*--[^\n]*$/gm, "").trim())
+      .filter((packet) => /information_schema\./i.test(packet))
+    assert.equal(guards.length, 5)
+    for (const guard of guards) {
+      const rows = await queryRecords(connection, guard)
+      assert.equal(rows.length, 1)
+      const value = rows[0].preflight
+      assert.deepEqual(typeof value === "string" ? JSON.parse(value) : value, {})
+    }
+
+    const scenarios = [
+      { guard: 0, change: "RENAME TABLE `inference_rollup_lock` TO `preflight_decoy`",
+        restore: "RENAME TABLE `preflight_decoy` TO `inference_rollup_lock`" },
+      { guard: 1, change: "ALTER TABLE `inference_usage_rollups` DROP COLUMN `response_bytes_count`",
+        restore: "ALTER TABLE `inference_usage_rollups` ADD `response_bytes_count` bigint" },
+      { guard: 2, change: "ALTER TABLE `inference_keys` DROP COLUMN `encrypted_key`",
+        restore: "ALTER TABLE `inference_keys` ADD `encrypted_key` text" },
+      { guard: 3, change: "CREATE TABLE `gateway_providers` (`id` int)", restore: "DROP TABLE `gateway_providers`" },
+      { guard: 3, change: "CREATE VIEW `gateway_credential_sets` AS SELECT 1 AS id", restore: "DROP VIEW `gateway_credential_sets`" },
+      ...[...guards[4].matchAll(/TABLE_NAME = '([^']+)' AND INDEX_NAME = '([^']+)'/g)].map((match) => ({
+        guard: 4,
+        change: `ALTER TABLE ${quoteIdentifier(match[1])} RENAME INDEX ${quoteIdentifier(match[2])} TO \`preflight_decoy\``,
+        restore: `ALTER TABLE ${quoteIdentifier(match[1])} RENAME INDEX \`preflight_decoy\` TO ${quoteIdentifier(match[2])}`,
+      })),
+    ]
+    for (const scenario of scenarios) {
+      await connection.query(scenario.change)
+      try {
+        await assert.rejects(connection.query(guards[scenario.guard]), (error: unknown) => {
+          assert.ok(isRecord(error))
+          assert.equal(error.code, "ER_INVALID_JSON_TEXT_IN_PARAM")
+          assert.equal(error.errno, 3141)
+          return true
+        })
+      } finally {
+        await connection.query(scenario.restore)
+      }
+      await connection.query(guards[scenario.guard])
+    }
+  } finally {
+    await connection?.end().catch(() => {})
+    await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)}`).catch(() => {})
+    await root.end()
+  }
+})
+
 test("0076 migrates workflow table, enums, and legacy data without changing IDs", { skip: !mysqlUrl, timeout: 120_000 }, async () => {
   if (!mysqlUrl) return
 

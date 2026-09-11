@@ -2,10 +2,10 @@
 -- Execute every statement on ONE connection, stop on the first error, and
 -- quiesce writers/callbacks/refreshes before starting. Requires schema through 0096.
 -- No legacy inference key, OpenRouter, limit, bucket or ledger table is changed.
--- A temporary primary-key guard fails actionably BEFORE persistent DDL, without
--- relying on CHECK enforcement, stored routines, SIGNAL or client delimiters.
--- On failure, the duplicate key names the failed preflight. Close the connection
--- and fix the source deliberately; never IGNORE errors or silently delete rows.
+-- Guards fail BEFORE persistent DDL without CHECK, routines, SIGNAL or delimiters.
+-- Metadata guards raise JSON error 3141; temporary primary-key guards retain
+-- duplicate-key failures for version, SQL mode and data. Close the connection
+-- on failure; fix the source deliberately, never IGNORE errors or delete rows.
 CREATE TEMPORARY TABLE `__gateway_0097_preflight` (
   `failure` varchar(80) NOT NULL PRIMARY KEY
 );
@@ -37,66 +37,60 @@ SELECT '0097_requires_strict_sql_mode'
 WHERE FIND_IN_SET('STRICT_ALL_TABLES', @@SESSION.sql_mode) = 0
   AND FIND_IN_SET('STRICT_TRANS_TABLES', @@SESSION.sql_mode) = 0;
 --> statement-breakpoint
-INSERT INTO `__gateway_0097_preflight` (`failure`)
-SELECT '0097_requires_complete_0096_schema'
-WHERE (
-  SELECT COUNT(*) FROM information_schema.tables
-  WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' AND table_name IN (
-    'inference_providers', 'inference_provider_models', 'inference_provider_credentials',
-    'inference_provider_access', 'inference_provider_oauth_states',
-    'inference_request_logs', 'inference_usage_rollups', 'inference_rollup_lock'
-  )
-) <> 8 OR (
-  SELECT COUNT(*) FROM information_schema.columns
-  WHERE table_schema = DATABASE() AND table_name = 'inference_usage_rollups'
-    AND column_name IN ('input_tokens_count', 'output_tokens_count', 'total_tokens_count',
-      'cache_read_tokens_count', 'cache_write_tokens_count', 'reasoning_tokens_count',
-      'cost_count', 'latency_count', 'ttfb_count', 'request_bytes_count', 'response_bytes_count')
-) <> 11 OR NOT EXISTS (
-  SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE()
-    AND table_name = 'inference_keys' AND column_name = 'encrypted_key'
+-- Vitess metadata queries must stay flat SELECTs: no joins, subqueries or DML.
+-- Invalid JSON raises ER_INVALID_JSON_TEXT_IN_PARAM (3141), not a warning, so
+-- Drizzle stops before persistent DDL. Success returns {} rather than no rows.
+SELECT JSON_EXTRACT(IF(COUNT(*) = 8, '{}', '0097_requires_complete_0096_schema'), '$') AS preflight
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME IN (
+  'inference_providers', 'inference_provider_models', 'inference_provider_credentials',
+  'inference_provider_access', 'inference_provider_oauth_states',
+  'inference_request_logs', 'inference_usage_rollups', 'inference_rollup_lock'
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0097_preflight` (`failure`)
-SELECT '0097_gateway_tables_already_exist'
-WHERE EXISTS (
-  SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (
-    'gateway_providers', 'gateway_provider_models', 'gateway_provider_credentials',
-    'gateway_provider_access', 'gateway_provider_oauth_states', 'gateway_request_logs',
-    'gateway_usage_rollups', 'gateway_rollup_lock', 'gateway_keys', 'gateway_model_groups',
-    'gateway_model_group_models', 'gateway_credential_sets'
-  )
+SELECT JSON_EXTRACT(IF(COUNT(*) = 11, '{}', '0097_requires_complete_0096_schema'), '$') AS preflight
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'inference_usage_rollups'
+  AND COLUMN_NAME IN ('input_tokens_count', 'output_tokens_count', 'total_tokens_count',
+    'cache_read_tokens_count', 'cache_write_tokens_count', 'reasoning_tokens_count',
+    'cost_count', 'latency_count', 'ttfb_count', 'request_bytes_count', 'response_bytes_count');
+--> statement-breakpoint
+SELECT JSON_EXTRACT(IF(COUNT(*) = 1, '{}', '0097_requires_complete_0096_schema'), '$') AS preflight
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'inference_keys' AND COLUMN_NAME = 'encrypted_key';
+--> statement-breakpoint
+SELECT JSON_EXTRACT(IF(COUNT(*) = 0, '{}', '0097_gateway_tables_already_exist'), '$') AS preflight
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (
+  'gateway_providers', 'gateway_provider_models', 'gateway_provider_credentials',
+  'gateway_provider_access', 'gateway_provider_oauth_states', 'gateway_request_logs',
+  'gateway_usage_rollups', 'gateway_rollup_lock', 'gateway_keys', 'gateway_model_groups',
+  'gateway_model_group_models', 'gateway_credential_sets'
 );
 --> statement-breakpoint
-INSERT INTO `__gateway_0097_preflight` (`failure`)
-SELECT '0097_missing_legacy_indexes'
-WHERE EXISTS (
-  SELECT 1 FROM (
-    SELECT 'inference_providers' AS table_name, 'inference_providers_organization_id' AS index_name
-    UNION ALL SELECT 'inference_providers', 'inference_providers_org_provider_id'
-    UNION ALL SELECT 'inference_provider_models', 'inference_provider_models_model_id'
-    UNION ALL SELECT 'inference_provider_models', 'inference_provider_models_provider_model'
-    UNION ALL SELECT 'inference_provider_credentials', 'inference_provider_credentials_org_membership_id'
-    UNION ALL SELECT 'inference_provider_credentials', 'inference_provider_credentials_organization_id'
-    UNION ALL SELECT 'inference_provider_credentials', 'inference_provider_credentials_provider_subject'
-    UNION ALL SELECT 'inference_provider_access', 'inference_provider_access_org_membership_id'
-    UNION ALL SELECT 'inference_provider_access', 'inference_provider_access_team_id'
-    UNION ALL SELECT 'inference_provider_access', 'inference_provider_access_provider_org_membership'
-    UNION ALL SELECT 'inference_provider_access', 'inference_provider_access_provider_team'
-    UNION ALL SELECT 'inference_provider_oauth_states', 'inference_provider_oauth_states_state'
-    UNION ALL SELECT 'inference_provider_oauth_states', 'inference_provider_oauth_states_expires_at'
-    UNION ALL SELECT 'inference_request_logs', 'inference_request_logs_openwork_request_id'
-    UNION ALL SELECT 'inference_request_logs', 'inference_request_logs_org_started'
-    UNION ALL SELECT 'inference_request_logs', 'inference_request_logs_member_started'
-    UNION ALL SELECT 'inference_request_logs', 'inference_request_logs_provider_started'
-    UNION ALL SELECT 'inference_request_logs', 'inference_request_logs_started_at'
-    UNION ALL SELECT 'inference_usage_rollups', 'inference_usage_rollups_bucket_dimension'
-    UNION ALL SELECT 'inference_usage_rollups', 'inference_usage_rollups_org_granularity_bucket'
-  ) required_indexes
-  LEFT JOIN information_schema.statistics actual
-    ON actual.table_schema = DATABASE() AND actual.table_name = required_indexes.table_name
-    AND actual.index_name = required_indexes.index_name
-  WHERE actual.index_name IS NULL
+SELECT JSON_EXTRACT(IF(COUNT(DISTINCT TABLE_NAME, INDEX_NAME) = 20, '{}', '0097_missing_legacy_indexes'), '$') AS preflight
+FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE() AND (
+  (TABLE_NAME = 'inference_providers' AND INDEX_NAME = 'inference_providers_organization_id')
+  OR (TABLE_NAME = 'inference_providers' AND INDEX_NAME = 'inference_providers_org_provider_id')
+  OR (TABLE_NAME = 'inference_provider_models' AND INDEX_NAME = 'inference_provider_models_model_id')
+  OR (TABLE_NAME = 'inference_provider_models' AND INDEX_NAME = 'inference_provider_models_provider_model')
+  OR (TABLE_NAME = 'inference_provider_credentials' AND INDEX_NAME = 'inference_provider_credentials_org_membership_id')
+  OR (TABLE_NAME = 'inference_provider_credentials' AND INDEX_NAME = 'inference_provider_credentials_organization_id')
+  OR (TABLE_NAME = 'inference_provider_credentials' AND INDEX_NAME = 'inference_provider_credentials_provider_subject')
+  OR (TABLE_NAME = 'inference_provider_access' AND INDEX_NAME = 'inference_provider_access_org_membership_id')
+  OR (TABLE_NAME = 'inference_provider_access' AND INDEX_NAME = 'inference_provider_access_team_id')
+  OR (TABLE_NAME = 'inference_provider_access' AND INDEX_NAME = 'inference_provider_access_provider_org_membership')
+  OR (TABLE_NAME = 'inference_provider_access' AND INDEX_NAME = 'inference_provider_access_provider_team')
+  OR (TABLE_NAME = 'inference_provider_oauth_states' AND INDEX_NAME = 'inference_provider_oauth_states_state')
+  OR (TABLE_NAME = 'inference_provider_oauth_states' AND INDEX_NAME = 'inference_provider_oauth_states_expires_at')
+  OR (TABLE_NAME = 'inference_request_logs' AND INDEX_NAME = 'inference_request_logs_openwork_request_id')
+  OR (TABLE_NAME = 'inference_request_logs' AND INDEX_NAME = 'inference_request_logs_org_started')
+  OR (TABLE_NAME = 'inference_request_logs' AND INDEX_NAME = 'inference_request_logs_member_started')
+  OR (TABLE_NAME = 'inference_request_logs' AND INDEX_NAME = 'inference_request_logs_provider_started')
+  OR (TABLE_NAME = 'inference_request_logs' AND INDEX_NAME = 'inference_request_logs_started_at')
+  OR (TABLE_NAME = 'inference_usage_rollups' AND INDEX_NAME = 'inference_usage_rollups_bucket_dimension')
+  OR (TABLE_NAME = 'inference_usage_rollups' AND INDEX_NAME = 'inference_usage_rollups_org_granularity_bucket')
 );
 --> statement-breakpoint
 INSERT INTO `__gateway_0097_preflight` (`failure`)
@@ -373,8 +367,8 @@ ALTER TABLE `gateway_provider_access`
   DROP INDEX `inference_provider_access_provider_org_membership`,
   DROP INDEX `inference_provider_access_provider_team`;
 --> statement-breakpoint
+-- gateway_keys intentionally stays empty. Mint ow_gw_ keys on the next
+-- authorized runtime connect, rotating the stable organization/member row.
 ALTER TABLE `gateway_provider_oauth_states`
   MODIFY COLUMN `credential_set_id` varchar(64) NOT NULL,
   ADD INDEX `gateway_provider_oauth_states_set_member` (`credential_set_id`,`org_membership_id`);
--- gateway_keys intentionally stays empty. Mint ow_gw_ keys on the next
--- authorized runtime connect, rotating the stable organization/member row.
