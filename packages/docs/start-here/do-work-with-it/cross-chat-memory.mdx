@@ -37,6 +37,15 @@ An agent can start sessions (`session.create`) and file idle ones away (`session
 
 Stopping a session is yours: use the Stop button in that conversation. When you archive a working session yourself, from the sidebar, OpenWork asks a short confirmation naming the session ("Stop the current task and archive?") with **Keep session open** and **Stop and archive**.
 
+### Model and reasoning effort
+
+Every session is bound to a model, and agents can see and set it without opening the session or reading OpenWork's storage:
+
+- `session.list_sessions` entries and `session.read` results carry `model: { providerId, modelId, variant }`. `variant` is the reasoning effort you see as the behavior pill in the composer (for example `low`, `medium`, `high`); it is `null` when the provider default applies. Before a session has a model bound (no `model` at creation and no turn yet), `model` is `null`.
+- `session.create` accepts the same shape as `model`, either once for every session in the call or per entry. The model is applied when the session is created and again on its first turn, so the session runs at the requested effort from the start and reads back with that `model`. Sessions created without `model` use the engine default.
+
+Changing the model of an existing session by id is not available to agents yet; the composer's model picker does that for the session you have open.
+
 ## Current limits
 
 - Session lookup is based on the sessions OpenWork has loaded for the current app and workspace context.

@@ -25,6 +25,22 @@ describe("OpenWork provider adapters", () => {
     }
   });
 
+  test("tells agents that sessions carry a model and that session.create takes one", () => {
+    const affordances = buildOpenworkProviderContributions([]).flatMap((contribution) => contribution.affordances);
+    const read = affordances.find((affordance) => affordance.id === "session.read");
+    const create = affordances.find((affordance) => affordance.id === "session.create");
+
+    // openwork_context is the only place an agent learns the result shape.
+    expect(read?.description).toContain("`model`");
+    expect(read?.description).toContain("variant");
+    expect(create?.arguments.map((argument) => [argument.name, argument.type, argument.required])).toEqual([
+      ["sessions", "array", true],
+      ["workspaceId", "string", false],
+      ["model", "object", false],
+    ]);
+    expect(create?.arguments.find((argument) => argument.name === "model")?.description).toContain("variant");
+  });
+
   test("keeps known Connect skills direct and search available for unknown capabilities", () => {
     const contributions = buildOpenworkProviderContributions([{
       name: "customer-briefing",

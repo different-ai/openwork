@@ -108,3 +108,34 @@ test("session.list_sessions keeps pinned sessions first and skips entries withou
     listed[0]?.sessionId === "alpha_0" && listed.length === 5,
   );
 });
+
+test("session.list_sessions exposes each session's bound model and reasoning effort as `model`", async ({ evidence }) => {
+  // The engine's session record carries {id, providerID, variant}; the app
+  // holds it verbatim, and agents read it back in the session.create shape
+  // (the engine's literal "default" variant reads as null, the composer's value).
+  const listed = listControlSessions(null, {
+    workspaces,
+    sessionsByWorkspaceId: {
+      ws_alpha: [
+        { id: "alpha_high", title: "Runs at high", time: { updated: 3 }, model: { id: "claude-fable-5-1", providerID: "lpr_test", variant: "high" } },
+        { id: "alpha_default", title: "Runs at the provider default", time: { updated: 2 }, model: { id: "gpt-6-astra", providerID: "openai", variant: "default" } },
+        { id: "alpha_unbound", title: "No model bound yet", time: { updated: 1 } },
+      ],
+      ws_beta: [],
+    },
+    pinnedIds: [],
+    statusFor: () => "idle" as const,
+  });
+
+  expect(listed.map((session) => [session.sessionId, session.model])).toEqual([
+    ["alpha_high", { providerId: "lpr_test", modelId: "claude-fable-5-1", variant: "high" }],
+    ["alpha_default", { providerId: "openai", modelId: "gpt-6-astra", variant: null }],
+    ["alpha_unbound", null],
+  ]);
+  expect(listed.every((session) => "model" in session)).toBe(true);
+  evidence.recordAssertionEvidence(
+    "Agents can read a session's model and effort without opening the SQLite store",
+    `Three sessions listed with model {providerId, modelId, variant}: high effort, provider default (variant null), and null before any model is bound.`,
+    listed[0]?.model?.variant === "high" && listed[1]?.model?.variant === null && listed[2]?.model === null,
+  );
+});

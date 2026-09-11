@@ -5,7 +5,7 @@ import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } fr
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
 import { visualizationSchema } from "@openwork/types/visualization";
-import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
+import { openworkSessionModelSchema, type OpenworkAffordanceEffects, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
   appendAgentInstructions,
@@ -86,12 +86,19 @@ const sessionReadArgsSchema = z.object({
   count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
 });
 
+// Same contract agents read back as `model`; `variant` may be omitted on input.
+const sessionModelArgSchema = openworkSessionModelSchema.extend({
+  variant: openworkSessionModelSchema.shape.variant.optional().describe("Reasoning effort variant (e.g. low, medium, high). Omit or null for the provider default."),
+});
+
 const sessionCreateArgsSchema = z.object({
   sessions: z.array(z.object({
     title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
+    model: sessionModelArgSchema.optional().describe("Model and reasoning effort for this session. Overrides the top-level model."),
   })).min(1).describe("One entry per new session to create and start."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+  model: sessionModelArgSchema.optional().describe("Model and reasoning effort for every created session unless an entry overrides it. Omit to use the engine default."),
 });
 
 const workspaceSchema = z.object({
@@ -110,11 +117,20 @@ const sessionTimeSchema = z.object({
   updated: z.number().optional(),
 }).passthrough();
 
+// The engine's session-level model: set from `model` at creation and updated
+// by every prompt (`variant` is the reasoning effort the turn ran with).
+const engineSessionModelSchema = z.object({
+  id: z.string(),
+  providerID: z.string(),
+  variant: z.string().optional(),
+}).passthrough();
+
 const sessionInfoSchema = z.object({
   id: z.string(),
   title: z.string().nullish(),
   directory: z.string().optional(),
   time: sessionTimeSchema.optional(),
+  model: engineSessionModelSchema.nullish(),
 }).passthrough();
 
 const sessionPartSchema = z.object({
@@ -161,6 +177,7 @@ const WEBMCP_EXECUTION_TIMEOUT_MS = 125_000;
 
 type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;
+type SessionModelArg = z.infer<typeof sessionModelArgSchema>;
 type SessionMessage = z.infer<typeof sessionMessageSchema>;
 type SessionSearchSnippet = { before: string; match: string; after: string };
 type SessionSearchResult = {
@@ -180,6 +197,8 @@ type CreatedOpenWorkSessionResult = {
   sessionId: string;
   title: string;
   started: boolean;
+  /** The model the engine bound to the session, read from its create response. */
+  model: OpenworkSessionModel | null;
   route: string;
 };
 type FailedOpenWorkSessionResult = {
@@ -503,6 +522,18 @@ function sessionUpdatedAt(session: SessionInfo): number {
   return session.time?.updated ?? session.time?.created ?? 0;
 }
 
+/**
+ * Session-level model from the engine record, or null when no model was ever
+ * bound. The engine writes the literal variant "default" for a turn that
+ * named none; agents pass and read null for that, like the composer pill.
+ */
+function sessionModelOf(session: SessionInfo): OpenworkSessionModel | null {
+  const model = session.model;
+  if (!model) return null;
+  const variant = model.variant?.trim();
+  return { providerId: model.providerID, modelId: model.id, variant: variant && variant !== "default" ? variant : null };
+}
+
 function messageText(message: SessionMessage): string {
   const parts: string[] = [];
   for (const part of message.parts) {
@@ -760,6 +791,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
         updatedAt: sessionUpdatedAt(session),
         status: activity.status,
         working: activity.working,
+        model: sessionModelOf(session),
         returned: readable.length,
         requested: count,
         messages: readable,
@@ -845,26 +877,42 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
   throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
 }
 
+/**
+ * The engine takes the model in two shapes: `{ id, providerID, variant }` on
+ * the session record at creation, and `{ providerID, modelID }` plus a
+ * top-level `variant` on prompt_async. Both are sent so the session is bound
+ * to the model before its first turn and that turn runs at the same effort.
+ */
+function engineSessionCreateModel(model: SessionModelArg) {
+  return { providerID: model.providerId, id: model.modelId, ...(model.variant ? { variant: model.variant } : {}) };
+}
+
+function enginePromptModel(model: SessionModelArg) {
+  return { model: { providerID: model.providerId, modelID: model.modelId }, ...(model.variant ? { variant: model.variant } : {}) };
+}
+
 async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const args = sessionCreateArgsSchema.parse(rawArgs);
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
   let createdOnEngine = false;
   const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
+    const model = session.model ?? args.model;
     try {
       const payload = sessionInfoSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
-        { title: session.title },
+        { title: session.title, ...(model ? { model: engineSessionCreateModel(model) } : {}) },
       ));
       createdOnEngine = true;
       await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
-        { parts: [{ type: "text", text: session.prompt }] },
+        { ...(model ? enginePromptModel(model) : {}), parts: [{ type: "text", text: session.prompt }] },
       );
       return {
         ok: true,
         sessionId: payload.id,
         title: payload.title?.trim() || session.title,
         started: true,
+        model: sessionModelOf(payload),
         route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.id)}`,
       };
     } catch (error) {

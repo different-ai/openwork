@@ -30,11 +30,18 @@ const searchResultSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
+const sessionModelSchema = z.object({
+  providerId: z.string(),
+  modelId: z.string(),
+  variant: z.string().nullable(),
+}).strict();
+
 const readResultSchema = z.object({
   ok: z.literal(true),
   workspaceId: z.string(),
   sessionId: z.string(),
   title: z.string(),
+  model: sessionModelSchema.nullable(),
   messages: z.array(z.object({
     role: z.string(),
     text: z.string(),
@@ -48,6 +55,7 @@ const createResultSchema = z.object({
     sessionId: z.string(),
     title: z.string(),
     started: z.boolean(),
+    model: sessionModelSchema.nullable(),
     route: z.string(),
   })),
   failures: z.array(z.object({
@@ -104,8 +112,10 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
   const workspaceTwo = { id: "ws_2", name: "Archive", displayName: "Archive", path: "/tmp/archive", workspaceType: "remote" };
-  const sessionAlpha = { id: "ses_alpha", title: "Alpha planning", time: { created: 100, updated: 300 } };
-  const sessionBeta = { id: "ses_beta", title: "Neon backlog", time: { created: 50, updated: 200 } };
+  // The engine's session-level model: alpha ran at high effort, beta at the
+  // provider default (the engine's literal "default"), archive never bound one.
+  const sessionAlpha = { id: "ses_alpha", title: "Alpha planning", time: { created: 100, updated: 300 }, model: { id: "claude-fable-5-1", providerID: "lpr_test", variant: "high" } };
+  const sessionBeta = { id: "ses_beta", title: "Neon backlog", time: { created: 50, updated: 200 }, model: { id: "gpt-6-astra", providerID: "openai", variant: "default" } };
   const sessionArchive = { id: "ses_archive", title: "Archive decisions", directory: "/tmp/archive", time: { created: 10, updated: 100 } };
   // Lives outside every workspace root: reads must refuse to expose it even
   // though the native engine route happily returns it (cross-workspace leak).
@@ -179,12 +189,18 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
       }
       if (url.pathname === "/workspace/ws_2/opencode/session") {
         if (request.method === "POST") {
-          const body = z.object({ title: z.string() }).strict().parse(record.body);
+          // Mirrors the pinned engine: `model` is optional and, when given,
+          // is persisted on the session record exactly as sent.
+          const body = z.object({
+            title: z.string(),
+            model: z.object({ id: z.string(), providerID: z.string(), variant: z.string().optional() }).strict().optional(),
+          }).strict().parse(record.body);
           createdCount += 1;
           return Response.json({
             id: `ses_created_${createdCount}`,
             title: body.title,
             time: { created: 400, updated: 400 },
+            ...(body.model ? { model: body.model } : {}),
           }, { status: 201 });
         }
         if (options.failSessionListWorkspaceId === "ws_2") {
@@ -250,6 +266,8 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
 
       if (/^\/workspace\/ws_2\/opencode\/session\/ses_created_\d+\/prompt_async$/.test(url.pathname)) {
         const body = z.object({
+          model: z.object({ providerID: z.string(), modelID: z.string() }).strict().optional(),
+          variant: z.string().optional(),
           parts: z.array(z.object({ type: z.literal("text"), text: z.string() }).strict()).length(1),
         }).strict().parse(record.body);
         if (body.parts[0]?.text === options.failPromptText) {
@@ -451,6 +469,20 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(await read("ses_alpha")).toMatchObject({ status: "busy", working: true });
     expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p", ["ses_c"])).toEqual({ status: "waiting", working: true });
     expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p")).toEqual({ status: "busy", working: true });
+  });
+
+  test("session.read exposes the session's bound model and reasoning effort from the engine record", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = async (sessionId: string) => affordanceResultSchema("session.read", readResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId, count: 1 } })))
+      .result.model;
+
+    // Agent-facing shape, not the engine's {id, providerID}: variant null for
+    // the engine's "default", and null altogether before a model is bound.
+    expect(await read("ses_alpha")).toEqual({ providerId: "lpr_test", modelId: "claude-fable-5-1", variant: "high" });
+    expect(await read("ses_beta")).toEqual({ providerId: "openai", modelId: "gpt-6-astra", variant: null });
+    expect(await read("ses_archive")).toBeNull();
   });
 
   test("an unreadable activity probe never reports a session as safe to archive", () => {
@@ -681,6 +713,72 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       { parts: [{ type: "text", text: "Research bananas." }] },
       { parts: [{ type: "text", text: "Research apple pies." }] },
     ]));
+  });
+
+  test("session.create binds the requested model and reasoning effort at creation and on the first turn", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "session.create",
+      args: {
+        model: { providerId: "lpr_test", modelId: "claude-fable-5-1", variant: "low" },
+        sessions: [
+          { title: "Runs at low", prompt: "Research dolphins." },
+          // A per-entry model wins over the call-level one; a null variant means the provider default.
+          { title: "Runs at default", prompt: "Research bananas.", model: { providerId: "openai", modelId: "gpt-6-astra", variant: null } },
+        ],
+      },
+    }, { sessionID: "ses_origin" });
+    const parsed = affordanceResultSchema("session.create", createResultSchema).parse(JSON.parse(output));
+
+    expect(parsed.result.ok).toBe(true);
+    expect(parsed.result.created.map((session) => [session.title, session.model])).toEqual([
+      ["Runs at low", { providerId: "lpr_test", modelId: "claude-fable-5-1", variant: "low" }],
+      ["Runs at default", { providerId: "openai", modelId: "gpt-6-astra", variant: null }],
+    ]);
+
+    // Creation: the engine's session record gets {providerID, id, variant}.
+    const createRequests = fake.requests.filter((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST");
+    expect(createRequests.map((request) => request.body)).toEqual([
+      { title: "Runs at low", model: { providerID: "lpr_test", id: "claude-fable-5-1", variant: "low" } },
+      { title: "Runs at default", model: { providerID: "openai", id: "gpt-6-astra" } },
+    ]);
+    // First turn: prompt_async carries {providerID, modelID} plus the top-level variant,
+    // so the run starts at the requested effort instead of the engine default.
+    const promptRequests = fake.requests.filter((request) => request.pathname.endsWith("/prompt_async") && request.method === "POST");
+    expect(promptRequests.map((request) => request.body)).toEqual([
+      { model: { providerID: "lpr_test", modelID: "claude-fable-5-1" }, variant: "low", parts: [{ type: "text", text: "Research dolphins." }] },
+      { model: { providerID: "openai", modelID: "gpt-6-astra" }, parts: [{ type: "text", text: "Research bananas." }] },
+    ]);
+  });
+
+  test("session.create without a model leaves both engine calls model-free and reports model null", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "session.create",
+      args: { sessions: [{ title: "Engine default", prompt: "Research apple pies." }] },
+    }, { sessionID: "ses_origin" });
+    const parsed = affordanceResultSchema("session.create", createResultSchema).parse(JSON.parse(output));
+
+    expect(parsed.result.created.map((session) => session.model)).toEqual([null]);
+    expect(fake.requests.filter((request) => request.method === "POST" && request.pathname !== "/experimental/ui-control/request").map((request) => request.body)).toEqual([
+      { title: "Engine default" },
+      { parts: [{ type: "text", text: "Research apple pies." }] },
+    ]);
+  });
+
+  test("session.create rejects a model without both provider and model ids instead of silently dropping it", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await expect(plugin.tool.openwork_execute.execute({
+      id: "session.create",
+      args: { model: { providerId: "lpr_test", variant: "high" }, sessions: [{ title: "Half a model", prompt: "Research nothing." }] },
+    }, { sessionID: "ses_origin" })).rejects.toThrow();
+    expect(fake.requests.filter((request) => request.method === "POST")).toEqual([]);
   });
 
   test("asks the desktop to refetch the target workspace's sessions after creating them", async () => {

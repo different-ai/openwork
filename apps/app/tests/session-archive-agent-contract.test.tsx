@@ -81,6 +81,27 @@ describe("session.list_sessions exposes live activity", () => {
     ]);
   });
 
+  test("entries carry the session's bound model and reasoning effort from the engine record", () => {
+    const listed = listControlSessions({}, {
+      workspaces: [{ id: "ws", name: "Main" }],
+      sessionsByWorkspaceId: { ws: [
+        // The engine writes {id, providerID, variant}; agents read {providerId, modelId, variant}.
+        { id: "high", title: "High", time: { updated: 4 }, model: { id: "claude-fable-5-1", providerID: "lpr_test", variant: "high" } },
+        { id: "default", title: "Default", time: { updated: 3 }, model: { id: "gpt-6-astra", providerID: "openai", variant: "default" } },
+        { id: "unbound", title: "Unbound", time: { updated: 2 } },
+        { id: "partial", title: "Partial", time: { updated: 1 }, model: { providerID: "openai" } },
+      ] },
+      pinnedIds: [],
+      statusFor: () => "idle",
+    });
+    expect(listed.map(({ sessionId, model }) => ({ sessionId, model }))).toEqual([
+      { sessionId: "high", model: { providerId: "lpr_test", modelId: "claude-fable-5-1", variant: "high" } },
+      { sessionId: "default", model: { providerId: "openai", modelId: "gpt-6-astra", variant: null } },
+      { sessionId: "unbound", model: null },
+      { sessionId: "partial", model: null },
+    ]);
+  });
+
   test("only finished or failed turns are safe to archive without Stop", () => {
     expect(["thinking", "responding", "waiting", "compacting"].map(isWorkingStatus)).toEqual([true, true, true, true]);
     expect(["idle", "error"].map(isWorkingStatus)).toEqual([false, false]);

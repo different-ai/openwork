@@ -59,6 +59,23 @@ export const openworkAffordanceDescriptorSchema = z.object({
 export type OpenworkAffordanceDescriptor = z.infer<typeof openworkAffordanceDescriptorSchema>
 
 /**
+ * The model a session is bound to, as agents pass it to `session.create`
+ * (`model` argument) and read it back from `session.list_sessions` entries
+ * and `session.read` results (`model` field). `variant` is the reasoning /
+ * thinking effort the composer shows as its behavior pill (for example
+ * `low`, `medium`, `high`); null means the provider default. The source is
+ * the engine's session record: bound at creation, updated by every turn.
+ * Results carry null instead of the object before any model is bound, and
+ * the engine's literal "default" variant reads back as null.
+ */
+export const openworkSessionModelSchema = z.object({
+  providerId: z.string().trim().min(1),
+  modelId: z.string().trim().min(1),
+  variant: z.string().trim().min(1).max(60).nullable(),
+})
+export type OpenworkSessionModel = z.infer<typeof openworkSessionModelSchema>
+
+/**
  * Where a request came from: the conversation (session) whose agent issued
  * it. Set by the OpenWork bridge, never by the agent, so UI commands such as
  * opening a browser tab can act for the requesting conversation instead of

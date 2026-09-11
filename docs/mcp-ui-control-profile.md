@@ -213,7 +213,7 @@ The exact list depends on the current OpenWork route and state. Common actions i
 | Action | Description |
 |--------|-------------|
 | `session.create_task` | Create a new session in the selected workspace |
-| `session.list_sessions` | List all loaded sessions across workspaces (optional `limit`, `workspaceId`) |
+| `session.list_sessions` | List all loaded sessions across workspaces (optional `limit`, `workspaceId`); entries carry `status`, `working`, and `model` `{ providerId, modelId, variant }` |
 | `session.open` | Navigate to a session by ID |
 | `session.rename` | Rename a session |
 | `session.delete` | Delete a session (requires confirmation) |
