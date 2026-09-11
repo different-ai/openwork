@@ -12,7 +12,7 @@ if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
 // Base UI detects DOM support at import time, including for portals and focus.
 const { createRoot } = await import("react-dom/client");
 const { ExtensionsView, filterForSection, stateForSection } = await import("../src/react-app/domains/settings/pages/extensions-view");
-const { TooltipProvider } = await import("../src/components/ui/tooltip");
+const { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } = await import("../src/components/ui/tooltip");
 const { LibraryAddControl, libraryAddKindLabel } = await import("../src/react-app/domains/settings/pages/library-add-control");
 const {
   connectMcpInventoryGroup,
@@ -47,6 +47,30 @@ async function mount(node: ReactNode) {
   });
   return host;
 }
+
+// Bun evaluates every test file in one shared module registry. When another
+// file imports Base UI before any DOM exists, its layout effects stay no-ops for
+// the rest of the run and no tooltip can open, even a controlled one. Probe that
+// once so the tooltip assertions skip loudly instead of failing on file order;
+// the focused Library command still runs them.
+async function tooltipLayerCanOpen() {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(
+    <TooltipProvider>
+      <Tooltip open>
+        <TooltipTrigger render={<button type="button">Probe</button>} />
+        <TooltipContent role="tooltip">tooltip-probe</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>,
+  ));
+  const opened = document.querySelector('[role="tooltip"]')?.textContent === "tooltip-probe";
+  await act(async () => root.unmount());
+  host.remove();
+  return opened;
+}
+const tooltipLayerInert = !(await tooltipLayerCanOpen());
 
 const extensions: PluginsExtensionsStore = {
   pluginScope: "project",
@@ -263,14 +287,24 @@ describe("Library state tabs", () => {
     expect(restricted).not.toContain("Add workspace MCP");
   });
 
-  test("warning is conditional, keyboard-focusable, preserves guidance, and Escape dismisses it", async () => {
+  test("warning is conditional and keeps its message out of the page until opened", async () => {
     const warning = "Some MCPs could not be registered with the engine: Calendar, Notes. They may appear disconnected - try reloading the engine.";
     expect(renderToStaticMarkup(<LibraryStatusWarning message={null} />)).toBe("");
+    expect(renderToStaticMarkup(<LibraryStatusWarning message="   " />)).toBe("");
     const host = await mount(<LibraryStatusWarning message={warning} />);
     const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="MCP status"]');
     if (!trigger) throw new Error("Missing warning trigger");
     expect(trigger.querySelector(".lucide-triangle-alert")).not.toBeNull();
+    expect(trigger.getAttribute("aria-describedby")).toBeTruthy();
     expect(host.textContent).not.toContain(warning);
+    expect(document.body.textContent).not.toContain(warning);
+  });
+
+  test.skipIf(tooltipLayerInert)("warning is keyboard-focusable, preserves guidance, and Escape dismisses it", async () => {
+    const warning = "Some MCPs could not be registered with the engine: Calendar, Notes. They may appear disconnected - try reloading the engine.";
+    const host = await mount(<LibraryStatusWarning message={warning} />);
+    const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="MCP status"]');
+    if (!trigger) throw new Error("Missing warning trigger");
     // Happy DOM does not implement keyboard :focus-visible matching.
     const matches = trigger.matches.bind(trigger);
     trigger.matches = (selector) => selector === ":focus-visible" ? document.activeElement === trigger : matches(selector);
@@ -284,7 +318,7 @@ describe("Library state tabs", () => {
     expect(document.querySelector('[role="tooltip"]')).toBeNull();
   });
 
-  test("warning opens on pointer hover without performing an action", async () => {
+  test.skipIf(tooltipLayerInert)("warning opens on pointer hover without performing an action", async () => {
     const host = await mount(<LibraryStatusWarning message="Calendar needs engine registration. Reload the engine to retry." />);
     const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="MCP status"]');
     if (!trigger) throw new Error("Missing warning trigger");
