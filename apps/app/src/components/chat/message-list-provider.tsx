@@ -8,11 +8,16 @@ import type {
 } from "@/components/tools/error-attribution"
 import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
+import type { OpenworkServerClient } from "@/app/lib/openwork-server"
+import type { McpAppOrigin } from "./mcp-app-origin"
 
 interface MessageListContextValue {
+  mcpAppOrigin: McpAppOrigin | null
   readOnly: boolean
   workspaceId: string
   sessionId: string
+  /** Verified principal/org, endpoint, workspace and session; absent means no retention. */
+  uiStateOwner?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -45,10 +50,13 @@ interface MessageListContextValue {
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
 interface MessageListProviderProps {
+  client?: OpenworkServerClient
+  mcpAppEngine?: "v1" | "v2"
   readOnly?: boolean
   children: React.ReactNode
   workspaceId: string
   sessionId: string
+  uiStateOwner?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -79,10 +87,13 @@ export interface DispatchAction {
 }
 
 export function MessageListProvider({
+  client,
+  mcpAppEngine,
   readOnly = false,
   children,
   workspaceId,
   sessionId,
+  uiStateOwner,
   showThinking,
   highlightQuery,
   developerMode,
@@ -158,11 +169,17 @@ export function MessageListProvider({
   }), [])
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
+  const mcpAppOrigin = React.useMemo<McpAppOrigin | null>(
+    () => client ? { client, workspaceId, sessionId, readOnly, ...(mcpAppEngine ? { engine: mcpAppEngine } : {}) } : null,
+    [client, workspaceId, sessionId, readOnly, mcpAppEngine],
+  )
   const value = React.useMemo(
     () => ({
+      mcpAppOrigin,
       readOnly,
       workspaceId,
       sessionId,
+      uiStateOwner,
       showThinking,
       highlightQuery,
       forkingMessageId,
@@ -180,9 +197,11 @@ export function MessageListProvider({
         : undefined,
     }),
     [
+      mcpAppOrigin,
       readOnly,
       workspaceId,
       sessionId,
+      uiStateOwner,
       showThinking,
       highlightQuery,
       forkingMessageId,

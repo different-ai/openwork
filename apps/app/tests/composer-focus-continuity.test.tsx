@@ -172,7 +172,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     composeNativeSessionSnapshot: async (_target: unknown, id: string) => id === otherSessionId ? otherSnapshot : snapshotRead ?? fetchedSnapshot,
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
-  const { snapshotKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
+  const { snapshotKey, statusKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
   const { useSessionArchive } = await import("../src/react-app/domains/session/sidebar/use-session-archive");
   const { claimQueuedSend, dispatchQueuedDrain, getQueuedDrainState, resetQueuedDrainForTests, subscribeQueuedDrain } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
   const queryClient = getReactQueryClient();
@@ -186,6 +186,17 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   const client = createOpenworkServerClient({ baseUrl: "http://127.0.0.1:1", token: "test-token" });
   const container = document.createElement("div");
   document.body.append(container);
+  const expectStarting = () => {
+    const indicators = container.querySelectorAll('[data-loading-message="starting"]');
+    expect(indicators).toHaveLength(1);
+    expect(indicators[0]?.getAttribute("role")).toBe("status");
+    expect(indicators[0]?.textContent).toBe("Starting…");
+    expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
+  };
+  const expectSettled = () => {
+    expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
+    expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
+  };
   const root = createRoot(container);
   const draft = "Keep this draft while the task finishes";
   let submission = Promise.withResolvers<CloudMcpSubmissionResult>();
@@ -762,9 +773,23 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(editor.textContent).toBe("");
     expect(container.textContent).toContain(draft);
     expect(useComposerStateStore.getState().sessions[sessionId]).toBeUndefined();
+    expectStarting();
+
+    // Native activity must win even when the submission promise is still pending.
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "busy" }));
+    await waitFor(() => container.querySelector('[data-loading-message="working"]') !== null, "confirmed activity during pending submission");
+    expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), {
+      type: "retry", attempt: 1, message: "Retrying test request", next: Date.now() + 10_000,
+    }));
+    await waitFor(() => container.textContent?.includes("Retrying test request") === true, "retry feedback during pending submission");
+    expectSettled();
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "idle" }));
+    await waitFor(() => container.querySelector('[data-loading-message="starting"]') !== null, "pending feedback after observed idle");
 
     await act(async () => useComposerStateStore.getState().setDraft(sessionId, "A newer draft"));
     await act(async () => submission.reject(new Error("Submission unavailable")));
+    expectSettled();
     expect(editor.textContent).toBe("A newer draft");
     expect(container.textContent).not.toContain(draft);
     expect(Object.values(useComposerStateStore.getState().failedDrafts).flat().map((item) => item.draft)).toEqual([draft]);
@@ -786,8 +811,10 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')?.click());
     await act(async () => send());
+    expectStarting();
     await act(async () => submission.resolve({ outcome: "cancelled", reason: "context_changed" }));
     expect(editor.textContent).toBe(draft);
+    expectSettled();
 
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     const { composerAutoSendScopeKey, markComposerAutoSend } = await import("../src/react-app/domains/session/surface/composer-auto-send");
@@ -798,6 +825,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     await waitFor(() => sentDrafts.length === 3, "first-message auto-send");
     expect(editor.textContent).toBe("");
     expect(container.textContent).toContain("First message auto-send");
+    expectStarting();
     const messageId = sentDrafts[2]?.messageId;
     expect(messageId).toStartWith("msg_");
     await act(async () => {
@@ -813,6 +841,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(0);
 
     const { PromptAdmissionUnknownError } = await import("../src/app/lib/opencode");
+    expectSettled();
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Uncertain send"));
     await act(async () => send());
@@ -906,6 +935,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
       .filter((row) => row.textContent?.includes("First submitted body"));
     expect(scopedPendingRows()).toHaveLength(1);
     expect(scopedPendingRows()[0]?.querySelector('img[alt="scoped.png"]')?.getAttribute("src")).toBe(scopedAttachment.previewUrl);
+    expectStarting();
     expect(editor.querySelector('[data-attachment-status="uploading"]')).toBeNull();
     expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
     await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Continuation B before preparation[attachment continuation-image]"));
@@ -920,6 +950,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(editor.textContent).toContain("Continuation B after preparation");
     const continuationAfterPreparation = useComposerStateStore.getState().sessions[sessionId];
     await act(async () => submission.reject(new Error("Scoped submission unavailable")));
+    expectSettled();
     expect(editor.textContent).toContain("Continuation B after preparation");
     expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationAfterPreparation);
     expect(continuationAfterPreparation?.attachments).toEqual([continuationAttachment]);
@@ -1070,6 +1101,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     await act(async () => {
       fetchedSnapshot = createSnapshot({ type: "busy" }, 30);
       queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), fetchedSnapshot.status);
       renderSession();
     });
     await waitFor(() => container.querySelector('button[aria-label="Stop"]') !== null, "busy session for queue promotion");
@@ -1195,6 +1227,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
       useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Do not retry uncertain admission"));
       fetchedSnapshot = createSnapshot({ type: "idle" }, 31);
       queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), fetchedSnapshot.status);
     });
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Send now"]')?.click());
     expect(sentDrafts).toHaveLength(sendsBeforeQueue + 5);
@@ -1222,12 +1255,13 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(creations).toBe(1);
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')?.textContent).toBe("First hero message");
-    expect(container.querySelector('[role="status"]')?.textContent).toBe("Creating conversation...");
+    expectStarting();
     expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     await act(async () => updateHeroDraft("Newer hero draft"));
     expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
     await act(async () => creation.reject(new Error("Session creation failed")));
+    expectSettled();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer hero draft");
     expect(container.textContent).toContain("Session creation failed");
     await act(async () => updateHeroDraft(""));
@@ -1246,12 +1280,13 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     });
     await act(async () => send());
     expect(creations).toBe(2);
-    expect(container.querySelector('[role="status"]')?.textContent).toBe("Creating conversation...");
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Starting…");
     expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')?.textContent).toContain("First hero message");
     expect(container.querySelector('[data-message-role="user"] img[alt="photo.png"]')).not.toBeNull();
+    expectStarting();
     expect(container.querySelector("[data-attachment-id]")).toBeNull();
     expect(capturedHandoff?.getContinuation()).toEqual({ draft: "", attachments: [], mentions: {}, pasteParts: [], revertMessageId: null });
     expect(capturedHandoff?.submitted.attachments[0]?.file).toBe(attachment.file);

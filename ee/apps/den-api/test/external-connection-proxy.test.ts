@@ -411,6 +411,18 @@ test("a healthy native MCP App preserves its resource and same-server app-visibl
   })
 })
 
+test.each([true, false, undefined])("App proxy preserves CallToolResult fields (isError=%s)", async (isError) => {
+  const result = {
+    content: [{ type: "audio", data: "AAAA", mimeType: "audio/wav" }],
+    structuredContent: { serverTools: ["provider-tool"], schemaGuidance: "provider data" },
+    _meta: { privateFixture: "view-only" },
+    ...(isError === undefined ? {} : { isError }),
+  }
+  await withClient({ tools: {} }, async (client) => {
+    expect(await client.callTool({ name: "open_fixture", arguments: {} })).toEqual(result)
+  }, { callTool: async () => result })
+})
+
 test("a regular MCP with an App keeps every model-visible tool behind search and execute", async () => {
   let downstreamCalls = 0
   let downstreamReads = 0

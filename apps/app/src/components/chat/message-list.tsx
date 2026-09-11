@@ -532,6 +532,7 @@ const AssistantMessage = React.memo(
               return (
                 <ReasoningBlock
                   key={`reasoning-${index}`}
+                  disclosureKey={JSON.stringify(["reasoning", message.id, index])}
                   text={group.text}
                   isStreaming={group.isStreaming}
                 />
@@ -549,7 +550,7 @@ const AssistantMessage = React.memo(
             if (group.kind === "tool-aggregate") {
               return (
                 <div key={`tool-aggregate-${index}`} className="w-full">
-                  <ToolAggregateGroup parts={group.parts} thoughts={group.thoughts} />
+                  <ToolAggregateGroup messageId={message.id} parts={group.parts} thoughts={group.thoughts} />
                 </div>
               )
             }
@@ -864,10 +865,10 @@ const MessageComponent = React.memo(
 
 MessageComponent.displayName = "MessageComponent"
 
-const LoadingMessage = React.memo(({ elapsedSeconds }: { elapsedSeconds: number }) => (
+const LoadingMessage = React.memo(({ elapsedSeconds, starting }: { elapsedSeconds: number; starting: boolean }) => (
     <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-      <div data-loading-message="working" className="py-1 text-sm text-muted-foreground">
-        <span className="ow-text-shimmer tabular-nums">Working {formatElapsedSeconds(elapsedSeconds)}</span>
+      <div role={starting ? "status" : undefined} data-loading-message={starting ? "starting" : "working"} className="py-1 text-sm text-muted-foreground">
+        <span className="ow-text-shimmer tabular-nums">{starting ? "Starting…" : `Working ${formatElapsedSeconds(elapsedSeconds)}`}</span>
       </div>
     </Message>
 ))
@@ -1259,7 +1260,7 @@ function MessageGroup({
     item.message.role === "assistant" && !isSessionErrorMessage(item.message)
       ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
         group.kind === "reasoning"
-          ? [{ key: `${item.message.id}-${groupIndex}`, text: group.text, isStreaming: group.isStreaming }]
+          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming }]
           : []
       )
       : []
@@ -1293,7 +1294,7 @@ function MessageGroup({
         key={`folded-reasoning-${reasoning.key}`}
         className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
       >
-        <ReasoningBlock text={reasoning.text} isStreaming={reasoning.isStreaming} />
+        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} />
       </Message>
     ))
     : []
@@ -1325,7 +1326,7 @@ function MessageGroup({
       nodes.push(
         <div key={`aggregate-${run.key}`}>
           <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-            <ToolAggregateGroup parts={run.parts} className="w-full" />
+            <ToolAggregateGroup messageId={run.key} parts={run.parts} className="w-full" />
           </Message>
         </div>
       )
@@ -1492,7 +1493,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
       || child?.compacting || child?.retrying
   }))
   const isStreaming = status === "streaming" || status === "retrying"
-  const runActive = status === "submitted" || status === "streaming" || status === "retrying"
+  const runActive = status === "streaming" || status === "retrying"
   const syncDegraded = syncHealth?.degraded === true
   const activityActive = runActive || tasks.length > 0
   const runStartedAtRef = React.useRef<number | null>(null)
@@ -1597,7 +1598,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus, syn
         )
         }}
       >
-        {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} />}
+        {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}

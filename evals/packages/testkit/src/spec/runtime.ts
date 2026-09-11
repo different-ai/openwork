@@ -582,7 +582,9 @@ export class SeedChannel implements Seed {
     const title = options.title ?? "New task";
     return this.#runtime.call("seed", "session", `session(${JSON.stringify(title)})`, app, async () => {
       const sessionId = await createSessionWhenReady(app);
-      if (options.title) await control(app, "session.rename", { sessionId, title });
+      // Same contract as sessions(): the title is part of the arrangement, so
+      // hand back only once the app lists it (the sidebar renders that list).
+      if (options.title) await renameSessionAndWait((action, args) => control(app, action, args), sessionId, title);
       return { sessionId, title };
     });
   }

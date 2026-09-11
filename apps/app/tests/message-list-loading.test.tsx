@@ -15,7 +15,7 @@ import {
 } from "../src/components/chat/message-list";
 import { MessageListProvider } from "../src/components/chat/message-list-provider";
 import type { ThreadStatus } from "../src/lib/messages";
-import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import { useSessionActivityStore, type SessionActivityStatus } from "../src/react-app/domains/session/status/session-activity-store";
 import { activeDelegatedTasks, hasNoNewActivity, lastTaskProgressAt, transcriptProgress } from "../src/react-app/domains/session/status/session-progress";
 import type { TaskToolPart } from "../src/lib/build-in-tools";
 import { WorkspaceProvider } from "../src/react-app/shell/workspace-provider";
@@ -35,7 +35,7 @@ const userMessage: UIMessage = {
   parts: [{ type: "text", text: "Send this", state: "done" }],
 };
 
-function list(messages: UIMessage[], status: ThreadStatus, syncHealth?: RunSyncHealth) {
+function list(messages: UIMessage[], status: ThreadStatus, syncHealth?: RunSyncHealth, activityStatus: SessionActivityStatus = "thinking") {
   return (
     <PlatformProvider value={createDefaultPlatform()}>
     <MessageListProvider
@@ -56,7 +56,7 @@ function list(messages: UIMessage[], status: ThreadStatus, syncHealth?: RunSyncH
       onMcpReopenAuthorization={() => Promise.resolve()}
       onMcpRetry={() => {}}
     >
-      <MessageList messages={messages} status={status} activityStatus="thinking" syncHealth={syncHealth} />
+      <MessageList messages={messages} status={status} activityStatus={activityStatus} syncHealth={syncHealth} />
     </MessageListProvider>
     </PlatformProvider>
   );
@@ -114,7 +114,9 @@ describe("message-list loading feedback", () => {
   test("acknowledges a submitted message before streaming starts", () => {
     const markup = renderList([userMessage], "submitted");
 
-    expect(markup).toContain("Working 0s");
+    expect(markup).toContain('role="status" data-loading-message="starting"');
+    expect(markup).toContain("Starting…");
+    expect(markup).not.toContain("Working");
     expect(markup).toContain("ow-text-shimmer");
     expect(markup).not.toContain("animate-spin");
     expect(markup).not.toContain("PaperGrainGradient");
@@ -124,10 +126,11 @@ describe("message-list loading feedback", () => {
     expect(shouldShowMessageListLoading("submitted", 0)).toBe(false);
   });
 
-  test("keeps the same loading treatment when streaming begins", () => {
+  test("shows active work only when streaming begins", () => {
     const markup = renderList([userMessage], "streaming");
 
     expect(markup).toContain("Working 0s");
+    expect(markup).not.toContain("Starting");
     expect(markup).toContain("ow-text-shimmer");
     expect(markup).not.toContain("animate-spin");
     expect(markup).not.toContain("PaperGrainGradient");
@@ -135,6 +138,51 @@ describe("message-list loading feedback", () => {
 
   test("does not duplicate working feedback when a tool row is visible", () => {
     expect(shouldShowMessageListLoading("streaming", 2, true)).toBe(false);
+    expect(shouldShowMessageListLoading("submitted", 2, true)).toBe(false);
+  });
+
+  test.each<SessionActivityStatus>(["waiting", "compacting"])("does not mask %s with pending feedback", (activityStatus) => {
+    const markup = renderToStaticMarkup(list([userMessage], "submitted", undefined, activityStatus));
+    expect(markup).not.toContain('data-loading-message="starting"');
+    expect(markup).not.toContain('data-loading-message="working"');
+  });
+
+  test("does not start a work timer or age out pending feedback before confirmed activity", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    const interval = spyOn(window, "setInterval");
+    try {
+      await act(async () => { root.render(list([userMessage], "submitted")); });
+      expect(container.textContent).toContain("Starting…");
+      expect(interval).not.toHaveBeenCalled();
+      clock.mockReturnValue(62_000);
+      await act(async () => { root.render(list([userMessage], "submitted")); });
+      expect(container.textContent).toContain("Starting…");
+      expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
+      expect(interval).not.toHaveBeenCalled();
+      await act(async () => {
+        useSessionActivityStore.getState().setRunStatus("ws", "session", { type: "busy" });
+        root.render(list([userMessage], "streaming"));
+      });
+      expect(container.textContent).toContain("Working 0s");
+      expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
+      expect(interval).toHaveBeenCalledTimes(1);
+      await act(async () => { root.render(list([userMessage], "ready")); });
+      expect(container.querySelector("[data-loading-message]")).toBeNull();
+    } finally {
+      await act(async () => { root.unmount(); });
+      container.remove();
+      interval.mockRestore();
+      clock.mockRestore();
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      if (ownedDom) await GlobalRegistrator.unregister();
+    }
   });
 });
 
@@ -150,7 +198,7 @@ const delegated: UIMessage = { id: "assistant", role: "assistant", parts: [task]
 const followup: UIMessage = { id: "followup", role: "user", parts: [{ type: "text", text: "What is the update?" }] };
 
 describe("task-linked meaningful progress", () => {
-  test.each<ThreadStatus>(["streaming", "ready"])("keeps delegated tasks before the follow-up while the parent is %s", (status) => {
+  test.each<ThreadStatus>(["submitted", "streaming", "ready"])("keeps delegated tasks before the follow-up while the parent is %s", (status) => {
     const messages = [userMessage, delegated, followup];
     expect(activeDelegatedTasks(messages)).toEqual([task]);
     const html = renderList(messages, status);
@@ -159,6 +207,7 @@ describe("task-linked meaningful progress", () => {
     expect(html).not.toContain('data-testid="active-subagents"');
     expect(html).not.toContain("data-subagent-history");
     expect(html).not.toContain('data-loading-message="working"');
+    expect(html).not.toContain('data-loading-message="starting"');
     expect(html).not.toContain("PRIVATE TASK PROMPT");
   });
 
@@ -396,6 +445,13 @@ describe("task-linked meaningful progress", () => {
 });
 
 describe("message-list reconnecting feedback", () => {
+  test("does not mask a degraded connection with Starting", () => {
+    const markup = renderList([userMessage], "submitted", { degraded: true, lastConfirmedAt: null });
+    expect(markup).toContain('data-loading-message="reconnecting"');
+    expect(markup).not.toContain('data-loading-message="starting"');
+    expect(markup).not.toContain('data-loading-message="working"');
+  });
+
   test("replaces the ticking working row when run liveness cannot be validated", () => {
     const markup = renderList([userMessage], "streaming", {
       degraded: true,
