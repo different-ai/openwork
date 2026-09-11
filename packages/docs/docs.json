@@ -101,6 +101,8 @@
             "group": "Install and operate",
             "pages": [
               "start-here/enterprise-desktop-deployment",
+              "self-host/gateway",
+              "self-host/gateway-upgrade",
               "self-host/declarative-configuration",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",
@@ -130,6 +132,7 @@
               "cloud/share-with-your-team/per-member-llm-credentials",
               "cloud/share-with-your-team/custom-llm-provider",
               "cloud/share-with-your-team/shared-mcp-connections",
+              "cloud/share-with-your-team/mcp-server-compatibility",
               "cloud/share-with-your-team/dashboards"
             ]
           },

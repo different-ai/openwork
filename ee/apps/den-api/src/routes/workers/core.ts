@@ -1,15 +1,17 @@
-import { desc, eq } from "@openwork-ee/den-db/drizzle"
+import { eq } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { nextCursorSchema } from "../../list-pagination.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOpenWorkWebRuntimeAccess, openWorkWebAccessRequiredPayload } from "../../openwork-web-runtime-access.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { getRequiredUserEmail } from "../../user.js"
+import { listWorkersPage } from "../../workers/list.js"
 import type { WorkerRouteVariables } from "./shared.js"
 import {
   continueCloudProvisioning,
@@ -60,6 +62,7 @@ const workerListResponseSchema = z.object({
   workers: z.array(z.object({
     instance: workerInstanceSchema,
   }).merge(workerSchema)),
+  nextCursor: nextCursorSchema,
 }).meta({ ref: "WorkerListResponse" })
 
 const workerResponseSchema = z.object({
@@ -149,7 +152,8 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     describeRoute({
       tags: ["Workers"],
       summary: "List workers",
-      description: "Lists the workers that belong to the caller's active organization, including each worker's latest known instance state.",
+      description: "Lists the workers that belong to the caller's active organization, newest first, including each worker's latest known instance state. "
+        + "Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.",
       responses: {
         200: jsonResponse("Workers returned successfully.", workerListResponseSchema),
         400: jsonResponse("The worker list query parameters were invalid.", invalidRequestSchema),
@@ -164,15 +168,10 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     const query = c.req.valid("query")
 
     if (!orgId) {
-      return c.json({ workers: [] })
+      return c.json({ workers: [], nextCursor: null })
     }
 
-    const rows = await db
-      .select()
-      .from(WorkerTable)
-      .where(eq(WorkerTable.org_id, orgId))
-      .orderBy(desc(WorkerTable.created_at))
-      .limit(query.limit)
+    const { items: rows, nextCursor } = await listWorkersPage({ orgId, limit: query.limit, cursor: query.cursor })
 
     const workers = await Promise.all(
       rows.map(async (row) => {
@@ -184,7 +183,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       }),
     )
 
-    return c.json({ workers })
+    return c.json({ workers, nextCursor })
     },
   )
 

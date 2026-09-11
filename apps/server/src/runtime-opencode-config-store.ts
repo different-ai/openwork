@@ -148,6 +148,16 @@ export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceI
   return await runtimeOpencodeConfigStore.get(config, workspaceId) ?? {};
 }
 
+// App leases are process-local too. Retain entry tombstones so removal and
+// restoration cannot resurrect a lease; unrelated runtime writes do not touch it.
+const runtimeMcpRevisions = new WeakMap<ServerConfig, Map<string, Map<string, number>>>();
+
+/** Private generations for one named MCP's global and workspace runtime entries. */
+export function readRuntimeMcpConfigRevisions(config: ServerConfig, workspaceId: string, name: string): Array<number | null> {
+  const revisions = runtimeMcpRevisions.get(config);
+  return [ENGINE_GLOBAL_RUNTIME_CONFIG_ID, workspaceId].map(id => revisions?.get(id)?.get(name) ?? null);
+}
+
 export async function readGlobalRuntimeOpencodeConfig(config: ServerConfig): Promise<RuntimeOpencodeConfig> {
   return await readRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID);
 }
@@ -531,7 +541,26 @@ function updateRuntimeConfig(
     const next = normalizeRuntimeOpencodeConfig(updater(row?.value ?? {}));
     const configJson = runtimeOpencodeConfigStore.serialize(next);
     if (row?.valueJson === configJson) return { config: next, changed: false };
-    await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, Date.now());
+    const updatedAt = Math.max(Date.now(), (row?.updatedAt ?? 0) + 1);
+    await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, updatedAt);
+    // Compare persisted bytes rather than row.value: an updater may mutate its input.
+    const previousMcp = runtimeMcpMap(parseRuntimeOpencodeConfig(row?.valueJson ?? "{}"));
+    const nextMcp = runtimeMcpMap(next);
+    const changedMcpNames = [...new Set([...Object.keys(previousMcp), ...Object.keys(nextMcp)])]
+      .filter(name => JSON.stringify(previousMcp[name]) !== JSON.stringify(nextMcp[name]));
+    if (changedMcpNames.length) {
+      let workspaces = runtimeMcpRevisions.get(config);
+      if (!workspaces) {
+        workspaces = new Map();
+        runtimeMcpRevisions.set(config, workspaces);
+      }
+      let revisions = workspaces.get(workspaceId);
+      if (!revisions) {
+        revisions = new Map();
+        workspaces.set(workspaceId, revisions);
+      }
+      for (const name of changedMcpNames) revisions.set(name, updatedAt);
+    }
     for (const listener of writeListeners) listener(config, workspaceId);
     return { config: next, changed: true };
   });

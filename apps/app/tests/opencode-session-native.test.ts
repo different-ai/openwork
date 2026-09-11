@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { focusManager } from "@tanstack/react-query";
 import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
-import { createClient, createPromptMessageID, hasAcceptedPromptMessage, unwrap, type FieldsResult } from "../src/app/lib/opencode";
-import { holdSessionWork, interruptSessionTurn, sendSessionCommand, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption } from "../src/app/lib/opencode-interruption";
+import { createClient, createPromptMessageID, hasAcceptedPromptMessage, PromptAdmissionUnknownError, promptAdmissionFailure, readPromptAdmission, unwrap, type FieldsResult } from "../src/app/lib/opencode";
+import { holdSessionWork, interruptSessionTurn, sendSessionCommand, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn } from "../src/app/lib/opencode-interruption";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import {
   composeNativeSessionSnapshot,
@@ -71,6 +71,12 @@ async function withSessionFetch(
     value: (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       requests.push(request);
+      const url = new URL(request.url);
+      // The engine serves these fixtures' directories as given; no symlink resolution applies.
+      if (request.method === "GET" && url.pathname.endsWith("/path")) {
+        const directory = url.searchParams.get("directory") ?? "";
+        return Promise.resolve(Response.json({ home: "/", state: "/", config: "/", worktree: directory, directory }));
+      }
       return Promise.resolve(respond(request));
     },
   });
@@ -132,6 +138,60 @@ describe("native OpenCode session operations", () => {
       globalThis.fetch = originalFetch;
     }
   });
+  test("an idle conversation listed without the message is the only absence that counts", async () => {
+    const originalFetch = globalThis.fetch;
+    const messageID = createPromptMessageID();
+    let listed: unknown = [];
+    let statuses: Record<string, SessionStatus> = {};
+    let messageStatus = 404;
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(new Request(input, init).url).pathname;
+        if (path.endsWith(`/message/${messageID}`)) {
+          return messageStatus === 200
+            ? Response.json({ info: { id: messageID, sessionID: session.id, role: "user" }, parts: [] })
+            : new Response(null, { status: messageStatus });
+        }
+        if (path.endsWith("/session/status")) return Response.json(statuses);
+        if (path.endsWith(`/session/${session.id}/message`)) return Response.json(listed);
+        return new Response(null, { status: 500 });
+      },
+    });
+    try {
+      const client = createClient(endpoint.opencodeBaseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("absent");
+      statuses = { [session.id]: { type: "busy" } };
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("unknown");
+      statuses = {};
+      listed = [{ info: { id: messageID, sessionID: session.id, role: "user" }, parts: [] }];
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("unknown");
+      listed = { unexpected: true };
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("unknown");
+      messageStatus = 200;
+      expect(await readPromptAdmission(client, session.id, messageID)).toBe("accepted");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+  test("a settled prompt failure keeps its response body behind the unknown admission", async () => {
+    const originalFetch = globalThis.fetch;
+    const body = { name: "APIError", data: { statusCode: 507, message: "storage quota exceeded" } };
+    let response = () => Response.json(body, { status: 507 });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async () => response() });
+    try {
+      const client = createClient(endpoint.opencodeBaseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
+      const settled = await client.session.promptAsync({ sessionID: session.id, parts: [] }).catch((error: unknown) => error);
+      if (!(settled instanceof PromptAdmissionUnknownError)) throw new Error("Expected an unknown admission");
+      expect(promptAdmissionFailure(settled)).toEqual(body);
+      response = () => new Response("", { status: 502 });
+      const empty = await client.session.promptAsync({ sessionID: session.id, parts: [] }).catch((error: unknown) => error);
+      if (!(empty instanceof PromptAdmissionUnknownError)) throw new Error("Expected an unknown admission");
+      expect(promptAdmissionFailure(empty)).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
   test("uses the resolved mounted endpoint and its workspace token", async () => {
     let receivedEndpoint: typeof endpoint | null = null;
     await getNativeSession(endpoint, session.id, undefined, {
@@ -148,7 +208,7 @@ describe("native OpenCode session operations", () => {
     const calls: string[] = [];
     const controller = new AbortController();
     const snapshotPromise = composeNativeSessionSnapshot(endpoint, session.id, {
-      limit: 140,
+      limit: 24,
       signal: controller.signal,
     }, {
       createOperations: () => operations({
@@ -157,7 +217,7 @@ describe("native OpenCode session operations", () => {
           return result(session);
         },
         messages: async (_sessionId, limit, options) => {
-          calls.push(limit === 140 && options?.signal === controller.signal ? "messages" : "bad-messages");
+          calls.push(limit === 24 && options?.signal === controller.signal ? "messages" : "bad-messages");
           return result(messages);
         },
         todo: async (_sessionId, options) => {
@@ -173,6 +233,130 @@ describe("native OpenCode session operations", () => {
 
     expect(calls).toEqual(["get", "messages", "todo", "status"]);
     expect(await snapshotPromise).toEqual({ session, messages, todos, status: { type: "idle" } });
+  });
+
+  test.each(["opencode", "opencode2"])("%s previews request the newest bounded messages and leave full reads uncapped", async (engine) => {
+    const target = { ...endpoint, opencodeBaseUrl: endpoint.opencodeBaseUrl.replace("opencode", engine) };
+    const history = Array.from({ length: 30 }, (_, index) => ({
+      info: { ...messages[0]!.info, id: `msg_${index}`, time: { created: index } },
+      parts: [],
+    }));
+    const limits: Array<string | null> = [];
+    await withSessionFetch((request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith(`/session/${session.id}`)) {
+        return Response.json(engine === "opencode2" ? { data: session } : session);
+      }
+      if (url.pathname.endsWith("/message")) {
+        const limit = url.searchParams.get("limit");
+        limits.push(limit);
+        const page = limit ? history.slice(-Number(limit)) : history;
+        return Response.json(engine === "opencode2" ? {
+          data: page.toReversed().map(({ info }) => ({ ...info, type: "user", content: [] })),
+        } : page);
+      }
+      if (url.pathname.endsWith("/todo")) return Response.json(todos);
+      if (url.pathname.endsWith("/status")) return Response.json({});
+      if (url.pathname.endsWith("/active")) return Response.json({ data: {} });
+      throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+    }, async () => {
+      const preview = await composeNativeSessionSnapshot(target, session.id, { limit: 24 });
+      const full = await composeNativeSessionSnapshot(target, session.id);
+      const newestIds = history.slice(-24).map(({ info }) => info.id);
+      const allIds = history.map(({ info }) => info.id);
+      expect(preview.messages.map(({ info }) => info.id)).toEqual(engine === "opencode2" ? newestIds.toReversed() : newestIds);
+      expect(full.messages.map(({ info }) => info.id)).toEqual(engine === "opencode2" ? allIds.toReversed() : allIds);
+      expect(limits).toEqual(["24", null]);
+    });
+  });
+
+  test.each(["opencode", "opencode2"])("%s reads only saved IDs in requested order and skips a deleted anchor", async (engine) => {
+    const target = { ...endpoint, opencodeBaseUrl: endpoint.opencodeBaseUrl.replace("opencode", engine) };
+    const controller = new AbortController();
+    const ids: readonly string[] = ["msg_z", "msg_a", "msg_m", "msg_z"];
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith(`/session/${session.id}`)) return Response.json(engine === "opencode2" ? { data: session } : session);
+      const id = path.match(/\/message\/([^/]+)$/)?.[1];
+      if (id) {
+        if (id === "msg_a") return Response.json({ message: "Message not found" }, { status: 404 });
+        const record = {
+          info: { ...messages[0]!.info, id, time: { created: ids.indexOf(id) } },
+          parts: messages[0]!.parts.map((part) => ({ ...part, messageID: id })),
+        };
+        return Response.json(engine === "opencode2"
+          ? { data: { ...record.info, type: "user", content: [{ type: "text", text: "hello" }] } }
+          : record);
+      }
+      if (path.endsWith("/todo")) return Response.json(todos);
+      if (path.endsWith("/status")) return Response.json({});
+      if (path.endsWith("/active")) return Response.json({ data: {} });
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }, async (requests) => {
+      const snapshot = await composeNativeSessionSnapshot(target, session.id, { messageIds: ids, limit: 24, signal: controller.signal });
+      expect(snapshot.messages.map(({ info }) => info.id)).toEqual(["msg_z", "msg_m"]);
+      expect(snapshot.messages.every(({ info, parts }) => info.sessionID === session.id && parts.length === 1
+        && parts.every((part) => part.sessionID === session.id && part.messageID === info.id))).toBe(true);
+      const lookups = requests.filter((request) => new URL(request.url).pathname.includes("/message/"));
+      expect(lookups.map((request) => request.url)).toEqual(["msg_z", "msg_a", "msg_m"].map((id) =>
+        `${target.opencodeBaseUrl}${engine === "opencode2" ? "/api" : ""}/session/${session.id}/message/${id}`));
+      expect(requests.some((request) => new URL(request.url).pathname.endsWith("/message"))).toBe(false);
+      for (const request of requests) {
+        expect(request.method).toBe("GET");
+        expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
+      }
+    });
+  });
+
+  test("saved-region previews dedupe before capping at 24 IDs without listing messages", async () => {
+    const ids = Array.from({ length: 30 }, (_, index) => `msg_${30 - index}`);
+    const lookups: string[] = [];
+    const controller = new AbortController();
+    const dependencies = { createOperations: () => operations({
+      messages: async () => { throw new Error("Unexpected full message read"); },
+      message: async (sessionId, messageId, options) => {
+        expect(sessionId).toBe(session.id);
+        expect(options?.signal).toBe(controller.signal);
+        lookups.push(messageId);
+        return result({ info: { ...messages[0]!.info, id: messageId }, parts: [] });
+      },
+    }) };
+    const snapshot = await composeNativeSessionSnapshot(endpoint, session.id, {
+      messageIds: [ids[0]!, ids[0]!, ...ids], signal: controller.signal,
+    }, dependencies);
+    expect(lookups).toEqual(ids.slice(0, 24));
+    expect(snapshot.messages.map(({ info }) => info.id)).toEqual(lookups);
+    expect((await composeNativeSessionSnapshot(endpoint, session.id, { messageIds: [] }, dependencies)).messages).toEqual([]);
+    expect(lookups).toHaveLength(24);
+  });
+
+  test("saved-region previews preserve auth, permission, and transport errors instead of treating them as deletion", async () => {
+    for (const status of [401, 403, 503]) {
+      await expect(composeNativeSessionSnapshot(endpoint, session.id, { messageIds: ["msg_1"] }, {
+        createOperations: () => operations({ message: async () => failedResult({ code: "read_failed" }, status) }),
+      })).rejects.toMatchObject({ status, code: "read_failed" });
+    }
+    const transportError = new Error("Connection lost");
+    await expect(composeNativeSessionSnapshot(endpoint, session.id, { messageIds: ["msg_1"] }, {
+      createOperations: () => operations({ message: async () => { throw transportError; } }),
+    })).rejects.toBe(transportError);
+    await expect(composeNativeSessionSnapshot(endpoint, session.id, { messageIds: ["msg_1"] }, {
+      createOperations: () => operations(),
+    })).rejects.toThrow("single-message reads are unavailable");
+  });
+
+  test("saved-region previews reject mismatched message and part owners", async () => {
+    const record = messages[0]!;
+    for (const mismatched of [
+      { ...record, info: { ...record.info, id: "msg_other" } },
+      { ...record, info: { ...record.info, sessionID: "ses_other" } },
+      { ...record, parts: record.parts.map((part) => ({ ...part, messageID: "msg_other" })) },
+      { ...record, parts: record.parts.map((part) => ({ ...part, sessionID: "ses_other" })) },
+    ]) {
+      await expect(composeNativeSessionSnapshot(endpoint, session.id, { messageIds: [record.info.id] }, {
+        createOperations: () => operations({ message: async () => result(mismatched) }),
+      })).rejects.toThrow("verify the saved session message owner");
+    }
   });
 
   test("returns raw SDK shapes for get, messages, and delete", async () => {
@@ -207,7 +391,7 @@ describe("native OpenCode session operations", () => {
     })).rejects.toMatchObject({ status: 503, code: "engine_unavailable" });
   });
 
-  test("retries a failed local snapshot read without waiting for query focus or issuing writes", async () => {
+  test.each([false, true])("retries a failed local snapshot read without waiting for query focus or issuing writes (saved region: %s)", async (savedRegion) => {
     const calls: string[] = [];
     const endpointTokens: string[] = [];
     let currentEndpoint = endpoint;
@@ -218,7 +402,7 @@ describe("native OpenCode session operations", () => {
         owner: "owner-a",
         endpoint: currentEndpoint,
         sessionId: session.id,
-      }), { limit: 140 }, {
+      }), savedRegion ? { messageIds: ["msg_1"] } : { limit: 140 }, {
         createOperations: (target) => {
           attempt += 1;
           endpointTokens.push(target.token);
@@ -231,6 +415,7 @@ describe("native OpenCode session operations", () => {
               ? failedResult({ code: "engine_reloading" }, 503)
               : result(session)),
             messages: async () => track("messages", result(messages)),
+            message: async () => track("message", result(messages[0]!)),
             todo: async () => track("todo", result(todos)),
             status: async () => track("status", result<Record<string, SessionStatus>>({})),
             delete: async () => {
@@ -247,7 +432,8 @@ describe("native OpenCode session operations", () => {
       expect(snapshot.session.id).toBe(session.id);
       expect(attempt).toBe(2);
       expect(endpointTokens).toEqual([endpoint.token, "rotated-workspace-token"]);
-      expect(calls).toEqual(["get", "messages", "todo", "status", "get", "messages", "todo", "status"]);
+      const messageRead = savedRegion ? "message" : "messages";
+      expect(calls).toEqual(["get", messageRead, "todo", "status", "get", messageRead, "todo", "status"]);
       expect(calls).not.toContain("delete");
       expect(calls).not.toContain("prompt");
     } finally {
@@ -277,7 +463,7 @@ describe("native OpenCode session operations", () => {
     expect(delays).toEqual([100, 250, 500]);
   });
 
-  test("aborting a local snapshot retry prevents the next read attempt", async () => {
+  test.each([false, true])("aborting a local snapshot retry prevents the next read attempt (saved region: %s)", async (savedRegion) => {
     const controller = new AbortController();
     const aborted = new Error("snapshot read cancelled");
     let attempt = 0;
@@ -285,16 +471,40 @@ describe("native OpenCode session operations", () => {
       owner: "owner-a",
       endpoint,
       sessionId: session.id,
-    }), { signal: controller.signal }, {
+    }), { signal: controller.signal, ...(savedRegion ? { messageIds: ["msg_1"] } : {}) }, {
       createOperations: () => {
         attempt += 1;
-        return operations({ get: async () => failedResult({ code: "engine_reloading" }, 503) });
+        return operations({
+          get: async () => failedResult({ code: "engine_reloading" }, 503),
+          message: async () => result(messages[0]!),
+        });
       },
       waitForSnapshotRetry: async () => { controller.abort(aborted); },
     });
 
     await expect(promise).rejects.toBe(aborted);
     expect(attempt).toBe(1);
+  });
+
+  test.each(["abort", "owner"])("a saved-region lookup cannot publish or retry after its %s changes", async (change) => {
+    const pending = Promise.withResolvers<FieldsResult<{ info: Message; parts: Part[] }>>();
+    const controller = new AbortController();
+    const aborted = new Error("snapshot read cancelled");
+    let owner = "owner-a";
+    let reads = 0;
+    const promise = composeNativeSessionSnapshotWithRetry("owner-a", () => ({
+      owner, endpoint, sessionId: session.id,
+    }), { messageIds: ["msg_1"], signal: controller.signal }, {
+      createOperations: () => operations({ message: async () => { reads += 1; return pending.promise; } }),
+      waitForSnapshotRetry: async () => { throw new Error("Unexpected retry"); },
+    });
+    expect(reads).toBe(1);
+    if (change === "abort") controller.abort(aborted);
+    else owner = "owner-b";
+    pending.resolve(result(messages[0]!));
+    if (change === "abort") await expect(promise).rejects.toBe(aborted);
+    else await expect(promise).rejects.toThrow("Session snapshot owner changed");
+    expect(reads).toBe(1);
   });
 });
 
@@ -644,9 +854,9 @@ describe("native Stop and follow-up handoff", () => {
     }
   });
 
-  test("v2 interrupts the native subagent before admitting the next prompt", async () => {
+  test.each([false, true])("v2 interrupts the native subagent before admitting the next prompt (immediate: %s)", async (immediate) => {
     const baseUrl = endpoint.opencodeBaseUrl.replace("opencode", "opencode2");
-    const rootID = "ses_v2_stop";
+    const rootID = `ses_v2_stop_${immediate}`;
     const childID = "ses_v2_child";
     const events: string[] = [];
     await withSessionFetch((request) => {
@@ -670,13 +880,76 @@ describe("native Stop and follow-up handoff", () => {
       throw new Error(`Unexpected v2 request: ${request.method} ${path}`);
     }, async (requests) => {
       const client = createClientV2(baseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
-      const stop = interruptSessionTurn(baseUrl, client, rootID, session.directory);
-      const next = submitAfterInterruption(baseUrl, rootID, async () => unwrap(await client.session.promptAsync({
+      const current = unwrap(await client.session.messages({ sessionID: rootID }));
+      const send = async () => unwrap(await client.session.promptAsync({
         sessionID: rootID, model: { providerID: "mock", modelID: "mock" }, parts: [{ type: "text", text: "new turn" }],
-      })));
+      }));
+      const stop = immediate ? undefined : interruptSessionTurn(baseUrl, client, rootID, session.directory);
+      const next = immediate
+        ? submitImmediateSessionTurn(baseUrl, client, rootID, current, send, { directory: session.directory })
+        : submitAfterInterruption(baseUrl, rootID, send);
       await Promise.all([stop, next]);
       expect(events).toEqual([`interrupt:${rootID}`, `interrupt:${rootID}`, `interrupt:${childID}`, `prompt:${rootID}`]);
       expect(requests.every((request) => new URL(request.url).pathname.includes("/opencode2/api/"))).toBe(true);
+    });
+  });
+
+  test("immediate follow-up preserves steering without current pending foreground delegation", async () => {
+    for (const variant of ["ordinary", "previous", "completed", "error", "background-input", "background-metadata"]) {
+      const rootID = `ses_steer_${variant}`;
+      const current = turnMessages(rootID, variant === "ordinary" ? [delegatedTool("ses_read", {}, "read")] :
+        variant === "previous" ? [] : [delegatedTool("ses_ignored", {
+          ...(variant === "completed" ? { status: "completed", output: "done" } : {}),
+          ...(variant === "error" ? { status: "error", error: "cancelled" } : {}),
+          ...(variant === "background-input" ? { input: { background: true } } : {}),
+          ...(variant === "background-metadata" ? { metadata: { sessionID: "ses_ignored", background: true } } : {}),
+        })]);
+      const sent: boolean[] = [];
+      await withSessionFetch((request) => {
+        if (request.method === "GET") return Response.json([
+          ...turnMessages(rootID, [delegatedTool("ses_old")], "msg_old"), ...current,
+        ]);
+        throw new Error("Ordinary steering must not abort");
+      }, async (requests) => {
+        const client = createClient(endpoint.opencodeBaseUrl);
+        const messages = unwrap(await client.session.messages({ sessionID: rootID }));
+        await submitImmediateSessionTurn(endpoint.opencodeBaseUrl, client, rootID, messages, async (afterStop) => { sent.push(afterStop); });
+        expect(sent).toEqual([false]);
+        expect(requests.filter((request) => request.method === "POST")).toEqual([]);
+      });
+    }
+  });
+
+  test("another Stop cancels an immediate successor while pending delegation is being interrupted", async () => {
+    const rootID = "ses_immediate_stop_race";
+    const idle = Promise.withResolvers<Response>();
+    const reached = Promise.withResolvers<void>();
+    let sends = 0;
+    await withSessionFetch((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/message")) return Response.json(turnMessages(rootID, [
+        delegatedTool("ses_pending", { status: "pending", metadata: undefined }),
+      ]));
+      if (path.endsWith("/abort")) return Response.json(true);
+      if (path.endsWith("/status")) { reached.resolve(); return idle.promise; }
+      if (path.endsWith(`/session/${rootID}`)) return Response.json({ ...session, id: rootID });
+      throw new Error(`Unexpected request: ${path}`);
+    }, async () => {
+      const client = createClient(endpoint.opencodeBaseUrl);
+      const current = unwrap(await client.session.messages({ sessionID: rootID }));
+      const next = submitImmediateSessionTurn(endpoint.opencodeBaseUrl, client, rootID, current, async () => { sends += 1; });
+      const outcome = next.then(() => undefined, (error: unknown) => error);
+      try {
+        await reached.promise;
+        const stop = interruptSessionTurn(endpoint.opencodeBaseUrl, client, rootID);
+        idle.resolve(Response.json({}));
+        await stop;
+        expect(await outcome).toMatchObject({ message: "Send cancelled by Stop." });
+        expect(sends).toBe(0);
+      } finally {
+        idle.resolve(Response.json({}));
+        await outcome;
+      }
     });
   });
 
@@ -702,14 +975,15 @@ describe("native Stop and follow-up handoff", () => {
     });
   });
 
-  test("stops only the current foreground tree and holds follow-up through delayed child abort and authoritative idle", async () => {
-    const root = { ...session, id: "ses_tree" };
+  test.each([false, true])("stops only the current foreground tree through delayed child abort and authoritative idle (immediate: %s)", async (immediate) => {
+    const root = { ...session, id: `ses_tree_${immediate}` };
     const baseUrl = endpoint.opencodeBaseUrl;
     const childAbort = Promise.withResolvers<Response>();
     const childReached = Promise.withResolvers<void>();
     const idle = Promise.withResolvers<Response>();
     const idleReached = Promise.withResolvers<void>();
     const aborted: string[] = [];
+    const withdrawn: string[] = [];
     const sent: boolean[] = [];
     let admissionReconciled = false;
     let statusReads = 0;
@@ -725,6 +999,33 @@ describe("native Stop and follow-up handoff", () => {
         if (++statusReads === 1) return Response.json({ ses_nested: { type: "busy" }, ses_unrelated: { type: "busy" } });
         idleReached.resolve();
         return idle.promise;
+      }
+      // The engine keeps an interrupted child's question pending; only the
+      // stopped tree's questions may be withdrawn, never another root's.
+      if (path.endsWith("/question")) {
+        expect(statusReads).toBeGreaterThan(1);
+        return Response.json([
+          { id: "que_nested", sessionID: "ses_nested", questions: [] },
+          { id: "que_unrelated", sessionID: "ses_unrelated", questions: [] },
+        ]);
+      }
+      const rejected = path.match(/\/question\/([^/]+)\/reject$/)?.[1];
+      if (request.method === "POST" && rejected) { withdrawn.push(rejected); return Response.json(true); }
+      // Same engine gap for permissions: an aborted tool's approval stays listed.
+      if (path.endsWith("/permission")) {
+        expect(statusReads).toBeGreaterThan(1);
+        return Response.json([
+          { id: "per_nested", sessionID: "ses_nested", permission: "bash", patterns: [], always: [], metadata: {} },
+          { id: "per_unrelated", sessionID: "ses_unrelated", permission: "bash", patterns: [], always: [], metadata: {} },
+        ]);
+      }
+      const replied = path.match(/\/permission\/([^/]+)\/reply$/)?.[1];
+      if (request.method === "POST" && replied) {
+        return request.clone().json().then((body: unknown) => {
+          const reply = typeof body === "object" && body !== null && "reply" in body ? body.reply : undefined;
+          withdrawn.push(`${replied}:${String(reply)}`);
+          return Response.json(true);
+        });
       }
       const [, id, action] = path.match(/\/session\/([^/]+)(?:\/([^/]+))?$/) ?? [];
       if (request.method === "POST" && action === "prompt_async") return new Response(null, { status: 204 });
@@ -753,14 +1054,18 @@ describe("native Stop and follow-up handoff", () => {
       throw new Error(`Unexpected request: ${request.method} ${path}`);
     }, async (requests) => {
       const client = createClient(baseUrl, root.directory, { token: endpoint.token, mode: "openwork" });
-      const stop = interruptSessionTurn(baseUrl, client, root.id, root.directory, {
+      const current = unwrap(await client.session.messages({ sessionID: root.id, directory: root.directory }));
+      const stop = immediate ? undefined : interruptSessionTurn(baseUrl, client, root.id, root.directory, {
         timeoutMs: 1_000, onStopped: () => { admissionReconciled = true; },
       });
-      const followUp = submitAfterInterruption(baseUrl, root.id, async (afterStop) => {
-        expect(admissionReconciled).toBe(true);
+      const send = async (afterStop: boolean) => {
+        if (!immediate) expect(admissionReconciled).toBe(true);
         sent.push(afterStop);
         return unwrap(await client.session.promptAsync({ sessionID: root.id, parts: [{ type: "text", text: "follow-up" }] }));
-      });
+      };
+      const followUp = immediate
+        ? submitImmediateSessionTurn(baseUrl, client, root.id, current, send, { directory: root.directory })
+        : submitAfterInterruption(baseUrl, root.id, send);
       try {
         await childReached.promise;
         expect(sent).toEqual([]);
@@ -774,12 +1079,15 @@ describe("native Stop and follow-up handoff", () => {
         idle.resolve(Response.json({ [root.id]: { type: "idle" }, ses_unrelated: { type: "busy" }, ses_old: { type: "busy" } }));
         await Promise.all([stop, followUp]);
         expect(sent).toEqual([true]);
+        expect(withdrawn).toEqual(["que_nested", "per_nested:reject"]);
         expect(sessionNeedsStop(baseUrl, root.id)).toBe(false);
         expect(requests.filter((request) => /\/session\/ses_[^/]+$/.test(new URL(request.url).pathname))
           .map((request) => new URL(request.url).pathname.split("/").at(-1)))
           .toEqual([root.id, "ses_child", "ses_nested", "ses_late"]);
         for (const request of requests) {
-          expect(request.url.startsWith(`${baseUrl}/session/`)).toBe(true);
+          expect(request.url.startsWith(`${baseUrl}/session/`) || request.url.startsWith(`${baseUrl}/question`)
+            || request.url.startsWith(`${baseUrl}/permission`)
+            || request.url.startsWith(`${baseUrl}/path?`)).toBe(true);
           expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
           if (!request.url.endsWith("/prompt_async")) expect(new URL(request.url).searchParams.get("directory")).toBe(root.directory);
         }

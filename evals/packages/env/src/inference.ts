@@ -37,11 +37,12 @@ export async function managedInference(place: Place) {
     const witness = stack.use(await startInferenceWitness());
     const port = await allocateFreePort();
     const child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", "src/server.ts"], {
-      cwd: `${root}/ee/apps/inference`, stdio: ["ignore", "pipe", "pipe"],
+      cwd: `${root}/ee/apps/gateway`, stdio: ["ignore", "pipe", "pipe"],
       env: {
         PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: "test", OPENWORK_DEV_MODE: "1",
         PORT: String(port), DB_MODE: "mysql", DATABASE_URL: database.url,
         DEN_DB_ENCRYPTION_KEY: encryptionSecret, OPENROUTER_UPSTREAM_URL: witness.url,
+        GATEWAY_EGRESS_ALLOWED_ORIGINS: new URL(witness.url).origin,
         INFERENCE_WEBHOOK_SECRET: "fixture-webhook-secret", INFERENCE_UPSTREAM_TIMEOUT_MS: "1000", INFERENCE_STREAM_IDLE_MS: "1000",
       },
     });

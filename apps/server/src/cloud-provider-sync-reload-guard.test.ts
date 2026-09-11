@@ -269,6 +269,75 @@ describe("engine reload guard", () => {
     expect(await waitUntil(() => rollovers === 1, 3_000)).toBe(true);
   });
 
+  test("a forced rollover the pool did not apply keeps the reload pending and the status loud until it lands", async () => {
+    previousReloadRetry = process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS;
+    process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS = "50";
+    const root = await createTempRoot();
+    const engine = startFakeEngine();
+    const baseUrl = `http://127.0.0.1:${engine.port}`;
+    const config = serverConfig(root, baseUrl);
+    const rollovers: Array<{ forceStandby: boolean | undefined; reason: string }> = [];
+    let outcome: Awaited<ReturnType<EnginePool["requestRollover"]>> = { action: "skipped", reason: "unchanged" };
+    const fakePool = {
+      hasDrainingGeneration: () => false,
+      requestRollover: async (input: Parameters<EnginePool["requestRollover"]>[0]) => {
+        rollovers.push({ forceStandby: input.forceStandby, reason: input.reason });
+        return outcome;
+      },
+      connections: () => [{ generationId: "gen_fake", role: "primary", baseUrl, username: "", password: "" }],
+      primaryUrl: () => baseUrl,
+      routeRequest: () => null,
+      reportRequestSuccess: () => undefined,
+      reportRequestFailure: () => undefined,
+      snapshot: () => ({ generations: [] }),
+    } as unknown as EnginePool;
+    setEnginePoolForConfig(config, fakePool);
+    stops.push(() => clearEnginePoolForConfig(config));
+    const server = await startServer(config);
+    stops.push(() => server.stop());
+    const base = `http://127.0.0.1:${server.port}`;
+    const den = startFakeDen({ providers: [guardProvider()] });
+    const put = await fetch(`${base}/den-session`, {
+      method: "PUT",
+      headers: hostHeaders(),
+      body: JSON.stringify({ baseUrl: den.url, token: "den_token", orgId: "org_test" }),
+    });
+    expect(put.status).toBe(204);
+
+    // The pool answered "skipped" to a forced request: nothing was applied, so
+    // the sync must neither clear the owed reload nor report the pass as applied.
+    const run = await readJsonObject(await fetch(`${base}/cloud-provider-sync/run`, {
+      method: "POST",
+      headers: hostHeaders(),
+      body: JSON.stringify({ reason: "skipped_by_pool" }),
+    }));
+    expect(rollovers.length).toBeGreaterThanOrEqual(1);
+    expect(rollovers.every((entry) => entry.forceStandby === true)).toBe(true);
+    expect(run.status).toBe("failed");
+    const stuck = await readJsonObject(await fetch(`${base}/cloud-provider-sync/status`, { headers: clientHeaders() }));
+    expect(stuck.reloadPending).toBe(true);
+    const stuckLastRun = isRecord(stuck.lastRun) ? stuck.lastRun : {};
+    expect(stuckLastRun.status).toBe("failed");
+    expect(String(stuckLastRun.message ?? "")).toContain("skipped");
+
+    // The retry poll keeps asking; once a generation actually lands the owed
+    // reload clears and the status settles to a truthful applied.
+    outcome = { action: "rolled_over", generationId: "gen_next", drainingSessions: 0 };
+    const rolloversBefore = rollovers.length;
+    const settled = await (async () => {
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const status = await readJsonObject(await fetch(`${base}/cloud-provider-sync/status`, { headers: clientHeaders() }));
+        const lastRun = isRecord(status.lastRun) ? status.lastRun : {};
+        if (lastRun.status === "applied" && status.reloadPending === false) return status;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return null;
+    })();
+    expect(settled).not.toBeNull();
+    expect(rollovers.length).toBeGreaterThan(rolloversBefore);
+  });
+
   test("global provider patch defers the reload while sessions are busy and applies it once idle", async () => {
     const root = await createTempRoot();
     const engine = startFakeEngine();

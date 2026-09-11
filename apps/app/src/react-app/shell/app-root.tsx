@@ -15,11 +15,13 @@ import {
   denSettingsChangedEvent,
   denSessionUpdatedEvent,
 } from "../../app/lib/den-session-events";
-import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
+import { evalRelaunchDesktopApp, readDesktopDistributionInfo } from "../../app/lib/desktop";
+import { outboundEgressAllowed } from "../../app/lib/enterprise-activation";
 import { isDesktopRuntime } from "../../app/lib/runtime-env";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import { useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import {
   clearCloudInventoryCache,
   prefetchCloudInventory,
@@ -375,22 +377,43 @@ function BrandThemeControlActions() {
 
 let appOpenedCaptured = false;
 
+/**
+ * Analytics and the Cloud inventory prefetch mount above the activation gate.
+ * An activation-required install holds them back until it is activated and
+ * its desktop config has resolved once — the same readiness the updater waits
+ * for — so nothing leaves the machine before the organization server is known
+ * and an organization policy could be honoured. Other installs are unaffected.
+ */
+function useOutboundEgressAllowed() {
+  const bootstrap = useSyncExternalStore(
+    subscribeToDenBootstrap,
+    readDenBootstrapSnapshot,
+    readDenBootstrapSnapshot,
+  );
+  const desktopConfig = useDesktopConfig();
+  return outboundEgressAllowed(readDesktopDistributionInfo(), bootstrap, {
+    desktopConfigLoading: desktopConfig.loading,
+  });
+}
+
 export function AppRoot() {
   useDesktopFontZoomBehavior();
   useVisualViewportInset();
+  const egressAllowed = useOutboundEgressAllowed();
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {
-    if (appOpenedCaptured) return;
+    if (!egressAllowed || appOpenedCaptured) return;
     appOpenedCaptured = true;
     initAnalytics();
     captureAnalyticsEvent("app_opened", {});
-  }, []);
+  }, [egressAllowed]);
 
   // Fetch what the organization shares with this member up front. Settings
   // mounts cold every time the extensions panel opens, so without this the
   // readiness groups wait on a Den round-trip the app could have done already.
   useEffect(() => {
+    if (!egressAllowed) return;
     prefetchCloudInventory();
     const handleSessionChanged = () => {
       clearCloudInventoryCache();
@@ -398,7 +421,7 @@ export function AppRoot() {
     };
     window.addEventListener(denSettingsChangedEvent, handleSessionChanged);
     return () => window.removeEventListener(denSettingsChangedEvent, handleSessionChanged);
-  }, []);
+  }, [egressAllowed]);
 
   return (
     <>

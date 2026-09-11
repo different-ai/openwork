@@ -19,12 +19,29 @@ export function setDenApiOriginOverride(input: string | null | undefined) {
   denApiOriginOverride = normalizeOrigin(input);
 }
 
-export function denApiOriginForWebOrigin(webOrigin: string): string | null {
-  const configuredOrigin = process.env.DEN_API_BASE?.trim();
-  if (configuredOrigin) {
+// Browser-facing API origin. DEN_API_PUBLIC_URL is the origin the browser can
+// reach (runtime-config hands it to clients); DEN_API_BASE is the server-side
+// upstream, which in containers is an in-network URL the browser cannot reach.
+// Prefer the public one and keep DEN_API_BASE as the documented fallback.
+// Mirrored in next-config-den-api-redirects.cjs (keep in sync).
+function configuredDenApiOrigin(): string | null {
+  for (const value of [process.env.DEN_API_PUBLIC_URL, process.env.DEN_API_BASE]) {
+    const configuredOrigin = value?.trim();
+    if (!configuredOrigin) continue;
     try {
-      return new URL(configuredOrigin).origin;
+      const url = new URL(configuredOrigin);
+      // Scheme-less values like `localhost:18788` parse with a `localhost:`
+      // scheme and an opaque "null" origin; skip them like the build-time rule.
+      if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
     } catch {}
+  }
+  return null;
+}
+
+export function denApiOriginForWebOrigin(webOrigin: string): string | null {
+  const configuredOrigin = configuredDenApiOrigin();
+  if (configuredOrigin) {
+    return configuredOrigin;
   }
 
   let url: URL;

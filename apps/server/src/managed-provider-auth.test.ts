@@ -291,6 +291,59 @@ describe("managed provider auth delivery", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("bounds a hung engine auth PUT and DELETE instead of waiting forever", async () => {
+    const previousTimeout = process.env.OPENWORK_PROVIDER_AUTH_TIMEOUT_MS;
+    process.env.OPENWORK_PROVIDER_AUTH_TIMEOUT_MS = "150";
+    try {
+      const config = await makeConfig(dir);
+      await seedProvider(config, { id: "anthropic", env: ["ANTHROPIC_API_KEY"] });
+      const env = { list: async () => [{ key: "ANTHROPIC_API_KEY", value: "sk-ant-secret" }] };
+      const errors: Array<Record<string, unknown> | undefined> = [];
+      let hang = false;
+      const methods: string[] = [];
+      // Mirrors an engine whose auth API accepted the socket but never
+      // answers: the response arrives only when the request is aborted.
+      const fetchImpl: typeof globalThis.fetch = Object.assign(
+        (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          methods.push(init?.method ?? "GET");
+          if (!hang) return Promise.resolve(new Response("{}", { status: 200 }));
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) return;
+            signal.addEventListener("abort", () => reject(signal.reason instanceof Error ? signal.reason : new Error("aborted")));
+          });
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      );
+      const logger = { warn: () => {}, error: (_m: string, meta?: Record<string, unknown>) => errors.push(meta) };
+
+      // Deliver once so the provider is owned, then rotate against a hung PUT.
+      await syncManagedProviderAuth({ config, env, fetchImpl, logger });
+      hang = true;
+      const rotatedEnv = { list: async () => [{ key: "ANTHROPIC_API_KEY", value: "sk-ant-rotated" }] };
+      const startedAt = Date.now();
+      const rotated = await syncManagedProviderAuth({ config, env: rotatedEnv, fetchImpl, logger });
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(rotated.failed).toEqual([{ providerId: PROVIDER, status: null }]);
+      expect(rotated.delivered).toEqual([]);
+      expect(rotated.rotated).toEqual([]);
+
+      // A hung DELETE for a no-longer-managed provider is bounded the same way
+      // and keeps the removal owed for the next pass.
+      await writeRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, (current) => ({ ...current, provider: {} }));
+      const removalStartedAt = Date.now();
+      const removal = await syncManagedProviderAuth({ config, env: rotatedEnv, fetchImpl, logger });
+      expect(Date.now() - removalStartedAt).toBeLessThan(2_000);
+      expect(removal.removed).toEqual([]);
+      expect(methods).toEqual(["PUT", "PUT", "DELETE"]);
+      expect(JSON.stringify(errors)).not.toContain("sk-ant-rotated");
+      await rm(dir, { recursive: true, force: true });
+    } finally {
+      if (previousTimeout === undefined) delete process.env.OPENWORK_PROVIDER_AUTH_TIMEOUT_MS;
+      else process.env.OPENWORK_PROVIDER_AUTH_TIMEOUT_MS = previousTimeout;
+    }
+  });
+
   test("re-delivers after the engine is replaced", async () => {
     const config = await makeConfig(dir);
     await seedProvider(config, { id: "anthropic", env: ["ANTHROPIC_API_KEY"] });

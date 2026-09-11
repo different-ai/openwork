@@ -116,6 +116,22 @@ describe("dashboard tile cache", () => {
     expect(readDashboardTileCache(scope, "tile_report", cache.cachedAt)).toBeNull();
   });
 
+  test("persists preview data without persisting a live App launch", () => {
+    const storage = installWindow();
+    const scope = dashboardTileCacheScopeKey("fixture-user", "fixture-org");
+    writeDashboardTileCache(scope, "tile", { ...cache, app: { ...cache.app, launchId: "private-live-launch" } });
+    expect(readDashboardTileCache(scope, "tile", cache.cachedAt)).toEqual(cache);
+    expect(storage.getItem(scope)).not.toContain("private-live-launch");
+  });
+
+  test.each([true, false, undefined])("retains the result error flag across cache restoration (isError=%s)", (isError) => {
+    installWindow();
+    const scope = dashboardTileCacheScopeKey("user_fixture", "org_fixture");
+    const saved = { ...cache, result: { ...cache.result, ...(isError === undefined ? {} : { isError }), _meta: { privateFixture: "view-only" } } };
+    writeDashboardTileCache(scope, "tile_report", saved);
+    expect(readDashboardTileCache(scope, "tile_report", cache.cachedAt)).toEqual(saved);
+  });
+
   test("refreshes only visible, stale, non-refreshing tiles", () => {
     const dueAt = cache.cachedAt + DASHBOARD_AUTO_REFRESH_INTERVAL_MS;
     expect(shouldAutoRefreshDashboardTile({

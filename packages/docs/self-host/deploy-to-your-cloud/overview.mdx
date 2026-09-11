@@ -3,7 +3,7 @@ title: "Deploy to your cloud"
 description: "Run OpenWork in your AWS, Azure, or Google Cloud account with Kubernetes, Helm, and managed MySQL."
 ---
 
-OpenWork's supported private-cloud shape uses the published Helm chart, a managed Kubernetes cluster, and a MySQL-compatible database in your own account. You control the network, DNS, certificates, database, backups, identity provider, and secrets; the chart deploys Den web, Den API, migrations, and the optional inference service.
+OpenWork's supported private-cloud shape uses the published Helm chart, a managed Kubernetes cluster, and a MySQL-compatible database in your own account. You control the network, DNS, certificates, database, backups, identity provider, and secrets; the chart deploys Den web, Den API, a migration Job, and optional OpenWork Gateway.
 
 <CardGroup cols={3}>
   <Card title="AWS" icon="cloud" href="/self-host/deploy-to-your-cloud/aws">
@@ -24,8 +24,8 @@ Every provider guide uses the same OpenWork boundaries:
 - Den web listens on port `3005` and serves the browser experience.
 - Den API listens on port `8788` and owns authentication, organizations, policy, and control-plane APIs.
 - A MySQL 8-compatible database stores shared control-plane state.
-- A migration Job runs before the application rollout.
-- The inference service is optional and disabled by default.
+- The default migration Job is a pre-install/pre-upgrade hook, not an automatic safe rolling schema cutover.
+- OpenWork Gateway is optional and disabled by default; it retains the `openwork-inference` image and `*-inference` resource names. It is not the separate `den-gateway` Web proxy.
 - HTTPS hostnames expose web and API traffic through the provider's load-balancing layer.
 
 Use private database networking in production. Require TLS for public application traffic, encrypt storage and backups, and keep database and authentication secrets in the provider secret store or a Kubernetes Secret—not in a Helm values file.
@@ -50,7 +50,7 @@ Keep rate limiting enabled in production.
 3. Create the database, database user, and Kubernetes namespace.
 4. Generate independent database, Better Auth, and Den encryption secrets.
 5. Prepare provider-specific Helm values for the web and API hostnames.
-6. Install or upgrade the chart and wait for the migration Job and workloads.
+6. For a fresh database, install the matching chart/images and verify initialization before opening traffic. For an existing database, follow the release-specific migration and rollout procedure; Gateway requires the [quiesced upgrade guide](/self-host/gateway-upgrade), not an unattended rolling upgrade.
 7. Point DNS at the load balancer and verify trusted HTTPS.
 8. [Create the first administrator](/self-host/deploy-to-your-cloud/first-administrator).
 9. Configure SAML or OIDC SSO and invite or provision members.
@@ -70,5 +70,7 @@ You need:
 </Note>
 
 ## After deployment
+
+To opt in to the Gateway dashboard, follow [Enable OpenWork Gateway](/self-host/gateway). This requires the Gateway-capable chart implementation introduced in `0.2.0` or later, matching release images, an authenticated capability-version-1 response, and a separate platform-admin organization grant. Neither legacy service enablement nor existing OpenWork Models billing enables it automatically.
 
 Use [Private network deployment](/start-here/private-network-deployment) when Den is reachable only through a VPN or private network. Review [Outbound network access](/start-here/outbound-network-access), [Certificate trust and proxies](/start-here/certificate-trust-and-proxies), and [Air-gapped deployment](/start-here/air-gapped-deployment) before restricting egress.

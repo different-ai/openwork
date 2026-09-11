@@ -42,6 +42,8 @@ export interface ElectronSurfaceOptions {
   devCommand?: "dev" | "dev:electron";
   /** Skip host-side sidecar/helper preparation when the caller intentionally uses existing resources. */
   prepareSharedResources?: boolean;
+  /** Never share a pooled sandbox with another surface; placement provisions this one its own. */
+  ownSandbox?: boolean;
 }
 
 export interface ChromeSurfaceOptions {

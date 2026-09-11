@@ -291,14 +291,19 @@ export async function preseededConnect(seed: Seed) {
   });
   if (provider.response.status !== 201) throw new Error(`Could not publish the Connect fixture model: HTTP ${provider.response.status}`);
   const mcpSession = await mintMcpSession(seed, den, organizationId);
-  const app = await seed.desktop({ den, signIn: false });
+  const proxy = await seed.faultProxy(den);
+  // Keep desktop handoff and subsequent token mints on the shaped connection.
+  const runtimeConfig = { denApiUrl: proxy.ref.apiUrl };
+  await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: runtimeConfig });
+  const tokenPath = "/api/den/v1/mcp/token";
+  await proxy.faults.status(tokenPath, 503, { times: 1000, body: { error: "connect_startup_unavailable" } });
+  const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("preseeded-connect"));
-  // TODO(primitive): seed.route
-  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
+  // Stay on the task route: Settings has its own reconciliation path.
   return {
-    app, den, prompt, proofPhrase, providerName, modelId,
+    app, den, proxy, runtimeConfig, tokenPath, prompt, proofPhrase, providerName, modelId,
     admin: den.admin,
-    member: den.admin,
+    member: { ...den.admin, ...proxy.ref },
     mcpSession,
     pluginId,
     rawSourceText,
