@@ -4,9 +4,9 @@ import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { generateMySQLDrizzleJson } from "drizzle-kit/api"
+import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/api"
 import * as schema from "../src/schema.ts"
-import { localConnectionConfig, matrixPreflightQueries, migrateLocalDatabase } from "../scripts/dev-migrate.ts"
+import { localConnectionConfig, matrixPreflightQueries, migrateLocalDatabase, preflightMatrix } from "../scripts/dev-migrate.ts"
 import { foundationSql, historyPrefix, journalTable, loadMigrationPlan, planAuthLookupIndexRepairs, recognizeBaseline, schemaDifferences, snapshotShape, stateTable } from "../scripts/migration-baseline.ts"
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -20,10 +20,12 @@ describe("local startup migration safety (offline)", () => {
     const saved = plan.at(-1)?.snapshot
     assert.ok(saved)
     const generated = JSON.parse(JSON.stringify(await generateMySQLDrizzleJson(schema, saved.prevId)))
-    generated.id = saved.id
-    assert.deepEqual(generated, saved)
+    assert.deepEqual(generated.tables, saved.tables)
+    assert.deepEqual(await generateMySQLMigration(saved, generated), [])
     assert.ok(saved.tables.team.columns.grants_organization_admin)
     assert.ok(saved.tables.inference_usage_ledger_entries.columns.provider_usage)
+    assert.ok(saved.tables.gateway_providers.columns.model_ids)
+    assert.ok(saved.tables.gateway_credential_sets.columns.created_by_org_membership_id)
   })
   function shapeAt(tag: string) {
     const snapshot = plan.find((entry) => entry.tag.startsWith(tag))?.snapshot
@@ -31,7 +33,7 @@ describe("local startup migration safety (offline)", () => {
     return snapshotShape(snapshot)
   }
   function fixture(shape: Map<string, string>, options: {
-    receipts?: Record<string, unknown>[]; dirty?: boolean; locked?: boolean; otherSessions?: boolean; invalid?: string; failOnSql?: RegExp; applyLookupIndexes?: boolean
+    receipts?: Record<string, unknown>[]; dirty?: boolean; locked?: boolean; otherSessions?: boolean; invalid?: string; failOnSql?: RegExp; applyLookupIndexes?: boolean; version?: string; mode?: string
   } = {}) {
     const queries: string[] = []
     const tables: Record<string, unknown>[] = []
@@ -70,7 +72,7 @@ describe("local startup migration safety (offline)", () => {
         for (const part of parts) indexes.push({ tbl: createIndex[2], name: createIndex[1], col: part.replace(/\(191\)$/, ""), prefix: 191,
           non_unique: unique ? 0 : 1, type, direction: "A", visible: "YES" })
       }
-      if (sql.includes("VERSION() AS version")) return [{ version: "8.0.40", mode: "STRICT_TRANS_TABLES", db: "synthetic_local" }]
+      if (sql.includes("VERSION() AS version")) return [{ version: options.version ?? "8.0.40", mode: options.mode ?? "STRICT_TRANS_TABLES", db: "synthetic_local" }]
       if (sql.includes("GET_LOCK")) return [{ acquired: options.locked ? 0 : 1 }]
       if (sql.includes("information_schema.PROCESSLIST")) return options.otherSessions ? [{ present: 1 }] : []
       if (sql.startsWith("SELECT table_name AS `name`")) return tables
@@ -79,7 +81,11 @@ describe("local startup migration safety (offline)", () => {
       if (sql.startsWith("SELECT t.table_name")) return constraints
       if (sql.startsWith(`SELECT hash, created_at FROM \`${journalTable}\``)) return options.receipts ?? []
       if (sql.startsWith(`SELECT 1 FROM \`${stateTable}\``)) return options.dirty ? [{ present: 1 }] : []
-      if (options.invalid && sql.startsWith(`SELECT '${options.invalid}'`)) return [{ invalid: 1 }]
+      const source = /^SELECT 1 FROM `(inference_[a-z_]+)` LIMIT 1$/.exec(sql)
+      if (source) {
+        assert.ok(shape.has(`table:${source[1]}`), `Must not query absent table ${source[1]}`)
+        return options.invalid === source[1] ? [{ present: 1 }] : []
+      }
       return []
     } }
     return { executor, queries }
@@ -88,7 +94,7 @@ describe("local startup migration safety (offline)", () => {
   test("known snapshots baseline only their prefix, never 0097", () => {
     assert.equal(recognizeBaseline(plan, shapeAt("0096_")), 96)
     assert.equal(recognizeBaseline(plan, shapeAt("0095_")), 95)
-    assert.throws(() => recognizeBaseline(plan, shapeAt("0097_")), /Historical groups\/sets cannot be reconstructed/)
+    assert.throws(() => recognizeBaseline(plan, shapeAt("0097_")), /Explicit recovery is required/)
     const partial = shapeAt("0096_")
     partial.delete("column:inference_providers.credential_mode")
     assert.throws(() => recognizeBaseline(plan, partial), /does not match/)
@@ -103,6 +109,135 @@ describe("local startup migration safety (offline)", () => {
     assert.throws(() => historyPrefix(plan, receipts.slice(1)), /exact hash\/timestamp prefix/)
     assert.throws(() => historyPrefix(plan, [{ ...receipts[0], hash: "dirty" }]), /exact hash\/timestamp prefix/)
     assert.throws(() => historyPrefix(plan, [...receipts, receipts[95]]), /exact hash\/timestamp prefix/)
+  })
+
+  test("only consolidated 0097 receipts retain the final prefix without restamping", () => {
+    const current = plan[96]
+    assert.equal(current.tag, "0097_gateway_access_matrix")
+    assert.equal(current.folderMillis, 1788895934602)
+    assert.equal(current.hash, "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470")
+    for (const created_at of [1788895934602, "1788895934602"]) {
+      const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+      const recorded = [...receipts.slice(0, 96), { hash: current.hash, created_at }]
+      const before = structuredClone(recorded)
+      assert.equal(historyPrefix(plan, recorded), 97)
+      assert.deepEqual(recorded, before)
+      assert.deepEqual(plan.slice(historyPrefix(plan, recorded)), [])
+    }
+  })
+
+  test("superseded 0097-0099 history and all other receipt drift require explicit recovery", async () => {
+    const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+    for (const hash of [
+      "dec021c8b3bb9fb139b3e0737ac5618ab1ed74d64d82fe36e1fcfe71306f378d",
+      "2882d271052bd27a6281e5a1b161056546c817d27e218ba69fecd5f00cb4db9a",
+    ]) {
+      for (const applied of [97, 98, 99]) {
+        const old = [...receipts.slice(0, 96), { ...receipts[96], hash },
+          ...Array.from({ length: applied - 97 }, (_, index) => ({ hash: "superseded", created_at: receipts[96].created_at + index + 1 }))]
+        const before = structuredClone(old)
+        const { executor, queries } = fixture(shapeAt("0097_"), { receipts: old })
+        await assert.rejects(migrateLocalDatabase(executor, plan), /exact hash\/timestamp prefix at receipt 97/)
+        assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+        assert.deepEqual(old, before)
+      }
+    }
+    for (const row of [
+      { ...receipts[96], hash: "unknown" },
+      { hash: plan[96].hash, created_at: 1788895934603 },
+    ]) {
+      assert.throws(() => historyPrefix(plan, [...receipts.slice(0, 96), row]), /exact hash\/timestamp prefix at receipt 97/)
+    }
+    for (const index of [2, 9, 14, 94, 95, 96]) {
+      const olderDrift = plan.map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+      olderDrift[index].hash = "unknown"
+      assert.throws(() => historyPrefix(plan, olderDrift), new RegExp(`exact hash/timestamp prefix at receipt ${index + 1}\\.`))
+    }
+    assert.throws(() => historyPrefix(plan, [...receipts, receipts[96]]), /prefix at receipt 98/)
+  })
+
+  test("consolidated 0097 receipts require schema parity and do not rerun source guards", async () => {
+    const receipts = plan.map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+    const before = structuredClone(receipts)
+    const shape = shapeAt("0097_")
+    const healthy = fixture(shape, { receipts })
+    await migrateLocalDatabase(healthy.executor, plan, true)
+    assert.ok(healthy.queries.every((sql) => sql.startsWith("SELECT")))
+    assert.ok(matrixPreflightQueries(plan).every((guard) => !healthy.queries.includes(guard.sql)))
+    const drifted = new Map(shape)
+    drifted.delete("column:gateway_provider_access.model_group_id")
+    const invalid = fixture(drifted, { receipts })
+    await assert.rejects(migrateLocalDatabase(invalid.executor, plan, true), /Schema differs from its recorded migration/)
+    assert.ok(invalid.queries.every((sql) => sql.startsWith("SELECT")))
+    assert.deepEqual(receipts, before)
+  })
+
+  test("consolidated source checks are eight read-only existence probes", () => {
+    const queries = matrixPreflightQueries(plan)
+    assert.deepEqual(queries.map(({ name }) => name), [
+      "inference_providers", "inference_provider_models", "inference_provider_credentials",
+      "inference_provider_access", "inference_provider_oauth_states", "inference_request_logs",
+      "inference_usage_rollups", "inference_rollup_lock",
+    ])
+    for (const query of queries) assert.equal(query.sql, `SELECT 1 FROM \`${query.name}\` LIMIT 1`)
+  })
+
+  test("source pin rejects missing, duplicate, added or altered generated packets", () => {
+    const mutations: ((sql: string[]) => string[])[] = [
+      (sql) => sql.slice(1),
+      (sql) => [...sql.slice(0, 4), sql[4], ...sql.slice(4)],
+      (sql) => [...sql.slice(0, 4), "SELECT 1;", ...sql.slice(4)],
+      (sql) => sql.map((packet) => packet.replace("NOT NULL", "NULL")),
+      (sql) => sql.map((packet) => packet.replace("RENAME TABLE", "SELECT")),
+    ]
+    for (const mutate of mutations) {
+      const altered = plan.map((entry) => entry.tag === "0097_gateway_access_matrix" ? { ...entry, sql: mutate([...entry.sql]) } : entry)
+      // The original plan hash is deliberately retained: layout checks must
+      // inspect SQL bytes, not trust a stale hash alongside changed packets.
+      assert.throws(() => matrixPreflightQueries(altered), /0097 source changed/)
+    }
+  })
+
+  test("each source must be empty and the first nonempty source aborts", async () => {
+    const queries = matrixPreflightQueries(plan)
+    const called: string[] = []
+    await preflightMatrix({ query: async (sql) => { called.push(sql); return [] } }, plan)
+    assert.deepEqual(called, queries.map((query) => query.sql))
+    for (const target of queries) {
+      for (const rows of [[{}], [{ present: 1 }]]) {
+        const called: string[] = []
+        await assert.rejects(preflightMatrix({ query: async (sql) => {
+          called.push(sql)
+          return sql === target.sql ? rows : []
+        } }, plan), /Preflight rejected/)
+        assert.deepEqual(called, queries.slice(0, queries.indexOf(target) + 1).map((query) => query.sql))
+      }
+    }
+  })
+
+  test("verified 0095 skips only its absent rollup lock and query errors abort", async () => {
+    const all = matrixPreflightQueries(plan)
+    const required = all.filter((query) => query.name !== "inference_rollup_lock")
+    assert.equal(all.length - required.length, 1)
+    const called: string[] = []
+    await preflightMatrix({ query: async (sql) => {
+      called.push(sql)
+      return []
+    } }, plan, false)
+    assert.deepEqual(called, required.map((query) => query.sql))
+    for (const completeSchema of [false, true]) {
+      const expected = completeSchema ? all : required
+      for (const target of expected) {
+        const failure = new Error("synthetic query failure")
+        const attempted: string[] = []
+        await assert.rejects(preflightMatrix({ query: async (sql) => {
+          attempted.push(sql)
+          if (sql === target.sql) throw failure
+          return []
+        } }, plan, completeSchema), (error: unknown) => error === failure)
+        assert.deepEqual(attempted, expected.slice(0, expected.indexOf(target) + 1).map((query) => query.sql))
+      }
+    }
   })
 
   const lookupKeys = [
@@ -228,12 +363,55 @@ describe("local startup migration safety (offline)", () => {
     }
   })
 
+  test("0095 nonempty sources and missing prerequisites fail before any pending writes", async () => {
+    for (const source of matrixPreflightQueries(plan, false)) {
+      const { executor, queries } = fixture(shapeAt("0095_"), { invalid: source.name })
+      await assert.rejects(migrateLocalDatabase(executor, plan), /Preflight rejected nonempty/)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+    for (const tag of ["0095_", "0096_"]) {
+      const shape = shapeAt(tag)
+      shape.delete("table:inference_provider_models")
+      const { executor, queries } = fixture(shape)
+      await assert.rejects(migrateLocalDatabase(executor, plan), /does not match/)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+  })
+
+  test("0095 apply repeats all eight source guards after 0096 and before the first 0097 DDL", async () => {
+    const shape = shapeAt("0095_")
+    const { executor, queries } = fixture(shape, { failOnSql: /^CREATE TABLE `gateway_credential_sets`/ })
+    await assert.rejects(migrateLocalDatabase({ query: async (sql) => {
+      if (sql.includes("CREATE TABLE `inference_rollup_lock`")) shape.set("table:inference_rollup_lock", "BASE TABLE:InnoDB")
+      return executor.query(sql)
+    } }, plan), /synthetic DDL failure/)
+    const prerequisite = queries.findIndex((sql) => sql.includes("CREATE TABLE `inference_rollup_lock`"))
+    const firstMatrixDdl = queries.findIndex((sql) => sql.startsWith("CREATE TABLE `gateway_credential_sets`"))
+    assert.ok(prerequisite >= 0 && firstMatrixDdl > prerequisite)
+    for (const guard of matrixPreflightQueries(plan)) {
+      const probe = queries.lastIndexOf(guard.sql)
+      assert.ok(probe > prerequisite && probe < firstMatrixDdl)
+    }
+    assert.equal(queries.filter((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``)).length, 96)
+  })
+
+  test("unsupported engines, old MySQL and non-strict sessions fail before writes", async () => {
+    for (const options of [
+      { version: "5.7.44" }, { version: "8.0.15" }, { version: "10.11.0-MariaDB" },
+      { version: "8.0.30-TiDB" }, { version: "unknown" }, { mode: "NO_ENGINE_SUBSTITUTION" },
+    ]) {
+      const { executor, queries } = fixture(shapeAt("0096_"), options)
+      await assert.rejects(migrateLocalDatabase(executor, plan), /MySQL 8.0.16/)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+  })
+
   test("dirty, mixed, already-pushed, competing and invalid-data states fail before writes", async () => {
     const cases = [
       { shape: shapeAt("0096_"), options: { dirty: true }, error: /interrupted/ },
       { shape: shapeAt("0096_"), options: { locked: true }, error: /holds this database/ },
       { shape: shapeAt("0096_"), options: { otherSessions: true }, error: /Other connections/ },
-      { shape: shapeAt("0097_"), options: {}, error: /Historical groups/ },
+      { shape: shapeAt("0097_"), options: {}, error: /Explicit recovery/ },
       { shape: new Map([["table:unrecognized", "BASE TABLE:InnoDB"]]), options: {}, error: /does not match/ },
       { shape: shapeAt("0096_"), options: { receipts: [{ hash: "dirty", created_at: 1 }] }, error: /exact hash/ },
       ...matrixPreflightQueries(plan).map((check) => ({ shape: shapeAt("0096_"), options: { invalid: check.name }, error: /Preflight rejected/ })),

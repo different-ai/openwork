@@ -47,8 +47,9 @@ import {
   requireWorldResource,
   validateWorldResources,
 } from "@openwork/env";
-import type { Den, Place, WorldResources } from "@openwork/env";
+import type { App, Den, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
+import type { DesktopHandle } from "@openwork/hosts";
 import { screenshot, validate } from "@openwork/test-evidence";
 import type {
   StepRecord,
@@ -472,7 +473,9 @@ export class SeedChannel implements Seed {
     });
   }
 
-  desktop(options: SeedDesktopOptions = {}) {
+  desktop(options: SeedDesktopOptions & { den: Den }): Promise<App>;
+  desktop(options?: SeedDesktopOptions): Promise<App | DesktopHandle>;
+  desktop(options: SeedDesktopOptions = {}): Promise<App | DesktopHandle> {
     requireWorldResource(this.#runtime.resources, "desktop");
     if (options.den) this.#runtime.requireDen(options.den);
     const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim();

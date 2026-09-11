@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { browserScript, type Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
+import type { MockMcpTool } from "@openwork/labs";
 import { go, runWorkflow, saveWorkflow, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { configureProvider } from "./chat.ts";
@@ -118,7 +119,7 @@ export async function isolatedMcpApps(seed: Seed) {
     });
     return `<!doctype html><html><head><title>Sample ${label}</title></head><body><p>App ${label} waiting</p><span>private-${label}</span><script>${bundle.outputFiles[0].text.replaceAll("</script", "<\\/script")}</script></body></html>`;
   };
-  const tools = async (label: string) => [
+  const tools = async (label: string): Promise<MockMcpTool[]> => [
     { name: `render_${label.toLowerCase()}`, description: `Open sample ${label}`, inputSchema: { type: "object", properties: { marker: { type: "string" } } },
       annotations: { readOnlyHint: true, destructiveHint: false }, _meta: { ui: { resourceUri: `ui://sample-${label}/view.html` } },
       appHtml: await appHtml(label), result: { content: [{ type: "text", text: `initial-${label}` }], isError: false,

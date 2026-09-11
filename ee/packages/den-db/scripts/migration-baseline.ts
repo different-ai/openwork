@@ -229,7 +229,7 @@ export function planAuthLookupIndexRepairs(plan: MigrationPlan, actual: Map<stri
 
 export function recognizeBaseline(plan: MigrationPlan, actual: Map<string, string>) {
   if ([...actual.keys()].some((key) => key.startsWith("table:gateway_"))) {
-    throw new MigrationSafetyError(`Gateway tables exist without migration receipts (already pushed or partial 0097). Historical groups/sets cannot be reconstructed safely from this state. ${recovery}`)
+    throw new MigrationSafetyError(`Gateway tables exist without migration receipts (already pushed or partial 0097). Explicit recovery is required; consolidated 0097 cannot be stamped onto an old deployment. ${recovery}`)
   }
   // Never baseline the matrix migration, even if a future snapshot matches.
   for (let index = plan.length - 1; index >= 0; index--) {

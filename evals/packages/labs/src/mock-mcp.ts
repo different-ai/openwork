@@ -135,7 +135,8 @@ export interface MockMcpTool {
   validateRequiredArguments?: boolean;
   /** Hold the response while the real engine exposes its running tool state. */
   delayMs?: number;
-  result: { content: { type: "text"; text: string }[]; isError?: boolean };
+  /** Served verbatim as the tools/call result, so structured content and result metadata reach the host unchanged. */
+  result: { content: { type: "text"; text: string }[]; isError?: boolean; structuredContent?: Record<string, unknown>; _meta?: Record<string, unknown> };
 }
 
 export interface StartMockMcpOptions {

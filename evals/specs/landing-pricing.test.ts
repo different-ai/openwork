@@ -350,7 +350,7 @@ test("visitors can explore the sovereign AI homepage without losing comparison o
   const outreach = await eventually(async () => {
     await freezeMotion(browser);
     await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Outreach Creation$/, nth: 1 }, { mustHitTest: true, timeoutMs: 5_000 })).center);
-    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText);
+    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText ?? "");
   }, {
     within: 10_000, until: (text) => typeof text === "string" && text.includes("I've drafted the follow-up email"),
   });
@@ -359,7 +359,7 @@ test("visitors can explore the sovereign AI homepage without losing comparison o
   const analysis = await eventually(async () => {
     await freezeMotion(browser);
     await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Data Analysis$/, nth: 1 }, { mustHitTest: true, timeoutMs: 5_000 })).center);
-    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText);
+    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText ?? "");
   }, {
     within: 10_000, until: (text) => typeof text === "string" && text.includes("I analyzed the spreadsheet"),
   });

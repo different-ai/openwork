@@ -108,8 +108,10 @@ existingDraftTest("an existing conversation restores drafts without sidebar mark
     // innerText inserts two newlines between paragraphs; the composer serializes one.
     const paragraphs = await probe.dom('[data-lexical-editor="true"] > p');
     const recovered = paragraphs.elements.map((paragraph) => paragraph.text).join("\n");
+    const restoredFollowUp = recovered === draft;
+    const excludedNewTaskDraft = recovered !== newDraft;
     assertObserved("Reopening restores the exact multiline follow-up, not the independent new-task draft",
-      { recovered, expected: draft, excluded: newDraft }, recovered === draft && recovered !== newDraft);
+      { recovered, expected: draft, excluded: newDraft }, restoredFollowUp && excludedNewTaskDraft);
   };
   const draftKeys = () => probe.storage("openwork.session-drafts.v2", (value) => {
     if (typeof value !== "object" || value === null || !("drafts" in value) || typeof value.drafts !== "object" || value.drafts === null) return [];

@@ -680,20 +680,6 @@
       "when": 1788895934602,
       "tag": "0097_gateway_access_matrix",
       "breakpoints": true
-    },
-    {
-      "idx": 98,
-      "version": "5",
-      "when": 1788958587949,
-      "tag": "0098_gateway_provider_model_universe",
-      "breakpoints": true
-    },
-    {
-      "idx": 99,
-      "version": "5",
-      "when": 1788961365465,
-      "tag": "0099_gateway_credential_set_creator",
-      "breakpoints": true
     }
   ]
 }

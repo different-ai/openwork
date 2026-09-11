@@ -2,15 +2,20 @@
   "compilerOptions": {
     "strict": true,
     "noEmit": true,
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "customConditions": ["development"],
     "target": "es2023",
-    "lib": ["es2023", "dom", "dom.iterable", "esnext.disposable"],
+    "lib": ["es2024", "dom", "dom.iterable", "esnext.disposable"],
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "paths": { "@/*": ["../apps/app/src/*"] }
   },
   "include": ["docs-shots/**/*.ts", "drivers/**/*.mts", "../packages/handsfree/test/e2e/browser.ts", "runner/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "specs/**/*.ts", "worlds/**/*.ts", "vitest.config.ts"],
   "exclude": ["results"]

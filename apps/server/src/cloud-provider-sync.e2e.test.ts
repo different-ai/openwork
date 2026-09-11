@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { EnvService } from "./env-file.js";
 import { CloudProviderSync } from "./cloud-provider-sync.js";
 import { openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
-import { clearEnginePoolForConfig, setEnginePoolForConfig, type EnginePool } from "./engine-pool.js";
+import { clearEnginePoolForConfig, setEnginePoolForConfig, type EnginePool, type RolloverOutcome } from "./engine-pool.js";
 import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import {
   readGlobalRuntimeOpencodeConfig,
@@ -19,6 +19,8 @@ import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
 
 const clientToken = "owt_cloud_provider_client";
+/** Stub reload that reports the engine applied the change in place. */
+const reloadedInPlace = async (): Promise<RolloverOutcome> => ({ action: "reloaded_in_place" });
 const hostToken = "owt_cloud_provider_host";
 const roots: string[] = [];
 const stops: Array<() => void | Promise<void>> = [];
@@ -225,7 +227,7 @@ describe("cloud provider sync gateway", () => {
         if (init?.method === "PUT") engineAuth.set(id, "synced-fixture-auth");
         return Response.json(true);
       }, { preconnect: globalThis.fetch.preconnect });
-      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => {} });
+      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace });
       stops.push(() => sync.stop());
       if (mode !== "cold cleanup") {
         await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
@@ -282,7 +284,7 @@ describe("cloud provider sync gateway", () => {
         return Response.json(true);
       }, { preconnect: globalThis.fetch.preconnect });
       if (ownership === "persisted sync") {
-        const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => {} });
+        const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace });
         stops.push(() => sync.stop());
         await sync.setSession({ baseUrl: "https://den.example.test", token: "fixture-session", orgId: "org_fixture" });
         expect((await sync.run("genuine-ownership")).status).toBe("applied");
@@ -305,7 +307,7 @@ describe("cloud provider sync gateway", () => {
       engineRequests.length = 0;
       // New config and sync objects discard both in-memory ownership caches.
       const cold = new CloudProviderSync({ config: serverConfig(root, "https://engine.example.test"), env,
-        fetchImpl, reloadEngine: async () => {} });
+        fetchImpl, reloadEngine: reloadedInPlace });
       stops.push(() => cold.stop());
       await cold.clearSession();
       expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[id]).toBeUndefined();
@@ -411,7 +413,7 @@ describe("cloud provider sync gateway", () => {
       }, { preconnect: globalThis.fetch.preconnect });
       const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
       const sync = new CloudProviderSync({ config, env, fetchImpl, engineBusy: async () => true,
-        reloadEngine: async () => { reloads += 1; }, intervalMs: 3_600_000 });
+        reloadEngine: async () => { reloads += 1; return reloadedInPlace(); }, intervalMs: 3_600_000 });
       stops.push(() => sync.stop());
       const session = { baseUrl: "https://den.example.test", token: "token-a", orgId: "org_a" };
       try {
@@ -643,6 +645,7 @@ describe("cloud provider sync gateway", () => {
       engineBusy: async () => engineBusy,
       reloadEngine: async () => {
         reloads += 1;
+        return reloadedInPlace();
       },
       intervalMs: 3_600_000,
     });
@@ -720,6 +723,7 @@ describe("cloud provider sync gateway", () => {
         reloads += 1;
         // A reload flips the pool onto a fresh generation.
         generationId = `generation-${reloads + 1}`;
+        return { action: "rolled_over", generationId, drainingSessions: 0 };
       },
       intervalMs: 3_600_000,
     });
@@ -768,7 +772,7 @@ describe("cloud provider sync gateway", () => {
       env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
       fetchImpl,
       engineBusy: async () => draining,
-      reloadEngine: async () => { reloads += 1; },
+      reloadEngine: async () => { reloads += 1; return reloadedInPlace(); },
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
@@ -845,6 +849,7 @@ describe("cloud provider sync gateway", () => {
       env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
       reloadEngine: async () => {
         reloads += 1;
+        return reloadedInPlace();
       },
       intervalMs: 3_600_000,
     });
@@ -887,7 +892,7 @@ describe("cloud provider sync gateway", () => {
       models: { model: { id: "model", name: "Model" } },
     } } }));
     const sync = new CloudProviderSync({
-      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: async () => {},
+      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: reloadedInPlace,
       fetchImpl: Object.assign(async (input: URL | RequestInfo) => {
         const { pathname } = new URL(String(input));
         if (pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
@@ -935,7 +940,7 @@ describe("cloud provider sync gateway", () => {
     const sync = new CloudProviderSync({
       config,
       env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
-      reloadEngine: async () => undefined,
+      reloadEngine: reloadedInPlace,
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
@@ -1039,7 +1044,7 @@ describe("cloud provider sync gateway", () => {
       config,
       env,
       fetchImpl,
-      reloadEngine: async () => undefined,
+      reloadEngine: reloadedInPlace,
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
@@ -1202,7 +1207,7 @@ describe("cloud provider sync gateway", () => {
       config,
       env,
       fetchImpl,
-      reloadEngine: async () => undefined,
+      reloadEngine: reloadedInPlace,
       intervalMs: 3_600_000,
     });
     stops.push(() => sync.stop());
@@ -1299,7 +1304,7 @@ describe("cloud provider sync gateway", () => {
     const envValues = async () => new Map((await env.list()).map((entry) => [entry.key, entry.value]));
     const session = { baseUrl: "https://den.example.test", token: "den-token", orgId: "org-env-upgrade" };
     const newSync = () => {
-      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => undefined, intervalMs: 3_600_000 });
+      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: reloadedInPlace, intervalMs: 3_600_000 });
       stops.push(() => sync.stop());
       return sync;
     };
