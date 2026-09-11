@@ -21,6 +21,8 @@ const {
   filterInventoryCardsByState,
   LibraryEmptyState,
   LibraryStatusWarning,
+  libraryStatusTone,
+  localServerInventoryGroup,
   McpAdvancedConfigSection,
   McpQuickConnectSection,
 } = await import("../src/react-app/domains/settings/pages/mcp-view");
@@ -275,22 +277,85 @@ describe("Library state tabs", () => {
     expect(browse).toHaveBeenCalledTimes(1);
   });
 
-  test("Advanced owns workspace setup and hides it when closed or policy denies it", () => {
+  test("Advanced keeps only workspace MCP creation and config, hidden when closed or policy denies it", () => {
     const base = { configScope: "project", activeConfig: null, canRevealConfig: false, revealBusy: false, revealLabel: "Open file", configError: null, onToggle: () => {}, onScopeChange: () => {}, onReveal: async () => {} } as const;
-    const closed = renderToStaticMarkup(<McpAdvancedConfigSection {...base} open={false} onAddMcp={() => {}}><div>Local server</div></McpAdvancedConfigSection>);
+    const closed = renderToStaticMarkup(<McpAdvancedConfigSection {...base} open={false} onAddMcp={() => {}} />);
+    expect(closed).toContain("Advanced settings");
     expect(closed).not.toContain("Add workspace MCP");
-    expect(closed).not.toContain("Local server");
-    const open = renderToStaticMarkup(<McpAdvancedConfigSection {...base} open onAddMcp={() => {}}><div>Local server</div></McpAdvancedConfigSection>);
+    const open = renderToStaticMarkup(<McpAdvancedConfigSection {...base} open onAddMcp={() => {}} />);
     expect(open).toContain("Add workspace MCP");
-    expect(open).toContain("Local server");
+    expect(open).toContain("Open file");
+    // Inventory never lives here: no cards, group headers, or plugin lists.
+    expect(open).not.toContain("READY TO USE");
+    expect(open).not.toContain("OpenCode Plugins");
     const restricted = renderToStaticMarkup(<McpAdvancedConfigSection {...base} open />);
     expect(restricted).not.toContain("Add workspace MCP");
+  });
+
+  test("workspace servers appear under MCPs as local items grouped by live status, not in Advanced", async () => {
+    const onCounts = mock(() => {});
+    const onDetail = mock(() => {});
+    const servers = [
+      { name: "docs-helper", source: "config.project", config: { type: "local", command: ["python3", "-m", "http.server"], enabled: false } },
+      { name: "files-helper", source: "config.global", config: { type: "local", command: ["npx", "-y", "server-filesystem"] } },
+      { name: "remote-helper", source: "config.project", config: { type: "remote", url: "https://mcp.example.test/sse" } },
+    ] as const;
+    const statuses = { "docs-helper": "disabled", "files-helper": "connected", "remote-helper": "needs_auth" } as const;
+    expect(localServerInventoryGroup("connected")).toBe("ready");
+    expect(localServerInventoryGroup("needs_client_registration")).toBe("needs_signin");
+    expect(localServerInventoryGroup("failed")).toBe("available");
+    const host = await mount(<McpQuickConnectSection
+      skillCount={0} entries={[]} loading={false} layout="grid" filter="mcp" state="ready"
+      localServers={[...servers]} localServerStatus={(entry) => statuses[entry.name as keyof typeof statuses]}
+      availableConnectMcpStatuses={{}} onStateCountsChange={onCounts} busy={false} connectingName={null}
+      isEntryHidden={() => false} isSkillHidden={() => false} isPluginHidden={() => false}
+      disabledReasonForEntry={() => null} isConfigured={() => false} statusForEntry={() => undefined}
+      onConnect={() => {}} onDetail={() => {}} onLocalServerDetail={onDetail} orgMcpDisconnectingId={null}
+    />);
+    expect(host.textContent).toContain("files-helper");
+    expect(host.textContent).toContain("Local · this device");
+    expect(host.textContent).toContain("Connected");
+    expect(host.textContent).not.toContain("docs-helper");
+    expect(host.textContent).not.toContain("remote-helper");
+    expect(onCounts).toHaveBeenCalledWith({ ready: 1, needs_signin: 1, needs_admin_setup: 0, available: 0, disabled: 1 });
+    // A connected card is neutral: only the Connected chip carries green.
+    const card = host.querySelector<HTMLButtonElement>("button");
+    expect(card?.className).not.toContain("bg-green-2");
+    expect(card?.className).not.toContain("border-green-6");
+    expect(card?.querySelector(".bg-green-9")).toBeNull();
+    expect(card?.querySelector(".bg-green-3")?.textContent).toBe("Connected");
+    await act(async () => card?.click());
+    expect(onDetail).toHaveBeenCalledWith(servers[1]);
+  });
+
+  test("hidden items wait under Disabled instead of a separate Show hidden control", async () => {
+    const onCounts = mock(() => {});
+    const skills = [
+      { name: "shown-skill", path: "/skills/shown/SKILL.md" },
+      { name: "hidden-skill", path: "/skills/hidden/SKILL.md" },
+    ];
+    const host = await mount(<McpQuickConnectSection
+      skillCount={2} entries={[]} loading={false} layout="grid" filter="skill" state="disabled"
+      installedSkills={skills} availableConnectMcpStatuses={{}} onStateCountsChange={onCounts} busy={false} connectingName={null}
+      isEntryHidden={() => false} isSkillHidden={(skill) => skill.name === "hidden-skill"} isPluginHidden={() => false}
+      disabledReasonForEntry={() => null} isConfigured={() => false} statusForEntry={() => undefined}
+      onConnect={() => {}} onDetail={() => {}} orgMcpDisconnectingId={null}
+    />);
+    expect(host.textContent).toContain("hidden-skill");
+    expect(host.textContent).toContain("Hidden");
+    expect(host.textContent).not.toContain("shown-skill");
+    expect(onCounts).toHaveBeenCalledWith({ ready: 1, needs_signin: 0, needs_admin_setup: 0, available: 0, disabled: 1 });
   });
 
   test("warning is conditional and keeps its message out of the page until opened", async () => {
     const warning = "Some MCPs could not be registered with the engine: Calendar, Notes. They may appear disconnected - try reloading the engine.";
     expect(renderToStaticMarkup(<LibraryStatusWarning message={null} />)).toBe("");
     expect(renderToStaticMarkup(<LibraryStatusWarning message="   " />)).toBe("");
+    // Progress and success notes are shown as information, not as an alert.
+    expect(libraryStatusTone("Reloading MCP servers…")).toBe("info");
+    expect(libraryStatusTone("Connected")).toBe("info");
+    expect(libraryStatusTone(warning)).toBe("warning");
+    expect(renderToStaticMarkup(<LibraryStatusWarning message="Connected" />)).not.toContain("bg-amber-3");
     const host = await mount(<LibraryStatusWarning message={warning} />);
     const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="MCP status"]');
     if (!trigger) throw new Error("Missing warning trigger");

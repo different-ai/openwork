@@ -101,7 +101,7 @@ export type ExtensionsViewProps = {
     initialFilter: ExtensionInventoryFilter;
     onFilterChange: (filter: ExtensionInventoryFilter) => void;
     initialState: ExtensionInventoryState;
-    advancedContent: ReactNode;
+    pluginsContent: ReactNode;
     detailId: string | null;
     onDetailIdChange?: (id: string | null) => void;
     onRefresh: () => void;
@@ -126,19 +126,26 @@ export function ExtensionsView(props: ExtensionsViewProps) {
     initialFilter,
     onFilterChange: setFilterRoute,
     initialState,
-    advancedContent: pluginCount > 0 ? (
-      <div className="space-y-3">
-        <h3 className="flex items-center gap-2 text-sm font-medium"><Cpu size={14} />OpenCode Plugins ({pluginCount})</h3>
-        <PluginsView
-          extensions={props.extensions}
-          busy={props.busy}
-          selectedWorkspaceRoot={props.selectedWorkspaceRoot}
-          canEditPlugins={props.canEditPlugins}
-          canUseGlobalScope={props.canUseGlobalScope}
-          accessHint={props.accessHint}
-          suggestedPlugins={props.suggestedPlugins}
-        />
-      </div>
+    // OpenCode plugins keep their own disclosure under the Plugins category.
+    pluginsContent: pluginCount > 0 ? (
+      <details className="group" open>
+        <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
+          <Cpu size={14} />
+          <span>OpenCode Plugins</span>
+          <span className="text-[11px] text-dls-secondary">({pluginCount})</span>
+        </summary>
+        <div className="mt-3">
+          <PluginsView
+            extensions={props.extensions}
+            busy={props.busy}
+            selectedWorkspaceRoot={props.selectedWorkspaceRoot}
+            canEditPlugins={props.canEditPlugins}
+            canUseGlobalScope={props.canUseGlobalScope}
+            accessHint={props.accessHint}
+            suggestedPlugins={props.suggestedPlugins}
+          />
+        </div>
+      </details>
     ) : null,
     detailId,
     onDetailIdChange: props.onDetailIdChange,

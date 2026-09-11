@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { MCP_QUICK_CONNECT, type McpDirectoryInfo } from "../src/app/constants";
 import { BUILT_IN_OPENWORK_EXTENSION_MANIFESTS } from "../src/app/extensions";
 import {
+  isLibraryMcpDirectoryEntry,
   matchesExtensionFilter,
   extensionInventoryFilters,
   primaryLibraryFilter,
@@ -23,6 +24,19 @@ describe("extension taxonomy", () => {
     expect(primaryLibraryFilter("connection")).toBe("mcp");
     expect(primaryLibraryFilter("skill")).toBe("skill");
     expect(primaryLibraryFilter("plugin")).toBe("plugin");
+    // Old command and agent routes land on Skills; the items themselves stay in the composer.
+    expect(primaryLibraryFilter("command")).toBe("skill");
+    expect(primaryLibraryFilter("agent")).toBe("skill");
+    expect(primaryLibraryFilter("app")).toBe("mcp");
+  });
+
+  test("the MCPs category lists third-party servers, not OpenWork's own runtimes or plumbing", () => {
+    const listed = MCP_QUICK_CONNECT.filter(isLibraryMcpDirectoryEntry).map((entry) => entry.name);
+    expect(listed).toEqual(["Notion", "Linear", "Sentry", "Stripe", "Context7"]);
+    for (const id of ["openwork-browser", "computer-use", "ollama"]) {
+      expect(isLibraryMcpDirectoryEntry(builtInEntry(id))).toBe(false);
+    }
+    expect(MCP_QUICK_CONNECT.filter((entry) => entry.kind === "ui-control" || entry.defaultHidden).every((entry) => !isLibraryMcpDirectoryEntry(entry))).toBe(true);
   });
   test("built-ins are apps because they run on this device", () => {
     for (const id of ["openwork-browser", "computer-use", "ollama"]) {

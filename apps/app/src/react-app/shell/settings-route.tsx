@@ -2505,10 +2505,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               void orgMcpConnections.refresh();
               void refreshConnectCapabilities({ force: true });
             }}
-            mcpView={({ initialFilter, onFilterChange, initialState, advancedContent, detailId, onDetailIdChange, onRefresh }) => (
+            mcpView={({ initialFilter, onFilterChange, initialState, pluginsContent, detailId, onDetailIdChange, onRefresh }) => (
               <McpView
                 headerActionsTarget={props.libraryHeaderActionsTarget}
-                advancedContent={advancedContent}
+                pluginsContent={pluginsContent}
                 onOpenCloudAccount={() => navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account") : "/settings/cloud-account")}
                 busy={busy}
                 selectedWorkspaceRoot={selectedWorkspaceRoot}
@@ -2520,8 +2520,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 managedOAuthAvailable={connectionsSnapshot.managedOAuthAvailable}
                 mcpConnectingName={connectionsSnapshot.mcpConnectingName}
                 allowManageExtensions={allowManageExtensions}
-                selectedMcp={connectionsSnapshot.selectedMcp}
-                setSelectedMcp={(name) => connectionsStore.setSelectedMcp(name)}
                 quickConnect={extensionItems.quickConnectEntries}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
