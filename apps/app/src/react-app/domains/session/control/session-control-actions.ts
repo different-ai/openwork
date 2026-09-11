@@ -9,6 +9,7 @@ import { useControlAction, type OpenworkControlAction } from "../../../shell/con
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
+import { selectSessionAttention } from "../status/session-attention";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { controlWorkspaceLabel as workspaceLabel, listControlSessions, type ControlSessionLike as SessionLike } from "./list-control-sessions";
 
@@ -108,13 +109,32 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
     ],
-    execute: (args) => listControlSessions(args, {
-      workspaces,
-      sessionsByWorkspaceId,
-      pinnedIds,
-      statusFor: (workspaceId, sessionId) => useSessionActivityStore.getState().getStatus(workspaceId, sessionId),
-    }),
-  }), [pinnedIds, sessionsByWorkspaceId, workspaces]);
+    execute: (args) => {
+      // Same roll-up as the sidebar: a delegated child's pending permission
+      // or question makes its parent `waiting`, not `thinking`.
+      const activity = useSessionActivityStore.getState();
+      const attentionByWorkspaceId = new Map<string, ReturnType<typeof selectSessionAttention>>();
+      return listControlSessions(args, {
+        workspaces,
+        sessionsByWorkspaceId,
+        pinnedIds,
+        statusFor: (workspaceId, sessionId) => {
+          let attention = attentionByWorkspaceId.get(workspaceId);
+          if (!attention) {
+            const runtimeId = endpointForWorkspace(workspaces.find((workspace) => workspace.id === workspaceId))?.workspaceId;
+            const ids = runtimeId && runtimeId !== workspaceId ? [workspaceId, runtimeId] : [workspaceId];
+            attention = selectSessionAttention(
+              (sessionsByWorkspaceId[workspaceId] ?? []).flatMap((session) => (session.id ? [{ ...session, id: session.id }] : [])),
+              (id) => ids.map((wid) => activity.statusesByWorkspaceId[wid]?.[id]).find((status) => status !== undefined),
+              (id) => ids.map((wid) => activity.waitingByWorkspaceId[wid]?.[id]).find((kind) => kind !== undefined),
+            );
+            attentionByWorkspaceId.set(workspaceId, attention);
+          }
+          return attention.get(sessionId)?.status ?? activity.getStatus(workspaceId, sessionId);
+        },
+      });
+    },
+  }), [endpointForWorkspace, pinnedIds, sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({

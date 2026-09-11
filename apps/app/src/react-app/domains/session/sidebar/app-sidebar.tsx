@@ -225,6 +225,8 @@ interface SessionStatusIndicatorProps {
   status?: string;
   isActiveWork: boolean;
   isUnread: boolean;
+  /** Names the delegated child asking, e.g. "Needs permission: Audit four open PRs". */
+  attentionLabel?: string;
 }
 
 function ShowMoreSessionsButton({
@@ -249,7 +251,7 @@ function ShowMoreSessionsButton({
 }
 
 /** Activity and outcomes share the fixed glyph slot before the session title. */
-function SessionStatusIndicator({ status, isActiveWork, isUnread }: SessionStatusIndicatorProps) {
+function SessionStatusIndicator({ status, isActiveWork, isUnread, attentionLabel }: SessionStatusIndicatorProps) {
   return (
     <SidebarGlyphSlot>
       {isActiveWork ? (
@@ -257,21 +259,23 @@ function SessionStatusIndicator({ status, isActiveWork, isUnread }: SessionStatu
           ? getSessionActivityStatusLabel(status)
           : t("workspace_list.session_streaming")} />
       ) : (
-        <SessionOutcomeIndicator status={status} isUnread={isUnread} />
+        <SessionOutcomeIndicator status={status} isUnread={isUnread} attentionLabel={attentionLabel} />
       )}
     </SidebarGlyphSlot>
   );
 }
 
 /** Orange = needs you, green = unread result, none = read/idle. */
-function SessionOutcomeIndicator({ status, isUnread }: { status?: string; isUnread: boolean }) {
+function SessionOutcomeIndicator({ status, isUnread, attentionLabel }: { status?: string; isUnread: boolean; attentionLabel?: string }) {
   if (isNeedsAttentionSessionStatus(status)) {
-    const title = isSessionActivityStatus(status)
-      ? getSessionActivityStatusLabel(status)
-      : t("workspace_list.session_needs_attention");
+    const title = attentionLabel
+      ?? (isSessionActivityStatus(status)
+        ? getSessionActivityStatusLabel(status)
+        : t("workspace_list.session_needs_attention"));
     return (
       <span
         data-session-attention-indicator
+        data-session-attention-source={attentionLabel ? "child" : "self"}
         className="size-2 shrink-0 rounded-full"
         style={{ backgroundColor: OUTCOME_DOT_NEEDS_ACTION }}
         title={title}
@@ -773,6 +777,7 @@ export type AppSidebarProps = {
   selectedSessionId: string | null;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
+  sessionAttentionLabelById?: Record<string, string>;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -886,6 +891,7 @@ export function AppSidebar(props: AppSidebarProps) {
     developerMode: props.developerMode,
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
+    sessionAttentionLabelById: props.sessionAttentionLabelById,
     newTaskDisabled: props.newTaskDisabled,
     connectingWorkspaceId: props.connectingWorkspaceId,
     workspaceConnectionStateById: props.workspaceConnectionStateById,
@@ -2097,6 +2103,7 @@ function SessionMenuItem({
   const displayTitle = getDisplaySessionTitle(session.title);
   const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
+  const sessionAttentionLabel = ctx.sessionAttentionLabelById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
   const isArchived = isSessionArchived(session);
@@ -2140,7 +2147,7 @@ function SessionMenuItem({
   const accessibleState = resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
     ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
     : isNeedsAttentionSessionStatus(sessionActivityStatus)
-      ? `${displayTitle}, ${t("workspace_list.session_needs_attention")}`
+      ? `${displayTitle}, ${sessionAttentionLabel ?? t("workspace_list.session_needs_attention")}`
       : isUnread
         ? `${displayTitle}, ${t("workspace_list.session_unread")}`
         : itemTitle;
@@ -2159,7 +2166,12 @@ function SessionMenuItem({
   // Pinned/archived rows identify their workspace via the tooltip title
   // only — no workspace color dot in these sections.
   const leading = (
-    <SessionStatusIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} isUnread={isUnread} />
+    <SessionStatusIndicator
+      status={sessionActivityStatus}
+      isActiveWork={resolvedActiveWork}
+      isUnread={isUnread}
+      attentionLabel={sessionAttentionLabel}
+    />
   );
 
   const trailing = (

@@ -114,7 +114,7 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
   const agent = agentName(part.input?.subagent_type ?? "")
   const status = permissionPending
     ? t("session.subagent_permission_needed")
-    : questionPending ? "Waiting for your answer"
+    : questionPending ? t("session.subagent_question_pending")
     : activity === "retrying" ? "Retrying"
     : activity === "failed" ? "Task reported an error"
     : activity === "waiting-result" ? "Waiting for task result"

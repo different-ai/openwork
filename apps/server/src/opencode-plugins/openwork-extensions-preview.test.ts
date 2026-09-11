@@ -194,11 +194,17 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
       }
 
       // Live activity: alpha is mid-turn, beta waits on a permission, archive is idle.
-      if (url.pathname === "/workspace/ws_1/opencode/session/status") return Response.json({ ses_alpha: { type: "busy" } });
+      // Gamma is a busy parent whose delegated grandchild waits on a question.
+      if (url.pathname === "/workspace/ws_1/opencode/session/status") return Response.json({ ses_alpha: { type: "busy" }, ses_gamma: { type: "busy" } });
       if (url.pathname === "/workspace/ws_1/opencode/permission") return Response.json([{ id: "per_1", sessionID: "ses_beta" }]);
-      if (url.pathname === "/workspace/ws_1/opencode/question") return Response.json([]);
+      if (url.pathname === "/workspace/ws_1/opencode/question") return Response.json([{ id: "que_1", sessionID: "ses_gamma_grandchild" }]);
       if (url.pathname === "/workspace/ws_2/opencode/session/status") return Response.json({});
       if (url.pathname === "/workspace/ws_2/opencode/permission" || url.pathname === "/workspace/ws_2/opencode/question") return Response.json([]);
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_gamma/children") return Response.json([{ id: "ses_gamma_child", parentID: "ses_gamma" }]);
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_gamma_child/children") return Response.json([{ id: "ses_gamma_grandchild", parentID: "ses_gamma_child" }]);
+      if (url.pathname.endsWith("/children")) return Response.json([]);
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_gamma") return Response.json({ id: "ses_gamma", title: "Gamma delegation", time: { created: 100, updated: 300 } });
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_gamma/message") return Response.json([]);
 
       if (url.pathname === "/workspace/ws_1/opencode/session/ses_alpha") return Response.json(sessionAlpha);
       if (url.pathname === "/workspace/ws_1/opencode/session/ses_beta") return Response.json(sessionBeta);
@@ -430,6 +436,21 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(await read("ses_alpha")).toMatchObject({ status: "busy", working: true });
     expect(await read("ses_beta")).toMatchObject({ status: "waiting", working: true });
     expect(await read("ses_archive")).toMatchObject({ status: "idle", working: false });
+  });
+
+  test("session.read rolls a delegated descendant's pending request up to the parent", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = async (sessionId: string) => affordanceResultSchema("session.read", readResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId, count: 1 } })))
+      .result;
+
+    // The grandchild owns the question; the busy parent reports waiting, not busy.
+    expect(await read("ses_gamma")).toMatchObject({ status: "waiting", working: true });
+    // An unrelated busy root is untouched by another tree's request.
+    expect(await read("ses_alpha")).toMatchObject({ status: "busy", working: true });
+    expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p", ["ses_c"])).toEqual({ status: "waiting", working: true });
+    expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p")).toEqual({ status: "busy", working: true });
   });
 
   test("an unreadable activity probe never reports a session as safe to archive", () => {

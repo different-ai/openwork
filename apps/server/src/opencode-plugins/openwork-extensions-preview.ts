@@ -626,11 +626,29 @@ async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: str
   return session;
 }
 
+const MAX_SESSION_DESCENDANTS = 256;
+const sessionChildrenSchema = z.array(z.object({ id: z.string() }).passthrough());
+
+/** Every delegated descendant of a session, breadth first; a failed hop ends the walk there. */
+async function readSessionDescendantIds(base: string, sessionId: string): Promise<string[]> {
+  const ids = [sessionId];
+  for (let index = 0; index < ids.length && ids.length <= MAX_SESSION_DESCENDANTS; index += 1) {
+    const parsed = sessionChildrenSchema.safeParse(
+      await serverGet(`${base}/session/${encodeURIComponent(ids[index])}/children`).catch(() => null),
+    );
+    if (!parsed.success) continue;
+    for (const child of parsed.data) if (!ids.includes(child.id)) ids.push(child.id);
+  }
+  return ids.slice(1);
+}
+
 async function readSessionActivity(workspace: OpenWorkWorkspace, sessionId: string): Promise<SessionActivity> {
   const base = `/workspace/${encodeURIComponent(workspace.id)}/opencode`;
   const probe = (path: string) => serverGet(`${base}${path}`).catch(() => null);
-  const [statuses, permissions, questions] = await Promise.all([probe("/session/status"), probe("/permission"), probe("/question")]);
-  return sessionActivityFrom(statuses, permissions, questions, sessionId);
+  const [statuses, permissions, questions, descendantIds] = await Promise.all([
+    probe("/session/status"), probe("/permission"), probe("/question"), readSessionDescendantIds(base, sessionId),
+  ]);
+  return sessionActivityFrom(statuses, permissions, questions, sessionId, descendantIds);
 }
 
 async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {

@@ -7,6 +7,9 @@ import { t } from "../../../../i18n";
 
 export type SessionActivityStatus = "idle" | "thinking" | "responding" | "error" | "compacting" | "waiting";
 
+/** What an unanswered request is asking the person for. */
+export type SessionWaitingKind = "permission" | "question";
+
 type SessionMessageRole = "assistant" | "system" | "user";
 
 type SessionActivityRecord = {
@@ -39,6 +42,12 @@ type SessionLike = {
 type SessionActivityStore = {
   recordsByWorkspaceId: Record<string, Record<string, SessionActivityRecord>>;
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>;
+  /**
+   * Sessions with an unanswered permission or question, by what they ask for.
+   * Derived like `statusesByWorkspaceId` so a parent roll-up can subscribe
+   * without re-rendering on every transcript progress write.
+   */
+  waitingByWorkspaceId: Record<string, Record<string, SessionWaitingKind>>;
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   getSessionError: (workspaceId: string, sessionId: string) => string | null;
   seedWorkspaceSessions: (workspaceId: string, sessions: SessionLike[]) => void;
@@ -124,6 +133,26 @@ function updateWorkspaceStatus(
   };
 }
 
+function waitingKindForRecord(record: SessionActivityRecord): SessionWaitingKind | undefined {
+  if (record.waitingPermissionIds.length > 0) return "permission";
+  if (record.waitingQuestionIds.length > 0) return "question";
+  return undefined;
+}
+
+function updateWorkspaceWaiting(
+  waitingByWorkspaceId: Record<string, Record<string, SessionWaitingKind>>,
+  workspaceId: string,
+  sessionId: string,
+  kind: SessionWaitingKind | undefined,
+) {
+  const current = waitingByWorkspaceId[workspaceId] ?? {};
+  if (current[sessionId] === kind) return waitingByWorkspaceId;
+  const next = { ...current };
+  if (kind) next[sessionId] = kind;
+  else delete next[sessionId];
+  return { ...waitingByWorkspaceId, [workspaceId]: next };
+}
+
 function sameStrings(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -159,12 +188,14 @@ function sameActivityRecord(
     && sameMessageRoles(current.messageRoles, next.messageRoles);
 }
 
+type SessionActivityDerivedState = Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId" | "waitingByWorkspaceId">;
+
 function updateRecord(
-  state: Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId">,
+  state: SessionActivityDerivedState,
   workspaceId: string,
   sessionId: string,
   updater: (record: SessionActivityRecord) => SessionActivityRecord,
-) {
+): SessionActivityDerivedState {
   const workspaceRecords = state.recordsByWorkspaceId[workspaceId] ?? {};
   const currentRecord = workspaceRecords[sessionId];
   const nextRecord = updater(currentRecord ?? createRecord());
@@ -180,6 +211,7 @@ function updateRecord(
       },
     },
     statusesByWorkspaceId: updateWorkspaceStatus(state.statusesByWorkspaceId, workspaceId, sessionId, status),
+    waitingByWorkspaceId: updateWorkspaceWaiting(state.waitingByWorkspaceId, workspaceId, sessionId, waitingKindForRecord(nextRecord)),
   };
 }
 
@@ -216,6 +248,7 @@ function addValue(values: string[], value: string) {
 export const useSessionActivityStore = create<SessionActivityStore>((set, get) => ({
   recordsByWorkspaceId: {},
   statusesByWorkspaceId: {},
+  waitingByWorkspaceId: {},
   getStatus: (workspaceId, sessionId) => (
     get().statusesByWorkspaceId[workspaceId]?.[sessionId] ?? "idle"
   ),
@@ -239,7 +272,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     const id = workspaceId.trim();
     if (!id) return;
     set((state) => {
-      let nextState: Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId"> = state;
+      let nextState: SessionActivityDerivedState = state;
       for (const session of sessions) {
         const sessionId = session.id.trim();
         if (!sessionId) continue;
@@ -443,6 +476,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           ...state.statusesByWorkspaceId,
           [workspace]: nextStatuses,
         },
+        waitingByWorkspaceId: updateWorkspaceWaiting(state.waitingByWorkspaceId, workspace, session, undefined),
       };
     });
   },

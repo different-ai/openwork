@@ -1322,6 +1322,7 @@ export default {
   "session.permission_title_read": "Read files?",
   "session.permission_title_task": "Start a subtask?",
   "session.subagent_permission_needed": "Needs permission",
+  "session.subagent_question_pending": "Waiting for your answer",
   "session.subagent_task": "Sub-agent task",
   "session.permission_decision_hint": "Allow once for this request, or allow for session when you trust this scope.",
   "session.redo_aria_label": "Redo last reverted message",

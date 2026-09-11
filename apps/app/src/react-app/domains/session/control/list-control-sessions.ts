@@ -11,6 +11,8 @@ export type ControlSessionWorkspace = {
 export type ControlSessionLike = {
   id?: string;
   title?: string;
+  /** Set on delegated (sub-agent) sessions; their pending requests roll up to this parent. */
+  parentID?: string | null;
   time?: {
     updated?: number;
     created?: number;
