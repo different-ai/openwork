@@ -15,7 +15,8 @@ import { configureProvider } from "./chat.ts";
  * app sweeps `lpr_*` keys as orphans, and the mirror keys its behavior on the
  * catalog identity, not the key. Credentials use the explicit `options.apiKey`
  * resolution path because the host-token env store is not reachable from the
- * headless web lane.
+ * headless web lane; the returned key strings exist only to configure the
+ * provider and the witness labels, never for assertions on raw values.
  */
 async function seedSessionRetry(seed: Seed, app: Surface, title: string): Promise<{ sessionId: string; title: string }> {
   const deadline = Date.now() + 60_000;
@@ -43,7 +44,8 @@ export async function managedVariantsWeb(seed: Seed) {
   const pinnedModelId = "gpt-5.1";
   const pinnedApiKey = "managed-den-pinned-key";
   const prompt = "Explain why the sky looks blue.";
-  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
+  // The witness logs credential labels only; key values never reach its public request log.
+  const mock = seed.mock({ isolatedProcessEnv: true, agentCredentials: { managed: apiKey, pinned: pinnedApiKey }, agentWorkloads: [{
     promptMarker: prompt, latestUserTurn: true, finalReply: "Air scatters blue light more strongly.", steps: [],
   }] });
   const workspacePath = seed.tmpPath("model-managed-variants");
@@ -79,7 +81,8 @@ export async function managedVariantsWeb(seed: Seed) {
       options: { baseURL: `${witness.url}/v1`, apiKey: pinnedApiKey },
       models: {
         [pinnedModelId]: { id: pinnedModelId, name: "GPT-5.1 pinned", reasoning: true, release_date: "2025-11-13", variants: {
-          low: { reasoningEffort: "low" }, CustomExact: { reasoningEffort: "high" },
+          // CustomExact maps to an effort no catalog-derived choice in this spec selects.
+          low: { reasoningEffort: "low" }, CustomExact: { reasoningEffort: "medium" },
           hidden: { disabled: true, reasoningEffort: "high" },
         } },
       },

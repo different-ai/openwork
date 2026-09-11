@@ -65,8 +65,8 @@ export interface MockAgentWorkload {
 export interface MockAgentRequest {
   model: string;
   reasoningEffort?: string | null;
-  /** Provider credential header as received (for example `Bearer <key>`); null when absent. */
-  authorization: string | null;
+  /** Non-identifying credential witness: a configured agentCredentials label, "unknown", or "missing". */
+  credential: string;
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
@@ -167,6 +167,8 @@ export interface StartMockMcpOptions {
   agentWorkloads?: MockAgentWorkload[];
   /** Verify native provider requests retain this private model header. */
   agentRequiredHeader?: { name: string; value: string };
+  /** Labelled bearer keys; the witness logs only the matching label, never a credential value. */
+  agentCredentials?: Record<string, string>;
   /** Spawn the mock with executable-discovery variables only, excluding inherited credentials. */
   isolatedProcessEnv?: boolean;
 }
@@ -475,7 +477,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
     const response = await fetch(`${url}/admin/agent-workloads`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workloads: options.agentWorkloads, requiredHeader: options.agentRequiredHeader }),
+      body: JSON.stringify({ workloads: options.agentWorkloads, requiredHeader: options.agentRequiredHeader, credentials: options.agentCredentials }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {
@@ -539,7 +541,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       completions.push({
         model: completion.model,
         reasoningEffort: typeof completion.reasoningEffort === "string" ? completion.reasoningEffort : null,
-        authorization: typeof completion.authorization === "string" ? completion.authorization : null,
+        credential: typeof completion.credential === "string" ? completion.credential : "missing",
         promptMarker: marker,
         matchedMarkers: completion.matchedMarkers.filter((value): value is string => typeof value === "string"),
         completedTools: completion.completedTools,

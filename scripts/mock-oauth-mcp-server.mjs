@@ -78,6 +78,9 @@ const requests = [];
 const drafts = [];
 let agentWorkloads = [];
 let agentRequiredHeader = null;
+// Labelled bearer keys the fixture expects. Requests are logged by label only;
+// the public /requests log never persists a credential value.
+let agentCredentials = {};
 const agentReplyGates = new Map();
 const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
 let agentRepliesHeld = false;
@@ -495,6 +498,16 @@ function capabilitySearchArguments(messages) {
   return { name: matches[0].name };
 }
 
+// Non-identifying credential witness: the configured label, "unknown" for any
+// other bearer value, or "missing" when no Authorization header arrived.
+function classifyAgentCredential(req) {
+  const header = req.headers.authorization;
+  if (typeof header !== "string" || !header.trim()) return "missing";
+  const bearer = header.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+  const label = Object.entries(agentCredentials).find(([, value]) => value === bearer)?.[0];
+  return label ?? "unknown";
+}
+
 // Native OpenAI Responses witness for plain-text workloads. Unsupported tool
 // scripts fail explicitly instead of pretending they executed.
 async function handleAgentResponse(req, res, entry) {
@@ -503,7 +516,7 @@ async function handleAgentResponse(req, res, entry) {
   const matched = agentWorkloads.filter((workload) => text.includes(workload.promptMarker));
   const model = body.model;
   const workload = matched[0];
-  const base = { model, reasoningEffort: body.reasoning?.effort ?? null, authorization: req.headers.authorization ?? null, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
+  const base = { model, reasoningEffort: body.reasoning?.effort ?? null, credential: classifyAgentCredential(req), matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
   if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
     entry.agentCompletion = { ...base, kind: "error" };
     json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
@@ -557,7 +570,7 @@ async function handleAgentCompletion(req, res, entry) {
   const workload = matched[0];
   const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
   const completedTools = scopedMessages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
-  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, authorization: req.headers.authorization ?? null, matchedMarkers, completedTools };
+  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, credential: classifyAgentCredential(req), matchedMarkers, completedTools };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
@@ -1326,7 +1339,15 @@ const server = http.createServer(async (req, res) => {
         releaseAgentReplyWaiters(state, false);
       }
       agentReplyGates.clear();
+      const credentials = body?.credentials;
+      if (credentials !== undefined && (!credentials || typeof credentials !== "object" || Array.isArray(credentials)
+        || Object.entries(credentials).some(([label, value]) => !label.trim() || ["unknown", "missing"].includes(label)
+          || typeof value !== "string" || !value))) {
+        json(res, 400, { error: "credentials must map non-reserved labels to non-empty bearer keys" });
+        return;
+      }
       agentRequiredHeader = requiredHeader ?? null;
+      agentCredentials = credentials ?? {};
       json(res, 200, { configured: agentWorkloads.length });
       return;
     }

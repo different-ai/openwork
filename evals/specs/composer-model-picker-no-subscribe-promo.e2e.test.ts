@@ -208,7 +208,9 @@ managedTest("MODEL-02 managed catalog providers derive reasoning effort from the
     expect(pinned.variants).toEqual(["low", "CustomExact"]);
     expect(pinned.record).not.toHaveProperty("canonical");
     // The public catalog exposes opaque IDs only; keys and settings stay inside the engine.
-    expect(JSON.stringify(catalog.body)).not.toMatch(/managed-den-resolved-key|managed-den-pinned-key|"settings":|"providerOptions":|"headers":|reasoningEffort|reasoningSummary/);
+    expect(JSON.stringify(catalog.body)).not.toContain(world.apiKey);
+    expect(JSON.stringify(catalog.body)).not.toContain(world.pinnedApiKey);
+    expect(JSON.stringify(catalog.body)).not.toMatch(/"settings":|"providerOptions":|"headers":|reasoningEffort|reasoningSummary/);
     evidence.recordJsonArtifact("MODEL-02 native catalog", { reasoning, standard, pinned, status: status.body });
   });
   await user.click({ role: "button", label: "Change model" });
@@ -229,7 +231,7 @@ managedTest("MODEL-02 managed catalog providers derive reasoning effort from the
   await step("High reaches the managed provider with the Den-resolved key and survives reload", async () => {
     const requests = await world.requests();
     expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({ model: world.modelId, reasoningEffort: "high", authorization: `Bearer ${world.apiKey}` });
+    expect(requests[0]).toMatchObject({ model: world.modelId, reasoningEffort: "high", credential: "managed" });
     expect(await world.modelRequests()).toEqual([{ model: { providerID: world.providerId, id: world.modelId, variant: "high" } }]);
     const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "high" } } });
@@ -281,7 +283,7 @@ managedTest("MODEL-02 managed catalog providers derive reasoning effort from the
     await user.click("Run task");
     await probe.eventually(() => world.requests(), { within: 90_000, label: "standard managed model omits effort", until: (requests) => requests.length === 4 });
     const requests = await world.requests();
-    expect(requests[3]).toMatchObject({ model: world.standardModelId, reasoningEffort: null, authorization: `Bearer ${world.apiKey}` });
+    expect(requests[3]).toMatchObject({ model: world.standardModelId, reasoningEffort: null, credential: "managed" });
     const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     const modelRequests = await world.modelRequests();
     expect(modelRequests).toEqual([
@@ -294,7 +296,7 @@ managedTest("MODEL-02 managed catalog providers derive reasoning effort from the
     evidence.recordJsonArtifact("MODEL-02 standard model request and native session", { requests, modelRequests, native });
     await user.see("Run task", { timeoutMs: 30_000 });
   });
-  await step("a Den-pinned model offers exactly its own efforts in the composer", async () => {
+  await step("a Den-pinned model offers exactly its own efforts and sends its explicit setting", async () => {
     await user.click({ role: "button", label: "Change model" });
     await user.click({ role: "button", label: /^Model\s+GPT-4\.1 witness/ });
     await user.type({ placeholder: "Search models..." }, "GPT-5.1 pinned");
@@ -309,12 +311,26 @@ managedTest("MODEL-02 managed catalog providers derive reasoning effort from the
     await user.see({ role: "button", label: "Change model" }, { text: /GPT-5\.1 pinned/ });
     await user.see({ role: "button", label: "Change model" }, { text: /CustomExact/ });
     await user.notSee({ placeholder: "Search models..." });
-  });
-  await step("every managed provider request carried only its own Den-resolved credential", async () => {
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await probe.eventually(() => world.requests(), { within: 90_000, label: "pinned custom effort reaches its provider", until: (requests) => requests.length === 5 });
     const requests = await world.requests();
-    expect(requests).toHaveLength(4);
-    expect(requests.map((request) => request.authorization)).toEqual(Array(4).fill(`Bearer ${world.apiKey}`));
-    expect(requests.some((request) => request.authorization?.includes(world.pinnedApiKey))).toBe(false);
-    evidence.recordJsonArtifact("MODEL-02 provider credential witness", requests.map((request) => ({ model: request.model, reasoningEffort: request.reasoningEffort, authorization: request.authorization })));
+    // The explicit Den variant carries its own setting (medium), not a catalog effort named CustomExact.
+    expect(requests[4]).toMatchObject({ model: world.pinnedModelId, reasoningEffort: "medium", credential: "pinned" });
+    const modelRequests = await world.modelRequests();
+    expect(modelRequests[3]).toEqual({ model: { providerID: world.pinnedProviderId, id: world.pinnedModelId, variant: "CustomExact" } });
+    expect(modelRequests).toHaveLength(4);
+    const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
+    expect(native.body).toMatchObject({ data: { model: { id: world.pinnedModelId, providerID: world.pinnedProviderId, variant: "CustomExact" } } });
+    evidence.recordJsonArtifact("MODEL-02 pinned model request and native session", { requests, modelRequests, native });
+    await user.see("Run task", { timeoutMs: 30_000 });
+  });
+  await step("each provider request carried only its own Den-resolved credential", async () => {
+    const requests = await world.requests();
+    expect(requests).toHaveLength(5);
+    expect(requests.map((request) => request.credential)).toEqual(["managed", "managed", "managed", "managed", "pinned"]);
+    expect(requests.filter((request) => request.model !== world.pinnedModelId).every((request) => request.credential === "managed")).toBe(true);
+    expect(requests.some((request) => request.credential === "unknown" || request.credential === "missing")).toBe(false);
+    evidence.recordJsonArtifact("MODEL-02 provider credential witness", requests.map((request) => ({ model: request.model, reasoningEffort: request.reasoningEffort, credential: request.credential })));
   });
 });
