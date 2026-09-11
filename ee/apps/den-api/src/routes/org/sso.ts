@@ -8,7 +8,7 @@ import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { enterprisePlanRequiredSchema } from "../../openapi.js"
+import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
   getOrganizationSsoConnection,
@@ -572,8 +572,14 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Cancel an organization SSO authentication test",
+      description: "Marks the caller's in-flight SSO test intent as cancelled so it can no longer be started or completed. Only the administrator who created the intent can cancel it; unknown or foreign intents are ignored and still answer 204.",
       security: [{ bearerAuth: [] }],
-      responses: { 204: { description: "SSO test cancelled" } },
+      responses: {
+        204: { description: "SSO test cancelled" },
+        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
+        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+      },
     }),
     orgMemberRoute(),
     async (c) => {
@@ -594,6 +600,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Enable the tested organization SSO configuration",
+      description: "Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires the Enterprise plan; the change is recorded in the organization audit log.",
       security: [{ bearerAuth: [] }],
       responses: {
         204: { description: "SSO enabled" },
@@ -624,8 +631,14 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Disable organization SSO",
+      description: "Switches the organization's SSO connection to disabled while keeping its provider configuration, so it can be tested and enabled again later. Answers 404 when the organization has no SSO connection; the change is recorded in the organization audit log.",
       security: [{ bearerAuth: [] }],
-      responses: { 204: { description: "SSO disabled" } },
+      responses: {
+        204: { description: "SSO disabled" },
+        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
+        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+      },
     }),
     orgMemberRoute(),
     async (c) => {
@@ -652,7 +665,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       description: "Returns the generated Service Provider metadata for the current organization's SAML connection.",
       security: [{ bearerAuth: [] }],
       responses: {
-        200: { description: "SAML metadata document" },
+        200: xmlResponse("SAML Service Provider metadata (an `EntityDescriptor` XML document) served as `application/xml`."),
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
         403: { description: "Only workspace owners and admins can read SSO metadata.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },

@@ -23,8 +23,10 @@ Use this checklist only when the goal is a fully isolated OpenWork deployment, n
 ### Deployment artifacts
 
 - Mirror the GHCR Helm chart into an internal OCI registry.
-- Mirror all enabled images into an internal registry, including `openwork-den-api`, `openwork-den-web`, and `openwork-inference` if inference is enabled.
+- Mirror all enabled images into an internal registry, including `openwork-den-api`, `openwork-den-web`, and `openwork-inference` if OpenWork Gateway or the retained legacy inference component is enabled. Gateway keeps this image name; do not substitute the separate `den-gateway` Web proxy.
 - Configure Helm image repositories and chart installation to use the internal registry. The public `ghcr.io` path is only needed when you are not mirroring the chart and images.
+
+For Gateway, mirror matching images from the capability-version-1 release rather than older stable images with new chart values. Follow [Gateway opt-in](/self-host/gateway) and the [safe upgrade procedure](/self-host/gateway-upgrade), including schema migration before runtime rollout.
 
 ### Installer artifacts
 

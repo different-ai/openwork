@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { getApiKeysRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export default function AdminDashboardLayout({
@@ -13,7 +14,7 @@ export default function AdminDashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { orgContext, orgBusy } = useOrgDashboard();
+  const { orgContext, orgBusy, orgError } = useOrgDashboard();
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -22,10 +23,14 @@ export default function AdminDashboardLayout({
   const canUseAdminRoute = access.isAdmin || (pathname === getApiKeysRoute() && access.canManageApiKeys);
 
   useEffect(() => {
-    if (orgContext && !canUseAdminRoute) {
+    if (!orgBusy && !orgError && orgContext && !canUseAdminRoute) {
       router.replace("/dashboard");
     }
-  }, [canUseAdminRoute, orgContext, router]);
+  }, [canUseAdminRoute, orgBusy, orgContext, orgError, router]);
+
+  if (orgError && !orgBusy) {
+    return <DenNotice tone="error" message={orgError} />;
+  }
 
   if (orgBusy || !orgContext) {
     return (

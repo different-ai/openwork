@@ -44,6 +44,7 @@ import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
+import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./workbench-panel-group";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
@@ -156,7 +157,7 @@ export type SessionPageSidebarProps = {
   startupPhase: BootPhase;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
-  onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
+  onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onCreateTaskWithPrompt?: (
@@ -987,11 +988,8 @@ export function SessionPage(props: SessionPageProps) {
       workspaceTitle: workspaceName,
       primarySessionId: props.selectedSessionId,
       sessionsKnown: workspaceGroup?.status === "ready",
-      sessions: (workspaceGroup?.sessions ?? []).filter((session) => (
-        !session.time?.archived
-        || session.id === props.selectedSessionId
-        || (splitSession?.workspaceId === props.selectedWorkspaceId && splitSession.sessionId === session.id)
-      )).map((session) => ({
+      archivedSessionIds: (workspaceGroup?.sessions ?? []).filter((session) => session.time?.archived).map((session) => session.id),
+      sessions: (workspaceGroup?.sessions ?? []).map((session) => ({
         workspaceId: props.selectedWorkspaceId,
         sessionId: session.id,
         title: getDisplaySessionTitle(session.title),
@@ -1003,7 +1001,6 @@ export function SessionPage(props: SessionPageProps) {
     props.selectedWorkspaceId,
     props.sidebar.workspaceSessionGroups,
     syncWorkbench,
-    splitSession,
     workspaceName,
   ]);
   useEffect(() => {
@@ -1377,7 +1374,6 @@ export function SessionPage(props: SessionPageProps) {
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
-          newTaskDraftScope={props.newTaskComposer?.draftScope ?? null}
           onSelectWorkspace={props.sidebar.onSelectWorkspace}
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
@@ -1731,13 +1727,16 @@ export function SessionPage(props: SessionPageProps) {
 
               {!props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <div className="flex h-full min-h-0 flex-col">
-                  <ResizablePanelGroup
-                    key={canRenderSplitSurface ? "workbench-split" : "workbench-single"}
-                    orientation="horizontal"
-                    className="min-h-0 flex-1"
+                  <WorkbenchPanelGroup
+                    owner={props.surface?.draftScope ? JSON.stringify([
+                      props.surface.draftScope, reactSessionBaseUrl, props.runtimeWorkspaceId,
+                    ]) : null}
+                    primaryVisible={!isMobile || narrowPane === "chat"}
+                    secondaryVisible={Boolean(canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split"))}
                   >
                     {!isMobile || narrowPane === "chat" ? (
                       <ResizablePanel
+                        id={PRIMARY_PANEL_ID}
                         minSize={isMobile ? "0px" : "320px"}
                         className="min-h-0 min-w-0"
                         data-workbench-pane="primary"
@@ -1797,6 +1796,7 @@ export function SessionPage(props: SessionPageProps) {
                       <>
                         {!isMobile ? <ResizableHandle /> : null}
                         <ResizablePanel
+                          id={SECONDARY_PANEL_ID}
                           minSize={isMobile ? "0px" : "320px"}
                           className="min-h-0 min-w-0"
                           data-workbench-pane="secondary"
@@ -1854,7 +1854,7 @@ export function SessionPage(props: SessionPageProps) {
                         </ResizablePanel>
                       </>
                     ) : null}
-                  </ResizablePanelGroup>
+                  </WorkbenchPanelGroup>
                 </div>
               ) : null}
 

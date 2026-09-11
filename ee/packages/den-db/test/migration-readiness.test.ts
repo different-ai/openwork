@@ -4,11 +4,469 @@ import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/api"
+import * as schema from "../src/schema.ts"
+import { localConnectionConfig, matrixPreflightQueries, migrateLocalDatabase, preflightMatrix } from "../scripts/dev-migrate.ts"
+import { foundationSql, historyPrefix, journalTable, loadMigrationPlan, planAuthLookupIndexRepairs, recognizeBaseline, schemaDifferences, snapshotShape, stateTable } from "../scripts/migration-baseline.ts"
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = path.resolve(packageDir, "..", "..", "..")
 const forbiddenDeployTools = ["pnpm", "tsx", "tsup", "drizzle-kit"]
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm"
+
+describe("local startup migration safety (offline)", () => {
+  const plan = loadMigrationPlan(path.join(packageDir, "drizzle"))
+  test("rebased final snapshot matches the source serializer and retains upstream fields", async () => {
+    const saved = plan.at(-1)?.snapshot
+    assert.ok(saved)
+    const generated = JSON.parse(JSON.stringify(await generateMySQLDrizzleJson(schema, saved.prevId)))
+    assert.deepEqual(generated.tables, saved.tables)
+    assert.deepEqual(await generateMySQLMigration(saved, generated), [])
+    assert.ok(saved.tables.team.columns.grants_organization_admin)
+    assert.ok(saved.tables.inference_usage_ledger_entries.columns.provider_usage)
+    assert.ok(saved.tables.gateway_providers.columns.model_ids)
+    assert.ok(saved.tables.gateway_credential_sets.columns.created_by_org_membership_id)
+  })
+  function shapeAt(tag: string) {
+    const snapshot = plan.find((entry) => entry.tag.startsWith(tag))?.snapshot
+    assert.ok(snapshot)
+    return snapshotShape(snapshot)
+  }
+  function fixture(shape: Map<string, string>, options: {
+    receipts?: Record<string, unknown>[]; dirty?: boolean; locked?: boolean; otherSessions?: boolean; invalid?: string; failOnSql?: RegExp; applyLookupIndexes?: boolean; version?: string; mode?: string
+  } = {}) {
+    const queries: string[] = []
+    const tables: Record<string, unknown>[] = []
+    const columns: Record<string, unknown>[] = []
+    const indexes: Record<string, unknown>[] = []
+    const constraints: Record<string, unknown>[] = []
+    for (const [key, value] of shape) {
+      const [kind, name] = key.split(":")
+      const [tbl, field] = name.split(".")
+      if (kind === "table") tables.push({ name, kind: "BASE TABLE", engine: "InnoDB" })
+      if (kind === "column") {
+        const [type, nullable, def, auto, update] = JSON.parse(value)
+        columns.push({ tbl, name: field, type, nullable: nullable ? "YES" : "NO", def,
+          extra: `${auto ? "auto_increment" : ""} ${update ? "on update CURRENT_TIMESTAMP(3)" : ""}`, generated: "" })
+      }
+      if (kind === "index") {
+        const [parts, unique, type]: [string[], boolean, string] = JSON.parse(value)
+        for (const part of parts) {
+          const prefix = /\((\d+)\)$/.exec(part)
+          indexes.push({ tbl, name: field, col: part.replace(/\(\d+\)$/, ""), prefix: prefix ? Number(prefix[1]) : null,
+            non_unique: unique ? 0 : 1, type, direction: "A", visible: "YES" })
+        }
+      }
+      if (kind === "check") constraints.push({ tbl, name: field, kind: "CHECK", clause: value, enforced: "YES" })
+    }
+    if (options.receipts) tables.push({ name: journalTable, kind: "BASE TABLE", engine: "InnoDB" })
+    if (options.dirty) tables.push({ name: stateTable, kind: "BASE TABLE", engine: "InnoDB" })
+    const executor = { query: async (sql: string): Promise<Record<string, unknown>[]> => {
+      queries.push(sql)
+      if (options.failOnSql?.test(sql)) throw new Error("synthetic DDL failure")
+      const createIndex = /^CREATE INDEX `([^`]+)` ON `([^`]+)`/.exec(sql)
+      if (createIndex && options.applyLookupIndexes) {
+        const definition = shapeAt("0096_").get(`index:${createIndex[2]}.${createIndex[1]}`)
+        assert.ok(definition)
+        const [parts, unique, type]: [string[], boolean, string] = JSON.parse(definition)
+        for (const part of parts) indexes.push({ tbl: createIndex[2], name: createIndex[1], col: part.replace(/\(191\)$/, ""), prefix: 191,
+          non_unique: unique ? 0 : 1, type, direction: "A", visible: "YES" })
+      }
+      if (sql.includes("VERSION() AS version")) return [{ version: options.version ?? "8.0.40", mode: options.mode ?? "STRICT_TRANS_TABLES", db: "synthetic_local" }]
+      if (sql.includes("GET_LOCK")) return [{ acquired: options.locked ? 0 : 1 }]
+      if (sql.includes("information_schema.PROCESSLIST")) return options.otherSessions ? [{ present: 1 }] : []
+      if (sql.startsWith("SELECT table_name AS `name`")) return tables
+      if (sql.startsWith("SELECT table_name AS `tbl`, column_name")) return columns
+      if (sql.startsWith("SELECT table_name AS `tbl`, index_name")) return indexes
+      if (sql.startsWith("SELECT t.table_name")) return constraints
+      if (sql.startsWith(`SELECT hash, created_at FROM \`${journalTable}\``)) return options.receipts ?? []
+      if (sql.startsWith(`SELECT 1 FROM \`${stateTable}\``)) return options.dirty ? [{ present: 1 }] : []
+      const source = /^SELECT 1 FROM `(inference_[a-z_]+)` LIMIT 1$/.exec(sql)
+      if (source) {
+        assert.ok(shape.has(`table:${source[1]}`), `Must not query absent table ${source[1]}`)
+        return options.invalid === source[1] ? [{ present: 1 }] : []
+      }
+      return []
+    } }
+    return { executor, queries }
+  }
+
+  test("known snapshots baseline only their prefix, never 0097", () => {
+    assert.equal(recognizeBaseline(plan, shapeAt("0096_")), 96)
+    assert.equal(recognizeBaseline(plan, shapeAt("0095_")), 95)
+    assert.throws(() => recognizeBaseline(plan, shapeAt("0097_")), /Explicit recovery is required/)
+    const partial = shapeAt("0096_")
+    partial.delete("column:inference_providers.credential_mode")
+    assert.throws(() => recognizeBaseline(plan, partial), /does not match/)
+    const indexDrift = shapeAt("0096_")
+    indexDrift.set("index:inference_provider_models.inference_provider_models_provider_model", '[[],false,"BTREE"]')
+    assert.throws(() => recognizeBaseline(plan, indexDrift), /does not match/)
+  })
+
+  test("history requires exact hashes, order and timestamps, not just MAX(created_at)", () => {
+    const receipts = plan.slice(0, 96).map((entry) => ({ hash: entry.hash, created_at: String(entry.folderMillis) }))
+    assert.equal(historyPrefix(plan, receipts), 96)
+    assert.throws(() => historyPrefix(plan, receipts.slice(1)), /exact hash\/timestamp prefix/)
+    assert.throws(() => historyPrefix(plan, [{ ...receipts[0], hash: "dirty" }]), /exact hash\/timestamp prefix/)
+    assert.throws(() => historyPrefix(plan, [...receipts, receipts[95]]), /exact hash\/timestamp prefix/)
+  })
+
+  test("only consolidated 0097 receipts retain the final prefix without restamping", () => {
+    const current = plan[96]
+    assert.equal(current.tag, "0097_gateway_access_matrix")
+    assert.equal(current.folderMillis, 1788895934602)
+    assert.equal(current.hash, "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470")
+    for (const created_at of [1788895934602, "1788895934602"]) {
+      const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+      const recorded = [...receipts.slice(0, 96), { hash: current.hash, created_at }]
+      const before = structuredClone(recorded)
+      assert.equal(historyPrefix(plan, recorded), 97)
+      assert.deepEqual(recorded, before)
+      assert.deepEqual(plan.slice(historyPrefix(plan, recorded)), [])
+    }
+  })
+
+  test("superseded 0097-0099 history and all other receipt drift require explicit recovery", async () => {
+    const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+    for (const hash of [
+      "dec021c8b3bb9fb139b3e0737ac5618ab1ed74d64d82fe36e1fcfe71306f378d",
+      "2882d271052bd27a6281e5a1b161056546c817d27e218ba69fecd5f00cb4db9a",
+    ]) {
+      for (const applied of [97, 98, 99]) {
+        const old = [...receipts.slice(0, 96), { ...receipts[96], hash },
+          ...Array.from({ length: applied - 97 }, (_, index) => ({ hash: "superseded", created_at: receipts[96].created_at + index + 1 }))]
+        const before = structuredClone(old)
+        const { executor, queries } = fixture(shapeAt("0097_"), { receipts: old })
+        await assert.rejects(migrateLocalDatabase(executor, plan), /exact hash\/timestamp prefix at receipt 97/)
+        assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+        assert.deepEqual(old, before)
+      }
+    }
+    for (const row of [
+      { ...receipts[96], hash: "unknown" },
+      { hash: plan[96].hash, created_at: 1788895934603 },
+    ]) {
+      assert.throws(() => historyPrefix(plan, [...receipts.slice(0, 96), row]), /exact hash\/timestamp prefix at receipt 97/)
+    }
+    for (const index of [2, 9, 14, 94, 95, 96]) {
+      const olderDrift = plan.map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+      olderDrift[index].hash = "unknown"
+      assert.throws(() => historyPrefix(plan, olderDrift), new RegExp(`exact hash/timestamp prefix at receipt ${index + 1}\\.`))
+    }
+    assert.throws(() => historyPrefix(plan, [...receipts, receipts[96]]), /prefix at receipt 98/)
+  })
+
+  test("consolidated 0097 receipts require schema parity and do not rerun source guards", async () => {
+    const receipts = plan.map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+    const before = structuredClone(receipts)
+    const shape = shapeAt("0097_")
+    const healthy = fixture(shape, { receipts })
+    await migrateLocalDatabase(healthy.executor, plan, true)
+    assert.ok(healthy.queries.every((sql) => sql.startsWith("SELECT")))
+    assert.ok(matrixPreflightQueries(plan).every((guard) => !healthy.queries.includes(guard.sql)))
+    const drifted = new Map(shape)
+    drifted.delete("column:gateway_provider_access.model_group_id")
+    const invalid = fixture(drifted, { receipts })
+    await assert.rejects(migrateLocalDatabase(invalid.executor, plan, true), /Schema differs from its recorded migration/)
+    assert.ok(invalid.queries.every((sql) => sql.startsWith("SELECT")))
+    assert.deepEqual(receipts, before)
+  })
+
+  test("consolidated source checks are eight read-only existence probes", () => {
+    const queries = matrixPreflightQueries(plan)
+    assert.deepEqual(queries.map(({ name }) => name), [
+      "inference_providers", "inference_provider_models", "inference_provider_credentials",
+      "inference_provider_access", "inference_provider_oauth_states", "inference_request_logs",
+      "inference_usage_rollups", "inference_rollup_lock",
+    ])
+    for (const query of queries) assert.equal(query.sql, `SELECT 1 FROM \`${query.name}\` LIMIT 1`)
+  })
+
+  test("source pin rejects missing, duplicate, added or altered generated packets", () => {
+    const mutations: ((sql: string[]) => string[])[] = [
+      (sql) => sql.slice(1),
+      (sql) => [...sql.slice(0, 4), sql[4], ...sql.slice(4)],
+      (sql) => [...sql.slice(0, 4), "SELECT 1;", ...sql.slice(4)],
+      (sql) => sql.map((packet) => packet.replace("NOT NULL", "NULL")),
+      (sql) => sql.map((packet) => packet.replace("RENAME TABLE", "SELECT")),
+    ]
+    for (const mutate of mutations) {
+      const altered = plan.map((entry) => entry.tag === "0097_gateway_access_matrix" ? { ...entry, sql: mutate([...entry.sql]) } : entry)
+      // The original plan hash is deliberately retained: layout checks must
+      // inspect SQL bytes, not trust a stale hash alongside changed packets.
+      assert.throws(() => matrixPreflightQueries(altered), /0097 source changed/)
+    }
+  })
+
+  test("each source must be empty and the first nonempty source aborts", async () => {
+    const queries = matrixPreflightQueries(plan)
+    const called: string[] = []
+    await preflightMatrix({ query: async (sql) => { called.push(sql); return [] } }, plan)
+    assert.deepEqual(called, queries.map((query) => query.sql))
+    for (const target of queries) {
+      for (const rows of [[{}], [{ present: 1 }]]) {
+        const called: string[] = []
+        await assert.rejects(preflightMatrix({ query: async (sql) => {
+          called.push(sql)
+          return sql === target.sql ? rows : []
+        } }, plan), /Preflight rejected/)
+        assert.deepEqual(called, queries.slice(0, queries.indexOf(target) + 1).map((query) => query.sql))
+      }
+    }
+  })
+
+  test("verified 0095 skips only its absent rollup lock and query errors abort", async () => {
+    const all = matrixPreflightQueries(plan)
+    const required = all.filter((query) => query.name !== "inference_rollup_lock")
+    assert.equal(all.length - required.length, 1)
+    const called: string[] = []
+    await preflightMatrix({ query: async (sql) => {
+      called.push(sql)
+      return []
+    } }, plan, false)
+    assert.deepEqual(called, required.map((query) => query.sql))
+    for (const completeSchema of [false, true]) {
+      const expected = completeSchema ? all : required
+      for (const target of expected) {
+        const failure = new Error("synthetic query failure")
+        const attempted: string[] = []
+        await assert.rejects(preflightMatrix({ query: async (sql) => {
+          attempted.push(sql)
+          if (sql === target.sql) throw failure
+          return []
+        } }, plan, completeSchema), (error: unknown) => error === failure)
+        assert.deepEqual(attempted, expected.slice(0, expected.indexOf(target) + 1).map((query) => query.sql))
+      }
+    }
+  })
+
+  const lookupKeys = [
+    "index:account.account_account_id_provider_id",
+    "index:oauthAccessToken.oauth_access_token_token",
+    "index:oauthRefreshToken.oauth_refresh_token_token",
+  ]
+  function missingLookups() {
+    const shape = shapeAt("0096_")
+    for (const key of lookupKeys) shape.delete(key)
+    return shape
+  }
+
+  test("auth reconciliation permits only missing subsets of the three canonical nonunique indexes", () => {
+    for (let mask = 0; mask < 8; mask++) {
+      const shape = shapeAt("0096_")
+      const missing = lookupKeys.filter((_, index) => mask & (1 << index))
+      for (const key of missing) shape.delete(key)
+      const repairs = planAuthLookupIndexRepairs(plan, shape)
+      assert.deepEqual(repairs.map((repair) => repair.key), missing)
+      for (const repair of repairs) {
+        assert.match(repair.sql, /^CREATE INDEX /)
+        assert.doesNotMatch(repair.sql, /UPDATE|DROP|UNIQUE|INSERT/)
+        shape.set(repair.key, repair.definition)
+      }
+      assert.equal(recognizeBaseline(plan, shape), 96)
+    }
+    for (const key of ["column:account.provider_id", "table:inference_providers", "index:account.account_user_id"]) {
+      const mixed = missingLookups()
+      mixed.delete(key)
+      assert.deepEqual(planAuthLookupIndexRepairs(plan, mixed), [])
+      assert.throws(() => recognizeBaseline(plan, mixed), /does not match/)
+    }
+    for (const definition of ['[["token(100)"],false,"BTREE"]', '[["token(191)"],true,"BTREE"]']) {
+      const wrong = missingLookups()
+      wrong.set(lookupKeys[1], definition)
+      assert.deepEqual(planAuthLookupIndexRepairs(plan, wrong), [])
+      assert.throws(() => recognizeBaseline(plan, wrong), /does not match/)
+    }
+    assert.deepEqual(planAuthLookupIndexRepairs(plan, shapeAt("0097_")), [])
+    assert.deepEqual(planAuthLookupIndexRepairs(plan, shapeAt("0095_")), [])
+  })
+
+  test("planned auth repair check allows active connections but performs only reads", async () => {
+    const { executor, queries } = fixture(missingLookups(), { otherSessions: true })
+    await migrateLocalDatabase(executor, plan, true)
+    assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    for (const guard of matrixPreflightQueries(plan)) assert.ok(queries.includes(guard.sql))
+  })
+
+  test("all data guards, connection and interruption checks precede any auth index writes", async () => {
+    const scenarios = [
+      { options: { otherSessions: true }, error: /Other connections/ },
+      { options: { dirty: true }, error: /interrupted/ },
+      ...matrixPreflightQueries(plan).map((guard) => ({ options: { invalid: guard.name }, error: /Preflight rejected/ })),
+    ]
+    for (const scenario of scenarios) {
+      const { executor, queries } = fixture(missingLookups(), scenario.options)
+      await assert.rejects(migrateLocalDatabase(executor, plan), scenario.error)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+  })
+
+  test("additive failure or failed reinspection retains marker with no baseline receipts", async () => {
+    for (const scenario of [
+      { options: { failOnSql: /^CREATE INDEX `oauth_access_token_token`/ }, error: /synthetic DDL failure/ },
+      { options: {}, error: /did not reach exact 0096/ },
+    ]) {
+      const { executor, queries } = fixture(missingLookups(), scenario.options)
+      await assert.rejects(migrateLocalDatabase(executor, plan), scenario.error)
+      const marker = queries.findIndex((sql) => sql.startsWith(`INSERT INTO \`${stateTable}\``))
+      const index = queries.findIndex((sql) => sql.startsWith("CREATE INDEX"))
+      assert.ok(marker >= 0 && marker < index)
+      assert.equal(queries.some((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``)), false)
+      assert.equal(queries.some((sql) => sql.startsWith(`DELETE FROM \`${stateTable}\``)), false)
+      assert.ok(queries.at(-1)?.includes("RELEASE_LOCK"))
+    }
+  })
+
+  test("auth repair verifies exact 0096 before receipts, then advances to 0097 without replaying 0073", async () => {
+    const { executor, queries } = fixture(missingLookups(), { applyLookupIndexes: true, failOnSql: /RENAME TABLE/ })
+    await assert.rejects(migrateLocalDatabase(executor, plan), /synthetic DDL failure/)
+    const firstIndex = queries.findIndex((sql) => sql.startsWith("CREATE INDEX"))
+    const lastIndex = queries.reduce((last, sql, index) => sql.startsWith("CREATE INDEX") ? index : last, -1)
+    const inspection = queries.findIndex((sql, index) => index > lastIndex && sql.startsWith("SELECT table_name AS `name`"))
+    const receipt = queries.findIndex((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``))
+    assert.equal(queries.filter((sql) => sql.startsWith("CREATE INDEX")).length, 3)
+    assert.ok(firstIndex >= 0 && inspection > lastIndex && receipt > inspection)
+    for (const guard of matrixPreflightQueries(plan)) assert.ok(queries.indexOf(guard.sql) < firstIndex)
+    assert.equal(queries.filter((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``)).length, 96)
+    assert.equal(queries.some((sql) => /UPDATE `user`/.test(sql)), false)
+    assert.ok(queries.some((sql) => /RENAME TABLE/.test(sql)))
+  })
+
+  test("launcher awaits build and local migration before starting application services", () => {
+    const launcher = readFileSync(path.join(repoRoot, "scripts/dev-local.mjs"), "utf8")
+    const build = launcher.indexOf('await run("pnpm", ["--filter", "@openwork-ee/den-db", "build"]')
+    const migrate = launcher.indexOf('await run("pnpm", ["--filter", "@openwork-ee/den-db", "db:migrate:local"]')
+    const start = launcher.indexOf("turboChild = spawn(")
+    assert.ok(build >= 0 && build < migrate && migrate < start)
+    assert.doesNotMatch(launcher, /drizzle-kit|--force|db:push|db:baseline/)
+  })
+
+  test("loopback restriction does not disclose URLs or passwords", () => {
+    assert.equal(localConnectionConfig("mysql://root:synthetic@127.0.0.1:3306/example").host, "127.0.0.1")
+    assert.equal(localConnectionConfig("mysql://root:synthetic@[::1]:3306/example").host, "::1")
+    for (const url of ["mysql://root:synthetic@remote.example.test/db", "malformed:synthetic"]) {
+      assert.throws(() => localConnectionConfig(url), (error: unknown) => {
+        assert.ok(error instanceof Error)
+        assert.equal(error.message.includes("synthetic"), false)
+        assert.equal(error.message.includes(url), false)
+        return true
+      })
+    }
+  })
+
+  test("empty and recognized pre-matrix read-only checks never create a journal", async () => {
+    for (const shape of [new Map<string, string>(), shapeAt("0096_"), shapeAt("0095_")]) {
+      const { executor, queries } = fixture(shape)
+      await migrateLocalDatabase(executor, plan, true)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+      assert.ok(queries.at(-1)?.includes("RELEASE_LOCK"))
+    }
+  })
+
+  test("0095 nonempty sources and missing prerequisites fail before any pending writes", async () => {
+    for (const source of matrixPreflightQueries(plan, false)) {
+      const { executor, queries } = fixture(shapeAt("0095_"), { invalid: source.name })
+      await assert.rejects(migrateLocalDatabase(executor, plan), /Preflight rejected nonempty/)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+    for (const tag of ["0095_", "0096_"]) {
+      const shape = shapeAt(tag)
+      shape.delete("table:inference_provider_models")
+      const { executor, queries } = fixture(shape)
+      await assert.rejects(migrateLocalDatabase(executor, plan), /does not match/)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+  })
+
+  test("0095 apply repeats all eight source guards after 0096 and before the first 0097 DDL", async () => {
+    const shape = shapeAt("0095_")
+    const { executor, queries } = fixture(shape, { failOnSql: /^CREATE TABLE `gateway_credential_sets`/ })
+    await assert.rejects(migrateLocalDatabase({ query: async (sql) => {
+      if (sql.includes("CREATE TABLE `inference_rollup_lock`")) shape.set("table:inference_rollup_lock", "BASE TABLE:InnoDB")
+      return executor.query(sql)
+    } }, plan), /synthetic DDL failure/)
+    const prerequisite = queries.findIndex((sql) => sql.includes("CREATE TABLE `inference_rollup_lock`"))
+    const firstMatrixDdl = queries.findIndex((sql) => sql.startsWith("CREATE TABLE `gateway_credential_sets`"))
+    assert.ok(prerequisite >= 0 && firstMatrixDdl > prerequisite)
+    for (const guard of matrixPreflightQueries(plan)) {
+      const probe = queries.lastIndexOf(guard.sql)
+      assert.ok(probe > prerequisite && probe < firstMatrixDdl)
+    }
+    assert.equal(queries.filter((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``)).length, 96)
+  })
+
+  test("unsupported engines, old MySQL and non-strict sessions fail before writes", async () => {
+    for (const options of [
+      { version: "5.7.44" }, { version: "8.0.15" }, { version: "10.11.0-MariaDB" },
+      { version: "8.0.30-TiDB" }, { version: "unknown" }, { mode: "NO_ENGINE_SUBSTITUTION" },
+    ]) {
+      const { executor, queries } = fixture(shapeAt("0096_"), options)
+      await assert.rejects(migrateLocalDatabase(executor, plan), /MySQL 8.0.16/)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+  })
+
+  test("dirty, mixed, already-pushed, competing and invalid-data states fail before writes", async () => {
+    const cases = [
+      { shape: shapeAt("0096_"), options: { dirty: true }, error: /interrupted/ },
+      { shape: shapeAt("0096_"), options: { locked: true }, error: /holds this database/ },
+      { shape: shapeAt("0096_"), options: { otherSessions: true }, error: /Other connections/ },
+      { shape: shapeAt("0097_"), options: {}, error: /Explicit recovery/ },
+      { shape: new Map([["table:unrecognized", "BASE TABLE:InnoDB"]]), options: {}, error: /does not match/ },
+      { shape: shapeAt("0096_"), options: { receipts: [{ hash: "dirty", created_at: 1 }] }, error: /exact hash/ },
+      ...matrixPreflightQueries(plan).map((check) => ({ shape: shapeAt("0096_"), options: { invalid: check.name }, error: /Preflight rejected/ })),
+    ]
+    for (const scenario of cases) {
+      const { executor, queries } = fixture(scenario.shape, scenario.options)
+      await assert.rejects(migrateLocalDatabase(executor, plan), scenario.error)
+      assert.ok(queries.every((sql) => sql.startsWith("SELECT")))
+    }
+  })
+
+  test("known repairs and fulltext differences do not hide unrelated drift", () => {
+    const expected = shapeAt("0096_")
+    const repaired = new Map(expected)
+    repaired.delete("column:config_object_version.organization_id")
+    repaired.delete("index:config_object_version.config_object_version_organization_id")
+    repaired.set("index:memory.memory_content_fulltext", '[["content"],false,"FULLTEXT"]')
+    assert.deepEqual(schemaDifferences(expected, repaired), [])
+    repaired.set("column:config_object_version.organization_id", '["varchar(255)",false,null,false,false]')
+    assert.deepEqual(schemaDifferences(expected, repaired), ["column:config_object_version.organization_id"])
+  })
+
+  test("DDL failure retains the interruption marker and never records 0097", async () => {
+    const { executor, queries } = fixture(shapeAt("0096_"), { failOnSql: /RENAME TABLE/ })
+    await assert.rejects(migrateLocalDatabase(executor, plan), /synthetic DDL failure/)
+    const marker = queries.findIndex((sql) => sql.startsWith(`INSERT INTO \`${stateTable}\``))
+    const baseline = queries.findIndex((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``))
+    const rename = queries.findIndex((sql) => /RENAME TABLE/.test(sql))
+    assert.ok(marker >= 0 && marker < baseline && baseline < rename)
+    assert.equal(queries.filter((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``)).length, 96)
+    assert.equal(queries.some((sql) => sql.startsWith(`DELETE FROM \`${stateTable}\``)), false)
+    assert.ok(queries.at(-1)?.includes("RELEASE_LOCK"))
+  })
+
+  test("matrix CHECK normalization preserves logical grouping", () => {
+    const snapshot = structuredClone(plan.at(-1)?.snapshot)
+    assert.ok(snapshot)
+    const expected = snapshotShape(snapshot)
+    snapshot.tables.gateway_provider_access.checkConstraint.gateway_provider_access_audience.value =
+      "(((`org_membership_id` is null) or (`team_id` is null)) and (`audience_key` = (case when (`org_membership_id` is not null) then concat(_utf8mb4'member:',`org_membership_id`) when (`team_id` is not null) then concat(_utf8mb4'team:',`team_id`) else _utf8mb4'organization' end)))"
+    assert.deepEqual(schemaDifferences(expected, snapshotShape(snapshot)), [])
+    snapshot.tables.gateway_provider_access.checkConstraint.gateway_provider_access_audience.value =
+      snapshot.tables.gateway_provider_access.checkConstraint.gateway_provider_access_audience.value.replace("or (`team_id` is null)) and", "or ((`team_id` is null) and")
+    assert.notDeepEqual(schemaDifferences(expected, snapshotShape(snapshot)), [])
+  })
+
+  test("foundation seeds only original tables and leaves later additions to replay", async () => {
+    const sql = (await foundationSql(plan)).join("\n")
+    assert.match(sql, /CREATE TABLE `worker`/)
+    assert.match(sql, /CREATE TABLE `oauthClient`/)
+    assert.doesNotMatch(sql, /CREATE TABLE `(?:inference_|gateway_|organization`|member`|memory`)/)
+    assert.doesNotMatch(sql, /`(?:last_heartbeat_at|last_active_at|cloud_failure_code|authorization_code_id|dpop_bound_access_tokens)`/)
+    assert.doesNotMatch(sql, /\b(?:DROP|RENAME|TRUNCATE|DELETE|INSERT)\b/)
+  })
+})
 
 function readRepoFile(relativePath: string) {
   return readFileSync(path.join(repoRoot, relativePath), "utf8")
@@ -42,6 +500,19 @@ function shortOutput(output: string) {
 }
 
 describe("Den DB migration readiness wiring", () => {
+  test("Drizzle tooling resolves workspace sources without a prerequisite production build", () => {
+    const { scripts } = JSON.parse(readRepoFile("ee/packages/den-db/package.json"))
+    const node = "node --conditions=development --import tsx"
+    for (const command of ["generate", "migrate", "push"]) {
+      const repair = command === "generate" ? "" : ` && ${node} scripts/ensure-schema-repairs.ts`
+      assert.equal(scripts[`db:${command}`], `${node} ./node_modules/drizzle-kit/bin.cjs ${command} --config drizzle.config.ts${repair}`)
+    }
+
+    const buildAssets = readRepoFile("ee/packages/den-db/scripts/build-assets.mjs")
+    assert.match(buildAssets, /spawnSync\(process\.execPath, \["--conditions=development", "--import", "tsx"/)
+    assert.match(buildAssets, /throw new Error\(`drizzle-kit export did not emit SQL/)
+  })
+
   test("oauth access token lookup has a token prefix index", () => {
     const authSchema = readRepoFile("ee/packages/den-db/src/schema/auth.ts")
     const migrations = readDenDbMigrations()

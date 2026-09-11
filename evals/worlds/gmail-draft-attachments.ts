@@ -9,6 +9,7 @@ import { localMysqlIsRunning, localRedisIsRunning, mcpMock, server, SkipError, t
 import { startMockGoogle } from "@openwork/labs";
 import { gmailDraftModel, gmailResultObjects } from "../packages/labs/src/gmail-draft-model.ts";
 import { bootManagedOpenworkServer, close, engineBinary, isRecord, listen } from "./openwork-server-cli.ts";
+import constants from "../../constants.json";
 
 export const gmailAttachmentFixtures = [
   { filename: "inventory.csv", mimeType: "text/csv", bytes: Buffer.from("sku,quantity\nfixture-widget,17\n") },
@@ -63,9 +64,9 @@ export async function gmailDraftAttachments(place: Place) {
   if (place.kind !== "local" || process.env.OPENWORK_EVAL_DEN_API_URL) throw new SkipError("isolated local Den for loopback Gmail witnesses");
   if (execFileSync("bun", ["--version"], { encoding: "utf8", timeout: 10_000 }).trim() !== "1.3.14") throw new SkipError("pinned Bun 1.3.14");
   const binary = engineBinary();
-  if (!binary) throw new SkipError("OpenCode v1.18.18 via OPENWORK_OPENCODE_BIN or prepared sidecar");
+  if (!binary) throw new SkipError(`OpenCode ${constants.opencodeVersion} via OPENWORK_OPENCODE_BIN or prepared sidecar`);
   const version = execFileSync(binary, ["--version"], { encoding: "utf8", timeout: 10_000 }).trim();
-  if (version.replace(/^v/, "") !== "1.18.18") throw new SkipError(`pinned OpenCode 1.18.18 (found ${version})`);
+  if (version.replace(/^v/, "") !== constants.opencodeVersion.replace(/^v/, "")) throw new SkipError(`pinned OpenCode ${constants.opencodeVersion} (found ${version})`);
   if (!await localMysqlIsRunning() || !await localRedisIsRunning()) throw new SkipError("local MySQL and Redis; run pnpm dev:den:mysql");
   const stack = new AsyncDisposableStack();
   try {

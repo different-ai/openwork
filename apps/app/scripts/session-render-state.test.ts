@@ -427,8 +427,8 @@ describe("resolveForkBoundaryId", () => {
     expect(resolveForkBoundaryId(transcript, "msg_4")).toBeNull();
   });
 
-  it("returns null for unknown ids instead of corrupting the boundary", () => {
-    expect(resolveForkBoundaryId(transcript, "msg_missing")).toBeNull();
+  it("rejects unknown ids instead of forking the entire conversation", () => {
+    expect(() => resolveForkBoundaryId(transcript, "msg_missing")).toThrow("no longer in this conversation");
   });
 
   it("skips synthetic session-error messages when picking the boundary", () => {
