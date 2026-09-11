@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { CancelledError, queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types";
@@ -127,11 +127,27 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
     activeOwner.current = input.owner;
     return () => { activeOwner.current = null; };
   }, [input.owner]);
-  const ensureFullSnapshot = useCallback(() => client.ensureQueryData({
-    queryKey: input.snapshotQueryKey,
-    queryFn: ({ signal }) => input.readSnapshot(signal),
-    networkMode: "always",
-  }), [client, input.snapshotQueryKey, input.readSnapshot]);
+  const ensureFullSnapshot = useCallback(async () => {
+    const options = {
+      queryKey: input.snapshotQueryKey,
+      queryFn: ({ signal }: { signal: AbortSignal }) => input.readSnapshot(signal),
+      networkMode: "always" as const,
+    };
+    try {
+      return await client.ensureQueryData(options);
+    } catch (error) {
+      // The cache cancels this read when the surface's own observer drops
+      // mid-flight. Development builds simulate an unmount for every mount
+      // effect, so a send fired from one (the hero's one-step Run task) always
+      // sees its reader drop and re-subscribe while the read is in flight. With
+      // the reader still present that is not a failed read: read again. Once
+      // nobody observes the thread anymore (navigated away), it stands.
+      if (!(error instanceof CancelledError)) throw error;
+      const query = client.getQueryCache().find({ queryKey: input.snapshotQueryKey, exact: true });
+      if (!query || query.getObserversCount() === 0) throw error;
+      return client.fetchQuery(options);
+    }
+  }, [client, input.snapshotQueryKey, input.readSnapshot]);
   const runWithFullSnapshot = useCallback(async (
     action: (snapshot: OpenworkSessionSnapshot) => void | Promise<unknown>,
     options: { fresh?: boolean } = {},
