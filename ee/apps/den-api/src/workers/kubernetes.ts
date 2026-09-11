@@ -202,6 +202,10 @@ function containerEnv(input: ProvisionInput) {
     { name: "DEN_ACTIVITY_HEARTBEAT_ENABLED", value: "1" },
     { name: "DEN_ACTIVITY_HEARTBEAT_URL", value: workerActivityHeartbeatUrl(input.workerId) },
     { name: "DEN_ACTIVITY_HEARTBEAT_TOKEN", ...secretKeyRef("DEN_ACTIVITY_HEARTBEAT_TOKEN") },
+    // opencode stores conversations/sessions in $XDG_DATA_HOME/opencode; point it
+    // at the /data PVC so they survive pod recreation (the container FS is
+    // ephemeral). The entrypoint creates the dir; the data PVC is RW at /data.
+    { name: "XDG_DATA_HOME", value: "/data/opencode-xdg/data" },
   ]
 }
 
