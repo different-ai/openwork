@@ -262,6 +262,7 @@ function sanitizeMarkdownHtml(value: string) {
       "data-openwork-code-copy-label",
       "data-openwork-code-scroll",
       "data-openwork-code-wrap",
+      "data-openwork-table-scroll",
       "aria-label",
       "aria-pressed",
       "data-openwork-image-preview",
@@ -442,7 +443,7 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         const header = token.header.map((cell) => this.tablecell({ ...cell, header: true })).join("");
         const body = token.rows.map((row) => this.tablerow({ text: row.map((cell) => this.tablecell(cell)).join("") })).join("");
 
-        return `<table class="my-4 w-full border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table>`;
+        return `<div data-openwork-table-scroll="" class="overflow-x-auto"><table class="my-4 w-full border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table></div>`;
       },
       tablerow({ text }) {
         return `<tr>${text}</tr>`;
