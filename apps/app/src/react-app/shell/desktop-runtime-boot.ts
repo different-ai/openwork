@@ -118,6 +118,21 @@ export function useDesktopRuntimeBoot() {
         };
 
         const startServerWithoutDesktopWorkspace = async () => {
+          // A renderer reload lands here whenever the selected workspace only
+          // exists in the server registry (workspaces created from the app are
+          // server-owned). The server is already serving it: restarting would
+          // kill the engine and every in-flight run for nothing.
+          const running = await openworkServerInfo().catch(() => null);
+          if (
+            isOpenworkServerInfoLike(running)
+            && isOpenworkServerReady(running)
+            && (running.remoteAccessEnabled === true) === preferredRemoteAccess
+          ) {
+            publishOpenworkServerInfo(running);
+            await window.__OPENWORK_ELECTRON__?.recovery?.recordHealthy?.().catch(() => undefined);
+            markReady();
+            return;
+          }
           setPhase("starting-engine", "Starting OpenWork server");
           const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
             console.warn("[desktop-boot] openworkServerRestart failed:", error);

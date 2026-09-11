@@ -1,17 +1,37 @@
 import { relations } from "drizzle-orm"
 import {
   bigint,
+  boolean,
   index,
   int,
   json,
   mysqlEnum,
   mysqlTable,
+  smallint,
   timestamp,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
-import { INFERENCE_RESET_STRATEGIES, INFERENCE_WINDOW_TYPES } from "@openwork/types/den/inference"
-import { denTypeIdColumn, encryptedTextColumn, timestamps } from "../columns"
+import {
+  INFERENCE_RESET_STRATEGIES,
+  INFERENCE_WINDOW_TYPES,
+} from "@openwork/types/den/inference"
+import {
+  GATEWAY_REQUEST_OUTCOMES,
+  GATEWAY_REQUEST_PROTOCOLS,
+  GATEWAY_REQUEST_ROUTES,
+  GATEWAY_ROLLUP_GRANULARITIES,
+  GATEWAY_USAGE_SOURCES,
+} from "@openwork/types/den/gateway"
+import { compatJsonColumn, denTypeIdColumn, encryptedTextColumn, timestamps } from "../columns"
+import {
+  GatewayCredentialSetTable,
+  GatewayKeyTable,
+  GatewayModelGroupTable,
+  GatewayProviderAccessTable,
+  GatewayProviderCredentialTable,
+  GatewayProviderTable,
+} from "./inference-providers"
 import { MemberTable, OrganizationTable } from "./org"
 
 export const InferenceKeyStatus = ["active", "revoked"] as const
@@ -26,6 +46,9 @@ export const InferenceKeyTable = mysqlTable(
     name: varchar("name", { length: 255 }),
     key_hash: varchar("key_hash", { length: 255 }).notNull(),
     key_prefix: varchar("key_prefix", { length: 32 }),
+    // Raw `ow_inf_` key (encrypted) so den-api can hand it back to the member's
+    // desktop without materializing an llm_provider row. Null on legacy rows.
+    encrypted_key: encryptedTextColumn("encrypted_key"),
     status: mysqlEnum("status", InferenceKeyStatus).notNull().default("active"),
     revoked_at: timestamp("revoked_at", { fsp: 3 }),
     ...timestamps,
@@ -167,6 +190,141 @@ export const InferenceUsageLedgerBucketChargeTable = mysqlTable(
   ],
 )
 
+// One row per proxied request (OpenWork/OpenRouter route and org-provider route).
+// Never stores prompt or completion content.
+// No team ID is recorded; team usage is grouped by current memberships.
+export const GatewayRequestLogTable = mysqlTable(
+  "gateway_request_logs",
+  {
+    id: denTypeIdColumn("inferenceRequestLog", "id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    inference_key_id: denTypeIdColumn("inferenceKey", "inference_key_id"),
+    gateway_key_id: denTypeIdColumn("gatewayKey", "gateway_key_id"),
+    gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id"),
+    gateway_provider_credential_id: denTypeIdColumn(
+      "inferenceProviderCredential",
+      "gateway_provider_credential_id",
+    ),
+    // Historical rows retain unknown selection, not invented default grants.
+    model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id"),
+    credential_set_id: denTypeIdColumn("gatewayCredentialSet", "credential_set_id"),
+    access_grant_id: denTypeIdColumn("inferenceProviderAccess", "access_grant_id"),
+    route: mysqlEnum("route", GATEWAY_REQUEST_ROUTES).notNull(),
+    protocol: mysqlEnum("protocol", GATEWAY_REQUEST_PROTOCOLS).notNull(),
+    upstream_provider_id: varchar("upstream_provider_id", { length: 64 }).notNull(),
+    upstream_host: varchar("upstream_host", { length: 255 }).notNull(),
+    upstream_path: varchar("upstream_path", { length: 512 }).notNull(),
+    method: varchar("method", { length: 8 }).notNull(),
+    requested_model: varchar("requested_model", { length: 255 }),
+    upstream_model: varchar("upstream_model", { length: 255 }),
+    stream: boolean("stream").notNull(),
+    status: smallint("status"),
+    outcome: mysqlEnum("outcome", GATEWAY_REQUEST_OUTCOMES).notNull(),
+    error_code: varchar("error_code", { length: 64 }),
+    input_tokens: int("input_tokens"),
+    output_tokens: int("output_tokens"),
+    total_tokens: int("total_tokens"),
+    cache_read_tokens: int("cache_read_tokens"),
+    cache_write_tokens: int("cache_write_tokens"),
+    reasoning_tokens: int("reasoning_tokens"),
+    usage_source: mysqlEnum("usage_source", GATEWAY_USAGE_SOURCES).notNull(),
+    cost_micro_usd: bigint("cost_micro_usd", { mode: "number" }),
+    upstream_request_id: varchar("upstream_request_id", { length: 255 }),
+    openwork_request_id: varchar("openwork_request_id", { length: 32 }).notNull(),
+    started_at: timestamp("started_at", { fsp: 3 }).notNull(),
+    first_byte_at: timestamp("first_byte_at", { fsp: 3 }),
+    completed_at: timestamp("completed_at", { fsp: 3 }),
+    request_bytes: bigint("request_bytes", { mode: "number" }),
+    response_bytes: bigint("response_bytes", { mode: "number" }),
+    metadata: compatJsonColumn<Record<string, unknown>>("metadata"),
+    created_at: timestamps.created_at,
+  },
+  (table) => [
+    uniqueIndex("gateway_request_logs_openwork_request_id").on(table.openwork_request_id),
+    index("gateway_request_logs_org_started").on(table.organization_id, table.started_at),
+    index("gateway_request_logs_member_started").on(table.org_membership_id, table.started_at),
+    index("gateway_request_logs_provider_started").on(
+      table.gateway_provider_id,
+      table.started_at,
+    ),
+    index("gateway_request_logs_started_at").on(table.started_at),
+  ],
+)
+
+// A permanent singleton record: INSERT ... ON DUPLICATE KEY UPDATE holds an
+// InnoDB exclusive lock through commit, coordinating hourly AND daily consumers.
+export const GatewayRollupLockTable = mysqlTable("gateway_rollup_lock", {
+  id: int("id").notNull().primaryKey(),
+})
+
+// Hour/day aggregates of gateway_request_logs, one row per dimension combination per bucket.
+export const GatewayUsageRollupTable = mysqlTable(
+  "gateway_usage_rollups",
+  {
+    id: denTypeIdColumn("inferenceUsageRollup", "id").notNull().primaryKey(),
+    granularity: mysqlEnum("granularity", GATEWAY_ROLLUP_GRANULARITIES).notNull(),
+    bucket_start: timestamp("bucket_start", { fsp: 3 }).notNull(),
+    // New aggregation uses gatewayRollupDimensionKey, including group/set/grant.
+    // Preserve old hashes and NULL selection dimensions as historical unknowns.
+    dimension_key: varchar("dimension_key", { length: 64 }).notNull(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id"),
+    model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id"),
+    credential_set_id: denTypeIdColumn("gatewayCredentialSet", "credential_set_id"),
+    access_grant_id: denTypeIdColumn("inferenceProviderAccess", "access_grant_id"),
+    route: mysqlEnum("route", GATEWAY_REQUEST_ROUTES).notNull(),
+    protocol: mysqlEnum("protocol", GATEWAY_REQUEST_PROTOCOLS).notNull(),
+    upstream_provider_id: varchar("upstream_provider_id", { length: 64 }).notNull(),
+    upstream_model: varchar("upstream_model", { length: 255 }),
+    request_count: int("request_count").notNull().default(0),
+    ok_count: int("ok_count").notNull().default(0),
+    error_count: int("error_count").notNull().default(0),
+    aborted_count: int("aborted_count").notNull().default(0),
+    stream_count: int("stream_count").notNull().default(0),
+    usage_missing_count: int("usage_missing_count").notNull().default(0),
+    input_tokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    output_tokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    total_tokens: bigint("total_tokens", { mode: "number" }).notNull().default(0),
+    cache_read_tokens: bigint("cache_read_tokens", { mode: "number" }).notNull().default(0),
+    cache_write_tokens: bigint("cache_write_tokens", { mode: "number" }).notNull().default(0),
+    reasoning_tokens: bigint("reasoning_tokens", { mode: "number" }).notNull().default(0),
+    cost_micro_usd: bigint("cost_micro_usd", { mode: "number" }).notNull().default(0),
+    latency_ms_sum: bigint("latency_ms_sum", { mode: "number" }).notNull().default(0),
+    ttfb_ms_sum: bigint("ttfb_ms_sum", { mode: "number" }).notNull().default(0),
+    request_bytes: bigint("request_bytes", { mode: "number" }).notNull().default(0),
+    response_bytes: bigint("response_bytes", { mode: "number" }).notNull().default(0),
+    source_row_count: int("source_row_count").notNull().default(0),
+    // NULL means an older rollup whose observation counts cannot be recovered.
+    // New batches explicitly write zero when the measurement was not observed.
+    input_tokens_count: bigint("input_tokens_count", { mode: "number" }),
+    output_tokens_count: bigint("output_tokens_count", { mode: "number" }),
+    total_tokens_count: bigint("total_tokens_count", { mode: "number" }),
+    cache_read_tokens_count: bigint("cache_read_tokens_count", { mode: "number" }),
+    cache_write_tokens_count: bigint("cache_write_tokens_count", { mode: "number" }),
+    reasoning_tokens_count: bigint("reasoning_tokens_count", { mode: "number" }),
+    cost_count: bigint("cost_count", { mode: "number" }),
+    latency_count: bigint("latency_count", { mode: "number" }),
+    ttfb_count: bigint("ttfb_count", { mode: "number" }),
+    request_bytes_count: bigint("request_bytes_count", { mode: "number" }),
+    response_bytes_count: bigint("response_bytes_count", { mode: "number" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("gateway_usage_rollups_bucket_dimension").on(
+      table.granularity,
+      table.bucket_start,
+      table.dimension_key,
+    ),
+    index("gateway_usage_rollups_org_granularity_bucket").on(
+      table.organization_id,
+      table.granularity,
+      table.bucket_start,
+    ),
+  ],
+)
+
 export const inferenceKeyRelations = relations(InferenceKeyTable, ({ many, one }) => ({
   organization: one(OrganizationTable, {
     fields: [InferenceKeyTable.organization_id],
@@ -248,9 +406,86 @@ export const inferenceUsageLedgerBucketChargeRelations = relations(
   }),
 )
 
+export const gatewayRequestLogRelations = relations(GatewayRequestLogTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [GatewayRequestLogTable.organization_id],
+    references: [OrganizationTable.id],
+  }),
+  orgMembership: one(MemberTable, {
+    fields: [GatewayRequestLogTable.org_membership_id],
+    references: [MemberTable.id],
+  }),
+  inferenceKey: one(InferenceKeyTable, {
+    fields: [GatewayRequestLogTable.inference_key_id],
+    references: [InferenceKeyTable.id],
+  }),
+  gatewayKey: one(GatewayKeyTable, {
+    fields: [GatewayRequestLogTable.gateway_key_id],
+    references: [GatewayKeyTable.id],
+  }),
+  gatewayProvider: one(GatewayProviderTable, {
+    fields: [GatewayRequestLogTable.gateway_provider_id],
+    references: [GatewayProviderTable.id],
+  }),
+  gatewayProviderCredential: one(GatewayProviderCredentialTable, {
+    fields: [GatewayRequestLogTable.gateway_provider_credential_id],
+    references: [GatewayProviderCredentialTable.id],
+  }),
+  modelGroup: one(GatewayModelGroupTable, {
+    fields: [GatewayRequestLogTable.model_group_id],
+    references: [GatewayModelGroupTable.id],
+  }),
+  credentialSet: one(GatewayCredentialSetTable, {
+    fields: [GatewayRequestLogTable.credential_set_id],
+    references: [GatewayCredentialSetTable.id],
+  }),
+  accessGrant: one(GatewayProviderAccessTable, {
+    fields: [GatewayRequestLogTable.access_grant_id],
+    references: [GatewayProviderAccessTable.id],
+  }),
+}))
+
+export const gatewayUsageRollupRelations = relations(GatewayUsageRollupTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [GatewayUsageRollupTable.organization_id],
+    references: [OrganizationTable.id],
+  }),
+  orgMembership: one(MemberTable, {
+    fields: [GatewayUsageRollupTable.org_membership_id],
+    references: [MemberTable.id],
+  }),
+  gatewayProvider: one(GatewayProviderTable, {
+    fields: [GatewayUsageRollupTable.gateway_provider_id],
+    references: [GatewayProviderTable.id],
+  }),
+  modelGroup: one(GatewayModelGroupTable, {
+    fields: [GatewayUsageRollupTable.model_group_id],
+    references: [GatewayModelGroupTable.id],
+  }),
+  credentialSet: one(GatewayCredentialSetTable, {
+    fields: [GatewayUsageRollupTable.credential_set_id],
+    references: [GatewayCredentialSetTable.id],
+  }),
+  accessGrant: one(GatewayProviderAccessTable, {
+    fields: [GatewayUsageRollupTable.access_grant_id],
+    references: [GatewayProviderAccessTable.id],
+  }),
+}))
+
 export const inferenceKey = InferenceKeyTable
 export const inferenceOrgLimitPolicy = InferenceOrgLimitPolicyTable
 export const inferenceOrgUsageBucket = InferenceOrgUsageBucketTable
 export const inferenceOrgUpstreamProviderKey = InferenceOrgUpstreamProviderKeyTable
 export const inferenceUsageLedgerEntry = InferenceUsageLedgerEntryTable
 export const inferenceUsageLedgerBucketCharge = InferenceUsageLedgerBucketChargeTable
+export const gatewayRequestLog = GatewayRequestLogTable
+export const gatewayUsageRollup = GatewayUsageRollupTable
+export const gatewayRollupLock = GatewayRollupLockTable
+
+export {
+  GatewayRequestLogTable as InferenceRequestLogTable,
+  GatewayUsageRollupTable as InferenceUsageRollupTable,
+  GatewayRollupLockTable as InferenceRollupLockTable,
+  gatewayRequestLog as inferenceRequestLog,
+  gatewayUsageRollup as inferenceUsageRollup,
+}

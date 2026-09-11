@@ -70,6 +70,7 @@ export interface TestRunRecord {
   createdAt: string;
   closedAt: string;
   gitSha?: string;
+  sandboxRef?: string;
   engine: EvalEngine;
   branch?: string;
   summary: TestRunSummary;
@@ -298,6 +299,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   const summary = legacy ? parseLegacySummary(value.summary, artifacts) : parseCurrentSummary(value.summary, artifacts);
   if (!summary) return null;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
+  const sandboxRef = typeof value.sandboxRef === "string" ? value.sandboxRef : undefined;
   const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
     ? "v1"
     : value.engine === "v2"
@@ -333,6 +335,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
     createdAt: value.createdAt,
     closedAt: value.closedAt,
     gitSha,
+    sandboxRef,
     engine,
     branch,
     summary,

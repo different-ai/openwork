@@ -1,6 +1,7 @@
 import type { ProviderListItem } from "../types";
 import type { ModelBehaviorOption } from "../types";
 import { t } from "../../i18n";
+import { FAST_DEFAULT_VARIANT, FAST_VARIANT_PREFIX, fastVariantId } from "@openwork/types/cloud-model-fast";
 
 type ProviderModel = ProviderListItem["models"][string];
 
@@ -28,7 +29,29 @@ export const normalizeModelBehaviorValue = (value: string | null) => {
   return value?.trim() ? value : null;
 };
 
-const getVariantKeys = (model: ProviderModel | undefined) => Object.keys(model?.variants ?? {});
+const getVariantKeys = (model: ProviderModel | undefined) => Object.entries(model?.variants ?? {})
+  .filter(([, value]) => value.disabled !== true).map(([key]) => key);
+
+export const FAST_PRICING_WARNING = "Fast uses priority processing at higher pricing. Effort is unchanged.";
+
+/** Verified engine materializers advertise these combinations. No inference from
+ * model names or raw catalog modes, and no extra session/queue state. */
+export function getModelBehaviorControls<T extends Pick<ModelBehaviorOption, "value">>(options: readonly T[], value: string | null) {
+  const hasFast = options.some((option) => option.value === FAST_DEFAULT_VARIANT);
+  const standard = options.filter((option) => !hasFast || !option.value?.startsWith(FAST_VARIANT_PREFIX));
+  const fastBase = hasFast ? standard.find((option) => fastVariantId(option.value) === value) : undefined;
+  const base = fastBase ?? standard.find((option) => option.value === value);
+  const counterpart = base && options.find((option) => option.value === fastVariantId(base.value));
+  return {
+    hasFast,
+    fast: fastBase !== undefined,
+    toggleValue: counterpart ? (fastBase ? base?.value : counterpart.value) : undefined,
+    options: fastBase ? standard.flatMap((option) => {
+      const fastOption = options.find((entry) => entry.value === fastVariantId(option.value));
+      return fastOption ? [{ ...option, value: fastOption.value }] : [];
+    }) : standard,
+  };
+}
 
 const sortVariantKeys = (keys: string[]) =>
   keys.slice().sort((a, b) => {
@@ -92,7 +115,7 @@ export const nextModelBehaviorValue = (
   options: readonly Pick<ModelBehaviorOption, "value">[],
   current: string | null,
 ) => {
-  const values = options.map((option) => option.value);
+  const values = getModelBehaviorControls(options, current).options.map((option) => option.value);
   if (values.length < 2) return null;
   const currentIndex = values.indexOf(current);
   return values[(currentIndex + 1) % values.length] ?? null;
@@ -103,7 +126,7 @@ export const previousModelBehaviorValue = (
   options: readonly Pick<ModelBehaviorOption, "value">[],
   current: string | null,
 ) => {
-  const values = options.map((option) => option.value);
+  const values = getModelBehaviorControls(options, current).options.map((option) => option.value);
   if (values.length < 2) return null;
   const currentIndex = values.indexOf(current);
   if (currentIndex === -1) return values[values.length - 1] ?? null;
@@ -138,7 +161,14 @@ export const getModelBehaviorOptions = (
   providerName?: string | null,
 ): ModelBehaviorOption[] => {
   const variantKeys = sortVariantKeys(getVariantKeys(model));
+  const hasFast = variantKeys.includes(FAST_DEFAULT_VARIANT);
   return [defaultBehaviorOption(), ...variantKeys.map((key) => {
+    const baseKey = hasFast ? [null, ...variantKeys.filter((entry) => !entry.startsWith(FAST_VARIANT_PREFIX))]
+      .find((entry) => fastVariantId(entry) === key) : undefined;
+    if (baseKey !== undefined) {
+      const label = baseKey === null ? defaultBehaviorOption().label : getVariantLabel(baseKey);
+      return { value: key, label: `${label} + Fast`, description: FAST_PRICING_WARNING };
+    }
     const label = getVariantLabel(key);
     return {
       value: key,

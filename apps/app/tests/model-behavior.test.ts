@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { CATALOG_FAST_VARIANT, catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
 
 import type { ProviderListItem } from "../src/app/types";
 import {
@@ -8,6 +9,7 @@ import {
   sanitizeModelBehaviorValue,
   nextModelBehaviorValue,
   previousModelBehaviorValue,
+  getModelBehaviorControls,
 } from "../src/app/lib/model-behavior";
 
 type ProviderModel = ProviderListItem["models"][string];
@@ -69,6 +71,32 @@ const model: ProviderModel = {
 };
 
 describe("model behavior options", () => {
+  test("Fast and effort stay independent, including custom IDs, Default, and keyboard cycling", () => {
+    const raw = catalogFastVariants({ variants: { high: { reasoningEffort: "high" }, low: { reasoningEffort: "low" },
+      CustomExact: { reasoningEffort: "medium" }, default: { reasoningEffort: "low" } },
+      experimental: { modes: { fast: { provider: { body: { service_tier: "priority" } } } } } }, "@ai-sdk/openai");
+    const native = { ...model, variants: Object.fromEntries(nativeModelVariants(raw, "@opencode-ai/ai/providers/openai")
+      .map((entry) => [entry.id, {}])) };
+    const options = getModelBehaviorOptions("lpr_synthetic", native);
+    for (const value of [null, "high", "low", "CustomExact", "default"]) {
+      const on = getModelBehaviorControls(options, value);
+      expect(on.toggleValue).toBe(fastVariantId(value));
+      const off = getModelBehaviorControls(options, on.toggleValue ?? null);
+      expect(off.fast).toBe(true);
+      expect(off.toggleValue).toBe(value);
+      expect(off.options.find((entry) => entry.label === "High")?.value).toBe(fastVariantId("high"));
+      expect(getModelBehaviorSummary("lpr_synthetic", native, on.toggleValue ?? null).description).toContain("higher pricing");
+    }
+    expect(nextModelBehaviorValue(options, fastVariantId("low"))).toBe(fastVariantId("high"));
+    expect(previousModelBehaviorValue(options, fastVariantId("high"))).toBe(fastVariantId("low"));
+    expect(nextModelBehaviorValue(options, "low")).toBe("high");
+    const stale = getModelBehaviorControls(options, "retired-custom");
+    expect(stale.toggleValue).toBeUndefined();
+    expect(getModelBehaviorSummary("lpr_synthetic", native, "retired-custom").value).toBe("retired-custom");
+    const legacy = getModelBehaviorOptions("lpr_synthetic", { ...model, variants: { high: {}, [CATALOG_FAST_VARIANT]: { disabled: true } } });
+    expect(legacy.map((entry) => entry.value)).toEqual([null, "high"]);
+    expect(getModelBehaviorControls(legacy, "high").hasFast).toBe(false);
+  });
   test("preserves opaque variant IDs through selection and saved-value normalization", () => {
     const custom = { ...model, variants: { CustomExact: {}, default: {}, high: {} } };
     expect(getModelBehaviorOptions("openai", custom).map((option) => option.value)).toEqual([null, "high", "CustomExact", "default"]);

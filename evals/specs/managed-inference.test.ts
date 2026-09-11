@@ -61,15 +61,16 @@ test("managed responses preserve completion, partial work, and cancellation", { 
 
   world.witness.mode("success");
   const history = [message, { role: "assistant", content: null, tool_calls: [{ id: "call_failed", type: "function", function: { name: "lookup", arguments: '{"key":' } }] }, { role: "tool", tool_call_id: "call_failed", content: "Invalid arguments; no tool was executed." }];
-  const controls = { messages: history, tools, reasoning: { effort: "medium" }, provider: { allow_fallbacks: true }, transforms: ["middle-out"], max_tokens: 131073 };
+  const controls = { messages: history, tools, reasoning: { effort: "medium" }, provider: { allow_fallbacks: true }, transforms: ["middle-out"], max_tokens: 131073, stream_options: { include_usage: false, fixture_extension: "preserved" } };
   expect(await (await chat(controls)).text()).toContain("[DONE]");
   const forwarded = world.witness.requests.at(-1)?.body;
   if (!forwarded) throw new Error("Missing forwarded request");
   const { user, trace, session_id, ...providerInput } = forwarded;
-  expect(providerInput).toEqual({ model, stream: true, ...controls });
+  expect(providerInput).toEqual({ model, stream: true, ...controls, stream_options: { ...controls.stream_options, include_usage: true } });
+  expect(controls.stream_options.include_usage).toBe(false);
   expect(user).toBe(memberId);
   expect(trace).toMatchObject({ openwork_request_id: session_id, org_membership_id: memberId });
-  claim("Request settings and tool-error history are not rewritten", "The gateway retains the chosen model, reasoning, routing preferences, transforms and output limits, including malformed historical arguments followed by their matching tool error. It does not substitute defaults or impose a new request contract.");
+  claim("Request settings survive the server-owned usage-reporting requirement", "The exact forwarded payload retains model, reasoning, routing preferences, transforms, output limits, tool-error history and the extra stream option. Only include_usage is forced true, even when the client explicitly sends false; identity and trace remain server-owned.");
 
   world.witness.mode("length-tools");
   const lengthText = await (await chat({ tools })).text();

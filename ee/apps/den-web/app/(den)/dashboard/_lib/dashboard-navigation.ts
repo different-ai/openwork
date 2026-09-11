@@ -23,6 +23,7 @@ import {
   getBillingRoute,
   getBrandAppearanceRoute,
   getCustomLlmProvidersRoute,
+  getGatewayProvidersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getInferenceRoute,
@@ -40,6 +41,7 @@ import {
   getWebRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
+import type { getGatewayDashboardAccess } from "./gateway-dashboard-access";
 
 export type DashboardNavChild = {
   href: string;
@@ -77,6 +79,7 @@ export type BuildDashboardNavSectionsInput = {
   orgSlug: string | null;
   access: DenOrgAccessFlags;
   capabilities: DenOrgCapabilities;
+  gatewayAccess: ReturnType<typeof getGatewayDashboardAccess>;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
 };
@@ -85,6 +88,7 @@ export function buildDashboardNavSections({
   orgSlug,
   access,
   capabilities,
+  gatewayAccess,
   orgMode,
   runtimeConfigLoaded,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
@@ -111,7 +115,8 @@ export function buildDashboardNavSections({
 
   // Hosted deployments expose OpenWork Models; self-hosted deployments only
   // expose their own providers. Keep hidden until runtime config is known.
-  const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org";
+  const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org"
+    && gatewayAccess !== "checking" && gatewayAccess !== "enabled";
   const modelsGroup: DashboardNavItem | null = access.isAdmin && orgSlug
     ? {
         href: showOpenWorkModels
@@ -121,10 +126,13 @@ export function buildDashboardNavSections({
         icon: Sparkles,
         badge: "Providers",
         children: [
+          ...((gatewayAccess === "enabled" || gatewayAccess === "unavailable") && capabilities.gatewayDashboard === true
+            ? [{ href: getGatewayProvidersRoute(orgSlug), label: "Gateway", badge: "New" }]
+            : []),
           ...(showOpenWorkModels
             ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
             : []),
-          { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring your Own Keys" },
+          { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring Your Own Keys (Legacy)" },
         ],
       }
     : null;
@@ -200,10 +208,11 @@ export function buildDashboardNavSections({
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["policy", "desktop policies", "mdm", "lock", "marketplace", "branding"],
+  Gateway: ["llm", "provider", "gateway", "inference", "usage"],
   Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
   "API Keys": ["token", "secret"],
   Billing: ["plan", "invoice", "payment"],
-  "Bring your Own Keys": ["llm", "provider", "byok", "api key"],
+  "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
   Dashboard: ["home", "overview"],
   Dashboards: ["boards", "apps"],

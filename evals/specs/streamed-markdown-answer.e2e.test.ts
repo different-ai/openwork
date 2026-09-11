@@ -39,7 +39,7 @@ function expectSettledDocument(visibleText: string) {
 
 test("sending clears the composer and shows one pending turn in existing and new conversations", async ({ world, user, probe, step }) => {
   for (const scenario of ["existing", "new"]) {
-    if (scenario === "new") await user.click({ role: "button", label: "New task" });
+    if (scenario === "new") await user.click({ role: "button", label: "New session" });
     const text = `Keep this ${scenario} conversation message while submission is delayed.`;
     await user.type("composer", text);
     await world.holdNextSubmission();
@@ -378,17 +378,18 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(await savedScroll(world.neighbor.sessionId)).toEqual(neighborScroll);
   });
 
-  await step("cold reload keeps the bounded history tail ordered and old and new tool links usable", async () => {
+  await step("cold reload restores the whole ordered transcript, the reading position and old and new tool links", async () => {
+    // A cold open fetches the transcript without a `limit` (#4695): OpenCode
+    // pages `limit` as the NEWEST n messages, so the engine's bounded page still
+    // lacks the oldest turn while the reopened surface must show every message.
     const bounded = await probe.desktopApi(`${world.historyPath}?limit=140`);
     expect(bounded.status).toBe(200);
     expect(bounded.body).toHaveLength(140);
-    const retainedHistory = world.history.filter(text => JSON.stringify(bounded.body).includes(text));
-    expect(retainedHistory.length).toBeGreaterThan(0);
-    expect(retainedHistory.length).toBeLessThan(world.history.length);
+    expect(JSON.stringify(bounded.body)).not.toContain(world.history[0]);
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await user.reload();
     await expectReadingPosition();
-    expect(await orderedHistory()).toEqual(retainedHistory);
+    expect(await orderedHistory()).toEqual(world.history);
     expect(occurrences((await readTranscriptMessages(probe, "user")).join("\n"), world.prompt)).toBe(1);
     expect(occurrences((await readTranscriptMessages(probe, "assistant")).join("\n"), world.closing)).toBe(1);
     await expectTargets([...oldTargets, world.latestTool]);
