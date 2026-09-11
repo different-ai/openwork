@@ -12,7 +12,7 @@ on:
         options: [full, critical]
         default: full
       only:
-        description: "Comma-separated substring filters on E2E test filenames; empty runs all eligible tests"
+        description: "Substring filter on E2E test filenames; empty runs all eligible tests"
         required: false
         default: ""
         type: string
