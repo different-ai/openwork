@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./cloud-model-fast": "./src/cloud-model-fast.ts",
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",

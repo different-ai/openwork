@@ -4,6 +4,7 @@ import { act, createElement, useState } from "react";
 import type { CreateAutomation } from "@openwork/types/automations";
 import type { AutomationProviderCatalog, AutomationModelOption } from "../src/react-app/domains/automations/automation-model-options";
 import type { ModelOption } from "../src/app/types";
+import { fastVariantId } from "@openwork/types/cloud-model-fast";
 
 // Base UI detects DOM support when its module loads.
 GlobalRegistrator.register({ url: "http://localhost" });
@@ -117,6 +118,102 @@ test("compact picker leaves unadvertised effort unavailable but can clear a stal
     queryClient.clear();
     policySpy.mockRestore();
     authSpy.mockRestore();
+  }
+});
+
+for (const surface of ["compact", "full"]) {
+  test(`${surface} picker toggles native Fast without resetting effort and hides it for legacy catalogs`, async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider");
+    const { ModelSelect } = await import("../src/components/model-select");
+    const policy = await import("../src/react-app/domains/cloud/desktop-config-provider");
+    const policySpy = spyOn(policy, "useCheckDesktopRestriction").mockReturnValue(() => false);
+    const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+    const current = { providerID: "fixture", modelID: "reasoner" };
+    const standard = [null, "low", "high", "CustomExact"].map((value) => ({ value,
+      label: value === null ? "Default" : value === "CustomExact" ? value : value.charAt(0).toUpperCase() + value.slice(1), description: "" }));
+    let behaviorOptions = [...standard, ...standard.map((option) => ({ ...option, value: fastVariantId(option.value), label: `${option.label} + Fast` }))];
+    let value: string | null = "high";
+    const changes: Array<string | null> = [];
+    const selected: unknown[] = [];
+    const queryClient = new QueryClient();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const change = (next: string | null) => { changes.push(next); value = next; render(); };
+    const render = () => {
+      const options: ModelOption[] = [{ ...current, title: "Synthetic model", description: "Fixture", isFree: false,
+        behaviorTitle: "Effort", behaviorLabel: "Default", behaviorDescription: "", behaviorValue: null, behaviorOptions }];
+      const picker = surface === "compact" ? createElement(ModelSelect, {
+        open: true, value: current, fallbackOptions: options, behaviorValue: value,
+        onOpenChange: () => undefined, onChange: (model) => selected.push(model), onBehaviorChange: change,
+      }) : createElement(ModelPickerModal, {
+        open: true, options, current, currentBehaviorValue: value, target: "session", query: "", setQuery: () => undefined,
+        onSelect: (model) => selected.push(model), onBehaviorChange: (_model, next) => change(next),
+        onOpenSettings: () => undefined, onClose: () => undefined,
+      });
+      root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
+        createElement(QueryClientProvider, { client: queryClient, children:
+          createElement(WorkspaceProvider, { client: null, selectedWorkspaceRoot: "/fixture", children: picker }) }) }));
+    };
+    const settings = () => document.querySelector(surface === "compact" ? '[data-slot="model-thinking-submenu"]' : '[data-testid="current-model-settings"]');
+    const openSettings = async () => {
+      if (surface !== "compact" || settings()) return;
+      const button = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="model-select-root"] button')).find((entry) => entry.textContent?.includes("Effort"));
+      if (!button) throw new Error("Missing effort menu");
+      await act(async () => button.click());
+    };
+    try {
+      await act(async () => render());
+      for (const label of ["Fast", "Low", "Fast", "CustomExact", "Fast", "Default", "Fast"]) {
+        await openSettings();
+        expect(settings()?.textContent).toContain("higher pricing");
+        const button = Array.from(settings()?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+          .find((entry) => label === "Fast" ? entry.textContent?.startsWith("Fast") : entry.textContent === label);
+        if (!button) throw new Error(`Missing ${surface} ${label} control`);
+        await act(async () => button.click());
+      }
+      expect(changes).toEqual([fastVariantId("high"), fastVariantId("low"), "low", "CustomExact",
+        fastVariantId("CustomExact"), fastVariantId(null), null]);
+      expect(selected).toEqual([]);
+      behaviorOptions = standard;
+      value = "high";
+      await act(async () => render());
+      await openSettings();
+      expect(settings()?.textContent).not.toContain("Fast");
+      expect(settings()?.textContent).not.toContain("higher pricing");
+    } finally {
+      await act(async () => root.unmount());
+      host.remove(); queryClient.clear(); policySpy.mockRestore(); authSpy.mockRestore();
+    }
+  });
+}
+
+test("Fast Default and custom effort persist in the same session variant read by queued sends", async () => {
+  const { getSessionModelSelection, useSessionModelStore } = await import("../src/react-app/domains/session/surface/session-model-store");
+  const { setQueuedSendContext, getQueuedSendContext, clearQueuedSendContext } = await import("../src/react-app/domains/session/sync/queued-send-context");
+  const { createOpenworkServerClient } = await import("../src/app/lib/openwork-server");
+  const sessionId = "synthetic-fast-session";
+  const model = { providerID: "fixture", modelID: "model" };
+  const before = useSessionModelStore.getState().bySessionId;
+  const stored = localStorage.getItem("openwork.sessionModels.v1");
+  setQueuedSendContext(sessionId, { workspaceId: "fixture", workspaceRoot: "/fixture", opencodeBaseUrl: "http://synthetic.test/opencode2",
+    openworkToken: "synthetic", client: createOpenworkServerClient({ baseUrl: "http://synthetic.test" }),
+    agent: null, variant: "high", model, environmentRuntimeKey: null });
+  try {
+    useSessionModelStore.getState().setModel(sessionId, model, "high");
+    for (const variant of [fastVariantId("CustomExact"), fastVariantId(null), null]) {
+      useSessionModelStore.getState().setVariant(sessionId, variant);
+      expect(getSessionModelSelection(sessionId)).toEqual({ model, variant });
+      expect(localStorage.getItem("openwork.sessionModels.v1")).toContain(JSON.stringify({ model, variant }));
+      // The drainer deliberately prefers session memory over its older context.
+      expect(getQueuedSendContext(sessionId)?.variant).toBe("high");
+    }
+  } finally {
+    clearQueuedSendContext(sessionId);
+    useSessionModelStore.setState({ bySessionId: before });
+    if (stored === null) localStorage.removeItem("openwork.sessionModels.v1");
+    else localStorage.setItem("openwork.sessionModels.v1", stored);
   }
 });
 

@@ -82,13 +82,15 @@ describe("workspace root preparation", () => {
 });
 
 describe("bundled OpenCode runtime", () => {
-  it("pins the engine release containing the timestamp-based session loop repair", async () => {
+  it("pins the engine release preserving OpenAI priority for GPT-6 without losing the session loop repair", async () => {
     const constantsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../constants.json");
     const constants = JSON.parse(await readFile(constantsPath, "utf8"));
 
     // OpenCode #40990 stops old assistant messages with lexicographically
     // later IDs from short-circuiting a newly appended user turn.
-    assert.equal(constants.opencodeVersion, "v1.18.18");
+    // 1.18.30 also includes #47659 / #47671: updated OpenAI capabilities and
+    // preservation of explicit service tiers, including GPT-6 Astra priority.
+    assert.equal(constants.opencodeVersion, "v1.18.30");
   });
 });
 

@@ -138,6 +138,8 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
     source: "source" in value && typeof value.source === "string" ? value.source : null,
     updatedAt: "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : null,
     modelIds: value.modelIds,
+    ...("modelConfigVersion" in value && typeof value.modelConfigVersion === "number"
+      ? { modelConfigVersion: value.modelConfigVersion } : {}),
     importedAt: "importedAt" in value && typeof value.importedAt === "number" ? value.importedAt : null,
   };
 }
