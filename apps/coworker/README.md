@@ -1192,6 +1192,10 @@ Runtime libraries the embedded server imports at run time (`zod`,
 renderer bytes and gives the server a version the desktop never ran. Refresh
 those together with `apps/server`, not here. `esbuild` stays on the repository
 override; it only bundles the main process and the maintenance helper.
+`@modelcontextprotocol/ext-apps` 2 requires the MCP v2 client stack
+(`@modelcontextprotocol/core` / `client`) in the app host; adopting it is a
+migration of `src/ui/mcp-app-frame.tsx` and its callers with the MCP apps
+journey, not a version bump.
 
 The macOS DMG is an Open Coworker-owned installation surface rather than the
 electron-builder default: two quiet installation stations hold the native app
