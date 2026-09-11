@@ -69,29 +69,30 @@ test('journeys needing a packaged binary or macOS are skipped in the CI lane (pr
     ['packaged-first-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-preactivation-egress.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-preactivation-updater.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
-    ['released-enterprise-activated.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY, set OPENWORK_EVAL_RELEASED_BASELINE_BINARY'],
+    ['released-enterprise-activated.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
   ]);
   assert(excluded.every(entry => entry.placement === 'local'));
   assert(excluded.every(entry => !entry.critical));
-  // A lane that packages the enterprise desktop still lacks a released baseline and macOS.
+  // A lane that packages the enterprise desktop would schedule the packaged journeys again; released-enterprise-activated's
+  // update case still skips itself there without OPENWORK_EVAL_RELEASED_BASELINE_BINARY, which the verdict counts as not tested.
   const packagedLane = { ...ciLane, env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
-  assert.deepEqual(excluded.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), ['computer-use-window-scope.e2e.test.ts', 'released-enterprise-activated.e2e.test.ts']);
+  assert.deepEqual(excluded.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), ['computer-use-window-scope.e2e.test.ts']);
   assert.deepEqual(unmetLaneNeeds(entry), []);
 });
 
-// What a spec and the worlds it imports actually gate on: `needs: { env, platform }` declarations,
-// plus env reads and platform checks in the lines leading to a `throw new SkipError`. Scoped to
-// journeys that declare `needs`: shared worlds (first-run.ts) hold scenario-specific guards, and
-// per-scenario world plans are #4771's job — this guard only keeps declared needs from drifting.
-async function guardedPrerequisites(spec, root = new URL('../specs/', import.meta.url)) {
-  const source = await readFile(new URL(spec, root), 'utf8');
-  const worlds = [...new Set([...source.matchAll(/from\s+["']\.\.\/worlds\/([\w-]+\.ts)["']/g)].map(match => match[1]))];
-  const sources = [source, ...await Promise.all(worlds.map(world => readFile(new URL(`../worlds/${world}`, root), 'utf8')))];
-  const env = new Set();
-  let platform;
-  for (const text of sources) {
-    for (const match of text.matchAll(/needs:\s*\{[^}]*\benv:\s*\[([^\]]*)\]/g)) for (const name of match[1].matchAll(/"(OPENWORK_EVAL_\w+)"/g)) env.add(name[1]);
-    for (const match of text.matchAll(/needs:\s*\{[^}]*\bplatform:\s*"(\w+)"/g)) platform = match[1];
+// The WHOLE-FILE blockers a spec and the worlds it imports actually gate on: env vars every
+// `needs: { env }` declaration in the spec shares (a prerequisite only one case declares is that
+// case's own, not the file's), plus env reads and platform checks in the lines leading to a
+// `throw new SkipError` in a world body (which every case runs). Scoped to journeys that declare
+// `needs`: shared worlds (first-run.ts) hold scenario-specific guards, and per-scenario world
+// plans are #4771's job — this guard only keeps declared needs from drifting either way.
+function wholeFileBlockers(specSource, worldSources) {
+  const declarations = [...specSource.matchAll(/needs:\s*\{([^}]*)\}/g)].map(match => match[1]);
+  const envSets = declarations.map(body => new Set([...(body.match(/\benv:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/"(OPENWORK_EVAL_\w+)"/g)].map(name => name[1])));
+  const env = new Set(envSets.length ? [...envSets[0]].filter(name => envSets.every(set => set.has(name))) : []);
+  const platforms = declarations.map(body => body.match(/\bplatform:\s*"(\w+)"/)?.[1]);
+  let platform = platforms.length && platforms.every(value => value && value === platforms[0]) ? platforms[0] : undefined;
+  for (const text of worldSources) {
     const lines = text.split('\n');
     lines.forEach((line, index) => {
       if (!line.includes('throw new SkipError')) return;
@@ -103,17 +104,33 @@ async function guardedPrerequisites(spec, root = new URL('../specs/', import.met
   return { env: [...env].sort(), platform };
 }
 
-test('catalog needs match the prerequisites each spec and its worlds guard, in both directions', async () => {
+async function guardedPrerequisites(spec, root = new URL('../specs/', import.meta.url)) {
+  const source = await readFile(new URL(spec, root), 'utf8');
+  const worlds = [...new Set([...source.matchAll(/from\s+["']\.\.\/worlds\/([\w-]+\.ts)["']/g)].map(match => match[1]))];
+  return wholeFileBlockers(source, await Promise.all(worlds.map(world => readFile(new URL(`../worlds/${world}`, root), 'utf8'))));
+}
+
+test('catalog needs match the whole-file prerequisites each spec and its worlds guard, in both directions', async () => {
   const entries = await catalog();
   const declared = entries.filter(entry => entry.needs);
   assert.equal(declared.length, 7);
   for (const entry of declared) {
     assert.deepEqual({ env: [...(entry.needs.env ?? [])].sort(), platform: entry.needs.platform }, await guardedPrerequisites(entry.spec), `${entry.spec}: catalog needs drifted from the spec/world guards`);
   }
-  // The scanner itself sees the guards it is trusted to see.
-  assert.deepEqual(await guardedPrerequisites('released-enterprise-activated.e2e.test.ts'), { env: ['OPENWORK_EVAL_ELECTRON_BINARY', 'OPENWORK_EVAL_RELEASED_BASELINE_BINARY'], platform: undefined });
+  // The released spec's update case alone needs the baseline binary; that is not a whole-file blocker.
+  assert.deepEqual(await guardedPrerequisites('released-enterprise-activated.e2e.test.ts'), { env: ['OPENWORK_EVAL_ELECTRON_BINARY'], platform: undefined });
   assert.deepEqual(await guardedPrerequisites('computer-use-window-scope.e2e.test.ts'), { env: [], platform: 'darwin' });
   assert.deepEqual(await guardedPrerequisites('mcp-oauth-start-unreadable-response.e2e.test.ts'), { env: [], platform: undefined });
+});
+
+test('mixed-world specs: a prerequisite one case declares is never promoted to the whole file; world-body guards always are', () => {
+  const mixed = `const launch = spec.world(w, { needs: { env: ["OPENWORK_EVAL_A"] } });\nconst update = spec.world(w, { needs: { env: ["OPENWORK_EVAL_A", "OPENWORK_EVAL_B"], platform: "darwin" } });`;
+  const world = `export async function w() {\n  const binary = process.env.OPENWORK_EVAL_C?.trim();\n  if (!binary) throw new SkipError("set it");\n  if (process.platform !== "linux") throw new SkipError("linux only");\n}`;
+  assert.deepEqual(wholeFileBlockers(mixed, [world]), { env: ['OPENWORK_EVAL_A', 'OPENWORK_EVAL_C'], platform: 'linux' });
+  assert.deepEqual(wholeFileBlockers(mixed, []), { env: ['OPENWORK_EVAL_A'], platform: undefined });
+  assert.deepEqual(wholeFileBlockers('spec.world(w, { timeout: 1, needs: { platform: "darwin" } });', []), { env: [], platform: 'darwin' });
+  // An env read that is not followed by a SkipError (optional pin) is not a blocker.
+  assert.deepEqual(wholeFileBlockers('', ['const v = process.env.OPENWORK_EVAL_OPTIONAL?.trim() || null;\nreturn v;']), { env: [], platform: undefined });
 });
 
 test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
