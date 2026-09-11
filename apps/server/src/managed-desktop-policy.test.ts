@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import type { ServerConfig } from "./types.js";
-import type { DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 
 // Bun 1.3.4 cannot isolate files; mock.restore() does not undo mock.module().
 // Run these replacements in a child so they cannot contaminate other files.
@@ -23,15 +22,13 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
   let release = Promise.withResolvers<void>();
   const delay = mock((ms: number) => { waiting.resolve(ms); return release.promise; });
   const externalFetch = mock(async (_url: string, _init?: RequestInit) => Response.json(policy));
-  const parse = mock((_value: unknown): DesktopConfig => policy);
-  let persistedPolicy: unknown;
-  const persist = async (_config: ServerConfig, nextPolicy: unknown) => { persistedPolicy = nextPolicy; return { changed: false }; };
-  const write = mock(persist);
+  const parse = mock((_value: unknown) => policy);
+  const write = mock(async (_config: ServerConfig, _policy: unknown) => ({ changed: false }));
   mock.module("node:timers/promises", () => ({ setTimeout: delay }));
   mock.module("./server-fetch.js", () => ({ externalFetch }));
   mock.module("@openwork/types/den/desktop-policies-runtime", () => ({ desktopConfigSchema: { parse } }));
   mock.module("./runtime-opencode-config-store.js", () => ({
-    readGlobalRuntimeOpencodeConfig: async () => ({ managedPolicy: persistedPolicy }), writeManagedDesktopPolicy: write,
+    readGlobalRuntimeOpencodeConfig: async () => ({}), writeManagedDesktopPolicy: write,
     runtimeProviderMap: () => ({}),
   }));
   mock.module("./workspace-kv-store.js", () => ({
@@ -53,8 +50,7 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
     delay.mockClear();
     externalFetch.mockReset().mockImplementation(async () => Response.json(policy));
     parse.mockReset().mockImplementation(() => policy);
-    persistedPolicy = undefined;
-    write.mockReset().mockImplementation(persist);
+    write.mockClear();
     service = managedDesktopPolicy({ ...config });
   });
   afterEach(() => { release.resolve(); });
@@ -127,203 +123,6 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
     ]);
     expect(delay).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledTimes(1);
-  });
-
-  const offline = async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ENETUNREACH" } }); };
-  const verified = async () => {
-    await service.setSession(session);
-    await turn();
-    const snapshot = await service.forUpdater();
-    await turn();
-    expect(snapshot.verification).toBe("fresh");
-    if (snapshot.verification !== "fresh") throw new Error("Expected a freshly verified updater identity");
-    return snapshot;
-  };
-
-  test("an unmanaged updater authority needs neither Den nor sign-in", async () => {
-    expect(await service.forUpdater()).toEqual({ verification: "unmanaged", identity: null, policy: null });
-    expect(externalFetch).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
-  });
-
-  test("updater cache is identity-bound and the ordinary policy read still fails closed offline", async () => {
-    const first = await verified();
-    await service.setSession({ ...session });
-    await turn();
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    await expect(service.current()).rejects.toMatchObject({ code: "policy_unavailable", status: 403 });
-    await turn();
-    const cached = await service.forUpdater();
-    expect(cached).toEqual({ verification: "cached-offline", identity: first.identity, policy });
-    expect(typeof cached.identity).toBe("string");
-    expect(JSON.stringify(cached)).not.toContain(session.token);
-    expect(JSON.stringify(cached)).not.toContain(session.orgId);
-  });
-
-  test("an offline first read cannot manufacture an approved updater cache", async () => {
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    await expect(service.setSession(session)).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-  });
-
-  test.each([
-    Object.assign(new TypeError("Unable to connect"), { code: "ConnectionRefused" }),
-    Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }),
-    new Error("net::ERR_INTERNET_DISCONNECTED"),
-    new Error("net::ERR_CONNECTION_REFUSED"),
-  ])("known Bun, Node and Electron network failures retain only attested offline permission %#", async (error) => {
-    const first = await verified();
-    externalFetch.mockImplementation(async () => { throw error; });
-    release.resolve();
-    expect(await service.forUpdater()).toEqual({ verification: "cached-offline", identity: first.identity, policy });
-  });
-
-  test.each(["net::ERR_CERT_AUTHORITY_INVALID", "net::ERR_INVALID_AUTH_CREDENTIALS", "upstream said net::ERR_INTERNET_DISCONNECTED"])(
-    "%s is not accepted as a Chromium offline grant", async (message) => {
-      await verified();
-      externalFetch.mockImplementation(async () => { throw new Error(message); });
-      await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    },
-  );
-
-  test("sign-out removes cached updater permission and same-token re-entry gets a new identity", async () => {
-    const first = await verified();
-    await service.clearSession();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    const next = await verified();
-    expect(next.identity).not.toBe(first.identity);
-  });
-
-  test.each([
-    { ...session, token: "different-token" },
-    { ...session, orgId: "different-org" },
-    { ...session, baseUrl: "https://other-den.invalid" },
-  ])("credential, organization, and origin changes cannot reuse offline updater permission %#", async (next) => {
-    const first = await verified();
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    await expect(service.setSession(next)).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    externalFetch.mockImplementation(async () => Response.json(policy));
-    expect((await service.forUpdater()).identity).not.toBe(first.identity);
-  });
-
-  test.each([401, 403, 404, 429])("HTTP %i invalidates updater cache; a later outage cannot revive access", async (status) => {
-    await verified();
-    externalFetch.mockImplementation(async () => new Response(null, { status }));
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-  });
-
-  test.each([401, 403])("auth loss HTTP %i on another authority read also removes offline updater permission", async (status) => {
-    await verified();
-    externalFetch.mockImplementation(async (url) => url.endsWith("/v1/me/desktop-config")
-      ? Response.json(policy)
-      : new Response(null, { status }));
-    await expect(service.assert("model", { providerID: "lpr_fixture", modelID: "fixture-model" })).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-  });
-
-  test("a late policy success cannot overwrite auth loss observed by another in-flight authority read", async () => {
-    await verified();
-    const catalogRequested = Promise.withResolvers<void>();
-    const catalogReply = Promise.withResolvers<Response>();
-    externalFetch.mockImplementation(async (url) => {
-      if (url.endsWith("/v1/me/desktop-config")) return Response.json(policy);
-      catalogRequested.resolve();
-      return catalogReply.promise;
-    });
-    const modelRead = service.assert("model", { providerID: "lpr_fixture", modelID: "fixture-model" }).catch((error: unknown) => error);
-    await catalogRequested.promise;
-    await turn();
-    const policyRequested = Promise.withResolvers<void>();
-    const policyReply = Promise.withResolvers<Response>();
-    externalFetch.mockImplementation(async () => { policyRequested.resolve(); return policyReply.promise; });
-    const latePolicy = service.forUpdater().catch((error: unknown) => error);
-    await policyRequested.promise;
-    catalogReply.resolve(new Response(null, { status: 401 }));
-    expect(await modelRead).toMatchObject({ code: "policy_unavailable" });
-    policyReply.resolve(Response.json(policy));
-    expect(await latePolicy).toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-  });
-
-  test("a temporary 503 may return an existing verified cache but never a fresh receipt", async () => {
-    const first = await verified();
-    externalFetch.mockImplementation(async () => new Response(null, { status: 503 }));
-    release.resolve();
-    expect(await service.forUpdater()).toEqual({ verification: "cached-offline", identity: first.identity, policy });
-  });
-
-  test("invalid policy and unknown TLS failures are not offline authorization", async () => {
-    await verified();
-    parse.mockImplementationOnce(() => { throw new Error("invalid policy"); });
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    externalFetch.mockImplementation(async () => Response.json(policy));
-    await verified();
-    externalFetch.mockImplementation(async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "CERT_HAS_EXPIRED" } }); });
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    await turn();
-    externalFetch.mockImplementation(offline);
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-  });
-
-  test.each([{ error: "not authorized" }, { policy: { allowedDesktopVersions: [] } }])(
-    "a 200 error/envelope cannot be stripped into an unrestricted updater grant %#", async (payload) => {
-      await verified();
-      externalFetch.mockImplementation(async () => Response.json(payload));
-      parse.mockImplementationOnce(() => ({}));
-      await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-      await turn();
-      externalFetch.mockImplementation(offline);
-      release.resolve();
-      await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
-    },
-  );
-
-  test("an observed version revocation replaces the updater cache even if persistence fails", async () => {
-    parse.mockImplementation(() => ({ ...policy, allowedDesktopVersions: ["0.17.23"] }));
-    const first = await verified();
-    const revoked = { ...policy, allowedDesktopVersions: ["0.17.0"] };
-    parse.mockImplementationOnce(() => revoked);
-    write.mockImplementationOnce(async () => { throw new Error("storage unavailable"); });
-    await expect(service.forUpdater()).rejects.toThrow("storage unavailable");
-    await turn();
-    externalFetch.mockImplementation(offline);
-    release.resolve();
-    expect(await service.forUpdater()).toEqual({ verification: "cached-offline", identity: first.identity, policy: revoked });
-  });
-
-  test("sign-out during a retry cannot complete an offline authorization for the old identity", async () => {
-    await verified();
-    externalFetch.mockImplementation(async () => new Response(null, { status: 503 }));
-    const pending = service.forUpdater().catch((error: unknown) => error);
-    expect(await waiting.promise).toBe(200);
-    await service.clearSession();
-    release.resolve();
-    expect(await pending).toMatchObject({ code: "policy_identity_changed", status: 409 });
-    await turn();
-    await expect(service.forUpdater()).rejects.toMatchObject({ code: "policy_unavailable" });
   });
 
   test("re-delivering the same identity during backoff keeps the in-flight verification", async () => {

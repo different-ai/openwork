@@ -3016,8 +3016,6 @@ function createRoutes(
 
   addRoute(routes, "GET", "/managed-policy", "client", async () =>
     jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
-  addRoute(routes, "GET", "/managed-policy/updater", "client", async () =>
-    jsonResponse(await managedDesktopPolicy(config).forUpdater()));
   addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     const action = managedPolicyActionSchema.safeParse(body.action);
