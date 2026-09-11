@@ -51,6 +51,8 @@ This may navigate OpenWork away from the user's current session while the lookup
 
 Inside OpenWork, agents control the app through the semantic tools (`openwork_context`, `openwork_query`, `openwork_execute`) using affordance ids from context. External MCP clients can also use the hidden **OpenWork UI Control** MCP via **Settings -> Extensions -> Show hidden**.
 
+In-app agents do not need `session.open` to work with another session: `session.read` reads any session by id and `session.send { sessionId, text }` messages it, both without changing what the person sees (`docs/features/headless-session-control.md`). `composer.set_text` / `composer.send` type into the composer the person currently has focused.
+
 ## Install
 
 ```bash

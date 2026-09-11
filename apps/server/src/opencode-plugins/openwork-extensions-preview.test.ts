@@ -55,6 +55,17 @@ const createResultSchema = z.object({
   })),
 });
 
+const sendResultSchema = z.object({
+  ok: z.literal(true),
+  accepted: z.literal(true),
+  sessionId: z.string(),
+  workspaceId: z.string(),
+  workspace: z.string(),
+  title: z.string(),
+  messageId: z.string().regex(/^msg_[0-9a-f]{26}$/),
+  revealed: z.boolean().optional(),
+});
+
 const automationProposalResultSchema = z.object({
   ok: z.literal(true),
   kind: z.literal("automation-proposal"),
@@ -232,6 +243,16 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
             parts: [{ type: "text", text: "We decided to ship the archive importer first." }],
           },
         ]);
+      }
+
+      // Existing sessions accept follow-up prompts the way the engine does:
+      // the message is persisted and 204 comes back at once, busy or not.
+      if (/^\/workspace\/ws_[12]\/opencode\/session\/ses_(alpha|beta|archive|foreign)\/prompt_async$/.test(url.pathname)) {
+        z.object({
+          messageID: z.string().regex(/^msg_[0-9a-f]{12}[0-9a-f]{14}$/),
+          parts: z.array(z.object({ type: z.literal("text"), text: z.string() }).strict()).length(1),
+        }).strict().parse(record.body);
+        return new Response(null, { status: 204 });
       }
 
       if (/^\/workspace\/ws_2\/opencode\/session\/ses_created_\d+\/prompt_async$/.test(url.pathname)) {
@@ -721,6 +742,97 @@ describe("OpenWorkExtensionsPreview session tools", () => {
         },
       },
     ]);
+  });
+
+  test("session.send appends a prompt to an existing session by id without touching the UI", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/main" });
+
+    // The target lives in a workspace other than the caller's: resolution is
+    // by id across workspaces, never by what the person has selected.
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "session.send",
+      args: { sessionId: "ses_archive", text: "Status update: the importer shipped." },
+    }, { sessionID: "ses_origin", workspaceId: "ws_1" });
+    const parsed = affordanceResultSchema("session.send", sendResultSchema).parse(JSON.parse(output));
+
+    expect(parsed.effects).toEqual({ data: "write", ui: "none", external: false });
+    expect(parsed.result).toMatchObject({
+      ok: true,
+      accepted: true,
+      sessionId: "ses_archive",
+      workspaceId: "ws_2",
+      workspace: "Archive",
+      title: "Archive decisions",
+    });
+    expect(parsed.result.revealed).toBeUndefined();
+    const prompts = fake.requests.filter((request) => request.pathname.endsWith("/prompt_async") && request.method === "POST");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.pathname).toBe("/workspace/ws_2/opencode/session/ses_archive/prompt_async");
+    expect(prompts[0]?.body).toEqual({
+      messageID: parsed.result.messageId,
+      parts: [{ type: "text", text: "Status update: the importer shipped." }],
+    });
+    // Headless by default: no session.open, no composer, no reload.
+    expect(fake.uiControlRequests).toEqual([]);
+    // No new session is created; the existing one receives the message.
+    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST")).toEqual([]);
+  });
+
+  test("session.send reveal=true sends first, then asks the desktop to open that session for the requester", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/main" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "session.send",
+      args: { sessionId: "ses_alpha", text: "Please take a look.", reveal: true },
+    }, { sessionID: "ses_origin", workspaceId: "ws_1" });
+    const parsed = affordanceResultSchema("session.send", sendResultSchema).parse(JSON.parse(output));
+
+    expect(parsed.effects).toEqual({ data: "write", ui: "navigate", external: false });
+    expect(parsed.result.revealed).toBe(true);
+    const promptIndex = fake.requests.findIndex((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/prompt_async");
+    const openIndex = fake.requests.findIndex((request) => request.pathname === "/experimental/ui-control/request");
+    expect(promptIndex).toBeGreaterThanOrEqual(0);
+    expect(openIndex).toBeGreaterThan(promptIndex);
+    expect(fake.uiControlRequests).toEqual([
+      {
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: { id: "session.open", args: { sessionId: "ses_alpha" }, origin: { sessionId: "ses_origin", workspaceId: "ws_1" } },
+        },
+      },
+    ]);
+  });
+
+  test("session.send refuses unknown and foreign sessions before anything reaches the engine", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/main" });
+    const failure = z.object({ ok: z.literal(false), id: z.literal("session.send"), error: z.string(), code: z.literal("failed") });
+
+    const missing = failure.parse(JSON.parse(await plugin.tool.openwork_execute.execute({
+      id: "session.send",
+      args: { sessionId: "ses_missing", text: "hello" },
+    }, { sessionID: "ses_origin" })));
+    expect(missing.error).toBe("Session ses_missing was not found in matching OpenWork workspaces");
+
+    // The native engine route returns ses_foreign, but it lives outside every
+    // workspace root, so the ownership check refuses to message it.
+    const foreign = failure.parse(JSON.parse(await plugin.tool.openwork_execute.execute({
+      id: "session.send",
+      args: { sessionId: "ses_foreign", text: "hello" },
+    }, { sessionID: "ses_origin" })));
+    expect(foreign.error).toBe("Session ses_foreign was not found in matching OpenWork workspaces");
+
+    const scoped = failure.parse(JSON.parse(await plugin.tool.openwork_execute.execute({
+      id: "session.send",
+      args: { sessionId: "ses_alpha", text: "hello", workspaceId: "ws_2" },
+    }, { sessionID: "ses_origin" })));
+    expect(scoped.error).toBe("Session ses_alpha was not found in matching OpenWork workspaces");
+
+    expect(fake.requests.filter((request) => request.method === "POST")).toEqual([]);
+    expect(fake.uiControlRequests).toEqual([]);
   });
 
   test("reports a created session as failed when its native prompt does not start", async () => {

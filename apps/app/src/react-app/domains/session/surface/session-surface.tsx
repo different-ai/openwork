@@ -2631,7 +2631,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.set_text",
     label: "Type into the composer",
-    description: "Replace the current session draft and type the supplied text visibly.",
+    description: "Replace the draft of the composer the person currently has focused and type the supplied text visibly. Focus-bound: it targets whichever pane is focused when it runs, never a session by id. To message another session use session.send.",
     effects: { data: "none", ui: "focus", external: false },
     sideEffect: "none",
     disabled: archived || !archiveStateKnown || archiveHeld,
@@ -2652,7 +2652,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.send",
     label: "Send the composer prompt",
-    description: "Send the currently visible composer draft to the active session.",
+    description: "Send the draft of the composer the person currently has focused to that session. Focus-bound: if focus moved since composer.set_text, the draft goes to the newly focused session. Disabled while that session is mid-turn. To message another session use session.send.",
     sideEffect: "mutation",
     disabled: archived || !archiveStateKnown || archiveHeld || sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
     targetRef: composerShellRef,
@@ -2666,7 +2666,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.stop",
     label: "Stop the current run",
-    description: "Stop the current streaming session run.",
+    description: "Stop the run of the session the person currently has focused. Focus-bound: it never targets a session by id.",
     sideEffect: "mutation",
     disabled: stopping || (!chatStreaming && queuedDrainState.phase.kind !== "sending" && queuedDrainState.phase.kind !== "admission_unknown"),
     targetRef: composerShellRef,

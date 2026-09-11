@@ -20,6 +20,22 @@ describe("OpenWork provider adapters", () => {
       effects: { data: "read", ui: "none", external: false },
       executor: { kind: "openwork" },
     });
+    // Talking to a session is a server command addressed by id: it declares
+    // no UI effect, so agents never need session.open + composer.* for it.
+    const send = contributions.flatMap((contribution) => contribution.affordances)
+      .find((affordance) => affordance.id === "session.send");
+    expect(send).toMatchObject({
+      kind: "command",
+      provider: { id: "openwork-server", kind: "builtin" },
+      effects: { data: "write", ui: "none", external: false },
+      executor: { kind: "openwork" },
+    });
+    expect(send?.arguments.map((argument) => [argument.name, argument.required])).toEqual([
+      ["sessionId", true],
+      ["text", true],
+      ["workspaceId", false],
+      ["reveal", false],
+    ]);
     for (const contribution of contributions) {
       expect(openworkFeatureContributionSchema.safeParse(contribution).success).toBe(true);
     }

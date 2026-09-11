@@ -112,6 +112,20 @@ function sessionContribution(): OpenworkFeatureContribution {
         arguments: [argument("sessions", "array", true, "Session titles and self-contained prompts.")],
         effects: writeEffects,
       }),
+      affordance({
+        id: "session.send",
+        kind: "command",
+        title: "Send a prompt to a session",
+        description: "Append a prompt to an existing session by id without opening it. The message is written immediately; a session that is mid-turn handles it at its next step. Nothing on screen changes unless reveal is true. This is the way to talk to another session: composer.set_text and composer.send only reach the composer the person has focused.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id from session.search, session.read, or session.list_sessions."),
+          argument("text", "string", true, "Prompt text appended as a new user message."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+          argument("reveal", "boolean", false, "true to also open that session in the person's focused pane after sending. Defaults to false."),
+        ],
+        effects: writeEffects,
+      }),
     ],
     guidance: [],
   };

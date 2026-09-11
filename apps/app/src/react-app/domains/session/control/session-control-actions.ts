@@ -80,7 +80,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const createTaskControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.create_task",
     label: "Create a new task",
-    description: "Create a new session in the selected workspace.",
+    description: "Create a new session in the selected workspace and open it in the person's focused pane. Use session.create to start sessions without changing what is on screen.",
+    effects: { data: "write", ui: "navigate", external: false },
     sideEffect: "mutation",
     disabled: !canCreateTask || !selectedWorkspaceId,
     execute: async () => {
@@ -110,7 +111,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.open",
     label: "Open a session by ID",
-    description: "Focus a visible session or reuse its existing tab. Use list_sessions first to get the session ID.",
+    description: "Show a session to the person: focus it if visible, else open it in the focused pane. Only for when they should see it; use session.read to inspect and session.send to message a session without opening it.",
     effects: { data: "none", ui: "navigate", external: false },
     sideEffect: "navigation",
     requiresArgs: true,
