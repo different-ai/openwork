@@ -357,6 +357,21 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
     json.model = model
     modified = true
   }
+  // Wire aliases hide Claude's identity from clients' model-specific options.
+  // Apply the same legacy-thinking compatibility as the desktop plugin, but
+  // only after the model grant has resolved the authorized upstream model.
+  const claudeVersion = model?.match(/claude-[a-z]+-(\d+)(?:[.@-]|$)/i)
+  if (upstream.protocol === "anthropic_messages" && claudeVersion && Number(claudeVersion[1]) >= 5
+    && isJsonObject(json.thinking) && json.thinking.type === "enabled") {
+    const { budget_tokens, ...thinking } = json.thinking
+    json.thinking = { ...thinking, type: "adaptive" }
+    const outputConfig = isJsonObject(json.output_config) ? json.output_config : {}
+    json.output_config = {
+      ...outputConfig,
+      effort: outputConfig.effort ?? (typeof budget_tokens === "number" && budget_tokens > 16000 ? "max" : "high"),
+    }
+    modified = true
+  }
   if (upstream.protocol === "openai_chat" && json.stream === true) {
     json.stream_options = { ...(isJsonObject(json.stream_options) ? json.stream_options : {}), include_usage: true }
     modified = true

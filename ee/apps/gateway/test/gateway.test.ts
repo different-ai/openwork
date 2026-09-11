@@ -398,6 +398,64 @@ test("anthropic: x-api-key auth, anthropic headers preserved, stream usage from 
   assert.equal(row.upstream_request_id, "req_anthropic")
 })
 
+test("adaptive thinking compatibility uses the granted model behind opaque aliases only for Anthropic messages", async (t) => {
+  const enabled = { type: "enabled", budget_tokens: 16000, display: "summarized" }
+  const adaptive = { type: "adaptive", display: "summarized" }
+  const format = { type: "json_schema", schema: { type: "object", properties: {} } }
+  const cases: Array<{ name: string; model?: string; input: Record<string, unknown>; expected?: Record<string, unknown> }> = [
+    { name: "16000 defaults to high", input: { thinking: enabled },
+      expected: { thinking: adaptive, output_config: { effort: "high" } } },
+    { name: "16001 defaults to max", model: "claude-opus-5@20260901", input: { thinking: { ...enabled, budget_tokens: 16001 } },
+      expected: { thinking: adaptive, output_config: { effort: "max" } } },
+    { name: "missing budget defaults to high", input: { thinking: { type: "enabled" } },
+      expected: { thinking: { type: "adaptive" }, output_config: { effort: "high" } } },
+    { name: "explicit effort and format survive", model: "claude-opus-5", input: { thinking: enabled, output_config: { effort: "low", format } },
+      expected: { thinking: adaptive, output_config: { effort: "low", format } } },
+    { name: "minor version preserves output fields", model: "claude-opus-5.1", input: { thinking: enabled, output_config: { format } },
+      expected: { thinking: adaptive, output_config: { format, effort: "high" } } },
+    { name: "future major and case-insensitive dated ID", model: "Claude-Opus-6-20260901", input: { thinking: enabled },
+      expected: { thinking: adaptive, output_config: { effort: "high" } } },
+    { name: "legacy 4-5", model: "claude-sonnet-4-5", input: { thinking: enabled, output_config: { format } } },
+    { name: "legacy 4.x", model: "claude-opus-4.6", input: { thinking: enabled } },
+    { name: "nonmatching version suffix", model: "claude-opus-5preview", input: { thinking: enabled } },
+    { name: "absent thinking", input: { output_config: { format } } },
+    { name: "disabled thinking", input: { thinking: { type: "disabled" } } },
+    { name: "already adaptive", input: { thinking: adaptive, output_config: { effort: "medium", format } } },
+  ]
+  for (const providerName of ["anthropic", "google-vertex-anthropic", "openai"]) {
+    for (const entry of cases) {
+      await t.test(`${providerName}: ${entry.name}`, async () => {
+        const vertex = providerName === "google-vertex-anthropic"
+        const fixture = createTestServer({
+          provider: { provider_id: providerName, settings: vertex ? { project: "test-project", location: "global" } : {} },
+          credential: vertex ? { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }) } : undefined,
+        })
+        const selected = fixture.accessRows[0]
+        assert.ok(selected?.model)
+        selected.model.model_id = entry.model ?? "claude-fable-5"
+        const alias = createGatewayModelAlias({ modelGroupId: selected.group.id, credentialSetId: selected.credentialSet.id, gatewayProviderModelId: selected.model.id })
+        assert.match(alias, /^gwm_/)
+        const common = { messages: [{ role: "user", content: "hi" }], max_tokens: 32000 }
+        const response = await fixture.app.fetch(gatewayRequest({
+          path: providerName === "openai" ? "/chat/completions" : "/messages",
+          body: { model: alias, ...common, ...entry.input },
+        }))
+        assert.equal(response.status, 200)
+        await response.text()
+        assert.equal(fixture.upstreamRequests.length, 1)
+        const upstream = fixture.upstreamRequests[0]
+        assert.ok(upstream)
+        const expected = providerName === "openai" ? entry.input : entry.expected ?? entry.input
+        assert.deepEqual(parseJsonObject(upstream.body), {
+          ...common, ...expected,
+          ...(vertex ? { anthropic_version: "vertex-2023-10-16" } : { model: selected.model.model_id }),
+        })
+        if (vertex) assert.ok(upstream.url.endsWith(`/publishers/anthropic/models/${encodeURIComponent(selected.model.model_id)}:rawPredict`))
+      })
+    }
+  }
+})
+
 test("azure: api-key auth, api-version query preserved, resource base from settings, api_key_map picks the key env", async () => {
   const { app, upstreamRequests, logRows } = createTestServer({
     provider: { provider_id: "azure", provider_config: { npm: "@ai-sdk/azure" }, settings: { resourceName: "acme-openai" } },
