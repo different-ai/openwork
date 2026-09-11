@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
-import { getModelBehaviorSelection } from "@/app/lib/model-behavior";
+import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import {
   gatewayConnectCopy,
   gatewayConnectProviderKey,
@@ -163,6 +163,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const currentOption = props.options.find((option) => modelEquals(option, props.current));
   const currentBehavior = getModelBehaviorSelection(currentOption?.behaviorOptions ?? [],
     props.currentBehaviorValue !== undefined ? props.currentBehaviorValue : currentOption?.behaviorValue ?? null);
+  const behaviorControls = getModelBehaviorControls(currentBehavior.options, currentBehavior.value);
 
   // Reset on open
   useEffect(() => {
@@ -388,8 +389,18 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               <section aria-label={`Settings for ${currentOption.title}`} className="mb-3 rounded-xl border border-dls-border p-3" data-testid="current-model-settings">
                 <div className="text-xs font-medium">{currentOption.title} · {currentBehavior.label}</div>
                 <p role="status" className="mt-1 text-xs text-muted-foreground">{currentBehavior.description}</p>
+                {behaviorControls.hasFast ? (
+                  <div className="mt-2 space-y-1">
+                    <Button type="button" size="sm" variant={behaviorControls.fast ? "secondary" : "outline"}
+                      aria-pressed={behaviorControls.fast} disabled={behaviorControls.toggleValue === undefined}
+                      onClick={() => {
+                        if (behaviorControls.toggleValue !== undefined) props.onBehaviorChange(props.current, behaviorControls.toggleValue);
+                      }}>Fast: {behaviorControls.fast ? "On" : "Off"}</Button>
+                    <p className="text-xs text-muted-foreground">{FAST_PRICING_WARNING}</p>
+                  </div>
+                ) : null}
                 <div role="group" aria-label="Thinking and effort" className="mt-2 flex flex-wrap gap-2">
-                  {currentBehavior.options.map((option) => (
+                  {behaviorControls.options.map((option) => (
                     <Button key={option.value === null ? "default" : `variant-${option.value}`} type="button" size="sm"
                       variant={option.value === currentBehavior.value ? "secondary" : "outline"}
                       aria-pressed={option.value === currentBehavior.value}

@@ -874,6 +874,40 @@ describe("cloud provider sync gateway", () => {
     expect(engineRequests).toContain("PUT /auth/lpr_test");
   });
 
+  test("preserves disabled Fast metadata and reconciles an unchanged catalog after serializer upgrade", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    const provider = buildProvider([{ id: "model", name: "Model", config: {
+      reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+      experimental: { modes: { fast: { provider: { body: { service_tier: "priority" } } } } },
+    } }]);
+    provider.providerConfig.npm = "@ai-sdk/openai";
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({ provider: { lpr_test: {
+      models: { model: { id: "model", name: "Model" } },
+    } } }));
+    const sync = new CloudProviderSync({
+      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: async () => {},
+      fetchImpl: Object.assign(async (input: URL | RequestInfo) => {
+        const { pathname } = new URL(String(input));
+        if (pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+        return Response.json(pathname.endsWith("/connect")
+          ? { llmProvider: provider } : { llmProviders: [provider] });
+      }, { preconnect: () => {} }),
+    });
+    stops.push(() => sync.stop());
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "synthetic", orgId: "org_test" });
+    expect((await sync.run()).status).toBe("applied");
+    expect(sync.status().providers[0]?.modelConfigVersion).toBe(2);
+    const written = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test;
+    const model = expectRecord(expectRecord(written.models, "serialized models").model, "serialized model");
+    expect(model.variants).toEqual({ __openwork_catalog_fast_v1: {
+      disabled: true, openworkNativeFast: 1, reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    } });
+    expect(JSON.stringify(written)).not.toContain('"experimental"');
+    expect((await sync.run()).status).toBe("noop");
+  });
+
   test("skips a per-member provider that needs the member's key", async () => {
     const root = await createRoot();
     const config = serverConfig(root, "https://engine.example.test");

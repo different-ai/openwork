@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
+import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import type { EnvService } from "./env-file.js";
 import { ApiError } from "./errors.js";
@@ -46,6 +47,7 @@ export type CloudProviderSyncStatusProvider = {
   updatedAt: string | null;
   modelIds: string[];
   importedAt: number;
+  modelConfigVersion: number;
 };
 
 /**
@@ -610,7 +612,7 @@ function providerEnvEntries(provider: DenProviderConnection): EnvEntry[] {
   return entries;
 }
 
-function buildModelConfig(model: DenProviderModel): JsonRecord {
+function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRecord {
   // Older Den responses included routing labels in the display name. Keep the
   // wire ID and selection metadata, but don't expose those labels in the picker.
   const selection = model.modelGroupName && model.credentialSetName ? ` (${model.modelGroupName} / ${model.credentialSetName})` : "";
@@ -622,13 +624,15 @@ function buildModelConfig(model: DenProviderModel): JsonRecord {
     const value = model.config[key];
     if (value !== undefined) next[key] = value;
   }
+  const variants = catalogFastVariants(model.config, providerNpm);
+  if (variants) next.variants = variants;
   return next;
 }
 
 function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   const models: JsonRecord = {};
   for (const model of [...provider.models].sort((left, right) => left.id.localeCompare(right.id))) {
-    models[model.id] = buildModelConfig(model);
+    models[model.id] = buildModelConfig(model, provider.providerConfig.npm);
   }
   const config: JsonRecord = {
     id: provider.providerId,
@@ -1378,6 +1382,7 @@ export class CloudProviderSync {
         source: entry.provider.source,
         updatedAt: entry.provider.updatedAt,
         modelIds: entry.provider.models.map((model) => model.id).sort(),
+        modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
         importedAt,
       };
     });

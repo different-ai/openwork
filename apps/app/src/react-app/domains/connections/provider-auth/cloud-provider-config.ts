@@ -1,5 +1,6 @@
 import { applyEdits, modify } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
+import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import type {
   DenOrgLlmProvider,
@@ -242,6 +243,8 @@ export const isCloudProviderOutOfSync = (
   provider: DenOrgLlmProvider,
   importedProvider: CloudImportedProvider,
 ) =>
+  (importedProvider.modelConfigVersion !== CLOUD_MODEL_CONFIG_VERSION
+    && provider.models.some((model) => catalogFastVariants(model.config, provider.providerConfig.npm) !== undefined)) ||
   importedProvider.providerId !== getCloudManagedProviderId(provider) ||
   importedProvider.sourceProviderId !== provider.providerId ||
   (importedProvider.source ?? null) !== provider.source ||
@@ -285,6 +288,8 @@ export const buildCloudProviderConfig = (
           (next as Record<string, unknown>)[key] = value;
         }
       }
+      const variants = catalogFastVariants(raw, provider.providerConfig.npm);
+      if (variants) Object.assign(next, { variants });
       return [model.id, next];
     }),
   );

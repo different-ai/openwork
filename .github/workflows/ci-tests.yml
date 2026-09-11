@@ -197,6 +197,8 @@ jobs:
         run: |
           rm -rf packages/types/dist
           pnpm --filter openwork-server build
+      - name: Check packaged Fast module consumption
+        run: node --test packages/types/tests/packaged-cloud-model-fast.test.mjs
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
       - name: Check virtual display bootstrap contract

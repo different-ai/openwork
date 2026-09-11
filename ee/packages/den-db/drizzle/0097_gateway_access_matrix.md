@@ -1,11 +1,172 @@
 # Gateway Matrix Migration 0097
 
-Status: complete registered SQL migration and source-serialized snapshot.
+Original authoring status: complete registered SQL migration and source-serialized snapshot.
 Offline generation and schema-delta inspection only; no database execution,
 runtime tests, service changes, commits, pushes, or deployment performed.
 The authoritative batch contract is `model-access-matrix.md` from the supplied
 external inference-gateway documentation; its key/matrix decisions supersede
 the historical plan.
+
+## Pending-Migration Vitess Recovery
+
+This is an explicitly authorized correction of the already-landed 0097 SQL for
+a deployment where 0097 is still pending, not a new migration or permission to
+replay an applied migration. Recovery base: `667b450fd` on `origin/dev`.
+
+| 0097 SQL bytes | SHA-256 |
+| --- | --- |
+| Before correction | `dec021c8b3bb9fb139b3e0737ac5618ab1ed74d64d82fe36e1fcfe71306f378d` |
+| After correction | `2882d271052bd27a6281e5a1b161056546c817d27e218ba69fecd5f00cb4db9a` |
+
+The three metadata `INSERT ... SELECT` guards become five flat SELECTs, without
+metadata joins, subqueries or DML. The complete-0096 check is split into eight
+required BASE TABLEs, eleven rollup observation columns, and one encrypted-key
+column. The twelve destination names must be absent regardless of table type,
+including views. Index presence counts twenty distinct `(TABLE_NAME, INDEX_NAME)`
+pairs, not statistics rows for individual indexed columns. The database scope
+stays outside the parenthesized OR of those exact twenty pairs.
+
+Every metadata SELECT evaluates `JSON_EXTRACT(IF(condition, '{}', '0097_reason'), '$')`.
+Success returns one row containing `{}`. Failure supplies a static non-JSON
+reason string, causing `ER_INVALID_JSON_TEXT_IN_PARAM` (3141), an SQL error rather
+than a warning or a result the migrator could ignore. A stop-on-error Drizzle
+execution therefore aborts before persistent DDL. The reason identifies the
+guard in the SQL; drivers need not include that string in their error message.
+The seven version, SQL-mode and data INSERT guards, all ten temporary sentinel
+values, and temporary-table lifecycle are unchanged. Every persistent DDL,
+backfill, constraint and index change is unchanged.
+
+The final two comments now precede the last ALTER rather than following its
+semicolon. Each breakpoint packet ends in actual SQL. No SQL in 0095, 0096,
+0098, 0099, older migrations, journal timestamps, snapshots or schema sources
+is changed, and no history is regenerated.
+
+The migration owner supplied prior read-only Vitess 8.4.11 observations: flat
+TABLES/COLUMNS/STATISTICS probes succeeded with expected counts and failed with
+3141 for deliberately wrong counts, including distinct table/index pairs.
+They also supplied the 1105 `Expected a single Statement` reproduction for
+`SELECT 1; -- comment`, and successful final-ALTER/0098/0099 execution after
+removing trailing comments in the diagnostic branch. These are supplied
+diagnostic findings, not tests executed or fresh deployment certification by
+this correction. The diagnostic branch is now empty at schema 0099; do not
+replay there or reuse another worktree's `.env`.
+
+Supplied deployment receipts cover 1 through 96, with exact matches reported
+for 0095/0096. Older 0003/0010/0015 hashes differ. That is NOT a clean-history
+claim. Those SQL files and receipts must remain untouched; investigate their
+provenance separately with the migration owner rather than accepting all old
+hashes, rewriting receipts, or replaying history.
+
+### Local Runner And Receipt Compatibility
+
+- Before any later authorized apply, the owner must establish from read-only
+  receipts and schema inspection that 0097 is pending and no persistent 0097
+  DDL has run. A missing receipt alone does not prove this: DDL auto-commits.
+  Mixed/partial Gateway state needs its own recovery plan, not a retry.
+- Deployments already recording the original 0097 hash must NOT replay 0097,
+  delete/restamp its receipt, change its timestamp, or baseline Gateway tables.
+  Timestamp-based pending selection and exact checksum validation are different
+  contracts; a migration being skipped does not certify its recorded bytes.
+- `scripts/migration-baseline.ts:historyPrefix` still checks every ordered hash
+  and timestamp, with one explicitly authorized known-equivalent hash alias.
+  The before-correction hash in the table above is accepted ONLY for tag
+  `0097_gateway_access_matrix`, journal time `1788895934602`, and current SQL
+  hash `2882d271052bd27a6281e5a1b161056546c817d27e218ba69fecd5f00cb4db9a`.
+  The receipt timestamp must also match. The current hash remains accepted by
+  the ordinary exact-match rule. An accepted original receipt remains unchanged
+  and counts as applied: 0097 is neither replayed nor restamped. Different tags,
+  times, unknown hashes or another replacement SQL hash do not qualify.
+- No other historical hash mismatch is permitted. The pending deployment with
+  receipts 1 through 96 does not use this alias at all. Its supplied 0095/0096
+  matches and 0003/0010/0015 discrepancies remain as reported; the older
+  discrepancies still fail local exact-prefix validation. No receipts, earlier
+  migrations or timestamps are rewritten, and no broader history is certified.
+- `scripts/dev-migrate.ts:matrixPreflightQueries` now recognizes the five JSON
+  assertions plus seven INSERT-derived guards. It reconstructs and pins the
+  reviewed 0097 source hash, checks all ten unique seed names, requires twelve
+  queries with five JSON assertions, and requires three complete-0096 queries
+  plus exactly one query for every other seed. Changed source bytes or unknown
+  layouts still raise `0097 preflight layout changed; review local startup integration before execution.`
+  Future 0097 edits require explicit review rather than silently weakening a
+  predicate or dropping an unrecognized statement.
+- `preflightMatrix` accepts JSON success only as one row whose `preflight` is an
+  empty object, either driver-decoded or parsed from a valid JSON string. Missing,
+  multiple, malformed, scalar, array or nonempty-object results fail closed.
+  Ordinary INSERT-derived SELECTs still pass only with zero rows. Query errors
+  propagate and abort before later guards. `completeSchema=false` skips all
+  three complete-0096 assertions, and only those; destination/index and all
+  version/mode/data checks still run. The embedded SQL checks still execute at
+  migration time, after 0096.
+- Loopback restrictions, active-session checks, interruption markers and exact
+  schema verification after receipt validation are unchanged. An accepted old
+  0097 hash cannot hide partial schema or unrelated drift. The prior layout and
+  old-0097-receipt integration blockers are covered by the focused checks below.
+  The SQL file has a narrowly scoped `text eol=lf` Git attribute so the reviewed
+  byte-level pin is stable across fresh platform checkouts.
+
+### Recovery Verification
+
+The orchestrator ran the following checks on the recovery working tree:
+
+- Offline preflight and migration-readiness tests: **36 passed, 0 failed, 0 skipped**.
+- `db:migrate:local --check-artifacts`: **99 ordered migrations and 41 foundation
+  statements validated**, without database access.
+- The targeted MySQL 8.4.10 schema-parity file: **11 passed, 0 failed, 0 skipped**,
+  including full migration replay, exported-schema parity, five successful JSON
+  guards and 25 invalid-metadata scenarios that raised error 3141.
+- Read-only probes on the user-supplied Vitess 8.4.11 branch: valid flat table,
+  column, index and distinct-table/index-count queries returned `{}`; deliberately
+  invalid counts raised error 3141. These establish the query shapes, not a full
+  corrected-file replay against populated Vitess data.
+- A separate read-only Vitess parser probe confirmed that a trailing comment
+  after a semicolon raises `Expected a single statement`, while the same SELECT
+  without the comment succeeds.
+
+The MySQL fixture was an owned disposable container, removed after verification.
+Initial fixture mount-inspection and child-process condition mistakes were
+corrected without changing migration assertions; the first schema-parity attempt
+had 10 passes and one environment failure before the final 11-pass run.
+No production database or migration receipts were modified.
+
+The focused offline `test/gateway-preflight.test.ts` checks exact metadata predicates/counts,
+the unchanged 35 non-metadata packets against a fingerprint from the original
+SQL, and actual SQL packet endings for 0097-0099. The added opt-in test in
+`test/migration-schema-parity.test.ts` uses the existing `DEN_DB_MYSQL_TEST_URL`
+scratch-database fixture, seeds only the 0095/0096 prerequisites, and exercises
+all five actual JSON guards. Negative cases remove a required table/column,
+occupy a destination with a table or view, and rename each of the twenty required
+indexes without reducing the total index count. It does not apply 0097 DDL or
+record migration receipts. MySQL coverage is not Vitess protocol certification.
+
+The existing local migration tests in `test/migration-readiness.test.ts` now
+cover the mixed result contract, malformed JSON results, every guard's stop-on-
+error behavior, three-assertion skipping, unknown layouts, the exact old/current
+0097 receipt pair, rejected alias variants and older drift, receipt preservation,
+and schema verification after accepting an original receipt. Their fake executor
+returns the JSON success row rather than treating all SELECTs as zero-row guards.
+
+Reproduction commands, from the repository root after dependency installation:
+
+```sh
+pnpm --dir ee/packages/den-db exec node --conditions=development --import tsx --test test/gateway-preflight.test.ts test/migration-readiness.test.ts
+pnpm --dir ee/packages/den-db db:migrate:local --check-artifacts
+NODE_OPTIONS=--conditions=development DEN_DB_MYSQL_TEST_URL="${ISOLATED_MYSQL_ADMIN_URL:?Set a dedicated disposable MySQL URL}" pnpm --dir ee/packages/den-db exec node --conditions=development --import tsx --test --test-concurrency=1 test/migration-schema-parity.test.ts
+```
+
+The last command needs a deliberately provisioned disposable MySQL fixture with
+CREATE/DROP DATABASE permission. It skips its database checks without a URL;
+never point it at production. `NODE_OPTIONS` is needed for the spawned Drizzle
+export process as well as its parent. The first two commands are offline.
+
+The diagnostic PlanetScale branch is already at schema 0099 with **zero journal
+receipts**; it is not an empty schema and must not undergo full migration replay.
+Its zero-row backfills do not validate populated production data. Fresh populated
+Vitess rehearsal and production-state/cutover review remain separate gates.
+
+The existing `Den DB Migrate` workflow can apply on migration changes landing on
+`dev` and on its configured schedule. Merging this patch therefore requires the
+owner's explicit deployment/cutover decision, including coordination of automatic
+retries and application writers. This document does not disable that workflow.
 
 ## Registration
 
@@ -27,7 +188,8 @@ pnpm exec node --conditions=development --import tsx scripts/generate-gateway-ma
 
 These historical generator commands intentionally reject a newer schema or
 journal tip. After later migrations, use `db:migrate:local --check-artifacts`
-to inspect the registered chain; do not regenerate 0097 against current source.
+to inspect the registered chain and reviewed preflight layout offline.
+Do not regenerate 0097 against current source.
 
 The generator rejects unrelated table/view drift. The schema-delta mode uses
 Drizzle's `generateMySQLMigration` on an in-memory copy of 0096 with the eight
@@ -50,12 +212,13 @@ their table-derived Drizzle snapshot labels change without rebuilding them.
   Split on the standard `--> statement-breakpoint` markers. Stop on first error;
   no force/ignore mode and no separate pooled connection per statement.
 - The embedded preflight is automatic: no exported helper or extra runner hook
-  is required. It uses a connection-local TEMPORARY table with primary-key
-  sentinels. Invalid source data attempts a duplicate sentinel INSERT, which
-  raises MySQL error 1062 naming the failed check BEFORE the first persistent DDL.
-  There are ten `INSERT ... SELECT '0097_...'` checks. A launcher may extract
-  their SELECT portions for an earlier read-only preflight before creating its
-  own durable interruption marker; the embedded checks must still execute.
+  is required for direct sequential SQL execution. Seven version/mode/data
+  checks use a connection-local TEMPORARY table with primary-key sentinels;
+  a duplicate INSERT raises MySQL error 1062 naming the failed check. Five flat
+  metadata SELECTs raise JSON error 3141 on failure. All run BEFORE persistent
+  DDL. The local read-only adapter handles both shapes and their different
+  success-result conventions as documented above. The embedded checks must
+  still execute, even after an earlier preflight.
 - Require CREATE TEMPORARY TABLES permission, ordinary migration DDL/DML rights,
   MySQL 8.0.16+ (including 8.4), and STRICT_TRANS_TABLES or STRICT_ALL_TABLES.
   MariaDB/TiDB are explicitly refused; other drivers or serverless sessions that
@@ -72,7 +235,7 @@ their table-derived Drizzle snapshot labels change without rebuilding them.
 
 ## Preflight Failures
 
-| Duplicate-entry marker | Required action before retry |
+| Failure marker (1062 duplicate or 3141 JSON guard) | Required action before retry |
 | --- | --- |
 | 0097_requires_mysql_8_0_16_or_later | Use a supported MySQL server, not MariaDB/TiDB |
 | 0097_requires_strict_sql_mode | Enable strict SQL mode on the migration connection |
@@ -94,8 +257,9 @@ validated, and historical attribution is preserved rather than linked to default
 - Coordinate a writer cutover. MySQL DDL auto-commits; this is not an online,
   transactional or blindly rerunnable migration. Old readers/writers use names
   that will no longer exist. Drain OAuth callbacks/refreshes as part of cutover.
-- No database execution or real-data preflight has happened during this batch.
-  Replay/rollback-failure journeys remain deferred to the verification phase.
+- No database execution or real-data preflight was performed by this correction.
+  Supplied earlier diagnostic findings are scoped above; replay/rollback-failure
+  journeys remain deferred to an authorized verification phase.
 - Confirm MySQL with enforced CHECK support (8.0.16+), strict SQL mode, and
   support for RENAME INDEX/CHANGE COLUMN.
   Do not disable checks or silently ignore invalid source data.
