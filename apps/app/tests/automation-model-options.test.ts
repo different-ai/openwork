@@ -112,9 +112,26 @@ describe("Automation model options", () => {
     expect(selected?.behaviorOptions?.map((option) => option.value)).toContain("low")
     expect(selected?.isFree).toBe(false)
     // The free starter model is absent from the local catalog here, so it
-    // still lists — just without reasoning levels.
+    // still lists with a Default recovery path, without invented reasoning levels.
     expect(free?.isFree).toBe(true)
-    expect(free?.behaviorOptions).toEqual([])
+    expect(free?.behaviorOptions?.map((option) => option.value)).toEqual([null])
+  })
+
+  test("preserves unknown saved settings only on the selected identity, even before runtime metadata arrives", () => {
+    const options = automationModelOptions([
+      provider({ id: "lpr_one", source: "custom", name: "One",
+        models: [{ id: "same-model", name: "One model", config: {}, createdAt: null }] }),
+      provider({ id: "lpr_two", source: "custom", name: "Two",
+        models: [{ id: "same-model", name: "Two model", config: {}, createdAt: null }] }),
+    ])
+    const selected = { providerId: "lpr_one", modelId: "same-model", variant: "retired" }
+    const picker = automationPickerOptions({ options, catalog: {}, selected })
+    expect(picker.find((option) => option.providerID === "lpr_one")).toMatchObject({
+      behaviorValue: "retired", behaviorLabel: '"retired" (not in current catalog)',
+    })
+    expect(picker.find((option) => option.providerID === "lpr_one")?.behaviorOptions?.map((option) => option.value)).toEqual([null])
+    expect(picker.find((option) => option.providerID === "lpr_two")?.behaviorValue).toBeNull()
+    expect(selected.variant).toBe("retired")
   })
 })
 

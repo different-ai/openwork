@@ -8,19 +8,19 @@ description: Manage OpenWork inference model aliases, openwork model overlays, d
 Use this skill for OpenWork inference model changes. The source of truth for
 available upstream models is:
 
-- `ee/apps/inference/src/models/base.json`
+- `ee/apps/gateway/src/models/base.json`
 - provider key: `openrouter`
 - model map: `openrouter.models`
 
 The editable OpenWork model list is:
 
-- `ee/apps/inference/src/models/openwork-models.json`
+- `ee/apps/gateway/src/models/openwork-models.json`
 
 Managed file:
 
 - `packages/types/src/den/inference.ts`
 
-`ee/apps/inference/scripts/build-models.mjs` reads `openwork-models.json` and
+`ee/apps/gateway/scripts/build-models.mjs` reads `openwork-models.json` and
 generates the OpenWork provider overlay in memory. It selects the API URL from
 `OPENWORK_DEV_MODE`: dev uses `http://127.0.0.1:8791/api/v1`, otherwise prod
 uses `https://inference.openworklabs.com/api/v1`.
@@ -122,7 +122,7 @@ Before finishing, run:
 
 ```bash
 node .opencode/skills/openwork-models/scripts/openwork-models.mjs validate
-node ee/apps/inference/scripts/build-models.mjs
+node ee/apps/gateway/scripts/build-models.mjs
 ```
 
 Validation checks JSON validity, OpenWork model ID consistency, and alias

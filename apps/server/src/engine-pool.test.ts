@@ -24,6 +24,7 @@ const ENV_NAMES = [
   "OPENWORK_ENGINE_DRAIN_TIMEOUT_MS",
   "OPENWORK_ENGINE_ABORT_SETTLE_MS",
   "OPENWORK_ENGINE_MIN_SPAWN_INTERVAL_MS",
+  "OPENWORK_ENGINE_STANDBY_PREPARE_TIMEOUT_MS",
   "OPENWORK_POOL_LOG",
   "OPENWORK_POOL_STATE",
 ];
@@ -423,6 +424,43 @@ describe("engine pool", () => {
     expect(fixture.hookCalls.reloadInPlace).toBe(1);
   });
 
+  test("an in-place reload of one workspace does not skip the other workspaces' stale instances", async () => {
+    // In-place reload disposes ONE directory instance. The other workspaces'
+    // instances were built against the previous config and stay stale until
+    // their own reload, so the fingerprint guard must be per directory.
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const reloaded: string[] = [];
+    fixture.hooks.reloadInPlace = async (_config, workspace) => { reloaded.push(workspace.id); };
+    const second: WorkspaceInfo = { ...fixture.workspace, id: "ws_second", path: join(fixture.root, "second") };
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    expect(await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace }))
+      .toEqual({ action: "reloaded_in_place" });
+    expect(await pool.requestRollover({ reason: "config_changed", workspace: second }))
+      .toEqual({ action: "reloaded_in_place" });
+    expect(reloaded).toEqual([fixture.workspace.id, second.id]);
+    expect(pool.primaryUrl()).toBe(primary.url);
+
+    // Both directories now match the current config: repeats are no-ops.
+    expect(await pool.requestRollover({ reason: "repeat", workspace: fixture.workspace }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(await pool.requestRollover({ reason: "repeat", workspace: second }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(reloaded).toEqual([fixture.workspace.id, second.id]);
+
+    // A rollover to a fresh process rebuilds every instance, so nothing is
+    // stale until the config changes again.
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 3 }));
+    await fixture.setBusy(portOf(primary.url), ["ses_live"]);
+    expect((await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace })).action)
+      .toBe("rolled_over");
+    expect(await pool.requestRollover({ reason: "repeat", workspace: second }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(reloaded).toEqual([fixture.workspace.id, second.id]);
+    await fixture.setBusy(portOf(primary.url), []);
+  });
+
   test("provider sync holds the serving primary until a standby is healthy and keeps it on spawn failure", async () => {
     const fixture = await createFixture();
     const { pool, primary } = await createPool(fixture);
@@ -468,13 +506,24 @@ describe("engine pool", () => {
     const replacementUrl = pool.primaryUrl();
     expect(replacementUrl).not.toBe(primary.url);
     expect(standbyHealthChecks).toBe(1);
+    expect(await waitUntil(() => pool.snapshot().generations.length === 1, 5_000)).toBe(true);
 
-    expect(await pool.requestRollover({
-      reason: "cloud_provider_sync_unchanged",
+    // Provider sync only asks for a standby when it knows something changed,
+    // and a rotated credential never shows up in the config fingerprint. A
+    // forced request must therefore apply even when the bytes are unchanged;
+    // reporting "skipped" here is what left the engine on the old key.
+    delete fixture.hooks.waitForHealthy;
+    const forcedUnchanged = await pool.requestRollover({
+      reason: "cloud_provider_sync_credential_rotated",
       workspace: fixture.workspace,
       forceStandby: true,
-    })).toEqual({ action: "skipped", reason: "unchanged" });
-    expect(standbyHealthChecks).toBe(1);
+    });
+    expect(forcedUnchanged.action).toBe("rolled_over");
+    const rotatedUrl = pool.primaryUrl();
+    expect(rotatedUrl).not.toBe(replacementUrl);
+    // The plain (unforced) path still skips a byte-identical config.
+    expect(await pool.requestRollover({ reason: "unchanged", workspace: fixture.workspace }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
 
     expect(await waitUntil(() => pool.snapshot().generations.length === 1, 5_000)).toBe(true);
     await fixture.setRuntimeConfig(JSON.stringify({ generation: 3 }));
@@ -487,7 +536,7 @@ describe("engine pool", () => {
       forceStandby: true,
     })).rejects.toThrow("standby spawn failed");
 
-    expect(pool.primaryUrl()).toBe(replacementUrl);
+    expect(pool.primaryUrl()).toBe(rotatedUrl);
     expect(pool.snapshot().generations).toEqual([expect.objectContaining({ role: "primary" })]);
     expect((await fixture.logLines()).some((line) => line.endsWith("POST /instance/dispose"))).toBe(false);
   });
@@ -580,7 +629,7 @@ describe("engine pool", () => {
     expect(await waitUntil(() => !primary.isAlive(), 5_000)).toBe(true);
   });
 
-  test("seeds the healthy standby before flipping and flips anyway when seeding fails", async () => {
+  test("seeds the healthy standby before flipping and keeps the live engine when seeding fails", async () => {
     const fixture = await createFixture();
     const seeded: Array<{ generationId: string; baseUrl: string; primaryAtSeed: string | null; hasAuth: boolean }> = [];
     let failSeed = false;
@@ -613,17 +662,99 @@ describe("engine pool", () => {
     expect(seeded[0]?.primaryAtSeed).toBe(primary.url);
     expect(seeded[0]?.hasAuth).toBe(true);
 
-    // A failed seed must not strand the pool on the old engine.
+    // A standby whose credential seed failed would serve every request with
+    // "API key is missing". It must never become primary: the live engine
+    // keeps serving, the standby is closed, and the caller learns the reload
+    // did not land so it can retry instead of reporting success.
     await fixture.setBusy(portOf(primary.url), []);
     expect(await waitUntil(async () => pool.snapshot().generations.length === 1, 5_000)).toBe(true);
     const secondPrimaryUrl = pool.primaryUrl();
     await fixture.setBusy(portOf(secondPrimaryUrl ?? "http://127.0.0.1:0"), ["ses_live_2"]);
     await fixture.setRuntimeConfig(JSON.stringify({ generation: 3 }));
     failSeed = true;
-    const second = await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace, manual: true });
-    expect(second.action).toBe("rolled_over");
+    await expect(pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace, manual: true }))
+      .rejects.toThrow("engine auth API rejected the seed");
     expect(seeded).toHaveLength(2);
+    expect(pool.primaryUrl()).toBe(secondPrimaryUrl);
+    expect(pool.snapshot().generations).toEqual([expect.objectContaining({ role: "primary" })]);
+    expect(await waitUntil(async () => (await fixture.logLines()).includes(`${portOf(seeded[1]?.baseUrl ?? "http://127.0.0.1:0")} SIGTERM`), 5_000)).toBe(true);
+
+    // Once seeding works again the same change lands on a fresh standby.
+    failSeed = false;
+    const third = await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace, manual: true });
+    expect(third.action).toBe("rolled_over");
+    expect(seeded).toHaveLength(3);
     expect(pool.primaryUrl()).not.toBe(secondPrimaryUrl);
+  });
+
+  test("a hung standby seed is bounded and leaves the live engine serving", async () => {
+    setEnv("OPENWORK_ENGINE_STANDBY_PREPARE_TIMEOUT_MS", "300");
+    const fixture = await createFixture();
+    let seeds = 0;
+    fixture.hooks.prepareStandby = () => {
+      seeds += 1;
+      return new Promise<void>(() => undefined);
+    };
+    const { pool, primary } = await createPool(fixture);
+    await fixture.setBusy(portOf(primary.url), ["ses_live"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    const startedAt = Date.now();
+    await expect(pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace }))
+      .rejects.toThrow(/standby preparation/i);
+    expect(Date.now() - startedAt).toBeLessThan(4_000);
+    expect(seeds).toBe(1);
+    expect(pool.primaryUrl()).toBe(primary.url);
+    expect(fixture.config.opencodeBaseUrl).toBe(primary.url);
+    expect(pool.snapshot().generations).toEqual([expect.objectContaining({ role: "primary" })]);
+  });
+
+  test("a request coalesced into an in-flight rollover settles only once its own rollover lands", async () => {
+    const fixture = await createFixture();
+    let releaseSpawn: () => void = () => undefined;
+    const spawnReleased = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    let spawns = 0;
+    const realSpawn = createManagedOpencodeServer;
+    fixture.hooks.spawn = async (template) => {
+      spawns += 1;
+      if (spawns === 1) await spawnReleased;
+      const handle = await realSpawn({ bin: template.bin, cwd: template.cwd, env: template.env });
+      cleanups.push(() => handle.close().catch(() => undefined));
+      return handle;
+    };
+    const { pool, primary } = await createPool(fixture);
+    await fixture.setBusy(portOf(primary.url), ["ses_live"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    const first = pool.requestRollover({ reason: "first", workspace: fixture.workspace });
+    expect(await waitUntil(() => spawns === 1, 2_000)).toBe(true);
+
+    // The second request carries a change the in-flight spawn may not have
+    // read (a rotated credential). Its promise must not resolve with a bare
+    // "coalesced" ack: that let the caller record the reload as landed while
+    // the engine was still being replaced with stale inputs.
+    const second = pool.requestRollover({ reason: "credential_rotated", workspace: fixture.workspace, forceStandby: true });
+    let secondSettled = false;
+    void second.then(() => { secondSettled = true; }, () => { secondSettled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    try {
+      expect(secondSettled).toBe(false);
+    } finally {
+      releaseSpawn();
+    }
+    expect((await first).action).toBe("rolled_over");
+    const afterFirst = pool.primaryUrl();
+    // Let the first drain finish so the forced follow-up can take its turn.
+    await fixture.setBusy(portOf(primary.url), []);
+    const outcome = await second;
+    expect(outcome.action).toBe("rolled_over");
+    expect(spawns).toBe(2);
+    // The last spawned generation is the one serving: the coalesced request
+    // landed after the in-flight one, with the final desired inputs.
+    expect(pool.primaryUrl()).not.toBe(afterFirst);
+    expect(pool.primaryUrl()).not.toBe(primary.url);
   });
 
   test("keeps a live session from another workspace on the draining generation", async () => {

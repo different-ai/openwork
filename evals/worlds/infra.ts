@@ -37,9 +37,11 @@ export async function twoDaytonaDesktopsWorld(seed: Seed) {
   const appA = requestedA
     ? await desktop({ host: daytonaSandbox(requestedA), name: "a" })
     : await seed.desktop({ name: "a" });
+  // The pooled lane hands every surface the worker's prepared sandbox; this
+  // journey is about two sandboxes, so the second desktop must own its own.
   const appB = requestedB
     ? await desktop({ host: daytonaSandbox(requestedB), name: "b" })
-    : await seed.desktop({ name: "b" });
+    : await seed.desktop({ name: "b", ownSandbox: true });
   const sandboxA = appA.handle.sandboxId;
   const sandboxB = appB.handle.sandboxId;
   if (!sandboxA || !sandboxB) throw new Error("Both desktops must run in Daytona sandboxes.");

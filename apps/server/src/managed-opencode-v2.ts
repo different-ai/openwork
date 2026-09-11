@@ -1,4 +1,5 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
+import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
@@ -204,11 +205,16 @@ export async function createManagedOpencodeV2Server(
           capabilities: {
             tools: typeof config.tool_call === "boolean" ? config.tool_call : true,
             input: modalities.input ?? ["text"],
-            output: modalities.output ?? ["text"],
+            output: config.reasoning === true
+              ? [...new Set([...(Array.isArray(modalities.output) ? modalities.output : ["text"]), "reasoning"])]
+              : modalities.output ?? ["text"],
           },
           limit: config.limit ?? { context: 128_000, output: 8_192 },
           ...(typeof config.family === "string" ? { family: config.family } : {}),
           ...(isRecord(config.options) ? { settings: config.options } : {}),
+          ...(isRecord(config.variants) ? {
+            variants: nativeModelVariants(config.variants, provider.package),
+          } : {}),
           ...(isRecord(config.headers) ? { headers: config.headers } : {}),
           ...(config.status === "deprecated" ? { disabled: true } : {}),
         };

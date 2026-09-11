@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getMcpIdentityKey } from "../src/app/mcp";
+import { getMcpIdentityKey, parseMcpServersFromContent } from "../src/app/mcp";
 import type { McpServerEntry, McpStatusMap } from "../src/app/types";
 import {
   createMcpStatusSynchronizer,
@@ -142,5 +142,41 @@ describe("MCP OAuth status synchronization", () => {
       [entry.name]: { status: "disconnected" },
     }, [entry])).toEqual({});
     expect(sync.project(sync.beginRefresh(workspace), {}, [entry])).toEqual({});
+  });
+});
+
+describe("local MCP entries from opencode.json", () => {
+  test("a Claude-style string command with args is read as one command list", () => {
+    const entries = parseMcpServersFromContent(JSON.stringify({
+      mcp: {
+        docs: { type: "local", command: "python3", args: ["server.py", "--port", "8080"], enabled: true },
+      },
+    }));
+
+    expect(entries).toEqual([{
+      name: "docs",
+      source: "config.project",
+      config: { type: "local", command: ["python3", "server.py", "--port", "8080"], args: ["server.py", "--port", "8080"], enabled: true },
+    }]);
+  });
+
+  test("an OpenCode command list and remote entries pass through unchanged", () => {
+    const entries = parseMcpServersFromContent(JSON.stringify({
+      mcp: {
+        files: { type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-filesystem"] },
+        api: { type: "remote", url: "https://mcp.example.test", headers: { Authorization: "Bearer x" } },
+        broken: { type: "sse", url: "https://ignored.example.test" },
+      },
+    }));
+
+    expect(entries.map((entry) => [entry.name, entry.config.command ?? entry.config.url])).toEqual([
+      ["files", ["npx", "-y", "@modelcontextprotocol/server-filesystem"]],
+      ["api", "https://mcp.example.test"],
+    ]);
+  });
+
+  test("an empty string command is dropped rather than spawned", () => {
+    const [entry] = parseMcpServersFromContent(JSON.stringify({ mcp: { blank: { type: "local", command: "  " } } }));
+    expect(entry?.config.command).toBeUndefined();
   });
 });

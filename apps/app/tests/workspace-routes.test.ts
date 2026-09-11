@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyRouteSessionReadError,
   createRouteSession,
+  createRouteSessionOnEngine,
   deleteRouteSession,
   mergeRouteWorkspaces,
   readRouteSessionsWithRetry,
@@ -52,7 +53,10 @@ describe("workspace session mutations", () => {
           baseUrl: "http://owner.test", token: "fixture-token",
         });
         if (!endpoint) throw new Error("Workspace endpoint missing");
-        expect((await createRouteSession(endpoint, "/existing")).id).toBe("ses_created");
+        const created = await createRouteSessionOnEngine(endpoint, "/existing");
+        expect(created.session.id).toBe("ses_created");
+        expect(created.endpoint.opencodeBaseUrl).toBe(`http://owner.test/workspace/ws_existing/${engine === "v2" ? "opencode2" : "opencode"}`);
+        expect(endpoint.opencodeBaseUrl).toBe("http://owner.test/workspace/ws_existing/opencode");
         expect(await deleteRouteSession(endpoint, "ses_created")).toBe(true);
         expect(requests).toEqual([
           "GET /experimental/engine-v2-preview/status",
@@ -261,16 +265,16 @@ describe("workspace route session load budget", () => {
     const starts: string[] = [];
     let releaseWorkspaceA: (() => void) | undefined;
 
-    const firstWorkspaceA = coalescer.run("workspace-a", async () => {
+    const firstWorkspaceA = coalescer.run("workspace-a", "v1", async () => {
       starts.push("workspace-a");
       await new Promise<void>((resolve) => {
         releaseWorkspaceA = resolve;
       });
     });
-    const duplicateWorkspaceA = coalescer.run("workspace-a", async () => {
+    const duplicateWorkspaceA = coalescer.run("workspace-a", "v1", async () => {
       starts.push("workspace-a-duplicate");
     });
-    const workspaceB = coalescer.run("workspace-b", async () => {
+    const workspaceB = coalescer.run("workspace-b", "v1", async () => {
       starts.push("workspace-b");
     });
 
@@ -283,7 +287,7 @@ describe("workspace route session load budget", () => {
     await Promise.all([firstWorkspaceA, duplicateWorkspaceA, workspaceB]);
     expect(coalescer.isInFlight("workspace-a")).toBe(false);
 
-    await coalescer.run("workspace-a", async () => {
+    await coalescer.run("workspace-a", "v1", async () => {
       starts.push("workspace-a-after-settle");
     });
     expect(starts).toEqual(["workspace-a", "workspace-b", "workspace-a-after-settle"]);

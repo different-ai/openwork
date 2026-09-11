@@ -39,7 +39,7 @@ function expectSettledDocument(visibleText: string) {
 
 test("sending clears the composer and shows one pending turn in existing and new conversations", async ({ world, user, probe, step }) => {
   for (const scenario of ["existing", "new"]) {
-    if (scenario === "new") await user.click({ role: "button", label: "New task" });
+    if (scenario === "new") await user.click({ role: "button", label: "New session" });
     const text = `Keep this ${scenario} conversation message while submission is delayed.`;
     await user.type("composer", text);
     await world.holdNextSubmission();
@@ -225,8 +225,22 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     }, { within: 5_000, label: "keyboard browsing settles above the latest turn", until: (value) => value.stable });
   };
   const scrollStorageKey = "openwork:session-scroll:v1";
-  const savedScroll = (sessionId: string): Promise<unknown> => probe.storage(scrollStorageKey, (value): unknown =>
-    value && typeof value === "object" ? Reflect.get(value, sessionId) ?? null : null);
+  const savedScroll = async (sessionId: string): Promise<unknown> => {
+    const organizationId = await probe.storage("openwork.den.activeOrgId");
+    const port = await probe.storage("openwork.server.port");
+    if (typeof organizationId !== "string" || !organizationId.trim()
+      || (typeof port !== "string" && typeof port !== "number") || !/^\d+$/.test(String(port))) {
+      throw new Error("Streamed history fixture is missing its organization or local server port");
+    }
+    // This world signs in as its admin and uses a local v1 workspace. Match
+    // every owner coordinate; a same-ID entry from another owner is not proof.
+    const draftScope = `cloud:${encodeURIComponent(world.principalId)}:${encodeURIComponent(organizationId.trim())}`;
+    const endpoint = `http://127.0.0.1:${port}/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode`;
+    const owner = JSON.stringify([draftScope, endpoint, world.workspace.workspaceId, sessionId]);
+    const key = JSON.stringify(["session-scroll", owner, sessionId]);
+    return probe.storage(scrollStorageKey, (value): unknown =>
+      value && typeof value === "object" ? Reflect.get(value, key) ?? null : null);
+  };
   const readingGeometry = async (messageId: string) => {
     const { elements } = await probe.dom(`${viewportSelector}, ${surface} [data-message-id="${messageId}"]`);
     const [viewport, message] = elements;

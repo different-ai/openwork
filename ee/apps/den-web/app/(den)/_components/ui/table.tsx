@@ -13,6 +13,7 @@ export type DenTableProps<T> = {
   columns: readonly DenTableColumn<T>[];
   rows: readonly T[];
   getRowKey: (row: T) => string;
+  rowClassName?: string;
   emptyLabel?: string;
   /** `plain` drops the filled header row for tables that sit on a white surface. */
   headerTone?: "muted" | "plain";
@@ -22,6 +23,7 @@ export function DenTable<T>({
   columns,
   rows,
   getRowKey,
+  rowClassName,
   emptyLabel = "Nothing here yet.",
   headerTone = "muted",
 }: DenTableProps<T>) {
@@ -54,7 +56,7 @@ export function DenTable<T>({
         </thead>
         <tbody className="divide-y divide-gray-100">
           {rows.map((row) => (
-            <tr key={getRowKey(row)}>
+            <tr key={getRowKey(row)} className={rowClassName}>
               {columns.map((column) => (
                 <td key={column.key} className={`px-6 py-3 ${column.align === "right" ? "text-right" : ""}`}>
                   {column.render(row)}
