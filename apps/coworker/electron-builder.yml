@@ -16,8 +16,22 @@ files:
   - "!server/**/*.test.js"
   - "!server/**/*.test.js.map"
   - "!server/dist/opencode-plugins/**"
-  - resources/icons/**/*
+  # The main process reads one window/dock PNG at run time; the .icns/.ico and
+  # the Linux icon set are consumed by electron-builder from the project tree.
+  - resources/icons/icon.png
+  - resources/icons/icon-macos.png
   - package.json
+  # Dependency build artifacts nothing loads at run time. Declarations with the
+  # classic .d.ts extension are already excluded by default; these are the
+  # module-flavoured declarations, source maps, and shipped TypeScript sources
+  # of packages whose exports point at compiled output. Keep every *.ts that a
+  # package exports directly (workspace types) by not excluding *.ts broadly.
+  - "!**/node_modules/**/*.map"
+  - "!**/node_modules/**/*.d.mts"
+  - "!**/node_modules/**/*.d.cts"
+  - "!**/node_modules/**/*.tsbuildinfo"
+  - "!**/node_modules/zod/src/**"
+  - "!**/node_modules/ajv/lib/**/*.ts"
 extraMetadata:
   main: electron-dist/main.mjs
 extraResources:

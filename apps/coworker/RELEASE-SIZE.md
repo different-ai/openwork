@@ -88,6 +88,37 @@ imports nothing from that package. `htmlparser2` and its `domhandler` /
 standalone into `opencode-plugins/`. Both were mirrors of `apps/server`'s
 manifest, not runtime imports of this package.
 
+**Packaging hygiene, same day:** the ASAR still carried 11.3 MiB of dependency
+source maps, 2.9 MiB of `.d.mts` / `.d.cts` declarations (classic `.d.ts` is
+already excluded by electron-builder), zod's 2.0 MiB shipped `src/` tree, ajv's
+`lib/*.ts` sources, and 3.4 MiB of icon files that only electron-builder reads
+from the project tree (`.icns`, `.ico`, the Linux set and the 1024 px source).
+`files` now excludes those; the two PNGs the main process reads at run time
+(`icon.png`, `icon-macos.png`) stay. `.ts` is not excluded broadly because
+`@openwork/types` exports its TypeScript sources as the runtime entry.
+
+| Bucket | Before hygiene | After hygiene | Change |
+| --- | ---: | ---: | ---: |
+| ASAR | 42.14 MiB | 21.70 MiB | −20.44 MiB |
+| Packaged app | 474.70 MiB | **454.27 MiB** | −20.43 MiB |
+| Files in ASAR | 5,579 | 3,170 | −2,409 |
+
+Against the September 10 candidate the package is now 35.25 MiB (7.2 %)
+smaller despite the heavier Electron 44 framework. The isolated Electron-Node
+imports of `embedded.js`, `server.js`, the URL guard, the KV store and
+`runtime-db` from a copy of the trimmed ASAR outside the repository passed,
+zod's runtime entry parsed a schema, and the isolated-profile app launched
+with no console errors. `--check` now rejects dependency maps, declarations
+and packaging-only icons so the saving cannot regress quietly.
+
+Startup timeline from the same isolated launches (spawn to event, unpackaged
+dev tree with the built renderer, local macOS ARM64): CDP reachable 0.7 s,
+renderer first contentful paint ~0.36 s after navigation start, welcome screen
+visible **1.35 s** on a warm profile and 6.2 s on a first run. The cold gap is
+the one-time engine SDK seeding (`engine-sdk.mjs`, `npm install` into the
+engine plugin directory), a reliability measure documented in that module, not
+renderer work.
+
 Renderer (`vite build`, same source):
 
 | Metric | Vite 6.4.3 | Vite 8.2.2 + lazy screens | Change |
@@ -137,7 +168,9 @@ run it with the filtered/isolated build dependencies installed.
 
 - Default mode reports size without enforcing cleanup invariants or a budget.
 - `--check` rejects duplicate/generic or missing target-qualified engines,
-  renderer maps and server test artifacts in ASAR, packaged
+  renderer maps and server test artifacts in ASAR, dependency source maps and
+  `.d.ts` / `.d.mts` / `.d.cts` declarations in ASAR, packaging-only icon files
+  (anything under `resources/icons/` other than the two runtime PNGs), packaged
   `@openwork/computer-use` / `@openwork/ui`, and native `.build` / `.dSYM` debris
   in unpacked dependencies. It also requires nonempty main/server/preload/reset
   entries, renderer HTML, sidecar metadata, declared plugin bundles, PDFium, and

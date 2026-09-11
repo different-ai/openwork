@@ -123,6 +123,9 @@ function main() {
     }
     reject("Renderer source maps", [...archive.keys()].filter((path) => /^dist\/.*\.map$/.test(path)));
     reject("Server test artifacts", [...archive.keys()].filter((path) => /^server\/.*\.test\.js(?:\.map)?$/.test(path)));
+    reject("Dependency source maps", [...archive.keys()].filter((path) => /(?:^|\/)node_modules\/.*\.map$/.test(path)));
+    reject("Dependency declarations", [...archive.keys()].filter((path) => /(?:^|\/)node_modules\/.*\.d\.[mc]?ts$/.test(path)));
+    reject("Packaging-only icon files", [...archive.keys()].filter((path) => /^resources\/icons\/(?!icon(?:-macos)?\.png$)/.test(path)));
     reject("Bundled-only packages", [...archive.keys(), ...disk.keys()].filter((path) => /(?:^|\/)node_modules\/@openwork\/(computer-use|ui)(?:\/|$)/.test(path)));
     reject("Unpacked native build debris", [...disk.keys()].filter((path) => path.startsWith(unpacked) && /(?:^|\/)node_modules\//.test(path.slice(unpacked.length)) && /(?:^|\/)(?:\.build|[^/]+\.dSYM)(?:\/|$)/.test(path)));
     for (const path of [
