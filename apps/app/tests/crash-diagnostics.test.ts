@@ -44,6 +44,30 @@ test("one idempotent path sanitizes mixed credentials and preserves frame syntax
   expect(JSON.stringify(diagnostic)).not.toContain("FAKE_");
 });
 
+test.each([
+  ["password containing an unescaped @", "https://user:p@ss@host/path", "https://host/path"],
+  ["multiple @ in userinfo", "https://a@b@c@host/path", "https://host/path"],
+  ["encoded %40 in userinfo", "https://user%40mail.invalid:pw@host/path", "https://host/path"],
+  ["only encoded %40 as the userinfo delimiter", "https://user:pw%40host/path", "https://host/path"],
+  ["no path after the authority", "https://user:pw@host", "https://host"],
+  ["port survives userinfo removal", "https://user:p@ss@host:8443/path", "https://host:8443/path"],
+  ["non-http scheme", "postgres://user:p@ss@db.invalid:5432/app", "postgres://db.invalid:5432/app"],
+  ["userinfo before a query-only URL", "https://user:p@ss@host?token=FAKE_QUERY", "https://host"],
+])("userinfo stripping handles %s", (_label, url, expected) => {
+  expect(redactCrashText(url)).toBe(expected);
+  expect(redactCrashText(url)).not.toContain("FAKE_");
+  expect(redactCrashText(url)).not.toMatch(/p@ss|pw/);
+});
+
+test.each([
+  ["an @ only in the path", "https://host/mail/a@b"],
+  ["an @ only in the fragment-free query-less path", "wss://host.invalid/rooms/team@example"],
+  ["no userinfo at all", "https://asset.invalid/chunk.js"],
+  ["no userinfo and a port", "http://127.0.0.1:3000/health"],
+])("URLs with %s are unchanged", (_label, url) => {
+  expect(redactCrashText(url)).toBe(url);
+});
+
 test("long diagnostics are bounded after sanitizing, without masking ordinary text or HTML", () => {
   const diagnostic = formatCrashDiagnostic({ name: "N".repeat(50000), message: "m".repeat(50000), stack: "s".repeat(50000) });
   expect(diagnostic.name).toHaveLength(100);
