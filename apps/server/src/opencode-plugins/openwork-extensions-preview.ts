@@ -3,7 +3,7 @@ import { ApiError } from "../errors.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
-import { visualizationSchema } from "@openwork/types/visualization";
+import { parseVisualization, visualizationSchema } from "@openwork/types/visualization";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
@@ -987,10 +987,12 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
   },
   tool: {
     openwork_visualization: {
-      description: "Show a lightweight UI mockup inline in OpenWork using native OpenWork styling. Use for wireframes, screen layouts, and design iteration instead of ASCII UI. Provide a title, optional navigation, and sections of text, metrics, fields, buttons, lists, or image placeholders. These are mock controls, not a working app. For revisions, keep the same id and send the complete updated mockup with an increased revision; earlier versions remain in the conversation. No HTML, scripts, servers, or files needed.",
+      description: "Show a lightweight, interactive UI mockup inline in OpenWork using native OpenWork styling. Use for wireframes, screen layouts, component inventories, and design iteration instead of ASCII UI. Provide a title, optional navigation, and sections of blocks: text, metric, field, button, list, image, toggle, select, segmented, chips, or table. Navigation items become clickable pages when sections set nav to one of them; sections without nav appear on every page. Toggles, segmented controls, selects, and fields are tappable in the preview but change nothing outside it. Keep each mockup focused (up to 12 sections of 16 blocks); split large inventories into several mockups. For revisions, keep the same id and send the complete updated mockup with an increased revision; earlier versions remain in the conversation. No HTML, scripts, servers, or files needed.",
       args: visualizationSchema.shape,
       async execute(rawArgs: unknown) {
-        return JSON.stringify(visualizationSchema.parse(rawArgs));
+        const result = parseVisualization(rawArgs);
+        if (!result.ok) throw new Error(result.message);
+        return JSON.stringify(result.data);
       },
     },
     openwork_context: {

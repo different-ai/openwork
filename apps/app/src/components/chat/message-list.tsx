@@ -555,8 +555,19 @@ const AssistantMessage = React.memo(
               )
             }
 
+            // Mockups break out of the reading column so designs get real width:
+            // centered on the message list, capped by its container width.
+            const wide =
+              group.part.type === "dynamic-tool" && group.part.toolName === "openwork_visualization"
             return (
-              <div key={`tool-${index}`} className="w-full">
+              <div
+                key={`tool-${index}`}
+                className={
+                  wide
+                    ? "relative left-1/2 w-[max(100%,min(72rem,calc(100cqw-1.5rem)))] max-w-none -translate-x-1/2"
+                    : "w-full"
+                }
+              >
                 <ToolMessage part={group.part} />
               </div>
             )

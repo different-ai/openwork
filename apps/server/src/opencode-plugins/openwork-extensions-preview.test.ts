@@ -844,9 +844,39 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     expect(fake.requests).toHaveLength(0);
     await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: [] })).rejects.toThrow();
     await expect(plugin.tool.openwork_visualization.execute({ ...design, revision: 0 })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: Array(9).fill(design.sections[0]) })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: [{ title: "Unsafe", blocks: [{ kind: "html", label: "Code" }] }] })).rejects.toThrow();
+    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: Array(13).fill(design.sections[0]) })).rejects.toThrow(/sections.*12|at most 12/i);
+    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: [{ title: "Unsafe", blocks: [{ kind: "html", label: "Code" }] }] })).rejects.toThrow(/blocks\.0\.kind/);
     expect(fake.requests).toHaveLength(0);
+  });
+
+  test("repairs common model slips in a visualization instead of failing it", async () => {
+    const plugin = await OpenWorkExtensionsPreview();
+    const sloppy = {
+      id: " admin-controls ", title: "  Controls  ", revision: "2",
+      navigation: ["Overview", "Teams", ""],
+      sections: [
+        { title: "Rules", columns: 2, page: "Teams", blocks: [
+          { kind: "Toggle", label: "Allow uploads", value: true },
+          { kind: "metric", label: "Devices", value: 14 },
+          { kind: "select", label: "Grace", options: ["None", "1 h", " ", "24 h"], value: "1 h" },
+          { kind: "text", value: "Only a value, no label" },
+          { kind: "text", label: "   " },
+        ] },
+      ],
+    };
+    const rendered = JSON.parse(await plugin.tool.openwork_visualization.execute(sloppy));
+    expect(rendered).toMatchObject({
+      id: "admin-controls", title: "Controls", revision: 2, navigation: ["Overview", "Teams"],
+      sections: [{ title: "Rules", columns: "two", nav: "Teams", blocks: [
+        { kind: "toggle", label: "Allow uploads", value: "true" },
+        { kind: "metric", label: "Devices", value: "14" },
+        { kind: "select", label: "Grace", items: ["None", "1 h", "24 h"], value: "1 h" },
+        { kind: "text", label: "Only a value, no label" },
+      ] }],
+    });
+    expect(rendered.sections[0].blocks).toHaveLength(4);
+    await expect(plugin.tool.openwork_visualization.execute({ ...sloppy, sections: [{ title: "Empty", blocks: [{ kind: "text", label: " " }] }] }))
+      .rejects.toThrow(/Fix these and call openwork_visualization again/);
   });
 
   test("proposes an Automation without creating anything or calling a backend", async () => {
