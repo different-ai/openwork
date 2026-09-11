@@ -80,7 +80,10 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then ulimit -n 65536; fi
           pnpm --filter @openwork/coworker build:electron
-          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --dir --publish never
+          # Package the Electron the app was installed and tested with; the
+          # isolated collector hides it from electron-builder's own detection.
+          electron_version="$(node -p "require('./apps/coworker/node_modules/electron/package.json').version")"
+          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion="$electron_version" --dir --publish never
 
       - name: Check packaged release size
         shell: bash
@@ -250,7 +253,8 @@ jobs:
           set -euo pipefail
           ulimit -n 65536
           pnpm --filter @openwork/coworker run build:electron
-          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --mac dmg zip --publish never
+          electron_version="$(node -p "require('./apps/coworker/node_modules/electron/package.json').version")"
+          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion="$electron_version" --mac dmg zip --publish never
 
       - name: Verify signature and notarization ticket
         shell: bash
