@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker, streamedMarkdownReasoning, streamedToolHistory } from "../worlds/chat.ts";
 import {
-  chatStreamContinuity,
+  chatStreamContinuityWeb,
   streamedContinuityBullets,
   streamedContinuityChunks,
   streamedContinuityMarker,
@@ -39,7 +39,7 @@ function expectSettledDocument(visibleText: string) {
 
 test("sending clears the composer and shows one pending turn in existing and new conversations", async ({ world, user, probe, step }) => {
   for (const scenario of ["existing", "new"]) {
-    if (scenario === "new") await user.click({ role: "button", label: "New task" });
+    if (scenario === "new") await user.click({ role: "button", label: "New session" });
     const text = `Keep this ${scenario} conversation message while submission is delayed.`;
     await user.type("composer", text);
     await world.holdNextSubmission();
@@ -225,8 +225,22 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     }, { within: 5_000, label: "keyboard browsing settles above the latest turn", until: (value) => value.stable });
   };
   const scrollStorageKey = "openwork:session-scroll:v1";
-  const savedScroll = (sessionId: string): Promise<unknown> => probe.storage(scrollStorageKey, (value): unknown =>
-    value && typeof value === "object" ? Reflect.get(value, sessionId) ?? null : null);
+  const savedScroll = async (sessionId: string): Promise<unknown> => {
+    const organizationId = await probe.storage("openwork.den.activeOrgId");
+    const port = await probe.storage("openwork.server.port");
+    if (typeof organizationId !== "string" || !organizationId.trim()
+      || (typeof port !== "string" && typeof port !== "number") || !/^\d+$/.test(String(port))) {
+      throw new Error("Streamed history fixture is missing its organization or local server port");
+    }
+    // This world signs in as its admin and uses a local v1 workspace. Match
+    // every owner coordinate; a same-ID entry from another owner is not proof.
+    const draftScope = `cloud:${encodeURIComponent(world.principalId)}:${encodeURIComponent(organizationId.trim())}`;
+    const endpoint = `http://127.0.0.1:${port}/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode`;
+    const owner = JSON.stringify([draftScope, endpoint, world.workspace.workspaceId, sessionId]);
+    const key = JSON.stringify(["session-scroll", owner, sessionId]);
+    return probe.storage(scrollStorageKey, (value): unknown =>
+      value && typeof value === "object" ? Reflect.get(value, key) ?? null : null);
+  };
   const readingGeometry = async (messageId: string) => {
     const { elements } = await probe.dom(`${viewportSelector}, ${surface} [data-message-id="${messageId}"]`);
     const [viewport, message] = elements;
@@ -382,7 +396,10 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
   });
 });
 
-const continuityTest = spec.world(chatStreamContinuity, { timeout: 420_000 });
+const continuityTest = spec.world(chatStreamContinuityWeb, {
+  timeout: 420_000,
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
 const normalizedLines = (text: string) => text.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
 const partialThirdPrefix = [streamedContinuityBullets[0], streamedContinuityBullets[1], streamedContinuityPartialThird].join("\n");
 const partialFifthPrefix = [...streamedContinuityBullets.slice(0, 4), streamedContinuityPartialFifth].join("\n");
@@ -464,10 +481,10 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
   };
   for (const bullet of streamedContinuityBullets) expect(streamedContinuityPrompt).not.toContain(bullet);
 
-  await step("the selected engine runs in the requested real app surface without substituting fixtures", async () => {
+  await step("the selected engine runs in the real headless app-web world", async () => {
     const facts = await world.runtimeFacts();
     evidence.recordJsonArtifact("CONT-01 runtime placement", facts);
-    expect(facts.surface).toBe(world.surface);
+    expect(facts.surface).toBe("web");
     expect(facts.requestedPlacement).toBe(facts.resolvedPlacement);
     expect(facts.actualHostKind).toBe(facts.resolvedPlacement);
     if (facts.actualHostKind === "daytona") expect(facts.actualSandboxId).toMatch(/^.+$/);
@@ -482,15 +499,13 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
       expect(facts.engineRunning).toBe(true);
       expect(facts.syntheticModelInNativeResponse).toBe(true);
     }
-    if (world.surface === "web") {
-      expect(facts.electronBridge).toBe(false);
-      expect(facts.origin).toBe(facts.expectedOrigin);
-      expect(facts.browser).toMatch(/Chrome\//);
-    } else {
-      expect(facts.electronBridge).toBe(true);
-    }
+    expect(facts.electronBridge).toBe(false);
+    expect(facts.origin).toBe(facts.expectedOrigin);
+    expect(facts.browser).toMatch(/HeadlessChrome\//);
+    if (facts.actualHostKind === "daytona") expect(facts.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
+    else if (facts.actualSourceSha !== null) expect(facts.actualSourceSha).toMatch(/^[0-9a-f]{40,64}$/);
     evidence.recordAssertionEvidence(
-      "Continuity surface and engine fixture are real and selected",
+      "Continuity headless app-web and engine fixture are real",
       `${facts.surface}; ${world.engine}; requested/resolved/actual placement=${facts.requestedPlacement}/${facts.resolvedPlacement}/${facts.actualHostKind}; sandbox=${facts.actualSandboxId ?? "none"}; ${facts.browser}; native ${facts.nativeStatus}; no Electron bridge=${String(!facts.electronBridge)}`,
       true,
     );

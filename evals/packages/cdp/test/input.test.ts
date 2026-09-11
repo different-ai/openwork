@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { assertAbsent, clickTarget, DisabledTargetError, locate, TargetNotFoundError, mapKey, parseTarget, readDom, waitForLocated } from "../src/input.ts";
+import { assertAbsent, clickTarget, DisabledTargetError, locate, TargetNotFoundError, mapKey, parseTarget, pressKey, readDom, waitForLocated } from "../src/input.ts";
 import type { Surface } from "../src/surface.ts";
 
 function surfaceReturning(value: unknown): Surface {
@@ -42,6 +42,7 @@ test("parseTarget normalizes bare, structured, and regular-expression targets", 
     nth: 0,
     composer: false,
   });
+  assert.equal(parseTarget({ role: "switch", label: "Check automatically" }).role, "switch");
 });
 
 test("mapKey produces CDP key fields and modifier bits", () => {
@@ -69,6 +70,42 @@ test("locate reports visible button and link names when no target matches", asyn
     locate(surface, { role: "button", text: "Missing" }),
     /Visible button\/link candidates: button "Model · gpt-5", link "Provider docs"/,
   );
+});
+
+test("key dispatch leaves native codes to Chrome and retains explicit editing commands", async () => {
+  const surface = surfaceReturning(null);
+  const events: unknown[] = [];
+  surface.client.send = async (method, params) => {
+    assert.equal(method, "Input.dispatchKeyEvent");
+    events.push(params);
+    return {};
+  };
+  await pressKey(surface, "Meta+ArrowDown");
+  await pressKey(surface, "Escape");
+  assert.deepEqual(events, [
+    { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, modifiers: 4, commands: ["moveToEndOfDocument"] },
+    { type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, modifiers: 4 },
+    { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
+    { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
+  ]);
+});
+
+test("click readiness waits for stable geometry rather than hitting a moving menu option", async () => {
+  const surface = surfaceReturning(null);
+  let inspections = 0;
+  surface.client.send = async (method) => {
+    if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+    assert.equal(method, "Runtime.callFunctionOn");
+    const y = Math.min(inspections++, 2) * 20;
+    return { result: { value: {
+      center: { x: 50, y: y + 25 }, rect: { x: 0, y, width: 100, height: 50 },
+      tag: "button", name: "CustomExact", visible: true, hitTestOk: true,
+      editable: false, disabled: null, value: "", text: "CustomExact", covering: null,
+    } } };
+  };
+  const target = await waitForLocated(surface, "CustomExact", { mustHitTest: true, timeoutMs: 2_000 });
+  assert.equal(inspections, 4);
+  assert.equal(target.rect.y, 40);
 });
 
 test("waitForLocated identifies the element covering a visible target", async () => {
@@ -177,7 +214,8 @@ function surfaceLocating(values: unknown[]): { surface: Surface; mouse: Array<Re
 test("clickTarget refuses a disabled or aria-disabled control by name instead of dispatching a click", async () => {
   for (const disabled of ["disabled", 'aria-disabled="true"']) {
     const { surface, mouse } = surfaceLocating([{ ...enabledButton, disabled }]);
-    await assert.rejects(clickTarget(surface, "Run task", { timeoutMs: 100 }), (error: unknown) =>
+    // waitForLocated needs two inspections with stable geometry before it can hand the target over.
+    await assert.rejects(clickTarget(surface, "Run task", { timeoutMs: 500 }), (error: unknown) =>
       error instanceof DisabledTargetError
       && error.message.includes('disabled button "Run task"')
       && error.message.includes(`(${disabled})`));
@@ -193,7 +231,8 @@ test("clickTarget rejects a malformed disabled state instead of guessing", async
 
 test("clickTarget re-locates immediately before dispatch and clicks the fresh center", async () => {
   const moved = { ...enabledButton, center: { x: 50, y: 49 }, rect: { x: 0, y: 24, width: 100, height: 50 } };
-  const { surface, mouse } = surfaceLocating([enabledButton, moved]);
+  // Two stable inspections satisfy waitForLocated; the third is the re-locate right before dispatch.
+  const { surface, mouse } = surfaceLocating([enabledButton, enabledButton, moved]);
   const clicked = await clickTarget(surface, "Run task", { clickCount: 2 });
   assert.deepEqual(clicked.rect, moved.rect);
   assert.deepEqual(mouse.map((event) => [event.type, event.x, event.y, event.clickCount]), [
@@ -205,10 +244,10 @@ test("clickTarget re-locates immediately before dispatch and clicks the fresh ce
 
 test("clickTarget fails with both rects when the target moves out of reach before dispatch", async () => {
   const covered = { ...enabledButton, rect: { x: 0, y: 24, width: 100, height: 50 }, hitTestOk: false, covering: { tag: "div", role: "", text: "Loading" } };
-  const { surface, mouse } = surfaceLocating([enabledButton, covered]);
+  const { surface, mouse } = surfaceLocating([enabledButton, enabledButton, covered]);
   await assert.rejects(clickTarget(surface, "Run task"), /"Run task" moved before the click could be dispatched: 0,0 100×50 → 0,24 100×50 \(visible=true, hitTestOk=false\)\. Covered by div text="Loading"/);
   assert.deepEqual(mouse, []);
-  const disabledLate = surfaceLocating([enabledButton, { ...enabledButton, disabled: "disabled" }]);
+  const disabledLate = surfaceLocating([enabledButton, enabledButton, { ...enabledButton, disabled: "disabled" }]);
   await assert.rejects(clickTarget(disabledLate.surface, "Run task"), DisabledTargetError);
   assert.deepEqual(disabledLate.mouse, []);
 });

@@ -1,4 +1,4 @@
-import { Check, CheckCircle2 } from "lucide-react";
+import { Check, CheckCircle2, Minus } from "lucide-react";
 
 import { LpAlphaBadge } from "./lp-primitives";
 import { OpenWorkMark } from "./openwork-mark";
@@ -21,12 +21,12 @@ const rows: ParityRow[] = [
   { capability: "GPT-5, Gemini, Mistral, and local models", cowork: "none" },
   { capability: "Scheduled tasks", cowork: "check", badge: "alpha" },
   {
-    capability: "Dispatch — assign tasks from your phone",
+    capability: "Dispatch: assign tasks from your phone",
     cowork: "check",
     openwork: "soon"
   },
   {
-    capability: "Live artifacts — auto-refreshing dashboards",
+    capability: "Live artifacts: auto-refreshing dashboards",
     cowork: "check",
     openwork: "soon"
   },
@@ -40,7 +40,7 @@ const rows: ParityRow[] = [
     highlighted: true
   },
   { capability: "Self-host or managed private instance", cowork: "none" },
-  { capability: "Open source — audit it, fork it, own it", cowork: "none" }
+  { capability: "Open source. Audit it, fork it, own it", cowork: "none" }
 ];
 
 function OpenWorkCheck() {
@@ -60,7 +60,11 @@ function CoworkCell({ support }: { support: CoworkSupport }) {
   }
 
   if (support === "none") {
-    return <span className="text-[15px] text-[var(--lp-faint)]">—</span>;
+    return (
+      <span className="text-[13px] text-[var(--lp-faint)]" aria-label="Not available">
+        <Minus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+      </span>
+    );
   }
 
   return (

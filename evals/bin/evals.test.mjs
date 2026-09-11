@@ -10,14 +10,88 @@ import {
   consentVarsFromSource,
   exitCodeFor,
   parseArgs,
+  refAlignmentLabel,
+  refAlignmentWarning,
   resolveExecutionSelection,
+  resolveRefAlignment,
   resolveRunEnvironment,
   resolveTestNames,
+  strictRefRequested,
   summarize,
   summarizeSelectedCase,
   verdictFor,
   worldSnapshotsSince,
 } from "./evals.mjs";
+import { discoverWorlds, selectWorlds, planWorlds } from "../scripts/world-plan.ts";
+
+const webSource = `import { spec } from "@openwork/testkit";
+const test = spec.world(arrange, { resources: { surfaces: ["appWeb"], services: ["mock"] } });
+test("CONT-01 streams", async () => {}); test("SWITCH-10 switches", async () => {});`;
+
+test("AST selection isolates aliased worlds from curried legacy registrations and static prefixes", () => {
+  const source = `import { spec as journey, test as legacy } from "@openwork/testkit";
+    const browser = journey.world(browserWorld, { resources: { surfaces: ["appWeb"], services: ["mock"] } });
+    const alias = browser;
+    alias("SWITCH-10 switches", async () => {});
+    const native = journey.world(nativeWorld, { resources: { surfaces: ["desktop"], services: [], nativeReason: "OS menus" } });
+    native("NATIVE-01 menus", async () => {});
+    legacy.skipIf(!runnable)(\`a tool started while away\${skipSuffix}\`, async () => {});`;
+  const worlds = discoverWorlds("mixed.ts", source);
+  assert.equal(worlds.length, 3);
+  assert.equal(worlds.find(world => world.binding === "legacy").dynamicTitles, false);
+  assert.deepEqual(selectWorlds(worlds, "^SWITCH-10(?:\\s|$)", "SWITCH-10").map(world => world.binding), ["browser"]);
+  assert.deepEqual(selectWorlds(worlds, "^SWITCH-10(?:\\s|$)").map(world => world.binding), ["browser"]);
+  const plan = planWorlds(["mixed.ts"], { sources: [source], pattern: "^SWITCH-10(?:\\s|$)", casePrefix: "SWITCH-10", surface: "web" });
+  assert.deepEqual(plan.surfaces, ["appWeb"]);
+  assert.deepEqual(plan.services, ["mock"]);
+  assert.deepEqual(plan.legacy, []);
+  assert.throws(() => planWorlds(["mixed.ts"], { sources: [source], surface: "web" }), /conflicts|legacy\/unresolved/);
+  const unresolved = source + 'legacy(titleFromRuntime, async () => {});';
+  assert.throws(() => planWorlds(["mixed.ts"], { sources: [unresolved], pattern: "^SWITCH-10", casePrefix: "SWITCH-10", surface: "web" }), /legacy\/unresolved/);
+  assert.throws(() => discoverWorlds("bad.ts", webSource.replace('services: ["mock"]', '...shared')), /Spread/);
+  assert.throws(() => discoverWorlds("bad.ts", webSource.replace('["appWeb"]', 'surfaces')), /literal arrays/);
+  assert.equal(discoverWorlds("properties.ts", webSource + '/x/.test("text"); const object = { test: true };').length, 1);
+  assert.throws(() => discoverWorlds("shadow.ts", webSource + 'function hidden(test) { test("hidden", () => {}); }'), /shadowed/);
+  assert.throws(() => discoverWorlds("alias.ts", webSource + 'const hidden = test.skipIf(flag); hidden("hidden", () => {});'), /Configured test aliases/);
+});
+
+test("suite ancestry and each/for formatted titles stay conservatively selected", () => {
+  for (const registration of [
+    'describe("Group", () => test("leaf", async () => {}));',
+    'describe(groupFromRuntime, () => test("leaf", async () => {}));',
+    'suiteAlias("Group", () => test("leaf", async () => {}));',
+    'test.each([["Group"]])("%s leaf", async () => {});',
+    'test.for([{ group: "Group" }])("$group leaf", async () => {});',
+    'test.each`group | value\n${"Group"} | ${1}`("$group leaf", async () => {});',
+  ]) {
+    const source = `import { test } from "@openwork/testkit"; ${registration}`;
+    const worlds = discoverWorlds("group.ts", source);
+    assert.equal(worlds[0].binding, "test", registration);
+    assert.equal(selectWorlds(worlds, "^Group").length, 1, registration);
+    assert.equal(worlds[0].dynamicTitles, true, registration);
+    assert.throws(() => planWorlds(["group.ts"], { sources: [source], pattern: "^Group", surface: "web" }), /legacy\/unresolved/);
+  }
+  const exact = planWorlds(["exact.ts"], { sources: [webSource], pattern: "^SWITCH-10(?:\\s|$)", surface: "web" });
+  assert.equal(exact.worlds.length, 1);
+  assert.equal(exact.worlds[0].dynamicTitles, false);
+});
+
+test("grandfathered dynamic options stay unknown while explicit malformed resources fail", () => {
+  const sourceWith = options => `import { spec } from "@openwork/testkit";
+    const test = spec.world(arrange, ${options}); test("legacy", async () => {});`;
+  for (const options of ['options', 'getOptions()', '{ ...options }', '{ timeout, ...options }', '{ [key]: value }', '{ resources: { surfaces: ["appWeb"], services: [] }, ...options }']) {
+    const source = sourceWith(options);
+    const plan = planWorlds(["legacy.ts"], { sources: [source] });
+    assert.equal(plan.worlds[0].resources, null, options);
+    assert.equal(plan.legacy.length, 1, options);
+    assert.deepEqual(plan.surfaces, []);
+    assert.deepEqual(plan.services, []);
+    assert.throws(() => planWorlds(["legacy.ts"], { sources: [source], surface: "web" }), /legacy\/unresolved/);
+  }
+  for (const options of ['{ resources: config }', '{ resources }', '{ resources: { surfaces: ["appWeb"] }, ...options }', '{ ...options, resources: { surfaces: ["invalid"], services: [] } }']) {
+    assert.throws(() => discoverWorlds("bad.ts", sourceWith(options)), /literal|Explicit resources|Unknown world surface/);
+  }
+});
 
 test("consentVarsFromSource extracts, deduplicates, and sorts only opt-in variables", () => {
   const source = `
@@ -82,10 +156,72 @@ test("parseArgs validates values, exclusivity, and unknown flags", () => {
   assert.throws(() => parseArgs(["--unknown"]), /Unknown flag: --unknown/);
   assert.throws(() => parseArgs(["app-smoke", "--engine", "v3"]), /Invalid --engine/);
   assert.throws(() => parseArgs(["app-smoke", "--surface", "terminal"]), /Invalid --surface/);
-  assert.throws(() => parseArgs(["app-smoke", "--surface", "web"]), /requires a registered --case/);
+  assert.equal(parseArgs(["app-smoke", "--surface", "web"]).surface, "web");
   assert.throws(() => parseArgs(["--case", "CONT-01"]), /requires exactly one named test/);
   assert.throws(() => parseArgs(["--list", "--engine", "v2"]), /--list is mutually exclusive/);
   assert.throws(() => parseArgs(["--publish", "--dry-run", "--engine", "v2"]), /mutually exclusive with --engine/);
+  assert.equal(parseArgs(["app-smoke", "--strict-ref"]).strictRef, true);
+  assert.throws(() => parseArgs(["--publish", "--dry-run", "--strict-ref"]), /mutually exclusive with --strict-ref/);
+});
+
+const RUNNER_SHA = "1111111111111111111111111111111111111111";
+const DEV_SHA = "2222222222222222222222222222222222222222";
+
+function fakeGit(remoteListing = "") {
+  const calls = [];
+  const exec = (command, args) => {
+    calls.push([command, ...args]);
+    const stdout = args[0] === "rev-parse" && args[1] === "HEAD" ? `${RUNNER_SHA}\n`
+      : args[0] === "rev-parse" ? "e2e/feature\n"
+        : args[0] === "ls-remote" ? remoteListing
+          : "";
+    return { status: 0, stdout };
+  };
+  return { exec, calls };
+}
+
+test("resolveRefAlignment only inspects Daytona placement and compares the runner HEAD with the sandbox ref", () => {
+  assert.equal(resolveRefAlignment("local", {}, fakeGit().exec, "/repo"), null);
+  assert.equal(resolveRefAlignment("attached", {}, fakeGit().exec, "/repo"), null);
+
+  const pinned = fakeGit();
+  const aligned = resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: RUNNER_SHA.toUpperCase() }, pinned.exec, "/repo");
+  assert.deepEqual(aligned, { sandboxRef: RUNNER_SHA.toUpperCase(), sandboxSha: RUNNER_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: false });
+  assert.ok(!pinned.calls.some((call) => call[1] === "ls-remote"), "immutable refs never hit the network");
+  assert.equal(resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: RUNNER_SHA.slice(0, 9) }, fakeGit().exec, "/repo").mismatch, false);
+  assert.equal(resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: DEV_SHA }, fakeGit().exec, "/repo").mismatch, true);
+
+  const branch = fakeGit(`${DEV_SHA}\trefs/heads/dev\n3333333333333333333333333333333333333333\trefs/tags/dev\n`);
+  const drifted = resolveRefAlignment("daytona", {}, branch.exec, "/repo");
+  assert.deepEqual(drifted, { sandboxRef: "dev", sandboxSha: DEV_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: true });
+  assert.deepEqual(branch.calls.at(-1), ["git", "ls-remote", "--quiet", "origin", "dev"]);
+  assert.equal(resolveRefAlignment("daytona", { GITHUB_SHA: RUNNER_SHA }, fakeGit().exec, "/repo").mismatch, false);
+
+  const unresolved = resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: "missing-branch" }, fakeGit("").exec, "/repo");
+  assert.equal(unresolved.sandboxSha, "");
+  assert.equal(unresolved.mismatch, null);
+});
+
+test("ref alignment renders a placement label and a warning only when the runner and sandbox differ", () => {
+  const aligned = { sandboxRef: RUNNER_SHA, sandboxSha: RUNNER_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: false };
+  const drifted = { sandboxRef: "dev", sandboxSha: DEV_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: true };
+  const unresolved = { sandboxRef: "missing-branch", sandboxSha: "", runnerSha: RUNNER_SHA, runnerBranch: "HEAD", mismatch: null };
+
+  assert.equal(refAlignmentLabel(null), "");
+  assert.equal(refAlignmentLabel(aligned), ` ref=${RUNNER_SHA}`);
+  assert.equal(refAlignmentLabel(drifted), " ref=dev@222222222 [RUNNER/REF MISMATCH]");
+  assert.equal(refAlignmentLabel(unresolved), " ref=missing-branch [unresolved]");
+
+  assert.equal(refAlignmentWarning(null), null);
+  assert.equal(refAlignmentWarning(aligned), null);
+  assert.match(refAlignmentWarning(drifted), /^runner HEAD 111111111 \(e2e\/feature\) differs from the ref the Daytona sandbox builds: dev \(222222222\)\./);
+  assert.match(refAlignmentWarning(drifted), /OPENWORK_EVAL_REF=\$\(git rev-parse HEAD\)/);
+  assert.match(refAlignmentWarning(unresolved), /^could not resolve sandbox ref missing-branch against origin.*runner HEAD 111111111\.$/);
+
+  assert.equal(strictRefRequested({}, {}), false);
+  assert.equal(strictRefRequested({ strictRef: true }, {}), true);
+  assert.equal(strictRefRequested({}, { OPENWORK_EVAL_STRICT_REF: "1" }), true);
+  assert.equal(strictRefRequested({}, { OPENWORK_EVAL_STRICT_REF: "0" }), false);
 });
 
 test("registered cases validate file and effective engine/surface before placement", () => {
@@ -100,8 +236,8 @@ test("registered cases validate file and effective engine/surface before placeme
     /belongs to live-tool-visible-after-session-switch/,
   );
   assert.throws(
-    () => resolveExecutionSelection(parseArgs(["live-tool-visible-after-session-switch", "--surface", "electron", "--case", "SWITCH-10"]), [switched], {}),
-    /does not support surface electron/,
+    () => resolveExecutionSelection(parseArgs(["live-tool-visible-after-session-switch", "--surface", "electron", "--case", "SWITCH-10"]), [switched], {}, [webSource]),
+    /conflicts with declared world surfaces/,
   );
   assert.throws(
     () => resolveExecutionSelection(parseArgs(["streamed-markdown-answer", "--case", "CONT-01"]), [markdown], { OPENWORK_EVAL_ENGINE: "future" }),
@@ -109,30 +245,33 @@ test("registered cases validate file and effective engine/surface before placeme
   );
 });
 
-test("registered cases use their web default after an inherited canonical surface", () => {
+test("registered cases derive fixed web from source regardless of inherited surface", () => {
   const markdown = "/repo/streamed-markdown-answer.e2e.test.ts";
   const switched = "/repo/live-tool-visible-after-session-switch.e2e.test.ts";
   const defaultMarkdown = resolveExecutionSelection(
     parseArgs(["streamed-markdown-answer", "--case", "CONT-01"]),
     [markdown],
     {},
+    [webSource],
   );
   const defaultSwitched = resolveExecutionSelection(
     parseArgs(["live-tool-visible-after-session-switch", "--case", "SWITCH-10"]),
     [switched],
     {},
+    [webSource],
   );
   const inheritedElectron = resolveExecutionSelection(
     parseArgs(["streamed-markdown-answer", "--case", "CONT-01"]),
     [markdown],
     { OPENWORK_EVAL_APP_SURFACE: "electron" },
+    [webSource],
   );
 
   assert.equal(defaultMarkdown.surface, "web");
-  assert.equal(defaultMarkdown.env.OPENWORK_EVAL_APP_SURFACE, "web");
+  assert.equal(defaultMarkdown.env.OPENWORK_EVAL_APP_SURFACE, undefined);
   assert.equal(defaultSwitched.surface, "web");
-  assert.equal(defaultSwitched.env.OPENWORK_EVAL_APP_SURFACE, "web");
-  assert.equal(inheritedElectron.surface, "electron");
+  assert.equal(defaultSwitched.env.OPENWORK_EVAL_APP_SURFACE, undefined);
+  assert.equal(inheritedElectron.surface, "web");
 });
 
 test("selection flags override inherited values without mutating the caller environment", () => {
@@ -146,20 +285,30 @@ test("selection flags override inherited values without mutating the caller envi
     parseArgs(["streamed-markdown-answer", "--engine", "v1", "--surface", "web", "--case", "CONT-01"]),
     ["/repo/streamed-markdown-answer.e2e.test.ts"],
     env,
+    [webSource],
   );
   assert.deepEqual(env, before);
   assert.equal(selected.env.OPENWORK_EVAL_ENGINE, "v1");
   assert.equal(selected.env.OPENWORK_ENGINE_V2_PREVIEW, undefined);
   assert.equal(selected.env.OPENWORK_EVAL_APP_SURFACE, "web");
   assert.equal(selected.env.APP_SURFACE, undefined);
-  assert.equal(selected.env.OPENWORK_EVAL_CHROME_HEADLESS, "1");
+  assert.equal(selected.env.OPENWORK_EVAL_CHROME_HEADLESS, undefined);
   assert.equal(selected.env.OPENWORK_EVAL_E2E_TESTS, "1");
   assert.equal(selected.testNamePattern, "^CONT-01(?:\\s|$)");
+  const child = buildChildEnvironment(
+    parseArgs(["streamed-markdown-answer", "--local", "--surface", "web", "--case", "CONT-01"]),
+    ["/repo/streamed-markdown-answer.e2e.test.ts"], [webSource], env,
+    () => { throw new Error("local selection must not probe"); },
+  );
+  assert.equal(child.surface, "web");
+  assert.equal(child.env.OPENWORK_EVAL_APP_SURFACE, "web");
+  assert.equal(child.env.OPENWORK_EVAL_CHROME_HEADLESS, undefined);
+  assert.deepEqual(env, before);
 });
 
 test("no selection flags preserve legacy engine and surface behavior", () => {
   const env = { OPENWORK_EVAL_ENGINE: "v2", OPENWORK_EVAL_APP_SURFACE: "web" };
-  const selected = resolveExecutionSelection(parseArgs(["app-smoke"]), ["/repo/app-smoke.e2e.test.ts"], env);
+  const selected = resolveExecutionSelection(parseArgs(["app-smoke"]), ["/repo/app-smoke.e2e.test.ts"], env, ['import { test } from "@openwork/testkit"; test("legacy", async () => {});']);
   assert.equal(selected.engine, undefined);
   assert.equal(selected.surface, undefined);
   assert.equal(selected.caseId, undefined);
@@ -174,9 +323,10 @@ test("--list prints exact registered cases and commands without selecting placem
   assert.equal(result.status, 0);
   assert.match(result.stdout, /CONT-01  streamed-markdown-answer\.e2e\.test\.ts/);
   assert.match(result.stdout, /engines: v1, v2/);
-  assert.match(result.stdout, /surfaces: web, electron/);
-  assert.match(result.stdout, /pnpm evals:e2e streamed-markdown-answer --local --engine v2 --surface web --case CONT-01/);
-  assert.match(result.stdout, /pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --surface web --case SWITCH-10/);
+  assert.match(result.stdout, /resources=unknown; legacy; lazy provision only/);
+  assert.match(result.stdout, /pnpm evals:e2e streamed-markdown-answer --local --engine v2 --case CONT-01/);
+  assert.match(result.stdout, /pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --case SWITCH-10/);
+  assert.doesNotMatch(result.stdout, /--surface/);
   assert.doesNotMatch(result.stderr, /placement:/);
 });
 
@@ -306,7 +456,7 @@ test("final child environment cannot consent into a different placement", () => 
   const registered = buildChildEnvironment(
     parseArgs(["live-tool-visible-after-session-switch", "--local", "--engine", "v1", "--surface", "web", "--case", "SWITCH-10"]),
     ["/repo/live-tool-visible-after-session-switch.e2e.test.ts"],
-    [source],
+    [webSource],
     {},
     () => { throw new Error("probe called"); },
   );

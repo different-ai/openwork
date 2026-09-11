@@ -198,6 +198,7 @@ function preserveMcpResult(output: unknown): void {
 
   const appResult = {
     content: output.content,
+    ...(typeof output.isError === "boolean" ? { isError: output.isError } : {}),
     ...(output.structuredContent !== undefined ? { structuredContent: output.structuredContent } : {}),
     ...(isRecord(output._meta) ? { _meta: output._meta } : {}),
   };

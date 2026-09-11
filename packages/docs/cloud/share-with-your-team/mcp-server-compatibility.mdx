@@ -1,0 +1,227 @@
+---
+title: "Make your MCP server work with OpenWork"
+sidebarTitle: "MCP server compatibility"
+description: "What an MCP server's OAuth setup must allow so OpenWork can connect members to it: the redirect URL and client metadata to approve, the registration methods OpenWork supports, and what members see when a step is missing."
+---
+
+This page is for people who run an MCP server that OpenWork members want to
+connect to: a SaaS provider hosting a remote MCP server, or a team hosting its
+own. It lists exactly what OpenWork sends during sign-in and what your
+authorization server has to accept.
+
+OpenWork connects to MCP servers on behalf of an organization from OpenWork
+Cloud (Den). Each member signs in to your server with their own account through
+a browser, OpenWork stores the resulting tokens for that member, and the
+[OpenWork MCP Gateway](/cloud/run-in-the-cloud/cloud-mcp) then exposes your tools
+to the member's AI apps. OpenWork is therefore one OAuth client acting for many
+members, hosted on a fixed origin. If your authorization server only accepts
+clients it already knows, OpenWork has to be one of them.
+
+## Checklist
+
+Do these and OpenWork connects without any manual setup on the OpenWork side:
+
+1. **Advertise OAuth per the MCP authorization spec.** Answer unauthenticated
+   MCP requests with `401` and a `WWW-Authenticate: Bearer` challenge whose
+   `resource_metadata` points at your protected-resource metadata (RFC 9728).
+   That document names your `authorization_servers`, and each of those publishes
+   authorization-server metadata (RFC 8414).
+2. **Support public clients with PKCE.** `code_challenge_methods_supported`
+   includes `S256`, `token_endpoint_auth_methods_supported` includes `none`,
+   and `grant_types_supported` includes `authorization_code` and
+   `refresh_token`.
+3. **Accept OpenWork as a client** in one of three ways, in OpenWork's order of
+   preference:
+   - **Client ID Metadata Document (recommended).** Advertise
+     `client_id_metadata_document_supported: true` and accept
+     `https://api.openworklabs.com/oauth/client-metadata.json` as the
+     `client_id`. Nothing to allowlist by hand.
+   - **Dynamic client registration.** Publish a `registration_endpoint` and
+     allow the redirect URL below. If you restrict registration to an allowlist
+     of redirect hosts, add `api.openworklabs.com`.
+   - **Pre-registered client.** Issue OpenWork a `client_id` (and a secret if
+     you require one) bound to the redirect URL below. An OpenWork admin
+     pastes those into the connection.
+4. **Register this exact redirect URL** wherever redirect URLs are checked:
+
+   ```text
+   https://api.openworklabs.com/v1/mcp-connections/oauth/callback
+   ```
+
+5. **Answer the MCP session after sign-in.** Once tokens are issued, OpenWork
+   opens a session (`initialize`) and lists tools (`tools/list`) before it
+   reports the connection as working. Those responses must be MCP JSON or an
+   event stream with a standard `Content-Type`; a sign-in page, portal HTML, or
+   proxy error page here fails the connection.
+
+<Note>
+**Self-hosted OpenWork.** Replace `https://api.openworklabs.com` with the
+`DEN_API_PUBLIC_URL` of the instance that is connecting. That instance serves
+its client metadata document at `<DEN_API_PUBLIC_URL>/oauth/client-metadata.json`
+and its redirect URL is `<DEN_API_PUBLIC_URL>/v1/mcp-connections/oauth/callback`.
+Providers compare redirect URLs exactly, including scheme, host, port, and path.
+</Note>
+
+## What OpenWork sends
+
+OpenWork's client metadata document, which is also the body of its dynamic
+registration request, is:
+
+```json
+{
+  "client_id": "https://api.openworklabs.com/oauth/client-metadata.json",
+  "client_name": "OpenWork",
+  "application_type": "web",
+  "redirect_uris": ["https://api.openworklabs.com/v1/mcp-connections/oauth/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}
+```
+
+You can fetch the live document at
+`https://api.openworklabs.com/oauth/client-metadata.json` to confirm it.
+
+Other properties of the client:
+
+- **Public client.** OpenWork authenticates the token request with PKCE only,
+  unless you issued a pre-registered client with a secret, in which case it uses
+  that secret.
+- **State.** OpenWork sends its own signed `state` value and expects it echoed
+  back unchanged on the redirect, as the OAuth specification requires.
+- **Resource indicator.** When your protected-resource metadata declares a
+  `resource`, OpenWork includes it in the authorization and token requests
+  (RFC 8707) so tokens are issued for your MCP server specifically.
+- **Issuer check.** If you advertise
+  `authorization_response_iss_parameter_supported: true`, include `iss` on the
+  redirect; OpenWork verifies it against the authorization server it selected.
+- **Scopes.** OpenWork requests the scopes named in your `WWW-Authenticate`
+  challenge, falling back to the `scopes_supported` in your protected-resource
+  metadata, and adds `offline_access` when you support both refresh tokens and
+  that scope.
+- **One authorization server per connection.** If your protected-resource
+  metadata lists several `authorization_servers`, an OpenWork admin must choose
+  one before members can connect.
+
+## How the sign-in flows
+
+<Steps>
+  <Step title="Discovery">
+    OpenWork sends an unauthenticated MCP request to your server URL. From the
+    `401` challenge (or the well-known paths when the header is absent) it reads
+    your protected-resource metadata, then each authorization server's metadata,
+    and verifies the issuer matches.
+  </Step>
+  <Step title="Client registration">
+    OpenWork picks the first available method: an admin-supplied pre-registered
+    client if one was configured, otherwise a Client ID Metadata Document if you
+    advertise support, otherwise dynamic registration if you publish a
+    `registration_endpoint`. If none applies, the connection waits for an admin
+    to add a pre-registered client.
+  </Step>
+  <Step title="Authorization">
+    The member's browser is sent to your `authorization_endpoint` with PKCE
+    (`S256`), OpenWork's `state`, the redirect URL above, the scopes described
+    earlier, and the resource indicator when applicable. You show consent and
+    redirect back with a code.
+  </Step>
+  <Step title="Token exchange and validation">
+    OpenWork exchanges the code at your `token_endpoint`, stores the tokens for
+    that member, then runs `initialize` and `tools/list` against your MCP server
+    with the new access token. Only a successful tool listing marks the member
+    as connected.
+  </Step>
+  <Step title="Refresh">
+    OpenWork refreshes access tokens with the refresh token when they expire and
+    re-runs the same validation. Rotated refresh tokens are stored as issued.
+  </Step>
+</Steps>
+
+## Registration methods in detail
+
+### Client ID Metadata Document
+
+This is the registration mechanism the current MCP authorization specification
+recommends, and the one OpenWork prefers. Your authorization server fetches
+OpenWork's metadata document by URL, so there is nothing to approve per
+deployment and no registration record to store. If you already support it,
+OpenWork connects with no action on your side; if you keep an allowlist of
+approved client metadata URLs, add
+`https://api.openworklabs.com/oauth/client-metadata.json`.
+
+### Dynamic client registration
+
+OpenWork registers itself once per connection by posting the metadata above to
+your `registration_endpoint`. Many servers accept any `redirect_uris` here;
+some accept only loopback addresses or an allowlist of hosts. In the second
+case, allow the host `api.openworklabs.com` (or the exact redirect URL). A
+registration rejected with `invalid_redirect_uri`, or with `invalid_request`
+whose description names the redirect URI, is what members see as
+`MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED` below.
+
+### Pre-registered client
+
+If your authorization server neither advertises client metadata documents nor
+publishes a `registration_endpoint`, OpenWork cannot register itself. Issue a
+client for OpenWork the same way you would for any other AI client you approve
+by hand, bound to the redirect URL above:
+
+- A public client (`token_endpoint_auth_method: none`) is enough. If your
+  server requires a secret, issue one; OpenWork keeps it server-side.
+- Grant `authorization_code` and `refresh_token`.
+- Send the `client_id` (and secret) to the OpenWork organization admin. In
+  OpenWork Cloud they open the connection, choose **OAuth app**, and paste the
+  values. The dialog shows the exact redirect URL to register. See
+  [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url).
+
+<Warning>
+A "Sign in with your product" OAuth app whose tokens are only valid for your
+REST API does not help if your MCP server rejects them. The client you issue
+must produce tokens your MCP resource accepts.
+</Warning>
+
+## What members see when a step is missing
+
+Every failed connection attempt in OpenWork carries a diagnostic with a phase,
+a code, who can fix it, and a reference ID. Members see a plain-language
+explanation; admins can expand the technical details. The most common
+provider-side causes:
+
+| Your server's behaviour | Diagnostic members see | What to change |
+| --- | --- | --- |
+| Dynamic registration answers `400 invalid_redirect_uri`, or `invalid_request` naming the redirect URI | `MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED`: "*Provider* hasn't approved OpenWork yet" with the redirect URL to allowlist and the reference ID. Members are told retrying will not help. | Allow `api.openworklabs.com` for registration, accept OpenWork's client metadata URL, or issue a pre-registered client. |
+| Authorization-server metadata has no `registration_endpoint` and no `client_id_metadata_document_supported` | "This provider needs a pre-registered OAuth app." The connection is saved but cannot connect until an admin adds a client ID. | Issue OpenWork a client, or add client metadata document or dynamic registration support. |
+| `401` without `WWW-Authenticate` resource metadata and no discoverable protected-resource document | OpenWork treats the server as API-key or bearer-token authenticated and asks the admin for a key. | Publish RFC 9728 metadata and the `resource_metadata` challenge parameter. |
+| Registration rejected for another reason (`invalid_client_metadata`, unsupported grant or auth method) | `MCP_OAUTH_CLIENT_REJECTED`, with the provider's error code in the details. | Accept the metadata shown above: public client, `authorization_code` + `refresh_token`, `response_types: ["code"]`. |
+| Protected-resource metadata lists several `authorization_servers` | "Choose an authorization server" for the admin before members can connect. | Nothing required; fewer issuers means one-click setup. |
+| Authorization server metadata issuer does not match the advertised issuer | `MCP_OAUTH_ISSUER_MISMATCH` | Make `issuer` in the metadata document match the URL listed in `authorization_servers`. |
+| `tools/list` or `initialize` answers HTML, or a non-MCP `Content-Type` | `MCP_HTTP_HTML_RESPONSE` or `MCP_HTTP_CONTENT_TYPE` | Serve MCP JSON or `text/event-stream`; keep sign-in pages and proxy error pages off the MCP path. |
+| `429` on any step | `MCP_HTTP_429`, retried with bounded backoff | Standard rate-limit headers help; nothing else required. |
+
+The reference ID members can copy (`req_…`) identifies the attempt in OpenWork's
+logs. If a member shares one with you, the exact time of the attempt is encoded
+in it and OpenWork support can match it to the request your server received.
+
+## Request template
+
+Members and admins who need a provider to approve OpenWork can send this:
+
+> We use OpenWork (openworklabs.com) to connect our team to your MCP server at
+> `<your MCP server URL>`. Sign-in currently fails at client registration
+> because OpenWork's redirect URL is not approved. Please either (a) accept our
+> Client ID Metadata Document `https://api.openworklabs.com/oauth/client-metadata.json`
+> as a client_id, (b) allow the redirect URL
+> `https://api.openworklabs.com/v1/mcp-connections/oauth/callback` (host
+> `api.openworklabs.com`) for dynamic client registration, or (c) issue a
+> pre-registered OAuth client for OpenWork bound to that redirect URL: public
+> client with PKCE S256, grants `authorization_code` and `refresh_token`. The
+> client name is OpenWork. Reference for a failed attempt: `<req_… from the
+> connection error>`.
+
+## Related
+
+- [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections)
+  covers the admin side: adding a connection, choosing individual or shared
+  accounts, and the OAuth redirect URL for self-hosted instances.
+- [OpenWork MCP Gateway](/cloud/run-in-the-cloud/cloud-mcp) explains how the
+  connected tools reach members' AI apps.
