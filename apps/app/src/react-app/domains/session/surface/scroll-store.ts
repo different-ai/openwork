@@ -29,7 +29,11 @@ type ManualSessionScrollState = {
   geometry?: SessionScrollGeometry;
 };
 
-export type SessionScrollState = StickyBottomSessionScrollState | ManualSessionScrollState;
+export type SessionScrollState = (StickyBottomSessionScrollState | ManualSessionScrollState) & {
+  // Also retain ownership on legacy entries until claimed, even if their
+  // optional geometry is evicted before the conversation is reopened.
+  owner?: string;
+};
 
 type SessionScrollStateById = Record<string, SessionScrollState>;
 
@@ -51,8 +55,11 @@ function normalizeSessionScrollState(value: unknown): SessionScrollState | null 
 
   const topClippedMessageId = normalizeTopClippedMessageId(value.topClippedMessageId);
   const geometry = normalizeGeometry(value.geometry);
+  const owner = typeof value.owner === "string" && value.owner.length > 0 && value.owner.length <= 1024
+    ? value.owner : geometry?.owner;
+  const metadata = { ...(owner ? { owner } : {}), ...(geometry && geometry.owner === owner ? { geometry } : {}) };
   if (value.mode === "stickyBottom") {
-    return { mode: "stickyBottom", topClippedMessageId, ...(geometry ? { geometry } : {}) };
+    return { mode: "stickyBottom", topClippedMessageId, ...metadata };
   }
 
   if (value.mode !== "manual" || typeof value.scrollTop !== "number" || !Number.isFinite(value.scrollTop)) {
@@ -67,7 +74,7 @@ function normalizeSessionScrollState(value: unknown): SessionScrollState | null 
       ? { anchor: { messageId: value.anchor.messageId, offset: value.anchor.offset } }
       : {}),
     topClippedMessageId,
-    ...(geometry ? { geometry } : {}),
+    ...metadata,
   };
 }
 
@@ -83,7 +90,7 @@ function normalizeGeometry(value: unknown): SessionScrollGeometry | undefined {
   return { owner: value.owner, scrollHeight, viewportWidth, before, after, messageIds: [...new Set(ids)] };
 }
 
-function readPersistedSessionScrollState(): SessionScrollStateById {
+export function readPersistedSessionScrollState(): SessionScrollStateById {
   if (globalThis.window === undefined) return {};
 
   try {
@@ -111,8 +118,8 @@ function persistSessionScrollState(sessions: SessionScrollStateById): void {
     // Clipped-message controls are presentation state, not a reading position.
     const positions = Object.fromEntries(Object.entries(sessions).map(([id, state]) => [id,
       state.mode === "manual"
-        ? { mode: state.mode, scrollTop: state.scrollTop, anchor: state.anchor, geometry: state.geometry }
-        : { mode: state.mode, geometry: state.geometry },
+        ? { mode: state.mode, scrollTop: state.scrollTop, anchor: state.anchor, owner: state.owner, geometry: state.geometry }
+        : { mode: state.mode, owner: state.owner, geometry: state.geometry },
     ]));
     window.localStorage.setItem(SESSION_SCROLL_STORAGE_KEY, JSON.stringify(positions));
   } catch {
@@ -123,9 +130,21 @@ function persistSessionScrollState(sessions: SessionScrollStateById): void {
 export function getSessionScrollState(
   sessions: SessionScrollStateById,
   sessionId: string | null | undefined,
+  owner?: string,
 ): SessionScrollState {
   if (!sessionId) return INITIAL_SESSION_SCROLL_STATE;
+  if (owner) {
+    const owned = sessions[sessionScrollKey(sessionId, owner)];
+    if (owned) return owned;
+    const legacy = sessions[sessionId];
+    const legacyOwner = legacy?.owner ?? legacy?.geometry?.owner;
+    return legacy && (!legacyOwner || legacyOwner === owner) ? legacy : INITIAL_SESSION_SCROLL_STATE;
+  }
   return sessions[sessionId] ?? INITIAL_SESSION_SCROLL_STATE;
+}
+
+export function sessionScrollKey(sessionId: string, owner?: string): string {
+  return owner ? JSON.stringify(["session-scroll", owner, sessionId]) : sessionId;
 }
 
 export function selectSessionIsStickyBottom(
@@ -156,7 +175,7 @@ function setSessionStickyBottom(
 
   return {
     ...sessions,
-    [sessionId]: { mode: "stickyBottom", topClippedMessageId, ...(current.geometry ? { geometry: current.geometry } : {}) },
+    [sessionId]: { mode: "stickyBottom", topClippedMessageId, owner: current.owner, ...(current.geometry ? { geometry: current.geometry } : {}) },
   };
 }
 
@@ -183,7 +202,7 @@ function setSessionManualScroll(
 
   return {
     ...sessions,
-    [sessionId]: { mode: "manual", scrollTop: nextScrollTop, topClippedMessageId, anchor, ...(current.geometry ? { geometry: current.geometry } : {}) },
+    [sessionId]: { mode: "manual", scrollTop: nextScrollTop, topClippedMessageId, anchor, owner: current.owner, ...(current.geometry ? { geometry: current.geometry } : {}) },
   };
 }
 
@@ -205,6 +224,7 @@ function setSessionTopClippedMessageId(
 
 type SessionScrollStore = {
   sessions: SessionScrollStateById;
+  claimOwner: (sessionId: string, owner: string) => void;
   setStickyBottom: (sessionId: string | null | undefined, topClippedMessageId: string | null) => void;
   setManualScroll: (sessionId: string | null | undefined, scrollTop: number, topClippedMessageId: string | null, anchor?: SessionScrollAnchor) => void;
   setTopClippedMessageId: (sessionId: string | null | undefined, topClippedMessageId: string | null) => void;
@@ -213,11 +233,24 @@ type SessionScrollStore = {
 
 export const useSessionScrollStore = create<SessionScrollStore>((set) => ({
   sessions: readPersistedSessionScrollState(),
+  claimOwner: (sessionId, owner) => set((state) => {
+    const legacy = state.sessions[sessionId];
+    const legacyOwner = legacy?.owner ?? legacy?.geometry?.owner;
+    if (!legacy || (legacyOwner && legacyOwner !== owner)) return state;
+    const key = sessionScrollKey(sessionId, owner);
+    const sessions = { ...state.sessions };
+    // Geometry-free v1 positions have no recoverable owner. Claim them once,
+    // never copy them into every workspace exposing the same session ID.
+    sessions[key] ??= { ...legacy, owner };
+    delete sessions[sessionId];
+    schedulePersistence(legacy, sessions[key], true);
+    return { sessions };
+  }),
   setGeometry: (sessionId, geometry) => set((state) => {
     const next = normalizeGeometry(geometry);
     const current = getSessionScrollState(state.sessions, sessionId);
-    if (!next || JSON.stringify(current.geometry) === JSON.stringify(next)) return state;
-    const updated = { ...current, geometry: next };
+    if (!next || (current.owner && current.owner !== next.owner) || JSON.stringify(current.geometry) === JSON.stringify(next)) return state;
+    const updated = { ...current, owner: next.owner, geometry: next };
     schedulePersistence(current, updated);
     const sessions = { ...state.sessions, [sessionId]: updated };
     // Keep positions indefinitely, but bound the heavier geometry hints.
@@ -253,12 +286,12 @@ export function flushSessionScrollState() {
   persistSessionScrollState(useSessionScrollStore.getState().sessions);
 }
 
-function schedulePersistence(before: SessionScrollState, next: SessionScrollState) {
+function schedulePersistence(before: SessionScrollState, next: SessionScrollState, force = false) {
   const changed = before.geometry !== next.geometry || before.mode !== next.mode || (next.mode === "manual" && before.mode === "manual" && (
     next.scrollTop !== before.scrollTop || next.anchor?.messageId !== before.anchor?.messageId
     || next.anchor?.offset !== before.anchor?.offset
   ));
-  if (!changed) return;
+  if (!changed && !force) return;
   clearTimeout(persistTimer);
   persistTimer = setTimeout(flushSessionScrollState, PERSIST_DELAY_MS);
 }

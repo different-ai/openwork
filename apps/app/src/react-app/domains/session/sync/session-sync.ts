@@ -1823,7 +1823,9 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   }, workspaceSyncDisposeGraceMs);
 }
 
-export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
+export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot, options: { preview?: boolean } = {}) {
+  // A reverted window cannot establish which messages are still visible.
+  if (options.preview && snapshot.session.revert?.messageID) return;
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
   const projected = snapshotToUIMessages(snapshot);
@@ -1858,6 +1860,16 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     }
   }
   const existing = queryClient.getQueryData<UIMessage[]>(key);
+
+  if (options.preview) {
+    // Supply declaration baselines for live deltas, not whole-session truth.
+    // In particular, a partial turn must not settle admission or seed idle.
+    queryClient.setQueryData(key, reconcileTranscriptMessages({
+      currentMessages: existing ?? [],
+      snapshotMessages: incoming,
+    }));
+    return;
+  }
 
   const snapshotStartedAt = sessionSnapshotFetchStarts.get(snapshot);
   if (typeof snapshotStartedAt === "number") {

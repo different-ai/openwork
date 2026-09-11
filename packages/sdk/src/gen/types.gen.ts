@@ -850,6 +850,10 @@ export type WorkflowRunListResponse = {
       } | null;
     } | null;
   }>;
+  /**
+   * Pass as cursor to fetch the next page; null on the last page.
+   */
+  nextCursor: string | null;
 };
 
 export type DashboardElement = {
@@ -3989,6 +3993,10 @@ export type WorkerListResponse = {
     createdAt: string;
     updatedAt: string;
   }>;
+  /**
+   * Pass as cursor to fetch the next page; null on the last page.
+   */
+  nextCursor: string | null;
 };
 
 export type Worker = {
@@ -7164,6 +7172,10 @@ export type GetV1WorkflowRunsData = {
   body?: never;
   path?: never;
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
+    cursor?: string;
     limit?: number;
   };
   url: "/v1/workflow-runs";
@@ -8544,6 +8556,10 @@ export type GetV1WorkflowsByConfigObjectIdSnapshotsData = {
     configObjectId: string;
   };
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
+    cursor?: string;
     limit?: number;
   };
   url: "/v1/workflows/{configObjectId}/snapshots";
@@ -8596,6 +8612,10 @@ export type GetV1WorkflowsByConfigObjectIdSnapshotsResponses = {
       finishedAt: string;
       contentDeletedAt: string | null;
     }>;
+    /**
+     * Pass as cursor to fetch the next page; null on the last page.
+     */
+    nextCursor: string | null;
   };
 };
 
@@ -21034,6 +21054,10 @@ export type GetV1WorkersData = {
   body?: never;
   path?: never;
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
+    cursor?: string;
     limit?: number;
   };
   url: "/v1/workers";

@@ -185,8 +185,11 @@ linter's reach. Each is a wire or schema change and needs its own change with
 a compatibility plan:
 
 - One timestamp encoding (epoch-ms integers in Automation schemas).
-- One pagination model (offset admin pages; limit-only `/v1/workflow-runs`,
-  `/v1/workflows/{id}/snapshots`, `/v1/workers`; `limit` typed as string).
+- One pagination model (offset admin pages; `limit` typed as string).
+  `/v1/workflow-runs`, `/v1/workflows/{id}/snapshots` and `/v1/workers` now
+  accept an optional `cursor` and return `nextCursor` (additive; keyset on
+  the existing sort order, shared helper in
+  `ee/apps/den-api/src/list-pagination.ts`).
 - Typed path parameters instead of bare `{id}`.
 - Static-vs-parameter path pairs (`/versions/latest`, `/workflows/test`,
   `/plugins/import-mcps-from-github-url`, `/mcp-connections/*`).

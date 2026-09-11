@@ -125,9 +125,15 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   const restoreRequests: Request[] = [];
   const nativePromptTexts: string[] = [];
   const nativeMessages: { id: string; role: "user"; text: string }[] = [];
+  const forkRequests: Request[] = [];
   const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const path = new URL(request.url).pathname;
+    if (request.method === "POST" && path.endsWith("/fork")) {
+      forkRequests.push(request);
+      await forkCompletion;
+      return Response.json(createSnapshot({ type: "idle" }, 1, "created-branch").session);
+    }
     if (request.method === "PATCH" && path.endsWith(`/session/${sessionId}`)) restoreRequests.push(request);
     if (path === `/opencode2/api/session/${sessionId}/prompt`) {
       const body: unknown = await request.json();
@@ -160,13 +166,15 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   }));
   mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
   mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
+  const nativeSessionModule = await import("../src/app/lib/opencode-session-native");
   mock.module("@/app/lib/opencode-session-native", () => ({
+    ...nativeSessionModule,
     composeNativeSessionSnapshot: async (_target: unknown, id: string) => id === otherSessionId ? otherSnapshot : snapshotRead ?? fetchedSnapshot,
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
-  const { snapshotKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
+  const { snapshotKey, statusKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
   const { useSessionArchive } = await import("../src/react-app/domains/session/sidebar/use-session-archive");
-  const { getQueuedDrainState, resetQueuedDrainForTests } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
+  const { claimQueuedSend, dispatchQueuedDrain, getQueuedDrainState, resetQueuedDrainForTests, subscribeQueuedDrain } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
   const queryClient = getReactQueryClient();
   queryClient.clear();
   queryClient.setQueryData(snapshotKey(workspaceId, sessionId), createSnapshot({ type: "busy" }, 1));
@@ -178,6 +186,17 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   const client = createOpenworkServerClient({ baseUrl: "http://127.0.0.1:1", token: "test-token" });
   const container = document.createElement("div");
   document.body.append(container);
+  const expectStarting = () => {
+    const indicators = container.querySelectorAll('[data-loading-message="starting"]');
+    expect(indicators).toHaveLength(1);
+    expect(indicators[0]?.getAttribute("role")).toBe("status");
+    expect(indicators[0]?.textContent).toBe("Starting…");
+    expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
+  };
+  const expectSettled = () => {
+    expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
+    expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
+  };
   const root = createRoot(container);
   const draft = "Keep this draft while the task finishes";
   let submission = Promise.withResolvers<CloudMcpSubmissionResult>();
@@ -185,7 +204,15 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   let prepareSubmission: ((text?: string) => void) | undefined;
   const revokePreview = spyOn(URL, "revokeObjectURL");
   const copyText = spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-  const forkAtMessage = mock(() => {});
+  let forkCompletion: Promise<void> = Promise.resolve();
+  const { forkSession } = await import("../src/app/lib/opencode-session");
+  const { createClient } = await import("../src/app/lib/opencode");
+  const forkClient = createClient("http://127.0.0.1:1/opencode", "/tmp/project-focus-continuity");
+  const forkNavigation = mock((_id: string) => {});
+  const forkAtMessage = mock(async (messageId: string | null, id: string, isCurrent: () => boolean) => {
+    await forkSession(forkClient, id, messageId ?? undefined);
+    if (isCurrent()) forkNavigation(id);
+  });
   const revertToMessage = mock(async () => {});
   const nativeMenuRequests: NativeContextMenuRequest[] = [];
   let nativeMenuSelection: string | null = null;
@@ -236,7 +263,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     return children(archived);
   }
 
-  const renderSurface = (opencodeBaseUrl = "http://127.0.0.1:1/opencode", activeSessionId = sessionId) => root.render(
+  const renderSurface = (opencodeBaseUrl = "http://127.0.0.1:1/opencode", activeSessionId = sessionId, isControlTarget = false) => root.render(
     <PlatformProvider value={platform}>
       <MemoryRouter>
         <QueryClientProvider client={queryClient}>
@@ -250,7 +277,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
                 workspaceRoot="/tmp/project-focus-continuity"
                 sessionId={activeSessionId}
                 draftScope="local"
-                isControlTarget={false}
+                isControlTarget={isControlTarget}
                 opencodeBaseUrl={opencodeBaseUrl}
                 openworkToken="test-token"
                 developerMode
@@ -374,9 +401,20 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.disabled).toBe(false);
     expect(refetch).toHaveBeenCalledTimes(1);
     interruption = Promise.withResolvers<void>();
+    // Opening a menu gives Escape to that menu, not the stop confirmation.
+    const tools = container.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
+    if (!tools) throw new Error("Expected the tools menu trigger");
+    await act(async () => tools.click());
+    await act(async () => { escape(); });
+    expect(container.textContent).not.toContain("Hit Escape again to stop the agent");
+    expect(interrupt).toHaveBeenCalledTimes(2);
     await act(async () => { escape(); });
     expect(interrupt).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("Hit Escape again to stop the agent");
+    const confirmation = container.querySelector('[data-composer-stop-confirmation][role="status"]');
+    expect(confirmation?.textContent).toBe("Hit Escape again to stop the agent");
+    expect(confirmation?.classList.contains("hidden")).toBe(false);
+    expect(container.querySelector('button[aria-label="Stop"]')?.className).toContain("w-9");
     await act(async () => { escape(); });
     expect(interrupt).toHaveBeenCalledTimes(3);
     expect(container.textContent).not.toContain("Stop unavailable");
@@ -462,7 +500,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     await openMessageMenu("copy");
     expect(copyText).toHaveBeenCalledWith("Keep this session mounted.");
     await openMessageMenu("branch");
-    expect(forkAtMessage).toHaveBeenCalledWith(null, sessionId);
+    expect(forkAtMessage).toHaveBeenCalledWith(null, sessionId, expect.any(Function));
     const retainedMessages = queryClient.getQueryData<OpenworkSessionSnapshot>(key)?.messages;
     await act(async () => updateRouteArchived(true));
 
@@ -503,6 +541,138 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
       { type: "item", id: "branch", label: "Branch in new chat", enabled: true },
       { type: "item", id: "revert", label: "Revert", enabled: true },
     ]);
+
+    const branch = () => {
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="Branch in new chat"]');
+      if (!button || button.disabled) throw new Error("Expected an enabled Branch button");
+      button.click();
+      button.click();
+    };
+    const expectBranching = () => {
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="Branching..."]');
+      expect(button?.disabled).toBe(true);
+      expect(button?.getAttribute("aria-busy")).toBe("true");
+      expect(button?.querySelector("svg.lucide-loader-circle")).not.toBeNull();
+      expect(container.querySelector('[data-message-role="user"] [role="status"]')?.textContent).toBe("Branching...");
+    };
+    const branchHistory = Promise.withResolvers<OpenworkSessionSnapshot>();
+    const forkCreated = Promise.withResolvers<void>();
+    snapshotRead = branchHistory.promise;
+    forkCompletion = forkCreated.promise;
+    await act(async () => branch());
+    expectBranching();
+    expect(forkAtMessage).toHaveBeenCalledTimes(1);
+    await openMessageMenu("branch");
+    expectBranching();
+    expect(forkAtMessage).toHaveBeenCalledTimes(1);
+    const branchSnapshot = createSnapshot({ type: "idle" }, 5);
+    const boundaryMessage = branchSnapshot.messages[0];
+    if (!boundaryMessage) throw new Error("Expected the branch boundary fixture");
+    branchSnapshot.messages.push({ ...boundaryMessage, info: { ...boundaryMessage.info, id: "fresh-next-message" } });
+    await act(async () => branchHistory.resolve(branchSnapshot));
+    expect(forkAtMessage).toHaveBeenCalledTimes(2);
+    expect(forkAtMessage).toHaveBeenLastCalledWith("fresh-next-message", sessionId, expect.any(Function));
+    expect(forkRequests).toHaveLength(2);
+    expect(new URL(forkRequests[1]!.url).pathname).toBe(`/opencode/session/${sessionId}/fork`);
+    expect(await forkRequests[1]?.json()).toEqual({ messageID: "fresh-next-message" });
+    expectBranching();
+    await openMessageMenu("branch");
+    expect(forkAtMessage).toHaveBeenCalledTimes(2);
+    expect(forkRequests).toHaveLength(2);
+    expect(forkNavigation).toHaveBeenCalledTimes(1);
+    await act(async () => forkCreated.reject(new Error("Branch creation failed")));
+    snapshotRead = null;
+    expect(container.textContent).toContain("Branch creation failed");
+    expect(container.querySelector('button[aria-label="Branching..."]')).toBeNull();
+    expect(editor.textContent).toBe(draft);
+    forkCompletion = Promise.resolve();
+    await act(async () => branch());
+    expect(forkAtMessage).toHaveBeenCalledTimes(3);
+    expect(forkNavigation).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("Branch creation failed");
+    const failedHistory = Promise.withResolvers<OpenworkSessionSnapshot>();
+    snapshotRead = failedHistory.promise;
+    await act(async () => branch());
+    expectBranching();
+    await act(async () => failedHistory.reject(new Error("Branch history unavailable")));
+    expect(container.textContent).toContain("Branch history unavailable");
+    expect(container.querySelector('button[aria-label="Branching..."]')).toBeNull();
+    expect(forkRequests).toHaveLength(3);
+    expect(editor.textContent).toBe(draft);
+
+    // A late history read cannot fork a new owner; a late fork cannot navigate it.
+    const abandonedHistory = Promise.withResolvers<OpenworkSessionSnapshot>();
+    snapshotRead = abandonedHistory.promise;
+    await act(async () => branch());
+    await act(async () => renderSession(otherSessionId));
+    await act(async () => abandonedHistory.resolve(branchSnapshot));
+    expect(forkAtMessage).toHaveBeenCalledTimes(3);
+    snapshotRead = null;
+    await act(async () => renderSession());
+    const abandonedFork = Promise.withResolvers<void>();
+    forkCompletion = abandonedFork.promise;
+    await act(async () => branch());
+    expectBranching();
+    expect(forkAtMessage).toHaveBeenCalledTimes(4);
+    await act(async () => renderSession(otherSessionId));
+    expect(container.querySelector('button[aria-label="Branching..."]')).toBeNull();
+    await act(async () => abandonedFork.resolve());
+    expect(forkNavigation).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Other session draft");
+    await act(async () => renderSession());
+    const blurredFork = Promise.withResolvers<void>();
+    forkCompletion = blurredFork.promise;
+    await act(async () => renderSurface(undefined, sessionId, true));
+    await act(async () => branch());
+    expectBranching();
+    await act(async () => renderSurface(undefined, sessionId, false));
+    await act(async () => blurredFork.resolve());
+    expect(forkNavigation).toHaveBeenCalledTimes(2);
+    forkCompletion = Promise.resolve();
+
+    for (const outcome of ["success", "failure"]) {
+      const remountedFork = Promise.withResolvers<void>();
+      forkCompletion = remountedFork.promise;
+      const beforeForks = forkRequests.length;
+      await act(async () => branch());
+      expectBranching();
+      expect(forkRequests).toHaveLength(beforeForks + 1);
+      const previousEditor = editor;
+      try {
+        await act(async () => root.render(null));
+        expect(container.querySelector('[data-lexical-editor="true"]')).toBeNull();
+        await act(async () => renderSession());
+        editor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
+        if (!editor) throw new Error("Expected the remounted session composer");
+        expect(editor).not.toBe(previousEditor);
+        await act(async () => {
+          const button = container.querySelector<HTMLButtonElement>('button[aria-label="Branch in new chat"], button[aria-label="Branching..."]');
+          if (!button) throw new Error("Expected the remounted Branch action");
+          button.click();
+          button.click();
+        });
+        expect(forkRequests).toHaveLength(beforeForks + 1);
+        expectBranching();
+        await openMessageMenu("branch");
+        expect(forkRequests).toHaveLength(beforeForks + 1);
+        if (outcome === "failure") {
+          await act(async () => remountedFork.reject(new Error("Remounted branch failed")));
+          expect(container.textContent).toContain("Remounted branch failed");
+        } else {
+          await act(async () => remountedFork.resolve());
+        }
+        expect(container.querySelector('button[aria-label="Branching..."]')).toBeNull();
+        expect(container.querySelector<HTMLButtonElement>('button[aria-label="Branch in new chat"]')?.disabled).toBe(false);
+        expect(forkNavigation).toHaveBeenCalledTimes(2);
+        expect(editor.textContent).toBe(draft);
+      } finally {
+        await act(async () => remountedFork.resolve());
+      }
+    }
+    forkCompletion = Promise.resolve();
+    await act(async () => branch());
+    expect(container.textContent).not.toContain("Remounted branch failed");
+    expect(forkNavigation).toHaveBeenCalledTimes(3);
 
     const send = () => {
       const button = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
@@ -603,9 +773,23 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(editor.textContent).toBe("");
     expect(container.textContent).toContain(draft);
     expect(useComposerStateStore.getState().sessions[sessionId]).toBeUndefined();
+    expectStarting();
+
+    // Native activity must win even when the submission promise is still pending.
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "busy" }));
+    await waitFor(() => container.querySelector('[data-loading-message="working"]') !== null, "confirmed activity during pending submission");
+    expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), {
+      type: "retry", attempt: 1, message: "Retrying test request", next: Date.now() + 10_000,
+    }));
+    await waitFor(() => container.textContent?.includes("Retrying test request") === true, "retry feedback during pending submission");
+    expectSettled();
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "idle" }));
+    await waitFor(() => container.querySelector('[data-loading-message="starting"]') !== null, "pending feedback after observed idle");
 
     await act(async () => useComposerStateStore.getState().setDraft(sessionId, "A newer draft"));
     await act(async () => submission.reject(new Error("Submission unavailable")));
+    expectSettled();
     expect(editor.textContent).toBe("A newer draft");
     expect(container.textContent).not.toContain(draft);
     expect(Object.values(useComposerStateStore.getState().failedDrafts).flat().map((item) => item.draft)).toEqual([draft]);
@@ -627,8 +811,10 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')?.click());
     await act(async () => send());
+    expectStarting();
     await act(async () => submission.resolve({ outcome: "cancelled", reason: "context_changed" }));
     expect(editor.textContent).toBe(draft);
+    expectSettled();
 
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     const { composerAutoSendScopeKey, markComposerAutoSend } = await import("../src/react-app/domains/session/surface/composer-auto-send");
@@ -639,6 +825,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     await waitFor(() => sentDrafts.length === 3, "first-message auto-send");
     expect(editor.textContent).toBe("");
     expect(container.textContent).toContain("First message auto-send");
+    expectStarting();
     const messageId = sentDrafts[2]?.messageId;
     expect(messageId).toStartWith("msg_");
     await act(async () => {
@@ -654,6 +841,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(0);
 
     const { PromptAdmissionUnknownError } = await import("../src/app/lib/opencode");
+    expectSettled();
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Uncertain send"));
     await act(async () => send());
@@ -747,6 +935,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
       .filter((row) => row.textContent?.includes("First submitted body"));
     expect(scopedPendingRows()).toHaveLength(1);
     expect(scopedPendingRows()[0]?.querySelector('img[alt="scoped.png"]')?.getAttribute("src")).toBe(scopedAttachment.previewUrl);
+    expectStarting();
     expect(editor.querySelector('[data-attachment-status="uploading"]')).toBeNull();
     expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
     await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Continuation B before preparation[attachment continuation-image]"));
@@ -761,6 +950,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(editor.textContent).toContain("Continuation B after preparation");
     const continuationAfterPreparation = useComposerStateStore.getState().sessions[sessionId];
     await act(async () => submission.reject(new Error("Scoped submission unavailable")));
+    expectSettled();
     expect(editor.textContent).toContain("Continuation B after preparation");
     expect(useComposerStateStore.getState().sessions[sessionId]).toBe(continuationAfterPreparation);
     expect(continuationAfterPreparation?.attachments).toEqual([continuationAttachment]);
@@ -908,6 +1098,141 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(nativePending().map((item) => item.serverMessageId)).toEqual(["native-first", "native-second"]);
     expect(sentDrafts).toHaveLength(8);
 
+    await act(async () => {
+      fetchedSnapshot = createSnapshot({ type: "busy" }, 30);
+      queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), fetchedSnapshot.status);
+      renderSession();
+    });
+    await waitFor(() => container.querySelector('button[aria-label="Stop"]') !== null, "busy session for queue promotion");
+    const queueDraft = (text: string): ComposerDraft => ({
+      mode: "prompt", text, resolvedText: text, parts: [{ type: "text", text }], attachments: [],
+    });
+    await act(async () => {
+      useComposerStateStore.getState().setDraft(sessionId, "Composer continuation beside queue");
+      useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Promote this queued message"));
+      useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Keep this queued follower"));
+    });
+    const selectedQueueId = useComposerStateStore.getState().queuedDrafts[sessionId]?.[0]?.id;
+    if (!selectedQueueId) throw new Error("Expected the selected queue row");
+    const sendNow = () => {
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="Send now"]');
+      if (!button || button.disabled) throw new Error("Expected an enabled Send now button");
+      button.click();
+      button.click();
+    };
+    const expectQueuedSending = () => {
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="Sending..."]');
+      expect(button?.disabled).toBe(true);
+      expect(button?.querySelector("svg.lucide-loader-circle")).not.toBeNull();
+      expect(button?.closest('[aria-busy="true"]')?.querySelector('[role="status"]')?.textContent).toBe("Sending...");
+      expect(container.textContent?.split("Promote this queued message")).toHaveLength(2);
+      expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.map((item) => item.id)).toContain(selectedQueueId);
+      expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send now"]')?.disabled).toBe(true);
+      expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Composer continuation beside queue");
+    };
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    const queuedHistory = Promise.withResolvers<OpenworkSessionSnapshot>();
+    const ensureSnapshot = spyOn(queryClient, "ensureQueryData").mockImplementation(() => queuedHistory.promise);
+    const sendsBeforeQueue = sentDrafts.length;
+    await act(async () => sendNow());
+    expectQueuedSending();
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue);
+    await act(async () => renderSession(otherSessionId));
+    expect(container.querySelector('button[aria-label="Sending..."]')).toBeNull();
+    await act(async () => renderSession());
+    expectQueuedSending();
+    await act(async () => queuedHistory.resolve(fetchedSnapshot));
+    ensureSnapshot.mockRestore();
+    expectQueuedSending();
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 1);
+    expect(sentDrafts.at(-1)?.text).toBe("Promote this queued message");
+    await act(async () => submission.reject(new Error("Queue submission failed")));
+    expect(container.textContent).toContain("Queue submission failed");
+    expect(container.querySelector('button[aria-label="Sending..."]')).toBeNull();
+    expect(container.textContent?.split("Promote this queued message")).toHaveLength(2);
+    expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "halted", itemId: selectedQueueId });
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 1);
+
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => sendNow());
+    expectQueuedSending();
+    await act(async () => submission.resolve({ outcome: "blocked", issue: {
+      code: "needs_connection", stage: "engine_delivery", retryable: true,
+      message: "Connection is unavailable", recommendedAction: "Reconnect before retrying",
+    } }));
+    expect(container.textContent?.split("Promote this queued message")).toHaveLength(2);
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("halted");
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 2);
+
+    const watchAdmissionRelease = (itemId: string) => {
+      const observation = { published: false, replayClaimed: false, queuedAtRelease: false };
+      const unsubscribe = subscribeQueuedDrain(sessionId, () => {
+        const phase = getQueuedDrainState(sessionId).phase;
+        if (observation.published || (phase.kind !== "running" && phase.kind !== "awaiting_observation") || phase.itemId !== itemId) return;
+        observation.published = true;
+        // Like the global drainer, reconcile idle synchronously when admission
+        // is published, then try to claim any still-deliverable copy of this row.
+        dispatchQueuedDrain(sessionId, { type: "idle_reconciled", observedAt: Date.now() + 1, terminalObserved: true });
+        observation.queuedAtRelease = Boolean(useComposerStateStore.getState().queuedDrafts[sessionId]?.some((item) => item.id === itemId));
+        if (observation.queuedAtRelease) observation.replayClaimed = claimQueuedSend(sessionId, itemId);
+      });
+      return { observation, unsubscribe };
+    };
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => sendNow());
+    expectQueuedSending();
+    const acceptedRelease = watchAdmissionRelease(selectedQueueId);
+    try {
+      await act(async () => {
+        useComposerStateStore.getState().setDraft(sessionId, "Newer composer edits during queue send");
+        submission.resolve({ outcome: "accepted" });
+      });
+      expect(acceptedRelease.observation).toEqual({ published: true, replayClaimed: false, queuedAtRelease: false });
+    } finally {
+      acceptedRelease.unsubscribe();
+    }
+    expect(container.textContent).not.toContain("Promote this queued message");
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.map((item) => item.draft.text)).toEqual(["Keep this queued follower"]);
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer composer edits during queue send");
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 3);
+
+    const sentQueueId = useComposerStateStore.getState().queuedDrafts[sessionId]?.[0]?.id;
+    if (!sentQueueId) throw new Error("Expected the next queued row");
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => sendNow());
+    expect(container.querySelector('button[aria-label="Sending..."]')).not.toBeNull();
+    const sentRelease = watchAdmissionRelease(sentQueueId);
+    try {
+      await act(async () => submission.resolve({ outcome: "sent", bypassed: false }));
+      expect(sentRelease.observation).toEqual({ published: true, replayClaimed: false, queuedAtRelease: false });
+    } finally {
+      sentRelease.unsubscribe();
+    }
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 4);
+    await act(async () => useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Uncertain queued message")));
+
+    submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    await act(async () => sendNow());
+    const queuedUnknownId = sentDrafts.at(-1)?.messageId;
+    if (!queuedUnknownId) throw new Error("Expected a queued admission identity");
+    expect(container.querySelector('button[aria-label="Sending..."]')).not.toBeNull();
+    await act(async () => submission.reject(new PromptAdmissionUnknownError({ messageID: queuedUnknownId })));
+    expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "admission_unknown", messageID: queuedUnknownId });
+    expect(container.textContent).toContain("It may already be running");
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer composer edits during queue send");
+    await act(async () => {
+      useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Do not retry uncertain admission"));
+      fetchedSnapshot = createSnapshot({ type: "idle" }, 31);
+      queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), fetchedSnapshot.status);
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Send now"]')?.click());
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 5);
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("admission_unknown");
+
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
     let creation = Promise.withResolvers<void>();
     let creations = 0;
@@ -930,9 +1255,13 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(creations).toBe(1);
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')?.textContent).toBe("First hero message");
+    expectStarting();
+    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     await act(async () => updateHeroDraft("Newer hero draft"));
     expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
     await act(async () => creation.reject(new Error("Session creation failed")));
+    expectSettled();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer hero draft");
     expect(container.textContent).toContain("Session creation failed");
     await act(async () => updateHeroDraft(""));
@@ -951,9 +1280,13 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     });
     await act(async () => send());
     expect(creations).toBe(2);
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Starting…");
+    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')?.textContent).toContain("First hero message");
     expect(container.querySelector('[data-message-role="user"] img[alt="photo.png"]')).not.toBeNull();
+    expectStarting();
     expect(container.querySelector("[data-attachment-id]")).toBeNull();
     expect(capturedHandoff?.getContinuation()).toEqual({ draft: "", attachments: [], mentions: {}, pasteParts: [], revertMessageId: null });
     expect(capturedHandoff?.submitted.attachments[0]?.file).toBe(attachment.file);

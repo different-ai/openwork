@@ -27,8 +27,12 @@ export function resolveRenderedSessionSnapshot(input: {
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: OpenworkSessionSnapshot | null | undefined;
+  historyComplete?: boolean;
 }) {
   const revertMessageId = input.snapshot?.session.revert?.messageID ?? null;
+  // Neither a newest window nor saved neighbors prove their position relative
+  // to a revert cursor. Withhold them until the ordered full history arrives.
+  if (input.historyComplete === false && revertMessageId) return [];
   const liveMessages = input.transcriptState ?? [];
 
   const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0

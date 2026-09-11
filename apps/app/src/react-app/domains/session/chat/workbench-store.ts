@@ -22,6 +22,8 @@ export type SyncWorkbenchInput = {
   primarySessionId: string | null;
   sessions: OpenworkSessionRef[];
   sessionsKnown: boolean;
+  /** Explicit archive metadata for this workspace, not sessions missing from its engine index. */
+  archivedSessionIds?: string[];
 };
 
 const initialWorkbenchSnapshot: WorkbenchSnapshot = {
@@ -97,17 +99,15 @@ export function syncWorkbenchSnapshot(
 ): WorkbenchSnapshot {
   const workspaceTitle = input.workspaceTitle?.trim() || input.workspaceId;
   const available = input.sessions.map((session) => ({ ...session, workspaceTitle }));
-  // The index can be partial, or briefly show the previous engine during boot.
-  // Saved pairs are durable navigation state; only an explicit close removes them.
-  const pairedSessions = new Set(Object.entries(current.sideChats).flatMap(([owner, chat]) =>
-    [owner, workbenchSessionKey(chat)]));
+  const archivedSessionIds = new Set(input.archivedSessionIds);
+  // An index only covers one engine. Absence is not evidence of deletion:
+  // retained tabs, like saved pairs, require an explicit close or archive.
   let tabs = current.tabs
     .filter((tab) => (
       tab.workspaceId !== input.workspaceId
-      || !input.sessionsKnown
-      || available.some((session) => isSameWorkbenchSession(session, tab))
+      || !archivedSessionIds.has(tab.sessionId)
+      // Keep the routed archived primary viewable until navigation leaves it.
       || tab.sessionId === input.primarySessionId
-      || pairedSessions.has(workbenchSessionKey(tab))
     ))
     .map((tab) => {
       const fresh = available.find((session) => isSameWorkbenchSession(session, tab));
