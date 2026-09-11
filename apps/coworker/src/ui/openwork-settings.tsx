@@ -1,5 +1,3 @@
-import { AllHandsPreferences } from "@/ui/all-hands";
-import type { AllHandsSettings } from "@/lib/bridge";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignedCoworkers } from "@/ui/assigned-coworkers";
 import {
@@ -30,10 +28,9 @@ import { LocalProviders } from "@/ui/local-providers";
 import { ModelsMembershipCard } from "@/ui/models-membership";
 import { FreshStartSettings } from "@/ui/fresh-start-settings";
 
-export type SettingsSection = "general" | "model-defaults" | "account" | "models" | "engine" | "all-hands" | "fresh-start";
+export type SettingsSection = "general" | "model-defaults" | "account" | "models" | "engine" | "fresh-start";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
-  { id: "all-hands", label: "All Hands", detail: "An optional team conversation and daily briefing" },
   { id: "general", label: "General", detail: "Coworker models, effort and activity preferences" },
   { id: "model-defaults", label: "Model defaults", detail: "Shared models for conversation, Workers and chat turn assignment" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
@@ -127,13 +124,11 @@ export function OpenWorkSettings({
   onRefreshRuntime,
   onRestartRuntime,
   onCoworkerChanged,
-  onAllHandsChanged,
   onReplayOnboarding,
   onFactoryReset,
 }: {
   onReplayOnboarding: () => void;
   onFactoryReset: () => void;
-  onAllHandsChanged: (settings: AllHandsSettings) => void;
   active?: boolean;
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -333,7 +328,6 @@ export function OpenWorkSettings({
               </select>
             </label>
             {section === "fresh-start" ? <FreshStartSettings onReplay={onReplayOnboarding} onFactoryReset={onFactoryReset} /> : null}
-            {section === "all-hands" ? <><AllHandsPreferences key={active ? "open" : "closed"} onChanged={onAllHandsChanged} />{coworkers.length < 2 ? <p className="text-sm text-mist">Add a second coworker to gather your team in All Hands. Your preferences will be ready for them.</p> : null}</> : null}
             {section === "model-defaults" ? <AppModelDefaults active={active} runtime={runtime} session={session} catalog={catalog} catalogLoaded={catalogLoaded} catalogLoading={refreshing} onRefreshCatalog={refreshConfiguration} onOpenModels={() => setSection("models")} /> : null}
             {section === "general" ? (
               <>

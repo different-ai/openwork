@@ -171,6 +171,7 @@ export function mergeGroupReplyParts(previous: readonly GroupReplyPart[], incomi
 }
 
 export function groupMessageKey(event: GroupTimelineEvent): string {
+  if (event.kind === "status" && event.status === "document") return event.id;
   return event.kind === "user" && event.clientMessageId ? `user:${event.clientMessageId}` : event.executionId ? `execution:${event.executionId}` : event.id;
 }
 
@@ -196,7 +197,7 @@ export function reconcileGroupActivity(previous: { timeline: GroupTimelineEvent[
     if (index < 0) timeline.push(event);
     else timeline[index] = event;
   }
-  const executions = incoming.executions.filter((entry) => !timeline.some((event) => event.executionId === entry.executionId || event.id === entry.timelineEventId)).map((entry) => {
+  const executions = incoming.executions.filter((entry) => !timeline.some((event) => groupMessageKey(event) === `execution:${entry.executionId}` || event.id === entry.timelineEventId)).map((entry) => {
     const before = previous.executions.find((item) => item.executionId === entry.executionId && item.messageId === entry.messageId && item.threadId === entry.threadId && item.slug === entry.slug);
     if (!before) return entry;
     const parts = mergeGroupReplyParts(groupReplyParts(before), groupReplyParts(entry));

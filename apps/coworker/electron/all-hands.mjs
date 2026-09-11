@@ -23,6 +23,7 @@ async function save(dir, value) {
 export function updateAllHands(dir, patch) {
   return serial(dir, async () => {
     const current = await readAllHands(dir);
+    if (current.migratedEventIds) throw new Error("All Hands schedules are now managed in Events.");
     const next = { ...current };
     for (const key of Object.keys(patch)) {
       const value = patch[key];
@@ -40,6 +41,7 @@ export function updateAllHands(dir, patch) {
 export function prepareAllHands(dir, coworkers) {
   return serial(dir, async () => {
     const settings = await readAllHands(dir);
+    if (settings.migratedEventIds) return settings.groupId ? getGroup(dir, settings.groupId) : null;
     if (!settings.enabled) return null;
     if (settings.groupId) {
       const group = await getGroup(dir, settings.groupId);
@@ -53,7 +55,7 @@ export function prepareAllHands(dir, coworkers) {
 }
 /** Latest eligible slot only: opening after a missed morning never replays a backlog. */
 export function dueAllHands(settings, now = new Date()) {
-  if (!settings.enabled || settings.frequency === "manual" || !settings.groupId) return null;
+  if (settings.migratedEventIds || !settings.enabled || settings.frequency === "manual" || !settings.groupId) return null;
   const times = settings.frequency === "twice" ? [settings.afternoon, settings.morning] : [settings.morning];
   for (const time of times) {
     const [hour, minute] = time.split(":").map(Number);
@@ -74,4 +76,8 @@ export function claimAllHands(dir) {
     await save(dir, { ...settings, lastOccurrence: due.occurrence, lastRequestedAt: Date.now() });
     return due;
   });
+}
+
+export function markAllHandsMigrated(dir, eventIds) {
+  return serial(dir, async () => save(dir, { ...await readAllHands(dir), migratedEventIds: eventIds }));
 }

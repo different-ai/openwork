@@ -463,15 +463,15 @@ test("restore refuses to overwrite a live coworker and permanent delete is expli
   assert.equal((await listCoworkers(coworkersDir)).length, 1, "the live twin is untouched");
 });
 
-test("the refreshed contract keeps the soul and memory untouched and carries the scheduling and self sections", async () => {
+test("the version 12 contract upgrades without changing identity, soul or memory", async () => {
   const coworkersDir = await tempCoworkersDir();
   const coworker = await createCoworker(coworkersDir, { name: "Pilot", role: "Ops" });
   const soulPath = path.join(coworker.path, "soul.md");
   const workingPath = path.join(coworker.path, "memory", "working.md");
   await writeFile(soulPath, "# Soul — Pilot\n\n## Role\n\nOps lead, edited by hand.\n", "utf8");
   await writeFile(workingPath, "# Working memory — Pilot\n\n## Now\n\n- Halfway through the audit.\n", "utf8");
-  // An older contract without the tool sections, and a config a person extended by hand.
-  await writeFile(path.join(coworker.path, "AGENTS.md"), "<!-- open-coworker-contract: 3 -->\n# Pilot — coworker contract\n\nOld words.\n", "utf8");
+  // The previous contract and a config a person extended by hand.
+  await writeFile(path.join(coworker.path, "AGENTS.md"), "<!-- open-coworker-contract: 12 -->\n# Pilot — coworker contract\n\nOld words.\n", "utf8");
   await writeFile(path.join(coworker.path, "opencode.json"), JSON.stringify({ instructions: ["soul.md"], mcp: { notes: { type: "remote", url: "http://127.0.0.1:1/mcp" } } }), "utf8");
 
   const { changed } = await repairCoworkerContract(coworkersDir, "pilot");
@@ -479,9 +479,8 @@ test("the refreshed contract keeps the soul and memory untouched and carries the
   const agents = await readFile(path.join(coworker.path, "AGENTS.md"), "utf8");
   assert.equal(agents, agentsTemplate({ name: "Pilot" }));
   assert.equal(agentsContractVersion(agents), AGENTS_CONTRACT_VERSION);
-  assert.match(agents, /## Scheduling/);
-  assert.match(agents, /## Keeping memory and soul current/);
-  assert.doesNotMatch(agents, /## Working memory duty/);
+  assert.equal(agentsContractVersion(agents), 13);
+  assert.deepEqual(await getCoworker(coworkersDir, "pilot"), coworker);
   const config = JSON.parse(await readFile(path.join(coworker.path, "opencode.json"), "utf8"));
   assert.deepEqual(config.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md", "team/roster.md"]);
   assert.deepEqual(config.mcp, { notes: { type: "remote", url: "http://127.0.0.1:1/mcp" } });

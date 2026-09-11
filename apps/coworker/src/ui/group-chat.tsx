@@ -206,15 +206,17 @@ function GroupChatView({
   onOpenAssignment,
   active = true,
   introduction,
-  briefing,
-  onRememberFocus,
+  event,
+  onOpenEvent,
+  documentRequest,
   documentsApi,
 }: {
   documentsApi?: GroupDocumentsApi;
   active?: boolean;
   introduction?: ReactNode;
-  briefing?: { enabled: boolean; context: string; request: { id: string; text: string } | null };
-  onRememberFocus?: (focus: string) => Promise<void>;
+  event?: { id: string; title: string };
+  onOpenEvent?: (id: string) => void;
+  documentRequest?: { id: number; documentId: string } | null;
   group: CoworkerGroupSummary;
   coworkers: CoworkerSummary[];
   runtime: RuntimeInfo;
@@ -229,7 +231,11 @@ function GroupChatView({
   /** Open an assignment a group created, in its owner's view. */
   onOpenAssignment?: (slug: string, threadId: string) => void;
 }) {
+  const eventId = event?.id ?? group.eventId;
   const [sharedDocument, setSharedDocument] = useState<{ groupId: string; id: string } | null>(null);
+  useEffect(() => {
+    if (documentRequest) setSharedDocument({ groupId: group.id, id: documentRequest.documentId });
+  }, [documentRequest, group.id]);
   const [observed, setObserved] = useState(() => groupObservations.get(group.id) ?? { groupId: "", timeline: [], executions: [] });
   const events = observed.groupId === group.id ? observed.timeline : [];
   const executions = observed.groupId === group.id ? observed.executions : [];
@@ -285,6 +291,23 @@ function GroupChatView({
   membersRef.current = members;
   const holdings = useGroupHoldings(members, runtime);
   const nameFor = useCallback((slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug, [coworkers]);
+
+  function isEventPhaseRequest(clientMessageId?: string, turnId?: string): boolean {
+    return Boolean(clientMessageId?.startsWith("event:") || (turnId && groupRef.current.turns.find((turn) => turn.id === turnId)?.clientMessageId.startsWith("event:")));
+  }
+
+  useEffect(() => {
+    // Old replay receipts must not hold ordinary follow-ups behind an unresolvable send.
+    changeGroupSends(group.id, (items) => items.map((item) => isEventPhaseRequest(item.clientMessageId, item.turnId) && ["pending", "sending", "uncertain"].includes(item.state)
+      ? { ...item, state: "failed", error: "Event phases cannot be replayed. Inspect the event for its actual status." }
+      : item));
+  }, [group.id, group.turns, localSends]);
+
+  useEffect(() => {
+    if (!eventId) return;
+    setAssignmentMode(false);
+    setPendingAssignment(null);
+  }, [eventId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -357,7 +380,12 @@ function GroupChatView({
 
   function startTurn(text: string, clientMessageId: string, recovery?: { turn: CoworkerGroupTurn; only?: string }, voiceIntent: VoiceExpectation | null = null): void {
     const existing = groupSends(group.id).find((item) => item.clientMessageId === clientMessageId);
-    const receipt: GroupSend = existing ?? { text, clientMessageId, at: Date.now(), state: "pending", context: briefing?.context,
+    if (isEventPhaseRequest(clientMessageId, recovery?.turn.id ?? existing?.turnId) || recovery?.turn.clientMessageId.startsWith("event:")) {
+      voice.abandonReply(voiceIntent);
+      setError("This event phase cannot be replayed. Use View event to inspect the run or explicitly start a new session.");
+      return;
+    }
+    const receipt: GroupSend = existing ?? { text, clientMessageId, at: Date.now(), state: "pending",
       ...(recovery ? { turnId: recovery.turn.id, turnUpdatedAt: recovery.turn.updatedAt, only: recovery.only } : {}),
     };
     submissionRevision.current += 1;
@@ -366,6 +394,7 @@ function GroupChatView({
       if (existing?.turnId) {
         const [status, recorded] = await Promise.all([waitForGroup(coworkerBridge.groups.status(group.id)), waitForGroup(coworkerBridge.groups.get(group.id))]);
         const turn = recorded.turns.find((turn) => turn.id === receipt.turnId);
+        if (turn?.clientMessageId.startsWith("event:")) throw new Error("This event phase cannot be replayed. Use View event instead.");
         if (status.queue.some((item) => item.clientMessageId === receipt.clientMessageId) || (turn && turn.updatedAt > (receipt.turnUpdatedAt ?? receipt.at))) {
           voice.rebindExpected(voiceIntent, recovery?.turn.clientMessageId ?? receipt.clientMessageId);
           return { accepted: true };
@@ -384,6 +413,10 @@ function GroupChatView({
   }
 
   function resume(turn: CoworkerGroupTurn, only?: string): void {
+    if (turn.clientMessageId.startsWith("event:")) {
+      setError("This event phase cannot be replayed. Use View event instead.");
+      return;
+    }
     const existing = groupSends(group.id).find((item) => item.turnId === turn.id);
     if (existing && existing.state !== "failed" && existing.state !== "uncertain") return;
     jumpToLatest();
@@ -410,6 +443,10 @@ function GroupChatView({
   }
 
   function removeQueued(clientMessageId: string): void {
+    if (isEventPhaseRequest(clientMessageId)) {
+      setError("Use View event to inspect or cancel this event run; it is not an ordinary queued message.");
+      return;
+    }
     if (groupSends(group.id).find((item) => item.clientMessageId === clientMessageId)?.state === "pending") {
       changeGroupSends(group.id, (items) => items.map((item) => item.clientMessageId === clientMessageId ? { ...item, state: "cancelled" } : item));
       return;
@@ -421,57 +458,20 @@ function GroupChatView({
     });
   }
 
-  const briefingRef = useRef(briefing);
-  briefingRef.current = briefing;
-  const startTurnRef = useRef(startTurn);
-  startTurnRef.current = startTurn;
-  const handledRequest = useRef("");
-  useEffect(() => {
-    const request = briefing?.request;
-    if (!loaded || live || members.length < 2 || !request || handledRequest.current === request.id) return;
-    handledRequest.current = request.id;
-    void startTurnRef.current(request.text, request.id);
-  }, [briefing?.request, loaded, live, members.length]);
-  useEffect(() => {
-    if (!loaded || !briefing?.enabled || members.length < 2) return;
-    let checking = false;
-    let cancelled = false;
-    async function tick() {
-      if (checking) return;
-      checking = true;
-      try {
-        const due = await waitForGroup(coworkerBridge.allHands.claim());
-        if (due && !cancelled && briefingRef.current?.enabled) {
-          await startTurnRef.current("Give us our All Hands briefing: what changed, what needs my decision, and the most useful next step. Use current evidence, name the source and time, and say when information is missing. Only relevant coworkers should contribute. This briefing is read-only: propose actions without executing them.", due.id);
-        }
-      } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause)); }
-      finally { checking = false; }
-    }
-    void tick();
-    const timer = window.setInterval(() => void tick(), 30_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [loaded, briefing?.enabled, group.id, members.length]);
-
   function send(): void {
     const text = message.trim();
-    if (!text || !runtime.engineManaged) return;
-    if (members.length < 2) {
-      setError("A group chat needs at least two coworkers who are still here.");
+    if (!active || !text || !runtime.engineManaged || group.archivedAt) return;
+    if (members.length < (event || group.eventId ? 1 : 2)) {
+      setError(event || group.eventId ? "This event needs a coworker who is still here." : "A group chat needs at least two coworkers who are still here.");
       return;
     }
     setMessage("");
     setMention(null);
-    const revision = ++errorRevision.current;
+    ++errorRevision.current;
     setError("");
     sendVoicedMessage(text, newId("m"));
     const mentions = parseMentions(text, members);
     for (const slug of mentions.everyone ? members.map((member) => member.slug) : mentions.slugs) acknowledgeCoworker(slug);
-    const focus = /^(?:\/focus\s+|focus on\s+)([\s\S]+)$/i.exec(text);
-    if (focus?.[1] && onRememberFocus) {
-      void waitForGroup(onRememberFocus(focus[1])).catch(() => {
-        if (mounted.current && revision === errorRevision.current) setError("The saved focus could not be confirmed. The message's send status is shown above.");
-      });
-    }
   }
 
   function sendVoicedMessage(text: string, clientMessageId: string): void {
@@ -490,14 +490,16 @@ function GroupChatView({
   // --- an assignment from the group ------------------------------------------------
   /** Ask who should own it: the best match by role is proposed first; the person confirms. */
   function proposeAssignment(): void {
+    if (eventId) { setError("Create this assignment in the owner's own chat. Event-chat assignment receipts are not supported yet."); return; }
     const outcome = assignment.trim();
-    if (!active || !outcome || members.length === 0 || pendingAssignment || assignmentInFlight.current) return;
+    if (!active || group.archivedAt || !outcome || members.length === 0 || pendingAssignment || assignmentInFlight.current) return;
     setError("");
     setPendingAssignment({ outcome, suggested: chooseSpeakers(outcome, members, events)[0] ?? members[0]?.slug ?? "" });
   }
 
   /** Create the assignment in the owner's own workspace and link it from the timeline as one action line. */
   async function createAssignment(slug: string, outcome: string): Promise<void> {
+    if (eventId || groupRef.current.eventId) { setError("Create this assignment in the owner's own chat. Event-chat assignment receipts are not supported yet."); return; }
     if (!activeRef.current || assignmentInFlight.current) return;
     const owner = coworkersRef.current.find((coworker) => coworker.slug === slug);
     if (!owner) return;
@@ -595,7 +597,7 @@ function GroupChatView({
   const voiceTurn = !live && !activityError && latestTurn && (!voiceBaseline || latestTurn.clientMessageId !== voiceBaseline.clientMessageId || latestTurn.updatedAt > voiceBaseline.updatedAt) ? latestTurn : null;
   const spokenReply = useMemo(() => groupVoiceReply(voiceTurn, events, nameFor, voiceBaseline?.eventIds), [voiceTurn, events, nameFor, voiceBaseline?.eventIds]);
   const voice = useVoice({
-    active: active && !assignmentMode && !sharedDocument,
+    active: active && !assignmentMode && !sharedDocument && !group.archivedAt,
     scope: `group:${group.id}`,
     onTranscript: (text) => { setMessage((draft) => appendVoiceDraft(draft, text)); setMention(null); },
     reply: spokenReply,
@@ -605,12 +607,14 @@ function GroupChatView({
   const recoveryBusy = localSends.some((item) => item.turnId && (item.state === "pending" || item.state === "sending" || item.state === "accepted"));
   const recoverable = loaded && !activityError && !live && latestTurn && unfinishedSpeakers(latestTurn).length > 0 ? latestTurn : null;
   const unfinished = recoverable ? unfinishedSpeakers(recoverable) : [];
-  const showContinue = recoverable && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
+  const eventPhaseRecovery = recoverable && isEventPhaseRequest(recoverable.clientMessageId);
+  const showContinue = recoverable && !eventPhaseRecovery && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
   const waiting = receipts.some((receipt) => ["waiting", "waiting-person", "resumption-queued"].includes(receipt.state));
   const presentation = useMemo(() => describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn, nameFor, unavailable: Boolean(activityError) || !loaded }), [events, executions, interactions, live, liveTurn, nameFor, activityError, loaded]);
   const statusLine = activityError ? "Reconnecting to activity" : localSends.some((item) => item.state === "uncertain") ? "Checking message confirmation" : sending ? "Sending…" : interactions.length || executions.length || live ? presentation.line : waiting ? "Waiting for requested work" : !loaded || !receiptsLoaded || observed.groupId !== group.id ? "Checking activity" : localSends.some((item) => item.state === "accepted") ? "Message accepted" : "Ready";
   const activeSlugs = presentation.activeSlugs;
   const rows = useMemo(() => groupConversationRows(events, executions, localSends), [events, executions, localSends]);
+  const viewEvent = eventId && onOpenEvent ? <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => onOpenEvent(eventId)} data-testid="group-event-phase-link">View event</button> : null;
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
@@ -633,27 +637,29 @@ function GroupChatView({
               }}
             />
           ) : (
-            <h1 className="whitespace-normal text-sm font-semibold text-snow [overflow-wrap:anywhere]" data-testid="group-name">{group.name}</h1>
+            <h1 className="whitespace-normal text-sm font-semibold text-snow [overflow-wrap:anywhere]" data-testid="group-name">{event?.title ?? group.name}</h1>
           )}
           <p className="whitespace-normal text-xs text-mist [overflow-wrap:anywhere]" data-testid="conversation-header-title">{members.map((member) => member.name).join(", ")}</p>
         </div>
         <div className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions">
+          {eventId && onOpenEvent ? <Button variant="ghost" onClick={() => onOpenEvent(eventId)} data-testid="event-conversation-backlink">View event</Button> : null}
           {documentsApi ? <Button variant="ghost" onClick={() => setSharedDocument({ groupId: group.id, id: "" })} data-testid="group-shared-documents">Shared documents</Button> : null}
           {live ? <Button variant="ghost" disabled={busyActions.includes("stop")} onClick={stopGroup}>{busyActions.includes("stop") ? "Stopping…" : actionAttempts.current.get("stop")?.state === "retryable" ? "Retry stop" : "Stop all"}</Button> : null}
-          <ActionMenu
+          {!event && !group.eventId ? <ActionMenu
             label="Group chat options"
             items={[
-              ...(!briefing ? [{ label: "Rename", onSelect: () => { setNameDraft(group.name); setRenaming(true); } }] : []),
+              { label: "Rename", onSelect: () => { setNameDraft(group.name); setRenaming(true); } },
               ...(onOpenDetails ? [{ label: "Group details", onSelect: onOpenDetails }] : []),
-              ...(!briefing ? [{ label: "Archive", tone: "danger" as const, disabled: live || sending || busyActions.includes("archive"), onSelect: () => void runAction("archive", () => coworkerBridge.groups.archive(group.id), (archived) => { if (mounted.current) onGroupArchived(archived); }) }] : []),
+              { label: "Archive", tone: "danger", disabled: live || sending || busyActions.includes("archive"), onSelect: () => void runAction("archive", () => coworkerBridge.groups.archive(group.id), (archived) => { if (mounted.current) onGroupArchived(archived); }) },
             ]}
-          />
+          /> : null}
         </div>
         {/* One plain line, no dot: who is replying, or Ready. */}
         <span data-testid="coworker-top-status" data-tone={statusLine === "Ready" ? "ready" : "mist"} className={`min-w-0 max-w-full whitespace-normal text-xs [overflow-wrap:anywhere] ${statusLine === "Ready" ? "text-ready" : "text-mist"}`}>
           {statusLine}
         </span>
       </header>
+      {event || group.eventId ? <p className="border-b border-line/60 px-5 py-2 text-[11px] text-mist">Event conversation. Change participants and future sessions in the event editor. {group.archivedAt ? "This conversation is archived; its history is kept." : ""}</p> : null}
       <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">
@@ -690,7 +696,7 @@ function GroupChatView({
               return (
                 <p key={key} className="flex flex-wrap items-center justify-center gap-x-3 px-12 text-center text-[11px] text-mist" data-testid="group-status" data-status={event.status} data-speaker={event.slug} data-error={speaker?.error}>
                   {documentsApi && "documentId" in event && typeof event.documentId === "string" ? <button type="button" className="text-spark hover:underline" onClick={() => setSharedDocument({ groupId: group.id, id: String(event.documentId) })}>{event.text}</button> : <span title={speaker?.error && speaker.error !== event.text ? speaker.error : undefined}>{event.text}</span>}
-                  {speaker && recoverable ? (
+                  {speaker && recoverable ? eventPhaseRecovery ? viewEvent : (
                     <span className="flex items-center gap-x-3">
                       <button type="button" disabled={recoveryBusy} className="font-medium text-snow/80 underline-offset-2 hover:underline disabled:opacity-50" data-testid="group-speaker-retry" data-speaker={speaker.slug} onClick={() => resume(recoverable, speaker.slug)}>Continue</button>
                       {failure?.modelRelated ? (
@@ -715,6 +721,7 @@ function GroupChatView({
             }
             if (event.kind === "user") {
               const queued = queue.some((item) => item.clientMessageId === event.clientMessageId);
+              const eventPhase = isEventPhaseRequest(delivery?.clientMessageId ?? event.clientMessageId, delivery?.turnId ?? event.turnId);
               return (
                 <div key={key} data-scroll-anchor={key} data-client-message-id={event.clientMessageId} data-delivery-state={delivery?.state ?? "recorded"}>
                   {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="group-time-label">{label}</p> : null}
@@ -724,10 +731,10 @@ function GroupChatView({
                     </div>
                   </div>
                   {delivery ? <div className="mt-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 px-2 text-[11px] text-mist" role="status" data-testid={queued ? "group-queued" : delivery.state === "failed" || delivery.state === "uncertain" ? "group-turn-failed" : "group-send-receipt"}>
-                    <span>{queued ? "Next" : delivery.state === "pending" ? "Waiting to send" : delivery.state === "sending" ? "Sending…" : delivery.state === "accepted" ? "Accepted" : delivery.state === "cancelled" ? "Removed from queue" : delivery.state === "uncertain" ? "Confirmation delayed. Checking records." : "Could not send"}</span>
+                    <span>{eventPhase ? "Managed event phase; its run record owns the status" : queued ? "Next" : delivery.state === "pending" ? "Waiting to send" : delivery.state === "sending" ? "Sending…" : delivery.state === "accepted" ? "Accepted" : delivery.state === "cancelled" ? "Removed from queue" : delivery.state === "uncertain" ? "Confirmation delayed. Checking records." : "Could not send"}</span>
                     {delivery.error ? <span className="max-w-prose [overflow-wrap:anywhere]">{delivery.error}</span> : null}
-                    {delivery.state === "failed" || delivery.state === "uncertain" ? <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => sendVoicedMessage(delivery.text, delivery.clientMessageId)}>Retry</button> : null}
-                    {queued || delivery.state === "pending" ? <button type="button" disabled={busyActions.includes(`remove:${delivery.clientMessageId}`)} className="text-mist underline disabled:opacity-50" aria-label="Do not send this" onClick={() => removeQueued(delivery.clientMessageId)}>{busyActions.includes(`remove:${delivery.clientMessageId}`) ? "Removing…" : actionAttempts.current.get(`remove:${delivery.clientMessageId}`)?.state === "retryable" ? "Retry remove" : "Remove"}</button> : null}
+                    {eventPhase ? viewEvent : delivery.state === "failed" || delivery.state === "uncertain" ? <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => sendVoicedMessage(delivery.text, delivery.clientMessageId)}>Retry</button> : null}
+                    {!eventPhase && (queued || delivery.state === "pending") ? <button type="button" disabled={busyActions.includes(`remove:${delivery.clientMessageId}`)} className="text-mist underline disabled:opacity-50" aria-label="Do not send this" onClick={() => removeQueued(delivery.clientMessageId)}>{busyActions.includes(`remove:${delivery.clientMessageId}`) ? "Removing…" : actionAttempts.current.get(`remove:${delivery.clientMessageId}`)?.state === "retryable" ? "Retry remove" : "Remove"}</button> : null}
                   </div> : null}
                 </div>
               );
@@ -751,7 +758,7 @@ function GroupChatView({
               </div>
             );
           })}
-          <CollaborationReceipts receipts={receipts} />
+          <CollaborationReceipts receipts={receipts} canRetry={(receipt) => !receipt.eventRunId && !events.some((entry) => entry.executionId === receipt.id && isEventPhaseRequest(entry.clientMessageId, entry.turnId))} retryUnavailable={viewEvent} />
           {interactions.map((entry) => {
             const member = members.find((member) => member.slug === entry.slug);
             if (!member) return null;
@@ -766,13 +773,14 @@ function GroupChatView({
             </div>;
           })}
           {live && executions.length === 0 && interactions.length === 0 ? <p className="px-1 text-[11px] text-mist [overflow-wrap:anywhere]" data-testid="group-progress-phrase">{statusLine}</p> : null}
+          {eventPhaseRecovery ? <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] text-mist" data-testid="group-event-phase-recovery"><span>This event phase cannot be replayed. Its accepted run and results are kept.</span>{viewEvent}</div> : null}
           {showContinue && recoverable ? (
             <div className="flex items-center justify-center gap-3 text-[11px] text-mist" data-testid="group-turn-recovery" data-turn-id={recoverable.id}>
               <span>{listNames(unfinished.map((speaker) => nameFor(speaker.slug)))} still to reply</span>
               <button type="button" disabled={recoveryBusy} className="font-medium text-snow/80 underline-offset-2 hover:underline disabled:opacity-50" data-testid="group-turn-continue" onClick={() => resume(recoverable)}>Continue</button>
             </div>
           ) : null}
-          {localSends.filter((item) => item.turnId).map((item) => <div key={item.clientMessageId} className="flex items-center justify-center gap-3 text-[11px] text-mist" role="status" data-testid="group-recovery-receipt">
+          {localSends.filter((item) => item.turnId).map((item) => isEventPhaseRequest(item.clientMessageId, item.turnId) ? <div key={item.clientMessageId} className="flex flex-wrap items-center justify-center gap-3 text-[11px] text-mist" role="status" data-testid="group-event-phase-receipt"><span>Event phase replay is unavailable; inspect its recorded run.</span>{viewEvent}</div> : <div key={item.clientMessageId} className="flex items-center justify-center gap-3 text-[11px] text-mist" role="status" data-testid="group-recovery-receipt">
             <span>{item.state === "failed" || item.state === "uncertain" ? "Continue could not be confirmed" : item.state === "accepted" ? "Continue accepted" : "Requesting Continue…"}{item.error ? `: ${item.error}` : ""}</span>
             {item.state === "failed" || item.state === "uncertain" ? <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => { const turn = group.turns.find((turn) => turn.id === item.turnId); if (turn) resume(turn, item.only); }}>Retry Continue</button> : null}
           </div>)}
@@ -845,7 +853,7 @@ function GroupChatView({
                 className="block min-h-[56px] w-full resize-none bg-transparent px-1 pb-3 pt-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
                 placeholder={assignmentMode ? "What should one of them own?" : `Message ${members.map((member) => member.name).join(", ")}`}
                 value={assignmentMode ? assignment : message}
-                disabled={!runtime.engineManaged}
+                disabled={!runtime.engineManaged || Boolean(group.archivedAt)}
                 onChange={(event) => {
                   if (assignmentMode) {
                     setAssignment(event.target.value);
@@ -891,10 +899,10 @@ function GroupChatView({
                 }}
               />
               <div className="flex items-center gap-2" data-testid="coworker-composer-actions">
-                <button
+                {!eventId ? <button
                   type="button"
                   aria-pressed={assignmentMode}
-                  disabled={Boolean(assignmentBusy)}
+                  disabled={Boolean(assignmentBusy) || Boolean(group.archivedAt)}
                   data-testid="group-assignment-toggle"
                   className={`flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
                     assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
@@ -908,18 +916,19 @@ function GroupChatView({
                 >
                   <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
                   <span className="sr-only">{assignmentMode ? "Back to chat" : "Create assignment"}</span>
-                </button>
-                {!assignmentMode ? <VoiceToggle voice={voice} disabled={!runtime.engineManaged} /> : null}
+                </button> : null}
+                {!assignmentMode ? <VoiceToggle voice={voice} disabled={!runtime.engineManaged || Boolean(group.archivedAt)} /> : null}
                 <span className="min-w-0 flex-1 text-[11px] text-mist/75">{assignmentMode ? "Create an assignment" : "@name to choose who answers"}</span>
                 {live && !assignmentMode ? <Button variant="ghost" disabled={busyActions.includes("stop")} className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={stopGroup}>{busyActions.includes("stop") ? "Stopping…" : actionAttempts.current.get("stop")?.state === "retryable" ? "Retry stop" : "Stop"}</Button> : null}
                 {assignmentMode ? (
-                  <SendButton label="Create assignment" busy={false} disabled={!assignment.trim() || !runtime.engineManaged || Boolean(pendingAssignment)} onClick={proposeAssignment} testId="group-send" />
+                  <SendButton label="Create assignment" busy={false} disabled={!assignment.trim() || !runtime.engineManaged || Boolean(pendingAssignment) || Boolean(group.archivedAt)} onClick={proposeAssignment} testId="group-send" />
                 ) : (
-                  <SendButton label={live || sending ? "Next" : "Send"} busy={false} disabled={!message.trim() || !runtime.engineManaged} onClick={send} testId="group-send" />
+                  <SendButton label={live || sending ? "Next" : "Send"} busy={false} disabled={!message.trim() || !runtime.engineManaged || Boolean(group.archivedAt)} onClick={send} testId="group-send" />
                 )}
               </div>
             </div>
           </div>
+          {eventId ? <p className="mt-2 px-2 text-[11px] text-mist" data-testid="event-assignment-unavailable">Create assignments in a coworker's own chat for now. Event-chat assignment receipts are not yet supported; ordinary follow-up messages still work here.</p> : null}
           <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 text-[10px] text-mist/65">
             <p className="min-w-0 truncate">
               {assignmentMode ? "Enter to choose who owns it · Shift Enter for a new line" : "Enter to send · Shift Enter for a new line · @name chooses who answers, @everyone asks all"}

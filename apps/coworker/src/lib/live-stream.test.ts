@@ -143,8 +143,19 @@ test("group snapshots retain unavailable words, isolate native requests, and han
   assert.deepEqual(describeGroupPresentation({ ...cached, events: [], interactions: [], active: true, turn: null, nameFor: (slug) => slug, unavailable: true }).activeSlugs, []);
   const other = reconcileGroupActivity(cached, { timeline: [], executions: [{ ...first, messageId: "other-request", replies: [] }] });
   assert.deepEqual(groupReplyParts(other.executions[0]!), []);
-  const published = reconcileGroupActivity(cached, { timeline: [{ id: "evt_1", kind: "coworker", executionId: first.executionId, text: "final reply", at: 3 }], executions: [first, second] });
+  const documents: GroupTimelineEvent[] = [1, 2].map((revision) => ({ id: `evt_document_brief_${revision}`, kind: "status", status: "document", documentId: "brief", revision, executionId: first.executionId, threadId: first.threadId, turnId: "turn_1", text: `Updated brief · revision ${revision}`, at: 2 }));
+  const withDocuments = reconcileGroupActivity(cached, { timeline: documents, executions: [first, second] });
+  assert.deepEqual(withDocuments.timeline, documents);
+  assert.deepEqual(withDocuments.executions.map((item) => item.executionId), ["exec_1", "exec_2"], "artifact provenance is not reply publication");
+  assert.equal(groupReplyParts(withDocuments.executions[0]!)[0]?.text, "kept reply");
+  assert.deepEqual(reconcileGroupActivity(withDocuments, withDocuments).timeline, documents, "repeated artifact observations retain each revision once");
+  const published = reconcileGroupActivity(withDocuments, { timeline: [...documents, { id: "evt_1", kind: "coworker", executionId: first.executionId, text: "final reply", at: 3 }], executions: [first, second] });
   assert.deepEqual(published.executions.map((item) => item.executionId), ["exec_2"]);
+  assert.deepEqual(published.timeline.slice(0, 2), documents, "published replies preserve the artifact receipts and their provenance");
+  assert.deepEqual(published.timeline.map(groupMessageKey), [...documents.map((event) => event.id), "execution:exec_1"]);
+  const stopped = reconcileGroupActivity(withDocuments, { timeline: [...documents, { id: "evt_stop", kind: "status", status: "cancelled", executionId: first.executionId, text: "Stopped.", at: 3 }], executions: [first, second] });
+  assert.deepEqual(stopped.executions.map((item) => item.executionId), ["exec_2"]);
+  assert.deepEqual(stopped.timeline.slice(0, 2), documents, "cancellation retains distinct artifact receipts");
   assert.equal(groupMessageKey({ id: "optimistic", kind: "user", clientMessageId: "same-id", at: 1, text: "prompt" }), groupMessageKey({ id: "recorded", kind: "user", clientMessageId: "same-id", at: 2, text: "prompt" }));
 
   const failed: GroupSend = { clientMessageId: "A", text: "failed prompt", at: 1, state: "failed", beforeClientMessageId: "B" };

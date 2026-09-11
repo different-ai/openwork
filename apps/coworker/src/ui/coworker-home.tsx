@@ -78,6 +78,8 @@ export function HeaderStatusWord({ activity, engineManaged }: { activity: Cowork
 export type CoworkerHomeRequest =
   | { id: number; kind: "settings"; section: "model" }
   | { id: number; kind: "thread"; threadId: string }
+  | { id: number; kind: "document"; documentId: string }
+  | { id: number; kind: "responsibilities" }
   | { id: number; kind: "turn"; prompt: string };
 
 /**
@@ -216,7 +218,7 @@ export function CoworkerHome({
   const nav = usePanelNavigation<PanelView>({
     initialView: "overview",
     isView: isPanelView,
-    open: !contextPanel.collapsed,
+    open: active && !contextPanel.collapsed,
     onEscapeAtRoot: contextPanel.collapse,
     onRequestOpen: contextPanel.expand,
   });
@@ -254,6 +256,15 @@ export function CoworkerHome({
   /** A request passed from a teammate, to send in the open discussion; the id makes repeats distinct. */
   const [turnRequest, setTurnRequest] = useState<{ id: number; prompt: string } | null>(null);
   const handledRequestRef = useRef(0);
+  const collapseContextPanel = contextPanel.collapse;
+  const toRoot = nav.toRoot;
+  // Reset before applying an incoming document/settings request on this mount.
+  useEffect(() => {
+    collapseContextPanel();
+    toRoot("overview");
+    setBesideDocumentId("");
+    setBesidePath(null);
+  }, [collapseContextPanel, coworker.slug, toRoot]);
   useEffect(() => {
     if (!request || handledRequestRef.current === request.id) return;
     handledRequestRef.current = request.id;
@@ -265,17 +276,17 @@ export function CoworkerHome({
       setTurnRequest({ id: request.id, prompt: request.prompt });
       return;
     }
+    if (request.kind === "document") {
+      setOpenDocumentRequest({ id: request.id, documentId: request.documentId });
+      openActivityLevel("documents");
+      return;
+    }
+    if (request.kind === "responsibilities") {
+      openActivityLevel("assignments");
+      return;
+    }
     openSettingsSection(request.section, request.id);
-  }, [openSettingsSection, request]);
-  const collapseContextPanel = contextPanel.collapse;
-  const toRoot = nav.toRoot;
-  /** Moving to another coworker returns to the conversation; the panel does not follow. */
-  useEffect(() => {
-    collapseContextPanel();
-    toRoot("overview");
-    setBesideDocumentId("");
-    setBesidePath(null);
-  }, [collapseContextPanel, coworker.slug, toRoot]);
+  }, [openActivityLevel, openSettingsSection, request]);
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener("resize", onResize);

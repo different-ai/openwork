@@ -1,16 +1,3 @@
-export type AllHandsSettings = {
-  enabled: boolean;
-  frequency: "morning" | "twice" | "manual";
-  morning: string;
-  afternoon: string;
-  focus: string;
-  groupId: string;
-  enabledAt: number;
-  lastOccurrence: string;
-  lastRequestedAt: number;
-};
-export type AllHandsPatch = Partial<Pick<AllHandsSettings, "enabled" | "frequency" | "morning" | "afternoon" | "focus">>;
-
 /** Typed access to the Open Coworker main-process bridge. */
 import type { CoworkerDocument, CoworkerDocumentSummary, DocumentRevision, DocumentStatus } from "./documents";
 import type { GroupDocument, GroupDocumentSave, GroupDocumentSaved, GroupDocumentSummary, GroupDocumentsApi } from "./group-documents";
@@ -26,12 +13,15 @@ import type { HeadlessThreadModel, HeadlessTurnAcceptance } from "@openwork/head
 import type { ThreadTurnState } from "./thread-queue.ts";
 import type { ExecutionActivity } from "./progress-activity.ts";
 import type { PendingInteractions, PermissionReply } from "./threads.ts";
+import { eventInputSchema, eventArtifactSchema, type EventInput, type WorkplaceEvent, type EventRun, type EventDetail, type EventArtifact } from "./events";
 
 export type GroupInteraction = { executionId: string; slug: string; threadId: string; workspaceId: string; deadline: number; pending: PendingInteractions };
 export type GroupInteractionReply = { groupId: string; executionId: string; slug: string; threadId: string; workspaceId: string; requestId: string } & ({ kind: "permission"; reply: PermissionReply } | { kind: "question"; answers: string[][]; reply?: never } | { kind: "question"; reply: "reject"; answers?: never });
 
 export type CollaborationReceipt = {
   id: string;
+  /** Native event ownership, when this task belongs to an accepted event run. */
+  eventRunId?: string;
   conversationId: string;
   threadId: string;
   messageId: string;
@@ -52,6 +42,7 @@ export type CoworkerTemplateSync = {
 export type CoworkerGroupSummary = {
   schemaVersion: 1;
   id: string;
+  eventId?: string;
   name: string;
   participantSlugs: string[];
   /** The native discussion thread each participant uses for this group, in its own workspace. */
@@ -691,11 +682,16 @@ export const coworkerBridge = {
     resume: (slug: string, id: string) => invoke<WorkerSummary>("workers.resume", { slug, id }),
     findings: (slug: string, id: string, limit?: number) => invoke<WorkerEvent[]>("workers.findings", { slug, id, limit }),
   },
-  allHands: {
-    get: () => invoke<AllHandsSettings>("allHands.get"),
-    update: (patch: AllHandsPatch) => invoke<AllHandsSettings>("allHands.update", patch),
-    prepare: () => invoke<CoworkerGroupSummary | null>("allHands.prepare"),
-    claim: () => invoke<{ id: string; at: number } | null>("allHands.claim"),
+  events: {
+    document: {
+      read: (id: string, runId: string, artifact: EventArtifact) => invoke<CoworkerDocument | GroupDocument>("events.document.read", { id, runId, artifact: eventArtifactSchema.parse(artifact) }),
+    },
+    list: () => invoke<WorkplaceEvent[]>("events.list", {}),
+    get: (id: string) => invoke<EventDetail>("events.get", { id }),
+    create: (input: EventInput) => invoke<WorkplaceEvent>("events.create", { input: eventInputSchema.parse(input) }),
+    update: (id: string, input: EventInput, expectedRevision: number) => invoke<WorkplaceEvent>("events.update", { id, input: eventInputSchema.parse(input), expectedRevision }),
+    runNow: (id: string, requestId: string) => invoke<EventRun>("events.runNow", { id, requestId }),
+    cancel: (id: string, runId: string) => invoke<EventRun>("events.cancel", { id, runId }),
   },
   settings: {
     get: () => invoke<CoworkerSettings>("settings.get"),

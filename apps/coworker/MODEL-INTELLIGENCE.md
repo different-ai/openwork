@@ -83,6 +83,13 @@ The facilitator honors group override then app choice, otherwise quick selection
 automatic secondary attempts stay with the same provider at no higher known prices.
 Memory/progress transport allowlists, budgets and opt-in settings are unchanged.
 
+Events use these same roles, not an Event-specific model policy. Contributions
+and lead conclusions use Conversation; delegated Workers use Thinking or Delivery.
+Ordinary Event-chat follow-ups use the facilitator; scheduled phases already have
+an explicit participant plan and bypass speaker-selection inference. Model defaults
+apply at new admission, while accepted turns and existing Workers keep their pins.
+Recovery, stop confirmation and artifact observation do not resolve a new model.
+
 ## Updating the index
 
 - Review the official source for the affected service or adapter. Update the

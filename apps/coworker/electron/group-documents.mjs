@@ -250,7 +250,7 @@ export function assertGroupDocumentToolContext({ slug, context, name, args, entr
 }
 
 /** The only transport entry points: trusted person IPC or admitted native group tools. */
-export function createGroupDocumentService({ coworkersDir, coworkerFor, resolveContext, publish = (groupId, event) => appendGroupEvent(coworkersDir, groupId, event) }) {
+export function createGroupDocumentService({ coworkersDir, coworkerFor, resolveContext, captureArtifact = async () => {}, publish = (groupId, event) => appendGroupEvent(coworkersDir, groupId, event) }) {
   const callers = new WeakMap();
   const person = Object.freeze({});
   callers.set(person, async () => ({ kind: "person" }));
@@ -259,12 +259,13 @@ export function createGroupDocumentService({ coworkersDir, coworkerFor, resolveC
     if (!resolve) throw new Error("Unrecognized shared-document caller.");
     return resolve();
   } });
-  async function announce(result) {
+  async function announce(result, entry) {
     if (!result.changed) return result;
     try {
       await publish(result.groupId, {
         id: `evt_document_${result.id}_${result.revision}`, kind: "status", status: "document",
         documentId: result.id, revision: result.revision,
+        ...(entry ? { executionId: entry.id, turnId: entry.owner.turnId, threadId: entry.owner.threadId } : {}),
         text: `${result.author} updated ${result.title} · revision ${result.revision}`,
         ...(result.authorSlug ? { slug: result.authorSlug } : {}),
       });
@@ -306,10 +307,14 @@ export function createGroupDocumentService({ coworkersDir, coworkerFor, resolveC
           case "group_document_revisions": result = await store.revisions(groupId, args.id, identity); break;
           case "group_document_save": {
             const { groupId: requestedGroupId, ...input } = args;
-            result = await announce(await store.save(groupId, input, identity));
+            result = await announce(await store.save(groupId, input, identity), trusted.entry);
             break;
           }
-          case "group_document_restore": result = await announce(await store.restore(groupId, args.id, args.revision, args.expectedRevision, identity)); break;
+          case "group_document_restore": result = await announce(await store.restore(groupId, args.id, args.revision, args.expectedRevision, identity), trusted.entry); break;
+        }
+        if (["group_document_read", "group_document_save", "group_document_restore"].includes(name)) {
+          try { await captureArtifact(trusted.entry, result, result.changed ? args.id ? "modified" : "created" : "used", { kind: "group", groupId }, trusted.callId); }
+          catch { result = { ...result, eventReferenceFailed: true }; }
         }
         return { text: JSON.stringify(result) };
       } finally { callers.delete(identity); }

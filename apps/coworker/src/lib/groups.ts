@@ -391,6 +391,8 @@ export async function runGroupTurn(input: {
   clientMessageId: string;
   signal: AbortSignal;
   deps: GroupTurnDeps;
+  /** A native, persisted event plan bypasses conversational audience selection. */
+  plan?: RoutingPlan;
 }): Promise<CoworkerGroupTurn | null> {
   const { deps } = input;
   const message = input.message.trim();
@@ -398,8 +400,8 @@ export async function runGroupTurn(input: {
   if (!begun.created) return null;
   deps.onTurn?.(begun.turn);
   const mentions = parseMentions(message, input.participants);
-  let plan: RoutingPlan | null = null;
-  if (deps.route && !input.signal.aborted) {
+  let plan: RoutingPlan | null = input.plan ?? null;
+  if (!plan && deps.route && !input.signal.aborted) {
     plan = await deps.route({ message, mentions, participants: input.participants, recent: input.recent, signal: input.signal }).catch(() => null);
   }
   if (!plan) plan = fallbackPlan(message, input.participants, input.recent);

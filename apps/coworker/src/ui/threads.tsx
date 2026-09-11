@@ -2388,7 +2388,7 @@ type ConversationBlock =
   | { kind: "ended"; message: TranscriptMessage; ended: "stopped" | "failed" };
 
 /** Safe conversation-scoped facts only; progress inspection is a separate surface. */
-export function CollaborationReceipts({ receipts }: { receipts: import("@/lib/bridge").CollaborationReceipt[] }) {
+export function CollaborationReceipts({ receipts, canRetry, retryUnavailable }: { receipts: import("@/lib/bridge").CollaborationReceipt[]; canRetry?: (receipt: import("@/lib/bridge").CollaborationReceipt) => boolean; retryUnavailable?: ReactNode }) {
   const [error, setError] = useState("");
   const act = async (action: () => Promise<unknown>) => {
     setError("");
@@ -2403,7 +2403,7 @@ export function CollaborationReceipts({ receipts }: { receipts: import("@/lib/br
         return dependency.groupId ? <button key={dependency.id} type="button" className="underline underline-offset-2" onClick={() => window.dispatchEvent(new CustomEvent("coworker:open-group", { detail: dependency.groupId }))}>{label}</button> : <span key={dependency.id}>{label}</span>;
       })}
       {!["succeeded", "failed", "cancelled"].includes(receipt.state) ? <button type="button" className="underline underline-offset-2" title="Stop this task, its delegated work, and its automatic follow-up" onClick={() => void act(() => coworkerBridge.collaboration.cancel(receipt.id))}>Stop task</button> : null}
-      {receipt.state === "failed" ? <button type="button" className="underline underline-offset-2" onClick={() => void act(() => coworkerBridge.collaboration.retry(receipt.id))}>Continue with available results</button> : null}
+      {receipt.state === "failed" ? canRetry?.(receipt) === false ? retryUnavailable : <button type="button" className="underline underline-offset-2" onClick={() => void act(() => coworkerBridge.collaboration.retry(receipt.id))}>Continue with available results</button> : null}
     </div>)}
     {error ? <p role="alert" className="text-xs text-mist">{error}</p> : null}
   </div>;

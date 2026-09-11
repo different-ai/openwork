@@ -15,6 +15,7 @@ import { isNothingToAdd } from "../src/lib/groups.ts";
 
 export const GROUPS_DIR = ".groups";
 export const GROUP_SCHEMA_VERSION = 1;
+export const EVENT_GROUP_AUTHORITY = Symbol("event-group-authority");
 /** How many turn records a group keeps; older ones fall off, their timeline lines stay. */
 export const MAX_TURNS = 50;
 /** What the timeline says for speakers a quit or crash cut off. */
@@ -120,7 +121,7 @@ function timelinePath(coworkersDir, id) {
   return path.join(groupDir(coworkersDir, id), "timeline.jsonl");
 }
 
-export function normalizeParticipantSlugs(input) {
+export function normalizeParticipantSlugs(input, minimum = 2) {
   if (!Array.isArray(input)) throw new Error("A group needs its participants as a list of coworker slugs.");
   const slugs = [];
   for (const raw of input) {
@@ -128,7 +129,7 @@ export function normalizeParticipantSlugs(input) {
     if (!SLUG.test(slug)) throw new Error(`Invalid coworker slug: ${String(raw)}`);
     if (!slugs.includes(slug)) slugs.push(slug);
   }
-  if (slugs.length < 2) throw new Error("A group chat needs at least two coworkers.");
+  if (slugs.length < minimum) throw new Error(minimum === 2 ? "A group chat needs at least two coworkers." : "An event needs at least one coworker.");
   return slugs;
 }
 
@@ -171,6 +172,7 @@ function normalizeStoredGroup(raw) {
   return {
     schemaVersion: GROUP_SCHEMA_VERSION,
     id: raw.id,
+    ...(typeof raw.eventId === "string" && raw.eventId ? { eventId: raw.eventId } : {}),
     name: typeof raw.name === "string" ? raw.name : "Group chat",
     participantSlugs: Array.isArray(raw.participantSlugs) ? raw.participantSlugs.filter((slug) => typeof slug === "string" && SLUG.test(slug)) : [],
     participantThreadIds: raw.participantThreadIds && typeof raw.participantThreadIds === "object" ? { ...raw.participantThreadIds } : {},
@@ -183,8 +185,9 @@ function normalizeStoredGroup(raw) {
   };
 }
 
-export async function createGroup(coworkersDir, { id, name, participantSlugs }, { now = Date.now() } = {}) {
-  const slugs = normalizeParticipantSlugs(participantSlugs);
+export async function createGroup(coworkersDir, { id, name, participantSlugs, eventId }, { now = Date.now(), authority } = {}) {
+  if (eventId && authority !== EVENT_GROUP_AUTHORITY) throw new Error("Event groups are managed through Events.");
+  const slugs = normalizeParticipantSlugs(participantSlugs, eventId ? 1 : 2);
   if (id) {
     if (!isGroupId(id)) throw new Error("Invalid group id.");
     try { return await getGroup(coworkersDir, id); } catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -192,6 +195,7 @@ export async function createGroup(coworkersDir, { id, name, participantSlugs }, 
   const group = {
     schemaVersion: GROUP_SCHEMA_VERSION,
     id: id ?? newGroupId(),
+    ...(eventId ? { eventId } : {}),
     name: normalizeName(name, "Group chat"),
     participantSlugs: slugs,
     participantThreadIds: {},
@@ -234,11 +238,16 @@ export async function listGroups(coworkersDir) {
   return groups.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function updateGroup(coworkersDir, id, patch = {}, { now = Date.now() } = {}) {
+export async function updateGroup(coworkersDir, id, patch = {}, { now = Date.now(), authority } = {}) {
   return mutateGroup(coworkersDir, id, (group) => {
+    if ((group.eventId || patch.eventId !== undefined) && authority !== EVENT_GROUP_AUTHORITY) throw new Error("Event groups are managed through Events.");
     const next = { ...group, updatedAt: now };
+    if (patch.eventId !== undefined) {
+      if (typeof patch.eventId !== "string" || !patch.eventId || (group.eventId && group.eventId !== patch.eventId)) throw new Error("An event group's identity cannot be replaced.");
+      next.eventId = patch.eventId;
+    }
     if (patch.name !== undefined) next.name = normalizeName(patch.name, group.name);
-    if (patch.participantSlugs !== undefined) next.participantSlugs = normalizeParticipantSlugs(patch.participantSlugs);
+    if (patch.participantSlugs !== undefined) next.participantSlugs = normalizeParticipantSlugs(patch.participantSlugs, next.eventId ? 1 : 2);
     if (patch.participantThreadIds !== undefined) {
       if (!patch.participantThreadIds || typeof patch.participantThreadIds !== "object") throw new Error("participantThreadIds must map slugs to thread ids.");
       next.participantThreadIds = { ...group.participantThreadIds };
@@ -256,6 +265,7 @@ export async function updateGroup(coworkersDir, id, patch = {}, { now = Date.now
 
 export async function archiveGroup(coworkersDir, id, { now = Date.now() } = {}) {
   return mutateGroup(coworkersDir, id, (group) => {
+    if (group.eventId) throw new Error("Archive this event through Events; its group history is retained.");
     const next = { ...group, archivedAt: now, updatedAt: now };
     return { next, result: next };
   });

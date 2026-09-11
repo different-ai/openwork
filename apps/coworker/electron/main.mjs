@@ -29,6 +29,9 @@ import { createGroupExecution, repairGroupSelection } from "./group-execution.mj
 import { installCollaborationPlugin } from "./collaboration-plugin.mjs";
 import { assertGroupDocumentToolContext, createGroupDocumentService, groupDocumentToolCatalog } from "./group-documents.mjs";
 import { installGroupDocumentPlugin } from "./group-document-plugin.mjs";
+import { createEvents, eventNativeSchemas, assertEventToolContext } from "./events.mjs";
+import { coworkerIdentity, EVENT_SCHEDULE_DENY, EVENT_WRITE_DENY } from "./event-execution.mjs";
+import { installEventPlugin } from "./event-plugin.mjs";
 import { installComputerPlugin } from "./computer-plugin.mjs";
 import { createComputerControl, assertPrivateComputerDiscussion, COMPUTER_TOOLS, COMPUTER_DENY, COMPUTER_STOP_GUIDANCE, trustedComputerSender } from "./computer-control.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
@@ -903,6 +906,7 @@ const WORKER_TURN_TIMEOUT_MS = 60 * 60_000;
 const collaboration = createCollaboration({
   directory: coworkersDir,
   clientFor: (slug, options) => maintenanceAdmission.run(() => collaborationClient(slug, options)),
+  validateOwner: (owner) => events.validateOwner(owner),
   consult: (task) => maintenanceAdmission.run(() => groupExecution.consultation(task)),
   spawn: (slug, input) => maintenanceAdmission.run(() => spawnWorker(slug, input, "coworker")),
   cancelWorker: async (slug, id) => {
@@ -912,9 +916,13 @@ const collaboration = createCollaboration({
     if (worker || liveWorkerTurns.has(workerKey(slug, id))) return cancelWorker(slug, id, "The originating task stopped.", "person");
   },
   invalidateWorker: (slug, id) => { void workerControls.revokeId(slug, id); },
-  onExecutionEnd: (entry) => computerControl.endTurn(entry),
   memoryContext: (owner) => conversationMemory.context(owner),
+  executionContext: (owner) => events.context(owner),
   onSuccess: (entry) => entry.owner.kind === "private" ? captureConversationMemory(entry) : Promise.resolve(),
+  onExecutionEnd: async (entry, snapshot) => {
+    await computerControl.endTurn(entry);
+    await events.captureExecution(entry, snapshot);
+  },
   publish: (task) => maintenanceAdmission.run(async () => {
     if (!task.groupId) return;
     await appendGroupEvent(coworkersDir, task.groupId, { id: `evt_${collaborationId(task.id, "answer").slice(5)}`, kind: task.state === "succeeded" ? "coworker" : "status", slug: task.to, threadId: task.owner.threadId, status: task.state, text: task.state === "succeeded" ? task.result : `${task.label}: ${task.error || "The request stopped."}` });
@@ -985,6 +993,8 @@ const groupExecution = createGroupExecution({
   directory: coworkersDir,
   collaboration,
   settings: () => readSettings(settingsPath),
+  eventContext: (request, slug) => events.requestContext(request, slug),
+  conversationContext: (groupId, expected) => events.conversationContext(groupId, expected),
   coworkerFor: (slug) => getCoworker(coworkersDir, slug),
   coordinator: () => maintenanceAdmission.run(ensureCoordinatorWorkspace),
   catalogFor: async (workspace, signal) => {
@@ -1005,7 +1015,34 @@ const groupDocuments = createGroupDocumentService({
   coworkersDir,
   coworkerFor: (slug) => getCoworker(coworkersDir, slug),
   resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected, assertGroupDocumentToolContext),
+  captureArtifact: async (...args) => {
+    try { await events.captureArtifact(...args); }
+    catch (error) { await events.recordArtifactError(args[0], error); throw error; }
+  },
 });
+
+const events = createEvents({
+  directory: coworkersDir, collaboration, groups: groupExecution,
+  coworkerFor: (slug) => getCoworker(coworkersDir, slug),
+  coworkers: () => listCoworkers(coworkersDir),
+  readExecution: async (entry) => (await collaborationClient(entry.owner.slug, { model: entry.model, observationOnly: true })).getThreadSnapshot(entry.owner.threadId, { signal: AbortSignal.timeout(10_000) }),
+  resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected, assertEventToolContext),
+  readArtifact: async (artifact) => {
+    const owner = artifact.owner;
+    const current = owner.kind === "group" ? await groupDocuments.read(owner.groupId, artifact.documentId) : await readDocument(coworkersDir, owner.slug, artifact.documentId);
+    if (current.revision === artifact.revision) return current;
+    const history = owner.kind === "group" ? await groupDocuments.revisions(owner.groupId, artifact.documentId) : await listRevisions(coworkersDir, owner.slug, artifact.documentId);
+    const exact = history.find((entry) => entry.revision === artifact.revision);
+    if (!exact) throw new Error("This exact document revision is no longer retained. The current version was not substituted.");
+    return exact;
+  },
+  assignments: async () => (await Promise.all((await listCoworkers(coworkersDir)).map(async (coworker) =>
+    (await listLocalResponsibilities(coworkersDir, coworker.slug)).map((item) => ({ id: item.id, slug: coworker.slug, title: item.name, state: item.state, schedule: item.schedule, nextDueAt: item.nextDueAt }))))).flat().slice(0, 200),
+});
+
+async function ordinaryGroup(id) {
+  if ((await getGroup(coworkersDir, id)).eventId) throw new Error("This group is managed through Events.");
+}
 
 async function collaborationClient(slug, { kind = "reply", requestText, model, observationOnly = false, signal } = {}) {
   maintenanceAdmission.assertOpen();
@@ -1023,6 +1060,7 @@ async function collaborationClient(slug, { kind = "reply", requestText, model, o
   const resolvedModel = model ?? (observationOnly ? undefined : await localRunModel(coworker, kind, requestText));
   const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: resolvedModel });
   client.resolvedModel = resolvedModel;
+  if (slug !== ".coordinator") client.coworkerIdentity = coworkerIdentity(coworker);
   const interactions = createCoworkerThreads({ serverUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken });
   client.workspaceId = coworker.workspaceId;
   client.pendingInteractions = interactions.listThreadInteractions;
@@ -1051,7 +1089,7 @@ async function computerDiscussion(slug, threadId) {
     collaboration.read((state) => [state.owners[`${slug}:${threadId}`], ...Object.values(state.executions).filter((entry) => entry.owner.slug === slug && entry.owner.threadId === threadId).map((entry) => entry.owner)].filter(Boolean)),
   ]);
   assertPrivateComputerDiscussion({ slug, threadId, savedIds: parseDiscussionRegistry(saved), workerIds, workers, groups, assignments, owners });
-  const client = await collaborationClient(slug);
+  const client = await collaborationClient(slug, { observationOnly: true });
   const snapshot = await client.getThreadSnapshot(threadId, { signal: AbortSignal.timeout(8000) });
   if (snapshot.threadId !== threadId || !snapshot.directory || path.resolve(snapshot.directory) !== path.resolve(coworker.path) || client.workspaceId !== coworker.workspaceId) throw new Error("This native discussion does not belong to the coworker's workspace.");
   return { workspaceId: coworker.workspaceId, directory: path.resolve(coworker.path) };
@@ -1065,6 +1103,7 @@ async function installNativeCoworkerPlugins(coworker, server) {
     await installComputerPlugin(coworker);
     await installBrowserPlugin(coworker);
     await installGroupDocumentPlugin(coworker);
+    await installEventPlugin(coworker);
   });
   nativePluginInstalls.set(key, pending);
   try { await pending; } finally { if (nativePluginInstalls.get(key) === pending) nativePluginInstalls.delete(key); }
@@ -1253,6 +1292,7 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
   const run = { controller, active: false, entry: null, client: null, threadId: "", done: new Promise((resolve) => { release = resolve; }), cleanupError: null };
   liveWorkerTurns.set(key, run);
   let continueAfter = false;
+  let eventDeadlineTimer;
   try {
     let worker;
     let coworker;
@@ -1285,6 +1325,10 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
     let threadId = worker.threadId;
     const settle = async (outcome) => {
       run.entry.state = outcome.kind === "failed" ? "failed" : "succeeded";
+      if (run.eventOwner && run.client && threadId) {
+        const snapshot = await run.client.getThreadSnapshot(threadId, { signal: AbortSignal.timeout(10_000) });
+        await events.captureExecution({ ...run.entry, owner: { ...run.eventOwner, kind: "worker", threadId } }, snapshot);
+      }
       if (!await workerControls.endRun(run)) {
         run.cleanupError = new Error("Worker control cleanup could not be confirmed. Try Stop again before continuing.");
         return false;
@@ -1292,6 +1336,10 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
       return settleWorkerTurn(slug, id, outcome);
     };
     try {
+      const eventBudget = await collaboration.admitEventWorker(worker);
+      run.eventOwner = eventBudget?.owner;
+      run.eventPromptPrefix = eventBudget?.promptPrefix;
+      if (eventBudget) eventDeadlineTimer = setTimeout(() => controller.abort(new Error("The event reached its duration limit.")), Math.max(1, eventBudget.deadlineAt - Date.now()));
       client = await readyWorkerClient(coworker, worker);
       run.client = client;
       controller.signal.throwIfAborted();
@@ -1325,7 +1373,8 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
       await workerControls.admit(worker, run);
       controller.signal.throwIfAborted();
       run.active = true;
-      const acceptance = await client.sendTurn(threadId, { ...worker.pendingTurn, tools: workerTurnTools(run.control?.surface), signal: controller.signal });
+      await collaboration.admitEventWorker(worker);
+      const acceptance = await client.sendTurn(threadId, { ...worker.pendingTurn, ...(run.eventPromptPrefix ? { prompt: `${run.eventPromptPrefix}\n\n${worker.pendingTurn.prompt}` } : {}), tools: { ...workerTurnTools(run.control?.surface), ...(run.eventOwner?.eventRunId ? EVENT_SCHEDULE_DENY : EVENT_WRITE_DENY) }, signal: controller.signal });
       for (const [index, steer] of (worker.pendingTurn.steers ?? []).entries()) {
         await appendWorkerEvent(coworkersDir, slug, id, { id: `evt_${collaborationId(id, worker.pendingTurn.messageId, "steer-applied", steer.id ?? index).slice(5)}`, kind: "status", by: steer.by, turnId: worker.pendingTurn.messageId, text: `Applied to admitted step: ${steer.text}` });
       }
@@ -1381,6 +1430,7 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
       }
     }
   } finally {
+    clearTimeout(eventDeadlineTimer);
     release();
     if (!run.cleanupError && liveWorkerTurns.get(key) === run) liveWorkerTurns.delete(key);
     workerControls.releaseRun(run);
@@ -1539,6 +1589,7 @@ async function recoverInterruptedWorkers() {
 }
 
 async function runDueLocalResponsibilities() {
+  await events.tick().catch((error) => console.warn("[open-coworker] Event scheduling could not advance:", error.message));
   const now = Date.now();
   await recoverInterruptedWorkers().catch((error) => {
     console.warn("[open-coworker] Worker recovery failed", error);
@@ -1708,11 +1759,12 @@ async function ensureToolsServer() {
   // functions the panel views use, so the run limit, the guardrails, and the records agree.
   startingToolsServer ??= createCoworkerToolsServer({
     resolveSlug: (token) => maintenanceAdmission.closed ? null : toolTokenSlugs.get(token) ?? null,
-    onContextTool: (slug, input) => maintenanceAdmission.run(async () => {
+    onContextTool: (slug, input, transportSignal) => maintenanceAdmission.run(async () => {
       const { name, args, context, cancel } = input;
       if (Object.hasOwn(COMPUTER_TOOLS, name)) return computerControl.execute(slug, { name, args, context, cancel });
       if (Object.hasOwn(BROWSER_TOOLS, name)) return browserControl.execute(slug, { name, args, context, cancel });
       if (groupDocumentTools.has(name)) return groupDocuments.executeNative(slug, { name, args, context });
+      if (Object.hasOwn(eventNativeSchemas, name)) return events.executeNative(slug, { name, args, context }, transportSignal);
       const workerTool = name === "worker_spawn" || WORKER_MANAGEMENT.includes(name);
       const trusted = workerTool
         ? await collaboration.context(slug, context, { name: `coworker_${name}`, args }, assertWorkerToolContext)
@@ -2519,18 +2571,18 @@ const commands = {
   "groups.status": async ({ id }) => groupExecution.status(id),
   "groups.interactions.reply": async (input) => { await groupExecution.replyInteraction(input); return { ok: true }; },
   "groups.activity": async ({ id }) => groupExecution.activity(id, readCollaborationActivity),
-  "groups.cancel": async ({ id }) => { await groupExecution.cancel(id); return { ok: true }; },
+  "groups.cancel": async ({ id }) => { if ((await getGroup(coworkersDir, id)).eventId) await events.cancelGroup(id); else await groupExecution.cancel(id); return { ok: true }; },
   "groups.removeQueued": async ({ id, clientMessageId }) => { await groupExecution.remove(id, clientMessageId); return { ok: true }; },
   "groups.get": async ({ id }) => getGroup(coworkersDir, id),
   "groups.create": async ({ name, participantSlugs }) => createGroup(coworkersDir, { name, participantSlugs }),
   "groups.update": async ({ id, patch }) => updateGroup(coworkersDir, id, patch ?? {}),
-  "groups.archive": async ({ id }) => { await groupExecution.cancel(id); return archiveGroup(coworkersDir, id); },
+  "groups.archive": async ({ id }) => { await ordinaryGroup(id); await groupExecution.cancel(id); return archiveGroup(coworkersDir, id); },
   "groups.readTimeline": async ({ id, limit }) => readGroupTimeline(coworkersDir, id, Number.isFinite(limit) ? { limit } : {}),
-  "groups.appendEvent": async ({ id, event }) => appendGroupEvent(coworkersDir, id, event),
+  "groups.appendEvent": async ({ id, event }) => { await ordinaryGroup(id); return appendGroupEvent(coworkersDir, id, event); },
   // One turn per message from the person: the record is the source of truth the
   // view and recovery read, so a double Send or a quit mid-turn loses nothing.
-  "groups.beginTurn": async ({ id, clientMessageId, prompt }) => beginGroupTurn(coworkersDir, id, { clientMessageId, prompt }),
-  "groups.updateTurn": async ({ id, turnId, patch }) => updateGroupTurn(coworkersDir, id, turnId, patch ?? {}),
+  "groups.beginTurn": async ({ id, clientMessageId, prompt }) => { await ordinaryGroup(id); return beginGroupTurn(coworkersDir, id, { clientMessageId, prompt }); },
+  "groups.updateTurn": async ({ id, turnId, patch }) => { await ordinaryGroup(id); return updateGroupTurn(coworkersDir, id, turnId, patch ?? {}); },
   // Reloads do not stop native work. Check queue ownership at the recovery mutation.
   "groups.recoverInterrupted": async () => {
     const coworkers = await listCoworkers(coworkersDir).catch(() => []);
@@ -2685,9 +2737,16 @@ const commands = {
   "workers.resume": async ({ slug, id }) => resumeWorker(slug, id),
   "workers.findings": async ({ slug, id, limit }) => readWorkerEvents(coworkersDir, slug, id, Number.isFinite(limit) ? { limit } : {}),
   "allHands.get": async () => readAllHands(coworkersDir),
-  "allHands.update": async (patch) => updateAllHands(coworkersDir, patch),
+  "allHands.update": async (patch) => { if (await events.migrated()) throw new Error("All Hands schedules are now managed in Events."); return updateAllHands(coworkersDir, patch); },
   "allHands.prepare": async () => prepareAllHands(coworkersDir, await listCoworkers(coworkersDir)),
-  "allHands.claim": async () => claimAllHands(coworkersDir),
+  "allHands.claim": async () => await events.migrated() ? null : claimAllHands(coworkersDir),
+  "events.list": () => events.list(),
+  "events.get": ({ id }) => events.get(id),
+  "events.create": ({ input }) => events.create(input),
+  "events.update": ({ id, input, expectedRevision }) => events.update(id, input, expectedRevision),
+  "events.runNow": ({ id, requestId }) => events.runNow(id, requestId),
+  "events.cancel": ({ id, runId }) => events.cancel(id, runId),
+  "events.document.read": ({ id, runId, artifact }) => events.documentRead(id, runId, artifact),
   "settings.get": async () => readSettings(settingsPath),
   "settings.progressModels": async () => {
     const transport = await readyProgressTransport().catch(() => null);
@@ -2782,6 +2841,7 @@ const maintenance = createMaintenance({
 async function stopForMaintenance() {
   if (localResponsibilitiesTimer) clearInterval(localResponsibilitiesTimer);
   localResponsibilitiesTimer = null;
+  await events.stop();
   progressSummaries.stop();
   await conversationMemory.stop();
   voice.reset();
@@ -2877,7 +2937,7 @@ function registerIpc() {
       return { ok: false, error: "Open Coworker commands are only available to the main app frame." };
     }
     const command = typeof request?.command === "string" ? request.command : "";
-    if ((command === "coworkers.openFolder" || command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("workers.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
+    if ((command === "coworkers.openFolder" || command.startsWith("events.") || command.startsWith("voice.") || command.startsWith("computer.") || command.startsWith("browser.") || command.startsWith("workers.") || command.startsWith("groups.documents.")) && !trustedComputerSender(event, mainWindow?.webContents, rendererUrl())) {
       return { ok: false, error: "Native controls require the trusted Open Coworker window and renderer URL." };
     }
     if (command === "voice.microphone" && request?.userGesture !== true) {
@@ -3056,6 +3116,7 @@ if (!singleInstanceLock) {
     void maintenanceAdmission.run(async () => {
       await ensurePlatformServer();
       maintenanceAdmission.assertOpen();
+      await events.start();
       await groupExecution.start();
       await collaboration.start();
       progressSummaries.start();
@@ -3101,6 +3162,7 @@ if (!singleInstanceLock) {
       }
       progressSummaries.stop();
       await conversationMemory.stop();
+      await events.stop();
       browserControl.destroy();
       await groupExecution.stop();
       if (localResponsibilitiesTimer) {

@@ -383,8 +383,18 @@ export async function createCoworkerToolsServer({ resolveSlug, handlers, onConte
     }
     if (url.pathname === "/context") {
       if (request.method !== "POST") { sendJson(response, 405, { error: "Use POST." }); return; }
-      try { sendJson(response, 200, await onContextTool(slug, JSON.parse(await readBody(request)))); }
-      catch (error) { sendJson(response, 400, { error: error.message || "Collaboration could not be requested." }); }
+      const controller = new AbortController();
+      const disconnected = () => { if (!response.writableEnded) controller.abort(new Error("The native tool transport disconnected before its response completed.")); };
+      response.once("close", disconnected);
+      try {
+        const input = JSON.parse(await readBody(request));
+        controller.signal.throwIfAborted();
+        // A host-owned argument, never a signal deserialized from provider input.
+        const result = await onContextTool(slug, input, controller.signal);
+        if (!response.destroyed && !controller.signal.aborted) sendJson(response, 200, result);
+      } catch (error) {
+        if (!response.destroyed && !response.writableEnded) sendJson(response, 400, { error: error.message || "Collaboration could not be requested." });
+      } finally { response.off("close", disconnected); }
       return;
     }
     if (request.method === "GET") {
