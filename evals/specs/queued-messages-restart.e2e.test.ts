@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { currentTestEvidence } from "@openwork/test-evidence";
+import { restartUpdateTaskWorld } from "../worlds/chat.ts";
 import { queuedFollowUps } from "../worlds/session-draft.ts";
 
 const test = spec.world(queuedFollowUps, {
@@ -128,5 +129,75 @@ test("a queued follow-up already admitted to the engine is neither duplicated no
     await world.releaseQueuedReply();
     await user.see({ text: /Notes published\./ });
     expect((await userMessages()).elements).toHaveLength(2);
+  });
+});
+
+const desktopTest = spec.world(restartUpdateTaskWorld, { timeout: 600_000 });
+
+desktopTest("Restart to update names the waiting message and the relaunched desktop hands it back unsent while the task resumes", async ({ world, user, agent, probe, step }) => {
+  user = user.on(world.app);
+  agent = agent.on(world.app);
+  probe = probe.on(world.app);
+  const queuedText = "After the report, archive the inputs";
+  const v2 = world.engine === "v2";
+  const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
+  const record = (value: unknown): Record<string, unknown> => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an engine record");
+    return Object.fromEntries(Object.entries(value));
+  };
+  const userTexts = async () => {
+    const response = await probe.desktopApi(`${mount}/session/${world.active.sessionId}/${v2 ? "context" : "message?limit=100"}`);
+    expect(response.status).toBe(200);
+    const value = v2 ? record(response.body).data : response.body;
+    if (!Array.isArray(value)) throw new Error("Expected engine messages");
+    return value.flatMap((entry: unknown) => {
+      const message = record(entry);
+      const info = v2 ? message : record(message.info);
+      const parts = v2 ? message.content : message.parts;
+      if (info[v2 ? "type" : "role"] !== "user" || !Array.isArray(parts)) return [];
+      return parts.map(record).flatMap((part) => typeof part.text === "string" ? [part.text] : []);
+    });
+  };
+
+  await step("queue a follow-up behind a running desktop task, then ask to restart for the update", async () => {
+    await user.click({ text: world.active.title });
+    await probe.eventually(() => probe.hash(), { within: 30_000, label: "the active task is selected",
+      until: (hash) => hash.includes(`/session/${world.active.sessionId}`) });
+    await user.type("composer", world.active.prompt, { verify: true });
+    await user.press(enter);
+    await probe.eventually(userTexts, { within: 30_000, label: "the task's prompt is admitted", until: (texts) => texts.length === 1 });
+    await user.type("composer", queuedText, { verify: true });
+    await user.press(enter);
+    await user.see({ text: /1 queued/ });
+    await agent.run("settings.panel.open", { panel: "updates" });
+    await user.click({ role: "button", text: "Check now" });
+    await user.see({ text: "Restart to update" }, { timeoutMs: 30_000 });
+    await user.click({ text: "Restart to update" });
+    await user.see({ text: "Restart OpenWork?" });
+    const notice = (await probe.dom('[data-testid="update-restart-waiting-messages"]')).elements.map((element) => element.text).join(" ");
+    assertObserved("The restart dialog says one waiting message will be kept as a draft and not sent on its own",
+      { notice }, /1 message waiting to be sent/.test(notice) && /kept as a draft/.test(notice));
+    await user.screenshot();
+    await user.click("Restart & update");
+  });
+
+  await step("after the relaunch the follow-up is an unsent draft while the interrupted task resumes without it", async () => {
+    const restart = await world.reconnectAfterRestart();
+    expect(restart.timeOrigin).not.toBe(restart.originalTimeOrigin);
+    await agent.run("session.open", { sessionId: world.active.sessionId });
+    await user.see("composer", { editable: true, text: queuedText, timeoutMs: 60_000 });
+    await user.notSee({ text: /1 queued/ });
+    await user.see({ text: /1 message waiting to be sent was kept as a draft/ });
+    await user.see({ text: world.recovery.reply }, { timeoutMs: 90_000 });
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    const texts = await userTexts();
+    const composer = (await probe.composer()).draftText;
+    assertObserved("The resumed task ran once and the queued follow-up was never sent: not in the transcript, still in the composer",
+      { texts, composer, queuedText },
+      texts.filter((text) => text.includes(queuedText)).length === 0
+        && texts.filter((text) => text.includes(world.recovery.marker)).length === 1
+        && composer.includes(queuedText)
+        && (await world.mock.agentRequests({ promptMarker: queuedText })).length === 0);
+    await user.screenshot();
   });
 });
