@@ -8,6 +8,36 @@ import type {
   OpenworkFeatureContribution,
   OpenworkGuidanceDescriptor,
 } from "@openwork/types/openwork-provider";
+import { z } from "zod";
+
+export const sessionSearchArgsSchema = z.object({
+  query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name to limit the search."),
+  limit: z.number().int().positive().max(20).optional().describe("Maximum matching sessions to return. Defaults to 10, max 20."),
+  scanLimit: z.number().int().positive().max(500).optional().describe("Maximum newest sessions to scan across matching workspaces. Defaults to 100, max 500."),
+  messageLimit: z.number().int().positive().max(1000).optional().describe("Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
+});
+
+export const sessionReadArgsSchema = z.object({
+  sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by session.search."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
+  count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
+});
+
+export const sessionCreateArgsSchema = z.object({
+  sessions: z.array(z.object({
+    title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
+    prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
+  })).min(1).describe("One entry per new session to create and start."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+});
+
+/** Argument schemas by affordance id; sessionContribution must advertise exactly these keys. */
+export const sessionAffordanceArgsSchemas = {
+  "session.search": sessionSearchArgsSchema,
+  "session.read": sessionReadArgsSchema,
+  "session.create": sessionCreateArgsSchema,
+};
 
 export type ConnectSkillDescriptor = {
   name: string;
@@ -82,11 +112,14 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.search",
         kind: "query",
         title: "Find sessions",
-        description: "Search session titles and transcripts without changing the visible workbench.",
+        description: "Search session titles and transcripts without changing the visible workbench. Only the `scanLimit` newest sessions are scanned; when the result's `truncated` is true, retry with a larger `scanLimit` (max 500).",
         provider,
         arguments: [
           argument("query", "string", true, "Text to find in session titles or messages."),
           argument("workspaceId", "string", false, "Optional workspace id or name."),
+          argument("limit", "number", false, "Maximum matching sessions to return. Defaults to 10, max 20."),
+          argument("scanLimit", "number", false, "Maximum newest sessions to scan across matching workspaces. Defaults to 100, max 500."),
+          argument("messageLimit", "number", false, "Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
         ],
         effects: readEffects,
       }),
@@ -109,7 +142,10 @@ function sessionContribution(): OpenworkFeatureContribution {
         title: "Create sessions",
         description: "Create and start one or more sessions without navigating away.",
         provider,
-        arguments: [argument("sessions", "array", true, "Session titles and self-contained prompts.")],
+        arguments: [
+          argument("sessions", "array", true, "Session titles and self-contained prompts."),
+          argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the requesting session's workspace."),
+        ],
         effects: writeEffects,
       }),
     ],

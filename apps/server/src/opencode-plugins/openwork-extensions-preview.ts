@@ -21,6 +21,9 @@ import {
 } from "./openwork-extensions-preview-steering.js";
 import {
   buildOpenworkProviderContributions,
+  sessionCreateArgsSchema,
+  sessionReadArgsSchema,
+  sessionSearchArgsSchema,
   type ConnectSkillDescriptor,
   type EngineMcpDescriptor,
 } from "./openwork-provider-adapters.js";
@@ -71,28 +74,6 @@ const connectSkillDescriptorSchema = z.object({
 const connectSkillsEnvelopeSchema = z.object({
   skills: z.array(connectSkillDescriptorSchema),
 }).passthrough();
-
-const sessionSearchArgsSchema = z.object({
-  query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
-  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name to limit the search."),
-  limit: z.number().int().positive().max(20).optional().describe("Maximum matching sessions to return. Defaults to 10, max 20."),
-  scanLimit: z.number().int().positive().max(500).optional().describe("Maximum newest sessions to scan across matching workspaces. Defaults to 100, max 500."),
-  messageLimit: z.number().int().positive().max(1000).optional().describe("Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
-});
-
-const sessionReadArgsSchema = z.object({
-  sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by session.search."),
-  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
-  count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
-});
-
-const sessionCreateArgsSchema = z.object({
-  sessions: z.array(z.object({
-    title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
-    prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
-  })).min(1).describe("One entry per new session to create and start."),
-  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
-});
 
 const workspaceSchema = z.object({
   id: z.string(),
