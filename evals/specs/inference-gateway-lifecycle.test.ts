@@ -1,8 +1,10 @@
-import { createHash, createHmac } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { expect } from "vitest";
 import { denFetch, type DenSession } from "@openwork/behaviors";
-import { eventually, localMysqlIsRunning, queryDenDatabase, server, test } from "@openwork/testkit";
+import {
+  eventually, gatewayBearerKey, gatewayBearerKeyLookupDigest, inferenceBearerKey,
+  legacyInferenceBearerKeyLookupDigest, localMysqlIsRunning, queryDenDatabase, server, test,
+} from "@openwork/testkit";
 
 const local = process.env.OPENWORK_EVAL_DAYTONA !== "1" && !process.env.OPENWORK_EVAL_DEN_API_URL;
 const mysql = await localMysqlIsRunning();
@@ -107,7 +109,9 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place }) => 
   const sql = (statement: string, values: string[] = []) => queryDenDatabase(database, statement, values);
   const keys = (id = memberId) => sql("SELECT id, key_hash, status, encrypted_key FROM gateway_keys WHERE organization_id = ? AND org_membership_id = ? AND status = 'active' AND revoked_at IS NULL", [orgId, id]);
   const modelsKeys = () => sql("SELECT id, key_hash, status, encrypted_key FROM inference_keys WHERE organization_id = ? AND org_membership_id = ? AND status = 'active'", [orgId, memberId]);
-  const gatewayDigest = (key: string) => createHmac("sha256", "openwork-gateway-bearer-key-lookup-v1").update(key).digest("hex");
+  const gatewayDigest = (value: string) => gatewayBearerKeyLookupDigest(gatewayBearerKey(value));
+  // The legacy SHA-only digest is also the negative control for Gateway's domain separation.
+  const legacyDigest = (value: string) => legacyInferenceBearerKeyLookupDigest(inferenceBearerKey(value));
   // No Models tier and no /connect yet: join itself must provision exactly one key.
   const inferenceEnabled = record((await sql("SELECT JSON_EXTRACT(metadata, '$.inference.enabled') AS enabled FROM organization WHERE id = ?", [orgId]))[0]).enabled;
   expect(inferenceEnabled == null || inferenceEnabled === false || inferenceEnabled === "false").toBe(true);
@@ -152,8 +156,8 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place }) => 
   expect(key).toMatch(/^ow_gw_[A-Za-z0-9_-]{43}$/);
   expect(new Set(connections.map((entry) => entry.apiKey)).size).toBe(1);
   expect(await keys()).toHaveLength(1);
-  expect(record((await keys())[0]).key_hash).toBe(gatewayDigest(key));
-  expect(record((await keys())[0]).key_hash).not.toBe(createHash("sha256").update(key).digest("hex"));
+  expect(record((await keys())[0]).key_hash).toBe(await gatewayDigest(key));
+  expect(record((await keys())[0]).key_hash).not.toBe(await legacyDigest(key));
   expect(text(record((await keys())[0]).encrypted_key)).toMatch(/^enc:v1:/);
   const scopedEnv = `${sharedId.toUpperCase()}_ANTHROPIC_API_KEY`;
   expect(record(connections[0]?.providerConfig).env).toEqual([scopedEnv]);
@@ -178,7 +182,7 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place }) => 
   const gatewayBeforeModelsRepair = await keys();
   await sql("UPDATE inference_keys SET encrypted_key = NULL WHERE organization_id = ? AND org_membership_id = ? AND status = 'active'", [orgId, memberId]);
   expect(await modelsConnect()).toBe(modelsKey);
-  expect(record((await modelsKeys())[0]).key_hash).toBe(createHash("sha256").update(modelsKey).digest("hex"));
+  expect(record((await modelsKeys())[0]).key_hash).toBe(await legacyDigest(modelsKey));
   await sql("UPDATE inference_keys SET encrypted_key = NULL, key_hash = ? WHERE organization_id = ? AND org_membership_id = ? AND status = 'active'", ["0".repeat(64), orgId, memberId]);
   const rotatedModelsKey = await modelsConnect();
   expect(rotatedModelsKey).toMatch(/^ow_inf_[A-Za-z0-9_-]{43}$/);
@@ -197,7 +201,7 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place }) => 
   expect(repairedKey).not.toBe(rotatedModelsKey);
   expect(new Set(recovered.map((entry) => entry.apiKey)).size).toBe(1);
   expect(await keys()).toHaveLength(1);
-  expect(record((await keys())[0]).key_hash).toBe(gatewayDigest(repairedKey));
+  expect(record((await keys())[0]).key_hash).toBe(await gatewayDigest(repairedKey));
   expect((await connect()).apiKey).toBe(repairedKey);
   expect(await modelsConnect()).toBe(rotatedModelsKey);
   expect(await modelsKeys()).toEqual(modelsBeforeGatewayRepair);

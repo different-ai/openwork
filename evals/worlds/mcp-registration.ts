@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import type { Seed } from "@openwork/env";
 import { startMockMcp } from "@openwork/labs";
-import { bootManagedOpenworkServer, close, isRecord, listen, readBody, sendJson, sendStream } from "./openwork-server-cli.ts";
+import { bootManagedOpenworkServer, close, isRecord, listen, readBody, sendJson, sendMockError, sendStream } from "./openwork-server-cli.ts";
 
 function gate() {
   let release: () => void = () => {};
@@ -56,7 +56,7 @@ export async function mcpRegistration(seed: Seed) {
       });
       response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
       response.end(await upstream.text());
-    } catch (error) { sendJson(response, 500, { error: String(error) }); }
+    } catch (error) { sendMockError(response, error); }
   });
   const mcpUrl = await listen(proxy);
   const provider = createServer(async (request, response) => {
@@ -75,7 +75,7 @@ export async function mcpRegistration(seed: Seed) {
         { id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: null }] },
         { id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: call ? "tool_calls" : "stop" }] },
       ]);
-    } catch (error) { sendJson(response, 500, { error: String(error) }); }
+    } catch (error) { sendMockError(response, error); }
   });
   const providerUrl = await listen(provider);
   const mcpConfig = { type: "remote", url: mcpUrl, oauth: false, enabled: true };

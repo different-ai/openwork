@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { SkipError } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { buildTestPdf, pdfDataUrl } from "../../apps/server/src/pdf-attachments/pdf-fixture.test-helper.ts";
-import { bootManagedOpenworkServer, close, engineBinary, isRecord, listen, readBody, sendJson, sendStream } from "./openwork-server-cli.ts";
+import { bootManagedOpenworkServer, close, engineBinary, isRecord, listen, readBody, sendJson, sendMockError, sendStream } from "./openwork-server-cli.ts";
 
 // A PDF attached in chat must work with every model the engine can run. The
 // engine forwards a PDF part to the provider untouched, so a model without PDF
@@ -109,8 +109,7 @@ function mockProvider(workspace: string, requests: ProviderRequest[]): Server {
       }
       sendJson(response, 200, { object: "list", data: [] });
     })().catch((error: unknown) => {
-      if (!response.headersSent) sendJson(response, 500, { error: String(error) });
-      else response.destroy(error instanceof Error ? error : undefined);
+      sendMockError(response, error);
     });
   });
 }
