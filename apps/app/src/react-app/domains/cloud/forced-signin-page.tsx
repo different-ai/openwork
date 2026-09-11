@@ -272,6 +272,8 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     };
   }, []);
 
+  // The forced sign-in gate is configured by the enterprise installer.
+  // Do not expose the organization server editor on this managed surface.
   return (
     <DenSignInSurface
       variant="fullscreen"
@@ -289,11 +291,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       sessionBusy={denAuth.status === "checking"}
       manualAuthOpen={manualAuthOpen}
       manualAuthInput={manualAuthInput}
-      organizationServerBusy={baseUrlBusy}
-      organizationServerError={baseUrlError}
-      organizationServerUrl={baseUrl}
       onBaseUrlDraftInput={setBaseUrlDraft}
-      onOrganizationServerSave={applyBaseUrl}
       onResetBaseUrl={() => setBaseUrlDraft(baseUrl)}
       onApplyBaseUrl={() => {
         void applyBaseUrl();
