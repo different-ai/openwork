@@ -1,12 +1,12 @@
 /** @jsxImportSource react */
-import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
-import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
+import type { ArchiveSessionOptions, ArchiveSessionOutcome, StopSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
 
@@ -22,16 +22,18 @@ Object.defineProperty(window, "fetch", { configurable: true, value: nativeFetch 
 // imported after the DOM exists or the dialog portal never mounts.
 const [
   { createOpenworkServerClient },
-  { toast },
+  { toast, Toaster },
   { isWorkingStatus, listControlSessions },
   { useSessionArchive },
   { OpenworkControlProvider, useControlAction },
+  { useNotificationStore },
 ] = await Promise.all([
   import("../src/app/lib/openwork-server"),
   import("../src/components/ui/sonner"),
   import("../src/react-app/domains/session/control/list-control-sessions"),
   import("../src/react-app/domains/session/sidebar/use-session-archive"),
   import("../src/react-app/shell/control/control-provider"),
+  import("../src/react-app/kernel/notification-store"),
 ]);
 const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
@@ -204,6 +206,7 @@ describe("archiving a working session: the warning goes back through the request
     document.body.append(host);
     const root = createRoot(host);
     let archiveSession: ((sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>) | null = null;
+    let stopSession: ((sessionId: string, options?: ArchiveSessionOptions) => Promise<StopSessionOutcome>) | null = null;
     function Harness() {
       const archive = useSessionArchive({
         workspaces: [workspace],
@@ -216,13 +219,13 @@ describe("archiving a working session: the warning goes back through the request
         reloadWorkspaceSessions: async () => undefined,
         onArchivedChange: () => undefined,
       });
-      useEffect(() => { archiveSession = archive.archiveSession; });
+      useEffect(() => { archiveSession = archive.archiveSession; stopSession = archive.stopSession; });
       return archive.archiveDialog;
     }
     await act(async () => root.render(<MemoryRouter><Harness /></MemoryRouter>));
     cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
-    if (!archiveSession) throw new Error("archive hook did not mount");
-    return archiveSession;
+    if (!archiveSession || !stopSession) throw new Error("archive hook did not mount");
+    return Object.assign(archiveSession, { stop: stopSession });
   }
 
   const errors = spyOn(toast, "error").mockImplementation(() => "");
@@ -283,4 +286,139 @@ describe("archiving a working session: the warning goes back through the request
     expect(outcome).toEqual({ kind: "cancelled" });
     expect(engine.requests.some((path) => path.endsWith("/abort"))).toBe(false);
   });
+});
+
+describe("session.stop: the Stop button for any loaded session, attributed to who asked", () => {
+  const directory = "/tmp/stop-contract";
+  type Engine = { baseUrl: string; busy: Set<string>; children: Record<string, string[]>; requests: string[] };
+
+  function startEngine(): Engine {
+    const engine: Engine = { baseUrl: "", busy: new Set(), children: {}, requests: [] };
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        engine.requests.push(`${request.method} ${url.pathname}`);
+        if (url.pathname === "/path") return NativeResponse.json({ directory });
+        if (url.pathname === "/session/status") {
+          return NativeResponse.json(Object.fromEntries([...engine.busy].map((id) => [id, { type: "busy" }])));
+        }
+        if (url.pathname === "/permission" || url.pathname === "/question") return NativeResponse.json([]);
+        const session = /^\/session\/([^/]+)(\/(children|message|abort))?$/.exec(url.pathname);
+        if (session) {
+          const [, id, , sub] = session;
+          if (sub === "abort") {
+            engine.busy.delete(id);
+            for (const child of engine.children[id] ?? []) engine.busy.delete(child);
+            return NativeResponse.json(true);
+          }
+          if (sub === "children") {
+            return NativeResponse.json((engine.children[id] ?? []).map((child) => ({ id: child, parentID: id, directory, title: child, time: { created: 1, updated: 1 } })));
+          }
+          if (sub === "message") return NativeResponse.json([]);
+          return NativeResponse.json({ id, directory, title: id, time: { created: 1, updated: 1 } });
+        }
+        return NativeResponse.json({ message: "not found" }, { status: 404 });
+      },
+    });
+    engine.baseUrl = `http://127.0.0.1:${server.port}`;
+    cleanups.push(() => server.stop(true));
+    return engine;
+  }
+
+  function session(id: string, title: string, updated: number): RouteSession {
+    return { id, slug: id, projectID: "prj", directory, title, version: "1", time: { created: 1, updated } };
+  }
+
+  async function mountStop(engine: Engine, sessions: RouteSession[]) {
+    const workspace: RouteWorkspace = {
+      id: "ws", name: "Client A / Production", displayNameResolved: "Client A / Production", path: directory, preset: "starter", workspaceType: "local",
+    };
+    const endpoint: ResolvedWorkspaceEndpoint = {
+      baseUrl: engine.baseUrl,
+      token: "",
+      workspaceId: "ws",
+      isRemote: false,
+      client: createOpenworkServerClient({ baseUrl: engine.baseUrl }),
+      mountedBaseUrl: engine.baseUrl,
+      opencodeBaseUrl: engine.baseUrl,
+    };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const navigations: string[] = [];
+    let stopSession: ((sessionId: string, options?: ArchiveSessionOptions) => Promise<StopSessionOutcome>) | null = null;
+    function Harness() {
+      const archive = useSessionArchive({
+        workspaces: [workspace],
+        sessionsByWorkspaceId: { ws: sessions },
+        endpointForWorkspace: () => endpoint,
+        selectedWorkspaceId: "ws",
+        selectedSessionId: null,
+        draftScope: null,
+        navigateToWorkspaceSession: (workspaceId, sessionId) => { navigations.push(`${workspaceId}/${sessionId}`); },
+        reloadWorkspaceSessions: async () => undefined,
+        onArchivedChange: () => undefined,
+      });
+      useEffect(() => { stopSession = archive.stopSession; });
+      return <>{archive.archiveDialog}<Toaster /></>;
+    }
+    await act(async () => root.render(<MemoryRouter><Harness /></MemoryRouter>));
+    cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
+    if (!stopSession) throw new Error("archive hook did not mount");
+    return { stop: stopSession, navigations };
+  }
+
+  const notifications = () => useNotificationStore.getState().notifications;
+  beforeEach(() => { useNotificationStore.getState().clearAll(); });
+
+  test("stopping a working session aborts its tree, navigates nowhere, and notifies who asked", async () => {
+    const engine = startEngine();
+    engine.busy.add("ses_target").add("ses_child");
+    engine.children.ses_target = ["ses_child"];
+    const { stop, navigations } = await mountStop(engine, [session("ses_target", "Payroll import", 2), session("ses_requester", "Ops audit", 3)]);
+
+    let outcome: StopSessionOutcome | null = null;
+    void stop("ses_target", { requester: { sessionId: "ses_requester" } }).then((value) => { outcome = value; });
+    await until(() => outcome !== null, "stop to resolve");
+    expect(outcome).toEqual({ ok: true, sessionId: "ses_target", title: "Payroll import", stopped: true });
+    expect(engine.requests).toContain("POST /session/ses_target/abort");
+    expect(engine.busy.size).toBe(0);
+    expect(navigations).toEqual([]);
+    expect(dialog()).toBeNull();
+
+    const entry = notifications().find((notification) => notification.title === "Session stopped: Payroll import");
+    expect(entry).toMatchObject({
+      kind: "system",
+      severity: "info",
+      body: 'Requested by The agent in "Ops audit" ses_requester',
+      action: { type: "open-session", workspaceId: "ws", sessionId: "ses_target" },
+      actionLabel: "View",
+    });
+    // The same wording reaches the immediate toast.
+    await until(() => document.body.textContent?.includes("Session stopped: Payroll import") === true, "stop toast");
+    expect(document.body.textContent).toContain('Requested by The agent in "Ops audit" ses_requester');
+  });
+
+  test("stopping an idle session is a no-op that says so", async () => {
+    const engine = startEngine();
+    const { stop } = await mountStop(engine, [session("ses_idle", "Quiet", 1)]);
+    let outcome: StopSessionOutcome | null = null;
+    void stop("ses_idle", { requester: { sessionId: "ses_other" } }).then((value) => { outcome = value; });
+    await until(() => outcome !== null, "idle stop to resolve");
+    expect(outcome).toEqual({ ok: true, sessionId: "ses_idle", title: "Quiet", alreadyIdle: true });
+    expect(engine.requests.some((entry) => entry.endsWith("/abort"))).toBe(false);
+    expect(notifications().some((notification) => notification.title.startsWith("Session stopped"))).toBe(false);
+  });
+
+  test("an unknown session id is a structured error, not a dialog", async () => {
+    const engine = startEngine();
+    const { stop } = await mountStop(engine, [session("ses_known", "Known", 1)]);
+    expect(await stop("ses_missing")).toEqual({ ok: false, sessionId: "ses_missing", error: "Session was not found in the current session list" });
+    expect(engine.requests).toEqual([]);
+    expect(dialog()).toBeNull();
+  });
+
+  const dialog = () => document.querySelector('[role="alertdialog"]');
 });

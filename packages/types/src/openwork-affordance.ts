@@ -91,8 +91,8 @@ const openworkAffordanceSuccessSchema = z.object({
  * Structured outcomes an action can report so the agent can decide instead of
  * retrying a transport-looking error. Warnings travel back through the channel
  * the request came from: an agent never gets a dialog, it gets one of these.
- * - `target_working`: the target session is still working; ask the person to
- *   stop it if they want it closed, otherwise leave it running.
+ * - `target_working`: the target session is still working; stop it first
+ *   (session.stop) if the person wants it closed, otherwise leave it running.
  * - `self_archive_while_working`: a session asked to archive itself (or its
  *   parent) from inside its own running turn; finish the turn, the reviewer
  *   archives.

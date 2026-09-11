@@ -7,7 +7,7 @@ import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
-import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
+import type { ArchiveSessionOptions, ArchiveSessionOutcome, StopSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { controlWorkspaceLabel as workspaceLabel, listControlSessions, type ControlSessionLike as SessionLike } from "./list-control-sessions";
@@ -33,9 +33,10 @@ type UseSessionControlActionsInput = {
   openModelPicker: () => void;
   refreshRouteState: () => Promise<unknown> | unknown;
   archiveSession: (sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
+  stopSession: (sessionId: string, options?: ArchiveSessionOptions) => Promise<StopSessionOutcome>;
 };
 
-const ARCHIVE_TARGET_WORKING_HINT = "This session is still working. If the user wants it closed, ask them to stop it in the app (or wait until session.list_sessions reports working=false), then archive. If not, leave it running.";
+const ARCHIVE_TARGET_WORKING_HINT = "This session is still working. If the user wants it closed, call session.stop {sessionId} first, then archive. If not, leave it running.";
 const SELF_ARCHIVE_WHILE_WORKING_HINT = "A working session cannot archive itself. Finish the turn so your conclusions can be reviewed; the reviewer archives.";
 
 function findSessionWorkspace(
@@ -79,6 +80,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     sessionsByWorkspaceId,
     workspaces,
     archiveSession,
+    stopSession,
   } = input;
   const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
 
@@ -271,7 +273,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.archive",
     label: "Archive or unarchive a session",
-    description: archiveDisabledReason ?? "Archive an idle session, preserving context. Check `working` in session.list_sessions first. A working session is not archived: the result is code target_working (if the user wants it closed, ask them to stop it in the app, then archive once working is false; otherwise leave it running). A session cannot archive itself or its parent during its own turn (code self_archive_while_working): finish the turn; the reviewer archives. Pass archived=false to restore without restarting work.",
+    description: archiveDisabledReason ?? "Archive an idle session, preserving context. Check `working` in session.list_sessions first. A working session is not archived: the result is code target_working (if the user wants it closed, call session.stop first, then archive; otherwise leave it running). A session cannot archive itself or its parent during its own turn (code self_archive_while_working): finish the turn; the reviewer archives. Pass archived=false to restore without restarting work.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [
@@ -300,6 +302,28 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     },
   }), [archiveDisabledReason, archiveSession, opencodeClient]);
   useControlAction(archiveControlAction);
+
+  // Stop shares archive's interruption path, which the v2 preview cannot verify.
+  const stopDisabledReason = archiveDisabledReason ? "Stopping a session by id is not available in the OpenCode v2 preview." : undefined;
+  const stopControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.stop",
+    label: "Stop a session's work",
+    description: stopDisabledReason ?? "Stop a session's current work by id: abort its turn, cancel its subtasks and queued messages, no navigation. Use when the user asks to stop it or it is no longer relevant; the notification attributes the stop to you. Idempotent: an idle session returns alreadyIdle. Does not archive.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [{ name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." }],
+    disabled: !opencodeClient || Boolean(stopDisabledReason),
+    execute: async (args, helpers) => {
+      const sessionId = stringArg(args, "sessionId");
+      if (stopDisabledReason) return { ok: false, error: stopDisabledReason };
+      if (!sessionId) return { ok: false, error: "sessionId is required" };
+      const requestedBy = helpers.origin?.sessionId;
+      const outcome = await stopSession(sessionId, requestedBy ? { requester: { sessionId: requestedBy } } : undefined);
+      if (outcome.ok) helpers.setNarration(`Stopped "${outcome.title}" (${sessionId})${requestedBy ? ` for ${requestedBy}` : ""}`);
+      return outcome;
+    },
+  }), [opencodeClient, stopDisabledReason, stopSession]);
+  useControlAction(stopControlAction);
 
   const groupCreateControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.group.create",
