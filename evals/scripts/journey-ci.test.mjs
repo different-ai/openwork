@@ -177,6 +177,21 @@ test('registered case metadata names exact files, supported execution axes, and 
       id: 'APP-ISOLATION',
       engines: ['v1', 'v2'],
     },
+    {
+      spec: 'opencode-v2-skill-jit.e2e.test.ts',
+      id: 'SKILL-CLOUD-01',
+      engines: ['v2'],
+    },
+    {
+      spec: 'opencode-v2-skill-jit.e2e.test.ts',
+      id: 'SKILL-CLOUD-02',
+      engines: ['v2'],
+    },
+    {
+      spec: 'opencode-v2-skill-jit.e2e.test.ts',
+      id: 'SKILL-NATIVE-01',
+      engines: ['v2'],
+    },
   ]);
   for (const registered of registeredCases) {
     assert(entries.some(entry => entry.spec === registered.spec));

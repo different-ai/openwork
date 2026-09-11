@@ -37,6 +37,7 @@ import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plu
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
+import { CloudNativeSkillSyncError } from "./cloud-native-skills.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -899,6 +900,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
             workspace,
             proxyPath: mount.restPath,
             connection,
+            syncCloudSkills: engineV2Preview.syncCloudSkills,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
           });
           const response = taskRecovery ? await taskRecovery.forward(workspace, "v2", mount.restPath, request, send) : await send();
@@ -1137,6 +1139,7 @@ async function proxyOpencodeV2Request(input: {
   workspace: WorkspaceInfo;
   proxyPath: string;
   connection: { url: string; username: string; password: string };
+  syncCloudSkills: EngineV2Preview["syncCloudSkills"];
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
@@ -1217,13 +1220,28 @@ async function proxyOpencodeV2Request(input: {
     const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
     const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
+    // Authorized organization skills are materialized fresh as native skills
+    // on every admission. Skills fail closed, the conversation does not: any
+    // Cloud auth/transport failure has already cleared and unregistered the
+    // materialized root, so the prompt is admitted without Cloud skills and the
+    // waiter below confirms none remain in the native registry.
+    let cloudSkills: Awaited<ReturnType<EngineV2Preview["syncCloudSkills"]>>;
+    try {
+      cloudSkills = await input.syncCloudSkills();
+    } catch (error) {
+      if (error instanceof CloudNativeSkillSyncError) throw new ApiError(502, error.code, error.message);
+      throw new ApiError(502, "cloud_skill_sync_failed", "OpenWork Cloud skills could not be synchronized");
+    }
+    if (cloudSkills.failure) {
+      console.warn(`[openwork-server] Cloud skills unavailable for this turn (${cloudSkills.failure}); admitting without Cloud skills`);
+    }
     const skillUrl = new URL(target);
     skillUrl.pathname = "/api/skill";
     await waitForOpenWorkV2Skills(input.workspace.path, async () => {
       const response = await loopbackFetch(skillUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(5_000) });
       if (!response.ok) throw new ApiError(502, "engine_skill_sync_failed", "Native skills are unavailable");
       return response.json();
-    });
+    }, cloudSkills);
     const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;

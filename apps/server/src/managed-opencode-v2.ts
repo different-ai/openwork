@@ -57,6 +57,8 @@ export interface ManagedOpencodeV2Server {
   fetchJson(path: string, init?: { method?: string; body?: unknown; directory?: string; timeoutMs?: number }): Promise<{ status: number; json: unknown }>;
   injectProvider(spec: OpencodeV2ProviderSpec): Promise<void>;
   setProviders(specs: OpencodeV2ProviderSpec[]): Promise<void>;
+  /** Extra absolute skill directories registered through native config `skills`. */
+  setSkills(directories: string[]): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -75,6 +77,59 @@ function diagnostics(exitCode: number | null, stdout: string, stderr: string): E
   );
 }
 
+/** The whole generated engine config: every writer emits all current keys. */
+export function renderOpencodeV2Config(input: {
+  providers: OpencodeV2ProviderSpec[];
+  permissions?: EnginePermissionRule[];
+  skills: string[];
+}): Record<string, unknown> {
+  const providerConfig: Record<string, unknown> = {};
+  for (const provider of input.providers) {
+    const models: Record<string, unknown> = {};
+    for (const model of provider.models) {
+      const config = model.config ?? {};
+      const modalities = isRecord(config.modalities) ? config.modalities : {};
+      models[model.id] = {
+        name: model.name,
+        ...(typeof config.id === "string" ? { modelID: config.id } : {}),
+        capabilities: {
+          tools: typeof config.tool_call === "boolean" ? config.tool_call : true,
+          input: modalities.input ?? ["text"],
+          output: config.reasoning === true
+            ? [...new Set([...(Array.isArray(modalities.output) ? modalities.output : ["text"]), "reasoning"])]
+            : modalities.output ?? ["text"],
+        },
+        limit: config.limit ?? { context: 128_000, output: 8_192 },
+        ...(typeof config.family === "string" ? { family: config.family } : {}),
+        ...(isRecord(config.options) ? { settings: config.options } : {}),
+        ...(isRecord(config.variants) ? {
+          variants: nativeModelVariants(config.variants, provider.package),
+        } : {}),
+        ...(isRecord(config.headers) ? { headers: config.headers } : {}),
+        ...(config.status === "deprecated" ? { disabled: true } : {}),
+      };
+    }
+    providerConfig[provider.id] = {
+      name: provider.name,
+      package: provider.package ?? "@opencode-ai/ai/providers/openai-compatible",
+      settings: {
+        ...provider.settings,
+        ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+        apiKey: provider.apiKey,
+        name: provider.id,
+      },
+      ...(provider.headers ? { headers: provider.headers } : {}),
+      models,
+    };
+  }
+  return {
+    $schema: "https://opencode.ai/config.json",
+    providers: providerConfig,
+    ...(input.permissions ? { permissions: input.permissions } : {}),
+    ...(input.skills.length ? { skills: [...input.skills] } : {}),
+  };
+}
+
 export async function createManagedOpencodeV2Server(
   options: ManagedOpencodeV2ServerOptions,
 ): Promise<ManagedOpencodeV2Server> {
@@ -86,6 +141,8 @@ export async function createManagedOpencodeV2Server(
   const username = "opencode";
   let url = "";
   const providers = new Map<string, OpencodeV2ProviderSpec>();
+  let skills: string[] = [];
+  let writes: Promise<void> = Promise.resolve();
   const opencodeModelsUrl = (options.env?.OPENCODE_MODELS_URL ?? process.env.OPENCODE_MODELS_URL)?.replace(/\/+$/, "");
   // The engine needs OS paths and locale settings, not the server's provider,
   // cloud, database, or control-plane credentials. Unknown keys stay private.
@@ -111,7 +168,9 @@ export async function createManagedOpencodeV2Server(
   // Replace the generated config before boot, removing stale managed-policy
   // registrations while retaining independent engine permissions. Leave the
   // old entrypoint on disk: another configuration may still reference it.
-  await writeProviders();
+  // Boot registers no skill directories: a stale materialized root is never
+  // visible until a fresh cloud skill sync succeeds.
+  await writeConfig();
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
       ...inherited,
@@ -192,53 +251,22 @@ export async function createManagedOpencodeV2Server(
     return { healthy, version, pid };
   }
 
-  async function writeProviders(): Promise<void> {
-    const providerConfig: Record<string, unknown> = {};
-    for (const provider of providers.values()) {
-      const models: Record<string, unknown> = {};
-      for (const model of provider.models) {
-        const config = model.config ?? {};
-        const modalities = isRecord(config.modalities) ? config.modalities : {};
-        models[model.id] = {
-          name: model.name,
-          ...(typeof config.id === "string" ? { modelID: config.id } : {}),
-          capabilities: {
-            tools: typeof config.tool_call === "boolean" ? config.tool_call : true,
-            input: modalities.input ?? ["text"],
-            output: config.reasoning === true
-              ? [...new Set([...(Array.isArray(modalities.output) ? modalities.output : ["text"]), "reasoning"])]
-              : modalities.output ?? ["text"],
-          },
-          limit: config.limit ?? { context: 128_000, output: 8_192 },
-          ...(typeof config.family === "string" ? { family: config.family } : {}),
-          ...(isRecord(config.options) ? { settings: config.options } : {}),
-          ...(isRecord(config.variants) ? {
-            variants: nativeModelVariants(config.variants, provider.package),
-          } : {}),
-          ...(isRecord(config.headers) ? { headers: config.headers } : {}),
-          ...(config.status === "deprecated" ? { disabled: true } : {}),
-        };
-      }
-      providerConfig[provider.id] = {
-        name: provider.name,
-        package: provider.package ?? "@opencode-ai/ai/providers/openai-compatible",
-        settings: {
-          ...provider.settings,
-          ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
-          apiKey: provider.apiKey,
-          name: provider.id,
-        },
-        ...(provider.headers ? { headers: provider.headers } : {}),
-        models,
-      };
-    }
+  // Every rewrite (providers, permissions, skills) serializes through one
+  // queue and emits the whole current state, so no writer drops another's keys.
+  function writeConfig(): Promise<void> {
+    const next = writes.catch(() => undefined).then(writeConfigNow);
+    writes = next;
+    return next;
+  }
+
+  async function writeConfigNow(): Promise<void> {
     const target = join(configDir, "opencode.json");
     const temporary = `${target}.tmp-${randomBytes(8).toString("hex")}`;
-    await writeFile(temporary, `${JSON.stringify({
-      $schema: "https://opencode.ai/config.json",
-      providers: providerConfig,
+    await writeFile(temporary, `${JSON.stringify(renderOpencodeV2Config({
+      providers: [...providers.values()],
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
-    }, null, 2)}\n`, { mode: 0o600 });
+      skills,
+    }), null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }
 
@@ -276,14 +304,18 @@ export async function createManagedOpencodeV2Server(
     fetchJson,
     async injectProvider(spec) {
       providers.set(spec.id, spec);
-      await writeProviders();
+      await writeConfig();
     },
     async setProviders(specs) {
       providers.clear();
       for (const spec of specs) {
         providers.set(spec.id, spec);
       }
-      await writeProviders();
+      await writeConfig();
+    },
+    async setSkills(directories) {
+      skills = [...directories];
+      await writeConfig();
     },
     close,
   };
