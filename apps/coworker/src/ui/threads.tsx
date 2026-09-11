@@ -1,5 +1,5 @@
 import { ActionMenu } from "@/ui/kit";
-import { Fragment, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
@@ -23,6 +23,7 @@ import {
   gatewayMcpAppLaunch,
   preservedMcpAppResult,
   type CoworkerMcpAppResource,
+  type CoworkerMcpAppContext,
   type CoworkerMcpClient,
   type PreservedMcpAppResult,
 } from "@/lib/mcp";
@@ -51,12 +52,13 @@ import {
   registerDiscussion,
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
-import { laneWithPreference, type EffortStop } from "@/lib/effort";
+import type { EffortStop } from "@/lib/effort";
 import { EffortDial } from "@/ui/effort-dial";
 import { ComputerControl } from "@/ui/computer-control";
 import { DiscussionBrowser } from "@/ui/browser-panel";
 import { PopoverDisclosure, TechnicalText } from "@/ui/details-popover";
-import { carryVariant, chooseFallbackModel, classifyRequest, describeModelChoice, markAutoPicked, resolveDiscussionModel, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
+import { carryVariant, chooseFallbackModel, describeModelChoice, markAutoPicked, resolveDiscussionModel, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
+import { usesAppConversationDefault, type ModelDefaults } from "@/lib/model-defaults";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { WorkersPanel } from "@/ui/workers";
@@ -80,8 +82,11 @@ import {
   loadThreadTurns,
   markStopped,
   removeQueued,
+  runThreadStop,
   saveThreadTurns,
+  subscribeThreadStops,
   takeQueued,
+  threadStop,
   type QueuedMessage,
   type ThreadTurnState,
 } from "@/lib/thread-queue";
@@ -176,6 +181,16 @@ type ActiveTurn = {
 
 /** How a turn is (re)sent: a fresh message, or the same message id run again after a failure, a stop, or a cut-off. */
 type TurnSend = ({ mode: "send" } | { mode: "retry"; attempt: number; switchedTo?: string; byPerson?: boolean }) & { voice?: VoiceExpectation | null };
+
+/** Retry policy travels with the model pin, never today's app defaults. */
+type TurnModelSelection = {
+  owner: CoworkerSummary;
+  defaults: ModelDefaults;
+  automatic: boolean;
+  allowFallback: boolean;
+  lane: ModelLane;
+  anchor: string;
+};
 
 /** One quiet line's worth of history for a reply that ended without words, kept in the transcript. */
 function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | null {
@@ -1137,6 +1152,10 @@ function ThreadView({
   /** The turn in flight or left unresolved, and the messages waiting as Next — the record turns.json keeps. */
   const [turnState, setTurnState] = useState<ThreadTurnState>(EMPTY_THREAD_TURNS);
   const turnStateRef = useRef<ThreadTurnState>(EMPTY_THREAD_TURNS);
+  const stopScope = JSON.stringify([coworker.slug, coworker.createdAt, threadId]);
+  const stopAttempt = useSyncExternalStore(subscribeThreadStops, () => threadStop(stopScope));
+  const stopPending = stopAttempt?.state === "pending";
+  const stopLabel = stopPending ? "Stopping..." : stopAttempt ? "Retry stop" : "Stop";
   const [turnsLoaded, setTurnsLoaded] = useState(false);
   const [collaborationReceipts, setCollaborationReceipts] = useState<import("@/lib/bridge").CollaborationReceipt[]>([]);
   const [nativeActivity, setNativeActivity] = useState<{ scope: string; executions: ExecutionActivity[] }>({ scope: "", executions: [] });
@@ -1246,7 +1265,7 @@ function ThreadView({
     const knownTurns = turnStateRef.current;
     const writingTurns = turnWrites.current > 0;
     void observe("turns", () => loadThreadTurns(coworker.slug, threadId), (savedTurns) => {
-      if (!writingTurns && turnWrites.current === 0 && !activeTurnRef.current) {
+      if (!writingTurns && turnWrites.current === 0 && !activeTurnRef.current && (!threadStop(stopScope) || knownTurns === EMPTY_THREAD_TURNS)) {
         turnStateRef.current = savedTurns;
         setTurnState(savedTurns);
         if (knownTurns === EMPTY_THREAD_TURNS) setRecovered(savedTurns.pending !== null);
@@ -1316,7 +1335,7 @@ function ThreadView({
       );
       setTranscriptLoaded(true);
     });
-  }, [coworker.slug, refreshReads, refreshScope, threads, threadId, titleDiscussionAfterFirstMessage]);
+  }, [coworker.slug, refreshReads, refreshScope, stopScope, threads, threadId, titleDiscussionAfterFirstMessage]);
 
   useEffect(() => {
     if (kind !== "discussion" || !assignmentDraft) return;
@@ -1394,6 +1413,8 @@ function ThreadView({
   const commitTurnState = useCallback((update: (state: ThreadTurnState) => ThreadTurnState): ThreadTurnState => {
     const previous = turnStateRef.current;
     const next = update(previous);
+    // A completed observer must not release Next while cancellation is unresolved.
+    if (previous.pending && !next.pending && threadStop(stopScope)) return previous;
     if (next === previous) return next;
     turnRevision.current += 1;
     turnStateRef.current = next;
@@ -1401,7 +1422,7 @@ function ThreadView({
     turnWrites.current += 1;
     void saveThreadTurns(coworker.slug, threadId, next, previous).catch((cause) => setError(`Could not keep this turn: ${cause instanceof Error ? cause.message : String(cause)}`)).finally(() => { turnWrites.current -= 1; });
     return next;
-  }, [coworker.slug, threadId]);
+  }, [coworker.slug, stopScope, threadId]);
 
   const pendingTurn = turnState.pending;
   const engineRunning = engineStatus.type === "busy" || engineStatus.type === "retry";
@@ -1414,12 +1435,13 @@ function ThreadView({
    */
   const abortUntilQuiet = useCallback(async (messageId: string) => {
     const deadline = Date.now() + 10_000;
+    const signal = AbortSignal.timeout(10_000);
     while (Date.now() < deadline) {
-      const snapshot = await threads.client.getThreadSnapshot(threadId).catch(() => null);
+      const snapshot = await threads.client.getThreadSnapshot(threadId, { signal }).catch(() => null);
       if (!snapshot) return;
       const reply = snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId).at(-1);
       if (reply && (reply.error !== null || reply.completedAt !== null)) return;
-      if (isRunning(snapshot.status)) await threads.client.abortThread(threadId).catch(() => undefined);
+      if (isRunning(snapshot.status)) await threads.client.abortThread(threadId, { signal }).catch(() => undefined);
       await new Promise<void>((resolveWait) => window.setTimeout(resolveWait, 300));
     }
   }, [threadId, threads]);
@@ -1447,20 +1469,14 @@ function ThreadView({
    * says "still working". Only the engine going idle without a reply ends the
    * turn without one.
    */
-  const submitTurn = useCallback(async (prompt: string, messageId: string, send: TurnSend, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = []) => {
-    if (activeTurnRef.current) { voiceRef.current?.abandonReply(send.voice ?? null); return; }
+  const submitTurn = useCallback(async (prompt: string, messageId: string, send: TurnSend, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = [], originalSelection?: TurnModelSelection) => {
+    if (activeTurnRef.current || threadStop(stopScope) || (send.mode === "retry" && !send.byPerson && turnStateRef.current.pending?.stoppedAt != null)) { voiceRef.current?.abandonReply(send.voice ?? null); return; }
     let voiceIntent = send.voice ?? null;
     let voiceFollowup = false;
+    let turnModel: HeadlessThreadModel | undefined = modelOverride;
     /** The model this turn actually ran on, so a failure can be attributed and, if it was the app's pick, replaced. */
     let turnModelId = modelOverride ? `${modelOverride.providerId}/${modelOverride.modelId}` : coworker.model;
-    /**
-     * How much thinking this message deserves, decided once per message and kept across the app's own
-     * retries: the message's own lane, nudged by the effort dial. In Automatic mode the lane also picks
-     * the model; in fixed mode it only sets the effort the fixed model is asked for.
-     */
-    const automatic = coworker.modelMode === "auto";
-    const messageLane: ModelLane = laneWithPreference(classifyRequest(prompt), coworker.effortPreference);
-    const turnLane: ModelLane = automatic ? messageLane : "standard";
+    let selection = originalSelection;
     const attempt = send.mode === "retry" ? send.attempt : 0;
     let continued = false;
     /**
@@ -1472,24 +1488,28 @@ function ThreadView({
      * is never swapped.
      */
     const fallBack = async (message: string): Promise<boolean> => {
-      if (!viewMounted.current) return false;
-      if (!(automatic || wasAutoPicked(coworker, turnModelId)) || failedModels.length >= 1) return false;
+      if (!viewMounted.current || threadStop(stopScope) || turnStateRef.current.pending?.stoppedAt != null) return false;
+      if (!selection?.allowFallback || failedModels.length >= 1) return false;
       if (!describeTurnFailure(message, coworker.name).modelRelated) return false;
       try {
+        const { owner, defaults, automatic, lane, anchor } = selection;
         const excluded = [...failedModels, turnModelId];
         const catalog = await threads.listModelCatalog();
-        const next = chooseFallbackModel(catalog, turnLane, { standard: coworker.model || turnModelId, exclude: excluded, ...(automatic ? { preferences: coworker.modelSelectionPreferences } : {}) });
+        if (threadStop(stopScope) || turnStateRef.current.pending?.stoppedAt != null) return false;
+        const next = chooseFallbackModel(catalog, lane, { standard: anchor, exclude: excluded, ...(automatic ? { preferences: owner.modelSelectionPreferences } : {}) });
         const nextModel = next ? parseModelPreference(next.id) : undefined;
         if (!next || !nextModel) return false;
+        const fallbackDecision = resolveDiscussionModel({ models: [next] }, { ...owner, model: next.id }, prompt, defaults);
+        if (!fallbackDecision.model) return false;
+        const variant = fallbackDecision.variant;
         markAutoPicked(coworker.slug, next.id);
-        const modelVariant = carryVariant(coworker.modelVariant, next);
         // In Automatic mode a lane model that failed is simply not chosen again this turn; the saved standard model changes only when it was the one that failed.
-        if (!automatic || turnModelId === coworker.model || !coworker.model) {
-          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant, modelChosenBy: "app" }));
+        if (!usesAppConversationDefault(owner) && (!automatic || turnModelId === owner.model || !owner.model)) {
+          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant: carryVariant(owner.modelVariant, next), modelChosenBy: "app", useAppModelDefaults: false }));
         }
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
         voiceFollowup = true;
-        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel, voice: voiceIntent }, { ...nextModel, ...(modelVariant ? { variant: modelVariant } : {}) }, excluded), 0);
+        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel, voice: voiceIntent }, { ...nextModel, ...(variant ? { variant } : {}) }, excluded, selection), 0);
         return true;
       } catch {
         return false;
@@ -1501,7 +1521,7 @@ function ThreadView({
      * message id. Anything hard waits for the person.
      */
     const retryLater = (message: string, retryable: boolean | null): boolean => {
-      if (!viewMounted.current) return false;
+      if (!viewMounted.current || threadStop(stopScope) || turnStateRef.current.pending?.stoppedAt != null) return false;
       if (classifyFailure(message, retryable) !== "transient") return false;
       const delay = retryDelayMs(attempt + 1);
       if (delay === null) return false;
@@ -1513,7 +1533,7 @@ function ThreadView({
         setAppRetry(null);
         // A deferred admission keeps the selected model's receipt. It does not
         // inherit permission to undo a later person-initiated cancellation.
-        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1, voice: voiceIntent, ...(send.mode === "retry" && send.switchedTo ? { switchedTo: send.switchedTo } : {}) }, modelOverride, failedModels);
+        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1, voice: voiceIntent, ...(send.mode === "retry" && send.switchedTo ? { switchedTo: send.switchedTo } : {}) }, turnModel, failedModels, selection);
       }, delay);
       return true;
     };
@@ -1574,40 +1594,25 @@ function ThreadView({
       if (!engineKnows) setFailure(message);
     };
     try {
-      let turnModel: HeadlessThreadModel | undefined = modelOverride;
       if (!turnModel) {
-        const savedModel = parseModelPreference(coworker.model);
-        const catalog = await threads.listModelCatalog();
-        /** The standard model: the saved one, or — when nobody chose yet — the recommendation, kept from now on. */
-        let standardId = coworker.model;
-        if (savedModel) {
-          if (!catalog.models.some((model) => model.id === coworker.model)) {
-            throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
-          }
-          turnModel = savedModel;
-        } else {
-          // Nobody chose a model yet: start on a connected model that can use tools and keep it.
-          const pick = recommendModel(catalog, { exclude: failedModels });
-          if (!pick) throw new Error(NO_TOOL_MODEL_MESSAGE);
-          const chosen = parseModelPreference(pick.id);
-          if (chosen) turnModel = chosen;
-          turnModelId = pick.id;
-          standardId = pick.id;
-          markAutoPicked(coworker.slug, pick.id);
-          void coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "", modelChosenBy: "app" })
-            .then(onCoworkerChanged)
-            .catch(() => undefined);
-        }
+        const selectionOwner = kind === "discussion" ? coworker : { ...coworker, useAppModelDefaults: false };
+        const inherited = usesAppConversationDefault(selectionOwner);
+        const [catalog, settings] = await Promise.all([threads.listModelCatalog(), coworkerBridge.settings.get()]);
+        const modelDefaults = settings.modelDefaults;
+        const automatic = inherited ? !modelDefaults.conversation.model : coworker.modelMode === "auto";
+        const standardId = coworker.model || recommendModel(catalog)?.id || "";
         // One resolver serves this discussion and native group/review turns.
-        const decision = resolveDiscussionModel({ models: catalog.models.filter((model) => !failedModels.includes(model.id)) }, { ...coworker, model: standardId }, prompt);
+        const decision = resolveDiscussionModel(catalog, selectionOwner, prompt, modelDefaults);
         if (!decision.model) {
           // This is a selection-policy refusal, not a failed provider attempt.
           // Do not retry it through the model-failure fallback path.
-          setFailure(decision.reason);
+          const unavailable = inherited ? modelDefaults.conversation.model : coworker.model;
+          setFailure(unavailable && !catalog.models.some((model) => model.id === unavailable) ? describeUnavailableModel(unavailable, catalog.models, session) : decision.reason);
           return;
         }
         const pick = decision.model;
         turnModelId = pick.id;
+        selection = { owner: selectionOwner, defaults: modelDefaults, automatic, allowFallback: automatic || (!inherited && wasAutoPicked(coworker, pick.id)), lane: decision.lane, anchor: standardId || pick.id };
         turnModel = { providerId: pick.providerId, modelId: pick.modelId, ...(decision.variant ? { variant: decision.variant } : {}) };
         if (automatic && pick.id !== standardId) {
           markAutoPicked(coworker.slug, pick.id);
@@ -1703,7 +1708,7 @@ function ThreadView({
         setActiveTurn(null);
       }
     }
-  }, [abortUntilQuiet, commitTurnState, coworker.effortPreference, coworker.model, coworker.modelChosenBy, coworker.modelMode, coworker.modelSelectionPreferences, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
+  }, [abortUntilQuiet, commitTurnState, coworker.effortPreference, coworker.model, coworker.modelChosenBy, coworker.modelMode, coworker.modelSelectionPreferences, coworker.modelVariant, coworker.useAppModelDefaults, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, stopScope, threadId, threads, title, titleDiscussionAfterFirstMessage]);
 
   /**
    * After a quit or reload the engine may still be on the turn. Follow it to
@@ -1819,12 +1824,12 @@ function ThreadView({
   /** Send what is next in line, one at a time, once nothing is in flight and nothing unresolved holds the queue. */
   const drainNext = useCallback(() => {
     if (backendOwnsTurns()) return;
-    if (activeTurnRef.current || turnStateRef.current.pending) return;
+    if (activeTurnRef.current || turnStateRef.current.pending || threadStop(stopScope)) return;
     const { state, message } = dequeue(turnStateRef.current);
     if (!message) return;
     commitTurnState(() => state);
     void submitTurn(message.text, newMessageId(), { mode: "send" });
-  }, [commitTurnState, submitTurn]);
+  }, [commitTurnState, stopScope, submitTurn]);
 
   useEffect(() => {
     if (!turnsLoaded || activeTurn || pendingTurn || appRetry || turnState.next.length === 0) return;
@@ -1849,7 +1854,7 @@ function ThreadView({
     if (!text) return;
     jumpToLatest();
     acknowledgeCoworker(coworker.slug);
-    if (activeTurnRef.current || turnStateRef.current.pending || appRetry || engineRunning) {
+    if (activeTurnRef.current || turnStateRef.current.pending || appRetry || engineRunning || threadStop(stopScope)) {
       voiceRef.current?.expectReply(null);
       commitTurnState((state) => enqueue(state, { id: newQueuedId(), text, queuedAt: Date.now() }));
       return;
@@ -1857,7 +1862,7 @@ function ThreadView({
     const messageId = newMessageId();
     const voiceIntent = voiceRef.current?.expectReply(messageId);
     void submitTurn(text, messageId, { mode: "send", voice: voiceIntent });
-  }, [appRetry, commitTurnState, coworker.slug, engineRunning, jumpToLatest, submitTurn]);
+  }, [appRetry, commitTurnState, coworker.slug, engineRunning, jumpToLatest, stopScope, submitTurn]);
 
   /** Put a waiting message back in the field to change it. */
   function editQueued(id: string) {
@@ -1870,18 +1875,18 @@ function ThreadView({
 
   /** Stop the reply in progress and send this waiting message right away. */
   async function sendQueuedNow(id: string) {
-    const { state, message } = takeQueued(turnStateRef.current, id);
+    if (threadStop(stopScope)) return;
+    const message = turnStateRef.current.next.find((item) => item.id === id);
     if (!message) return;
     jumpToLatest();
     voice.stop("");
-    commitTurnState(() => state);
     if (activeTurnRef.current || appRetry || engineRunning) {
-      await stop();
+      if (!await stop()) return;
       await untilTurnReleased();
-      await threads.client.waitUntilIdle(threadId, { timeoutMs: 15_000, pollIntervalMs: 300 }).catch(() => undefined);
     }
+    if (!viewMounted.current || threadStop(stopScope) || !turnStateRef.current.next.some((item) => item.id === id)) return;
     // The stopped turn keeps its line in the transcript; the record moves on to this message.
-    commitTurnState(clearPending);
+    commitTurnState((state) => clearPending(removeQueued(state, id)));
     void submitTurn(message.text, newMessageId(), { mode: "send" });
   }
 
@@ -1915,25 +1920,30 @@ function ThreadView({
   }
 
   /** Stop: the engine's turn, an automatic attempt still waiting, or the wait — whichever is going. Next stays. */
-  async function stop() {
-    voice.stop("Audio stopped. Your text conversation is kept.");
-    if (appRetryTimerRef.current !== null) {
-      window.clearTimeout(appRetryTimerRef.current);
-      appRetryTimerRef.current = null;
-    }
-    setAppRetry(null);
-    const stopping = turnStateRef.current.pending;
-    commitTurnState((state) => markStopped(state, Date.now()));
-    waitControllerRef.current?.abort();
-    try {
-      await coworkerBridge.turns.cancel(coworker.slug, threadId, stopping?.messageId);
-      await threads.client.abortThread(threadId);
+  function stop(): Promise<boolean> {
+    const messageId = threadStop(stopScope)?.messageId ?? turnStateRef.current.pending?.messageId ?? activeTurnRef.current?.messageId;
+    return runThreadStop(stopScope, async () => {
+      voice.stop("Audio stopped. Your text conversation is kept.");
+      if (appRetryTimerRef.current !== null) {
+        window.clearTimeout(appRetryTimerRef.current);
+        appRetryTimerRef.current = null;
+      }
+      setAppRetry(null);
+      // This is the durable cancellation intent/queue fence, not confirmation.
+      commitTurnState((state) => state.pending?.messageId === messageId ? markStopped(state, Date.now()) : state);
+      waitControllerRef.current?.abort();
+      if (!messageId) throw new Error("The current message could not be identified. Refresh this conversation before trying Stop again.");
+      const cancelled = await waitForObservation(coworkerBridge.turns.cancel(coworker.slug, threadId, messageId));
+      if (!cancelled.ok) throw new Error("Cancellation was not confirmed. Try Stop again before continuing.");
+      await threads.client.abortThread(threadId, { signal: AbortSignal.timeout(10_000) });
       // The message may still be on its way to the engine's run; keep the stop in force until the turn has ended.
-      if (stopping && activeTurnRef.current?.phase !== "accepting") await abortUntilQuiet(stopping.messageId);
+      if (activeTurnRef.current?.phase !== "accepting") await abortUntilQuiet(messageId);
+      await untilTurnReleased();
+      if (activeTurnRef.current) throw new Error("The pending send has not finished stopping. Try Stop again before continuing.");
+      const result = await threads.client.waitUntilIdle(threadId, { timeoutMs: 10_000, pollIntervalMs: 300, signal: AbortSignal.timeout(10_000) });
+      if (result.outcome !== "settled" || isRunning(result.snapshot.status)) throw new Error("The conversation is still stopping. Try Stop again before continuing.");
       await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
+    }, messageId);
   }
 
   /** Let a cut-off turn go: nothing is sent again, and whatever waited as Next moves on. */
@@ -1943,6 +1953,7 @@ function ThreadView({
   }
 
   function chooseTurnAction(choice: TurnChoice) {
+    if (threadStop(stopScope) && choice.id !== "stop") return;
     switch (choice.id) {
       case "retry":
       case "continue":
@@ -2012,7 +2023,7 @@ function ThreadView({
     recommendedModel: recommendedModel?.modelLabel ?? "",
   });
   const needsContinuation = pendingTurn && messages.some((message) => message.parentId === pendingTurn.messageId && message.toolCalls.length > 0);
-  const outcome = rawOutcome && needsContinuation && ["failed", "stopped-by-you", "cut-off"].includes(rawOutcome.kind)
+  const outcome = stopAttempt ? null : rawOutcome && needsContinuation && ["failed", "stopped-by-you", "cut-off"].includes(rawOutcome.kind)
     ? { ...rawOutcome, detail: "Earlier actions and their history are kept. Continue performs only missing work, using a new message in this discussion.", choices: rawOutcome.choices.map((choice): TurnChoice => choice.id === "retry" || choice.id === "continue" ? { ...choice, id: "continue", label: "Continue" } : choice) }
     : rawOutcome;
   // A reply that landed while this view was not driving the turn (after a reload) settles the record.
@@ -2022,8 +2033,8 @@ function ThreadView({
 
   const turnRunning = outcome?.kind === "working" || outcome?.kind === "slow" || outcome?.kind === "retrying";
   // The engine can be busy on a turn this view never sent (a Worker's review, a scheduled run): still working.
-  const working = turnRunning || (outcome === null && !needsYou && engineRunning) || (activeTurn !== null && outcome === null);
-  const voiceSettled = engineStatus.type === "idle" && !activeTurn && !appRetry && !working && !needsYou && !error && !Object.values(readErrors).some(Boolean);
+  const working = !stopAttempt && (turnRunning || (outcome === null && !needsYou && engineRunning) || (activeTurn !== null && outcome === null));
+  const voiceSettled = !stopAttempt && engineStatus.type === "idle" && !activeTurn && !appRetry && !working && !needsYou && !error && !Object.values(readErrors).some(Boolean);
   const voiceReply = useMemo(() => privateVoiceReply(messages, voiceSettled && !failure && (!outcome || outcome.kind === "replied")), [messages, voiceSettled, failure, outcome?.kind]);
   const voice = useVoice({
     active: active && kind === "discussion" && !assignmentMode && !assignmentBusy,
@@ -2097,7 +2108,7 @@ function ThreadView({
     failedSteps: currentReplies.flatMap((reply) => reply.toolCalls).filter((call) => executionState(call.status) === "failed").length,
   };
 
-  const readableStatus = !transcriptLoaded ? "Loading conversation" : outcome && outcome.kind !== "working" && outcome.kind !== "replied"
+  const readableStatus = stopAttempt ? stopPending ? "Stopping..." : "Stop not confirmed" : !transcriptLoaded ? "Loading conversation" : outcome && outcome.kind !== "working" && outcome.kind !== "replied"
     ? outcome.label
     : working
       ? workingLabel
@@ -2106,6 +2117,10 @@ function ThreadView({
   const failed = outcome?.kind === "failed";
 
   useEffect(() => {
+    if (stopAttempt) {
+      onActivityChange({ state: stopPending ? "working" : "attention", label: stopPending ? "Stopping..." : "Stop not confirmed", detail: "Stopping work in this conversation", summary: stopPending ? "Stopping..." : "Stop not confirmed. Try Stop again before continuing.", updatedAt: Date.now(), threadId });
+      return;
+    }
     if (!transcriptLoaded) return;
     if (needsYou) {
       onActivityChange({
@@ -2149,12 +2164,12 @@ function ThreadView({
     // already announced itself; clearing here would leave the header on Ready for one frame.
     if (activeTurnRef.current) return;
     onActivityChange(null);
-  }, [activeToolLabel, kind, needsYou, onActivityChange, outcome?.kind, outcome?.label, outcome?.line, pending, threadId, title, transcriptLoaded, working, workingLabel]);
+  }, [activeToolLabel, kind, needsYou, onActivityChange, outcome?.kind, outcome?.label, outcome?.line, pending, stopAttempt, stopPending, threadId, title, transcriptLoaded, working, workingLabel]);
 
   const currentDiscussion: ThreadListItem = discussions.find((item) => item.id === threadId)
     ?? { id: threadId, title, createdAt: 0, updatedAt: 0, status: "idle" };
   const freshDiscussion = transcriptLoaded && turnsLoaded && kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !outcome;
-  const composerWorking = turnRunning || activeTurn !== null || (engineRunning && !needsYou);
+  const composerWorking = Boolean(stopAttempt) || turnRunning || activeTurn !== null || (engineRunning && !needsYou);
   const [controlStatusSlot, setControlStatusSlot] = useState<HTMLDivElement | null>(null);
   const [floatingSlot, setFloatingSlot] = useState<HTMLDivElement | null>(null);
   const [computerOpenRequest, setComputerOpenRequest] = useState(0);
@@ -2184,7 +2199,7 @@ function ThreadView({
           <>
             {kind !== "discussion" ? <Button variant="ghost" onClick={onBack}>Back</Button> : null}
             {kind !== "worker" ? (
-              <Button variant="ghost" disabled={!active || (!working && !needsYou)} title={working || needsYou ? "Stop work in this conversation" : "No active work to stop"} data-testid="coworker-stop" onClick={() => void stop()}>Stop</Button>
+              <Button variant="ghost" disabled={!active || stopPending || (!working && !needsYou && !stopAttempt)} title={working || needsYou || stopAttempt ? "Stop work in this conversation" : "No active work to stop"} data-testid="coworker-stop" onClick={() => void stop()}>{stopLabel}</Button>
             ) : null}
           </>
         )}
@@ -2194,8 +2209,8 @@ function ThreadView({
       <div className="@container/discussion min-h-0 min-w-0 flex-1">
       <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="coworker-conversation-column">
-      <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={needsYou ? "needs-you" : working ? "working" : "idle"} data-outcome={outcome?.kind ?? ""}>
-        {transcriptLoaded && kind === "discussion" && !working && !needsYou && !failed && !settledWord ? "Ready" : readableStatus}
+      <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={stopAttempt ? stopPending ? "stopping" : "stop-unconfirmed" : needsYou ? "needs-you" : working ? "working" : "idle"} data-outcome={outcome?.kind ?? ""}>
+        {transcriptLoaded && kind === "discussion" && !stopAttempt && !working && !needsYou && !failed && !settledWord ? "Ready" : readableStatus}
       </p>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
@@ -2206,6 +2221,7 @@ function ThreadView({
         <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">
           {!transcriptLoaded && !readErrors.transcript ? <p role="status" className="text-xs text-mist">Loading conversation...</p> : null}
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
+          <TranscriptAppContext.Provider value={{ sessionId: threadId, engine: "v1", readOnly: !active || kind !== "discussion" }}>
           {blocks.map((block) => {
             const retriedWith = block.kind === "message" ? executionsByMessage.get(block.message.id)?.retryLabel : undefined;
             if (block.kind === "actions") {
@@ -2242,6 +2258,7 @@ function ThreadView({
               </div>
             );
           })}
+          </TranscriptAppContext.Provider>
           <CollaborationReceipts receipts={collaborationReceipts} />
           <InteractionCards
             coworker={coworker}
@@ -2283,6 +2300,9 @@ function ThreadView({
               onStop={outcome?.kind === "slow" ? () => void stop() : undefined}
             />
           </LiveRowSlot>
+          {stopAttempt ? <div role="status" aria-live="polite" data-testid="coworker-stop-feedback">
+            <QuietLine outcome={stopPending ? "stopping" : "stop-unconfirmed"} text={stopPending ? "Stopping..." : `Stop not confirmed. ${stopAttempt.error ?? "Try Stop again before continuing."}`} choices={stopPending ? [] : [{ id: "stop", label: "Retry stop" }]} onChoose={chooseTurnAction} />
+          </div> : null}
           {outcome?.kind === "retrying" || outcome?.kind === "stopped-by-you" || outcome?.kind === "cut-off" ? (
             <QuietLine outcome={outcome.kind} text={outcome.line} choices={outcome.choices} onChoose={chooseTurnAction} />
           ) : null}
@@ -2321,6 +2341,8 @@ function ThreadView({
           onCreateAssignment={() => void createAssignmentFromDiscussion()}
           busy={assignmentBusy}
           working={composerWorking}
+          stopPending={stopPending}
+          stopLabel={stopLabel}
           onStop={() => void stop()}
           offerStartingPoints={freshDiscussion}
           coworkerName={coworker.name}
@@ -2340,6 +2362,8 @@ function ThreadView({
           onChange={setReply}
           onSubmit={() => void send()}
           working={composerWorking}
+          stopPending={stopPending}
+          stopLabel={stopLabel}
           onStop={() => void stop()}
           placeholder={`Follow up with ${coworker.name}…`}
           summary={summary}
@@ -2948,7 +2972,10 @@ function ToolAttachments({ calls, client }: { calls: TranscriptToolCall[]; clien
 }
 
 /** The standard MCP App a tool call returned, mounted in the existing sandboxed host. */
+const TranscriptAppContext = createContext<CoworkerMcpAppContext>({ sessionId: null, engine: "v1", readOnly: true });
+
 function ToolAppFrame({ call, client }: { call: TranscriptToolCall; client: CoworkerMcpClient }) {
+  const { sessionId, engine, readOnly } = useContext(TranscriptAppContext);
   const nextResult = preservedMcpAppResult({ output: call.output, metadata: call.metadata });
   const resultSignature = JSON.stringify(nextResult);
   const resultRef = useRef<{ signature: string; value: PreservedMcpAppResult | null }>({
@@ -2968,24 +2995,41 @@ function ToolAppFrame({ call, client }: { call: TranscriptToolCall; client: Cowo
   if (inputRef.current.signature !== inputSignature) {
     inputRef.current = { signature: inputSignature, value: launch?.arguments ?? call.input };
   }
-  const [app, setApp] = useState<CoworkerMcpAppResource | null>(null);
+  const [resolvedApp, setApp] = useState<{ app: CoworkerMcpAppResource; client: CoworkerMcpClient } | null>(null);
+  const app = resolvedApp?.client === client
+    && resolvedApp.app.context.sessionId === sessionId
+    && resolvedApp.app.context.engine === engine
+    && resolvedApp.app.context.readOnly === readOnly ? resolvedApp.app : null;
   const [appError, setAppError] = useState("");
   const complete = call.status === "completed" || call.status === "success";
+  const releaseRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let cancelled = false;
+    let launchId: string | undefined;
+    const release = () => {
+      if (launchId) void client.releaseApp(launchId).catch(() => undefined);
+      launchId = undefined;
+    };
+    releaseRef.current = release;
     setApp(null);
     setAppError("");
     if (!result || !complete) return;
-    void client.resolveApp(call.tool, launch ?? undefined)
+    void client.resolveApp(call.tool, { sessionId, engine, readOnly }, launch ?? undefined)
       .then(({ app: resolved }) => {
-        if (!cancelled) setApp(resolved);
+        launchId = resolved?.launchId;
+        if (cancelled) release();
+        else setApp(resolved ? { app: resolved, client } : null);
       })
       .catch((cause) => {
         if (!cancelled) setAppError(cause instanceof Error ? cause.message : String(cause));
       });
-    return () => { cancelled = true; };
-  }, [call.tool, client, complete, launch, result]);
+    return () => {
+      cancelled = true;
+      release();
+      if (releaseRef.current === release) releaseRef.current = null;
+    };
+  }, [call.tool, client, complete, launch, result, sessionId, engine, readOnly]);
 
   if (app && result) {
     return (
@@ -2996,7 +3040,7 @@ function ToolAppFrame({ call, client }: { call: TranscriptToolCall; client: Cowo
           toolName={call.tool}
           input={inputRef.current.value}
           result={result}
-          onClose={() => setApp(null)}
+          onClose={() => { releaseRef.current?.(); setApp(null); }}
         />
       </div>
     );
@@ -3041,6 +3085,8 @@ function DiscussionComposer({
   onCreateAssignment,
   busy,
   working = false,
+  stopPending = false,
+  stopLabel = "Stop",
   onStop,
   waiting,
   error,
@@ -3066,6 +3112,8 @@ function DiscussionComposer({
   busy: boolean;
   /** A reply is in progress: the field stays open, Enter puts the message on Next, and the round control stops when the field is empty. */
   working?: boolean;
+  stopPending?: boolean;
+  stopLabel?: string;
   onStop?: () => void;
   /** Why sending has to wait a moment (for example, the workspace is still starting); typing stays possible. */
   waiting?: string;
@@ -3140,7 +3188,7 @@ function DiscussionComposer({
               {effortStop && onEffortChange ? <EffortDial stop={effortStop} onChange={onEffortChange} coworkerName={coworkerName} fixedVariant={fixedVariant} /> : null}
             </div>
             {stopping && onStop ? (
-              <SendButton label="Stop" busy={false} disabled={false} stop onClick={onStop} />
+              <SendButton label={stopLabel} busy={stopPending} disabled={stopPending} stop onClick={onStop} />
             ) : (
               <SendButton label={submitLabel} busy={busy} disabled={!canSubmit} title={waiting} onClick={submit} />
             )}
@@ -3233,6 +3281,8 @@ function MessageComposer({
   onChange,
   onSubmit,
   working = false,
+  stopPending = false,
+  stopLabel = "Stop",
   onStop,
   placeholder,
   summary = null,
@@ -3243,6 +3293,8 @@ function MessageComposer({
   onSubmit: () => void;
   /** A reply is in progress: the field stays open, Enter puts the message on Next, and the round control stops when the field is empty. */
   working?: boolean;
+  stopPending?: boolean;
+  stopLabel?: string;
   onStop?: () => void;
   placeholder: string;
   summary?: CoworkerSummaryLine | null;
@@ -3272,7 +3324,7 @@ function MessageComposer({
           />
           <div className="flex justify-end" data-testid="coworker-composer-actions">
             {stopping && onStop ? (
-              <SendButton label="Stop" busy={false} disabled={false} stop onClick={onStop} />
+              <SendButton label={stopLabel} busy={stopPending} disabled={stopPending} stop onClick={onStop} />
             ) : (
               <SendButton label={working ? "Next" : "Send"} busy={false} disabled={!canSubmit} onClick={onSubmit} />
             )}

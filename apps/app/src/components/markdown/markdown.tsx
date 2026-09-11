@@ -25,6 +25,7 @@ import {
 import { LinkActionMenu } from "./link-action-menu";
 import { useMermaidEnhancer } from "./mermaid";
 import { useSelectionStableValue } from "./selection-stability";
+import { enhanceNearViewport } from "./near-viewport";
 
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
@@ -191,27 +192,6 @@ function MarkdownBlockInner({
     };
   }, []);
 
-  useEffect(() => {
-    if (streaming || !hasFencedCodeBlock(text)) {
-      setHighlightedHtml(null);
-      return;
-    }
-
-    let cancelled = false;
-    void renderHighlightedMarkdownHtml(text).then((html) => {
-      if (!cancelled && html.trim()) {
-        setHighlightedHtml({ text, html });
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setHighlightedHtml(null);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [streaming, text]);
-
   const candidate = useMemo<RenderedMarkdown>(() => {
     if (!streaming && highlightedHtml?.text === text) return { kind: "document", html: highlightedHtml.html };
     if (streamedBlocks) return { kind: "blocks", blocks: streamedBlocks };
@@ -228,6 +208,30 @@ function MarkdownBlockInner({
   const isEmpty = rendered.kind === "document"
     ? !rendered.html
     : rendered.blocks.every((block) => !block.__html);
+
+  useEffect(() => {
+    if (streaming || !hasFencedCodeBlock(text)) {
+      setHighlightedHtml(null);
+      return;
+    }
+    // Selection stability commits the settled document on a later render. Wait
+    // for that keyed root, not the streaming root that is about to be removed.
+    const root = rootRef.current;
+    if (!root || isEmpty || rendered.kind !== "document") return;
+    let cancelled = false;
+    const stopObserving = enhanceNearViewport([root], () => {
+      void renderHighlightedMarkdownHtml(text).then((html) => {
+        if (!cancelled && html.trim()) setHighlightedHtml({ text, html });
+      }).catch(() => {
+        if (!cancelled) setHighlightedHtml(null);
+      });
+    });
+    return () => {
+      cancelled = true;
+      stopObserving();
+    };
+  }, [isEmpty, rendered.kind, streaming, text]);
+
   useMermaidEnhancer(rootRef, rendered, !streaming);
 
   useEffect(() => {

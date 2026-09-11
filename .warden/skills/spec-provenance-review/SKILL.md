@@ -47,7 +47,9 @@ Do not report:
 - Test-only shortcuts, mocks, or fixtures that do not invalidate the claim.
 - Pre-existing gaps, title wording alone, or anything outside the scoped paths.
 
-Never report `high` or `low`. Each finding must quote the claimed behavior,
-identify the changed line that bypasses it, explain the concrete failure that
-would still pass, and suggest the smallest fix. If that evidence is missing,
-report nothing.
+Every finding is `medium` advisory; never report `high` or `low`, and never
+turn helper-style policy into a finding. Use one finding per root cause, group
+related locations, quote the claimed behavior, identify changed-code causality,
+explain the reachable concrete failure that would still pass, address contrary
+evidence, suggest the smallest fix, and state `Clear when:` with an observable
+condition. If that evidence is missing, report nothing.

@@ -8,7 +8,6 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Archive, ArchiveRestore } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
@@ -18,9 +17,11 @@ import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
-import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { createClientV2, isOpencodeV2BaseUrl, v2PromptText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
+import { composeNativeSessionSnapshot, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { prefetchOpeningSessionHistory, sessionHistoryIdentity } from "@/react-app/domains/session/surface/session-history";
+import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import {
@@ -35,6 +36,7 @@ import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
   getDesktopHomeDir,
   joinDesktopPath,
+  openworkServerInfo,
   revealDesktopItemInDir,
   pickDirectory,
   resolveWorkspaceListSelectedId,
@@ -80,6 +82,7 @@ import {
   describeTaskCreateRetry,
   describeWorkspaceCreateError,
   createRouteSession,
+  createRouteSessionOnEngine,
   deleteRouteSession,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -109,7 +112,10 @@ import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
 import { useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability";
 import { automationsStateChangedEvent } from "@/react-app/domains/automations/automation-events";
-import type { NewTaskComposerContext } from "@/react-app/domains/session/chat/new-task-composer";
+import type {
+  NewTaskComposerContext,
+  NewTaskComposerHandoff,
+} from "@/react-app/domains/session/chat/new-task-composer";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
@@ -124,7 +130,7 @@ import {
 import { draftToParts } from "@/react-app/domains/session/sync/draft-parts";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
-import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorValue } from "@/app/lib/model-behavior";
+import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorValue, sanitizeModelBehaviorValue } from "@/app/lib/model-behavior";
 import { computeModelAvailability, createUnavailableConfirmationGate, type ModelAvailability } from "@/react-app/domains/session/surface/model-availability";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
@@ -136,7 +142,10 @@ import {
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
-import { markComposerAutoSend } from "@/react-app/domains/session/surface/composer-auto-send";
+import {
+  composerAutoSendScopeKey,
+  markComposerAutoSend,
+} from "@/react-app/domains/session/surface/composer-auto-send";
 import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe-edit-resend";
 import { assertQueuedSendCurrent, getQueuedSendGeneration } from "@/react-app/domains/session/surface/queued-drain-machine";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
@@ -208,6 +217,8 @@ import {
 } from "@/react-app/domains/session/sync/draft-store";
 import {
   claimComposerSessionDraftScope,
+  persistableComposerDraftText,
+  snapshotComposerSessionState,
   useComposerStateStore,
 } from "@/react-app/domains/session/surface/composer-state-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
@@ -240,6 +251,7 @@ import {
 } from "./cloud-workspace-status";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
+import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
   globalExtensionsRoute,
@@ -353,6 +365,14 @@ function singlePickedDirectory(selection: string | string[] | null) {
     : Array.isArray(selection)
       ? selection[0] ?? null
       : null;
+}
+
+function focusedWorkbenchPaneOwner() {
+  const workbench = useWorkbenchStore.getState();
+  const focused = workbench.focusedPane === "secondary" ? workbench.secondary : workbench.primary;
+  return focused
+    ? JSON.stringify([workbench.focusedPane, focused.workspaceId, focused.sessionId])
+    : null;
 }
 
 export function SessionRoute() {
@@ -470,6 +490,7 @@ export function SessionRoute() {
     legacySelectedWorkspaceId,
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
+    loadedWorkspaceIds,
     setRetryingWorkspaceIds,
     startupRetryTimerRef,
     selectedWorkspaceId,
@@ -497,7 +518,52 @@ export function SessionRoute() {
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
+  const routeNavigationRef = useRef({ locationKey: location.key, generation: 0 });
+  if (routeNavigationRef.current.locationKey !== location.key) {
+    routeNavigationRef.current = {
+      locationKey: location.key,
+      generation: routeNavigationRef.current.generation + 1,
+    };
+  }
+  const selectedConversationRef = useRef({
+    workspaceId: selectedWorkspaceId,
+    sessionId: selectedSessionId,
+    draftScope: sessionDraftScope,
+    location: `${location.pathname}${location.search}`,
+    locationKey: location.key,
+    navigationGeneration: routeNavigationRef.current.generation,
+  });
+  selectedConversationRef.current = {
+    workspaceId: selectedWorkspaceId,
+    sessionId: selectedSessionId,
+    draftScope: sessionDraftScope,
+    location: `${location.pathname}${location.search}`,
+    locationKey: location.key,
+    navigationGeneration: routeNavigationRef.current.generation,
+  };
   const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
+  const canPrefetchSelectedWorkspace = Boolean(opencodeClient && selectedWorkspaceEndpoint && !selectedWorkspaceError);
+  const prefetchRuntimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId;
+  const cancelOpeningPrefetchRef = useRef<(() => void) | undefined>(undefined);
+  const handlePrefetchSession = useCallback((workspaceId: string, sessionId: string) => {
+    // Only the selected workspace has a confirmed runtime here. Never infer an
+    // endpoint for a pinned/other-workspace row just to warm its transcript.
+    if (workspaceId !== selectedWorkspaceId || !canPrefetchSelectedWorkspace || !prefetchRuntimeWorkspaceId || !selectedWorkspaceServerToken
+      || !sessionsByWorkspaceIdRef.current[workspaceId]?.some((session) => session.id === sessionId)) return;
+    const endpoint = { opencodeBaseUrl: opencodeBaseUrl.trim(), token: selectedWorkspaceServerToken.trim() };
+    const cancel = prefetchOpeningSessionHistory(getReactQueryClient(), {
+      ...sessionHistoryIdentity({ draftScope: sessionDraftScope, opencodeBaseUrl: endpoint.opencodeBaseUrl, runtimeWorkspaceId: prefetchRuntimeWorkspaceId, sessionId }),
+      sessionId,
+      authToken: endpoint.token,
+      readSnapshot: (signal, window) => composeNativeSessionSnapshot(endpoint, sessionId, { ...window, signal }),
+    });
+    if (cancel) cancelOpeningPrefetchRef.current = cancel;
+    return cancel;
+  }, [selectedWorkspaceId, canPrefetchSelectedWorkspace, prefetchRuntimeWorkspaceId, opencodeBaseUrl, selectedWorkspaceServerToken, sessionDraftScope, sessionsByWorkspaceIdRef]);
+  useEffect(() => () => {
+    cancelOpeningPrefetchRef.current?.();
+    cancelOpeningPrefetchRef.current = undefined;
+  }, [handlePrefetchSession]);
   // The dashboard is user-scoped while MCP servers are workspace-scoped: the
   // selected workspace's runtime is primary, and every other available one is
   // a per-tile fallback so tiles keep working when the selected workspace does
@@ -543,6 +609,7 @@ export function SessionRoute() {
     : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
+    cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     opencodeClient,
@@ -650,6 +717,31 @@ export function SessionRoute() {
     onSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
   });
 
+  useEffect(() => {
+    if (!isDesktopRuntime() || selectedWorkspace?.workspaceType !== "local") return;
+    let cancelled = false;
+    let checking = false;
+    // Ports and credentials can survive a restart. Observe the host's actual
+    // generation even when no settings-change event accompanies it.
+    const interval = window.setInterval(async () => {
+      if (checking || document.visibilityState !== "visible") return;
+      checking = true;
+      try {
+        const info = await openworkServerInfo();
+        if (cancelled || !info.running || info.generation === openworkServerHostInfoState?.generation) return;
+        await refreshRouteState({ supersede: true });
+      } catch {
+        // The next probe can recover a temporarily unavailable desktop bridge.
+      } finally {
+        checking = false;
+      }
+    }, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [openworkServerHostInfoState?.generation, refreshRouteState, selectedWorkspace?.workspaceType]);
+
   const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
     client,
     workspaceId: selectedWorkspaceId,
@@ -704,8 +796,8 @@ export function SessionRoute() {
 
 
   const workspaceSessionGroups = useMemo(
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
-    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds), loadedWorkspaceIds),
+    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces, loadedWorkspaceIds],
   );
   useSessionGroupSync({ workspaces, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
@@ -800,6 +892,7 @@ export function SessionRoute() {
     selectedWorkspaceRoot,
     selectedWorkspaceId,
     localServerHostToken: openworkServerHostInfoState?.hostToken?.trim() ?? "",
+    localServerGeneration: openworkServerHostInfoState?.generation ?? null,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
@@ -927,6 +1020,9 @@ export function SessionRoute() {
   // the picker edits the global default (e.g. opened from the new-providers
   // toast). Composer "All models" carries the session id on the open event.
   const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
+  const modelPickerSelection = useSessionModelStore((state) =>
+    modelPickerSessionId ? state.bySessionId[modelPickerSessionId] ?? null : null,
+  );
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
@@ -1300,11 +1396,14 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         const generation = getQueuedSendGeneration(targetSessionId);
-        const assertCurrent = () => assertQueuedSendCurrent(targetSessionId, generation);
+        const assertCurrent = () => {
+          assertQueuedSendCurrent(targetSessionId, generation);
+          if (sessionWorkHeld(opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
+        };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1325,6 +1424,11 @@ export function SessionRoute() {
           // message, including tasks that do not use connected services.
           skipGate: true,
           send: async () => {
+            assertCurrent();
+            if (unwrap(await opencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              throw new Error("This session is archived. Restore it before sending.");
+            }
+            assertCurrent();
             await sendWithRevertRollback({
               assertCurrent,
               revertMessageId: draft.revertMessageId,
@@ -1338,6 +1442,7 @@ export function SessionRoute() {
                 applySessionRevert(selectedWorkspaceId, reverted);
               },
               prompt: async () => {
+                assertCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1373,13 +1478,16 @@ export function SessionRoute() {
                 trackTaskStarted(targetSessionId, telemetryDimensions);
 
                 if (draft.mode === "shell") {
-                  await shellInSession(opencodeClient, targetSessionId, text);
+                  onPrepared?.();
+                  await shellInSession(opencodeClient, targetSessionId, text, { messageID: draft.messageId });
                   return;
                 }
 
                 if (draft.command) {
-                  const result = await opencodeClient.session.command({
+                  onPrepared?.();
+                  const result = await sendSessionCommand(opencodeBaseUrl, opencodeClient, {
                     sessionID: targetSessionId,
+                    messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1397,6 +1505,7 @@ export function SessionRoute() {
                   runtimeKey: environmentRuntimeKey,
                 });
                 assertCurrent();
+                onPrepared?.(v2PromptText(parts));
                 const result = await opencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
@@ -1412,7 +1521,7 @@ export function SessionRoute() {
                 }
                 // Remember what this conversation used last so returning to it
                 // (or splitting it beside another session) keeps its own model.
-                if (sendModel) {
+                if (sendModel && getQueuedSendGeneration(targetSessionId) === generation) {
                   useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                 }
               },
@@ -1496,25 +1605,26 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || selectedSessionId;
-          if (!targetSessionId) return;
-          try {
-            const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(selectedWorkspaceId, forked.id);
-            rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || selectedSessionId;
+        if (!targetSessionId) return;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(selectedWorkspaceId, forked.id);
+        rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
+        void refreshRouteState();
       },
       onChangeModel: (model: { providerID: string; modelID: string }) => {
         local.setPrefs((previous) => ({
@@ -1654,10 +1764,13 @@ export function SessionRoute() {
       isSandboxWorkspace: isSandboxWorkspace(workspace),
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
         const generation = getQueuedSendGeneration(targetSessionId);
-        const assertCurrent = () => assertQueuedSendCurrent(targetSessionId, generation);
+        const assertCurrent = () => {
+          assertQueuedSendCurrent(targetSessionId, generation);
+          if (sessionWorkHeld(endpoint.opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
+        };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!targetSessionId || (!text && draft.attachments.length === 0)) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1668,6 +1781,11 @@ export function SessionRoute() {
         return submitWithCloudMcpReadiness({
           skipGate: true,
           send: async () => {
+            assertCurrent();
+            if (unwrap(await workspaceOpencodeClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              throw new Error("This session is archived. Restore it before sending.");
+            }
+            assertCurrent();
             await sendWithRevertRollback({
               assertCurrent,
               revertMessageId: draft.revertMessageId,
@@ -1681,6 +1799,7 @@ export function SessionRoute() {
                 applySessionRevert(endpoint.workspaceId, reverted);
               },
               prompt: async () => {
+                assertCurrent();
                 captureAnalyticsEvent("task_message_sent", {
                   mode: draft.mode ?? "prompt",
                   is_command: Boolean(draft.command),
@@ -1705,12 +1824,15 @@ export function SessionRoute() {
                 trackSessionActive(targetSessionId, telemetryDimensions);
                 trackTaskStarted(targetSessionId, telemetryDimensions);
                 if (draft.mode === "shell") {
-                  await shellInSession(workspaceOpencodeClient, targetSessionId, text);
+                  onPrepared?.();
+                  await shellInSession(workspaceOpencodeClient, targetSessionId, text, { messageID: draft.messageId });
                   return;
                 }
                 if (draft.command) {
-                  const result = await workspaceOpencodeClient.session.command({
+                  onPrepared?.();
+                  const result = await sendSessionCommand(endpoint.opencodeBaseUrl, workspaceOpencodeClient, {
                     sessionID: targetSessionId,
+                    messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
                   });
@@ -1725,6 +1847,7 @@ export function SessionRoute() {
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
                 assertCurrent();
+                onPrepared?.(v2PromptText(parts));
                 const result = await workspaceOpencodeClient.session.promptAsync({
                   sessionID: targetSessionId,
                   messageID: draft.messageId,
@@ -1738,7 +1861,7 @@ export function SessionRoute() {
                   if (isPromptAdmissionUnknown(result.error)) throw result.error;
                   throw new Error(serializeSDKError(result.error));
                 }
-                if (sendModel) {
+                if (sendModel && getQueuedSendGeneration(targetSessionId) === generation) {
                   useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                 }
               },
@@ -1783,24 +1906,25 @@ export function SessionRoute() {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || session.sessionId;
-          try {
-            const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
-            writeLastSessionFor(workspace.id, forked.id);
-            rememberPendingCreatedSession(workspace.id, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
-            }));
-            navigateToWorkspaceSession(workspace.id, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
-          }
-        })();
+      onForkAtMessage: async (messageId: string | null, sessionId: string, isCurrent: () => boolean) => {
+        const targetSessionId = sessionId.trim() || session.sessionId;
+        const navigationOwner = selectedConversationRef.current;
+        const paneOwner = focusedWorkbenchPaneOwner();
+        const forked = await forkSession(workspaceOpencodeClient, targetSessionId, messageId ?? undefined);
+        if (!isCurrent()
+          || selectedConversationRef.current.navigationGeneration !== navigationOwner.navigationGeneration
+          || selectedConversationRef.current.workspaceId !== navigationOwner.workspaceId
+          || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
+          || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
+          || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        writeLastSessionFor(workspace.id, forked.id);
+        rememberPendingCreatedSession(workspace.id, forked.id);
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
+        }));
+        navigateToWorkspaceSession(workspace.id, forked.id);
+        void refreshRouteState();
       },
     };
     return {
@@ -1861,6 +1985,12 @@ export function SessionRoute() {
     return {
       client,
       workspaceId: selectedWorkspaceId || null,
+      draftOwnerKey: JSON.stringify([
+        sessionDraftScope,
+        selectedWorkspaceEndpoint?.opencodeBaseUrl ?? null,
+        selectedWorkspaceId || null,
+      ]),
+      draftScope: sessionDraftScope,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       modelOptions: organizationAssignedModelOptions,
       modelUnavailable: selectedModelUnavailable,
@@ -1944,8 +2074,10 @@ export function SessionRoute() {
     selectedAgent,
     selectedModelUnavailable,
     selectedWorkspace,
+    selectedWorkspaceEndpoint,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
+    sessionDraftScope,
     sessionProviderAuthStore,
     setSelectedAgent,
   ]);
@@ -2268,10 +2400,10 @@ export function SessionRoute() {
       : null;
     const options = selection ? (summary?.options ?? []) : modelBehaviorOptions;
     const current = selection ? (summary?.value ?? selection.variant) : modelVariantValue;
+    if (options.length < 2) return null;
     const next = direction === "reverse"
       ? previousModelBehaviorValue(options, current)
       : nextModelBehaviorValue(options, current);
-    if (!next) return null;
 
     if (activeSessionId && selection) {
       useSessionModelStore.getState().setVariant(activeSessionId, next);
@@ -2305,10 +2437,9 @@ export function SessionRoute() {
     if (!next) return null;
 
     const providerModel = providerCatalog?.[next.providerID]?.[next.modelID];
-    const summary = providerModel
-      ? getModelBehaviorSummary(next.providerID, providerModel, selection?.variant ?? modelVariantValue)
+    const variant = providerModel
+      ? sanitizeModelBehaviorValue(next.providerID, providerModel, selection ? selection.variant : modelVariantValue)
       : null;
-    const variant = summary && summary.options.length > 0 ? summary.value : null;
     if (activeSessionId) {
       useSessionModelStore.getState().setModel(activeSessionId, next, variant);
     }
@@ -2374,6 +2505,29 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
+  const { archiveSession, archiveDialog } = useSessionArchive({
+    workspaces,
+    sessionsByWorkspaceId,
+    endpointForWorkspace,
+    selectedWorkspaceId,
+    selectedSessionId,
+    navigateToWorkspaceSession,
+    reloadWorkspaceSessions,
+    draftScope: sessionDraftScope,
+    onArchivedChange: (workspaceId, sessionId, archived) => {
+      setSessionsByWorkspaceId(current => {
+        const sessions = current[workspaceId];
+        if (!sessions) return current;
+        return { ...current, [workspaceId]: sessions.map(session => session.id === sessionId
+          ? { ...session, time: { ...session.time, archived: archived ? Date.now() : 0 } }
+          : session) };
+      });
+    },
+  });
+  const handleArchiveSession = async (sessionId: string, archived: boolean) => {
+    await archiveSession(sessionId, archived);
+  };
+
   useSessionControlActions({
     workspaces,
     sessionsByWorkspaceId,
@@ -2390,6 +2544,7 @@ export function SessionRoute() {
     createTaskInWorkspace: handleCreateTaskInWorkspace,
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
+    archiveSession,
   });
 
   const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {
@@ -2906,59 +3061,6 @@ export function SessionRoute() {
     setWorkspaces((current) => orderRouteWorkspaces(current, nextOrderIds));
   }, []);
 
-  const handleArchiveSession = useCallback(
-    async (sessionId: string, archived: boolean) => {
-      if (!opencodeClient) return;
-      // The sidebar lists sessions from every workspace, so resolve the
-      // session's owning workspace instead of assuming the selected one —
-      // session.update needs the directory the session actually lives in.
-      const ownerWorkspace = workspaceSessionGroups.find((group) =>
-        group.sessions.some((session) => session?.id === sessionId),
-      )?.workspace;
-      const apply = async (nextArchived: boolean) => {
-        try {
-          await setSessionArchived(
-            opencodeClient,
-            sessionId,
-            nextArchived,
-            ownerWorkspace?.path || selectedWorkspaceRoot || undefined,
-          );
-          if (ownerWorkspace) await reloadWorkspaceSessions(ownerWorkspace.id);
-          await refreshRouteState();
-          return true;
-        } catch (error) {
-          console.error("[session-route] archive session failed", error);
-          toast.error(
-            nextArchived
-              ? t("session_management.archive_failed")
-              : t("session_management.unarchive_failed"),
-            { description: describeRouteError(error) },
-          );
-          return false;
-        }
-      };
-      if (!(await apply(archived))) return;
-      // Archiving is easy to hit by accident from the row's hover actions, so
-      // confirm it quietly with a way back. Undo reuses the same owner
-      // workspace and does not announce itself again.
-      toast.undo(
-        archived
-          ? t("session_management.session_archived")
-          : t("session_management.session_unarchived"),
-        {
-          id: `session-archive:${sessionId}`,
-          icon: archived ? Archive : ArchiveRestore,
-          undo: { label: t("common.undo"), onClick: () => void apply(!archived) },
-          view: ownerWorkspace
-            ? { label: t("common.view"), onClick: () => navigateToWorkspaceSession(ownerWorkspace.id, sessionId) }
-            : undefined,
-          closeLabel: t("common.close"),
-        },
-      );
-    },
-    [navigateToWorkspaceSession, opencodeClient, refreshRouteState, reloadWorkspaceSessions, selectedWorkspaceRoot, workspaceSessionGroups],
-  );
-
   const handleCreateWorkspace = useCallback(async (
     preset: WorkspacePreset,
     folder: string | null,
@@ -3373,7 +3475,7 @@ export function SessionRoute() {
           const remembered = readLastSessionFor(workspaceId);
           if (remembered && remembered !== selectedSessionId) {
             const known = sessionsByWorkspaceId[workspaceId];
-            if (known?.some((session) => session?.id === remembered)) {
+            if (known?.some((session) => session?.id === remembered && !session.time.archived)) {
               navigateToWorkspaceSession(workspaceId, remembered);
             } else {
               navigateToWorkspaceSession(workspaceId);
@@ -3389,7 +3491,7 @@ export function SessionRoute() {
           writeLastSessionFor(workspaceId, sessionId);
           navigateToWorkspaceSession(workspaceId, sessionId);
         },
-        onPrefetchSession: () => {},
+        onPrefetchSession: handlePrefetchSession,
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
           const { focusedPane, secondary } = useWorkbenchStore.getState();
           const hasWorkspaceError = Boolean(errorsByWorkspaceId[workspaceId]?.trim())
@@ -3412,44 +3514,92 @@ export function SessionRoute() {
         onCreateSplitTaskInWorkspace: (workspaceId) => {
           void handleCreateSplitTaskInWorkspace(workspaceId);
         },
-        onCreateTaskWithPrompt: async (workspaceId, prompt, attachments) => {
+        onCreateTaskWithPrompt: async (
+          workspaceId,
+          prompt,
+          attachments,
+          handoff?: NewTaskComposerHandoff,
+        ) => {
+          const navigationOwner = {
+            ...selectedConversationRef.current,
+            paneOwner: focusedWorkbenchPaneOwner(),
+          };
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (!workspace) throw new Error("Workspace is unavailable. Try again.");
-          const endpoint = endpointForWorkspace(workspace);
-          if (!endpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
-          const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
+          const workspaceEndpoint = endpointForWorkspace(workspace);
+          if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
+          // The scoped auto-send mark must name the engine that owns the new
+          // session; the session surface consumes it under that same base URL.
+          const { session, endpoint } = await createRouteSessionOnEngine(workspaceEndpoint, workspace.path?.trim() || undefined);
+          const continuation = handoff
+            ? snapshotComposerSessionState(handoff.getContinuation())
+            : null;
           if (workspaceId === selectedWorkspaceId) {
             void refreshCloudProviderSync("new_chat");
           }
           const firstTaskPrompt = prompt.trim();
           if (firstTaskPrompt || attachments?.length) {
             const firstTaskAttachments = attachments ?? [];
-            // Attachment chips only survive in-memory (File objects), so the
-            // persisted fallback draft drops their tokens.
-            saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
-            claimComposerSessionDraftScope(
-              session.id,
-              sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id),
-            );
-            // The composer reads its draft from the composer state store,
-            // not the persisted draft store — seed both.
-            useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
-            if (firstTaskAttachments.length) {
-              useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
+            const destinationScopeKey = sessionDraftScopeKey(sessionDraftScope, workspaceId, session.id);
+            if (handoff && continuation) {
+              // The source composer remains live while session creation is in
+              // flight. Seed its latest continuation in the destination, but
+              // send the immutable submitted snapshot through the scoped mark.
+              saveSessionDraft(sessionDraftScope, workspaceId, session.id, {
+                text: persistableComposerDraftText(continuation.draft),
+                mode: "prompt",
+              });
+              claimComposerSessionDraftScope(session.id, destinationScopeKey);
+              useComposerStateStore.setState((state) => ({
+                sessions: {
+                  ...state.sessions,
+                  [session.id]: continuation,
+                },
+              }));
+              markComposerAutoSend(session.id, {
+                scopeKey: composerAutoSendScopeKey({
+                  draftScope: sessionDraftScope,
+                  opencodeBaseUrl: endpoint.opencodeBaseUrl,
+                  workspaceId,
+                  sessionId: session.id,
+                }),
+                composer: handoff.submitted,
+              });
+            } else {
+              // Attachment chips only survive in-memory (File objects), so the
+              // persisted fallback draft drops their tokens.
+              saveSessionDraft(sessionDraftScope, workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
+              claimComposerSessionDraftScope(session.id, destinationScopeKey);
+              // The composer reads its draft from the composer state store,
+              // not the persisted draft store — seed both.
+              useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
+              if (firstTaskAttachments.length) {
+                useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
+              }
+              // Legacy callers still seed the submitted draft directly.
+              markComposerAutoSend(session.id);
             }
-            // One-step run: the session surface sends the seeded draft itself.
-            markComposerAutoSend(session.id);
           }
-          writeActiveWorkspaceId(workspaceId || null);
-          writeLastSessionFor(workspaceId, session.id);
           rememberPendingCreatedSession(workspaceId, session.id);
           applyLastUsedModelToSession(session.id);
           setSessionsByWorkspaceId((current) => ({
             ...current,
             [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
           }));
-          navigateToWorkspaceSession(workspaceId, session.id);
-          focusPromptSoon();
+          const stillOwnsNavigation = navigationOwner.workspaceId === workspaceId
+            && selectedConversationRef.current.workspaceId === navigationOwner.workspaceId
+            && selectedConversationRef.current.sessionId === navigationOwner.sessionId
+            && selectedConversationRef.current.draftScope === navigationOwner.draftScope
+            && selectedConversationRef.current.location === navigationOwner.location
+            && selectedConversationRef.current.locationKey === navigationOwner.locationKey
+            && selectedConversationRef.current.navigationGeneration === navigationOwner.navigationGeneration
+            && focusedWorkbenchPaneOwner() === navigationOwner.paneOwner;
+          if (stillOwnsNavigation) {
+            writeActiveWorkspaceId(workspaceId || null);
+            writeLastSessionFor(workspaceId, session.id);
+            navigateToWorkspaceSession(workspaceId, session.id);
+            focusPromptSoon();
+          }
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,
@@ -3674,6 +3824,7 @@ export function SessionRoute() {
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}
     />
+    {archiveDialog}
     <SessionSearchDialog
       open={sessionSearchOpen}
       onClose={() => setSessionSearchOpen(false)}
@@ -3691,7 +3842,7 @@ export function SessionRoute() {
       setQuery={modelPicker.setQuery}
       subtitle={
         resolveModelAvailability(
-          (modelPickerSessionId ? getSessionModelSelection(modelPickerSessionId)?.model : null)
+          modelPickerSelection?.model
             ?? local.prefs.defaultModel
             ?? null,
         ).status === "unavailable"
@@ -3699,8 +3850,11 @@ export function SessionRoute() {
           : undefined
       }
       target="default"
+      currentBehaviorValue={modelPickerSelection
+        ? modelPickerSelection.variant
+        : local.prefs.modelVariant ?? null}
       current={
-        (modelPickerSessionId ? getSessionModelSelection(modelPickerSessionId)?.model : null)
+        modelPickerSelection?.model
           ?? local.prefs.defaultModel
           ?? ({ providerID: "", modelID: "" } satisfies ModelRef)
       }
@@ -3710,7 +3864,15 @@ export function SessionRoute() {
         modelPicker.setOpen(false);
       }}
       disabledProviders={disabledProviderIds}
-      onBehaviorChange={() => {}}
+      onBehaviorChange={(model, value) => {
+        if (modelPickerSessionId) {
+          const store = useSessionModelStore.getState();
+          store.setModel(modelPickerSessionId, model, value);
+          // Same-model selection preserves settings; explicit effort edits do not.
+          store.setVariant(modelPickerSessionId, value);
+        }
+        local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
+      }}
       onToggleProvider={async (providerId, enable) => {
         if (!opencodeClient) return;
         try {

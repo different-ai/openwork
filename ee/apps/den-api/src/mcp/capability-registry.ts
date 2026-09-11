@@ -1,4 +1,5 @@
 import { Tool, toolError } from "@openwork/codemode"
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { Effect } from "effect"
 import type { Hono } from "hono"
@@ -32,11 +33,9 @@ import {
 } from "./codemode-namespaces.js"
 import {
   connectedConnectionActionPayload,
-  connectionActionErrorCard,
-  connectionActionLaunch,
   connectionActionPayloadFromStatus,
   connectionActionTextFallback,
-} from "./connection-action-app.js"
+} from "./connection-action.js"
 import {
   buildExternalCapabilityName,
   executeExternalCapability,
@@ -79,7 +78,6 @@ import {
   type CapabilityMatch,
   type SearchCapabilityType,
 } from "./search.js"
-import type { AgentToolContentPart } from "./tool-content.js"
 import { externalToolContent } from "./tool-content.js"
 
 export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "admin"] as const
@@ -96,7 +94,7 @@ export type ParsedCapability =
 
 export type ExecuteCapabilityToolResult = {
   isError?: boolean
-  content: AgentToolContentPart[]
+  content: CallToolResult["content"]
   structuredContent?: Record<string, unknown>
   _meta?: Record<string, unknown>
 }
@@ -233,6 +231,7 @@ const externalMcpProviderErrorOutputSchema = z.object({
 const externalCapabilityErrorPayloadSchema = z.object({
   error: z.string(),
   message: z.string(),
+  requiredScope: z.enum(["mcp:read", "mcp:write"]).optional(),
   referenceId: z.string().optional(),
   retryable: z.boolean().optional(),
   providerError: externalMcpProviderErrorOutputSchema.optional(),
@@ -262,6 +261,7 @@ export function externalCapabilityErrorToolResult(
   const payload = externalCapabilityErrorPayloadSchema.parse({
     error: result.error,
     message: result.message,
+    ...(result.requiredScope ? { requiredScope: result.requiredScope } : {}),
     ...(result.referenceId === undefined ? {} : { referenceId: result.referenceId }),
     ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
     ...(result.providerError ? { providerError: result.providerError } : {}),
@@ -282,12 +282,10 @@ export function externalCapabilityErrorToolResult(
       content: textContent(JSON.stringify(payload)),
     }
   }
-  const card = connectionActionErrorCard(result.connectionStatus)
   return {
     isError: true,
     content: textContent(JSON.stringify(payload)),
-    structuredContent: card.structuredContent,
-    _meta: card.meta,
+    structuredContent: connectionActionPayloadFromStatus(result.connectionStatus),
   }
 }
 
@@ -299,38 +297,28 @@ export function externalCapabilitySuccessToolResult(
     && isRecord(result.result.structuredContent)
     ? result.result.structuredContent
     : undefined
-  const structuredContent = result.mcpApp
-    ? {
-        ...(providerStructuredContent ?? {}),
-        serverTools: {
-          searchCapabilities: SEARCH_CAPABILITIES_TOOL_NAME,
-          executeCapability: EXECUTE_CAPABILITY_TOOL_NAME,
-        },
-      }
-    : providerStructuredContent
   const providerMeta = isRecord(result.result) && isRecord(result.result._meta)
     ? result.result._meta
     : {}
   const meta = {
     ...providerMeta,
-    ...(result.mcpApp ? { "openwork/mcpApp": result.mcpApp } : {}),
-  }
-  if (!result.schemaGuidance) {
-    return {
-      content,
-      ...(structuredContent ? { structuredContent } : {}),
-      ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
-    }
+    ...(result.mcpApp ? {
+      "openwork/mcpApp": result.mcpApp,
+      "openwork/serverTools": {
+        searchCapabilities: SEARCH_CAPABILITIES_TOOL_NAME,
+        executeCapability: EXECUTE_CAPABILITY_TOOL_NAME,
+      },
+    } : {}),
+    ...(result.schemaGuidance ? { "openwork/schemaGuidance": result.schemaGuidance } : {}),
   }
   return {
+    ...(isRecord(result.result) && typeof result.result.isError === "boolean" ? { isError: result.result.isError } : {}),
     content: [
       ...content,
-      ...textContent(JSON.stringify({ schemaGuidance: result.schemaGuidance })),
+      // Only the advisory is model-visible; never serialize provider _meta.
+      ...(result.schemaGuidance ? textContent(JSON.stringify({ "openwork/schemaGuidance": result.schemaGuidance })) : []),
     ],
-    structuredContent: {
-      ...(structuredContent ?? {}),
-      schemaGuidance: result.schemaGuidance,
-    },
+    ...(providerStructuredContent ? { structuredContent: providerStructuredContent } : {}),
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   }
 }
@@ -540,6 +528,7 @@ const externalMcpSource: CapabilitySource = {
     return leavesFromBuilt(await buildExternalMcpToolTree({
       organizationId: ctx.organizationId,
       member: ctx.member,
+      scopes: ctx.principal.scopes,
       redirectUriBase: ctx.redirectUriBase,
       namespaceContext: await ctx.resolveNamespaceContext(),
     }))
@@ -573,12 +562,12 @@ const externalMcpSource: CapabilitySource = {
       return {
         content: textContent(connectionActionTextFallback(payload)),
         structuredContent: { ...payload },
-        _meta: { "openwork/mcpApp": connectionActionLaunch(payload) },
       }
     }
     const result = await executeExternalCapability({
       organizationId: ctx.organizationId,
       member: ctx.member,
+      scopes: ctx.principal.scopes,
       connectionId: parsed.connectionId,
       toolName: parsed.toolName,
       args: normalizeToolBody(input.body),

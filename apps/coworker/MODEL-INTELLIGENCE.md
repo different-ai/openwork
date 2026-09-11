@@ -50,7 +50,11 @@ compares the two reported text token rates only.
 
 ## Decision order
 
-1. Preserve an exact Fixed model. Automatic preferences apply only in Automatic.
+1. Preserve exact coworker overrides and explicit app role models. Automatic
+   preferences never replace an intentional exact choice. Conversation app
+   inheritance is resolved before the retained coworker override.
+   An explicit app effort no longer offered by its model refuses selection;
+   the facilitator may use its deterministic scorer, never another effort.
 2. Resolve the exact standard anchor. An explicitly missing/excluded/avoided
    anchor does not authorize a replacement or a provider-failure retry.
 3. Restrict substitutions to the same connected engine provider and both known
@@ -63,17 +67,21 @@ compares the two reported text token rates only.
 5. Preferred IDs are soft ordered preferences after safety gates; avoided IDs
    exclude automatic candidates. Lists are limited to eight exact IDs each.
 6. Use deterministic ties and prefer continuity. Explain why the model was kept
-   or changed. Pin the native model at admission; do not re-rank a running turn.
+    or changed. Pin the native model at admission; do not re-rank a running turn.
 
 This conservative initial policy preserves all known anchor limits rather than
 estimating a smaller context requirement from the latest message alone. A cheaper
 model with lower limits may therefore remain ineligible even for a short prompt.
 
 Private discussion and native group/review paths share `resolveDiscussionModel`.
-Assignments retain their standard model. Workers retain purpose-specific or
-inherited models pinned at creation. Memory/progress transport allowlists, budgets
-and opt-in settings are unchanged; documenting an adapter here does not enable it
-for tool-free background inference. Facilitator selection also remains unchanged.
+Inherited conversations use the app's exact model or the quick policy around the
+coworker's anchor/recommendation; explicit depth still affects effort. Assignments
+retain their standard model. New Workers resolve coworker role override, app role
+default, then deep (thinking) or standard (delivery) around the owner anchor, and
+pin the result. Existing Worker snapshots and legacy unpinned execution are unchanged.
+The facilitator honors group override then app choice, otherwise quick selection;
+automatic secondary attempts stay with the same provider at no higher known prices.
+Memory/progress transport allowlists, budgets and opt-in settings are unchanged.
 
 ## Updating the index
 

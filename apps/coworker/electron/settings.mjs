@@ -4,6 +4,7 @@
  * here; everything about one coworker stays in its own `coworker.md`.
  */
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { normalizeModelDefaults } from "../src/lib/model-defaults.ts";
 
 export const SETTINGS_FILE = "coworker-settings.json";
 
@@ -44,6 +45,7 @@ export function clampMaxRunsPerDay(value) {
 export function normalizeSettings(value) {
   const source = value && typeof value === "object" ? value : {};
   return {
+    modelDefaults: normalizeModelDefaults(source.modelDefaults),
     maxParallelLocalRuns: clampParallelRuns(source.maxParallelLocalRuns),
     minimumRunGapMinutes: clampMinimumRunGap(source.minimumRunGapMinutes),
     maxRunsPerDay: clampMaxRunsPerDay(source.maxRunsPerDay),
@@ -70,7 +72,7 @@ export async function readSettings(file) {
 
 export async function updateSettings(file, patch) {
   const current = await readSettings(file);
-  const next = normalizeSettings({ ...current, ...(patch && typeof patch === "object" ? patch : {}) });
+  const next = normalizeSettings({ ...current, ...(patch && typeof patch === "object" ? patch : {}), modelDefaults: normalizeModelDefaults(patch?.modelDefaults, current.modelDefaults) });
   const temporary = `${file}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify({ version: 1, ...next }, null, 2)}\n`, "utf8");
   await rename(temporary, file);

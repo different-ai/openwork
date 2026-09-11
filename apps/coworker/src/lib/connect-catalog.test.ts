@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { CoworkerMcpError, createCoworkerMcpClient, createCoworkerMcpAppActions, preservedMcpAppResult, type CoworkerMcpAppResource } from "./mcp.ts";
 import {
   mergeSearchMatches,
   parseSearchMatches,
@@ -97,4 +98,91 @@ test("the skill index reads into titled skills, built-in ones apart", () => {
   assert.deepEqual(skills.map((skill) => [skill.title, skill.builtIn, skill.pluginName]), [["Create Skill", true, ""], ["Release", false, "Release"]]);
   assert.deepEqual(parseSkillIndex(null), []);
   assert.deepEqual(parseSkillIndex({ skills: "x" }), []);
+});
+
+const appResource: CoworkerMcpAppResource = {
+  launchId: "launch-original",
+  context: { sessionId: "session-original", engine: "v1", readOnly: false },
+  serverName: "fixture", toolName: "open_fixture", resourceUri: "ui://fixture/view.html", html: "",
+  csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] }, prefersBorder: false,
+};
+
+test("App launch and action results preserve error flags, typed content and view metadata", async () => {
+  for (const isError of [true, false, undefined]) {
+    const result = {
+      content: [{ type: "audio", data: "Zml4dHVyZQ==", mimeType: "audio/wav" }, { type: "resource_link", uri: "https://example.com/fixture", name: "Fixture" }],
+      structuredContent: { status: "fixture" },
+      _meta: { viewOnly: "fixture" },
+      ...(isError === undefined ? {} : { isError }),
+    };
+    assert.deepEqual(preservedMcpAppResult({ output: "fallback", metadata: { openworkMcpResult: result } }), result);
+    const actions = createCoworkerMcpAppActions({ callAppTool: async () => result }, appResource, () => false);
+    assert.deepEqual(await actions.callTool("read_detail"), result);
+  }
+});
+
+test("App resolution captures host context; discovery and release use their own routes", async (t) => {
+  const requests: Array<{ url: string; body: unknown }> = [];
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    requests.push({ url, body: JSON.parse(String(init.body)) });
+    return Response.json(url.endsWith("/resolve") ? { app: appResource } : { content: [], released: true });
+  });
+  const client = createCoworkerMcpClient({ serverUrl: "http://127.0.0.1:1234", workspaceId: "workspace-original", token: "synthetic" });
+  const context = { sessionId: "catalog", engine: "v1" as const, readOnly: false };
+  const pending = client.resolveApp("fixture_open_fixture", context);
+  context.sessionId = "changed-after-resolution-started";
+  const { app } = await pending;
+  assert.equal(app?.context.sessionId, "catalog", "provider-returned and subsequently mutated context cannot replace the origin");
+  await client.searchCapabilities("calendar");
+  await client.releaseApp("launch-original");
+  assert.deepEqual(requests.map((request) => new URL(request.url).pathname), [
+    "/workspace/workspace-original/mcp-apps/resolve",
+    "/workspace/workspace-original/mcp/openwork-cloud/search",
+    "/workspace/workspace-original/mcp-apps/release",
+  ]);
+  assert.deepEqual(requests[0]?.body, { projectedToolName: "fixture_open_fixture", context: { sessionId: "catalog", engine: "v1", readOnly: false } });
+  assert.deepEqual(requests[1]?.body, { query: "calendar" });
+  assert.deepEqual(requests[2]?.body, { launchId: "launch-original" });
+});
+
+test("App actions retain the launch, session and server across approval and reject disposed actions", async () => {
+  const requests: unknown[] = [];
+  const actions = createCoworkerMcpAppActions({ callAppTool: async (request) => {
+    requests.push(request);
+    if (!request.approved) throw new CoworkerMcpError(403, "tool_requires_approval", "Approval required");
+    return { content: [] };
+  } }, appResource, () => true);
+  await actions.callTool("save", { value: 1 });
+  const request = { launchId: "launch-original", sessionId: "session-original", engine: "v1", serverName: "fixture", resourceUri: "ui://fixture/view.html", name: "save", arguments: { value: 1 } };
+  assert.deepEqual(requests, [request, { ...request, approved: true }]);
+  actions.dispose();
+  await assert.rejects(actions.callTool("save"), /closed or changed/);
+  assert.equal(requests.length, 2);
+});
+
+test("read-only and unleased Apps cannot dispatch; disposing during approval prevents its retry", async () => {
+  let calls = 0;
+  const client = { callAppTool: async () => {
+    calls += 1;
+    throw new CoworkerMcpError(403, "tool_requires_approval", "Approval required");
+  } };
+  const readOnly = createCoworkerMcpAppActions(client, { ...appResource, context: { ...appResource.context, readOnly: true } }, () => true);
+  await assert.rejects(readOnly.callTool("save"), /read-only/);
+  const unleased = createCoworkerMcpAppActions(client, { ...appResource, launchId: undefined }, () => true);
+  await assert.rejects(unleased.callTool("save"), /no live launch context/);
+  assert.equal(calls, 0);
+  const pending = createCoworkerMcpAppActions(client, appResource, async () => { pending.dispose(); return true; });
+  await assert.rejects(pending.callTool("save"), /closed or changed/);
+  assert.equal(calls, 1);
+});
+
+test("a result arriving after disposal is not accepted or retried", async () => {
+  let calls = 0;
+  const actions = createCoworkerMcpAppActions({ callAppTool: async () => {
+    calls += 1;
+    actions.dispose();
+    return { content: [] };
+  } }, { ...appResource, context: { sessionId: null, engine: "v1", readOnly: false } }, () => true);
+  await assert.rejects(actions.callTool("read"), /closed or changed/);
+  assert.equal(calls, 1);
 });

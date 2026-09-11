@@ -44,6 +44,7 @@ import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
+import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./workbench-panel-group";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
@@ -62,7 +63,7 @@ import {
 } from "@/components/ui/resizable";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { SessionEmptyHero } from "./session-empty-hero";
-import type { NewTaskComposerContext } from "./new-task-composer";
+import type { NewTaskComposerContext, NewTaskComposerHandoff } from "./new-task-composer";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
@@ -156,10 +157,15 @@ export type SessionPageSidebarProps = {
   startupPhase: BootPhase;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
-  onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
+  onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
-  onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
+  onCreateTaskWithPrompt?: (
+    workspaceId: string,
+    prompt: string,
+    attachments?: ComposerAttachment[],
+    handoff?: NewTaskComposerHandoff,
+  ) => Promise<void>;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -432,6 +438,11 @@ function controlStringArg(args: unknown, key: string) {
 }
 
 export function SessionPage(props: SessionPageProps) {
+  const archivedInWorkspace = (workspaceId: string, sessionId: string | null) => {
+    const session = props.sidebar.workspaceSessionGroups.find(group => group.workspace.id === workspaceId)
+      ?.sessions.find(session => session.id === sessionId);
+    return session ? Boolean(session.time?.archived) : undefined;
+  };
   const { config: shellConfig } = useShellConfig();
   const platform = usePlatform();
   const denAuth = useDenAuth();
@@ -766,7 +777,7 @@ export function SessionPage(props: SessionPageProps) {
   const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
-    description: "Create or select an OpenWork built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
+    description: "Open a built-in browser tab and return its tab_id and CDP handle. The tab is protected from suspension for its task lifetime until browser.release_tab declares all running and queued browser work complete.",
     sideEffect: "navigation",
     requiresArgs: true,
     args: [
@@ -791,6 +802,42 @@ export function SessionPage(props: SessionPageProps) {
     },
   }), [openOwnerSidePanel, props.selectedSessionId]);
   useControlAction(openBrowserUrlControlAction);
+  const restoreBrowserTabControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "browser.restore_tab",
+    label: "Restore browser tab",
+    description: "Acquire a fresh protected CDP handle for a tab owned by this conversation. A suspended tab reloads its saved URL, not its previous document, retaining tab_id with a new target_id. A live tab keeps its document. Always use the returned handle. Protection lasts until browser.release_tab.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [{ name: "tabId", type: "string", required: true, description: "The logical tab_id returned by browser.open_url or browser.restore_tab." }],
+    disabled: !isElectronRuntime(),
+    execute: async (args, helpers) => {
+      const tabId = controlStringArg(args, "tabId");
+      if (!tabId) return { ok: false, error: "Missing tabId." };
+      const restoreTab = window.__OPENWORK_ELECTRON__?.browser?.restoreTab;
+      if (!restoreTab) return { ok: false, error: "Built-in browser is not available." };
+      const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
+      return restoreTab(tabId, ownerSessionId);
+    },
+  }), [props.selectedSessionId]);
+  useControlAction(restoreBrowserTabControlAction);
+  const releaseBrowserTabControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "browser.release_tab",
+    label: "Release browser tab",
+    description: "Declare all running and queued browser work on this conversation's tab complete and remove its suspension protection. Release does not close, suspend, or invalidate the current target. The user may then manually suspend it. Before starting later browser work, call browser.restore_tab and use its returned protected handle.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [{ name: "tabId", type: "string", required: true, description: "The logical tab_id whose browser work is complete." }],
+    disabled: !isElectronRuntime(),
+    execute: async (args, helpers) => {
+      const tabId = controlStringArg(args, "tabId");
+      if (!tabId) return { ok: false, error: "Missing tabId." };
+      const releaseTab = window.__OPENWORK_ELECTRON__?.browser?.releaseTab;
+      if (!releaseTab) return { ok: false, error: "Built-in browser is not available." };
+      const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
+      return releaseTab(tabId, ownerSessionId);
+    },
+  }), [props.selectedSessionId]);
+  useControlAction(releaseBrowserTabControlAction);
   const setBrowserProxyControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.set_proxy",
     label: "Set built-in browser proxy",
@@ -941,6 +988,7 @@ export function SessionPage(props: SessionPageProps) {
       workspaceTitle: workspaceName,
       primarySessionId: props.selectedSessionId,
       sessionsKnown: workspaceGroup?.status === "ready",
+      archivedSessionIds: (workspaceGroup?.sessions ?? []).filter((session) => session.time?.archived).map((session) => session.id),
       sessions: (workspaceGroup?.sessions ?? []).map((session) => ({
         workspaceId: props.selectedWorkspaceId,
         sessionId: session.id,
@@ -1326,6 +1374,7 @@ export function SessionPage(props: SessionPageProps) {
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
+          newTaskDraftScope={props.newTaskComposer?.draftScope ?? null}
           onSelectWorkspace={props.sidebar.onSelectWorkspace}
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
@@ -1676,13 +1725,16 @@ export function SessionPage(props: SessionPageProps) {
 
               {!props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <div className="flex h-full min-h-0 flex-col">
-                  <ResizablePanelGroup
-                    key={canRenderSplitSurface ? "workbench-split" : "workbench-single"}
-                    orientation="horizontal"
-                    className="min-h-0 flex-1"
+                  <WorkbenchPanelGroup
+                    owner={props.surface?.draftScope ? JSON.stringify([
+                      props.surface.draftScope, reactSessionBaseUrl, props.runtimeWorkspaceId,
+                    ]) : null}
+                    primaryVisible={!isMobile || narrowPane === "chat"}
+                    secondaryVisible={Boolean(canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split"))}
                   >
                     {!isMobile || narrowPane === "chat" ? (
                       <ResizablePanel
+                        id={PRIMARY_PANEL_ID}
                         minSize={isMobile ? "0px" : "320px"}
                         className="min-h-0 min-w-0"
                         data-workbench-pane="primary"
@@ -1716,6 +1768,8 @@ export function SessionPage(props: SessionPageProps) {
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
+                            archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
+                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false); }}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
@@ -1740,6 +1794,7 @@ export function SessionPage(props: SessionPageProps) {
                       <>
                         {!isMobile ? <ResizableHandle /> : null}
                         <ResizablePanel
+                          id={SECONDARY_PANEL_ID}
                           minSize={isMobile ? "0px" : "320px"}
                           className="min-h-0 min-w-0"
                           data-workbench-pane="secondary"
@@ -1768,6 +1823,8 @@ export function SessionPage(props: SessionPageProps) {
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
                                   sessionId={splitSession.sessionId}
+                                  archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
+                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
@@ -1795,7 +1852,7 @@ export function SessionPage(props: SessionPageProps) {
                         </ResizablePanel>
                       </>
                     ) : null}
-                  </ResizablePanelGroup>
+                  </WorkbenchPanelGroup>
                 </div>
               ) : null}
 
@@ -1866,9 +1923,13 @@ export function SessionPage(props: SessionPageProps) {
                   ) : (
                     <div className="flex flex-1 items-center justify-center py-16">
                       <SessionEmptyHero
+                        // Remount per draft owner so the hero reads that
+                        // workspace's persisted new-task draft instead of
+                        // carrying the previous workspace's text across.
+                        key={props.newTaskComposer?.draftOwnerKey}
                         providerCount={providerCount}
-                        onRunTask={(prompt, attachments) =>
-                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments)
+                        onRunTask={(prompt, attachments, handoff) =>
+                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments, handoff)
                         }
                         onOpenProviderAuth={props.onOpenProviderAuth}
                         composer={props.newTaskComposer}

@@ -16,6 +16,7 @@ import {
   type ComposerSettingsSection,
 } from "@/react-app/domains/settings/library";
 import { ModelSelect } from "@/components/model-select";
+import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { LexicalPromptEditor, syncAttachmentChipStatus, type ComposerAttachmentToken, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import { COMPUTER_MENTIONS } from "./computer-mentions";
@@ -56,8 +57,10 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  stopping?: boolean;
   steering: boolean;
   submissionPreparing: boolean;
+  submissionPreparingLabel?: string;
   queuedCount: number;
   disabled: boolean;
   modelUnavailable?: boolean;
@@ -743,6 +746,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     props.onExpandPastedText(target.id);
   }, [props.onExpandPastedText, props.pastedText]);
 
+  // Draft image chip clicked: show it full-size so it can be inspected before sending.
+  const [expandedAttachmentId, setExpandedAttachmentId] = useState<string | null>(null);
+  const expandedAttachment = props.attachments.find((attachment) => attachment.id === expandedAttachmentId);
+
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
   const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
   const toolCommandItems = commands.filter(isLibraryCommand);
@@ -1029,9 +1036,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     // Escape-to-stop while the agent is busy. Only when no menu is open so
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.
-    const anyMenuOpen = agentMenuOpen || toolMenuOpen || Boolean(activeMenu);
+    const anyMenuOpen = agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu);
     if (event.key === "Escape" && props.busy && !anyMenuOpen) {
       event.preventDefault();
+      if (props.stopping) return;
       if (escapeArmed) {
         disarmEscape();
         void props.onStop();
@@ -1330,6 +1338,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               onChange={props.onDraftChange}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
+              onExpandAttachment={setExpandedAttachmentId}
               onRemoveAttachment={props.onRemoveAttachment}
               onPasteText={props.onPasteText}
               onPaste={(event) => {
@@ -1407,6 +1416,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
             />
 
             {/* Respond to the pane width, including desktop split views. */}
+            {props.busy && !props.stopping && escapeArmed ? (
+              <div data-composer-stop-confirmation role="status" className="mt-2 text-[12px] font-medium text-gray-10">
+                {t("composer.escape_to_stop")}
+              </div>
+            ) : null}
             <div data-composer-toolbar className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-2 @min-[560px]/composer:flex">
               <div className="contents">
                 <div className="col-start-1 row-start-2 flex shrink-0 items-center gap-1.5">
@@ -1793,11 +1807,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   Cmd/Ctrl+Enter still steers).
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
-                {props.busy && escapeArmed ? (
-                  <span className="self-center pr-1 text-[12px] font-medium text-gray-10 hidden @min-[720px]/composer:inline">
-                    {t("composer.escape_to_stop")}
-                  </span>
-                ) : null}
                 <button
                   type="button"
                   onClick={
@@ -1809,31 +1818,41 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   }
                   disabled={
                     props.disabled
+                    || props.stopping
                     || (!props.busy && (!canSend || props.submissionPreparing))
                   }
                   aria-label={
-                    props.busy
-                      ? t("composer.stop")
-                      : props.submissionPreparing
-                        ? "Preparing connected service tools…"
-                        : t("composer.run_task")
+                    props.stopping
+                      ? t("composer.stopping")
+                      : props.busy
+                        ? t("composer.stop")
+                        : props.submissionPreparing
+                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
+                          : t("composer.run_task")
                   }
+                  aria-busy={props.stopping || props.submissionPreparing || undefined}
                   className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    props.busy
-                      ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                      : !canSend || props.disabled || props.submissionPreparing
-                        ? "bg-gray-4 text-gray-10"
-                        : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
+                    props.stopping
+                      ? "cursor-wait bg-[var(--dls-accent)] text-[var(--dls-accent-fg)]"
+                      : props.busy
+                        ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
+                        : !canSend || props.disabled || props.submissionPreparing
+                          ? "bg-gray-4 text-gray-10"
+                          : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                   }`}
                   title={
-                    props.busy
-                      ? t("composer.stop")
-                      : props.submissionPreparing
-                        ? "Preparing connected service tools…"
-                        : t("composer.run_task")
+                    props.stopping
+                      ? t("composer.stopping")
+                      : props.busy
+                        ? t("composer.stop")
+                        : props.submissionPreparing
+                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
+                          : t("composer.run_task")
                   }
                 >
-                  {props.busy ? (
+                  {props.stopping ? (
+                    <LoaderCircle size={15} className="animate-spin" />
+                  ) : props.busy ? (
                     <Square size={12} fill="currentColor" />
                   ) : props.submissionPreparing ? (
                     <LoaderCircle size={15} className="animate-spin" />
@@ -1841,11 +1860,13 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     <ArrowUp size={15} />
                   )}
                   <span className="sr-only">
-                    {props.busy
-                      ? t("composer.stop")
-                      : props.submissionPreparing
-                        ? "Preparing connected service tools…"
-                        : t("composer.run_task")}
+                    {props.stopping
+                      ? t("composer.stopping")
+                      : props.busy
+                        ? t("composer.stop")
+                        : props.submissionPreparing
+                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
+                          : t("composer.run_task")}
                   </span>
                 </button>
               </div>
@@ -1855,6 +1876,17 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
       </div>
     </div>
+    {/* Sibling of the composer root so Escape closes the lightbox without arming stop. */}
+    {expandedAttachment?.previewUrl ? (
+      <ImageLightbox
+        src={expandedAttachment.previewUrl}
+        alt={expandedAttachment.name}
+        open
+        onOpenChange={(open) => {
+          if (!open) setExpandedAttachmentId(null);
+        }}
+      />
+    ) : null}
     </DevProfiler>
   );
 });

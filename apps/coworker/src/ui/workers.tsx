@@ -222,7 +222,7 @@ function NewWorker({
         <button type="button" role="radio" aria-checked={purpose === "thinking"} className={`flex-1 ${choiceClass(purpose === "thinking")}`} onClick={() => { setPurpose("thinking"); setTurns("2"); }}>Deep thinking</button>
       </div>
       <p className="break-words text-[11px] text-mist" data-testid="new-worker-model">
-        {purpose === "thinking" ? "Decision, constraints, acceptance criteria, and open risks." : "Deliver from a brief and file references; return evidence."} Model: {(purpose === "thinking" ? coworker.thinkingModel : coworker.deliveryModel) || coworker.model || "Native default (resolved when started)"}. Pinned when started; no automatic fallback.
+        {purpose === "thinking" ? "Decision, constraints, acceptance criteria, and open risks." : "Deliver from a brief and file references; return evidence."} Model: {(purpose === "thinking" ? coworker.thinkingModel : coworker.deliveryModel) || "App default for this purpose (resolved when started)"}. Pinned when started; no automatic fallback.
       </p>
       <input className={inputClass} placeholder="Name, e.g. Market scan" aria-label="Worker name" value={name} onChange={(event) => setName(event.target.value)} data-testid="new-worker-name" />
       <textarea

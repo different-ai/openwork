@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect } from "react";
+import { createElement, useEffect } from "react";
 
 import {
   engineInfo,
@@ -23,6 +23,7 @@ import {
   writeOpenworkServerSettings,
 } from "../../app/lib/openwork-server";
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
+import { useEnterpriseActivationRequired } from "../domains/cloud/enterprise-activation-gate";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
 
@@ -324,12 +325,18 @@ export function useDesktopRuntimeBoot() {
   }, [markReady, setActive, setError, setPhase]);
 }
 
+function ActivatedDesktopRuntimeBoot(): null {
+  useDesktopRuntimeBoot();
+  return null;
+}
+
 /**
  * Component wrapper that must be rendered inside <BootStateProvider>. It runs
  * the boot hook exactly once per app mount so callers don't have to think
- * about React Strict-Mode double-invocation.
+ * about React Strict-Mode double-invocation. Enterprise builds stay unbooted
+ * until Den activation completes.
  */
-export function DesktopRuntimeBoot(): null {
-  useDesktopRuntimeBoot();
-  return null;
+export function DesktopRuntimeBoot() {
+  if (useEnterpriseActivationRequired()) return null;
+  return createElement(ActivatedDesktopRuntimeBoot);
 }

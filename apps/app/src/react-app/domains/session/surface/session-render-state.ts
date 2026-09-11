@@ -4,16 +4,8 @@ import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-serve
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
 import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
-
-const snapshotMessageCache = new WeakMap<OpenworkSessionSnapshot, UIMessage[]>();
-
-function getSnapshotMessages(snapshot: OpenworkSessionSnapshot) {
-  const cached = snapshotMessageCache.get(snapshot);
-  if (cached) return cached;
-  const messages = snapshotToUIMessages(snapshot);
-  snapshotMessageCache.set(snapshot, messages);
-  return messages;
-}
+import { parseConnectSkillToken } from "./composer/connect-skill-token";
+import { parseSlashCommandInvocation } from "./composer/slash-command";
 
 export function resolveRenderedSessionSnapshot(input: {
   sessionId: string;
@@ -35,12 +27,16 @@ export function resolveRenderedSessionSnapshot(input: {
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: OpenworkSessionSnapshot | null | undefined;
+  historyComplete?: boolean;
 }) {
-  const revertMessageId = (input.snapshot?.session as any)?.revert?.messageID ?? null;
+  const revertMessageId = input.snapshot?.session.revert?.messageID ?? null;
+  // Neither a newest window nor saved neighbors prove their position relative
+  // to a revert cursor. Withhold them until the ordered full history arrives.
+  if (input.historyComplete === false && revertMessageId) return [];
   const liveMessages = input.transcriptState ?? [];
 
   const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0
-    ? getSnapshotMessages(input.snapshot)
+    ? snapshotToUIMessages(input.snapshot)
     : [];
 
   // Render the server snapshot as the history floor and layer live stream
@@ -51,4 +47,32 @@ export function deriveRenderedSessionMessages(input: {
     : liveMessages;
 
   return applyRevertCursor(messages, revertMessageId);
+}
+
+export function deriveComposerHistory(messages: readonly UIMessage[]): string[] {
+  const history: string[] = [];
+  // Use the reconciled transcript: native projections already exclude synthetic
+  // and ignored text, and message identity reconciles snapshots with live sends.
+  for (const message of messages) {
+    if (message.role !== "user") continue;
+    let unsafe = false;
+    const text = message.parts.flatMap((part) => {
+      if (part.type !== "text") return [];
+      const metadata = part.providerMetadata?.opencode;
+      const token = metadata && typeof metadata === "object" && "composerToken" in metadata
+        ? metadata.composerToken : undefined;
+      if (typeof token === "string") {
+        const skill = parseConnectSkillToken(token);
+        if (skill && part.text === `/${skill.slug}`) return [token];
+        unsafe = true;
+      }
+      // Older labels have no durable skill identity. Never recall them as commands
+      // or try to recover that identity from generated model instructions.
+      if (parseSlashCommandInvocation(part.text.replace(/\s+/g, " "))) unsafe = true;
+      return [part.text];
+    }).join("\n").trim();
+    if (unsafe) continue;
+    if (text && history.at(-1) !== text) history.push(text);
+  }
+  return history.slice(-50);
 }

@@ -104,18 +104,25 @@ export function LoadingOverlay() {
         fading ? "opacity-0" : "opacity-100"
       }`}
       aria-live="polite"
-      aria-busy={!fading}
+      aria-busy={!fading && !error}
       role="status"
     >
       <div className="flex w-full max-w-[320px] flex-col items-center gap-4 px-6 text-center">
         {error ? (
           <div className="flex w-full flex-col gap-3 text-[12px] leading-5">
             <div className="text-base font-medium text-dls-primary">OpenWork couldn't start</div>
-            <div className="text-dls-secondary">Return to a version that works on this computer.</div>
+            <div className="text-dls-secondary">Reload to try again, or return to a version that works on this computer.</div>
+            <button
+              type="button"
+              className="rounded-md border border-dls-border px-3 py-2 font-medium text-dls-primary"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
             <button
               type="button"
               disabled={!releases.some((release) => release.marking === "previous")}
-              className="rounded-md bg-dls-accent px-3 py-2 font-medium text-dls-accent-foreground disabled:opacity-50"
+              className="rounded-md bg-dls-accent px-3 py-2 font-medium text-[var(--dls-accent-fg)] disabled:opacity-50"
               onClick={() => void runRecovery(window.__OPENWORK_ELECTRON__?.recovery?.restorePrevious)}
             >
               Restore previous version
@@ -165,6 +172,13 @@ export function LoadingOverlay() {
             <div className="text-[12px] leading-5 text-dls-secondary">
               {message || "Preparing workspace"}
             </div>
+            <button
+              type="button"
+              className="rounded-md border border-dls-border px-3 py-2 text-sm font-medium text-dls-primary"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
           </>
         )}
       </div>

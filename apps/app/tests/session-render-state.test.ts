@@ -3,6 +3,7 @@ import type { UIMessage } from "ai";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
+import { resolveForkBoundaryId } from "../src/react-app/domains/session/sync/transcript-reconcile";
 import {
   mergeSnapshotAndLiveMessages,
   mergeSnapshotIntoCachedMessages,
@@ -58,6 +59,46 @@ for (const { name, merge } of [
   { name: "mergeSnapshotIntoCachedMessages", merge: mergeSnapshotIntoCachedMessages },
 ]) {
   describe(name, () => {
+    test("keeps terminal tools by call identity without blocking fresh snapshot output", () => {
+      const running = {
+        id: "tools", role: "assistant", parts: [{
+          type: "dynamic-tool", toolName: "bash", toolCallId: "call-a",
+          state: "input-streaming", input: { command: "pwd" },
+        }],
+      } satisfies UIMessage;
+      for (const terminal of [
+        { state: "output-available", output: "finished" } as const,
+        { state: "output-error", errorText: "failed" } as const,
+      ]) {
+        const completed: UIMessage = {
+          ...running, parts: [{ ...running.parts[0], ...terminal }],
+        };
+        expect(merge([running], [completed])[0]).toBe(completed);
+        const inputAvailable: UIMessage = {
+          ...running, parts: [{ ...running.parts[0], state: "input-available" }],
+        };
+        expect(merge([inputAvailable], [completed])[0]).toBe(completed);
+        expect(merge([completed], [running])[0]?.parts).toEqual(completed.parts);
+        const reordered: UIMessage = {
+          ...running, parts: [{
+            type: "dynamic-tool", toolName: "bash", toolCallId: "call-b",
+            state: "input-streaming", input: {},
+          }, ...running.parts],
+        };
+        expect(merge([reordered], [completed])[0]?.parts).toEqual([
+          reordered.parts[0], completed.parts[0],
+        ]);
+        expect(merge([running], [reordered])[0]?.parts).toEqual([
+          running.parts[0], reordered.parts[0],
+        ]);
+        const refreshed: UIMessage = { ...completed, parts: [{
+          type: "dynamic-tool", toolName: "bash", toolCallId: "call-a",
+          state: "output-available", input: {}, output: "fresh snapshot output",
+        }] };
+        expect(merge([refreshed], [completed])[0]?.parts).toEqual(refreshed.parts);
+      }
+    });
+
     for (const historySize of [200, 400, 800]) {
       test(`bounds timestamp reads for a 140-message snapshot over ${historySize} cached messages`, () => {
         let reads = 0;
@@ -213,6 +254,29 @@ describe("message merge duplicate and inclusion semantics", () => {
       expect(result[1]?.parts).toEqual(liveLast.parts);
       expect(result[2]).toBe(tail);
     }
+  });
+});
+
+describe("fork boundaries in complete history", () => {
+  const history = [{ id: "z-first" }, { id: "a-answer" }, { id: "m-next" }];
+
+  test("includes the clicked message using native history order and reserves null for the last message", () => {
+    expect(resolveForkBoundaryId(history, "z-first")).toBe("a-answer");
+    expect(resolveForkBoundaryId(history, "a-answer")).toBe("m-next");
+    expect(resolveForkBoundaryId(history, "m-next")).toBeNull();
+  });
+
+  test("rejects missing messages rather than forking the whole conversation", () => {
+    expect(() => resolveForkBoundaryId(history, "missing")).toThrow("no longer in this conversation");
+    expect(() => resolveForkBoundaryId([], "missing")).toThrow("no longer in this conversation");
+  });
+
+  test("resolves display-only rows and skips synthetic error boundaries", () => {
+    expect(resolveForkBoundaryId(history, "a-answer:steps")).toBe("m-next");
+    expect(resolveForkBoundaryId(history, "session-error:a-answer")).toBe("m-next");
+    const withError = [...history.slice(0, 2), { id: "session-error:a-answer" }, history[2]];
+    expect(resolveForkBoundaryId(withError, "a-answer")).toBe("m-next");
+    expect(resolveForkBoundaryId(withError, "session-error:a-answer")).toBe("m-next");
   });
 });
 

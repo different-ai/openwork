@@ -1039,7 +1039,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const workspaceSessionGroups = useMemo(
     // Settings has no per-workspace loading state; the empty set keeps the
     // previous behavior (error -> "error", otherwise "ready").
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set()),
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(), new Set(Object.keys(sessionsByWorkspaceId))),
     [errorsByWorkspaceId, sessionsByWorkspaceId, workspaces],
   );
 
@@ -1831,6 +1831,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [providerAuthStore, route.tab]);
 
   useEffect(() => {
+    providerAuthStore.syncFromOptions();
+  }, [
+    providerAuthStore,
+    openworkServerSnapshot.openworkServerStatus,
+    openworkServerSnapshot.openworkServerCapabilities?.providerSync,
+    openworkServerSnapshot.openworkServerClient,
+    openworkServerSnapshot.openworkServerHostInfo?.generation,
+  ]);
+
+  useEffect(() => {
     openworkServerStore.syncFromOptions();
     connectionsStore.syncFromOptions();
     providerAuthStore.syncFromOptions();
@@ -2151,6 +2161,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       runtime: "direct",
       workspacePaths,
       openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+      // The user env file is read when the local server process spawns, so a
+      // healthy engine must be replaced, not reused, for new values to apply.
+      forceRestart: true,
     });
     const reconnected = await openworkServerStore.reconnectOpenworkServer();
     if (!reconnected) {
@@ -2843,6 +2856,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         query={modelPicker.query}
         setQuery={modelPicker.setQuery}
         target="default"
+        currentBehaviorValue={local.prefs.modelVariant ?? null}
         current={
           local.prefs.defaultModel ?? { providerID: "", modelID: "" }
         }
@@ -2856,7 +2870,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           }));
           modelPicker.setOpen(false);
         }}
-        onBehaviorChange={() => {}}
+        onBehaviorChange={(_model, value) => local.setPrefs((previous) => ({ ...previous, modelVariant: value }))}
         onOpenSettings={() => {}}
         onClose={() => modelPicker.setOpen(false)}
       />

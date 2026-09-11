@@ -457,6 +457,8 @@ export type OpenworkMcpItem = {
 };
 
 export type OpenworkMcpAppResource = {
+  /** Opaque, short-lived host context. Absent on generated previews and older servers. */
+  launchId?: string;
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -734,6 +736,8 @@ export type OpenworkCloudMcpHealth = {
   usable: boolean;
   usableByCurrentModel: boolean | null;
   connectCatalogEnabled: boolean;
+  /** Local private credential readiness, not provider health. Older servers omit it. */
+  appHostAuthorizationReady?: boolean | null;
   workspace: {
     id: string;
     type: string;
@@ -859,7 +863,6 @@ export type OpenworkConnectState = {
   status: "available" | "missing" | "invalid" | "unreadable";
   connectEnabled: boolean;
   cloudMcpPresent: boolean;
-  googleWorkspace: { legacyConfigured: boolean };
 };
 
 export type OpenworkExtensionActionCall = {
@@ -1595,17 +1598,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
-    putDenSession: async (body: { baseUrl: string; token: string; orgId: string }) => {
-      await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "PUT", body, timeoutMs: timeouts.config });
+    putDenIdentity: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
+      await requestJson<unknown>(baseUrl, "/den-session/identity", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });
+    },
+    putDenSession: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
+      await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });
     },
     deleteDenSession: async () => {
       await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "DELETE", timeoutMs: timeouts.config });
     },
-    runCloudProviderSyncNow: async (reason?: string) =>
+    runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
         hostToken,
         method: "POST",
         body: reason ? { reason } : {},
+        signal,
         timeoutMs: timeouts.cloudMcpReconcile,
       })),
     getCloudProviderSyncStatus: async () =>
@@ -1988,6 +1995,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       projectedToolName: string,
       launch?: OpenworkMcpAppLaunchReference,
+      context?: { sessionId: string | null; readOnly: boolean; engine?: "v1" | "v2" },
     ) =>
       requestJson<{ app: OpenworkMcpAppResource | null }>(
         baseUrl,
@@ -1996,7 +2004,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { projectedToolName, ...(launch ? { launch } : {}) },
+          body: { projectedToolName, ...(launch ? { launch } : {}), ...(context ? { context: { sessionId: context.sessionId, readOnly: context.readOnly, engine: context.engine } } : {}) },
           timeoutMs: timeouts.config,
         },
       ),
@@ -2012,6 +2020,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     callMcpAppTool: (
       workspaceId: string,
       payload: {
+        launchId?: string;
+        sessionId?: string | null;
+        engine?: "v1" | "v2";
         serverName: string;
         name: string;
         resourceUri: string;
@@ -2028,6 +2039,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         body: payload,
         timeoutMs: timeouts.binary,
       },
+    ),
+    releaseMcpApp: (workspaceId: string, launchId: string) => requestJson<{ released: boolean }>(
+      baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp-apps/release`,
+      { token, hostToken, method: "POST", body: { launchId } },
     ),
     getOpenworkCloudMcpHealth: (
       workspaceId: string,

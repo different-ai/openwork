@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CoworkerSummary, ModelChosenBy, ProviderSyncRun, RuntimeInfo } from "@/lib/bridge";
 import { describeSkippedProvider, type DenSession } from "@/lib/den";
 import { carryVariant, describeModelPick, previewAutomaticChoice, type ModelMode } from "@/lib/model-choice";
-import { effortForTurn, effortStopLabel } from "@/lib/effort";
+import { effortStopLabel } from "@/lib/effort";
+import type { ModelPurpose } from "@/lib/model-defaults";
 import { chooseIndexedModel, MODEL_INTELLIGENCE_INDEX, type ModelSelectionPreferences } from "@/lib/model-intelligence";
 import {
   createCoworkerThreads,
@@ -50,7 +51,7 @@ function ModelFacts({ model }: { model: EngineModelOption | undefined }) {
   const adapter = MODEL_INTELLIGENCE_INDEX.adapters.find((entry) => entry.npm === facts?.adapterNpm);
   return (
     <div className="space-y-2 break-words text-[11px] leading-relaxed text-mist" data-testid="model-intelligence-facts">
-      <p className="select-text font-mono text-snow">{model?.id ?? "No available model"}</p>
+      <p className="select-text font-mono text-snow">{model?.id ?? "No catalog model to inspect"}</p>
       <p>Source: {facts?.provenance ?? "Unknown"}. Status: {facts?.status ?? "Unknown"}.</p>
       <p>Tools: {fact(facts?.tools)}. Reasoning: {fact(facts?.reasoning)}.</p>
       <p>Input modalities: {facts ? Object.entries(facts.input).map(([key, value]) => `${key}: ${fact(value)}`).join("; ") : "Unknown"}.</p>
@@ -92,10 +93,14 @@ export function ModelPicker({
   compact = false,
   chosenBy = "",
   forWorker = false,
+  defaultPurpose,
+  catalog: sharedCatalog,
+  catalogLoading = false,
+  onRefreshCatalog,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
-  coworker: CoworkerSummary;
+  coworker?: CoworkerSummary;
   value: string;
   modelVariant: string;
   /** `auto`: the coworker picks a lane per message around `value`; `fixed`: `value` every time. */
@@ -108,33 +113,45 @@ export function ModelPicker({
   compact?: boolean;
   /** Who chose the current model; the app's own pick gets one plain line saying so and why. */
   chosenBy?: ModelChosenBy;
-  /** Worker choices are fixed snapshots, or inherit the coworker's standard model at creation. */
+  /** Worker choices are fixed snapshots, or use the app's purpose default at creation. */
   forWorker?: boolean;
+  /** App-wide role default, without a coworker or per-message selection policy. */
+  defaultPurpose?: ModelPurpose;
+  /** Share a parent's catalog rather than fetching once per picker. */
+  catalog?: EngineModelCatalog;
+  catalogLoading?: boolean;
+  onRefreshCatalog?: (options: { sync?: boolean }) => Promise<void>;
 }) {
   const threads = useMemo(
     () =>
-      coworker.workspaceId
+      !sharedCatalog && coworker?.workspaceId
         ? createCoworkerThreads({
             serverUrl: runtime.serverUrl,
             workspaceId: coworker.workspaceId,
             token: runtime.ownerToken,
           })
         : null,
-    [coworker.workspaceId, runtime.ownerToken, runtime.serverUrl],
+    [sharedCatalog, coworker?.workspaceId, runtime.ownerToken, runtime.serverUrl],
   );
-  const [catalog, setCatalog] = useState<EngineModelCatalog>(EMPTY_CATALOG);
+  const [localCatalog, setCatalog] = useState<EngineModelCatalog>(EMPTY_CATALOG);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(!compact);
-  const [loading, setLoading] = useState(false);
+  const [localLoading, setLoading] = useState(false);
   const [syncNote, setSyncNote] = useState("");
   const [error, setError] = useState("");
   const [inspectedId, setInspectedId] = useState("");
+  const catalog = sharedCatalog ?? localCatalog;
+  const loading = localLoading || catalogLoading;
 
   const refresh = useCallback(async (options: { sync?: boolean } = {}) => {
-    if (!threads || !runtime.engineManaged) return;
+    if (!onRefreshCatalog && (!threads || !runtime.engineManaged)) return;
     setLoading(true);
     setError("");
     try {
+      if (onRefreshCatalog) {
+        await onRefreshCatalog(options);
+        return;
+      }
       if (options.sync && session && onSyncProviders) {
         const run = await onSyncProviders();
         setSyncNote(
@@ -145,21 +162,22 @@ export function ModelPicker({
               : "",
         );
       }
-      setCatalog(await threads.listModelCatalog());
+      if (threads) setCatalog(await threads.listModelCatalog());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(false);
     }
-  }, [onSyncProviders, runtime.engineManaged, session, threads]);
+  }, [onRefreshCatalog, onSyncProviders, runtime.engineManaged, session, threads]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (!sharedCatalog) void refresh();
+  }, [sharedCatalog, refresh]);
 
-  const selected = catalog.models.find((option) => option.id === value && (!forWorker || (option.toolCall && option.status !== "deprecated")));
+  const workerModel = forWorker || defaultPurpose === "thinking" || defaultPurpose === "delivery";
+  const selected = catalog.models.find((option) => option.id === value && (!workerModel || (option.toolCall && option.status !== "deprecated")));
   const visible = catalog.models.filter((option) => {
-    if (forWorker && (!option.toolCall || option.status === "deprecated")) return false;
+    if (workerModel && (!option.toolCall || option.status === "deprecated")) return false;
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
     return `${option.providerLabel} ${option.providerId} ${option.modelLabel} ${option.modelId} ${option.family}`
@@ -175,33 +193,35 @@ export function ModelPicker({
     }, new Map<string, { label: string; source: EngineModelOption["source"]; models: EngineModelOption[] }>()),
   );
   const variants = selected?.variants ?? [];
+  const variantUnavailable = Boolean(modelVariant && !variants.includes(modelVariant));
   const recommended = recommendModel(catalog);
-  const inherited = catalog.models.find((option) => option.id === coworker.model && option.toolCall && option.status !== "deprecated");
-  const inheritedVariantUnavailable = Boolean(inherited && coworker.modelVariant && !inherited.variants.includes(coworker.modelVariant));
-  const inheritedEffort = inherited ? effortForTurn({ kind: "worker-turn", stop: coworker.effortPreference, fixedVariant: coworker.modelVariant, variants: inherited.variants }) : "";
-  const inheritedDescription = `${inherited?.modelLabel || coworker.model || "No main model selected"}${inheritedVariantUnavailable ? ` · Fixed effort ${coworker.modelVariant} unavailable` : inherited ? ` · ${inheritedEffort || "Model default"} effort` : ""}`;
+  const allowsDefault = forWorker || Boolean(defaultPurpose);
+  const defaultLabel = defaultPurpose ? "Automatic (role-appropriate)" : "Use app default";
+  const defaultDescription = defaultPurpose
+    ? "Chooses an eligible connected model for this role when needed."
+    : "Uses the app default for this Worker's purpose, then role-appropriate Automatic.";
   const cloudModelCount = catalog.models.filter((option) => option.source === "cloud").length;
   const skipped = catalog.cloud?.skippedProviders ?? [];
   const reloadPending = catalog.cloud?.reloadPending === true;
   const lastRunFailed = catalog.cloud?.lastRun?.status === "failed" ? catalog.cloud.lastRun : null;
 
-  const automatic = modelMode === "auto";
-  const automaticLine = automatic ? describeAutomaticChoice(catalog, value, coworker.modelSelectionPreferences) : "";
-  const inspected = inspectedId ? catalog.models.find((model) => model.id === inspectedId) : forWorker && !value ? inherited : selected;
+  const automatic = !allowsDefault && modelMode === "auto";
+  const automaticLine = automatic ? describeAutomaticChoice(catalog, value, coworker?.modelSelectionPreferences) : "";
+  const inspected = inspectedId ? catalog.models.find((model) => model.id === inspectedId) : selected;
 
   /** Change the main model without changing the person's fixed or Automatic policy. */
   function selectModel(model: EngineModelOption | null) {
     onChange({
       model: model?.id ?? "",
-      modelVariant: carryVariant(modelVariant, model),
-      modelMode: forWorker ? "fixed" : modelMode,
+      modelVariant: model && model.id === value ? modelVariant : carryVariant(modelVariant, model),
+      modelMode: allowsDefault ? "fixed" : modelMode,
     });
     if (compact) setOpen(false);
   }
 
   return (
-    <div className="space-y-3" data-testid="model-picker" data-model-mode={modelMode}>
-      {!forWorker ? (
+    <div className="min-w-0 space-y-3" data-testid="model-picker" data-model-mode={modelMode}>
+      {!allowsDefault ? (
         <Field label="Model selection">
           <select className={`${inputClass} bg-panel`} value={modelMode} onChange={(event) => onChange({ model: value, modelVariant, modelMode: event.target.value === "auto" ? "auto" : "fixed" })}>
             <option value="fixed">Use the selected model</option>
@@ -217,14 +237,14 @@ export function ModelPicker({
         aria-expanded={open}
       >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-ink">
-          <StatusDot tone={forWorker && !value ? inherited && !inheritedVariantUnavailable ? "mint" : "amber" : selected ? "mint" : "amber"} />
+          <StatusDot tone={allowsDefault && !value ? "mist" : selected ? "mint" : "amber"} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-semibold text-snow" data-testid="model-picker-current">
-            {forWorker && !value ? `Use ${coworker.name}'s main model` : selected?.modelLabel || value || "Choose a model"}
+          <span className="block break-words text-xs font-semibold text-snow" data-testid="model-picker-current">
+            {allowsDefault && !value ? defaultLabel : selected?.modelLabel || value || "Choose a model"}
           </span>
           <span className="mt-0.5 block break-words text-[11px] leading-relaxed text-mist" data-testid="model-picker-current-detail">
-            {forWorker && !value ? inheritedDescription : selectedDescription(selected, value)}
+            {allowsDefault && !value ? defaultDescription : selectedDescription(selected, value)}
           </span>
         </span>
         <span className="text-xs text-mist" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
@@ -234,7 +254,7 @@ export function ModelPicker({
           <summary className="cursor-pointer">{automaticLine} <span className="text-snow">Why these models?</span></summary>
           <div className="mt-2 space-y-3" data-testid="model-automatic-reasons">
             {(["quick", "standard", "deep"] as const).map((lane) => {
-              const decision = chooseIndexedModel(catalog, lane, { standard: value, preferences: coworker.modelSelectionPreferences });
+              const decision = chooseIndexedModel(catalog, lane, { standard: value, preferences: coworker?.modelSelectionPreferences });
               return (
                 <div key={lane} className="space-y-1 border-l border-line pl-3">
                   <p className="font-medium capitalize text-snow">{lane}: {decision.model?.modelLabel ?? "Unavailable"}</p>
@@ -253,7 +273,7 @@ export function ModelPicker({
         <summary className="cursor-pointer font-medium">Inspect model facts</summary>
         <div className="mt-2 space-y-3">
           <select aria-label="Inspect connected model" className={`${inputClass} bg-panel text-xs`} value={inspectedId} onChange={(event) => setInspectedId(event.target.value)}>
-            <option value="">Selected model</option>
+            <option value="">{value ? "Selected model" : "Choose a model to inspect"}</option>
             {catalog.models.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}
             {inspectedId && !inspected ? <option value={inspectedId}>{inspectedId} (unavailable)</option> : null}
           </select>
@@ -271,8 +291,7 @@ export function ModelPicker({
           </details>
         </div>
       </details>
-      {forWorker && !value ? <p className="text-[11px] leading-relaxed text-mist">Copies the main model and its effort setting when this Worker starts.</p> : null}
-      {forWorker && !value && inheritedVariantUnavailable ? <ErrorNote>New Workers cannot start with this effort. Choose a supported effort for the main model, or select a different Worker model.</ErrorNote> : null}
+      {forWorker && !value ? <p className="text-[11px] leading-relaxed text-mist">Resolves the app default when a new Worker starts, then keeps that model and effort.</p> : null}
       {chosenBy === "app" && selected ? (
         <p className="text-[11px] leading-relaxed text-mist" data-testid="model-chosen-for-you">{describeModelPick(selected)}</p>
       ) : null}
@@ -291,7 +310,7 @@ export function ModelPicker({
               aria-busy={loading}
               variant="ghost"
               className="shrink-0 text-xs"
-              disabled={loading}
+              disabled={loading || (!threads && !onRefreshCatalog)}
               title={session ? "Refresh your OpenWork providers and the available AI models" : "Refresh the available AI models"}
               onClick={() => void refresh({ sync: true })}
             >
@@ -302,19 +321,20 @@ export function ModelPicker({
             <button
               type="button"
               className={`mt-1 flex w-full items-start gap-2 rounded-xl px-2.5 py-2.5 text-left ${!automatic && !value ? "bg-white/8" : "hover:bg-white/5"}`}
-              disabled={!forWorker && !recommended}
-              onClick={() => selectModel(forWorker ? null : recommended ?? null)}
+              disabled={!allowsDefault && !recommended}
+              onClick={() => selectModel(allowsDefault ? null : recommended ?? null)}
+              aria-pressed={allowsDefault ? !value : Boolean(recommended && recommended.id === value)}
             >
               <StatusDot tone={!automatic && !value ? "mint" : "mist"} />
-              <span>
-                <span className="block text-xs font-semibold text-snow">{forWorker ? `Use ${coworker.name}'s main model` : "Use recommended model"}</span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">{forWorker ? inheritedDescription : recommended ? `Select ${recommended.modelLabel} from your connected models. You can change it any time.` : "No connected model can use tools yet."}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold text-snow">{allowsDefault ? defaultLabel : "Use recommended model"}</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">{allowsDefault ? defaultDescription : recommended ? `Select ${recommended.modelLabel} from your connected models. You can change it any time.` : "No connected model can use tools yet."}</span>
               </span>
             </button>
 
             {value && !selected ? (
-              <div className="mt-1 rounded-xl bg-amber/8 px-2.5 py-2 text-[11px] leading-relaxed text-amber" data-testid="model-unavailable">
-                Saved selection {value} is unavailable. {forWorker ? "New Workers will be blocked until you choose an available model." : "Choose a connected model or use the recommendation."}
+              <div className="mt-1 break-words rounded-xl bg-amber/8 px-2.5 py-2 text-[11px] leading-relaxed text-amber" data-testid="model-unavailable">
+                Saved selection {value} is unavailable. {allowsDefault ? "Choose a connected model or return to the default. This explicit choice is not replaced automatically." : "Choose a connected model or use the recommendation."}
               </div>
             ) : null}
 
@@ -333,8 +353,8 @@ export function ModelPicker({
                   >
                     <StatusDot tone={option.id === value ? "mint" : "mist"} />
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate text-xs font-medium text-snow">{option.modelLabel}</span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="break-words text-xs font-medium text-snow">{option.modelLabel}</span>
                         {option.isProviderDefault ? (
                           <span className="shrink-0 rounded-full bg-white/7 px-1.5 py-0.5 text-[8px] text-mist">Provider default</span>
                         ) : null}
@@ -366,7 +386,7 @@ export function ModelPicker({
 
             {!loading && runtime.engineManaged && catalog.models.length === 0 ? (
               <p className="p-3 text-xs leading-relaxed text-mist">
-                No AI models are connected yet. Connect a provider in OpenWork, then refresh.
+                The connected model catalog is not available here yet. Refresh after a coworker workspace and provider are ready.{allowsDefault ? " You can still choose the default now." : ""}
               </p>
             ) : null}
             {!runtime.engineManaged ? (
@@ -376,22 +396,28 @@ export function ModelPicker({
         </div>
       ) : null}
 
-      {value && variants.length > 0 ? (
+      {value && (defaultPurpose || variants.length > 0 || modelVariant) ? (
         <Field label={automatic ? "Main model effort" : "Thinking effort"}>
           <select
-            className={`${inputClass} bg-panel`}
+            className={`${inputClass} min-w-0 bg-panel`}
             value={modelVariant}
-            title={forWorker ? "The Worker keeps this effort from its first turn." : "Follow the effort setting below, or choose a fixed level."}
+            title={defaultPurpose ? "Use automatic effort for this role, or choose a supported fixed level." : forWorker ? "The Worker keeps this effort from its first turn." : "Follow the effort setting below, or choose a fixed level."}
             onChange={(event) => onChange({ model: value, modelVariant: event.target.value, modelMode })}
           >
-            <option value="">Follow effort setting · {effortStopLabel(coworker.effortPreference)}</option>
+            <option value="">{defaultPurpose ? "Automatic effort for this role" : coworker ? `Follow effort setting · ${effortStopLabel(coworker.effortPreference)}` : "Model default effort"}</option>
+            {variantUnavailable ? <option value={modelVariant} disabled>{modelVariant} (not currently offered)</option> : null}
             {variants.map((variant) => (
               <option key={variant} value={variant}>{variant.slice(0, 1).toUpperCase() + variant.slice(1)}</option>
             ))}
           </select>
-          <p className="mt-1 text-[11px] leading-relaxed text-mist">{forWorker ? "Sets effort once when the Worker starts. A fixed level overrides the effort setting above." : "Leave this on Follow effort setting to adapt to each task. A fixed level overrides that setting when supported."}</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-mist">{defaultPurpose
+            ? variants.length ? "Automatic adapts effort to this role using the levels the model offers. A fixed level overrides it." : "No effort levels are listed for this model. Automatic uses its default when no levels are offered."
+            : forWorker ? "Sets effort once when the Worker starts. A fixed level overrides the coworker's effort setting." : "Leave this on Follow effort setting to adapt to each task. A fixed level overrides that setting when supported."}</p>
+          {variantUnavailable ? <p className="mt-1 break-words text-[11px] leading-relaxed text-amber" role="status">Saved effort "{modelVariant}" is not offered in the current catalog. It is still saved, not Automatic. Refresh the catalog or choose a supported effort.</p> : null}
         </Field>
       ) : null}
+
+      {!value && modelVariant ? <p className="break-words text-[11px] leading-relaxed text-amber">Saved effort "{modelVariant}" is not used without an explicit model. Choose the default option again to clear it.</p> : null}
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {lastRunFailed ? (

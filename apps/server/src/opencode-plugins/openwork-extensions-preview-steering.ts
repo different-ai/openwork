@@ -21,9 +21,6 @@ export type OpenWorkExtensionConnectState = {
     directory?: string | null;
     reason?: string;
   };
-  googleWorkspace: {
-    legacyConfigured: boolean;
-  };
 };
 
 export type OpenWorkCloudHealthSummary = {
@@ -123,9 +120,6 @@ const connectStateResponseSchema = z.object({
     directory: z.string().nullable().optional(),
     reason: z.string().optional(),
   }).passthrough().optional(),
-  googleWorkspace: z.object({
-    legacyConfigured: z.boolean(),
-  }).passthrough(),
 }).passthrough();
 
 // Both catalogs answer with the same envelope: a rendered prompt section.
@@ -135,8 +129,12 @@ const connectCatalogResponseSchema = z.object({
   instruction: z.string(),
 }).passthrough();
 
+export const OPENWORK_GOOGLE_CONNECTION_INSTRUCTION =
+  `Google Workspace uses OpenWork Cloud Connect only, with the member's Google connection managed by the Cloud backend. Do not set up local Google OAuth, request Google tokens, or offer a legacy Google extension or another provider stack. OpenWork Cloud readiness alone does not establish Google connection readiness. When the user requests Google setup or the requested operation is blocked by its connection, follow the exact live Cloud connection status action returned for that connection under the openwork-cloud server instructions. Never invent a connection status, connection id, or setup action; if no live status action is available, report that limitation.
+For Google Drive uploads and Gmail attachments, Cloud search results alone do not establish that upload is unavailable. Discover the native Gmail draft schema before declaring attachments unsupported: OpenWork fulfills its attachment paths through host file transport, preserving the selected connection. Draft creation does not send email; sending is a separate, permissioned operation that requires the user's authorization. For Google Drive uploads, when OpenWork host tools are exposed, first query extension.actions with extensionId openwork-cloud-uploads. Only if drive_upload_file is returned and the user authorizes the upload, execute that exact action through openwork_execute id extension.call with extensionId openwork-cloud-uploads and args containing path and optional folderId. This host action supports files up to 4 MiB under authorized roots and preserves bytes outside model context. Drive uses the member's default Google connection and cannot select another named connection; do not substitute it for a requested account unless it is confirmed to be the default. If using the Gmail host action directly, only if gmail_create_draft_with_attachments is returned and the user authorizes draft creation, execute it with authorized paths and draft fields from its returned input schema, including the selected connectionId. It creates a reviewable draft, does not send email, and supports up to 10 files totaling 4 MiB. The bridge uses the Cloud backend member connection, not local Google credentials. Never load file bytes into model context or tool arguments, extract tokens, or use shell uploads as a fallback. If host tools or the action are absent, including in external MCP-only clients, report that limitation rather than claiming this host upload route is available. Do not retry or switch routes after an uncertain result; verify whether the draft was created first.`;
+
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+  `If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action. Do not use another route to bypass a failed connection; follow its connection guidance. ${OPENWORK_GOOGLE_CONNECTION_INSTRUCTION}`;
 
 export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
   "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in OpenWork Cloud as a private plugin, not in the workspace. For later steps, use share-plugin when the user wants a specific person or team to use a skill, and use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
@@ -144,7 +142,7 @@ export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
 export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
   "Skill creation: Local. Create or update a workspace-local skill only when the user requests one. Keep one skill in .opencode/skills/<skill-name>/SKILL.md, validate it, and re-read it after writing. Do not create a Cloud copy.";
 
-// Availability signal only. The base agent prompt already names the two
+// Cloud availability plus shared Google guidance. The base agent prompt names the two
 // Connect tools and the catalog rule, and the detailed Connect contract
 // (search-first discovery, MCP Apps, connection_status handling, schema
 // guidance, retry semantics, "a successful search proves authorization")
@@ -153,7 +151,7 @@ export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
 // steering is selected. Restating either here costs characters on every
 // request and drifts.
 export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  "The OpenWork Cloud connection is verified ready for this exact workspace/model. The openwork-cloud server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules; follow them instead of improvising. Local OpenWork extensions remain available through openwork_query/openwork_execute with extension.actions and extension.call.";
+  `The OpenWork Cloud connection is verified ready for this exact workspace/model. The openwork-cloud server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules; follow them instead of improvising. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`;
 
 export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
   `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to OpenWork and connect the service in Settings → Connect.`;
@@ -300,9 +298,6 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
     cloudMcpPresent: parsed.cloudMcpPresent,
     cloudHealth: parsed.cloudHealth ?? null,
     ...(parsed.workspace ? { workspace: parsed.workspace } : {}),
-    googleWorkspace: {
-      legacyConfigured: parsed.googleWorkspace.legacyConfigured,
-    },
   };
 }
 
@@ -344,7 +339,7 @@ export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExte
     if (!health.desired.present || health.firstFailure?.code === "cloud_mcp_missing") return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
     return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   }
-  if (!state.connectCatalogEnabled || state.googleWorkspace.legacyConfigured) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+  if (!state.connectCatalogEnabled) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
 }
 

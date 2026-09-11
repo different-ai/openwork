@@ -103,7 +103,16 @@
     </script>
   </head>
   <body class="bg-dls-surface text-dls-text mac:bg-transparent">
-    <div id="root"></div>
+    <div id="root">
+      <!-- Visible even when the entry bundle cannot load. React replaces this on mount. -->
+      <div style="min-height: 100dvh; display: flex; align-items: center; justify-content: center; font: 14px system-ui; text-align: center; padding: 24px; box-sizing: border-box">
+        <div>
+          <p role="status">Starting OpenWork</p>
+          <p>If startup does not finish, reload to try again.</p>
+          <button type="button" onclick="window.location.reload()" style="font: inherit; padding: 8px 16px; cursor: pointer">Reload</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/index.react.tsx"></script>
   </body>
 </html>

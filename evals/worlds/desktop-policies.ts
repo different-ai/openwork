@@ -1,6 +1,129 @@
-import { mcpMock } from "@openwork/env";
+import { faultProxy, mcpMock, resolveEvalEngine } from "@openwork/env";
+import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
+import { engineSessionProbe } from "@openwork/behaviors";
+import { configureProvider } from "./chat.ts";
 import type { Seed } from "@openwork/env";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { isRecord, records } from "./library.ts";
+import { bootServer, stopChild } from "./openwork-server-cli.ts";
+
+/** Real app-web tools with the old policy HTTP service faulted and IPC severed.
+ * Wrappers affect only this fixture's captured PATH, never a personal engine. */
+export async function policyTransportRollback(seed: Seed) {
+  await using setup = new AsyncDisposableStack();
+  const engine = resolveEvalEngine();
+  const root = seed.tmpPath("policy-transport-rollback");
+  const bin = join(root, "bin");
+  const workspacePath = join(root, "workspace");
+  await mkdir(bin, { recursive: true });
+  await mkdir(workspacePath, { recursive: true });
+  const input = "policy-transport-input.txt";
+  const content = `tool-read-witness-${Date.now()}`;
+  await writeFile(join(workspacePath, input), content);
+  const requests: string[] = [];
+  const upstreamPath = join(root, "upstream.txt");
+  const fault = createServer(async (request, response) => {
+    if (request.url === "/managed-policy/evaluate") {
+      requests.push(request.url);
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ message: "Fixture policy transport unavailable" }));
+      return;
+    }
+    try {
+      const upstream = await readFile(upstreamPath, "utf8");
+      const body = [];
+      for await (const chunk of request) body.push(Buffer.from(chunk));
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(request.headers)) {
+        if (value !== undefined && !["host", "connection", "content-length"].includes(key)) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+      }
+      const result = await fetch(`${upstream}${request.url}`, {
+        method: request.method, headers,
+        ...(body.length ? { body: Buffer.concat(body) } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+      response.writeHead(result.status, { "content-type": result.headers.get("content-type") ?? "application/json" });
+      response.end(Buffer.from(await result.arrayBuffer()));
+    } catch {
+      response.writeHead(502);
+      response.end("Fixture forwarding failed");
+    }
+  });
+  setup.defer(async () => {
+    fault.closeAllConnections();
+    await new Promise<void>((resolve) => fault.close(() => resolve()));
+  });
+  await new Promise<void>((resolve) => fault.listen(0, "127.0.0.1", resolve));
+  const address = fault.address();
+  if (!address || typeof address === "string") throw new Error("Policy fault did not bind");
+  const faultUrl = `http://127.0.0.1:${address.port}`;
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  for (const name of ["opencode", "opencode2"]) {
+    const real = execFileSync("which", [name], { encoding: "utf8" }).trim();
+    await writeFile(join(bin, name), `#!/bin/sh
+if [ "$1" = "serve" ]; then
+  printf '%s' "$OPENWORK_SERVER_URL" > ${quote(upstreamPath)}
+  export OPENWORK_SERVER_URL=${quote(faultUrl)}
+  export OPENWORK_POLICY_TOKEN=fixture-policy-transport
+  unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
+  exec 3<&- 3>&-
+  printf '%s' 'HTTP fault configured; IPC fd closed' > ${quote(join(root, `${name}-fault.txt`))}
+fi
+exec ${quote(real)} "$@"
+`, { mode: 0o700 });
+  }
+  const marker = "POLICY_TRANSPORT_ROLLBACK";
+  const output = "policy-tool-output.txt";
+  const command = `printf '%s' '${content}' > '${output}'`;
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath}`;
+  let app;
+  try {
+    app = await seed.appWeb({
+      name: "policy-transport-rollback", workspacePath, headless: true,
+      mocks: { witness: seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
+        promptMarker: marker, finalReply: "The requested file was copied successfully.", steps: [
+          { tool: "read", arguments: { filePath: join(workspacePath, input), path: join(workspacePath, input) } },
+          { tool: engine === "v2" ? "shell" : "bash", arguments: { command, description: "Copy the read witness" } },
+        ],
+      }] }) },
+    });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+  const workspace = await seed.workspace(app, workspacePath);
+  const providerId = "policy-rollback-witness";
+  const modelId = "policy-rollback-model";
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { bash: "allow", read: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Policy rollback witness",
+      options: { baseURL: `${app.mocks.witness!.url}/v1`, apiKey: "fixture-only" },
+      models: { [modelId]: { name: "Policy rollback model", tool_call: true } },
+    } },
+  }, engine);
+  const session = await seed.session(app, { title: "Copy a local file during policy outage" });
+  const token = await seed.evalIn(app, () => localStorage.getItem("openwork.server.token"));
+  if (typeof token !== "string" || !token) throw new Error("Missing isolated app-web token");
+  const native = engineSessionProbe({ engine, serverUrl: app.openworkUrl, token, workspaceId: workspace.workspaceId });
+  const owned = setup.move();
+  return {
+    app, engine, marker, session, content, command,
+    native: () => native.snapshot(session.sessionId),
+    approve: () => native.approvePendingPermissions(session.sessionId),
+    output: () => readFile(join(workspacePath, output), "utf8"),
+    faultReceipt: () => readFile(join(root, `${engine === "v2" ? "opencode2" : "opencode"}-fault.txt`), "utf8"),
+    checkFault: async () => {
+      const response = await fetch(`${faultUrl}/managed-policy/evaluate`, { method: "POST" });
+      return { status: response.status, message: await response.text() };
+    },
+    policyRequests: () => [...requests],
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
+  };
+}
 
 /**
  * The organization's default desktop policy as Den returns it, with the shape
@@ -159,4 +282,174 @@ export async function teamAccess(seed: Seed) {
   const admin = await seed.web({ den, signedInAs: den.admin, startPath: editorPath, headless: true, viewport: { width: 1440, height: 2100 } });
   return { den, member, control, admin, commandProofs, nonce, providerId: llmProvider.id, teamId, grantTeamId, controlTeamId,
     memberId: currentMember.id, controlMemberId: controlMember.id, editorPath, pluginId, pluginName, rawSourceText };
+}
+
+/** A real OpenWork server signed in to Den through a fault proxy, without an
+ * Electron renderer. The journey can therefore count only policy verification
+ * requests caused by each evaluation. */
+export async function managedPolicyRecovery(seed: Seed) {
+  const den = await seed.den({
+    mocks: { witness: mcpMock({ allowUnauthenticatedMcp: true }) },
+    org: {
+      name: `Managed policy recovery ${Date.now()}`,
+      admin: { name: "Policy Recovery Admin" },
+      members: { member: { name: "Policy Recovery Member" } },
+    },
+  });
+  const member = den.members.member;
+  if (!member) throw new Error("Missing policy recovery member session");
+  const org = await seed.api(member, "/v1/org");
+  const organization = isRecord(org.body) && isRecord(org.body.organization) ? org.body.organization : null;
+  const currentMember = isRecord(org.body) && isRecord(org.body.currentMember) ? org.body.currentMember : null;
+  if (!org.response.ok || typeof organization?.id !== "string" || typeof currentMember?.id !== "string") {
+    throw new Error("Missing policy recovery organization or member ID");
+  }
+
+  const modelId = "assigned-policy-retry-proof";
+  const created = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Assigned policy recovery model",
+      source: "custom",
+      customConfig: {
+        id: "assigned-policy-recovery-provider",
+        name: "Assigned policy recovery model",
+        npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${den.mocks.witness.url}/v1` },
+        env: ["ASSIGNED_POLICY_RECOVERY_API_KEY"],
+        models: [{ id: modelId, name: "Assigned policy recovery model" }],
+      },
+      apiKey: "sk-openwork-assigned-policy-recovery-eval-only",
+      allMembers: false,
+      memberIds: [currentMember.id],
+      teamIds: [],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const llmProvider = isRecord(created.body) && isRecord(created.body.llmProvider) ? created.body.llmProvider : null;
+  if (created.response.status !== 201 || typeof llmProvider?.id !== "string" || !/^lpr_/.test(llmProvider.id)) {
+    throw new Error(`Assigned organization model setup failed: HTTP ${created.response.status}`);
+  }
+  const providerId = llmProvider.id;
+  const manageable = await seed.api(den.admin, "/v1/llm-providers?scope=manageable", { signal: AbortSignal.timeout(30_000) });
+  const providers = isRecord(manageable.body) && Array.isArray(manageable.body.llmProviders)
+    ? manageable.body.llmProviders.filter(isRecord)
+    : [];
+  const provider = providers.find((entry) => entry.id === providerId);
+  const access = provider && isRecord(provider.access) ? provider.access : null;
+  const memberAccess = access && Array.isArray(access.members)
+    ? access.members.filter(isRecord).find((entry) => entry.orgMembershipId === currentMember.id)
+    : null;
+  if (!manageable.response.ok || typeof memberAccess?.id !== "string") {
+    throw new Error(`Assigned organization model access lookup failed: HTTP ${manageable.response.status}`);
+  }
+  const accessId = memberAccess.id;
+
+  const stored = await readDefaultDesktopPolicy(seed, den.admin);
+  if (!isRecord(stored.policy) || typeof stored.id !== "string" || typeof stored.policyName !== "string") {
+    throw new Error("Missing default policy for recovery proof");
+  }
+  const allowedPolicy = { ...stored.policy, allowCustomProviders: false, allowZenModel: true };
+  const updateBuiltInModel = async (allowed: boolean) => seed.api(den.admin, `/v1/desktop-policies/${stored.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ policyName: stored.policyName, policy: { ...allowedPolicy, allowZenModel: allowed } }),
+  });
+  const allowed = await updateBuiltInModel(true);
+  if (!allowed.response.ok) throw new Error(`Allowing the built-in model failed: HTTP ${allowed.response.status}`);
+
+  const root = seed.tmpPath("managed-policy-recovery");
+  const workspace = join(root, "workspace");
+  const home = join(root, "home");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(home, { recursive: true });
+  // The OpenWork server below runs beside Vitest, so its Den fault boundary
+  // must run there too even when Den is on Daytona. Point it at the API origin
+  // directly: unlike browser traffic, server verification has no web Origin.
+  const proxy = await faultProxy({ ...den.ref, webUrl: den.ref.apiUrl });
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENWORK_") && !key.startsWith("OPENCODE")));
+  const token = "owt_managed_policy_recovery";
+  const booted = bootServer({
+    ...inherited,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "3600000",
+    OPENWORK_MANAGE_OPENCODE: "0",
+  }, token, workspace, () => {});
+  try {
+    const baseUrl = await booted.listening;
+    const request = async (path: string, input: { method?: string; host?: boolean; body?: unknown } = {}) => {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (input.host) headers["x-openwork-host-token"] = `${token}-host`;
+      else headers.authorization = `Bearer ${token}`;
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: input.method ?? "GET",
+        headers,
+        body: input.body === undefined ? undefined : JSON.stringify(input.body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await response.text();
+      let body: unknown = null;
+      try { body = text ? JSON.parse(text) : null; }
+      catch { body = text; }
+      return { status: response.status, body };
+    };
+    const session = await request("/den-session", {
+      method: "PUT",
+      host: true,
+      body: { baseUrl: proxy.ref.webUrl, token: member.token, orgId: organization.id },
+    });
+    if (session.status !== 204) throw new Error(`Setting the policy recovery Den session failed: HTTP ${session.status} ${JSON.stringify(session.body)}`);
+    const readProviderState = async () => {
+      const runtime = await request("/runtime-config/providers", { host: true });
+      const status = await request("/cloud-provider-sync/status");
+      return { runtime, status };
+    };
+    const syncProviders = async () => {
+      const run = await request("/cloud-provider-sync/run", { method: "POST", host: true, body: { reason: "managed-policy-recovery" } });
+      const { runtime, status } = await readProviderState();
+      return { run, runtime, status };
+    };
+    const memberCatalog = async () => {
+      const result = await seed.api(member, "/v1/llm-providers", { signal: AbortSignal.timeout(30_000) });
+      const items = isRecord(result.body) && Array.isArray(result.body.llmProviders)
+        ? result.body.llmProviders.filter(isRecord)
+        : [];
+      return { status: result.response.status, providers: items };
+    };
+    const revokeProviderAccess = async () => {
+      const result = await seed.api(den.admin, `/v1/llm-providers/${encodeURIComponent(providerId)}/access/${encodeURIComponent(accessId)}`, {
+        method: "DELETE",
+        signal: AbortSignal.timeout(30_000),
+      });
+      return result.response.status;
+    };
+    let disposed = false;
+    return {
+      den,
+      proxy,
+      providerId,
+      modelId,
+      memberCatalog,
+      readProviderState,
+      revokeProviderAccess,
+      syncProviders,
+      updateBuiltInModel,
+      evaluate: (body: Record<string, unknown>) => request("/managed-policy/evaluate", { method: "POST", body }),
+      async [Symbol.asyncDispose]() {
+        if (disposed) return;
+        disposed = true;
+        await stopChild(booted.child);
+        await proxy[Symbol.asyncDispose]();
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await stopChild(booted.child);
+    await proxy[Symbol.asyncDispose]();
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
 }

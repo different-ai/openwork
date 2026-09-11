@@ -14,9 +14,20 @@ test("app boots with a control route and meaningful visible content", async ({ w
       until: (hash) => /^#\/workspace\/[^/]+\/session$/.test(hash),
     });
     await user.see("composer", { editable: true, text: "" });
-    expect(await world.packagedRuntime()).toEqual({
+    const expectedRuntime = {
       bridge: true, protocol: "file:", health: 200, emptySession: true, signedOut: true, onboarding: false, crash: false,
+    };
+    // The renderer can remount while the asynchronous IPC/health probe runs.
+    // Wait for one coherent ready snapshot instead of combining observations
+    // from different startup frames. Keep every positive and negative condition.
+    const runtime = await probe.eventually(() => world.packagedRuntime(), {
+      within: 30_000,
+      label: "packaged renderer, bridge and server are ready together",
+      until: (value) => typeof value === "object" && value !== null
+        && Object.entries(expectedRuntime).every(([key, expected]) => Reflect.get(value, key) === expected),
     });
+    expect(runtime).toEqual(expectedRuntime);
+    await user.see("composer", { editable: true, text: "" });
     await user.see("Run task");
     const workspaceId = /^#\/workspace\/([^/]+)\/session$/.exec(await probe.hash())?.[1];
     if (!workspaceId) throw new Error("The packaged app did not open its empty workspace route.");

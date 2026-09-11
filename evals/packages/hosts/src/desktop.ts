@@ -3,7 +3,7 @@ import { timed } from "@openwork/timeline";
 import { attachSurface, describeAppState, dumpScreenState, isInteractive, probeAppStateOnSurface } from "@openwork/cdp";
 import { resolveHost } from "./resolve.ts";
 import type { AppStateProbe, AppSurfaceState, AttachedSurface, Surface, SurfaceHandle } from "@openwork/cdp";
-import type { Host } from "./types.ts";
+import type { DesktopRelease, ElectronStartupObservation, Host } from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 const POLL_INTERVAL_MS = 250;
@@ -76,6 +76,53 @@ export interface DesktopHandle extends AttachedSurface {
    */
   workspaceRoot: string | null;
   stop(): Promise<void>;
+}
+
+export interface RetainedDesktopHandle extends AsyncDisposable {
+  handle: SurfaceHandle;
+  startup: ElectronStartupObservation;
+  workspaceRoot: string;
+  stop(): Promise<void>;
+}
+
+export interface RetainedDesktopOptions {
+  name?: string;
+  host: Host;
+  binaryPath?: string;
+  release?: DesktopRelease;
+  profileDir?: string;
+  env?: Record<string, string>;
+  launchArgs?: readonly string[];
+  startupTimeoutMs?: number;
+}
+
+/** Retain the host and viewer when product startup crashes or never exposes CDP. */
+export async function retainedDesktop(opts: RetainedDesktopOptions): Promise<RetainedDesktopHandle> {
+  if (!opts.host.spawnElectronRetained) {
+    throw new Error("The selected desktop host does not support retained Electron launches.");
+  }
+  const launched = await opts.host.spawnElectronRetained(opts.name ?? "retained", {
+    profile: "blank",
+    ...(opts.binaryPath === undefined ? {} : { binaryPath: opts.binaryPath }),
+    ...(opts.release === undefined ? {} : { release: opts.release }),
+    ...(opts.profileDir === undefined ? {} : { profileDir: opts.profileDir }),
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+    ...(opts.launchArgs === undefined ? {} : { launchArgs: opts.launchArgs }),
+    ...(opts.startupTimeoutMs === undefined ? {} : { startupTimeoutMs: opts.startupTimeoutMs }),
+  });
+  let stopped = false;
+  const stop = async (): Promise<void> => {
+    if (stopped) return;
+    stopped = true;
+    await opts.host.disposeSurface(launched.handle);
+  };
+  return {
+    handle: launched.handle,
+    startup: launched.startup,
+    workspaceRoot: opts.host.workspaceRoot,
+    stop,
+    [Symbol.asyncDispose]: () => stop().catch((error: unknown) => logCleanupError(launched.handle.name, error)),
+  };
 }
 
 async function waitForReadiness(app: Surface, timeoutMs: number): Promise<AppReadiness> {

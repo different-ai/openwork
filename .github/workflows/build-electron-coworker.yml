@@ -82,6 +82,24 @@ jobs:
           pnpm --filter @openwork/coworker build:electron
           pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --dir --publish never
 
+      - name: Check packaged release size
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            macOS) packages=(apps/coworker/dist-electron/mac*/"Open Coworker.app") ;;
+            Linux) packages=(apps/coworker/dist-electron/linux*unpacked) ;;
+            Windows) packages=(apps/coworker/dist-electron/win*unpacked) ;;
+          esac
+          case "$RUNNER_ARCH" in
+            ARM64) arch=arm64 ;;
+            X64) arch=x64 ;;
+            *) exit 1 ;;
+          esac
+          for app in "${packages[@]}"; do
+            node apps/coworker/scripts/release-size.mjs "$app" --check --arch "$arch"
+          done
+
       - name: Upload Open Coworker artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -247,6 +265,12 @@ jobs:
           ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Open Coworker" \
             --input-type=module -e 'await import(process.argv[1])' \
             "$PWD/$app/Contents/Resources/app.asar/server/dist/embedded.js"
+          case "$RUNNER_ARCH" in
+            ARM64) arch=arm64 ;;
+            X64) arch=x64 ;;
+            *) exit 1 ;;
+          esac
+          node apps/coworker/scripts/release-size.mjs "$app" --check --arch "$arch"
 
       - name: Upload signed macOS artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

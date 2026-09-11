@@ -101,11 +101,15 @@ export function variantForLevel(level: EffortLevel, variants: readonly string[])
 
 /**
  * The effort one turn is sent with. An exact effort the person fixed wins when
- * the model offers it; otherwise the dial decides through the kind's level.
+ * the model offers it; an unavailable fixed choice refuses the turn rather than
+ * silently replacing it. Only an empty choice follows the dial.
  */
 export function effortForTurn(input: { kind: EffortKind; stop: EffortStop; fixedVariant: string; variants: readonly string[] }): string {
   const fixed = input.fixedVariant.trim();
-  if (fixed && input.variants.includes(fixed)) return fixed;
+  if (fixed) {
+    if (!input.variants.includes(fixed)) throw new Error(`This model no longer offers thinking effort "${fixed}". Choose another effort or follow the effort setting; no different effort was selected.`);
+    return fixed;
+  }
   return variantForLevel(effortLevelFor(input.kind, input.stop), input.variants);
 }
 

@@ -12,7 +12,9 @@ export type ExternalMcpPreset = {
   displayName: string
   description: string
   url: string
+  // Setup default, not an exclusive requirement when supportedAuthTypes lists alternatives.
   authType: "oauth" | "apikey" | "none"
+  supportedAuthTypes?: readonly ("oauth" | "apikey" | "none")[]
   requiresOAuthClient?: boolean
   authorizationServerIssuer?: string
   defaultOAuthScopes?: readonly string[]
@@ -24,6 +26,7 @@ export const externalMcpPresetResponseSchema = z.object({
   description: z.string(),
   url: z.string(),
   authType: z.enum(["oauth", "apikey", "none"]),
+  supportedAuthTypes: z.array(z.enum(["oauth", "apikey", "none"])).optional(),
   requiresOAuthClient: z.boolean().optional(),
   authorizationServerIssuer: z.string().url().optional(),
   defaultOAuthScopes: z.array(z.string()).optional(),
@@ -34,6 +37,15 @@ export const externalMcpPresetListResponseSchema = z.object({
 }).meta({ ref: "ExternalMcpPresetListResponse" })
 
 export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
+  {
+    presetId: "github",
+    displayName: "GitHub",
+    description: "PRs, issues, code, and CI. Use a registered GitHub OAuth app for individual accounts, or a personal access token for a shared connection. Automatic app registration is not supported.",
+    url: "https://api.githubcopilot.com/mcp/",
+    authType: "oauth",
+    supportedAuthTypes: ["oauth", "apikey"],
+    requiresOAuthClient: true,
+  },
   {
     presetId: "notion",
     displayName: "Notion",
@@ -79,7 +91,7 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
     presetId: "slack",
     displayName: "Slack",
-    description: "Channels, DMs, and search. Slack has no automatic app registration — paste your Slack app's OAuth client once; each person then connects their own account.",
+    description: "Channels, DMs, and search. Requires an eligible internal or Slack Marketplace-published app; not every Slack app can use MCP. An admin configures its OAuth client once, then each person connects their own account. Automatic app registration is not supported.",
     url: "https://mcp.slack.com/mcp",
     authType: "oauth",
     requiresOAuthClient: true,
@@ -101,7 +113,7 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
     presetId: "exa",
     displayName: "Exa",
-    description: "AI web search, code search, and research for your agents. Paste your org's Exa API key from dashboard.exa.ai.",
+    description: "Web search, code context, and research. This connection uses your org's Exa API key from dashboard.exa.ai; provider usage limits and billing apply.",
     url: "https://mcp.exa.ai/mcp",
     authType: "apikey",
   },
@@ -115,7 +127,7 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
     presetId: "context7",
     displayName: "Context7",
-    description: "Search product docs with richer context.",
+    description: "Up-to-date library documentation and code examples. Connect without an API key using Context7's rate-limited anonymous access.",
     url: "https://mcp.context7.com/mcp",
     authType: "none",
   },

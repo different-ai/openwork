@@ -5,6 +5,30 @@ import { PromptAdmissionUnknownError } from "../src/app/lib/opencode";
 import { assertQueuedSendCurrent, dispatchQueuedDrain, getQueuedSendGeneration, resetQueuedDrainForTests } from "../src/react-app/domains/session/surface/queued-drain-machine";
 
 describe("safe edit resend", () => {
+  test("a late response failure after Stop cannot roll back the successor's history", async () => {
+    resetQueuedDrainForTests();
+    const sessionId = "ses_late_revert_response";
+    const generation = getQueuedSendGeneration(sessionId);
+    const response = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    const old = sendWithRevertRollback({
+      assertCurrent: () => assertQueuedSendCurrent(sessionId, generation),
+      revertMessageId: "msg_original",
+      abort: async () => {},
+      revert: async () => { calls.push("old-revert"); },
+      prompt: async () => { started.resolve(); await response.promise; },
+      unrevert: async () => { calls.push("unrevert"); },
+    });
+    await started.promise;
+    dispatchQueuedDrain(sessionId, { type: "queue_cleared" });
+    calls.push("successor-revert");
+    response.reject(new Error("Late HTTP 502"));
+    await expect(old).rejects.toThrow("Send cancelled by Stop.");
+    expect(calls).toEqual(["old-revert", "successor-revert"]);
+    resetQueuedDrainForTests();
+  });
+
   test("sends a normal draft without history mutation", async () => {
     const calls: string[] = [];
     await sendWithRevertRollback({

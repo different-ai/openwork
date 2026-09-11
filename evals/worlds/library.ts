@@ -291,14 +291,19 @@ export async function preseededConnect(seed: Seed) {
   });
   if (provider.response.status !== 201) throw new Error(`Could not publish the Connect fixture model: HTTP ${provider.response.status}`);
   const mcpSession = await mintMcpSession(seed, den, organizationId);
-  const app = await seed.desktop({ den, signIn: false });
+  const proxy = await seed.faultProxy(den);
+  // Keep desktop handoff and subsequent token mints on the shaped connection.
+  const runtimeConfig = { denApiUrl: proxy.ref.apiUrl };
+  await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: runtimeConfig });
+  const tokenPath = "/api/den/v1/mcp/token";
+  await proxy.faults.status(tokenPath, 503, { times: 1000, body: { error: "connect_startup_unavailable" } });
+  const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("preseeded-connect"));
-  // TODO(primitive): seed.route
-  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
+  // Stay on the task route: Settings has its own reconciliation path.
   return {
-    app, den, prompt, proofPhrase, providerName, modelId,
+    app, den, proxy, runtimeConfig, tokenPath, prompt, proofPhrase, providerName, modelId,
     admin: den.admin,
-    member: den.admin,
+    member: { ...den.admin, ...proxy.ref },
     mcpSession,
     pluginId,
     rawSourceText,
@@ -368,10 +373,33 @@ export async function connectorBranding(seed: Seed) {
   return { app, den, prompt, failurePrompt, proof };
 }
 
-export async function connectorsQuickAdd(seed: Seed) {
+export async function connectorCatalogManagement(seed: Seed) {
   const den = await seed.den({
-    org: { name: `Connectors Quick Add ${Date.now()}`, admin: { name: "Sarah" } },
+    org: { name: `Connector Catalog ${Date.now()}`, admin: { name: "Catalog Admin" }, members: { member: { name: "Catalog Member" } } },
     mocks: { connector: seed.mock() },
+  });
+  const connection = await seed.orgConnection(den.admin, {
+    name: "Catalog Notes",
+    url: den.mocks.connector.mcpUrl,
+    authType: "oauth",
+    credentialMode: "per_member",
+    access: { orgWide: true },
+  });
+  // Native OAuth clients intentionally have no managed MCP row.
+  const google = await seed.api(den.admin, "/v1/oauth-providers/google-workspace/client", {
+    method: "POST",
+    body: JSON.stringify({ clientId: "catalog-test-client", clientSecret: "catalog-test-secret" }),
+  });
+  if (!google.response.ok) throw new Error("Could not arrange the native Google client.");
+  // Fault the provider boundary, not Den's startup response or persisted readiness.
+  const rejected = await seed.faultProxy(den);
+  await rejected.faults.status("/mcp", 503, { times: 1000, body: { error: "catalog_provider_unavailable" } });
+  const rejectedConnection = await seed.orgConnection(den.admin, {
+    name: "Catalog Recovery",
+    url: `${rejected.ref.webUrl}/mcp`,
+    authType: "oauth",
+    credentialMode: "per_member",
+    access: { orgWide: true },
   });
   const web = await seed.web({
     den,
@@ -380,7 +408,10 @@ export async function connectorsQuickAdd(seed: Seed) {
     headless: true,
     viewport: { width: 1440, height: 1200 },
   });
-  return { web, connector: den.mocks.connector };
+  const memberWeb = await seed.web({
+    den, signedInAs: den.members.member, startPath: `/dashboard/your-connections?connectionId=${connection.id}`, headless: true,
+  });
+  return { den, web, memberWeb, connection, rejectedConnection, connector: den.mocks.connector, rejected };
 }
 
 export async function libraryConnectorDiscovery(seed: Seed) {
@@ -394,9 +425,13 @@ export async function libraryConnectorDiscovery(seed: Seed) {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  // TODO(primitive): seed.route
-  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }, [workspace.workspaceId]));
-  return { app, organizationId, denWebUrl: den.ref.webUrl };
+  // Arrange an upgraded profile whose retired local extension was enabled.
+  await seed.evalIn(app, browserScript((workspaceId) => {
+    localStorage.setItem("openwork.extension.enabled.google-workspace", "1");
+    location.hash = "#/workspace/" + workspaceId + "/settings/general";
+    return true;
+  }, [workspace.workspaceId]));
+  return { app, workspaceId: workspace.workspaceId, organizationId, denWebUrl: den.ref.webUrl };
 }
 
 export async function librarySessionRestore(seed: Seed) {
@@ -960,11 +995,11 @@ async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promis
   throw new Error("The configured desktop control did not return after reload.");
 }
 
-export const connectionActionResourceUri = "ui://openwork/connection-action/v1/view.html";
 export const connectionActionReply = "Connect your Notion account to continue.";
 export const ordinaryDiscoveryPrompt = "Create a dashboard using my notes.";
 export const ordinaryDiscoveryReply = "I found the available capabilities for the dashboard.";
 export const connectionActionPrompt = "I want to connect Notion.";
+export const connectionStatusPrompt = "Check my Notion connection so I can sign in.";
 
 export const allConnectorsPrompt = "Show me all the quick-add connectors.";
 export const allConnectorsReply = "Here are all the connectors available to add.";
@@ -979,12 +1014,22 @@ export async function connectionActionMcpApp(seed: Seed) {
     mocks: {
       connector: seed.mock({ agentWorkloads: [{
         promptMarker: ordinaryDiscoveryPrompt,
+        latestUserTurn: true,
         finalReply: ordinaryDiscoveryReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
       }, {
         promptMarker: connectionActionPrompt,
+        latestUserTurn: true,
         finalReply: connectionActionReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", intent: "connect" } }],
+      }, {
+        promptMarker: connectionStatusPrompt,
+        latestUserTurn: true,
+        finalReply: connectionActionReply,
+        steps: [
+          { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", limit: 1 } },
+          { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+        ],
       }, {
         promptMarker: connectorCatalogPrompt,
         finalReply: connectorCatalogReply,
@@ -1020,7 +1065,7 @@ export async function connectionActionMcpApp(seed: Seed) {
   });
   await reloadConfiguredApp(app);
   await seed.session(app);
-  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
+  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken }, appHostSession: { ...den.admin, token: appHostToken } };
 }
 
 export const skillCreatedResourceUri = "ui://openwork/skill-created/v1/view.html";

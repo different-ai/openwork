@@ -9,6 +9,7 @@ import { PROGRESS_PLUGIN } from "./progress-plugin.mjs";
 import { createProgressSummaries, summarizeProgress } from "./progress-summaries.mjs";
 import { PROGRESS_AGENT, PROGRESS_LIMITS, PROGRESS_SYSTEM, PROGRESS_TITLE } from "../src/lib/progress-config.ts";
 import { connectedModelCatalog, eligibleProgressModels } from "../src/lib/threads.ts";
+import { DEFAULT_MODEL_DEFAULTS } from "../src/lib/model-defaults.ts";
 import {
   MAX_RUNS_PER_DAY_DEFAULT,
   MINIMUM_RUN_GAP_DEFAULT,
@@ -33,6 +34,7 @@ after(async () => {
 });
 
 const defaults = {
+  modelDefaults: DEFAULT_MODEL_DEFAULTS,
   maxParallelLocalRuns: PARALLEL_RUNS_DEFAULT,
   minimumRunGapMinutes: MINIMUM_RUN_GAP_DEFAULT,
   maxRunsPerDay: MAX_RUNS_PER_DAY_DEFAULT,
@@ -77,6 +79,23 @@ test("settings read, update, and survive a damaged file", async () => {
     minimumRunGapMinutes: 30,
     maxRunsPerDay: 6,
   });
+  await updateSettings(file, { modelDefaults: { conversation: { model: " fixture/chat ", modelVariant: " low " }, thinking: { model: "fixture/deep" } } });
+  const saved = await updateSettings(file, { modelDefaults: { thinking: { modelVariant: "high" }, delivery: { model: "unavailable/exact" } } });
+  assert.deepEqual(saved.modelDefaults, {
+    conversation: { model: "fixture/chat", modelVariant: "low" }, thinking: { model: "fixture/deep", modelVariant: "high" },
+    delivery: { model: "unavailable/exact", modelVariant: "" }, facilitator: DEFAULT_MODEL_DEFAULTS.facilitator,
+  }, "role patches preserve siblings and unavailable intentional choices");
+  assert.deepEqual(await readSettings(file), saved);
+  assert.equal(saved.automaticMemoryEnabled, defaults.automaticMemoryEnabled);
+  assert.equal(saved.progressSummariesEnabled, defaults.progressSummariesEnabled);
+  for (const model of ["no-provider", "fixture/white space", "fixture/control\nvalue", "fixture/\u007f", `fixture/${"x".repeat(249)}`]) {
+    assert.deepEqual((await updateSettings(file, { modelDefaults: { delivery: { model } } })).modelDefaults, saved.modelDefaults, "malformed IDs cannot replace a saved well-formed unavailable choice");
+  }
+  for (const modelVariant of ["high effort", "high\ncontrol", "x".repeat(65)]) {
+    assert.deepEqual((await updateSettings(file, { modelDefaults: { thinking: { modelVariant } } })).modelDefaults, saved.modelDefaults);
+  }
+  const boundary = { model: `p/${"x".repeat(254)}`, modelVariant: "x".repeat(64) };
+  assert.deepEqual((await updateSettings(file, { modelDefaults: { delivery: boundary } })).modelDefaults.delivery, boundary);
   await writeFile(file, "{ not json", "utf8");
   assert.deepEqual(await readSettings(file), defaults);
 });

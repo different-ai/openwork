@@ -7,6 +7,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { t } from "../../../../i18n";
 import { useLocal } from "../../../kernel/local-provider";
 import { useDesktopConfig } from "../../cloud/desktop-config-provider";
+import { useEnterpriseActivationRequired } from "../../cloud/enterprise-activation-gate";
 import { useBrandAppName } from "../../cloud/brand-theme";
 import { notifyAlert } from "../../../shell/notifications";
 import { useElectronUpdaterState } from "./electron-updater-state";
@@ -28,6 +29,11 @@ function useUpdatePreference(key: string) {
 function useUpdater() {
   const local = useLocal();
   const desktopConfig = useDesktopConfig();
+  // This provider mounts above the enterprise activation gate. Before activation
+  // no Den is known, and until the desktop config has resolved once the
+  // organization's allowed-versions policy cannot be honoured, so no update
+  // check (and therefore no download) may run yet.
+  const updatePolicyKnown = !useEnterpriseActivationRequired() && !desktopConfig.loading;
   const [updateAutoCheck, setUpdateAutoCheck] = useUpdatePreference("openwork.react.settings.update-auto-check");
   // Older Settings wrote "0" even when the user never touched the old opt-in.
   // Start the automatic-download default once, then retain future opt-outs.
@@ -45,6 +51,7 @@ function useUpdater() {
     onReleaseChannelChange,
     updateAutoCheck,
     updateAutoDownload,
+    updatePolicyKnown,
     desktopConfig: desktopConfig.config,
     refreshDesktopConfig: desktopConfig.refreshFresh,
     setError,

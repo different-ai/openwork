@@ -11,11 +11,13 @@ import {
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
   OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
 } from "../openwork-web-runtime-access.js"
+import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materialization.js"
+import { appLogger } from "../observability/logger.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
 import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
 import { CLOUD_INSTANCE_BACKEND } from "../workers/cloud-constants.js"
 import { wakeCloudWorker } from "../workers/cloud-lifecycle.js"
-import { fetchPreviewNoRedirect, previewFetch } from "../workers/preview-fetch.js"
+import { fetchPreviewNoRedirect, previewFetch, type FetchLike } from "../workers/preview-fetch.js"
 import { resolveAutomationModelAccess } from "./authority.js"
 
 const WORKER_READY_TIMEOUT_MS = 120_000
@@ -23,6 +25,16 @@ const WORKER_READY_POLL_MS = 1_000
 const WORKER_REQUEST_TIMEOUT_MS = 15_000
 const ABORT_SETTLE_TIMEOUT_MS = 15_000
 const RESULT_SUMMARY_LIMIT = 20_000
+// A woken sandbox answers /health as soon as openwork-server binds, before its
+// managed OpenCode engine has spawned. Until then the Cloud MCP health probe
+// reports opencode_unconfigured. Cloud Chat rides this window out because a
+// person takes seconds to type; an Automation sends its first request at once,
+// so it needs an explicit bounded wait instead of a terminal failure.
+const ENGINE_WARMUP_TIMEOUT_MS = 60_000
+const ENGINE_WARMUP_POLL_MS = 2_000
+const ENGINE_WARMUP_FAILURE_CODE = "opencode_unconfigured"
+
+const logger = appLogger.child({ component: "cloud_agent_executor" })
 
 type OwnerScope = { organizationId: string; ownerMemberId: string }
 type AgentAction = Extract<AutomationAction, { kind: "agent" }>
@@ -295,13 +307,41 @@ export function cloudAgentRuntimeUnavailableResult(input: {
   }
 }
 
-async function connectHealth(input: {
+export type CloudConnectDeps = {
+  fetchImpl: FetchLike
+  materializeProviders: typeof materializeCloudWorkerProviders
+  sleep: typeof abortableSleep
+  now: () => number
+}
+
+type CloudConnectResult = { ok: true } | { ok: false; code: "connect_access_unavailable" | "model_access_lost"; message: string }
+
+function engineWarmingUp(health: Record<string, unknown> | null): boolean {
+  const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
+  return failure?.code === ENGINE_WARMUP_FAILURE_CODE
+}
+
+/**
+ * Bring the worker's Cloud MCP to a usable state for this run's model: wait
+ * for the managed engine to finish starting, deliver the organization's
+ * current provider credentials and catalog, then run the health probe (with
+ * one engine refresh) exactly as before.
+ */
+export async function connectHealth(input: {
+  organizationId: string
+  workerId: string
   baseUrl: string
   workspaceId: string
   access: CloudWorkerAccess
   action: AgentAction
   signal: AbortSignal
-}): Promise<{ ok: true } | { ok: false; code: "connect_access_unavailable" | "model_access_lost"; message: string }> {
+}, options: Partial<CloudConnectDeps> = {}): Promise<CloudConnectResult> {
+  const deps: CloudConnectDeps = {
+    fetchImpl: options.fetchImpl ?? previewFetch(),
+    materializeProviders: options.materializeProviders ?? materializeCloudWorkerProviders,
+    sleep: options.sleep ?? abortableSleep,
+    now: options.now ?? Date.now,
+  }
   const encodedWorkspace = encodeURIComponent(input.workspaceId)
   const query = new URLSearchParams({
     provider: input.action.model.providerId,
@@ -309,7 +349,7 @@ async function connectHealth(input: {
     probe: "true",
   })
   const request = async (method: "GET" | "POST", path: string, body?: unknown) => {
-    const response = await fetchPreviewNoRedirect(previewFetch(), `${input.baseUrl}${path}`, {
+    const response = await fetchPreviewNoRedirect(deps.fetchImpl, `${input.baseUrl}${path}`, {
       method,
       headers: {
         ...workerHeaders(input.access),
@@ -322,15 +362,44 @@ async function connectHealth(input: {
     const value: unknown = await response.json()
     return isRecord(value) ? value : null
   }
-  let value = await request("GET", `/workspace/${encodedWorkspace}/mcp/openwork-cloud/health?${query}`)
-  let health = value
+  const healthPath = `/workspace/${encodedWorkspace}/mcp/openwork-cloud/health?${query}`
+
+  let health = await request("GET", healthPath)
+  const warmupDeadline = deps.now() + ENGINE_WARMUP_TIMEOUT_MS
+  while (engineWarmingUp(health) && deps.now() < warmupDeadline) {
+    await deps.sleep(ENGINE_WARMUP_POLL_MS, input.signal)
+    health = await request("GET", healthPath)
+  }
+
+  // Cloud Chat materializes providers on every gateway resolve; Automations
+  // are the only other producer of engine turns and must do the same, or a
+  // provider added or rotated after the worker was provisioned never reaches
+  // a worker that only runs Automations. Runs after the engine is up so the
+  // read phase cannot fail on the same warm-up window.
+  if (!engineWarmingUp(health)) {
+    try {
+      await deps.materializeProviders({
+        organizationId: normalizeDenTypeId("organization", input.organizationId),
+        workerId: normalizeDenTypeId("worker", input.workerId),
+        instanceUrl: input.baseUrl,
+        hostToken: input.access.hostToken,
+        clientToken: input.access.clientToken,
+      })
+    } catch (error) {
+      logger.warn("automation run provider materialization warning", {
+        worker_id: input.workerId,
+        message: error instanceof Error ? error.message : "provider_materialization_failed",
+      })
+    }
+  }
+
   if (health?.usable !== true || health.usableByCurrentModel !== true) {
-    value = await request("POST", `/workspace/${encodedWorkspace}/mcp/openwork-cloud/engine-refresh`, {
+    const refreshed = await request("POST", `/workspace/${encodedWorkspace}/mcp/openwork-cloud/engine-refresh`, {
       provider: input.action.model.providerId,
       model: input.action.model.modelId,
       trigger: "automation_run",
     })
-    health = isRecord(value?.health) ? value.health : null
+    health = isRecord(refreshed?.health) ? refreshed.health : null
   }
   if (health?.usable === true && health.usableByCurrentModel === true) return { ok: true }
   if (health?.usable === true && health.usableByCurrentModel !== true) {
@@ -476,7 +545,15 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     // Recovery keeps the receipt's workspace (the turn may already be running
     // there); otherwise the revision pin wins over the worker's active workspace.
     const workspaceId = previousReceipt?.workspaceId ?? input.workspaceId ?? runtime.workspaceId
-    const connect = await connectHealth({ ...runtime, workspaceId, action: input.action, signal })
+    const connect = await connectHealth({
+      organizationId: input.organizationId,
+      workerId: runtime.workerId,
+      baseUrl: runtime.baseUrl,
+      access: runtime.access,
+      workspaceId,
+      action: input.action,
+      signal,
+    })
     if (!connect.ok) {
       return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: true }
     }

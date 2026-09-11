@@ -2,11 +2,12 @@ version = 1
 
 # Warden gates clearance on blocking findings from three skills:
 # diff-security-review and confidentiality-review (all findings block) and
-# desktop-den-sync-review (only high findings block; medium findings are
-# advisory). The clearance itself is granted by
-# .github/workflows/warden-clearance.yml.
+# desktop-den-sync-review (only high findings block). Provenance and medium/low
+# sync advisories remain in Warden check summaries but create no new threads.
+# Clearance itself is granted by .github/workflows/warden-clearance.yml.
 
 [defaults]
+defaultBranch = "dev"
 reportOn = "low"
 ignorePaths = [
   "**/node_modules/**",
@@ -14,6 +15,9 @@ ignorePaths = [
   "**/dist/**",
   "**/*.min.js",
 ]
+
+[defaults.scan]
+maxFileLines = 5000
 
 [defaults.agent]
 model = "openai/gpt-5.6-luna"
@@ -32,9 +36,11 @@ type = "pull_request"
 # Omitting draft matches both draft and ready PRs.
 actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
-# Lets developers run `warden` locally on uncommitted changes before pushing.
+# Local bare mode reviews committed branch changes; `--staged` is diagnostic.
 [[skills.triggers]]
 type = "local"
+failOn = "info"
+minConfidence = "low"
 
 # Public repo: customer/prospect/partner identities must never land in the
 # tree (see AGENTS.md, Confidentiality).
@@ -47,9 +53,12 @@ actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
+failOn = "info"
+minConfidence = "low"
 
 [[skills]]
 name = "spec-provenance-review"
+reportOn = "off"
 paths = ["evals/specs/**", "evals/worlds/**"]
 
 [[skills.triggers]]
@@ -58,9 +67,11 @@ actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
+failOn = "off"
 
 [[skills]]
 name = "desktop-den-sync-review"
+reportOn = "high"
 paths = [
   "apps/app/**",
   "apps/desktop/**",
@@ -74,3 +85,5 @@ actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
+failOn = "high"
+minConfidence = "low"

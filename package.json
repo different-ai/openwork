@@ -35,6 +35,8 @@
     "build:web": "pnpm --filter @openwork-ee/den-web build",
     "preview": "pnpm --filter @openwork/app preview",
     "typecheck": "pnpm --filter @openwork/app typecheck",
+    "api:snapshot": "pnpm --filter @openwork-ee/den-api openapi:snapshot",
+    "api:lint": "node scripts/api-lint.mjs",
     "check:enterprise-mcp-mock-server": "pnpm --filter @openwork/enterprise-mcp-mock-server check",
     "check:enterprise-mock-lab": "pnpm --filter @openwork-ee/enterprise-mock-lab check",
     "check:diagnostics": "pnpm --filter @openwork-ee/diagnostics test && pnpm --filter @openwork-ee/diagnostics build",
@@ -50,6 +52,7 @@
     "test:session-switch": "pnpm --filter @openwork/app test:session-switch",
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
     "test:eval-runner": "pnpm --dir evals run test",
+    "warden:check": "pnpm dlx @sentry/warden@0.43.0 --runtime pi --config-path warden.toml --log",
     "check:outbound-access": "node scripts/check-outbound-access.mjs",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
     "test:admin-scale": "pnpm --filter @openwork-ee/den-api test:admin-scale",
@@ -68,6 +71,7 @@
     "evals:check-browser": "pnpm --dir evals check:browser"
   },
   "devDependencies": {
+    "@stoplight/spectral-cli": "6.16.3",
     "@types/node": "^24.0.0",
     "turbo": "^2.10.7",
     "typescript": "^5.9.0"

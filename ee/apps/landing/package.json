@@ -13,10 +13,11 @@
   "dependencies": {
     "@openwork/email": "workspace:*",
     "@openwork/ui": "workspace:*",
+    "@paper-design/shaders-react": "0.0.72",
     "botid": "^1.5.11",
     "framer-motion": "^12.35.1",
     "lucide-react": "^0.577.0",
-    "next": "15.5.21",
+    "next": "15.5.24",
     "react": "catalog:react18",
     "react-dom": "catalog:react18"
   },

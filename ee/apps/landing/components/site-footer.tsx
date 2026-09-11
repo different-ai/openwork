@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { ShieldCheck } from "lucide-react";
 import { OpenCodeLogo } from "./opencode-logo";
+import { SocTypeIBadge } from "./soc-type-i-badge";
 
 export function SiteFooter() {
   return (
@@ -65,11 +65,11 @@ export function SiteFooter() {
           </div>
           <Link
             href="/trust"
-            aria-label="SOC 2 Type I — view Trust Center"
-            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--lp-border)] px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-800"
+            aria-label="SOC 2 Type I. View Trust Center"
+            className="inline-flex shrink-0 items-center text-gray-600 transition-opacity hover:opacity-80"
           >
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-            SOC 2 Type I
+            <SocTypeIBadge className="h-12 w-12" />
+            <span className="sr-only">SOC 2 Type I</span>
           </Link>
         </div>
       </div>

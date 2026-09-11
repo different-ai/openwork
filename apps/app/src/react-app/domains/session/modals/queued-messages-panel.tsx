@@ -1,11 +1,12 @@
 /** @jsxImportSource react */
-import { ArrowUp, FileText, GripVertical, ListPlus, X } from "lucide-react";
+import { ArrowUp, FileText, GripVertical, ListPlus, LoaderCircle, X } from "lucide-react";
 import { Fragment, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { t } from "@/i18n";
 import type { ComposerAttachment, ComposerDraft, ComposerPart } from "@/app/types";
 import { parseConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
+import { parseConnectorToken } from "@/react-app/domains/session/surface/composer/connector-token";
 import type { QueuedComposerItem } from "@/react-app/domains/session/surface/composer-state-store";
 
 export type QueuedMessagesPanelProps = {
@@ -15,9 +16,10 @@ export type QueuedMessagesPanelProps = {
   onReorder: (ids: string[]) => void;
   onEdit: (id: string, text: string) => void;
   sending?: boolean;
+  sendingId?: string;
 };
 
-const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\])/;
+const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\])/;
 
 function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
@@ -90,6 +92,20 @@ function QueuedDraftContent(props: { draft: ComposerDraft }) {
       continue;
     }
 
+    const connectorName = parseConnectorToken(segment);
+    if (connectorName) {
+      nodes.push(
+        <span
+          key={key}
+          className="mx-0.5 inline-flex items-center rounded-full border border-blue-6/35 bg-blue-3/20 px-2.5 py-1 text-xs font-medium text-blue-11 align-middle"
+          title={`Connector: ${connectorName}`}
+        >
+          {connectorName}
+        </span>,
+      );
+      continue;
+    }
+
     nodes.push(
       <Fragment key={key}>{segment}</Fragment>,
     );
@@ -132,6 +148,7 @@ function QueuedDraftRow(props: {
   item: QueuedComposerItem;
   ids: string[];
   sending?: boolean;
+  active?: boolean;
   onRemove: (id: string) => void;
   onSendNow: (id: string) => void;
   onReorder: (ids: string[]) => void;
@@ -176,6 +193,7 @@ function QueuedDraftRow(props: {
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    if (props.sending) return;
     const fromId = event.dataTransfer.getData("text/plain");
     draggingRef.current = false;
     if (fromId) moveId(fromId, props.item.id);
@@ -191,6 +209,7 @@ function QueuedDraftRow(props: {
         draggingRef.current = false;
       }}
       className="flex items-start gap-2 rounded-xl border border-gray-6 bg-gray-1 px-2 py-2.5"
+      aria-busy={props.active || undefined}
     >
       <span
         className="mt-0.5 flex size-5 shrink-0 cursor-grab items-center justify-center text-gray-9 active:cursor-grabbing"
@@ -203,6 +222,7 @@ function QueuedDraftRow(props: {
         {editing ? (
           <textarea
             autoFocus
+            disabled={props.sending}
             value={draftText}
             onChange={(event) => setDraftText(event.target.value)}
             onBlur={commitEdit}
@@ -236,6 +256,7 @@ function QueuedDraftRow(props: {
             <QueuedDraftContent draft={props.item.draft} />
           </button>
         )}
+        {props.active ? <span role="status" className="block px-0.5 text-xs text-gray-10">Sending...</span> : null}
       </div>
       <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
         <button
@@ -243,10 +264,10 @@ function QueuedDraftRow(props: {
           onClick={() => props.onSendNow(props.item.id)}
           disabled={props.sending}
           className="flex size-5 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-40"
-          title={t("composer.queued_send_now")}
-          aria-label={t("composer.queued_send_now")}
+          title={props.active ? "Sending..." : t("composer.queued_send_now")}
+          aria-label={props.active ? "Sending..." : t("composer.queued_send_now")}
         >
-          <ArrowUp size={13} />
+          {props.active ? <LoaderCircle size={13} className="motion-safe:animate-spin" /> : <ArrowUp size={13} />}
         </button>
         <button
           type="button"
@@ -291,6 +312,7 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
             item={item}
             ids={ids}
             sending={props.sending}
+            active={props.sendingId === item.id}
             onRemove={props.onRemove}
             onSendNow={props.onSendNow}
             onReorder={props.onReorder}

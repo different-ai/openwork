@@ -9,6 +9,9 @@ import {
   evalIn,
   listSessions,
   readComposerState,
+  readBrowserState,
+  readBrowserTabMetrics,
+  readConnectorCatalog,
   renameSessionAndWait,
   signInDesktopAs,
   waitUntilInteractive,
@@ -34,13 +37,18 @@ import {
 import type { Located, Surface, Target } from "@openwork/cdp";
 import {
   app as startApp,
+  appWeb as startAppWeb,
   faultProxy as startFaultProxy,
   mcpMock,
   server,
+  requestBrowserTask,
+  readBrowserFixtureState,
+  setBrowserFixtureDiscovery,
+  requireWorldResource,
+  validateWorldResources,
 } from "@openwork/env";
-import type { Den, Place } from "@openwork/env";
+import type { Den, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
-import { expectVisualEvidence } from "@openwork/test-evidence/vitest";
 import { screenshot, validate } from "@openwork/test-evidence";
 import type {
   StepRecord,
@@ -60,6 +68,7 @@ import type {
   Probe,
   ProbeEvalOptions,
   Seed,
+  SeedAppWebOptions,
   SeedDesktopOptions,
   SeedWebOptions,
   SeeOptions,
@@ -256,6 +265,18 @@ async function createSessionWhenReady(surface: Surface): Promise<string> {
   throw new Error("session.create_task returned no session ID after one retry.");
 }
 
+export function copyWorldResources(resources: WorldResources | undefined): WorldResources | undefined {
+  if (resources === undefined) return undefined;
+  validateWorldResources(resources);
+  const copy = {
+    surfaces: Object.freeze([...resources.surfaces]),
+    services: Object.freeze([...resources.services]),
+    ...(resources.nativeReason === undefined ? {} : { nativeReason: resources.nativeReason }),
+  };
+  validateWorldResources(copy);
+  return Object.freeze(copy);
+}
+
 export class SpecRuntime {
   stage: "world" | "body" = "world";
   acted = false;
@@ -264,18 +285,41 @@ export class SpecRuntime {
   readonly stack: AsyncDisposableStack;
   readonly place: Place;
   readonly adapters: SpecAdapters;
+  readonly #resources: WorldResources | undefined;
+
+  get resources(): WorldResources | undefined { return this.#resources; }
   #stepDepth = 0;
   #stepBlocked = false;
 
-  constructor(place: Place, stack: AsyncDisposableStack, sink: EvidenceSink, adapters: SpecAdapters = {}) {
+  constructor(place: Place, stack: AsyncDisposableStack, sink: EvidenceSink, adapters: SpecAdapters = {}, resources?: WorldResources) {
     this.place = place;
     this.stack = stack;
     this.sink = sink;
     this.adapters = adapters;
+    this.#resources = copyWorldResources(resources);
   }
 
   useSink(sink: EvidenceSink): void {
     this.sink = sink;
+  }
+
+  requireDen(den: Den): void {
+    requireWorldResource(this.resources, "den");
+    if (Object.keys(den.mocks).length > 0) requireWorldResource(this.resources, "mock");
+  }
+
+  async own<T extends AsyncDisposable>(resource: T, expectedKind?: "chrome" | "electron"): Promise<T> {
+    try {
+      if (expectedKind && (!isSurface(resource) || !isRecord(resource.handle) || resource.handle.kind !== expectedKind)) {
+        throw new Error(`World resource handle mismatch: expected ${expectedKind}.`);
+      }
+      return this.stack.use(resource);
+    } catch (error) {
+      // A timed-out world may finish launching after its stack was disposed.
+      try { await resource[Symbol.asyncDispose](); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], "Resource registration and cleanup failed"); }
+      throw error;
+    }
   }
 
   setPrimary(value: unknown): void {
@@ -295,6 +339,7 @@ export class SpecRuntime {
   }
 
   checkOrder(channel: TraceChannel, verb: string): void {
+    if (this.stack.disposed) throw new Error("World is disposed; refused before launch.");
     if (channel === "user" || channel === "agent") this.acted = true;
     if ((channel === "seed" || channel === "seed:raw") && this.stage === "body" && !this.acted) {
       throw new SeedBeforeActError(verb);
@@ -419,17 +464,25 @@ export class SeedChannel implements Seed {
   }
 
   den(options: Omit<import("@openwork/env").ServerOptions, "place"> = {}): Promise<Den> {
+    requireWorldResource(this.#runtime.resources, "den");
+    if (options.mocks && Object.keys(options.mocks).length > 0) requireWorldResource(this.#runtime.resources, "mock");
     return this.#runtime.call("seed", "den", `den(${this.#runtime.place.kind})`, null, async () => {
       const den = await server({ ...options, place: this.#runtime.place });
-      return this.#runtime.stack.use(den);
+      return this.#runtime.own(den);
     });
   }
 
   desktop(options: SeedDesktopOptions = {}) {
+    requireWorldResource(this.#runtime.resources, "desktop");
+    if (options.den) this.#runtime.requireDen(options.den);
+    const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim();
+    if (requestedSurface && requestedSurface !== "electron") {
+      throw new Error(`seed.desktop() conflicts with app surface ${requestedSurface}; select an explicit desktop world.`);
+    }
     return this.#runtime.call("seed", "desktop", `desktop(${options.den ? `as ${options.signIn === false ? "signed-out" : options.as ?? "admin"}` : this.#runtime.place.kind})`, null, async () => {
       if (options.den) {
         if (options.signIn === false) {
-          return this.#runtime.stack.use(await startApp({
+          return this.#runtime.own(await startApp({
             den: options.den,
             place: this.#runtime.place,
             signIn: false,
@@ -438,9 +491,9 @@ export class SeedChannel implements Seed {
             workspacePath: options.workspacePath,
             profileDir: options.profileDir,
             enterpriseActivated: options.enterpriseActivated,
-          }));
+          }), "electron");
         }
-        return this.#runtime.stack.use(await startApp({
+        return this.#runtime.own(await startApp({
           den: options.den,
           place: this.#runtime.place,
           as: options.as ?? "admin",
@@ -449,30 +502,45 @@ export class SeedChannel implements Seed {
           workspacePath: options.workspacePath,
           profileDir: options.profileDir,
           enterpriseActivated: options.enterpriseActivated,
-        }));
+        }), "electron");
       }
       if (options.as) throw new Error("seed.desktop({ as }) requires a Den.");
-      const app = this.#runtime.stack.use(await desktop({
+      const app = await this.#runtime.own(await desktop({
         name: options.name,
         host: this.#runtime.place.host(),
         profileDir: options.profileDir,
         env: options.model
           ? { ...options.env, OPENWORK_EVAL_MODEL: options.model }
           : options.env,
-      }));
+      }), "electron");
       if (options.workspacePath) await this.workspace(app, options.workspacePath);
       return app;
     });
   }
 
+  appWeb(options: SeedAppWebOptions) {
+    requireWorldResource(this.#runtime.resources, "appWeb");
+    if (options.mocks && Object.keys(options.mocks).length > 0) requireWorldResource(this.#runtime.resources, "mock");
+    const requestedSurface = process.env.OPENWORK_EVAL_APP_SURFACE?.trim();
+    if (requestedSurface && requestedSurface !== "web") {
+      throw new Error(`seed.appWeb() requires OPENWORK_EVAL_APP_SURFACE=web when a surface is explicitly requested; received ${JSON.stringify(requestedSurface)}.`);
+    }
+    return this.#runtime.call("seed", "appWeb", `appWeb(${this.#runtime.place.kind})`, null, async () => {
+      const web = await startAppWeb({ ...options, place: this.#runtime.place });
+      return this.#runtime.own(web, "chrome");
+    });
+  }
+
   web(options: SeedWebOptions) {
+    requireWorldResource(this.#runtime.resources, "web");
+    this.#runtime.requireDen(options.den);
     return this.#runtime.call("seed", "web", `web(${options.signedInAs ? "signed in" : "signed out"})`, null, async () => {
-      const web = this.#runtime.stack.use(await chrome({
+      const web = await this.#runtime.own(await chrome({
         name: "spec-web",
         host: this.#runtime.place.host(),
         startUrl: options.signedInAs === undefined ? options.den.ref.webUrl : "about:blank",
         headless: options.headless,
-      }));
+      }), "chrome");
       if (options.viewport) await setViewport(web, {
         ...options.viewport,
         deviceScaleFactor: options.viewport.deviceScaleFactor ?? 1,
@@ -558,23 +626,26 @@ export class SeedChannel implements Seed {
   }
 
   mock(options: Parameters<typeof mcpMock>[0] = {}) {
+    requireWorldResource(this.#runtime.resources, "mock");
     return this.#runtime.sync("seed", "mock", "mock(mcp)", () => mcpMock(options));
   }
 
   faultProxy(den: Den) {
+    this.#runtime.requireDen(den);
     return this.#runtime.call("seed", "faultProxy", `faultProxy(${this.#runtime.place.kind})`, null, async () => {
       const proxy = await startFaultProxy(den.ref, {
         place: this.#runtime.place,
         sandbox: den.placement?.kind === "daytona" ? den.placement.sandboxId : undefined,
       });
-      return this.#runtime.stack.use(proxy);
+      return this.#runtime.own(proxy);
     });
   }
 
   denLink(den: Den, options: import("@openwork/env").SeedDenLinkOptions = {}) {
+    this.#runtime.requireDen(den);
     return this.#runtime.call("seed", "denLink", `denLink(${options.client ?? "public-preview"})`, null, async () => {
       const link = await startDenLink(den.ref, options);
-      return this.#runtime.stack.use(link);
+      return this.#runtime.own(link);
     });
   }
 
@@ -589,6 +660,20 @@ export class SeedChannel implements Seed {
       await waitForControlAction(app, "composer.set_text");
       await control(app, "composer.set_text", { text });
     });
+  }
+
+  deepLink(app: Surface, url: string) {
+    return this.#runtime.call("seed", "deepLink", "deepLink(renderer ingress)", app, async () => {
+      if (new URL(url).protocol !== "openwork:") throw new Error("Expected an OpenWork deep link.");
+      await callFunctionOnSurface(app, (url) => {
+        window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [url] } }));
+      }, [url]);
+    });
+  }
+
+  browserFixtureDiscovery(app: Surface, origin: string, action: "hold" | "release") {
+    return this.#runtime.call("seed", "browserFixtureDiscovery", `browserFixtureDiscovery(${action})`, app,
+      () => setBrowserFixtureDiscovery(app, origin, action));
   }
 
   evalIn<T>(surface: Surface, expression: BrowserEvaluation<T>, options: EvaluateOptions = {}): Promise<Awaited<T>> {
@@ -742,6 +827,7 @@ export class UserChannel implements User {
     return this.#runtime.call("vision", "looks", `looks(${expectations.length} expectations)`, surface, async () => {
       const artifact = await screenshot(surface);
       const result = await validate(artifact, expectations);
+      const { expectVisualEvidence } = await import("@openwork/test-evidence/vitest");
       expectVisualEvidence(result);
     });
   }
@@ -760,6 +846,12 @@ export class AgentChannel implements Agent {
     return new AgentChannel(this.#runtime, surface);
   }
 
+  browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "browserTask", `browserTask(${input.operation}, session=${input.sessionId}, tab=${input.args?.tabId ?? "owned"})`, surface,
+      () => requestBrowserTask(surface, input));
+  }
+
   run(action: string, args?: unknown): Promise<unknown> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "run", `run(${action})`, surface, async () => {
@@ -772,7 +864,13 @@ export class AgentChannel implements Agent {
   browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "browserRequest", `browserRequest(${input.method ?? "GET"} ${input.url})`, surface, async () => {
-      const handle = await callFunctionOnSurface(surface, async () => window.__OPENWORK_ELECTRON__.browser.openUrl("about:blank"), [], { awaitPromise: true });
+      const handle = await callFunctionOnSurface(surface, async () => {
+        const browser = window.__OPENWORK_ELECTRON__.browser;
+        const state = await browser.getState();
+        const tab = state.tabs.find(tab => tab.id === state.activeTabId);
+        if (!tab?.ownerSessionId || !tab.url?.startsWith('http')) throw new Error('Select an owned website tab first');
+        return browser.openUrl(tab.url, 'builtin', { sessionId: tab.ownerSessionId });
+      }, [], { awaitPromise: true });
       if (!isRecord(handle) || typeof handle.target_id !== "string") throw new Error("Browser did not return a target");
       const target = (await listTargets(surface.handle.cdpUrl)).find((entry) => entry.id === handle.target_id);
       if (!target) throw new Error("Browser target missing");
@@ -861,9 +959,37 @@ export class ProbeChannel implements Probe {
     return new ProbeChannel(this.#runtime, surface);
   }
 
+  zoom(): Promise<number> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "zoom", "zoom(Page.getLayoutMetrics)", surface, async () => {
+      const metrics = await surface.client.send("Page.getLayoutMetrics");
+      if (!isRecord(metrics) || !isRecord(metrics.cssVisualViewport)
+        || typeof metrics.cssVisualViewport.zoom !== "number"
+        || !Number.isFinite(metrics.cssVisualViewport.zoom) || metrics.cssVisualViewport.zoom <= 0) {
+        throw new Error("Chromium did not report its applied page zoom.");
+      }
+      return metrics.cssVisualViewport.zoom;
+    });
+  }
+
   dom(selector: string) {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "dom", `dom(${JSON.stringify(redacted(selector))})`, surface, () => readDom(surface, selector));
+  }
+
+  browserState() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserState", "browserState", surface, () => readBrowserState(surface));
+  }
+
+  browserTabMetrics(targetId: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserTabMetrics", `browserTabMetrics(${targetId})`, surface, () => readBrowserTabMetrics(surface, targetId));
+  }
+
+  browserFixtureState(origin: string) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "browserFixtureState", "browserFixtureState(GET /state)", surface, () => readBrowserFixtureState(surface, origin));
   }
 
   text(): Promise<string> {
@@ -888,6 +1014,11 @@ export class ProbeChannel implements Probe {
   composer() {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "composer", "composer", surface, () => readComposerState(surface));
+  }
+
+  connectorCatalog() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "connectorCatalog", "connectorCatalog", surface, () => readConnectorCatalog(surface));
   }
 
   storage(key: string): Promise<unknown>;
@@ -990,6 +1121,9 @@ export function channels(runtime: SpecRuntime): { seed: Seed; user: User; agent:
   };
 }
 
-export function registerWorldDisposable(stack: AsyncDisposableStack, world: unknown): void {
-  if (isAsyncDisposable(world) && !isSurface(world)) stack.use(world);
+export async function registerWorldDisposable(stack: AsyncDisposableStack, world: unknown): Promise<void> {
+  if (isAsyncDisposable(world) && !isSurface(world)) {
+    if (stack.disposed) await world[Symbol.asyncDispose]();
+    else stack.use(world);
+  }
 }

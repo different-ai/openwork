@@ -57,6 +57,8 @@ export interface ServerOptions {
   reuseMembers?: Record<string, PersonShape>;
   ports?: { api: number; web: number };
   seedProfile?: "demo-org";
+  /** Daytona idle shutdown in minutes. Preview worlds pass 0 so their lifetime owns teardown. */
+  daytonaAutoStopMinutes?: number;
   /**
    * Extra origins Den should trust, on top of its own API and web hosts. A
    * loopback identity provider needs this: Den refuses to register an SSO
@@ -685,6 +687,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       reuse: preparedSandbox,
       bootstrapAdminEmail: bootstrapAdmin.email,
       env: denEnv,
+      ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),
       log: (line) => console.error(`[openwork/testkit] ${line}`),
     });
     let bootedMocks: { handles: Record<string, MockHandle>; env: Record<string, string> } = { handles: {}, env: {} };
@@ -762,7 +765,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     throw new Error("Local Den requires MySQL on 127.0.0.1:3306. Run: pnpm dev:den:mysql");
   }
   if (!await localRedisIsRunning()) {
-    throw new Error("Local Den requires Redis on 127.0.0.1:6379. Run: redis-server --port 6379 --daemonize yes --save '' --appendonly no");
+    throw new Error("Local Den requires Redis at DATABASE_REDIS_URL or redis://127.0.0.1:6379. Start an isolated Redis and configure DATABASE_REDIS_URL.");
   }
 
   const bootedMocks = await bootLocalMocks(options.place, options.mocks ?? {});

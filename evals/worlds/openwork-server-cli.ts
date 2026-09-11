@@ -74,9 +74,10 @@ export function stopChild(child: ChildProcess): Promise<void> {
  * chunk goes to `sink`; `listening` resolves with the base URL once the server
  * reports its port, or rejects when the process exits first.
  */
-export function bootServer(env: NodeJS.ProcessEnv, token: string, workspace: string, sink: (chunk: string) => void): { child: ChildProcess; listening: Promise<string> } {
+export function bootServer(env: NodeJS.ProcessEnv, token: string, workspace: string, sink: (chunk: string) => void, options?: { configPath?: string; preload?: string }): { child: ChildProcess; listening: Promise<string> } {
   const child = spawn("bun", [
     "--conditions=development",
+    ...(options?.preload ? ["--preload", options.preload] : []),
     "src/cli.ts",
     "--host", "127.0.0.1",
     "--port", "0",
@@ -85,6 +86,7 @@ export function bootServer(env: NodeJS.ProcessEnv, token: string, workspace: str
     "--approval", "auto",
     "--cors", "*",
     "--workspace", workspace,
+    ...(options?.configPath ? ["--config", options.configPath] : []),
   ], { cwd: serverRoot, env, stdio: ["ignore", "pipe", "pipe"] });
   let seen = "";
   const listening = new Promise<string>((resolveBase, reject) => {
@@ -131,6 +133,9 @@ export async function bootManagedOpenworkServer(options: {
   token: string;
   sink: (chunk: string) => void;
   binary?: string;
+  env?: Record<string, string>;
+  configPath?: string;
+  preload?: string;
 }): Promise<ManagedOpenworkServer> {
   const binary = options.binary ?? engineBinary();
   if (!binary) throw new SkipError("set OPENWORK_OPENCODE_BIN or install opencode");
@@ -150,6 +155,7 @@ export async function bootManagedOpenworkServer(options: {
     XDG_STATE_HOME: join(home, ".local", "state"),
     OPENWORK_MANAGE_OPENCODE: "1",
     OPENWORK_OPENCODE_BIN: binary,
+    ...options.env,
   };
 
   let output = "";
@@ -166,7 +172,7 @@ export async function bootManagedOpenworkServer(options: {
     // output stays in the diagnostics.
     let base = "";
     for (let attempt = 1; ; attempt += 1) {
-      const booted = bootServer(env, options.token, options.workspace, sink);
+      const booted = bootServer(env, options.token, options.workspace, sink, options);
       child = booted.child;
       try {
         base = await booted.listening;

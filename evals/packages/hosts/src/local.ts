@@ -4,6 +4,7 @@ import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/p
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { allocateFreePort, allocateFreePorts, listTargets, waitForCdp } from "@openwork/cdp";
+import type { SurfaceExit } from "@openwork/cdp";
 import {
   desktopBootstrapPath,
   globalOpencodeConfigDir,
@@ -70,6 +71,7 @@ interface ElectronSurfaceEnvOptions {
 interface SpawnedDetached {
   child: ChildProcess;
   pid: number;
+  exit: Promise<SurfaceExit>;
 }
 
 interface SpawnDetachedOptions {
@@ -312,7 +314,10 @@ function spawnDetached(command: string, args: string[], { cwd, env, logPath }: S
   });
   child.unref();
   if (!child.pid) throw new Error(`Could not spawn ${command}.`);
-  return { child, pid: child.pid };
+  const exit = new Promise<SurfaceExit>((resolveExit) => {
+    child.once("exit", (code, signal) => resolveExit({ code, signal }));
+  });
+  return { child, pid: child.pid, exit };
 }
 
 function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean): string[] {
@@ -896,6 +901,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         pid: spawned.pid,
         profileDir: profileRoot,
         meta: { vitePort: String(port), cdpPort: String(cdpPort), log: logPath, profileRoot, profileOwner: callerOwnedProfile ? "caller" : "host" },
+        exit: spawned.exit,
       };
       spawnedSurfaces.add(handle);
       return handle;

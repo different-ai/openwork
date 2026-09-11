@@ -6,6 +6,7 @@ import test from "node:test";
 import { createCollaboration, nativeMessageId } from "./collaboration.mjs";
 import { createConversationMemory } from "./conversation-memory.mjs";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
+import { normalizeSettings } from "./settings.mjs";
 import { withInteractiveQuestionDefault } from "./collaboration-plugin.mjs";
 import { createWorker, getWorker, nextWorkerState, parseWorkerReport, prepareWorkerTurn, queueWorkerSteer, updateWorker } from "./workers.mjs";
 import { createCoworkerThreads } from "../src/lib/threads.ts";
@@ -294,6 +295,35 @@ async function eventually(check) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 10)); }
   assert.fail("The collaboration did not settle within the module check's deadline.");
 }
+
+test("idle collaboration does not copy settled history and still accepts new work", async (t) => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5 });
+    const owner = { slug: "scout", threadId: "ses_idle", conversationId: "ses_idle", kind: "private" };
+    await service.change((state) => {
+      state.tasks.settled = { id: "settled", state: "succeeded", result: "kept history ".repeat(10_000) };
+    });
+    const clone = globalThis.structuredClone;
+    let historyCopies = 0;
+    let reads = 0;
+    const spy = t.mock.method(globalThis, "structuredClone", (value) => {
+      if (value?.tasks || (Array.isArray(value) && value.some((entry) => entry?.id === "settled"))) historyCopies++;
+      reads++;
+      return clone(value);
+    });
+    try {
+      await service.start();
+      await eventually(() => reads >= 10);
+      assert.equal(historyCopies, 0, "idle ticks must not clone the store or completed task payloads");
+      spy.mock.restore();
+      await service.submit({ owner, messageId: "msg_after_idle", prompt: "New work", track: true });
+      await eventually(async () => fixture.requests.length === 1 && (await service.threadState(owner.slug, owner.threadId)).pending === null);
+      assert.equal(fixture.requests[0].prompt, "New work");
+      assert.equal(await service.read((state) => state.tasks.settled.result.length), "kept history ".length * 10_000);
+    } finally { spy.mock.restore(); await service.stop(); }
+  });
+});
 
 test("automatic memory captures only terminal private success and recalls raw requests in a new thread", async () => {
   await withHome(async (home) => {
@@ -604,6 +634,7 @@ test("one thinking brief permits a bounded delivery handoff, and unavailable Wor
   await withHome(async (home) => {
     let service;
     const spawned = [];
+    const selections = [];
     const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
       const trusted = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
       const ask = (callId, purpose, name = purpose) => service.request({ ...trusted, callId }, "worker", { name, purpose, goal: "Use workspace/brief.md; check acceptance criteria.", continuation: { objective: "Deliver the original task", refs: ["workspace/brief.md"], resumeInstructions: "Check the evidence and report here." } });
@@ -624,7 +655,7 @@ test("one thinking brief permits a bounded delivery handoff, and unavailable Wor
         await assert.rejects(ask("recursive-delivery", "delivery"), /collaboration limit|completed thinking brief/);
       }
     });
-    service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, cancelWorker: async () => {},
+    service = createCollaboration({ directory: home, clientFor: async (slug, options) => { selections.push(options); return fixture.clientFor(slug); }, pollMs: 5, cancelWorker: async () => {},
       spawn: async (slug, input) => {
         spawned.push(input);
         if (input.name === "Unavailable") throw new Error("Worker model is unavailable; no fallback was selected.");
@@ -656,6 +687,7 @@ test("one thinking brief permits a bounded delivery handoff, and unavailable Wor
       await service.completeWorker(manual, [{ kind: "finding", report: "done", text: "THINKING BRIEF: workspace/brief.md" }]);
       await eventually(() => fixture.requests.length === 7);
       await eventually(async () => (await service.receipts({ slug: owner.slug, threadId: owner.threadId })).every((receipt) => receipt.state === "succeeded"));
+      assert.ok(selections.some((selection) => selection.kind === "review" && selection.requestText === manual.goal), "form-created Worker reviews carry their goal to native model resolution");
       assert.deepEqual(spawned.slice(4).map((input) => input.purpose), ["delivery", "delivery"], "a thinking Worker from New Worker uses the same bounded handoff");
       for (const prompt of ["Empty thinker", "Exhausted thinker", "Empty Done"]) {
         const before = spawned.length;
@@ -1155,6 +1187,7 @@ test("a nested consultation delivers the final child continuation to its parent 
   await withHome(async (home) => {
     let service;
     const published = [];
+    const selections = [];
     const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
       if (input.prompt === "Private task" || input.prompt === "Focused B question") {
         const trusted = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
@@ -1162,7 +1195,7 @@ test("a nested consultation delivers the final child continuation to its parent 
         reply.parts.push({ type: "text", text: "ACKNOWLEDGEMENT ONLY" });
       } else if (slug === "editor") reply.parts.push({ type: "text", text: "FINAL B SYNTHESIS" });
     });
-    service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5,
+    service = createCollaboration({ directory: home, clientFor: async (slug, options) => { selections.push({ slug, ...options }); return fixture.clientFor(slug); }, pollMs: 5,
       consult: async (task) => ({ owner: { slug: task.to, threadId: `ses_${task.to}`, conversationId: "grp_nested", groupId: "grp_nested", kind: "consultation" }, prompt: task.input.question }),
       publish: async (task) => { published.push({ id: task.id, result: task.result }); },
     });
@@ -1174,6 +1207,7 @@ test("a nested consultation delivers the final child continuation to its parent 
       assert.match(final[0].prompt, /FINAL B SYNTHESIS/);
       assert.doesNotMatch(final[0].prompt, /ACKNOWLEDGEMENT ONLY/);
       assert.equal(fixture.requests.filter((request) => request.slug === "editor" && request.prompt.startsWith("Continue the original task")).length, 1);
+      for (const kind of ["reply", "review"]) assert.equal(selections.find((selection) => selection.slug === "editor" && selection.kind === kind).requestText, "Focused B question", "new consultations and their reviews retain the question, not the continuation wrapper");
       assert.equal(new Set(published.map((entry) => entry.id)).size, 2);
       assert.equal(published.length, 2);
     } finally { await service.stop(); }
@@ -1410,7 +1444,8 @@ test("the backend preserves semantic audiences beyond the general budget and car
     const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor, pollMs: 5,
       coworkerFor: async (slug) => ({ slug, name: slug, role: "", mission: "", model: "test/model" }),
       coordinator: async () => ({ workspaceId: "coordinator" }),
-      catalogFor: async () => ({ models: [{ id: "test/model", providerId: "test", modelId: "model", variants: [], source: "local", tier: "key", toolCall: true, status: "active", label: "Test", releaseDate: "" }] }),
+      settings: async () => normalizeSettings({ modelDefaults: { facilitator: { model: selection.id === "single" ? "test/model" : "", modelVariant: "high" } } }),
+      catalogFor: async () => ({ models: [{ id: "test/model", providerId: "test", modelId: "model", variants: ["high", "minimal", "low"], source: "local", tier: "key", toolCall: true, status: "active", label: "Test", releaseDate: "" }] }),
     });
     try {
       const group = await createGroup(home, { name: "Team", participantSlugs: members });
@@ -1435,6 +1470,7 @@ test("the backend preserves semantic audiences beyond the general budget and car
         const turn = (await getGroup(home, group.id)).turns.at(-1);
         const expected = scenario.plan.speakers.map((entry) => entry.slug);
         assert.equal(turn.routedBy, "facilitator");
+        assert.equal(fixture.requests.slice(before).find((entry) => entry.slug === ".coordinator").model.variant, scenario.id === "single" ? "high" : "minimal", "next-turn settings use exact explicit effort, otherwise minimal regardless of catalog order");
         assert.equal(turn.status, "succeeded");
         assert.deepEqual(turn.speakers.map((entry) => entry.slug), expected);
         const requests = fixture.requests.slice(before).filter((entry) => entry.slug !== ".coordinator");

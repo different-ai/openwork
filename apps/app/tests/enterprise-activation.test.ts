@@ -28,6 +28,10 @@ const connectConfirmDialogSource = readFileSync(
   new URL("../src/react-app/domains/cloud/connect-confirm-dialog.tsx", import.meta.url),
   "utf8",
 );
+const ditherBackdropSource = readFileSync(
+  new URL("../src/components/dither-backdrop.tsx", import.meta.url),
+  "utf8",
+);
 
 const publicDistribution = {
   flavor: "public" as const,
@@ -107,9 +111,15 @@ describe("enterprise desktop activation", () => {
   });
 
   test("keeps the branded connect-link activation consumer mounted before activation", () => {
-    expect(providersSource).toContain(
-      "return <ConnectLinkProvider>{children}</ConnectLinkProvider>;",
-    );
+    // One provider tree serves every activation state (runtime proof lives in
+    // providers.test.tsx): ConnectLinkProvider (the branded connect-link
+    // consumer) and the contexts AppRoot-level consumers need —
+    // DesktopUpdaterProvider's useUpdater() reads Local and DesktopConfig
+    // contexts before activation completes (#4482) — are never forked away.
+    expect(providersSource).not.toContain("activationRequired");
+    expect(providersSource).toContain("<ConnectLinkProvider>");
+    expect(providersSource).toContain("<DesktopConfigProvider>");
+    expect(providersSource).toContain("<LocalProvider>");
     expect(connectConfirmDialogSource).toContain(
       "const trustedBrandUrl = transport ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;",
     );
@@ -117,14 +127,15 @@ describe("enterprise desktop activation", () => {
 
   test("matches the desktop login gate and offers actionable sign-in", () => {
     for (const marker of [
-      'type="2x2"',
-      "size={20.3}",
-      "scale={1.19}",
-      "frame={264559.21}",
+      "<DitherBackdrop />",
       'className="w-full max-w-[720px] rounded-3xl border border-border bg-background',
     ]) {
       expect(signInSurfaceSource).toContain(marker);
       expect(activationGateSource).toContain(marker);
+    }
+    // The shared backdrop keeps the Paper dither spec and skips the shader without WebGL2.
+    for (const marker of ['type="2x2"', "size={20.3}", "scale={1.19}", "frame={264559.21}", 'getContext("webgl2")']) {
+      expect(ditherBackdropSource).toContain(marker);
     }
     expect(activationGateSource).toContain('id="organization-server-input"');
     expect(activationGateSource).toContain('data-testid="organization-server-input"');

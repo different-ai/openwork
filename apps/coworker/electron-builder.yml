@@ -10,7 +10,11 @@ directories:
 files:
   - electron-dist/**/*
   - dist/**/*
+  # Keep debugging output in the build tree, not every downloaded copy.
+  - "!dist/**/*.map"
   - server/**/*
+  - "!server/**/*.test.js"
+  - "!server/**/*.test.js.map"
   - "!server/dist/opencode-plugins/**"
   - resources/icons/**/*
   - package.json
@@ -19,11 +23,9 @@ extraMetadata:
 extraResources:
   - from: resources/sidecars
     to: sidecars
+    # beforePack narrows this to the builder target and its version metadata.
     filter:
-      - opencode
-      - opencode.exe
       - opencode-*
-      - versions.json
       - versions.json-*
   # The embedded server resolves its OpenWork engine plugins from
   # Resources/opencode-plugins when it runs from an asar, as the desktop does.

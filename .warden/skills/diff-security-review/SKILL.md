@@ -42,12 +42,15 @@ are not exempt when such a path exists.
 
 For each finding, report:
 
-- The exact file and changed lines that introduce the issue.
-- The attack path: who controls the input and what they gain.
+- One finding per root cause, grouping all related locations and identifying
+  the exact changed lines that cause it.
+- The reachable attack path: who controls the input, the concrete failure,
+  and what they gain. Check and address contrary evidence before reporting.
 - Severity: `critical` (RCE, auth bypass, real secret leak), `high`
   (injection, XSS, SSRF, traversal), `medium` (info disclosure, weak crypto),
   `low` (defense-in-depth regression introduced by this diff).
-- A concrete fix in the changed code.
+- The smallest concrete fix in the changed code.
+- `Clear when:` followed by the observable condition that resolves the finding.
 
 If the diff introduces no new security issues, report nothing. Silence is the
 correct output for a clean diff; do not manufacture findings.

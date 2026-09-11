@@ -39,10 +39,13 @@ import {
   callMcpAppTool,
   listMcpAppCatalog,
   listMcpServerTools,
+  searchWorkspaceCapabilities,
   McpAppHostError,
   resolveConnectMcpAppResource,
   resolveMcpAppResource,
   resolveSameServerMcpAppResource,
+  releaseMcpAppLaunch,
+  type McpAppLaunchContext,
 } from "./mcp-app-host.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
 import {
@@ -617,10 +620,14 @@ async function assertWorkspaceOwnsProxiedSessionRead(
   workspace: WorkspaceInfo,
   method: string,
   proxyPath: string,
+  requireActive = false,
 ): Promise<void> {
   const sessionId = proxiedSessionReadId(method, proxyPath);
   const directory = resolveOpencodeDirectory(workspace);
-  if (!sessionId || !directory) return;
+  if (!sessionId || !directory) {
+    if (requireActive) throw new McpAppHostError("inactive_session", "The original conversation cannot be verified. Reopen it before using App actions.");
+    return;
+  }
 
   const result = await createWorkspaceOpencodeClient(config, workspace, { sessionId }).session.get({ sessionID: sessionId });
   if (result.error !== undefined) {
@@ -643,6 +650,9 @@ async function assertWorkspaceOwnsProxiedSessionRead(
     : [directory, sessionDirectory];
   if (!actualDirectory || actualDirectory !== expectedDirectory) {
     throw new ApiError(404, "session_not_found", "Session not found");
+  }
+  if (requireActive && (result.data?.id !== sessionId || result.data.time.archived)) {
+    throw new McpAppHostError("inactive_session", "This conversation is archived or unavailable. Reopen an active conversation before using App actions.");
   }
 }
 
@@ -1267,10 +1277,14 @@ async function proxyOpencodeV2Request(input: {
       if (!isRecord(value) || typeof value.id !== "string" || typeof value.providerID !== "string") {
         throw new ApiError(502, "invalid_engine_response", "Invalid model metadata");
       }
-      return Object.fromEntries(Object.entries(value).filter(([key]) => [
+      const metadata = Object.fromEntries(Object.entries(value).filter(([key]) => [
         "id", "modelID", "providerID", "canonical", "family", "name", "package",
         "capabilities", "time", "cost", "status", "enabled", "limit",
       ].includes(key)));
+      // The picker needs opaque variant IDs, never their provider settings.
+      const variants = (Array.isArray(value.variants) ? value.variants : []).flatMap((variant) =>
+        isRecord(variant) && typeof variant.id === "string" ? [{ id: variant.id }] : []);
+      return { ...metadata, variants };
     };
     return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicModel) : publicModel(raw) });
   }
@@ -2887,6 +2901,19 @@ function createRoutes(
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
   });
 
+  addRoute(routes, "PUT", "/den-session/identity", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
+    if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    const suspended = cloudProviderSync.suspend();
+    try {
+      await managedDesktopPolicy(config).setSession(session);
+    } finally {
+      await suspended;
+    }
+    return new Response(null, { status: 204 });
+  });
+
   addRoute(routes, "PUT", "/den-session", "host-token", async (ctx) => {
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
@@ -3436,6 +3463,20 @@ function createRoutes(
     }
   });
 
+  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/search", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || typeof body.query !== "string" || !body.query.trim() || body.query.length > 2_000 || Object.keys(body).some((key) => key !== "query")) {
+      throw new ApiError(400, "invalid_payload", "Capability discovery accepts only a query of 1 to 2000 characters.");
+    }
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    try {
+      return jsonResponse(await searchWorkspaceCapabilities({ serverConfig: config, workspaceId: workspace.id, workspaceRoot: workspace.path, query: body.query }));
+    } catch (error) {
+      rethrowMcpAppHostError(error);
+    }
+  });
+
   addRoute(routes, "GET", "/workspace/:id/mcp/:name/tools", "client", async (ctx) => {
     requireClientScope(ctx, "viewer");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -3458,6 +3499,17 @@ function createRoutes(
     requireClientScope(ctx, "viewer");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
+    let context: McpAppLaunchContext | undefined;
+    if (body.context !== undefined) {
+      const parsed = body.context;
+      if (!parsed || typeof parsed !== "object" || !("sessionId" in parsed) || !("readOnly" in parsed)
+        || (parsed.sessionId !== null && (typeof parsed.sessionId !== "string" || !parsed.sessionId.trim()))
+        || ("engine" in parsed && parsed.engine !== "v1" && parsed.engine !== "v2")
+        || typeof parsed.readOnly !== "boolean") {
+        throw new ApiError(400, "invalid_launch_context", "App context requires a sessionId (null for dashboard views) and readOnly flag.");
+      }
+      context = { sessionId: parsed.sessionId, readOnly: parsed.readOnly, engine: "engine" in parsed && parsed.engine === "v2" ? "v2" : "v1" };
+    }
     const projectedToolName = typeof body.projectedToolName === "string" ? body.projectedToolName.trim() : "";
     const launch = body.launch && typeof body.launch === "object" && !Array.isArray(body.launch)
       ? body.launch as Record<string, unknown>
@@ -3466,6 +3518,7 @@ function createRoutes(
       const app = launch && typeof launch.connectionId === "string"
         ? await resolveConnectMcpAppResource({
             serverConfig: config,
+            context,
             workspaceId: workspace.id,
             workspaceRoot: workspace.path,
             launch: {
@@ -3477,6 +3530,7 @@ function createRoutes(
         : launch
           ? await resolveSameServerMcpAppResource({
               serverConfig: config,
+              context,
               workspaceId: workspace.id,
               workspaceRoot: workspace.path,
               projectedToolName,
@@ -3487,6 +3541,7 @@ function createRoutes(
             })
         : await resolveMcpAppResource({
             serverConfig: config,
+            context,
             workspaceId: workspace.id,
             workspaceRoot: workspace.path,
             projectedToolName,
@@ -3508,11 +3563,18 @@ function createRoutes(
       ? body.arguments as Record<string, unknown>
       : {};
     const approved = body.approved === true;
+    const launchId = typeof body.launchId === "string" ? body.launchId : undefined;
+    const sessionId = typeof body.sessionId === "string" || body.sessionId === null ? body.sessionId : undefined;
+    if (body.engine !== undefined && body.engine !== "v1" && body.engine !== "v2") throw new ApiError(400, "invalid_launch_context", "Unknown App session engine.");
+    const engine = body.engine === "v2" ? "v2" : "v1";
     if (!serverName || !name) throw new ApiError(400, "invalid_payload", "serverName and name are required");
     if (approved) requireClientScope(ctx, "collaborator");
     try {
       return jsonResponse(await callMcpAppTool({
         serverConfig: config,
+        launchId,
+        sessionId,
+        engine,
         workspaceId: workspace.id,
         workspaceRoot: workspace.path,
         serverName,
@@ -3520,10 +3582,44 @@ function createRoutes(
         resourceUri,
         arguments: args,
         approved,
+        assertSessionActive: async () => {
+          if (!sessionId) return;
+          if (engine === "v2") {
+            const connection = engineV2Preview.connection();
+            if (!connection) throw new McpAppHostError("inactive_session", "The original conversation engine is unavailable. Reopen it before using App actions.");
+            const url = new URL(`/api/session/${encodeURIComponent(sessionId)}`, connection.url);
+            url.searchParams.set("location[directory]", workspace.path);
+            const response = await loopbackFetch(url.toString(), {
+              headers: { authorization: `Basic ${Buffer.from(`opencode:${connection.password}`).toString("base64")}` },
+              signal: AbortSignal.timeout(10_000),
+            });
+            const payload: unknown = response.ok ? await response.json() : null;
+            const data = isRecord(payload) && isRecord(payload.data) ? payload.data : payload;
+            const session = isRecord(data) && isRecord(data.info) ? data.info : data;
+            const location = isRecord(session) && isRecord(session.location) ? session.location : null;
+            const directory = location && typeof location.directory === "string" ? location.directory : null;
+            const [expected, actual] = await Promise.all([
+              realpath(workspace.path).catch(() => workspace.path),
+              directory ? realpath(directory).catch(() => directory) : null,
+            ]);
+            if (!isRecord(session) || (session.id ?? session.sessionID) !== sessionId || !actual || actual !== expected || (isRecord(session.time) && session.time.archived)) {
+              throw new McpAppHostError("inactive_session", "The original conversation is archived or unavailable. Reopen it before using App actions.");
+            }
+            return;
+          }
+          await assertWorkspaceOwnsProxiedSessionRead(config, workspace, "GET", `/session/${encodeURIComponent(sessionId)}`, true);
+        },
       }));
     } catch (error) {
       rethrowMcpAppHostError(error);
     }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/mcp-apps/release", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    return jsonResponse({ released: typeof body.launchId === "string" && releaseMcpAppLaunch(config, workspace.id, body.launchId) });
   });
 
   addRoute(routes, "POST", "/workspace/:id/mcp/managed", "client", async (ctx) => {

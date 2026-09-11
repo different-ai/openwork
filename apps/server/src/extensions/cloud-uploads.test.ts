@@ -1,9 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ServerConfig } from "../types.js";
+import { ApiError, formatError } from "../errors.js";
+import { OpenWorkExtensionsPreview } from "../opencode-plugins/openwork-extensions-preview.js";
 import { OPENWORK_CLOUD_UPLOAD_ACTIONS, callOpenWorkCloudUploadAction } from "./cloud-uploads.js";
 
 const roots: string[] = [];
@@ -65,6 +67,7 @@ test("cloud upload action schemas expose paths and metadata, never inline bytes"
     "bcc",
     "body",
     "cc",
+    "connectionId",
     "folderId",
     "path",
     "paths",
@@ -73,6 +76,13 @@ test("cloud upload action schemas expose paths and metadata, never inline bytes"
     "to",
   ]);
   expect(fields.filter((field) => /base64|bytes|content|raw/i.test(field))).toEqual([]);
+  const drive = OPENWORK_CLOUD_UPLOAD_ACTIONS.find((action) => action.action === "drive_upload_file");
+  const gmail = OPENWORK_CLOUD_UPLOAD_ACTIONS.find((action) => action.action === "gmail_create_draft_with_attachments");
+  expect(drive?.description).toContain("This Drive bridge cannot select a different named connection");
+  expect(drive?.inputSchema.properties).not.toHaveProperty("connectionId");
+  expect(gmail?.description).toContain("Pass connectionId to preserve the selected Google Workspace connection");
+  expect(gmail?.description).not.toContain("cannot select");
+  expect(gmail?.inputSchema.properties).toHaveProperty("connectionId");
 });
 
 test("drive upload sends exact workspace bytes and server-derived Office metadata", async () => {
@@ -90,6 +100,7 @@ test("drive upload sends exact workspace bytes and server-derived Office metadat
     {
       readCloudMcp: async () => cloudMcp(),
       fetchImpl: async (url, init) => {
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer member-token");
         capturedUrl = url;
         if (!(init?.body instanceof FormData)) throw new Error("Expected multipart form");
         const file = init.body.get("file");
@@ -112,7 +123,7 @@ test("drive upload sends exact workspace bytes and server-derived Office metadat
   expect(Buffer.from(await captured.file.arrayBuffer())).toEqual(bytes);
 });
 
-test("Gmail attachment action reuses the same direct multipart transport for multiple paths", async () => {
+test.each([undefined, "google-workspace", "emc_selected"])("Gmail attachment multipart transport preserves connection %s", async (connectionId) => {
   const root = await tempRoot();
   await writeFile(join(root, "notes.txt"), "notes");
   await writeFile(join(root, "table.csv"), "a,b\n1,2\n");
@@ -127,11 +138,14 @@ test("Gmail attachment action reuses the same direct multipart transport for mul
       subject: "Files",
       body: "Please review.",
       paths: ["notes.txt", "table.csv"],
+      ...(connectionId ? { connectionId } : {}),
     },
     { directory: root },
     {
       readCloudMcp: async () => cloudMcp(),
-      fetchImpl: async (_url, init) => {
+      fetchImpl: async (url, init) => {
+        expect(url).toBe("https://api.openwork.test/v1/direct-uploads/google-workspace/gmail-drafts");
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer member-token");
         if (!(init?.body instanceof FormData)) throw new Error("Expected multipart form");
         capturedFiles = init.body.getAll("file").filter((value): value is File => value instanceof File);
         const payload = init.body.get("payload");
@@ -154,7 +168,20 @@ test("Gmail attachment action reuses the same direct multipart transport for mul
     to: "sam@example.com",
     subject: "Files",
     body: "Please review.",
+    ...(connectionId ? { connectionId } : {}),
   });
+});
+
+test("Gmail upload rejects invalid connection namespaces before file or network I/O", async () => {
+  let calls = 0;
+  const root = await tempRoot();
+  await expect(callOpenWorkCloudUploadAction(testConfig(root), "gmail_create_draft_with_attachments", {
+    paths: ["missing.txt"], connectionId: "external:other",
+  }, { directory: root }, {
+    readCloudMcp: async () => { calls++; return cloudMcp(); },
+    fetchImpl: async () => { calls++; return Response.json({ ok: true }); },
+  })).rejects.toMatchObject({ code: "invalid_payload" });
+  expect(calls).toBe(0);
 });
 
 test("direct upload rejects files above the deployed 4 MiB transport ceiling before network I/O", async () => {
@@ -176,6 +203,37 @@ test("direct upload rejects files above the deployed 4 MiB transport ceiling bef
     },
   )).rejects.toMatchObject({ status: 413, code: "file_too_large" });
   expect(fetchCalled).toBe(false);
+});
+
+test("direct uploads require Cloud member authorization even when local Google tokens remain on disk", async () => {
+  const root = await tempRoot();
+  await writeFile(join(root, "notes.txt"), "notes");
+  const directory = join(root, "extensions", "google-workspace");
+  await mkdir(directory, { recursive: true });
+  const vaultPath = join(directory, "oauth.dev-plaintext.json");
+  const vault = JSON.stringify({ token: { accessToken: "retired-local-token", refreshToken: "retired-refresh-token" } });
+  await writeFile(vaultPath, vault);
+  let networkCalls = 0;
+
+  for (const cloud of [null, { ...cloudMcp(), headers: {} }]) {
+    for (const action of ["drive_upload_file", "gmail_create_draft_with_attachments"]) {
+      await expect(callOpenWorkCloudUploadAction(
+        testConfig(root),
+        action,
+        { path: "notes.txt", paths: ["notes.txt"], to: "review@example.test", subject: "Review", body: "Notes" },
+        { directory: root },
+        {
+          readCloudMcp: async () => cloud,
+          fetchImpl: async () => {
+            networkCalls += 1;
+            throw new Error("Cloud authorization is required before upload");
+          },
+        },
+      )).rejects.toMatchObject({ status: 409, code: "cloud_not_connected" });
+    }
+  }
+  expect(networkCalls).toBe(0);
+  expect(await readFile(vaultPath, "utf8")).toBe(vault);
 });
 
 test("direct upload rejects aggregate attachment bytes above 4 MiB with no network calls", async () => {
@@ -226,4 +284,116 @@ test("direct upload rejects symlinks that resolve outside authorized roots", asy
     },
   )).rejects.toMatchObject({ status: 404, code: "file_not_found" });
   expect(fetchCalled).toBe(false);
+});
+
+test.each(["before-files", "during-credentials"])("Gmail cancellation %s prevents remote multipart dispatch", async (when) => {
+  const root = await tempRoot();
+  await writeFile(join(root, "notes.txt"), "notes");
+  const controller = new AbortController();
+  let remoteCalls = 0;
+  if (when === "before-files") controller.abort();
+  await expect(callOpenWorkCloudUploadAction(testConfig(root), "gmail_create_draft_with_attachments", {
+    to: "recipient@example.com", subject: "Review", body: "Please review.", paths: ["notes.txt"],
+  }, { directory: root }, {
+    signal: controller.signal,
+    readCloudMcp: async () => { controller.abort(); return cloudMcp(); },
+    fetchImpl: async () => { remoteCalls++; return Response.json({ ok: true, draftId: "draft_1" }); },
+  })).rejects.toMatchObject({ status: 499, code: "gmail_attachment_cancelled" });
+  expect(remoteCalls).toBe(0);
+});
+
+test("Gmail cancellation reaches an already dispatched multipart request without retry", async () => {
+  const root = await tempRoot();
+  await writeFile(join(root, "notes.txt"), "notes");
+  const controller = new AbortController();
+  let remoteCalls = 0;
+  await expect(callOpenWorkCloudUploadAction(testConfig(root), "gmail_create_draft_with_attachments", {
+    to: "recipient@example.com", subject: "Review", body: "Please review.", paths: ["notes.txt"],
+  }, { directory: root }, {
+    signal: controller.signal,
+    readCloudMcp: async () => cloudMcp(),
+    fetchImpl: async (_url, init) => {
+      remoteCalls++;
+      expect(init?.signal?.aborted).toBe(false);
+      controller.abort();
+      expect(init?.signal?.aborted).toBe(true);
+      throw new DOMException("Aborted after dispatch", "AbortError");
+    },
+  })).rejects.toThrow("Aborted after dispatch");
+  expect(remoteCalls).toBe(1);
+});
+
+test("Gmail transport preserves cloud rejection codes without asserting no creation", async () => {
+  const root = await tempRoot();
+  await writeFile(join(root, "notes.txt"), "notes");
+  for (const { status, error } of [{ status: 409, error: "needs_connection" }, { status: 502, error: "google_api_error" }]) {
+    await expect(callOpenWorkCloudUploadAction(testConfig(root), "gmail_create_draft_with_attachments", {
+      to: "recipient@example.com", subject: "Review", body: "Please review.", paths: ["notes.txt"],
+    }, { directory: root }, {
+      readCloudMcp: async () => cloudMcp(),
+      fetchImpl: async () => Response.json({ error, message: "Actionable error." }, { status }),
+    })).rejects.toMatchObject({ status, code: "cloud_upload_failed", details: { upstreamCode: error }, message: "OpenWork Cloud could not upload the file: Actionable error." });
+  }
+});
+
+test("Gmail idle cancels the real loopback request before remote multipart dispatch", async () => {
+  const root = await tempRoot();
+  await writeFile(join(root, "notes.txt"), "notes");
+  const previousUrl = process.env.OPENWORK_SERVER_URL;
+  const previousToken = process.env.OPENWORK_SERVER_TOKEN;
+  let markPreparing: () => void = () => {};
+  const preparing = new Promise<void>((resolve) => { markPreparing = resolve; });
+  let markFinished: () => void = () => {};
+  const finished = new Promise<void>((resolve) => { markFinished = resolve; });
+  let remoteCalls = 0;
+  let hostError: unknown;
+  const fields = { to: "recipient@example.com", subject: "Review", body: "Please review." };
+  const server = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    async fetch(request) {
+      await request.json();
+      try {
+        return Response.json(await callOpenWorkCloudUploadAction(testConfig(root), "gmail_create_draft_with_attachments", {
+          ...fields, paths: ["notes.txt"],
+        }, { directory: root }, {
+          signal: request.signal,
+          readCloudMcp: async () => {
+            markPreparing();
+            if (!request.signal.aborted) await new Promise<void>((resolve) => request.signal.addEventListener("abort", () => resolve(), { once: true }));
+            return cloudMcp();
+          },
+          fetchImpl: async () => { remoteCalls++; return Response.json({ ok: true, draftId: "draft_1" }); },
+        }));
+      } catch (error) {
+        hostError = error;
+        return error instanceof ApiError ? Response.json(formatError(error), { status: error.status }) : Response.json({}, { status: 500 });
+      } finally {
+        markFinished();
+      }
+    },
+  });
+  try {
+    process.env.OPENWORK_SERVER_URL = `http://127.0.0.1:${server.port}`;
+    process.env.OPENWORK_SERVER_TOKEN = "fixture-host-token";
+    const plugin = await OpenWorkExtensionsPreview({ directory: root }, {});
+    const input = {
+      tool: "openwork-cloud_execute_capability", sessionID: "ses_cancel", callID: "call_cancel",
+      args: { name: "native:emc_selected:postCapabilitiesGoogleWorkspaceGmailDrafts", body: { ...fields, attachments: ["notes.txt"] } },
+    };
+    const output = { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "file_input_requires_host", created: false, message: "Host upload required." }) }] };
+    const result = plugin["tool.execute.after"](input, output).catch((error: unknown) => error);
+    await preparing;
+    await plugin.event({ event: { type: "session.status", properties: { sessionID: input.sessionID, status: { type: "idle" } } } });
+    expect(await result).toMatchObject({ message: expect.stringContaining("creation outcome unknown; verify drafts before retrying") });
+    await finished;
+    expect(hostError).toMatchObject({ status: 499, code: "gmail_attachment_cancelled" });
+    expect(remoteCalls).toBe(0);
+    await expect(plugin["tool.execute.after"](input, output)).rejects.toThrow("already attempted");
+  } finally {
+    server.stop(true);
+    if (previousUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
+    else process.env.OPENWORK_SERVER_URL = previousUrl;
+    if (previousToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
+    else process.env.OPENWORK_SERVER_TOKEN = previousToken;
+  }
 });

@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { denFetch } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
 import { reauthPopup } from "../worlds/reauth-popup.ts";
 
@@ -111,5 +112,99 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
     await user.screenshot();
     popup.client.close();
     evidence.recordAssertionEvidence("Real OIDC verification closes both surfaces and resumes a server-validated settings mutation", "A session aged beyond 15 minutes could not save; signed-token approval refreshed authentication, showed completion, closed the popup/dialog, and persisted the new workspace name across reload.", true);
+  });
+
+  const editUrl = new URL(`/dashboard/plugins/${world.pluginId}/skills/${world.skillId}/edit`, world.den.ref.webUrl).toString();
+  const skillBody = { role: "textbox", label: /Skill body/ } as const;
+  await step("shared content editing reuses confirmation beyond fifteen minutes", async () => {
+    await world.ageSession(20);
+    const headers = { "x-openwork-org-id": world.organizationId, authorization: `Bearer ${world.den.admin.token}` };
+    const renamed = await denFetch(world.den.admin, `/v1/plugins/${world.pluginId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ name: "Shared editing updated" }),
+    });
+    expect(renamed.response.status).toBe(200);
+    expect(JSON.stringify(renamed.body)).toContain("Shared editing updated");
+    const accessBefore = await probe.api(world.den.admin, `/v1/plugins/${world.pluginId}/access`, { headers });
+    expect(accessBefore.response.status).toBe(200);
+    const grant = await denFetch(world.den.admin, `/v1/plugins/${world.pluginId}/access`, {
+      method: "POST", headers, body: JSON.stringify({ orgWide: true, role: "editor" }),
+    });
+    const deletion = await denFetch(world.den.admin, `/v1/config-objects/${world.skillId}/delete`, {
+      method: "POST", headers, body: "{}",
+    });
+    const mcp = await denFetch(world.den.admin, "/v1/config-objects", {
+      method: "POST", headers, body: JSON.stringify({
+        type: "mcp", sourceMode: "cloud", pluginIds: [world.pluginId],
+        input: { rawSourceText: '{"mcpServers":{"fixture":{"url":"https://example.test/mcp"}}}' },
+      }),
+    });
+    for (const blocked of [grant, deletion, mcp]) {
+      expect(blocked.response.status).toBe(403);
+      expect(blocked.body).toMatchObject({ error: "reauth", reason: "fresh_auth_required" });
+    }
+    const accessAfter = await probe.api(world.den.admin, `/v1/plugins/${world.pluginId}/access`, { headers });
+    expect(accessAfter.body).toEqual(accessBefore.body);
+    expect((await world.skillSnapshot()).versions).toBe(1);
+    evidence.recordAssertionEvidence("The content editing window accepts plugin metadata while access, deletion, and MCP changes still require recent authentication", "At twenty minutes the plugin rename succeeded; grants, skill deletion and MCP creation returned fresh_auth_required; access grants and skill versions stayed unchanged.", true);
+    await user.navigate(editUrl);
+    await user.see({ text: "Edit shared-editing" }, { timeoutMs: 60_000 });
+    await user.type(skillBody, "Saved within the content editing window.", { replace: true });
+    await user.click("Save changes");
+    await user.see({ text: "Complete skill body" }, { timeoutMs: 30_000 });
+    expect(await probe.eval(() => document.querySelector('[role="dialog"]') === null)).toBe(true);
+    const stored = await world.skillSnapshot();
+    expect(stored.source).toContain("Saved within the content editing window.");
+    expect(stored.versions).toBe(2);
+    evidence.recordAssertionEvidence("A twenty-minute-old session can save shared skill content without another prompt", "The UI saved and navigated to the skill; exactly one new version persisted without a verification dialog. Workspace security settings above still required verification at twenty minutes.", true);
+  });
+
+  await step("expired skill edits retain their draft through cancellation and resume once after real verification", async () => {
+    await world.ageSession(65);
+    await user.navigate(editUrl);
+    await user.see({ text: "Edit shared-editing" }, { timeoutMs: 60_000 });
+    const draft = "Keep this draft through verification.";
+    await user.type(skillBody, draft, { replace: true });
+    await user.click("Save changes");
+    await user.see({ role: "button", label: "Continue with SSO" });
+    await world.duplicateSkillSubmit();
+    expect((await world.skillSnapshot()).versions).toBe(2);
+    await user.click({ role: "button", label: "Close security check" });
+    await user.see(skillBody, { value: draft });
+    expect((await world.skillSnapshot()).versions).toBe(2);
+    await user.click("Save changes");
+    await user.see({ role: "button", label: "Continue with SSO" });
+    await user.click({ role: "button", label: "Continue with SSO" });
+    const popup = await waiting();
+    await user.on(popup).click({ role: "button", label: "Approve sign-in" });
+    await user.see({ text: "Complete skill body" }, { timeoutMs: 60_000 });
+    const stored = await world.skillSnapshot();
+    expect(stored.source).toContain(draft);
+    expect(stored.versions).toBe(3);
+    expect(await probe.eval(() => document.querySelector('[role="dialog"]') === null)).toBe(true);
+    await user.reload();
+    await user.see({ text: draft }, { timeoutMs: 60_000 });
+    popup.client.close();
+    evidence.recordAssertionEvidence("Expired skill edits open verification, survive cancellation, and save the draft exactly once after SSO", "At sixty-five minutes the server blocked the save; cancellation and duplicate submit made no versions; real SSO saved one new version with the retained draft, visible after reload.", true);
+    await user.screenshot();
+  });
+
+  await step("expired skill creation also offers verification and resumes", async () => {
+    await world.ageSession(65);
+    await user.navigate(new URL(`/dashboard/plugins/${world.pluginId}/skills/new`, world.den.ref.webUrl).toString());
+    await user.see({ text: "Create a skill" }, { timeoutMs: 60_000 });
+    await user.type({ placeholder: "e.g. customer-research" }, "created-after-verification");
+    await user.type({ placeholder: "When should an agent use this skill?" }, "Synthetic creation recovery.");
+    await user.type(skillBody, "Created after confirming identity.");
+    await user.click("Create skill");
+    await user.see({ role: "button", label: "Continue with SSO" });
+    await user.click({ role: "button", label: "Continue with SSO" });
+    const popup = await waiting();
+    await user.on(popup).click({ role: "button", label: "Approve sign-in" });
+    await user.see({ text: "Complete skill body" }, { timeoutMs: 60_000 });
+    await user.reload();
+    await user.see({ text: "Created after confirming identity." }, { timeoutMs: 60_000 });
+    expect(await probe.eval(() => document.querySelector('[role="dialog"]') === null)).toBe(true);
+    popup.client.close();
+    evidence.recordAssertionEvidence("Creating a shared skill resumes after verification", "An expired session opened SSO from the create form; verification completed creation and the new skill persisted across reload.", true);
   });
 });

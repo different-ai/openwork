@@ -107,6 +107,37 @@ test("side chats keep questions, replies, and saved splits attached to their own
     });
   };
   const before = await ids();
+  await step("only the conversation showing the plus gives up title space", async () => {
+    for (const selected of [world.switchSession.sessionId, primary]) {
+      await reopen(selected);
+      await user.hover("composer");
+      for (const sessionId of [primary, world.switchSession.sessionId]) {
+        const selector = `[data-sidebar-session-id="${sessionId}"]`;
+        const layout = await probe.eventually(() => probe.dom(
+          `${selector}, ${selector} [data-session-tab-id], ${selector} [data-session-title-slot], ${selector} [data-session-side-chat]`,
+        ), {
+          within: 10_000,
+          label: "idle row restores its title space after selection and hover settle",
+          until: ({ elements }) => elements.length === (sessionId === selected ? 4 : 3)
+            && elements[1]!.rect.right - elements[2]!.rect.right <= 11,
+        });
+        const [row, main, title, side] = layout.elements;
+        if (!row || !main || !title) throw new Error("Missing conversation row geometry");
+        expect(title.rect.width).toBeGreaterThan(0);
+        expect(main.rect.right - title.rect.right, "no invisible action gutter").toBeCloseTo(10, 0);
+        if (sessionId === selected) {
+          if (!side) throw new Error("The selected conversation must offer a side chat");
+          expect(side.rect.width).toBeGreaterThan(0);
+          expect(main.rect.right).toBeCloseTo(side.rect.left, 0);
+          expect(side.rect.right).toBeCloseTo(row.rect.right, 0);
+        } else {
+          expect(side).toBeUndefined();
+          expect(main.rect.right, "other conversations use the plus space").toBeCloseTo(row.rect.right, 0);
+        }
+      }
+    }
+    expect(await ids(), "switching rows must not create a side chat").toEqual(before);
+  });
   await step("only a genuinely empty main conversation offers starters", async () => {
     await probe.eventually(() => world.continuity.surfaceState("primary"), {
       within: 15_000, label: "loaded empty primary offers starters",

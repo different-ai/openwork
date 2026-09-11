@@ -15,3 +15,20 @@ Today, the supported path is the first-party `OpenWork Browser` extension.
 - Keep `OpenWork Browser` enabled in `Settings > Library`.
 
 Then go back to the session view and ask OpenWork to open a website.
+
+In the desktop browser toolbar, **Suspend** frees a tab's memory after a warning. This is manual, not a page snapshot: form input, scroll position, and page history are lost. **Reload** or selecting the suspended tab opens its saved URL again. Tabs opened or restored for browser work stay protected until `browser.release_tab` declares all running and queued work complete. Release does not suspend or invalidate the current target; there is no automatic reclamation. For later work, `browser.restore_tab` checks conversation ownership and returns a fresh protected handle to use.
+
+## Keyboard shortcuts
+
+In the desktop app, these shortcuts apply when a built-in browser page, its URL field, or its browser controls have focus:
+
+| Action | macOS | Windows / Linux |
+| --- | --- | --- |
+| Close the focused browser tab, keeping OpenWork open | `Cmd+W` | `Ctrl+W` |
+| Reopen that conversation's most recently closed browser tab | `Cmd+T` | `Ctrl+T` |
+
+The native app menu's **Close** command also closes the focused browser tab before closing the window.
+
+Reopening creates a fresh page from a URL kept only in memory, not a saved page snapshot. It does not restore form input, scroll position, or page history, and closed-tab URLs do not survive an app restart.
+
+After closing the last browser tab, press the reopen shortcut immediately. Clicking elsewhere, pressing `Tab`, or changing conversations clears that immediate browser context. With the chat composer focused, `Cmd+T` / `Ctrl+T` still cycles conversations instead of reopening a browser tab.

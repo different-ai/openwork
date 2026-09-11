@@ -90,6 +90,15 @@ function writeToolPart(
 }
 
 describe("tool part mapper", () => {
+  test("forwards native tool start time without inventing pending timing", () => {
+    expect(parseDynamicToolUIPart(writeToolPart("running", { description: "Review" }, { tool: "task" })))
+      .toMatchObject({ callProviderMetadata: { openwork: { toolStartedAt: 1 } } });
+    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" })))
+      .toMatchObject({ callProviderMetadata: { opencode: { partId: "part-write" } } });
+    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" }))?.callProviderMetadata?.openwork)
+      .toBeUndefined();
+  });
+
   test("v1 execute tools keep their existing representation even with code or toolCalls metadata", () => {
     const part = writeToolPart("completed", { code: 'tools["openwork-cloud"].search_capabilities({})' }, { tool: "execute" });
     if (part.state.status !== "completed") throw new Error("Expected completed fixture");
@@ -163,11 +172,12 @@ describe("tool part mapper", () => {
     });
   });
 
-  test("preserves MCP Apps result metadata for the chat host", () => {
+  test.each([true, false, undefined])("preserves MCP Apps result metadata for the chat host (isError=%s)", (isError) => {
     const part = writeToolPart("completed", { configObjectId: "script_1" });
     if (part.state.status !== "completed") throw new Error("Expected completed fixture");
     part.state.metadata = {
       openworkMcpApp: {
+        ...(isError === undefined ? {} : { isError }),
         content: [{ type: "text", text: "Fallback" }],
         structuredContent: { schemaVersion: "1", value: 42 },
         _meta: { receiptId: "receipt_1" },
@@ -178,6 +188,7 @@ describe("tool part mapper", () => {
       opencode: { partId: "part-write" },
       openwork: {
         mcpResult: {
+          ...(isError === undefined ? {} : { isError }),
           content: [{ type: "text", text: "Fallback" }],
           structuredContent: { schemaVersion: "1", value: 42 },
           _meta: { receiptId: "receipt_1" },
@@ -197,7 +208,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(running)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1" },
+      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
 
     const completed = writeToolPart(
@@ -210,7 +221,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(completed)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1" },
+      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
   });
 
@@ -224,7 +235,7 @@ describe("tool part mapper", () => {
     });
   });
 
-  test("recovers a connection-action MCP App from an errored capability result", () => {
+  test("recovers native connection status without an app launch from an errored capability result", () => {
     const error = JSON.stringify({
       error: "needs_connection",
       message: "Connect Acme Tracker.",
@@ -243,22 +254,18 @@ describe("tool part mapper", () => {
       },
     });
 
-    expect(parseDynamicToolUIPart(writeToolPart("error", {}, {}, error))).toMatchObject({
+    const parsed = parseDynamicToolUIPart(writeToolPart("error", {}, {}, error));
+    expect(parsed?.callProviderMetadata?.openwork?.mcpResult).not.toHaveProperty("_meta");
+    expect(parsed).toMatchObject({
       state: "output-error",
       callProviderMetadata: {
         openwork: {
           mcpResult: {
+            isError: true,
             structuredContent: {
               schemaVersion: "1",
               connectionId: "emc_acme",
               state: "needs_connection",
-            },
-            _meta: {
-              "openwork/mcpApp": {
-                toolName: "connection_action",
-                resourceUri: "ui://openwork/connection-action/v1/view.html",
-                arguments: { connectionId: "emc_acme" },
-              },
             },
           },
         },

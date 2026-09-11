@@ -3,9 +3,9 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { markTaskRunStart } from "@/app/lib/analytics";
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, isPromptAdmissionUnknown } from "@/app/lib/opencode";
 import { shellInSession } from "@/app/lib/opencode-session";
-import { submitAfterInterruption } from "@/app/lib/opencode-interruption";
+import { composeNativeSessionSnapshot, getNativeSession } from "@/app/lib/opencode-session-native";
+import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, sessionWorkHeld, submitAfterInterruption } from "@/app/lib/opencode-interruption";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
-import { composeNativeSessionSnapshot } from "@/app/lib/opencode-session-native";
 import type { ComposerDraft, ModelRef } from "@/app/types";
 import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
 import { useSessionActivityStore } from "../status/session-activity-store";
@@ -19,6 +19,7 @@ import {
   claimQueuedSend,
   dispatchQueuedDrain,
   getQueuedDrainState,
+  hasPendingQueuedAdmission,
   getQueuedSendGeneration,
   nextObservationProbeAt,
   subscribeQueuedDrain,
@@ -95,10 +96,13 @@ async function performQueuedDraftSend(
   sessionId: string,
   draft: ComposerDraft,
   generation: number,
-) {
+): Promise<"sent" | "cancelled"> {
   assertQueuedSendCurrent(sessionId, generation);
   const text = draft.text.trim();
-  if (!text && draft.attachments.length === 0 && !draft.command) return;
+  if (!text && draft.attachments.length === 0 && !draft.command) return "cancelled";
+  const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken }, sessionId);
+  assertQueuedSendCurrent(sessionId, generation);
+  if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
 
   const sessionModelSelection = getSessionModelSelection(sessionId);
   const sendModel = sessionModelSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
@@ -111,18 +115,19 @@ async function performQueuedDraftSend(
   );
 
   if (draft.mode === "shell") {
-    await shellInSession(opencodeClient, sessionId, text);
-    return;
+    await shellInSession(opencodeClient, sessionId, text, { messageID: draft.messageId });
+    return "sent";
   }
 
   if (draft.command) {
-    const result = await opencodeClient.session.command({
+    const result = await sendSessionCommand(context.opencodeBaseUrl, opencodeClient, {
       sessionID: sessionId,
+      messageID: draft.messageId,
       command: draft.command.name,
       arguments: draft.command.arguments,
     });
     if (result.error) throw new Error(serializeSDKError(result.error));
-    return;
+    return "sent";
   }
 
   const parts = await draftToParts(draft, context.workspaceRoot, sessionId, {
@@ -136,6 +141,7 @@ async function performQueuedDraftSend(
     runtimeKey: context.environmentRuntimeKey,
   });
   assertQueuedSendCurrent(sessionId, generation);
+  if (sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
   const result = await opencodeClient.session.promptAsync({
     sessionID: sessionId,
     messageID: draft.messageId,
@@ -149,9 +155,11 @@ async function performQueuedDraftSend(
     if (isPromptAdmissionUnknown(result.error)) throw result.error;
     throw new Error(serializeSDKError(result.error));
   }
+  assertQueuedSendCurrent(sessionId, generation);
   if (sendModel) {
     useSessionModelStore.getState().setModel(sessionId, sendModel, sendVariant ?? null);
   }
+  return "sent";
 }
 
 // Mirrors withoutRevertTarget in ../surface/session-surface.tsx without
@@ -214,9 +222,12 @@ function armObservationProbe(watched: WatchedSession) {
       if (watchedSessions.get(watched.sessionId) !== watched) return;
       watched.lastObservedStatus = snapshot.status;
       if (snapshot.status.type === "idle") {
+        const phase = getQueuedDrainState(watched.sessionId).phase;
+        sessionHasPendingSubmission(watched.context.opencodeBaseUrl, watched.sessionId, snapshot.messages);
         dispatchQueuedDrain(watched.sessionId, {
           type: "idle_reconciled",
           observedAt: startedAt,
+          terminalObserved: phase.kind === "awaiting_observation" && Boolean(phase.messageID && hasTerminalSessionReply(snapshot.messages, watched.sessionId, phase.messageID)),
         });
       } else {
         dispatchQueuedDrain(watched.sessionId, { type: "busy_observed" });
@@ -291,6 +302,10 @@ function watchSession(sessionId: string, context: QueuedSendContext) {
   watched.unsubscribeDrain = subscribeQueuedDrain(sessionId, () => {
     armObservationProbe(watched);
     if (watched.lastObservedStatus?.type === "idle") void attemptDrain(sessionId);
+    if (!hasPendingQueuedAdmission(getQueuedDrainState(sessionId))
+      && !watched.sendInFlight && getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId).length === 0) {
+      releaseWatchedSession(watched, true);
+    }
   });
   armObservationProbe(watched);
 
@@ -299,7 +314,7 @@ function watchSession(sessionId: string, context: QueuedSendContext) {
     sessionId,
     { limit: 140, signal: initialStatusController.signal },
   ).then((snapshot) => {
-    handleObservedStatus(watched, snapshot.status);
+    if (watched.lastObservedStatus === null) handleObservedStatus(watched, snapshot.status);
   }).catch(() => {
     // The live workspace stream remains authoritative if this initial read fails.
   });
@@ -313,8 +328,7 @@ function reconcileWatchedSessions() {
     const queuedItems = queuedDrafts[sessionId] ?? [];
     const context = getQueuedSendContext(sessionId);
     if (watched.sendInFlight) continue;
-    const unknown = getQueuedDrainState(sessionId).phase.kind === "admission_unknown";
-    if ((queuedItems.length === 0 && !unknown) || !context) {
+    if ((queuedItems.length === 0 && !hasPendingQueuedAdmission(getQueuedDrainState(sessionId))) || !context) {
       releaseWatchedSession(watched, queuedItems.length === 0);
       continue;
     }
@@ -339,6 +353,7 @@ async function attemptDrain(sessionId: string) {
   const context = getQueuedSendContext(sessionId);
   const nextItem = getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId)[0];
   if (!context || !nextItem || watched.lastObservedStatus?.type !== "idle") return;
+  if (sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return;
   if (!canAdmitNextQueuedItem(getQueuedDrainState(sessionId))) return;
 
   const draft = { ...withoutRevertTarget(nextItem.draft), messageId: nextItem.draft.messageId ?? createPromptMessageID() };
@@ -350,17 +365,22 @@ async function attemptDrain(sessionId: string) {
   useComposerStateStore.getState().removeQueuedDraft(sessionId, nextItem.id);
 
   try {
-    await submitAfterInterruption(context.opencodeBaseUrl, sessionId,
-      () => performQueuedDraftSend(context, sessionId, draft, generation));
+    const outcome = await submitAfterInterruption(context.opencodeBaseUrl, sessionId,
+      () => performQueuedDraftSend(context, sessionId, draft, generation), draft.messageId);
     dispatchQueuedDrain(sessionId, {
       type: "send_result",
       itemId: nextItem.id,
-      outcome: "sent",
+      outcome,
       at: Date.now(),
+      terminalObserved: draft.mode === "shell",
+      deferredMessageID: draft.command ? draft.messageId : undefined,
     });
     draft.attachments.forEach(revokeAttachmentPreview);
+    if (outcome === "cancelled") {
+      useComposerStateStore.getState().clearQueuedDrafts(sessionId);
+      return;
+    }
     if (getQueuedSendGeneration(sessionId) !== generation) return;
-    useComposerStateStore.getState().appendHistory(sessionId, draft.text);
     useSessionActivityStore.getState().setRunStatus(
       context.workspaceId,
       sessionId,
@@ -370,7 +390,7 @@ async function attemptDrain(sessionId: string) {
   } catch (error) {
     if (isPromptAdmissionUnknown(error)) {
       dispatchQueuedDrain(sessionId, {
-        type: "send_unknown", itemId: nextItem.id, messageID: draft.messageId, at: Date.now(),
+        type: "send_unknown", itemId: nextItem.id, messageID: draft.messageId, at: Date.now(), deferred: Boolean(draft.command),
       });
       draft.attachments.forEach(revokeAttachmentPreview);
     } else if (getQueuedSendGeneration(sessionId) !== generation) {
@@ -386,7 +406,7 @@ async function attemptDrain(sessionId: string) {
       reconcileWatchedSessions();
     }
     if (getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId).length === 0
-      && getQueuedDrainState(sessionId).phase.kind !== "admission_unknown") {
+      && !hasPendingQueuedAdmission(getQueuedDrainState(sessionId))) {
       clearQueuedSendContext(sessionId);
     }
   }

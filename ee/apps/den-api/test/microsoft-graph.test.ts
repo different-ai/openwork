@@ -10,6 +10,7 @@ import {
   extractMicrosoftTeamsChats,
   extractMicrosoftTeamsMessages,
   MicrosoftGraphClient,
+  MicrosoftGraphMutationOutcomeUnknownError,
   MicrosoftGraphRequestError,
 } from "../src/capability-sources/microsoft-graph.js"
 
@@ -189,25 +190,166 @@ describe("MicrosoftGraphClient", () => {
     expect(file.contentUnavailableReason).toBeNull()
   })
 
-  test("does not download oversized or binary OneDrive files", async () => {
+  test("does not download oversized OneDrive files and preserves supported binary bytes", async () => {
     let contentRequests = 0
     const fetchMock: typeof fetch = async (input, init) => {
       const request = new Request(input, init)
       const url = new URL(request.url)
       if (url.pathname.endsWith("/large")) {
-        return json({ id: "large", name: "Large.txt", size: 6_000_000, file: { mimeType: "text/plain" } })
+        return json({ id: "large", name: "Large.txt", size: 10 * 1024 * 1024 + 1, file: { mimeType: "text/plain" } })
       }
       if (url.pathname.endsWith("/binary")) {
         return json({ id: "binary", name: "Plan.docx", size: 2_000, file: { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } })
       }
       contentRequests += 1
-      return new Response("unexpected")
+      return new Response(new Uint8Array([0xff, 0x00, 0xab]))
     }
     const client = new MicrosoftGraphClient({ accessToken: "token", fetch: fetchMock })
 
     expect((await client.getDriveItemWithContent("large")).contentUnavailableReason).toBe("file_too_large")
-    expect((await client.getDriveItemWithContent("binary")).contentUnavailableReason).toBe("unsupported_content_type")
     expect(contentRequests).toBe(0)
+    expect(await client.getDriveItemWithContent("binary")).toMatchObject({ encoding: "base64", contentBase64: "/wCr", contentUnavailableReason: null })
+    expect(contentRequests).toBe(1)
+  })
+
+  test("sends exactly one existing draft and reports Graph 202 as accepted, not delivered", async () => {
+    const requests: Request[] = []
+    const client = new MicrosoftGraphClient({
+      accessToken: "member-token",
+      fetch: async (input, init) => {
+        const request = new Request(input, init)
+        requests.push(request)
+        expect(request.url).toBe("https://graph.microsoft.com/v1.0/me/messages/draft%2B1%3D/send")
+        expect(request.method).toBe("POST")
+        expect(request.redirect).toBe("error")
+        expect(request.headers.get("authorization")).toBe("Bearer member-token")
+        expect(await request.text()).toBe("")
+        return new Response(null, { status: 202 })
+      },
+    })
+    expect(await client.sendMailDraft("draft+1=")).toEqual({ draftId: "draft+1=", status: "accepted" })
+    expect(requests).toHaveLength(1)
+  })
+
+  test("never replays ambiguous sends, server failures, or unexpected successful statuses", async () => {
+    const failures: Array<() => Promise<Response>> = [
+      async () => { throw new TypeError("response lost after send") },
+      async () => new Response(null, { status: 503 }),
+      async () => new Response(null, { status: 204 }),
+      async () => json({ delivered: true }, 200),
+    ]
+    for (const failure of failures) {
+      let calls = 0
+      const client = new MicrosoftGraphClient({ accessToken: "member-token", fetch: async () => { calls += 1; return failure() } })
+      await expect(client.sendMailDraft("draft_1")).rejects.toBeInstanceOf(MicrosoftGraphMutationOutcomeUnknownError)
+      expect(calls).toBe(1)
+    }
+  })
+
+  test("propagates bounded provider rejections without retrying or claiming acceptance", async () => {
+    let calls = 0
+    const client = new MicrosoftGraphClient({ accessToken: "member-token", maxJsonResponseBytes: 40, fetch: async () => {
+      calls += 1
+      return new Response("denied".repeat(100), { status: 403 })
+    } })
+    await expect(client.sendMailDraft("draft_1")).rejects.toMatchObject({ status: 403, name: "MicrosoftGraphRequestError" })
+    expect(calls).toBe(1)
+  })
+
+  test("preserves cancellation and timeout bounds without retrying a send", async () => {
+    const controller = new AbortController()
+    let calls = 0
+    const client = new MicrosoftGraphClient({
+      accessToken: "member-token", signal: controller.signal, timeoutMs: 20,
+      fetch: async (_input, init) => {
+        calls += 1
+        const signal = init?.signal
+        if (!signal) throw new Error("Expected an abort signal")
+        controller.abort()
+        signal.throwIfAborted()
+        throw new Error("Must abort before returning")
+      },
+    })
+    await expect(client.sendMailDraft("draft_1")).rejects.toBeInstanceOf(MicrosoftGraphMutationOutcomeUnknownError)
+    expect(calls).toBe(1)
+  })
+
+  test("creates a reply draft and patches only selected mail state, preserving move receipts", async () => {
+    const requests: Request[] = []
+    const client = new MicrosoftGraphClient({ accessToken: "member-token", fetch: async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request)
+      if (request.url.endsWith("/createReply")) return json({ id: "reply_1", isDraft: true, conversationId: "thread_1", body: { content: "Reply" } }, 201)
+      if (request.url.endsWith("/move")) return json({ id: "moved_1", parentFolderId: "archive_1", isRead: true }, 201)
+      return json({ id: "message_1", isRead: false, categories: ["Follow up"] })
+    } })
+    expect(await client.createMailReplyDraft("message_1", "Reply")).toMatchObject({ id: "reply_1", isDraft: true, conversationId: "thread_1" })
+    expect(await client.updateMailMessage("message_1", { isRead: false, categories: ["Follow up"] })).toMatchObject({ isRead: false, categories: ["Follow up"] })
+    expect(await client.moveMailMessage("message_1", "archive")).toMatchObject({ id: "moved_1", parentFolderId: "archive_1" })
+    expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+      ["POST", "/v1.0/me/messages/message_1/createReply"],
+      ["PATCH", "/v1.0/me/messages/message_1"],
+      ["POST", "/v1.0/me/messages/message_1/move"],
+    ])
+    expect(await requests[0]?.json()).toEqual({ comment: "Reply" })
+    expect(await requests[1]?.json()).toEqual({ isRead: false, categories: ["Follow up"] })
+    expect(await requests[2]?.json()).toEqual({ destinationId: "archive" })
+  })
+
+  test("patches paired UTC event times without erasing omitted fields and handles empty cancellation/deletion receipts", async () => {
+    const requests: Request[] = []
+    const client = new MicrosoftGraphClient({ accessToken: "member-token", fetch: async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request)
+      if (request.method === "DELETE") return new Response(null, { status: 204 })
+      if (request.url.endsWith("/cancel")) return new Response(null, { status: 202 })
+      return json({ id: "event_1", subject: "Updated" })
+    } })
+    expect((await client.updateCalendarEvent("event_1", { subject: "Updated" })).id).toBe("event_1")
+    await client.updateCalendarEvent("event_1", { start: "2026-09-10T10:00:00Z", end: "2026-09-10T11:00:00Z", location: "" })
+    expect(await client.cancelCalendarEvent("event_1", "Cancelled by organizer")).toEqual({ eventId: "event_1", status: "accepted" })
+    expect(await client.deleteCalendarEvent("event_1")).toEqual({ eventId: "event_1", status: "deleted" })
+    expect(await requests[0]?.json()).toEqual({ subject: "Updated" })
+    expect(await requests[1]?.json()).toEqual({
+      start: { dateTime: "2026-09-10T10:00:00Z", timeZone: "UTC" },
+      end: { dateTime: "2026-09-10T11:00:00Z", timeZone: "UTC" },
+      location: { displayName: "" },
+    })
+    expect(await requests[2]?.json()).toEqual({ comment: "Cancelled by organizer" })
+    expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+      ["PATCH", "/v1.0/me/events/event_1"], ["PATCH", "/v1.0/me/events/event_1"],
+      ["POST", "/v1.0/me/events/event_1/cancel"], ["DELETE", "/v1.0/me/events/event_1"],
+    ])
+    expect(await requests[3]?.text()).toBe("")
+  })
+
+  test("renames or moves a OneDrive item and creates folders with conflict failure, never overwrite", async () => {
+    const requests: Request[] = []
+    const client = new MicrosoftGraphClient({ accessToken: "member-token", fetch: async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request)
+      return json({ id: "item_1", name: "Plans", folder: {} }, request.method === "POST" ? 201 : 200)
+    } })
+    await client.updateDriveItem("item_1", { name: "Plans", parentId: "folder_2" })
+    await client.updateDriveItem("item_1", { name: "Renamed" })
+    expect(await client.createDriveFolder({ parentId: "folder_2", name: "Plans" })).toMatchObject({ id: "item_1", kind: "folder" })
+    expect(await requests[0]?.json()).toEqual({ name: "Plans", parentReference: { id: "folder_2" } })
+    expect(await requests[1]?.json()).toEqual({ name: "Renamed" })
+    expect(await requests[2]?.json()).toEqual({ name: "Plans", folder: {}, "@microsoft.graph.conflictBehavior": "fail" })
+    expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+      ["PATCH", "/v1.0/me/drive/items/item_1"], ["PATCH", "/v1.0/me/drive/items/item_1"],
+      ["POST", "/v1.0/me/drive/items/folder_2/children"],
+    ])
+  })
+
+  test("rejects malformed or oversized mutation JSON rather than manufacturing a success receipt", async () => {
+    for (const response of [json({}), json({ id: "x".repeat(100) }), new Response("invalid"), json({ id: "reply_1", isDraft: false }, 201)]) {
+      let calls = 0
+      const client = new MicrosoftGraphClient({ accessToken: "member-token", maxJsonResponseBytes: 50, fetch: async () => { calls += 1; return response } })
+      const operation = response.status === 201 ? client.createMailReplyDraft("message_1", "Reply") : client.updateMailMessage("message_1", { isRead: true })
+      await expect(operation).rejects.toBeInstanceOf(MicrosoftGraphMutationOutcomeUnknownError)
+      expect(calls).toBe(1)
+    }
   })
 
   test("creates drafts and events, writes OneDrive text, and reads/sends Teams chat", async () => {

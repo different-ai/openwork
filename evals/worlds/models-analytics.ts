@@ -2,10 +2,20 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { allocateFreePort } from "@openwork/cdp";
+import { allocateFreePort, browserScript, evaluate } from "@openwork/cdp";
 import { provisionOrg } from "@openwork/behaviors";
 import { createDaytonaHost, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import type { Seed } from "@openwork/env";
+
+declare global {
+  interface Window {
+    __analyticsPageGate?: {
+      cursors: string[]; held: boolean; delivered: boolean; expired: boolean; status: number;
+      release(): void; restore(): void;
+    };
+  }
+}
+
 function modelsFixtureKey(memberId: string) { return `ow_inf_models-analytics-fixture-${memberId}`; }
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -100,6 +110,7 @@ async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean, usageSet
     fixtureKey: modelsFixtureKey,
     async upgradeAnalytics() { await arrange("migrate"); },
     async analyticsStoreUnavailable(unavailable: boolean) { await arrange(unavailable ? "pause-analytics" : "resume-analytics"); },
+    async seedPagination(newest = false) { await arrange(newest ? "pagination-newest" : "pagination"); },
     async anotherOrganization() { return provisionOrg(den.ref, {}); },
     async verifyErasure() { await arrange("assert-erased"); },
     async anotherSubscriber() {
@@ -172,7 +183,55 @@ async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean, usageSet
 export async function modelsAnalyticsWorld(seed: Seed) {
   const world = await createModelsWorld(seed, true);
   const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/inference", headless: true, viewport: { width: 1440, height: 1100 } });
-  return { ...world, web };
+  return { ...world, web,
+    async holdActivityPage(beforeId: string) {
+      await seed.evalIn(web, browserScript((beforeId) => {
+        if (window.__analyticsPageGate) throw new Error("An analytics page gate is already active");
+        const original = window.fetch;
+        const state: NonNullable<Window["__analyticsPageGate"]> = {
+          cursors: [], held: false, delivered: false, expired: false, status: 0,
+          release() {},
+          restore() { state.release(); window.fetch = original; delete window.__analyticsPageGate; },
+        };
+        window.__analyticsPageGate = state;
+        window.fetch = async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          const cursor = method === "GET" && url.pathname.endsWith("/v1/inference/analytics/activity") ? url.searchParams.get("beforeId") : null;
+          if (cursor) state.cursors.push(cursor);
+          const response = await original.call(window, input, init);
+          if (cursor === beforeId && !state.held) {
+            const readText = response.text.bind(response);
+            // Deliver real headers, but hold the real body across the automatic refresh.
+            response.text = async () => {
+              const text = await readText();
+              state.status = response.status;
+              state.held = true;
+              await new Promise<void>((resolve, reject) => {
+                const timer = setTimeout(() => { state.expired = true; reject(new Error("Analytics page gate timed out")); }, 60_000);
+                state.release = () => { clearTimeout(timer); resolve(); };
+              });
+              state.delivered = true;
+              return text;
+            };
+          }
+          return response;
+        };
+      }, [beforeId]));
+      return {
+        read: () => evaluate(web.client, () => {
+          if (!window.__analyticsPageGate) throw new Error("Analytics page gate lost its document");
+          const { cursors, held, delivered, expired, status } = window.__analyticsPageGate;
+          return { cursors, held, delivered, expired, status };
+        }),
+        release: () => seed.evalIn(web, () => {
+          if (!window.__analyticsPageGate?.held) throw new Error("No analytics page is held");
+          window.__analyticsPageGate.release();
+        }),
+        async [Symbol.asyncDispose]() { await seed.evalIn(web, () => window.__analyticsPageGate?.restore()); },
+      };
+    },
+  };
 }
 
 export async function modelsInferenceWorld(seed: Seed) {

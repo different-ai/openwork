@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { assertAbsent, locate, TargetNotFoundError, mapKey, parseTarget, readDom, waitForLocated } from "../src/input.ts";
+import { assertAbsent, locate, TargetNotFoundError, mapKey, parseTarget, pressKey, readDom, waitForLocated } from "../src/input.ts";
 import type { Surface } from "../src/surface.ts";
 
 function surfaceReturning(value: unknown): Surface {
@@ -42,6 +42,7 @@ test("parseTarget normalizes bare, structured, and regular-expression targets", 
     nth: 0,
     composer: false,
   });
+  assert.equal(parseTarget({ role: "switch", label: "Check automatically" }).role, "switch");
 });
 
 test("mapKey produces CDP key fields and modifier bits", () => {
@@ -69,6 +70,42 @@ test("locate reports visible button and link names when no target matches", asyn
     locate(surface, { role: "button", text: "Missing" }),
     /Visible button\/link candidates: button "Model · gpt-5", link "Provider docs"/,
   );
+});
+
+test("key dispatch leaves native codes to Chrome and retains explicit editing commands", async () => {
+  const surface = surfaceReturning(null);
+  const events: unknown[] = [];
+  surface.client.send = async (method, params) => {
+    assert.equal(method, "Input.dispatchKeyEvent");
+    events.push(params);
+    return {};
+  };
+  await pressKey(surface, "Meta+ArrowDown");
+  await pressKey(surface, "Escape");
+  assert.deepEqual(events, [
+    { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, modifiers: 4, commands: ["moveToEndOfDocument"] },
+    { type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, modifiers: 4 },
+    { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
+    { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
+  ]);
+});
+
+test("click readiness waits for stable geometry rather than hitting a moving menu option", async () => {
+  const surface = surfaceReturning(null);
+  let inspections = 0;
+  surface.client.send = async (method) => {
+    if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+    assert.equal(method, "Runtime.callFunctionOn");
+    const y = Math.min(inspections++, 2) * 20;
+    return { result: { value: {
+      center: { x: 50, y: y + 25 }, rect: { x: 0, y, width: 100, height: 50 },
+      tag: "button", name: "CustomExact", visible: true, hitTestOk: true,
+      editable: false, value: "", text: "CustomExact", covering: null,
+    } } };
+  };
+  const target = await waitForLocated(surface, "CustomExact", { mustHitTest: true, timeoutMs: 2_000 });
+  assert.equal(inspections, 4);
+  assert.equal(target.rect.y, 40);
 });
 
 test("waitForLocated identifies the element covering a visible target", async () => {

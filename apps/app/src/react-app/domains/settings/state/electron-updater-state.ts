@@ -43,6 +43,8 @@ type UseElectronUpdaterStateOptions = {
   onReleaseChannelChange: (next: ReleaseChannel) => void;
   updateAutoCheck: boolean;
   updateAutoDownload: boolean;
+  /** False until the organization's update policy can be honoured (activation done, desktop config resolved). */
+  updatePolicyKnown: boolean;
   desktopConfig: DenDesktopConfig | null | undefined;
   refreshDesktopConfig: () => Promise<DenDesktopConfig>;
   setError: (message: string | null) => void;
@@ -148,6 +150,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     onReleaseChannelChange,
     updateAutoCheck,
     updateAutoDownload,
+    updatePolicyKnown,
     desktopConfig,
     refreshDesktopConfig,
     setError,
@@ -272,11 +275,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       requestedReleaseChannel,
     ).catch((error: unknown) => {
       if (isCurrentReleaseChannel()) {
+        const message = describeError(error);
         setUpdateStatus({
           state: "error",
-          message: describeError(error),
+          message,
           failedAction: "download",
         });
+        setError(message);
       }
       return null;
     });
@@ -317,11 +322,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       const result = await bridge.download();
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
+        const message = result?.reason ?? "Update download failed.";
         setUpdateStatus({
           state: "error",
-          message: result?.reason ?? "Update download failed.",
+          message,
           failedAction: "download",
         });
+        setError(message);
         return;
       }
       if (
@@ -343,11 +350,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       }));
     } catch (error) {
       if (!isCurrentReleaseChannel()) return;
+      const message = describeError(error);
       setUpdateStatus({
         state: "error",
-        message: describeError(error),
+        message,
         failedAction: "download",
       });
+      setError(message);
     } finally {
       unsubProgress?.();
     }
@@ -533,7 +542,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   );
 
   useEffect(() => {
-    if (!updateAutoCheck || updateEnv?.supported === false || !appVersion) return;
+    if (!updatePolicyKnown || !updateAutoCheck || updateEnv?.supported === false || !appVersion) return;
     const key = `${policyReleaseChannel}:${appVersion}`;
     const interval = 15 * 60 * 1000;
     const check = () => {
@@ -559,15 +568,16 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       window.removeEventListener("online", check);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported]);
+  }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported, updatePolicyKnown]);
 
   // Run a check when the native "Check for Updates..." menu item was used.
+  // A request made before the policy is known stays queued until it is.
   const updateCheckRequestedAt = useUpdateCheckRequestStore((state) => state.requestedAt);
   useEffect(() => {
-    if (updateCheckRequestedAt == null || updateEnv?.supported === false) return;
+    if (!updatePolicyKnown || updateCheckRequestedAt == null || updateEnv?.supported === false) return;
     useUpdateCheckRequestStore.getState().clearUpdateCheckRequest();
     void checkForUpdates();
-  }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported]);
+  }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported, updatePolicyKnown]);
 
   const installUpdateAndRestart = useCallback(async () => {
     const releaseChannelRequestId = releaseChannelRequestRef.current;
@@ -593,9 +603,40 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           return;
         }
       }
+      // The download was allowed by the policy in force at check time; the
+      // organization may have revoked that version since, so re-run the policy
+      // allow decision against a fresh desktop config before installing. An
+      // absent allowlist still means unrestricted. Offline, the refresh fails:
+      // fall back to the last known config rather than block an approved
+      // install purely on a network error.
+      const downloadedVersion = updateStatusRef.current?.version;
+      if (downloadedVersion) {
+        const currentDesktopConfig = await refreshDesktopConfig()
+          .catch(() => desktopConfigRef.current);
+        if (!isCurrentReleaseChannel()) return;
+        const stillAllowed = downloadedReleaseChannelRef.current === "alpha"
+          ? await isAlphaUpdateAllowed(downloadedVersion, currentDesktopConfig, appVersion)
+          : isUpdateAllowedByDesktopConfig(downloadedVersion, currentDesktopConfig);
+        if (!isCurrentReleaseChannel()) return;
+        if (!stillAllowed) {
+          downloadedReleaseChannelRef.current = null;
+          availableReleaseChannelRef.current = null;
+          setUpdateStatus({
+            state: "blocked",
+            lastCheckedAt: Date.now(),
+            version: downloadedVersion,
+            message: t("settings.update_blocked_policy", undefined, {
+              version: downloadedVersion,
+            }),
+          });
+          return;
+        }
+      }
       const result = await bridge.installAndRestart();
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
+        const message = result?.reason ?? "Update install failed.";
+        setError(message);
         if (result?.reason === "update-not-downloaded") {
           // The main-side staged download was invalidated; re-check so the UI
           // returns to a working stable-targeted download/install flow.
@@ -606,19 +647,21 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         }
         setUpdateStatus({
           state: "error",
-          message: result?.reason ?? "Update install failed.",
+          message,
           failedAction: "install",
         });
       }
     } catch (error) {
       if (!isCurrentReleaseChannel()) return;
+      const message = describeError(error);
       setUpdateStatus({
         state: "error",
-        message: describeError(error),
+        message,
         failedAction: "install",
       });
+      setError(message);
     }
-  }, [onReleaseChannelChange, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
+  }, [appVersion, onReleaseChannelChange, refreshDesktopConfig, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
 
   const setReleaseChannel = useCallback(
     async (next: ReleaseChannel) => {

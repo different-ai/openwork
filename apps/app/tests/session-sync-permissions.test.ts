@@ -11,6 +11,8 @@ import { useSessionInteractions, type UseSessionInteractionsInput } from "../src
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
+import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
@@ -25,6 +27,10 @@ import {
   coalescePendingDeltas,
   ensureWorkspaceSessionSync,
   permissionKey,
+  markSessionSnapshotFetchStart,
+  snapshotKey,
+  statusKey,
+  todoKey,
   questionKey,
   seedPermissionState,
   seedQuestionState,
@@ -691,6 +697,223 @@ describe("session transcript sync", () => {
 
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
     expect(transcript?.map((message) => message.id)).toEqual(["msg-user", "msg-assistant"]);
+  });
+
+  test("rendering and hydration reuse unchanged history across cached revisits and tail refreshes", () => {
+    const snapshot = snapshotWithMessages(Array.from({ length: 140 }, (_, index) => ({
+      id: `history-${index}`, role: "assistant", text: `answer-${index}`,
+    })));
+    let projectionReads = 0;
+    for (const message of snapshot.messages) {
+      for (const part of message.parts) {
+        if (part.type !== "text") continue;
+        const text = part.text;
+        Object.defineProperty(part, "text", { get() { projectionReads += 1; return text; } });
+      }
+    }
+    const queryClient = getReactQueryClient();
+    const key = transcriptKey("workspace-a", "session-a");
+    const render = (current: OpenworkSessionSnapshot) => deriveRenderedSessionMessages({
+      snapshot: current, transcriptState: queryClient.getQueryData<UIMessage[]>(key),
+    });
+    render(snapshot);
+    seedSessionState("workspace-a", snapshot);
+    const first = render(snapshot);
+    projectionReads = 0;
+    for (let index = 0; index < 20; index += 1) {
+      // A status/title envelope update still contains the exact same history.
+      const revisited = { ...snapshot, session: { ...snapshot.session, title: `title-${index}` } };
+      seedSessionState("workspace-a", revisited);
+      const rendered = render(revisited);
+      expect(rendered.every((message, at) => message === first[at])).toBe(true);
+    }
+    console.info(`cached hydration: history=140, revisits=20, projectionReads=${projectionReads}`);
+    expect(projectionReads).toBe(0);
+
+    const fresh = snapshotWithMessages([{ id: "history-139", role: "assistant", text: "fresh answer" }]);
+    const changed = fresh.messages[0]!;
+    const refreshed = {
+      ...snapshot,
+      messages: [...snapshot.messages.slice(0, -1), {
+        ...changed, info: { ...changed.info, time: { created: 140 } },
+      }],
+    };
+    seedSessionState("workspace-a", refreshed);
+    const rendered = render(refreshed);
+    expect(projectionReads).toBe(0);
+    expect(rendered.slice(0, -1).every((message, at) => message === first[at])).toBe(true);
+    expect(rendered.at(-1)?.parts[0]).toMatchObject({ text: "fresh answer" });
+    expect(snapshotToUIMessages(snapshot).at(-1)?.parts[0]).toMatchObject({ text: "answer-139" });
+  });
+
+  test("todo hydration rejects old reads and cached reapplication but accepts newer snapshots", () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    const old = snapshotWithMessages([]);
+    old.todos = [{ id: "todo-a", content: "Check output", status: "pending", priority: "high" }];
+    const completed = old.todos.map((todo) => ({ ...todo, status: "completed" }));
+    const queryClient = getReactQueryClient();
+    try {
+      setSystemTime(100);
+      markSessionSnapshotFetchStart(old, 100);
+      seedSessionState("workspace-a", old);
+      const unmarked = snapshotWithMessages([]);
+      unmarked.todos = old.todos;
+      seedSessionState("workspace-a", unmarked);
+      seedSessionState("workspace-a", snapshotWithMessages([], "session-b"));
+      setSystemTime(200);
+      __applySessionSyncEventForTest(input, {
+        type: "todo.updated", properties: { sessionID: "session-a", todos: completed },
+      });
+      setSystemTime(300);
+      seedSessionState("workspace-a", old);
+      seedSessionState("workspace-a", unmarked);
+      const late = snapshotWithMessages([]);
+      markSessionSnapshotFetchStart(late, 150);
+      seedSessionState("workspace-a", late);
+      const tied = snapshotWithMessages([]);
+      markSessionSnapshotFetchStart(tied, 200);
+      seedSessionState("workspace-a", tied);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual(completed);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-b"))).toEqual([]);
+      const fresh = snapshotWithMessages([]);
+      markSessionSnapshotFetchStart(fresh, 250);
+      seedSessionState("workspace-a", fresh);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
+      seedSessionState("workspace-a", old);
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
+    } finally { release(); cleanup(); }
+  });
+
+  for (const preview of [true, false]) for (const declared of [true, false]) {
+    test(`snapshot reconciles buffered deltas exactly once (declared=${declared}, preview=${preview})`, () => {
+      const scheduled: Array<() => void> = [];
+      __setSessionSyncDeltaFlushSchedulerForTest((_lane, run) => {
+        scheduled.push(run);
+        return () => {};
+      });
+      const input = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+      const cleanup = __createWorkspaceSessionSyncForTest(input);
+      const release = trackWorkspaceSessionSync(input, "session-a");
+      const queryClient = getReactQueryClient();
+      const key = transcriptKey("workspace-a", "session-a");
+      const releaseNeighbor = trackWorkspaceSessionSync(input, "session-b");
+      try {
+        if (declared) seedSessionState("workspace-a", snapshotWithMessages([
+          { id: "answer", role: "assistant", text: "hello" },
+        ]));
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.delta", properties: {
+            sessionID: "session-b", messageID: "answer", partID: "part_answer", delta: "neighbor text stays separate",
+          },
+        });
+        for (const run of scheduled.splice(0)) run();
+        const delta = (messageId: string, text: string) => __applySessionSyncEventForTest(input, {
+          type: "message.part.delta", properties: {
+            sessionID: "session-a", messageID: messageId, partID: `part_${messageId}`, delta: text,
+          },
+        });
+        delta("answer", declared ? " world" : "hello world");
+        delta("unknown", "retained");
+        const snapshot = snapshotWithMessages([
+          { id: "history", role: "user", text: "unchanged history" },
+          { id: "answer", role: "assistant", text: declared ? "hello world" : "hello" },
+        ]);
+        const projected = snapshotToUIMessages(snapshot);
+        for (const message of projected) {
+          for (const part of message.parts) Object.freeze(part);
+          Object.freeze(message.parts);
+          Object.freeze(message);
+        }
+        Object.freeze(projected);
+        seedSessionState("workspace-a", snapshot, { preview });
+        expect(projected[1]?.parts[0]).toMatchObject({ text: declared ? "hello world" : "hello" });
+        expect(snapshotToUIMessages(snapshot)).toBe(projected);
+        expect(queryClient.getQueryData<UIMessage[]>(key)?.find((message) => message.id === "history")).toEqual(projected[0]);
+        expect(snapshot.messages[1]?.parts[0]).toMatchObject({ text: declared ? "hello world" : "hello" });
+        for (const run of scheduled.splice(0)) run();
+        expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "answer")?.parts[0])
+          .toMatchObject({ text: "hello world" });
+        delta("answer", "!");
+        seedSessionState("workspace-a", snapshot);
+        for (const run of scheduled.splice(0)) run();
+        expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "answer")?.parts[0])
+          .toMatchObject({ text: "hello world!" });
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.updated", properties: { part: {
+            id: "part_unknown", sessionID: "session-a", messageID: "unknown", type: "text", text: "",
+          } },
+        });
+        expect(queryClient.getQueryData<UIMessage[]>(key)?.find((m) => m.id === "unknown")?.parts[0])
+          .toMatchObject({ text: "retained" });
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.updated", properties: { part: {
+            id: "part_answer", sessionID: "session-b", messageID: "answer", type: "text", text: "",
+          } },
+        });
+        expect(queryClient.getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-b"))?.[0]?.parts[0])
+          .toMatchObject({ text: "neighbor text stays separate" });
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.delta", properties: {
+            sessionID: "session-b", messageID: "answer", partID: "part_answer", delta: "!",
+          },
+        });
+        __applySessionSyncEventForTest(input, {
+          type: "message.part.updated", properties: { part: {
+            id: "part_answer", sessionID: "session-a", messageID: "answer", type: "text", text: "hello world!",
+          } },
+        });
+        for (const run of scheduled.splice(0)) run();
+        expect(queryClient.getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-b"))?.[0]?.parts[0])
+          .toMatchObject({ text: "neighbor text stays separate!" });
+      } finally { releaseNeighbor(); release(); cleanup(); __setSessionSyncDeltaFlushSchedulerForTest(null); }
+    });
+  }
+
+  test("a preview supplies live part baselines without seeding status, todos, admission, or complete history", () => {
+    const scheduled: Array<() => void> = [];
+    __setSessionSyncDeltaFlushSchedulerForTest((_lane, run) => { scheduled.push(run); return () => {}; });
+    const input = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    const queryClient = getReactQueryClient();
+    const key = transcriptKey("workspace-a", "session-a");
+    try {
+      const preview = snapshotWithMessages([{ id: "answer", role: "assistant", text: "Existing answer" }]);
+      markSessionSnapshotFetchStart(preview, Date.now());
+      const activity = useSessionActivityStore.getState().recordsByWorkspaceId;
+      seedSessionState("workspace-a", preview, { preview: true });
+      expect(queryClient.getQueryData(snapshotKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(queryClient.getQueryData(statusKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId).toBe(activity);
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: {
+        sessionID: "session-a", messageID: "answer", partID: "part_answer", delta: " continues",
+      } });
+      for (const run of scheduled.splice(0)) run();
+      expect(deriveRenderedSessionMessages({ snapshot: preview, transcriptState: queryClient.getQueryData(key), historyComplete: false })[0]?.parts[0])
+        .toMatchObject({ text: "Existing answer continues" });
+      seedSessionState("workspace-a", snapshotWithMessages([
+        { id: "earlier", role: "user", text: "Earlier prompt" },
+        { id: "answer", role: "assistant", text: "Existing answer" },
+      ]));
+      for (const run of scheduled.splice(0)) run();
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.map((message) => message.id)).toEqual(["earlier", "answer"]);
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.[1]?.parts[0]).toMatchObject({ text: "Existing answer continues" });
+    } finally { release(); cleanup(); __setSessionSyncDeltaFlushSchedulerForTest(null); }
+  });
+
+  test("a reverted preview neither seeds its suffix nor truncates a known live transcript", () => {
+    const queryClient = getReactQueryClient();
+    const key = transcriptKey("workspace-a", "session-a");
+    const current = [uiMessage("before", "user", "Kept")];
+    queryClient.setQueryData(key, current);
+    const preview = snapshotWithMessages([{ id: "hidden", role: "assistant", text: "Reverted away" }]);
+    preview.session.revert = { messageID: "missing-cursor" };
+    seedSessionState("workspace-a", preview, { preview: true });
+    expect(queryClient.getQueryData(key)).toEqual(current);
+    expect(queryClient.getQueryData(snapshotKey("workspace-a", "session-a"))).toBeUndefined();
   });
 
   test("keeps longer live text when an idle snapshot lags the event stream", () => {

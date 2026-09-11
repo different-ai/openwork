@@ -62,18 +62,22 @@ Optional adapters:
   scheme. `true` retains the existing delayed blank-page/hide handoff. Desktop's
   wrapper recognizes `openwork://` and `openwork-dev://`; the shared host does not.
 - `popupDisposition({ url, ownerId, tabId }): "embedded" | "external" | "deny"`
-  (may return a promise): defaults to external, including Desktop's existing
-  same-owner embedded fallback on external policy denial. `embedded` uses the
-  same marker/open path, checks embedded policy, and preserves the captured
-  opener owner. Denied embedded policy does not fall back externally.
+  (may return a promise): Coworker's adapter uses the marker/open path and
+  preserves the captured opener owner. Without an adapter, Desktop retains
+  Electron's opener-linked popup contents in the shared host. Policy denial
+  never falls back to an external browser.
 - `onEvent(channel, payload)`: receive existing `openwork:browser:*` events
   instead of sending them to the main renderer. Payloads retain
   `ownerSessionId`, `visibleSessionId`, `activeTabIdByOwner`, and panel tab shapes.
 - `BrowserWindow`: optional Electron constructor override for the parking host.
-- `menuOverlay`: omitted by default. To use Desktop's native overlay, supply
-  `{ preloadPath, loadRenderer(view), listInstalledBrowsers(), openBuiltinLabel }`.
-  Desktop supplies its current renderer, installed-browser catalog and label.
-  Coworker may omit it and use its own UI; no overlay preload is then required.
+- `showNativeContextMenu`, `closeNativeContextMenu`, `listInstalledBrowsers`:
+  Desktop's native menu services. No overlay renderer or preload is needed.
+- `createBrowserTaskHost`, `createWebMcpBroker`, `createWebMcpFramePolicy`,
+  `BrowserTaskError`: Desktop injects its existing task/WebMCP services. Their
+  view lifecycle, navigation guard, approval, result disclosure, invalidation
+  and IPC wiring live in this shared host. Coworker omits these services and
+  keeps its own native execution broker as the sole authority. The pure
+  Desktop service modules stay in Desktop rather than being duplicated here.
 
 ### Direct API (no IPC registration)
 
@@ -92,7 +96,10 @@ Optional adapters:
   owner's views and restore the new owner's active view. Returns that owner ID.
 - `show(bounds, { sessionId?, ensureTab?, preloadDefault? }?)`, `hide()`,
   `setBounds(bounds)`: existing panel lifecycle; bounds are renderer CSS pixels
-  `{ x, y, width, height }`. `setBounds` alone does not show a hidden panel.
+  `{ x, y, width, height, zoomFactor? }`. Stamped bounds are rejected if zoom
+  changed during delivery; accepted rectangles are cached as window DIPs.
+  Unstamped Coworker calls retain their CSS-pixel contract. `setBounds` alone
+  does not show a hidden panel.
 - `navigate(url)`, `back()`, `forward()`, `reload()`: existing controls on the
   current on-screen tab. `navigate` creates a tab for the visible owner if needed;
   it schedules the load rather than awaiting navigation completion.
@@ -114,7 +121,8 @@ visible owner until explicit tab selection or showing/selecting that owner.
 
 The host ships as plain ESM; no package compilation step is required. Keep
 `electron` external when bundling a main process. `@openwork/browser-tabs/preload`
-exports the unchanged sandbox-compatible CJS asset; **resolve/copy it, do not
+exports the sandbox-compatible CJS asset, including WebMCP and scoped Escape;
+**resolve/copy it, do not
 import or bundle it into the main process**.
 
 For an unbundled Electron app (Desktop), resolve at runtime with

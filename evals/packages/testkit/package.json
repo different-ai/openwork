@@ -20,6 +20,6 @@
     "@openwork/hosts": "workspace:*",
     "@openwork/labs": "workspace:*",
     "mysql2": "^3.11.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }

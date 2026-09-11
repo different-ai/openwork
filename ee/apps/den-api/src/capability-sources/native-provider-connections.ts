@@ -1,7 +1,8 @@
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { ConnectedAccountTable } from "@openwork-ee/den-db/schema"
+import { ConnectedAccountTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import {
   clientSelectedFeatures,
   NATIVE_OAUTH_PROVIDERS,
@@ -12,6 +13,7 @@ import {
 import { getConnectedAccount, getOrgOAuthClient } from "./oauth-credentials.js"
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
+import { memberFacingMcpConnectionsEnabled } from "./external-mcp-rollout.js"
 
 /**
  * Native providers (google-workspace, ...) surface in the SAME member-facing
@@ -32,7 +34,7 @@ export type NativeProviderConnectionEntry = {
   /** Native providers are implemented by Den itself and never have a standard MCP catalog to expose. */
   exposeDirectly: false
   connected: boolean
-  connectedAt: null
+  connectedAt: string | null
   connectedForMe: boolean
   needsReconnect: boolean
   missingFeatures: string[]
@@ -75,6 +77,7 @@ export function buildNativeProviderEntry(
   state: {
     clientConfigured: boolean
     connectedForMe: boolean
+    connectedAt?: Date
     externalAccountId?: string | null
     grantedScopes?: string[] | null
     reconnect?: NativeProviderReconnectState
@@ -95,7 +98,7 @@ export function buildNativeProviderEntry(
     exposeDirectly: false,
     nativeProviderKey: provider.providerId,
     connected: true,
-    connectedAt: null,
+    connectedAt: state.connectedForMe && state.connectedAt ? state.connectedAt.toISOString() : null,
     connectedForMe: state.connectedForMe,
     needsReconnect: state.reconnect?.needsReconnect ?? false,
     missingFeatures: state.reconnect?.missingFeatures ?? [],
@@ -107,11 +110,32 @@ export function buildNativeProviderEntry(
   }
 }
 
+export type NativeProviderPolicyError = { kind: "policy_blocked"; message: string }
+
+export async function nativeProviderConnectionPolicyError(organizationId: DenTypeId<"organization">): Promise<NativeProviderPolicyError | null> {
+  const [organization] = await db
+    .select({ metadata: OrganizationTable.metadata })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, organizationId))
+    .limit(1)
+  if (organization && memberFacingMcpConnectionsEnabled(organization.metadata, {
+    gatingEnabled: env.mcpConnectionsGatingEnabled,
+  })) return null
+  return {
+    kind: "policy_blocked",
+    message: organization
+      ? "Connect is disabled for this organization. Ask your administrator to have it re-enabled."
+      : "This organization is unavailable. Ask your administrator to check your organization access.",
+  }
+}
+
 export async function listNativeProviderUsableEntries(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   teamIds?: DenTypeId<"team">[]
 }): Promise<NativeProviderConnectionEntry[]> {
+  // Recheck at resolution so retained capability names and Code Mode calls cannot bypass an org disable.
+  if (await nativeProviderConnectionPolicyError(input.organizationId)) return []
   const entries: NativeProviderConnectionEntry[] = []
   const connections = await listUsableNativeProviderConnections({
     organizationId: input.organizationId,
@@ -132,6 +156,7 @@ export async function listNativeProviderUsableEntries(input: {
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),
+      connectedAt: account?.connectedAt,
       credentialProviderId: connection.id,
       name: connection.name,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
@@ -160,6 +185,7 @@ export async function listNativeProviderUsableEntries(input: {
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),
+      connectedAt: account?.connectedAt,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
       ...(account?.scopes ? { grantedScopes: account.scopes } : {}),
       ...(provider.tenantIdExtraKey
@@ -180,6 +206,7 @@ export async function resolveDefaultNativeProviderCredentialId(input: {
   nativeProviderKey: string
   teamIds: DenTypeId<"team">[]
 }): Promise<string | null> {
+  if (await nativeProviderConnectionPolicyError(input.organizationId)) return null
   // The literal registry key is the legacy alias: it has no connector row or
   // access grants, so it intentionally remains implicitly org-wide.
   if (await getOrgOAuthClient(input.organizationId, input.nativeProviderKey)) {

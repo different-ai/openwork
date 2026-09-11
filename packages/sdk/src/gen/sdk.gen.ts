@@ -5,21 +5,46 @@ import { buildClientParams, type Client, type Options as Options2, type TDataSha
 import type {
   ActivateAutomationErrors,
   ActivateAutomationResponses,
+  AppendGoogleSheetsValuesErrors,
+  AppendGoogleSheetsValuesResponses,
   ArchiveAutomationErrors,
   ArchiveAutomationResponses,
   CancelAutomationRunErrors,
   CancelAutomationRunResponses,
+  CancelMicrosoft365CalendarEventErrors,
+  CancelMicrosoft365CalendarEventResponses,
   CreateAutomationErrors,
   CreateAutomationResponses,
   CreateCloudAutomationErrors,
   CreateCloudAutomationResponses,
+  CreateGmailLabelErrors,
+  CreateGmailLabelResponses,
+  CreateGoogleDriveFolderErrors,
+  CreateGoogleDriveFolderResponses,
+  CreateGoogleSpreadsheetErrors,
+  CreateGoogleSpreadsheetResponses,
   CreateInstallLinkRequest,
+  CreateMicrosoft365DriveFolderErrors,
+  CreateMicrosoft365DriveFolderResponses,
+  CreateMicrosoft365ReplyDraftErrors,
+  CreateMicrosoft365ReplyDraftResponses,
   CreateOrganizationApiKeyRequest,
   DashboardElement,
   DeactivateAutomationErrors,
   DeactivateAutomationResponses,
+  DeleteApiAuthScimV2GroupsByGroupIdErrors,
   DeleteApiAuthScimV2GroupsByGroupIdResponses,
+  DeleteGmailDraftErrors,
+  DeleteGmailDraftResponses,
+  DeleteGmailLabelErrors,
+  DeleteGmailLabelResponses,
+  DeleteGoogleCalendarEventErrors,
+  DeleteGoogleCalendarEventResponses,
+  DeleteMicrosoft365CalendarEventErrors,
+  DeleteMicrosoft365CalendarEventResponses,
+  DeleteV1AdminAdminsByAdminIdErrors,
   DeleteV1AdminAdminsByAdminIdResponses,
+  DeleteV1AdminUsersByUserIdErrors,
   DeleteV1AdminUsersByUserIdResponses,
   DeleteV1ConfigObjectsByConfigObjectIdAccessByGrantIdErrors,
   DeleteV1ConfigObjectsByConfigObjectIdAccessByGrantIdResponses,
@@ -36,6 +61,7 @@ import type {
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1InferenceAnalyticsLangfuseErrors,
   DeleteV1InferenceAnalyticsLangfuseResponses,
   DeleteV1LlmProvidersByKeyByExternalKeyResponses,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdErrors,
@@ -76,6 +102,7 @@ import type {
   DeleteV1TeamsByTeamIdResponses,
   DeleteV1WorkersByIdErrors,
   DeleteV1WorkersByIdResponses,
+  DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentErrors,
   DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentResponses,
   DenDesktopPolicyDocumentWrite,
   ExternalMcpConnectionAccessInput,
@@ -85,19 +112,35 @@ import type {
   ExternalMcpIssuerReviewInput,
   ExternalMcpRequirementsDiscoveryInput,
   ExternalMcpResolveInput,
-  GetApiAuthOauth2AuthorizeResponses,
+  GetApiAuthOauth2AuthorizeErrors,
+  GetApiAuthScimV2GroupsByGroupIdErrors,
   GetApiAuthScimV2GroupsByGroupIdResponses,
+  GetApiAuthScimV2GroupsErrors,
   GetApiAuthScimV2GroupsResponses,
+  GetApiAuthScimV2ResourceTypesErrors,
+  GetApiAuthScimV2ResourceTypesGroupErrors,
   GetApiAuthScimV2ResourceTypesGroupResponses,
   GetApiAuthScimV2ResourceTypesResponses,
+  GetApiAuthScimV2SchemasErrors,
   GetApiAuthScimV2SchemasResponses,
   GetApiAuthWellKnownOauthAuthorizationServerResponses,
   GetApiAuthWellKnownOpenidConfigurationResponses,
+  GetAutomationDesktopRunnerPresenceErrors,
   GetAutomationDesktopRunnerPresenceResponses,
   GetAutomationErrors,
   GetAutomationResponses,
   GetAutomationRunErrors,
   GetAutomationRunResponses,
+  GetGmailDraftErrors,
+  GetGmailDraftResponses,
+  GetGoogleCalendarEventErrors,
+  GetGoogleCalendarEventResponses,
+  GetGoogleDriveFileMetadataErrors,
+  GetGoogleDriveFileMetadataResponses,
+  GetGoogleSheetsValuesErrors,
+  GetGoogleSheetsValuesResponses,
+  GetGoogleSpreadsheetErrors,
+  GetGoogleSpreadsheetResponses,
   GetHealthResponses,
   GetMcpAdminWellKnownOauthProtectedResourceResponses,
   GetMcpAgentWellKnownOauthProtectedResourceResponses,
@@ -106,11 +149,13 @@ import type {
   GetReadyResponses,
   GetV1AdminMetricsErrors,
   GetV1AdminMetricsResponses,
+  GetV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
   GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
   GetV1AdminOrganizationsErrors,
   GetV1AdminOrganizationsResponses,
   GetV1AdminOverviewErrors,
   GetV1AdminOverviewResponses,
+  GetV1AdminUsersByUserIdInferenceUsageErrors,
   GetV1AdminUsersByUserIdInferenceUsageResponses,
   GetV1AdminUsersErrors,
   GetV1AdminUsersResponses,
@@ -122,8 +167,6 @@ import type {
   GetV1AuthBootstrapStatusResponses,
   GetV1AuthLoginOptionsErrors,
   GetV1AuthLoginOptionsResponses,
-  GetV1AutomationRunnersEventsResponses,
-  GetV1AutomationRunnerWorkResponses,
   GetV1BrandAssetsByOrganizationIdByKindByVersionErrors,
   GetV1BrandAssetsByOrganizationIdByKindByVersionResponses,
   GetV1CapabilitiesGoogleWorkspaceCalendarEventsErrors,
@@ -210,8 +253,6 @@ import type {
   GetV1DesktopPoliciesByKeyByExternalKeyResponses,
   GetV1DesktopPoliciesErrors,
   GetV1DesktopPoliciesResponses,
-  GetV1DevEmailsLastResponses,
-  GetV1DevEmailsResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
   GetV1InferenceAnalyticsActivityResponses,
@@ -286,6 +327,7 @@ import type {
   GetV1MemoryResponses,
   GetV1MemorySearchErrors,
   GetV1MemorySearchResponses,
+  GetV1MeOrgsErrors,
   GetV1MeOrgsResponses,
   GetV1MePluginAccessErrors,
   GetV1MePluginAccessResponses,
@@ -347,8 +389,11 @@ import type {
   GetV1WorkflowsByConfigObjectIdResponses,
   GetV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdErrors,
   GetV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdResponses,
+  GetV1WorkflowsByConfigObjectIdSnapshotsErrors,
   GetV1WorkflowsByConfigObjectIdSnapshotsResponses,
+  GetV1WorkflowsByConfigObjectIdVersionsErrors,
   GetV1WorkflowsByConfigObjectIdVersionsResponses,
+  GetV1WorkflowsByConfigObjectIdViewsErrors,
   GetV1WorkflowsByConfigObjectIdViewsResponses,
   GetV1WorkflowsErrors,
   GetV1WorkflowsResponses,
@@ -363,20 +408,40 @@ import type {
   GoogleWorkspaceCreateCalendarEventBody,
   GoogleWorkspaceShareDriveFileBody,
   GoogleWorkspaceUpdateCalendarEventBody,
+  ListAutomationRunsErrors,
   ListAutomationRunsResponses,
   ListAutomationsErrors,
   ListAutomationsResponses,
+  ListGmailDraftsErrors,
+  ListGmailDraftsResponses,
+  ListGmailLabelsErrors,
+  ListGmailLabelsResponses,
+  Microsoft365CalendarCancelBody,
+  Microsoft365CalendarDeleteBody,
   Microsoft365CalendarEventBody,
+  Microsoft365CalendarEventUpdateBody,
   Microsoft365DriveFileWriteBody,
+  Microsoft365DriveFolderBody,
+  Microsoft365DriveItemUpdateBody,
   Microsoft365MailDraftBody,
+  Microsoft365MailMessageMoveBody,
+  Microsoft365MailMessageUpdateBody,
+  Microsoft365MailReplyDraftBody,
+  Microsoft365MailSendBody,
   Microsoft365TeamsMessageBody,
   MintAutomationRunnerTokenErrors,
   MintAutomationRunnerTokenResponses,
+  MoveMicrosoft365MailMessageErrors,
+  MoveMicrosoft365MailMessageResponses,
+  PatchApiAuthScimV2GroupsByGroupIdErrors,
   PatchApiAuthScimV2GroupsByGroupIdResponses,
+  PatchApiAuthScimV2UsersByUserIdErrors,
   PatchApiAuthScimV2UsersByUserIdResponses,
   PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
   PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
+  PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
+  PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
   PatchV1AdminOrganizationsByOrganizationIdPlanResponses,
   PatchV1CapabilitiesGoogleWorkspaceCalendarEventByEventIdErrors,
   PatchV1CapabilitiesGoogleWorkspaceCalendarEventByEventIdResponses,
@@ -412,11 +477,17 @@ import type {
   PatchV1TeamsByTeamIdResponses,
   PatchV1WorkersByIdErrors,
   PatchV1WorkersByIdResponses,
+  PostApiAuthOauth2RegisterErrors,
   PostApiAuthOauth2RegisterResponses,
+  PostApiAuthScimV2GroupsErrors,
   PostApiAuthScimV2GroupsResponses,
+  PostApiAuthScimV2UsersErrors,
   PostApiAuthScimV2UsersResponses,
+  PostRegisterErrors,
   PostRegisterResponses,
+  PostV1AdminAdminsErrors,
   PostV1AdminAdminsResponses,
+  PostV1AdminUsersByUserIdInferenceUsageResetErrors,
   PostV1AdminUsersByUserIdInferenceUsageResetResponses,
   PostV1ApiKeysErrors,
   PostV1ApiKeysResponses,
@@ -424,14 +495,12 @@ import type {
   PostV1AppsByAppIdSaveResponses,
   PostV1AppsByAppIdShareErrors,
   PostV1AppsByAppIdShareResponses,
+  PostV1ArtifactViewsByArtifactViewIdRetireErrors,
   PostV1ArtifactViewsByArtifactViewIdRetireResponses,
+  PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateErrors,
   PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
   PostV1AuthBootstrapVerifyErrors,
   PostV1AuthBootstrapVerifyResponses,
-  PostV1AutomationRunsByIdClaimResponses,
-  PostV1AutomationRunsByIdCompleteResponses,
-  PostV1AutomationRunsByIdEventsResponses,
-  PostV1AutomationRunsByIdHeartbeatResponses,
   PostV1BootstrapClaimsAcceptErrors,
   PostV1BootstrapClaimsAcceptResponses,
   PostV1BootstrapWorkspaceErrors,
@@ -518,8 +587,11 @@ import type {
   PostV1DirectUploadsGoogleWorkspaceDriveFilesResponses,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsErrors,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsResponses,
+  PostV1InferenceAnalyticsEventsErrors,
   PostV1InferenceAnalyticsEventsResponses,
+  PostV1InferenceAnalyticsLangfuseConnectErrors,
   PostV1InferenceAnalyticsLangfuseConnectResponses,
+  PostV1InferenceAnalyticsLangfuseTestErrors,
   PostV1InferenceAnalyticsLangfuseTestResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
@@ -598,8 +670,6 @@ import type {
   PostV1PluginsImportMcpsFromGithubUrlPreviewResponses,
   PostV1PluginsImportMcpsFromGithubUrlResponses,
   PostV1PluginsResponses,
-  PostV1RemoteSessionCommandsByIdClaimResponses,
-  PostV1RemoteSessionCommandsByIdCompleteResponses,
   PostV1RolesErrors,
   PostV1RolesResponses,
   PostV1ScimReconcileErrors,
@@ -609,6 +679,7 @@ import type {
   PostV1SkillHubsBySkillHubIdAccessErrors,
   PostV1SkillHubsBySkillHubIdSkillsErrors,
   PostV1SkillHubsErrors,
+  PostV1SsoDisableErrors,
   PostV1SsoDisableResponses,
   PostV1SsoEnableErrors,
   PostV1SsoEnableResponses,
@@ -618,6 +689,7 @@ import type {
   PostV1SsoRequestDomainVerificationResponses,
   PostV1SsoSamlErrors,
   PostV1SsoSamlResponses,
+  PostV1SsoTestByIntentIdCancelErrors,
   PostV1SsoTestByIntentIdCancelResponses,
   PostV1SsoTestByIntentIdStartErrors,
   PostV1SsoTestByIntentIdStartResponses,
@@ -645,9 +717,13 @@ import type {
   PostV1WorkflowsByConfigObjectIdVersionsResponses,
   PostV1WorkflowsTestErrors,
   PostV1WorkflowsTestResponses,
+  PutApiAuthScimV2GroupsByGroupIdErrors,
   PutApiAuthScimV2GroupsByGroupIdResponses,
+  PutApiAuthScimV2UsersByUserIdErrors,
   PutApiAuthScimV2UsersByUserIdResponses,
+  PutV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
+  PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessErrors,
   PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessResponses,
   PutV1CapabilitiesMicrosoft365DriveFilesErrors,
   PutV1CapabilitiesMicrosoft365DriveFilesResponses,
@@ -677,14 +753,41 @@ import type {
   RunAutomationNowResponses,
   SaveWorkflowErrors,
   SaveWorkflowResponses,
+  SendGmailDraftErrors,
+  SendGmailDraftResponses,
+  SendMicrosoft365MailDraftErrors,
+  SendMicrosoft365MailDraftResponses,
+  TrashGmailMessageErrors,
+  TrashGmailMessageResponses,
+  UntrashGmailMessageErrors,
+  UntrashGmailMessageResponses,
   UpdateAutomationErrors,
   UpdateAutomationResponses,
+  UpdateGmailDraftErrors,
+  UpdateGmailDraftResponses,
+  UpdateGmailLabelErrors,
+  UpdateGmailLabelResponses,
+  UpdateGmailMessageLabelsErrors,
+  UpdateGmailMessageLabelsResponses,
+  UpdateGoogleCalendarEventErrors,
+  UpdateGoogleCalendarEventResponses,
+  UpdateGoogleDriveFileMetadataErrors,
+  UpdateGoogleDriveFileMetadataResponses,
+  UpdateGoogleSheetsValuesErrors,
+  UpdateGoogleSheetsValuesResponses,
+  UpdateMicrosoft365CalendarEventErrors,
+  UpdateMicrosoft365CalendarEventResponses,
+  UpdateMicrosoft365DriveItemErrors,
+  UpdateMicrosoft365DriveItemResponses,
+  UpdateMicrosoft365MailMessageErrors,
+  UpdateMicrosoft365MailMessageResponses,
 } from "./types.gen.js";
 
-export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<
-  TData,
-  ThrowOnError
-> & {
+export type Options<
+  TData extends TDataShape = TDataShape,
+  ThrowOnError extends boolean = boolean,
+  TResponse = unknown,
+> = Options2<TData, ThrowOnError, TResponse> & {
   /**
    * You can provide a client instance returned by `createClient()` instead of
    * individual options. This might be also useful if you want to implement a
@@ -756,13 +859,23 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Add a platform admin
+   *
+   * Adds an email address to the platform admin allowlist. Body: { email: string, note?: string | null }.
+   */
   public postV1AdminAdmins<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostV1AdminAdminsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<PostV1AdminAdminsResponses, PostV1AdminAdminsErrors, ThrowOnError>({
       url: "/v1/admin/admins",
       ...options,
     });
   }
 
+  /**
+   * Remove a platform admin
+   *
+   * Removes an email address from the platform admin allowlist. Admins cannot remove themselves or the final remaining admin.
+   */
   public deleteV1AdminAdminsByAdminId<ThrowOnError extends boolean = false>(
     parameters: {
       adminId: string;
@@ -770,13 +883,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "adminId" }] }]);
-    return (options?.client ?? this.client).delete<DeleteV1AdminAdminsByAdminIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).delete<
+      DeleteV1AdminAdminsByAdminIdResponses,
+      DeleteV1AdminAdminsByAdminIdErrors,
+      ThrowOnError
+    >({
       url: "/v1/admin/admins/{adminId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Get a user's inference usage
+   *
+   * Returns the user's inference usage per organization and limit window, alongside the organization-wide usage of the same windows.
+   */
   public getV1AdminUsersByUserIdInferenceUsage<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -784,13 +906,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).get<GetV1AdminUsersByUserIdInferenceUsageResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<
+      GetV1AdminUsersByUserIdInferenceUsageResponses,
+      GetV1AdminUsersByUserIdInferenceUsageErrors,
+      ThrowOnError
+    >({
       url: "/v1/admin/users/{userId}/inference-usage",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Reset a user's inference usage
+   *
+   * Removes the user's charges from the current inference limit windows of every organization they belong to and returns the total amount released.
+   */
   public postV1AdminUsersByUserIdInferenceUsageReset<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -800,7 +931,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
     return (options?.client ?? this.client).post<
       PostV1AdminUsersByUserIdInferenceUsageResetResponses,
-      unknown,
+      PostV1AdminUsersByUserIdInferenceUsageResetErrors,
       ThrowOnError
     >({
       url: "/v1/admin/users/{userId}/inference-usage/reset",
@@ -809,6 +940,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Delete a user
+   *
+   * Deletes the user account, revokes its sessions, API keys, OAuth grants and connected accounts, and soft-removes its organization memberships. Admins cannot delete their own user.
+   */
   public deleteV1AdminUsersByUserId<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -816,13 +952,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).delete<DeleteV1AdminUsersByUserIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).delete<
+      DeleteV1AdminUsersByUserIdResponses,
+      DeleteV1AdminUsersByUserIdErrors,
+      ThrowOnError
+    >({
       url: "/v1/admin/users/{userId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Set an organization's plan
+   *
+   * Assigns a manual plan tier and seat limit to the organization. Body: { tier: "free" | "team" | "enterprise", seatLimit: integer }.
+   */
   public patchV1AdminOrganizationsByOrganizationIdPlan<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -832,7 +977,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).patch<
       PatchV1AdminOrganizationsByOrganizationIdPlanResponses,
-      unknown,
+      PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/plan",
@@ -841,6 +986,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Set an organization's free seats
+   *
+   * Sets the total number of free seats for the organization and resynchronizes its seat subscription quantity. Body: { totalFreeSeats: integer }.
+   */
   public patchV1AdminOrganizationsByOrganizationIdFreeSeats<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -850,7 +1000,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).patch<
       PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
-      unknown,
+      PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/free-seats",
@@ -867,8 +1017,8 @@ export class DenClient extends HeyApiClient {
   public patchV1AdminOrganizationsByOrganizationIdDpa<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
-      dpaSigned?: boolean;
-      reason?: string;
+      dpaSigned: boolean;
+      reason: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -900,6 +1050,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Grant or revoke complimentary OpenWork Web access
+   *
+   * Toggles complimentary OpenWork Web access for the organization and records an audit event. Access cannot be granted while a paid OpenWork Web subscription is ongoing. Body: { enabled: boolean, reason: string }.
+   */
   public putV1AdminOrganizationsByOrganizationIdOpenworkWebAccess<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -909,7 +1064,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).put<
       PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessResponses,
-      unknown,
+      PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/openwork-web-access",
@@ -918,6 +1073,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get an organization's capability overrides
+   *
+   * Returns the admin-visible capability flags (install links, MCP connections) for the organization.
+   */
   public getV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -927,7 +1087,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).get<
       GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
-      unknown,
+      GetV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/capabilities",
@@ -936,6 +1096,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Set an organization's capability overrides
+   *
+   * Enables, disables or clears (null) the install-links and MCP-connections capability overrides for the organization. Body: { capabilities: { installLinks?: boolean | null, mcpConnections?: boolean | null } }.
+   */
   public putV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {
       organizationId: string;
@@ -945,7 +1110,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "organizationId" }] }]);
     return (options?.client ?? this.client).put<
       PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
-      unknown,
+      PutV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/capabilities",
@@ -1072,43 +1237,72 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * List SCIM schemas
+   *
+   * Returns the SCIM schemas this server supports (RFC 7644 section 4), combining the Better Auth User schema with the Den Group schema.
+   */
   public getApiAuthScimV2Schemas<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2SchemasResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Schemas",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2SchemasResponses,
+      GetApiAuthScimV2SchemasErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Schemas", ...options });
   }
 
+  /**
+   * Get the SCIM Group resource type
+   */
   public getApiAuthScimV2ResourceTypesGroup<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2ResourceTypesGroupResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/ResourceTypes/Group",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2ResourceTypesGroupResponses,
+      GetApiAuthScimV2ResourceTypesGroupErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/ResourceTypes/Group", ...options });
   }
 
+  /**
+   * List SCIM resource types
+   *
+   * Returns the SCIM resource types this server supports (RFC 7644 section 4), combining the Better Auth User type with the Den Group type.
+   */
   public getApiAuthScimV2ResourceTypes<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2ResourceTypesResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/ResourceTypes",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2ResourceTypesResponses,
+      GetApiAuthScimV2ResourceTypesErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/ResourceTypes", ...options });
   }
 
+  /**
+   * List SCIM groups
+   *
+   * Lists the organization's SCIM-managed groups. Supports the `filter` (displayName or externalId equality), `startIndex` and `count` query parameters from RFC 7644 section 3.4.2.
+   */
   public getApiAuthScimV2Groups<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthScimV2GroupsResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Groups",
-      ...options,
-    });
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2GroupsResponses,
+      GetApiAuthScimV2GroupsErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Groups", ...options });
   }
 
+  /**
+   * Create a SCIM group
+   */
   public postApiAuthScimV2Groups<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostApiAuthScimV2GroupsResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Groups",
-      ...options,
-    });
+    return (options?.client ?? this.client).post<
+      PostApiAuthScimV2GroupsResponses,
+      PostApiAuthScimV2GroupsErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Groups", ...options });
   }
 
+  /**
+   * Delete a SCIM group
+   */
   public deleteApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1116,13 +1310,20 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).delete<DeleteApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).delete<
+      DeleteApiAuthScimV2GroupsByGroupIdResponses,
+      DeleteApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Get a SCIM group
+   */
   public getApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1130,13 +1331,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).get<GetApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<
+      GetApiAuthScimV2GroupsByGroupIdResponses,
+      GetApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Patch a SCIM group
+   *
+   * Applies an RFC 7644 section 3.5.2 PatchOp (add, remove, replace) to the group and returns the updated resource.
+   */
   public patchApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1144,13 +1354,20 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).patch<PatchApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).patch<
+      PatchApiAuthScimV2GroupsByGroupIdResponses,
+      PatchApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Replace a SCIM group
+   */
   public putApiAuthScimV2GroupsByGroupId<ThrowOnError extends boolean = false>(
     parameters: {
       groupId: string;
@@ -1158,13 +1375,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "groupId" }] }]);
-    return (options?.client ?? this.client).put<PutApiAuthScimV2GroupsByGroupIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).put<
+      PutApiAuthScimV2GroupsByGroupIdResponses,
+      PutApiAuthScimV2GroupsByGroupIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Groups/{groupId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Patch a SCIM user
+   *
+   * Forwarded to the Better Auth SCIM server after the bearer token is validated; the resulting user is then synchronized into the organization's membership.
+   */
   public patchApiAuthScimV2UsersByUserId<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -1172,13 +1398,22 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).patch<PatchApiAuthScimV2UsersByUserIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).patch<
+      PatchApiAuthScimV2UsersByUserIdResponses,
+      PatchApiAuthScimV2UsersByUserIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Users/{userId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Replace a SCIM user
+   *
+   * Forwarded to the Better Auth SCIM server after the bearer token is validated; the resulting user is then synchronized into the organization's membership.
+   */
   public putApiAuthScimV2UsersByUserId<ThrowOnError extends boolean = false>(
     parameters: {
       userId: string;
@@ -1186,20 +1421,35 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "userId" }] }]);
-    return (options?.client ?? this.client).put<PutApiAuthScimV2UsersByUserIdResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).put<
+      PutApiAuthScimV2UsersByUserIdResponses,
+      PutApiAuthScimV2UsersByUserIdErrors,
+      ThrowOnError
+    >({
       url: "/api/auth/scim/v2/Users/{userId}",
       ...options,
       ...params,
     });
   }
 
+  /**
+   * Create a SCIM user
+   *
+   * Forwarded to the Better Auth SCIM server after the bearer token is validated; the resulting user is then synchronized into the organization's membership.
+   */
   public postApiAuthScimV2Users<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostApiAuthScimV2UsersResponses, unknown, ThrowOnError>({
-      url: "/api/auth/scim/v2/Users",
-      ...options,
-    });
+    return (options?.client ?? this.client).post<
+      PostApiAuthScimV2UsersResponses,
+      PostApiAuthScimV2UsersErrors,
+      ThrowOnError
+    >({ url: "/api/auth/scim/v2/Users", ...options });
   }
 
+  /**
+   * Get OAuth authorization server metadata
+   *
+   * Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.
+   */
   public getApiAuthWellKnownOauthAuthorizationServer<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1210,6 +1460,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/api/auth/.well-known/oauth-authorization-server", ...options });
   }
 
+  /**
+   * Get OpenID Connect discovery document
+   *
+   * Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.
+   */
   public getApiAuthWellKnownOpenidConfiguration<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1218,6 +1473,11 @@ export class DenClient extends HeyApiClient {
     );
   }
 
+  /**
+   * Get OAuth authorization server metadata
+   *
+   * Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOauthAuthorizationServerApiAuth<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1228,6 +1488,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/.well-known/oauth-authorization-server/api/auth", ...options });
   }
 
+  /**
+   * Get OpenID Connect discovery document
+   *
+   * Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOpenidConfigurationApiAuth<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1236,6 +1501,11 @@ export class DenClient extends HeyApiClient {
     );
   }
 
+  /**
+   * Get OAuth authorization server metadata
+   *
+   * Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOauthAuthorizationServer<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1245,6 +1515,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OpenID Connect discovery document
+   *
+   * Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.
+   */
   public getWellKnownOpenidConfiguration<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetWellKnownOpenidConfigurationResponses, unknown, ThrowOnError>({
       url: "/.well-known/openid-configuration",
@@ -1252,22 +1527,38 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Register an OAuth client dynamically
+   *
+   * RFC 7591 dynamic client registration for MCP clients. The Den registration policy validates redirect URIs and grant types before the request reaches the authorization server.
+   */
   public postRegister<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostRegisterResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<PostRegisterResponses, PostRegisterErrors, ThrowOnError>({
       url: "/register",
       ...options,
     });
   }
 
+  /**
+   * Register an OAuth client dynamically
+   *
+   * RFC 7591 dynamic client registration for MCP clients. The Den registration policy validates redirect URIs and grant types before the request reaches the authorization server.
+   */
   public postApiAuthOauth2Register<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostApiAuthOauth2RegisterResponses, unknown, ThrowOnError>({
-      url: "/api/auth/oauth2/register",
-      ...options,
-    });
+    return (options?.client ?? this.client).post<
+      PostApiAuthOauth2RegisterResponses,
+      PostApiAuthOauth2RegisterErrors,
+      ThrowOnError
+    >({ url: "/api/auth/oauth2/register", ...options });
   }
 
+  /**
+   * Start an OAuth authorization request
+   *
+   * RFC 6749 authorization endpoint. The Den request policy normalizes the MCP client's request, then the user signs in and consents through the Better Auth authorization server; the browser is redirected back to the client's redirect URI.
+   */
   public getApiAuthOauth2Authorize<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetApiAuthOauth2AuthorizeResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<unknown, GetApiAuthOauth2AuthorizeErrors, ThrowOnError>({
       url: "/api/auth/oauth2/authorize",
       ...options,
     });
@@ -1338,8 +1629,8 @@ export class DenClient extends HeyApiClient {
    * Creates a provisional workspace, setup member, starter skill, and short-lived claim links without requiring an email account first.
    */
   public postV1BootstrapWorkspace<ThrowOnError extends boolean = false>(
-    parameters?: {
-      workspaceName?: string;
+    parameters: {
+      workspaceName: string;
       skillName?: string;
       devicePublicKey?: string;
       claimRoles?: Array<"owner" | "admin" | "member">;
@@ -1385,8 +1676,8 @@ export class DenClient extends HeyApiClient {
    * Lets a signed-in human claim ownership or membership of a provisional agent-created workspace.
    */
   public postV1BootstrapClaimsAccept<ThrowOnError extends boolean = false>(
-    parameters?: {
-      token?: string;
+    parameters: {
+      token: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1705,20 +1996,6 @@ export class DenClient extends HeyApiClient {
     });
   }
 
-  public getV1DevEmails<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1DevEmailsResponses, unknown, ThrowOnError>({
-      url: "/v1/dev/emails",
-      ...options,
-    });
-  }
-
-  public getV1DevEmailsLast<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1DevEmailsLastResponses, unknown, ThrowOnError>({
-      url: "/v1/dev/emails/last",
-      ...options,
-    });
-  }
-
   /**
    * Get current user
    *
@@ -1737,7 +2014,7 @@ export class DenClient extends HeyApiClient {
    * Lists the organizations visible to the current user and marks which organization is currently active.
    */
   public getV1MeOrgs<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1MeOrgsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<GetV1MeOrgsResponses, GetV1MeOrgsErrors, ThrowOnError>({
       url: "/v1/me/orgs",
       ...options,
     });
@@ -1762,9 +2039,9 @@ export class DenClient extends HeyApiClient {
    * Updates the signed-in user's display name.
    */
   public patchV1MeProfile<ThrowOnError extends boolean = false>(
-    parameters?: {
-      firstName?: string;
-      lastName?: string;
+    parameters: {
+      firstName: string;
+      lastName: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1810,14 +2087,14 @@ export class DenClient extends HeyApiClient {
    * Mints a time-limited runner-only credential for the desktop SSE connection and HTTP runner APIs.
    */
   public mintAutomationRunnerToken<ThrowOnError extends boolean = false>(
-    parameters?: {
-      runnerId?: string;
-      protocolVersion?: 1;
-      supportedExecutionTargets?: ["desktop"];
+    parameters: {
+      runnerId: string;
+      protocolVersion: 1;
+      supportedExecutionTargets: ["desktop"];
       capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
-      appVersion?: string;
-      platform?: "darwin" | "win32" | "linux";
-      concurrency?: number;
+      appVersion: string;
+      platform: "darwin" | "win32" | "linux";
+      concurrency: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1861,235 +2138,11 @@ export class DenClient extends HeyApiClient {
   public getAutomationDesktopRunnerPresence<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
-    return (options?.client ?? this.client).get<GetAutomationDesktopRunnerPresenceResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runners/presence",
-      ...options,
-    });
-  }
-
-  public getV1AutomationRunnersEvents<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1AutomationRunnersEventsResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runners/events",
-      ...options,
-    });
-  }
-
-  public getV1AutomationRunnerWork<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1AutomationRunnerWorkResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runner/work",
-      ...options,
-    });
-  }
-
-  public postV1RemoteSessionCommandsByIdClaim<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
-    return (options?.client ?? this.client).post<PostV1RemoteSessionCommandsByIdClaimResponses, unknown, ThrowOnError>({
-      url: "/v1/remote-session-commands/{id}/claim",
-      ...options,
-      ...params,
-    });
-  }
-
-  public postV1RemoteSessionCommandsByIdComplete<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      body:
-        | {
-            status: "delivered";
-            sessionId: string;
-            workspaceId: string;
-            resultSummary?: string;
-            error?: unknown;
-          }
-        | {
-            status: "failed";
-            sessionId?: unknown;
-            workspaceId?: unknown;
-            resultSummary?: string;
-            error: {
-              code: string;
-              message: string;
-            };
-          };
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { key: "body", map: "body" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<
-      PostV1RemoteSessionCommandsByIdCompleteResponses,
-      unknown,
+    return (options?.client ?? this.client).get<
+      GetAutomationDesktopRunnerPresenceResponses,
+      GetAutomationDesktopRunnerPresenceErrors,
       ThrowOnError
-    >({
-      url: "/v1/remote-session-commands/{id}/complete",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  public postV1AutomationRunsByIdClaim<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdClaimResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/claim",
-      ...options,
-      ...params,
-    });
-  }
-
-  public postV1AutomationRunsByIdHeartbeat<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      attempt?: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { in: "body", key: "attempt" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdHeartbeatResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/heartbeat",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  public postV1AutomationRunsByIdEvents<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      attempt?: number;
-      sequence?: number;
-      type?: "user" | "assistant" | "capability_search" | "capability_execution" | "usage" | "warning" | "terminal";
-      payload?: {
-        [key: string]: unknown;
-      };
-      createdAt?: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { in: "body", key: "attempt" },
-            { in: "body", key: "sequence" },
-            { in: "body", key: "type" },
-            { in: "body", key: "payload" },
-            { in: "body", key: "createdAt" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdEventsResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/events",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  public postV1AutomationRunsByIdComplete<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      attempt?: number;
-      status?: "succeeded" | "failed" | "cancelled";
-      sessionId?: string | null;
-      workspaceId?: string | null;
-      resultSummary?: string | null;
-      usage?: {
-        inputTokens: number | null;
-        outputTokens: number | null;
-        costMicros: number | null;
-      };
-      error?: {
-        code:
-          | "owner_membership_lost"
-          | "model_access_lost"
-          | "provider_unavailable"
-          | "connect_access_unavailable"
-          | "openwork_web_access_required"
-          | "execution_runtime_unavailable"
-          | "execution_failed"
-          | "execution_timed_out"
-          | "runner_unavailable"
-          | "cancelled"
-          | "lease_lost"
-          | "internal_error";
-        message: string;
-        retryable: boolean;
-      } | null;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { in: "body", key: "attempt" },
-            { in: "body", key: "status" },
-            { in: "body", key: "sessionId" },
-            { in: "body", key: "workspaceId" },
-            { in: "body", key: "resultSummary" },
-            { in: "body", key: "usage" },
-            { in: "body", key: "error" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AutomationRunsByIdCompleteResponses, unknown, ThrowOnError>({
-      url: "/v1/automation-runs/{id}/complete",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
+    >({ url: "/v1/automation-runners/presence", ...options });
   }
 
   /**
@@ -2223,9 +2276,9 @@ export class DenClient extends HeyApiClient {
    * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This is the Web and Cloud Chat creation surface. Placement is fixed to OpenWork Cloud and the Automation can wake a stopped Cloud container without a desktop. Create only when the person explicitly asks to create or schedule it; there is no draft step.
    */
   public createCloudAutomation<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
-      schedule?:
+    parameters: {
+      name: string;
+      schedule:
         | {
             kind: "once";
             timezone: string;
@@ -2244,7 +2297,7 @@ export class DenClient extends HeyApiClient {
             hour: number;
             minute: number;
           };
-      action?:
+      action:
         | {
             kind: "agent";
             instructions: string;
@@ -2505,7 +2558,7 @@ export class DenClient extends HeyApiClient {
         },
       ],
     );
-    return (options?.client ?? this.client).get<ListAutomationRunsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<ListAutomationRunsResponses, ListAutomationRunsErrors, ThrowOnError>({
       url: "/v1/automations/{id}/runs",
       ...options,
       ...params,
@@ -2659,8 +2712,8 @@ export class DenClient extends HeyApiClient {
    * Accepts an organization invitation for the current signed-in user and switches their active organization to the accepted workspace.
    */
   public postV1OrgsInvitationsAccept<ThrowOnError extends boolean = false>(
-    parameters?: {
-      id?: string;
+    parameters: {
+      id: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2772,15 +2825,26 @@ export class DenClient extends HeyApiClient {
   /**
    * List Workflow runs
    *
-   * Lists Workflow run receipts visible to the active organization member.
+   * Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
    */
   public getV1WorkflowRuns<ThrowOnError extends boolean = false>(
     parameters?: {
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "limit" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).get<GetV1WorkflowRunsResponses, GetV1WorkflowRunsErrors, ThrowOnError>({
       url: "/v1/workflow-runs",
       ...options,
@@ -2790,6 +2854,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List accessible Workflows
+   *
+   * Lists every Workflow the calling member can reach through Plugin or direct grants, each with the Plugin it executes under, its latest immutable version id, declared inputSchema and outputSchema, and the capabilities it calls. Workflows whose latest version cannot be parsed are omitted. Use the returned configObjectVersionId to run an exact version.
    */
   public getV1Workflows<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1WorkflowsResponses, GetV1WorkflowsErrors, ThrowOnError>({
@@ -2800,13 +2866,15 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin
+   *
+   * Turns the caller's most recent successful execute_capability_script run into a reusable Workflow: code must match that run byte-for-byte and the run must be less than 15 minutes old (400 workflow_recent_receipt_required), and the tool calls the run made become the Workflow's requiredCapabilities (400 workflow_capability_unavailable when one is no longer in the caller's tool tree). Omit pluginId to save into the member's private My Workflows Plugin, created on first use; passing pluginId requires editor access to that Plugin. Saving a name that already exists in the Plugin adds a new immutable version to that Workflow, which requires manager access to it.
    */
   public saveWorkflow<ThrowOnError extends boolean = false>(
-    parameters?: {
+    parameters: {
       pluginId?: string;
-      name?: string;
+      name: string;
       description?: string;
-      code?: string;
+      code: string;
       currentInput?: unknown;
       inputSchema?: unknown;
       outputSchema?: unknown;
@@ -2843,6 +2911,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect a Workflow
+   *
+   * Returns the Workflow's library entry (caller role, connection readiness, result freshness, view state, Automation count), its detail (current and past versions, latest snapshot, latest successful snapshot), and the generated Artifact views bound to it. maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access; when generated Artifact views are disabled for the deployment, views is empty and viewState is default.
    */
   public getV1WorkflowsByConfigObjectId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2875,6 +2945,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List saved reusable apps
+   *
+   * Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.
    */
   public getV1Apps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
@@ -2885,11 +2957,13 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Share a saved app with a teammate
+   *
+   * Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.
    */
   public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
     parameters: {
       appId: string;
-      email?: string;
+      email: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2922,6 +2996,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Open an app or an exact draft preview
+   *
+   * Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. The data comes from the Workflow's latest successful snapshot, or from the snapshot named by receiptId. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.
    */
   public getV1AppsByAppId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2952,11 +3028,13 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Add or remove an app on your personal dashboard
+   *
+   * Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.
    */
   public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
     parameters: {
       appId: string;
-      added?: boolean;
+      added: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2985,14 +3063,16 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Save an exact app revision for reuse
+   *
+   * Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.
    */
   public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
     parameters: {
       appId: string;
-      revisionId?: string;
-      title?: string;
-      useInWorkflow?: boolean;
-      expectedActiveRevisionId?: string | null;
+      revisionId: string;
+      title: string;
+      useInWorkflow: boolean;
+      expectedActiveRevisionId: string | null;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3024,6 +3104,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List generated Artifact views for a Workflow
+   *
+   * Lists the generated Artifact views bound to this Workflow, newest first, each with its recent revisions and their build status. Requires read access to the Workflow. Returns an empty list when generated Artifact views are disabled for the deployment.
    */
   public getV1WorkflowsByConfigObjectIdViews<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3032,7 +3114,11 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "configObjectId" }] }]);
-    return (options?.client ?? this.client).get<GetV1WorkflowsByConfigObjectIdViewsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).get<
+      GetV1WorkflowsByConfigObjectIdViewsResponses,
+      GetV1WorkflowsByConfigObjectIdViewsErrors,
+      ThrowOnError
+    >({
       url: "/v1/workflows/{configObjectId}/views",
       ...options,
       ...params,
@@ -3041,6 +3127,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Activate or roll back an immutable Artifact view revision
+   *
+   * Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivate<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3062,7 +3150,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).post<
       PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
-      unknown,
+      PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateErrors,
       ThrowOnError
     >({
       url: "/v1/artifact-views/{artifactViewId}/revisions/{revisionId}/activate",
@@ -3073,6 +3161,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Retire a generated Artifact view
+   *
+   * Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRetire<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3083,7 +3173,7 @@ export class DenClient extends HeyApiClient {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "artifactViewId" }] }]);
     return (options?.client ?? this.client).post<
       PostV1ArtifactViewsByArtifactViewIdRetireResponses,
-      unknown,
+      PostV1ArtifactViewsByArtifactViewIdRetireErrors,
       ThrowOnError
     >({
       url: "/v1/artifact-views/{artifactViewId}/retire",
@@ -3094,6 +3184,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List immutable Workflow versions
+   *
+   * Lists the Workflow's immutable versions, newest first, each with its code, call graph, schemas, requiredCapabilities, digests, and the caller's own Automations that pin it. Code, example input, and source-derived graph labels are redacted for members without manager access. Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3102,32 +3194,36 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "configObjectId" }] }]);
-    return (options?.client ?? this.client).get<GetV1WorkflowsByConfigObjectIdVersionsResponses, unknown, ThrowOnError>(
-      {
-        url: "/v1/workflows/{configObjectId}/versions",
-        ...options,
-        ...params,
-      },
-    );
+    return (options?.client ?? this.client).get<
+      GetV1WorkflowsByConfigObjectIdVersionsResponses,
+      GetV1WorkflowsByConfigObjectIdVersionsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/workflows/{configObjectId}/versions",
+      ...options,
+      ...params,
+    });
   }
 
   /**
    * Create an immutable Workflow version using the immediately preceding matching test receipt and unchanged draft
+   *
+   * Appends a new immutable version to the Workflow and updates its name and description. receiptId must reference a successful draft test by the caller that is less than 15 minutes old, has not already produced a version, and whose code, exampleInput, inputSchema, outputSchema, name, description, and requiredCapabilities all match this body byte-for-byte (400 workflow_matching_test_receipt_required). Every capability the test actually called must be listed in requiredCapabilities and still be available to the caller (400 workflow_capability_unavailable). Requires manager access to the Workflow.
    */
   public postV1WorkflowsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      name?: string;
+      name: string;
       description?: string;
-      code?: string;
+      code: string;
       exampleInput?: unknown;
       inputSchema?: unknown;
       outputSchema?: unknown;
-      requiredCapabilities?: Array<{
+      requiredCapabilities: Array<{
         capabilityName: string;
         scriptPath: string;
       }>;
-      receiptId?: string;
+      receiptId: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3167,10 +3263,13 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List Workflow artifact snapshots
+   *
+   * Lists run receipts of saved versions of this Workflow, most recently finished first, including failed runs and runs whose content was deleted (value and markdown are null and contentDeletedAt is set). Draft test runs are not snapshots and never appear here. limit caps the result at 1 to 200 rows (default 100). Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page. Requires read access to the Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshots<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
@@ -3181,6 +3280,7 @@ export class DenClient extends HeyApiClient {
         {
           args: [
             { in: "path", key: "configObjectId" },
+            { in: "query", key: "cursor" },
             { in: "query", key: "limit" },
           ],
         },
@@ -3188,7 +3288,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).get<
       GetV1WorkflowsByConfigObjectIdSnapshotsResponses,
-      unknown,
+      GetV1WorkflowsByConfigObjectIdSnapshotsErrors,
       ThrowOnError
     >({
       url: "/v1/workflows/{configObjectId}/snapshots",
@@ -3199,6 +3299,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Inspect one Workflow artifact snapshot
+   *
+   * Returns one run receipt of a saved version of this Workflow: the validated result value, its Markdown rendering, code and schema digests, tool calls, status, error details, and whether it was produced by an Automation. value and markdown are null once the content has been deleted. Requires read access to the Workflow; receiptId must belong to this Workflow.
    */
   public getV1WorkflowsByConfigObjectIdSnapshotsByReceiptId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3231,20 +3333,22 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Test the exact Workflow draft and return the receiptId required to create that unchanged version
+   *
+   * Executes the draft code once with exampleInput against the caller's live tools, validating the input against inputSchema and the result against outputSchema, and records a durable test receipt. The returned receiptId is the proof required by POST /v1/workflows/{configObjectId}/versions and is only accepted when every draft field is resubmitted unchanged within 15 minutes. Requires manager access to the Workflow; a script failure, argument mismatch, or result mismatch is returned as a 400 with the error code and message.
    */
   public postV1WorkflowsTest<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string;
-      code?: string;
+      code: string;
       exampleInput?: unknown;
       inputSchema?: unknown;
       outputSchema?: unknown;
-      requiredCapabilities?: Array<{
+      requiredCapabilities: Array<{
         capabilityName: string;
         scriptPath: string;
       }>;
-      configObjectId?: string;
+      configObjectId: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3281,12 +3385,14 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Run an exact Workflow version
+   *
+   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
    */
   public postV1WorkflowsByConfigObjectIdRun<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      pluginId?: string;
-      configObjectVersionId?: string;
+      pluginId: string;
+      configObjectVersionId: string;
       input?: unknown;
     },
     options?: Options<never, ThrowOnError>,
@@ -3322,6 +3428,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete artifact content while retaining its audit receipt
+   *
+   * Clears the stored input, result value, and Markdown of one snapshot and stamps contentDeletedAt, while the receipt itself (digests, tool calls, status, timings) stays in history. When the snapshot came from an Automation, that Automation's latest successful result is re-pointed to its newest remaining readable snapshot. Idempotent: deleting already-deleted content returns the snapshot unchanged. Requires manager access to the Workflow.
    */
   public deleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContent<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3343,7 +3451,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).delete<
       DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentResponses,
-      unknown,
+      DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentErrors,
       ThrowOnError
     >({
       url: "/v1/workflows/{configObjectId}/snapshots/{receiptId}/content",
@@ -3354,6 +3462,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards
+   *
+   * Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.
    */
   public getV1Dashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1DashboardsResponses, GetV1DashboardsErrors, ThrowOnError>({
@@ -3364,10 +3474,12 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create dashboard
+   *
+   * Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.
    */
   public postV1Dashboards<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       elements?: Array<DashboardElement>;
     },
     options?: Options<never, ThrowOnError>,
@@ -3397,6 +3509,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete dashboard
+   *
+   * Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.
    */
   public deleteV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3418,6 +3532,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get dashboard
+   *
+   * Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.
    */
   public getV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3439,6 +3555,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update dashboard
+   *
+   * Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.
    */
   public patchV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3478,6 +3596,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboard access grants
+   *
+   * Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.
    */
   public getV1DashboardsByDashboardIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3508,7 +3628,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3544,6 +3664,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Revoke dashboard access
+   *
+   * Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.
    */
   public deleteV1DashboardsByDashboardIdAccessByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3576,6 +3698,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List dashboards granted to the current member
+   *
+   * Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.
    */
   public getV1MeDashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1MeDashboardsResponses, GetV1MeDashboardsErrors, ThrowOnError>({
@@ -3586,6 +3710,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete desktop-policies by stable key
+   *
+   * Deletes the desktop policy identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3607,6 +3733,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read desktop-policies by stable key
+   *
+   * Reads the desktop policy identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3634,8 +3762,8 @@ export class DenClient extends HeyApiClient {
   public putV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      policyName?: string;
-      policy?: DenDesktopPolicyDocumentWrite;
+      policyName: string;
+      policy: DenDesktopPolicyDocumentWrite;
       priority?: number;
       isEnabled?: boolean;
       memberIds?: Array<string>;
@@ -3679,6 +3807,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete desktop policy
+   *
+   * Soft-deletes a custom desktop policy, disables it, and releases its stable externalKey for reuse. The default policy cannot be deleted (400 default_policy_required).
    */
   public deleteV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3700,6 +3830,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read desktop-policies by id
+   *
+   * Reads a single desktop policy by id.
    */
   public getV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3721,12 +3853,14 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update desktop policy
+   *
+   * Rewrites one desktop policy. The full write body is required: the policy document is replaced (access, execution, and onboarding prompts omitted from it are carried over from the stored document) and the member, team, and role assignments are replaced with the ones sent. The default policy keeps its name, priority, and assignments and cannot be disabled (400 default_policy_required).
    */
   public patchV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
     parameters: {
       desktopPolicyId: string;
-      policyName?: string;
-      policy?: DenDesktopPolicyDocumentWrite;
+      policyName: string;
+      policy: DenDesktopPolicyDocumentWrite;
       priority?: number;
       isEnabled?: boolean;
       memberIds?: Array<string>;
@@ -3770,6 +3904,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List desktop policies
+   *
+   * Returns the organization's desktop policies, default policy first and then by name, each with its member, team, and role assignments, alongside the definitions catalog describing every setting a policy document can control. Workspace owners and admins can read; writes require super-admin.
    */
   public getV1DesktopPolicies<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
@@ -3781,11 +3917,13 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create desktop policy
+   *
+   * Creates a desktop policy from a policy document plus optional priority, enabled flag, and assignments to members, teams, or roles (owner, admin, member). Requires the Enterprise plan; referenced members and teams must belong to the organization.
    */
   public postV1DesktopPolicies<ThrowOnError extends boolean = false>(
-    parameters?: {
-      policyName?: string;
-      policy?: DenDesktopPolicyDocumentWrite;
+    parameters: {
+      policyName: string;
+      policy: DenDesktopPolicyDocumentWrite;
       priority?: number;
       isEnabled?: boolean;
       memberIds?: Array<string>;
@@ -3883,8 +4021,8 @@ export class DenClient extends HeyApiClient {
    * Enables or disables OpenWork Models for the active organization.
    */
   public patchV1Inference<ThrowOnError extends boolean = false>(
-    parameters?: {
-      enabled?: boolean;
+    parameters: {
+      enabled: boolean;
       tier?: "tier1" | "tier2";
     },
     options?: Options<never, ThrowOnError>,
@@ -3914,6 +4052,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read the OpenWork Models task analytics choice
+   *
+   * Returns the organization's task analytics state for OpenWork Models: whether the feature is available and the organization has an active Models subscription, whether collection is enabled and when it was consented to, and whether export to a configured Langfuse host is on. Any member can read it.
    */
   public getV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
@@ -3924,10 +4064,12 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Choose whether to collect task analytics included with OpenWork Models
+   *
+   * Turns task analytics collection on or off for the organization. Workspace owners and admins only. Enabling requires the feature, an active OpenWork Models subscription, and consentVersion 1 (403 models_analytics_unavailable otherwise); repeating an already enabled choice keeps the original consent time as the collection cutoff, and disabling also switches export off.
    */
   public patchV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(
-    parameters?: {
-      enabled?: boolean;
+    parameters: {
+      enabled: boolean;
       consentVersion?: 1;
     },
     options?: Options<never, ThrowOnError>,
@@ -3955,9 +4097,14 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Report task analytics events for the calling member's OpenWork Models calls
+   *
+   * Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.
+   */
   public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
-    parameters?: {
-      events?: Array<{
+    parameters: {
+      events: Array<{
         id: string;
         type:
           | "task.started"
@@ -3993,7 +4140,11 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
-    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsEventsResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsEventsResponses,
+      PostV1InferenceAnalyticsEventsErrors,
+      ThrowOnError
+    >({
       url: "/v1/inference/analytics/events",
       ...options,
       ...params,
@@ -4007,6 +4158,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read task activity collected after the analytics choice
+   *
+   * Returns the task analytics events recorded for the organization over the last `days` days (default 30, max 90), newest first, 200 per page with a `next` cursor made of before + beforeId. Filter by memberId, taskId, or sessionId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled.
    */
   public getV1InferenceAnalyticsActivity<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4043,6 +4196,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read provider-reported consumption for OpenWork Models
+   *
+   * Aggregates provider-reported OpenWork Models calls per model, provider, member, and day over the last `days` days (default 30, max 90): call counts, failed and incomplete calls, input, output, and cache-read tokens, and cost in USD. Optionally filter by memberId. Workspace owners and admins only; answers 403 models_analytics_unavailable while collection is disabled and 400 narrow_date_range when the range would produce more than 10,000 groups.
    */
   public getV1InferenceAnalyticsConsumption<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -4077,11 +4232,16 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Test a Langfuse analytics export destination
+   *
+   * Sends an empty batch to the given Langfuse host with the project keys to verify connectivity. Nothing is stored.
+   */
   public postV1InferenceAnalyticsLangfuseTest<ThrowOnError extends boolean = false>(
-    parameters?: {
-      host?: string;
-      publicKey?: string;
-      secretKey?: string;
+    parameters: {
+      host: string;
+      publicKey: string;
+      secretKey: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4097,7 +4257,11 @@ export class DenClient extends HeyApiClient {
         },
       ],
     );
-    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsLangfuseTestResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsLangfuseTestResponses,
+      PostV1InferenceAnalyticsLangfuseTestErrors,
+      ThrowOnError
+    >({
       url: "/v1/inference/analytics/langfuse/test",
       ...options,
       ...params,
@@ -4109,11 +4273,16 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Connect a Langfuse analytics export destination
+   *
+   * Verifies connectivity, then stores the Langfuse destination and starts exporting task analytics recorded from now on. Requires the organization to have opted into task analytics.
+   */
   public postV1InferenceAnalyticsLangfuseConnect<ThrowOnError extends boolean = false>(
-    parameters?: {
-      host?: string;
-      publicKey?: string;
-      secretKey?: string;
+    parameters: {
+      host: string;
+      publicKey: string;
+      secretKey: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4131,7 +4300,7 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).post<
       PostV1InferenceAnalyticsLangfuseConnectResponses,
-      unknown,
+      PostV1InferenceAnalyticsLangfuseConnectErrors,
       ThrowOnError
     >({
       url: "/v1/inference/analytics/langfuse/connect",
@@ -4145,13 +4314,19 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Disconnect the Langfuse analytics export destination
+   *
+   * Stops exporting and forgets the stored Langfuse host and project keys.
+   */
   public deleteV1InferenceAnalyticsLangfuse<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
-    return (options?.client ?? this.client).delete<DeleteV1InferenceAnalyticsLangfuseResponses, unknown, ThrowOnError>({
-      url: "/v1/inference/analytics/langfuse",
-      ...options,
-    });
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceAnalyticsLangfuseResponses,
+      DeleteV1InferenceAnalyticsLangfuseErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/analytics/langfuse", ...options });
   }
 
   /**
@@ -4184,8 +4359,8 @@ export class DenClient extends HeyApiClient {
    * Controls whether provisioned SCIM Groups remain metadata or create and manage organization teams.
    */
   public patchV1Scim<ThrowOnError extends boolean = false>(
-    parameters?: {
-      groupMappingMode?: "metadata_only" | "create_teams";
+    parameters: {
+      groupMappingMode: "metadata_only" | "create_teams";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4310,6 +4485,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Cancel an organization SSO authentication test
+   *
+   * Marks the caller's in-flight SSO test intent as cancelled so it can no longer be started or completed. Only the administrator who created the intent can cancel it; unknown or foreign intents are ignored and still answer 204.
    */
   public postV1SsoTestByIntentIdCancel<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4318,7 +4495,11 @@ export class DenClient extends HeyApiClient {
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "intentId" }] }]);
-    return (options?.client ?? this.client).post<PostV1SsoTestByIntentIdCancelResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<
+      PostV1SsoTestByIntentIdCancelResponses,
+      PostV1SsoTestByIntentIdCancelErrors,
+      ThrowOnError
+    >({
       url: "/v1/sso/test/{intentId}/cancel",
       ...options,
       ...params,
@@ -4327,6 +4508,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Enable the tested organization SSO configuration
+   *
+   * Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires the Enterprise plan; the change is recorded in the organization audit log.
    */
   public postV1SsoEnable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<PostV1SsoEnableResponses, PostV1SsoEnableErrors, ThrowOnError>({
@@ -4337,9 +4520,11 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Disable organization SSO
+   *
+   * Switches the organization's SSO connection to disabled while keeping its provider configuration, so it can be tested and enabled again later. Answers 404 when the organization has no SSO connection; the change is recorded in the organization audit log.
    */
   public postV1SsoDisable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<PostV1SsoDisableResponses, unknown, ThrowOnError>({
+    return (options?.client ?? this.client).post<PostV1SsoDisableResponses, PostV1SsoDisableErrors, ThrowOnError>({
       url: "/v1/sso/disable",
       ...options,
     });
@@ -4391,9 +4576,9 @@ export class DenClient extends HeyApiClient {
    * Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance.
    */
   public postV1Invitations<ThrowOnError extends boolean = false>(
-    parameters?: {
-      email?: string;
-      role?: string;
+    parameters: {
+      email: string;
+      role: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4543,8 +4728,8 @@ export class DenClient extends HeyApiClient {
    * Reports whether a short-lived organization connection code is still pending or has been accepted by a desktop.
    */
   public postV1InstallConnectStatus<ThrowOnError extends boolean = false>(
-    parameters?: {
-      code?: string;
+    parameters: {
+      code: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4571,8 +4756,8 @@ export class DenClient extends HeyApiClient {
    * Resolves a short-lived organization connection code without consuming it.
    */
   public postV1InstallConnectPreview<ThrowOnError extends boolean = false>(
-    parameters?: {
-      code?: string;
+    parameters: {
+      code: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4599,8 +4784,8 @@ export class DenClient extends HeyApiClient {
    * Consumes a short-lived organization connection code exactly once.
    */
   public postV1InstallConnectExchange<ThrowOnError extends boolean = false>(
-    parameters?: {
-      code?: string;
+    parameters: {
+      code: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4657,6 +4842,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete llm-providers by stable key
+   *
+   * Deletes the LLM provider identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4678,6 +4865,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read llm-providers by stable key
+   *
+   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4705,8 +4894,8 @@ export class DenClient extends HeyApiClient {
   public putV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      name?: string;
-      source?: "models_dev" | "custom";
+      name: string;
+      source: "models_dev" | "custom";
       providerId?: string;
       modelIds?: Array<string>;
       customConfigText?: string;
@@ -4785,6 +4974,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read llm-providers by id
+   *
+   * Reads a single LLM provider by id.
    */
   public getV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4812,8 +5003,8 @@ export class DenClient extends HeyApiClient {
   public patchV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
       llmProviderId: string;
-      name?: string;
-      source?: "models_dev" | "custom";
+      name: string;
+      source: "models_dev" | "custom";
       providerId?: string;
       modelIds?: Array<string>;
       customConfigText?: string;
@@ -4873,8 +5064,8 @@ export class DenClient extends HeyApiClient {
    * Probes an OpenAI-compatible endpoint (Azure AI Foundry, LiteLLM, vLLM, gateways) with the given credential: normalizes common base-URL mistakes, calls GET /models, and returns the model ids the endpoint actually serves — on Azure these are the deployment names. Nothing is stored.
    */
   public postV1LlmProvidersTestConnection<ThrowOnError extends boolean = false>(
-    parameters?: {
-      api?: string;
+    parameters: {
+      api: string;
       apiKey?: string;
       modelIds?: Array<string>;
     },
@@ -4969,9 +5160,9 @@ export class DenClient extends HeyApiClient {
    * Creates a new organization-scoped LLM provider from either a models.dev provider template, pasted JSON/JSONC custom configuration, or MCP-supplied customConfig object.
    */
   public postV1LlmProviders<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
-      source?: "models_dev" | "custom";
+    parameters: {
+      name: string;
+      source: "models_dev" | "custom";
       providerId?: string;
       modelIds?: Array<string>;
       customConfigText?: string;
@@ -5045,6 +5236,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete the calling member's LLM provider credential
+   *
+   * Removes the calling member's own stored credential on a granted per-member provider. Answers 200 even when no credential was stored. A credential an admin has blocked is admin-owned and cannot be removed by the member (409 credential_blocked).
    */
   public deleteV1LlmProvidersByLlmProviderIdMyCredential<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5183,6 +5376,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Block one member's LLM provider credential
+   *
+   * Admin-only. Marks one member's credential on the provider as blocked: it is no longer used for inference and the member can neither delete nor overwrite it. Storing a new credential for that member through the admin PUT endpoint is the unblock path.
    */
   public postV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdBlock<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5255,7 +5450,7 @@ export class DenClient extends HeyApiClient {
   public postV1MembersByMemberIdRole<ThrowOnError extends boolean = false>(
     parameters: {
       memberId: string;
-      role?: string;
+      role: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5523,6 +5718,902 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Send an existing Gmail draft
+   *
+   * Sends the existing draft unchanged, including To/Cc/Bcc, reply threading and attachments. Create or inspect the draft first. Requires gmail.compose or gmail.modify (gmail.send alone does not authorize drafts.send). A successful response contains the actual sent message id and threadId, not the old draft message ID. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public sendGmailDraft<ThrowOnError extends boolean = false>(
+    parameters: {
+      draftId: string;
+      confirm: true;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "draftId" },
+            { in: "body", key: "confirm" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<SendGmailDraftResponses, SendGmailDraftErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}/send",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List or search Gmail drafts
+   *
+   * Returns one page of drafts and the actual nextPageToken, if any. Pass it as pageToken for the next page. Requires gmail.readonly, gmail.compose or gmail.modify. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public listGmailDrafts<ThrowOnError extends boolean = false>(
+    parameters?: {
+      q?: string;
+      maxResults?: number;
+      pageToken?: string;
+      includeSpamTrash?: "true" | "false";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "q" },
+            { in: "query", key: "maxResults" },
+            { in: "query", key: "pageToken" },
+            { in: "query", key: "includeSpamTrash" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<ListGmailDraftsResponses, ListGmailDraftsErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-drafts",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create a Gmail draft or threaded reply with optional workspace attachments
+   *
+   * Creates a plain-text Gmail draft in the calling member own mailbox. Optional attachments are workspace paths, up to 10 files totaling at most 4 MiB, fulfilled outside model context by a supporting OpenWork host on direct execute_capability calls. Code Mode and other MCP hosts cannot fulfill attachments and create no draft. Set threadId for replies and forwards. Always share the returned draftUrl.
+   */
+  public postV1CapabilitiesGoogleWorkspaceGmailDrafts<ThrowOnError extends boolean = false>(
+    parameters: {
+      to: string;
+      cc?: string;
+      bcc?: string;
+      subject: string;
+      body: string;
+      threadId?: string;
+      attachments?: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "to" },
+            { in: "body", key: "cc" },
+            { in: "body", key: "bcc" },
+            { in: "body", key: "subject" },
+            { in: "body", key: "body" },
+            { in: "body", key: "threadId" },
+            { in: "body", key: "attachments" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses,
+      PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/gmail-drafts",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Permanently delete a Gmail draft
+   *
+   * Permanently discards the specified draft; this is not a move to trash. Requires gmail.compose or gmail.modify and explicit user confirmation. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public deleteGmailDraft<ThrowOnError extends boolean = false>(
+    parameters: {
+      draftId: string;
+      confirm: true;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "draftId" },
+            { in: "body", key: "confirm" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<DeleteGmailDraftResponses, DeleteGmailDraftErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read a Gmail draft
+   *
+   * Returns Google's draft and message content, capped at 6 MiB. Use format=raw for the base64url RFC 2822 message including MIME attachments. Requires gmail.readonly, gmail.compose or gmail.modify. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public getGmailDraft<ThrowOnError extends boolean = false>(
+    parameters: {
+      draftId: string;
+      format?: "minimal" | "full" | "raw" | "metadata";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "draftId" },
+            { in: "query", key: "format" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetGmailDraftResponses, GetGmailDraftErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Replace a Gmail draft's full content
+   *
+   * Replaces the draft message, not a partial text edit. Supply the complete base64url RFC 2822 MIME message, preserving intended recipients, reply headers, threadId and attachments. Read the existing draft first; omitted content is lost. Does not send. Requires gmail.compose or gmail.modify. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public updateGmailDraft<ThrowOnError extends boolean = false>(
+    parameters: {
+      draftId: string;
+      confirm: true;
+      message: {
+        /**
+         * Complete base64url RFC 2822 MIME message, not just body text.
+         */
+        raw: string;
+        /**
+         * Preserve the existing conversation's threadId for a reply, with matching subject and References/In-Reply-To headers in raw.
+         */
+        threadId?: string;
+      };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "draftId" },
+            { in: "body", key: "confirm" },
+            { in: "body", key: "message" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<UpdateGmailDraftResponses, UpdateGmailDraftErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-draft/{draftId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Archive, unarchive, mark read or unread, star or change Gmail message labels
+   *
+   * Changes labels on one message. Archive removes INBOX; unarchive adds INBOX; mark read removes UNREAD; mark unread adds UNREAD; star adds STARRED; unstar removes STARRED. Supports user label IDs from gmail-labels. Requires gmail.modify, not gmail.labels or gmail.compose. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public updateGmailMessageLabels<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+      addLabelIds?: Array<string>;
+      removeLabelIds?: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "messageId" },
+            { in: "body", key: "addLabelIds" },
+            { in: "body", key: "removeLabelIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      UpdateGmailMessageLabelsResponses,
+      UpdateGmailMessageLabelsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/gmail-message/{messageId}/modify",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Move a Gmail message to trash
+   *
+   * Moves one message to Gmail trash, not permanent deletion. Requires gmail.modify and explicit user confirmation. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public trashGmailMessage<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+      confirm: true;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "messageId" },
+            { in: "body", key: "confirm" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<TrashGmailMessageResponses, TrashGmailMessageErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-message/{messageId}/trash",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Restore a Gmail message from trash
+   *
+   * Removes one message from trash. Requires gmail.modify. To put it in the inbox, also add INBOX using the modify capability. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public untrashGmailMessage<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "messageId" }] }]);
+    return (options?.client ?? this.client).post<UntrashGmailMessageResponses, UntrashGmailMessageErrors, ThrowOnError>(
+      {
+        url: "/v1/capabilities/google-workspace/gmail-message/{messageId}/untrash",
+        ...options,
+        ...params,
+      },
+    );
+  }
+
+  /**
+   * List Gmail labels
+   *
+   * Returns user and system labels with IDs and types; only user labels can be edited or deleted. Requires gmail.labels, gmail.readonly, gmail.metadata or gmail.modify. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public listGmailLabels<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<ListGmailLabelsResponses, ListGmailLabelsErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-labels",
+      ...options,
+    });
+  }
+
+  /**
+   * Create a Gmail user label
+   *
+   * Creates a custom user label with its name and optional visibility settings. Requires gmail.labels or gmail.modify. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public createGmailLabel<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      messageListVisibility?: "show" | "hide";
+      labelListVisibility?: "labelShow" | "labelShowIfUnread" | "labelHide";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "messageListVisibility" },
+            { in: "body", key: "labelListVisibility" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<CreateGmailLabelResponses, CreateGmailLabelErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-labels",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Permanently delete a Gmail user label
+   *
+   * Permanently removes the user label and its assignment from every message and thread, without deleting the messages. Reads its type first and refuses system labels. Requires gmail.labels or gmail.modify and explicit user confirmation. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public deleteGmailLabel<ThrowOnError extends boolean = false>(
+    parameters: {
+      labelId: string;
+      confirm: true;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "labelId" },
+            { in: "body", key: "confirm" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<DeleteGmailLabelResponses, DeleteGmailLabelErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-label/{labelId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Update a Gmail user label
+   *
+   * Renames or changes visibility of a user label. Reads its type first and refuses system labels. Requires gmail.labels or gmail.modify. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
+   */
+  public updateGmailLabel<ThrowOnError extends boolean = false>(
+    parameters: {
+      labelId: string;
+      name?: string;
+      messageListVisibility?: "show" | "hide";
+      labelListVisibility?: "labelShow" | "labelShowIfUnread" | "labelHide";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "labelId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "messageListVisibility" },
+            { in: "body", key: "labelListVisibility" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<UpdateGmailLabelResponses, UpdateGmailLabelErrors, ThrowOnError>({
+      url: "/v1/capabilities/google-workspace/gmail-label/{labelId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete/cancel a Google Calendar event after explicit confirmation
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public deleteGoogleCalendarEvent<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventId: string;
+      calendarId?: string;
+      sendUpdates?: "none" | "all" | "externalOnly";
+      confirmCancellation: "true";
+      confirmNotifications?: "true" | "false";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventId" },
+            { in: "query", key: "calendarId" },
+            { in: "query", key: "sendUpdates" },
+            { in: "query", key: "confirmCancellation" },
+            { in: "query", key: "confirmNotifications" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteGoogleCalendarEventResponses,
+      DeleteGoogleCalendarEventErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/calendar-events/{eventId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read an individual Google Calendar event on a selected calendar
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public getGoogleCalendarEvent<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventId: string;
+      calendarId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventId" },
+            { in: "query", key: "calendarId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetGoogleCalendarEventResponses,
+      GetGoogleCalendarEventErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/calendar-events/{eventId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update or reschedule a Google Calendar event; explicitly approve guest notifications
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public updateGoogleCalendarEvent<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventId: string;
+      calendarId?: string;
+      summary?: string;
+      description?: string;
+      location?: string;
+      start?:
+        | {
+            dateTime: string;
+            timeZone?: string;
+          }
+        | {
+            date: string;
+          };
+      end?:
+        | {
+            dateTime: string;
+            timeZone?: string;
+          }
+        | {
+            date: string;
+          };
+      attendees?: Array<{
+        email: string;
+        optional?: boolean;
+      }>;
+      sendUpdates?: "none" | "all" | "externalOnly";
+      confirmNotifications?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventId" },
+            { in: "query", key: "calendarId" },
+            { in: "body", key: "summary" },
+            { in: "body", key: "description" },
+            { in: "body", key: "location" },
+            { in: "body", key: "start" },
+            { in: "body", key: "end" },
+            { in: "body", key: "attendees" },
+            { in: "body", key: "sendUpdates" },
+            { in: "body", key: "confirmNotifications" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      UpdateGoogleCalendarEventResponses,
+      UpdateGoogleCalendarEventErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/calendar-events/{eventId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read Google Sheets spreadsheet metadata and sheet names without grid data
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public getGoogleSpreadsheet<ThrowOnError extends boolean = false>(
+    parameters: {
+      spreadsheetId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "spreadsheetId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetGoogleSpreadsheetResponses,
+      GetGoogleSpreadsheetErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create a real Google Sheets spreadsheet with one bounded initial sheet
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public createGoogleSpreadsheet<ThrowOnError extends boolean = false>(
+    parameters: {
+      title: string;
+      sheetTitle?: string;
+      rowCount?: number;
+      columnCount?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "title" },
+            { in: "body", key: "sheetTitle" },
+            { in: "body", key: "rowCount" },
+            { in: "body", key: "columnCount" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      CreateGoogleSpreadsheetResponses,
+      CreateGoogleSpreadsheetErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/spreadsheets",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read a bounded rectangle of Google Sheets cells
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public getGoogleSheetsValues<ThrowOnError extends boolean = false>(
+    parameters: {
+      spreadsheetId: string;
+      range: string;
+      valueRenderOption?: "FORMATTED_VALUE" | "UNFORMATTED_VALUE" | "FORMULA";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "spreadsheetId" },
+            { in: "query", key: "range" },
+            { in: "query", key: "valueRenderOption" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetGoogleSheetsValuesResponses,
+      GetGoogleSheetsValuesErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}/values",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Write Google Sheets cells, RAW by default; USER_ENTERED requires explicit approval
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public updateGoogleSheetsValues<ThrowOnError extends boolean = false>(
+    parameters: {
+      spreadsheetId: string;
+      range: string;
+      values: Array<Array<string | number | boolean>>;
+      valueInputOption?: "RAW" | "USER_ENTERED";
+      confirmUserEntered?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "spreadsheetId" },
+            { in: "body", key: "range" },
+            { in: "body", key: "values" },
+            { in: "body", key: "valueInputOption" },
+            { in: "body", key: "confirmUserEntered" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      UpdateGoogleSheetsValuesResponses,
+      UpdateGoogleSheetsValuesErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}/values",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Append rows after a Google Sheets table found in a bounded range; inserts rows, RAW by default
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public appendGoogleSheetsValues<ThrowOnError extends boolean = false>(
+    parameters: {
+      spreadsheetId: string;
+      range: string;
+      values: Array<Array<string | number | boolean>>;
+      valueInputOption?: "RAW" | "USER_ENTERED";
+      confirmUserEntered?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "spreadsheetId" },
+            { in: "body", key: "range" },
+            { in: "body", key: "values" },
+            { in: "body", key: "valueInputOption" },
+            { in: "body", key: "confirmUserEntered" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      AppendGoogleSheetsValuesResponses,
+      AppendGoogleSheetsValuesErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/spreadsheets/{spreadsheetId}/values/append",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Create a Google Drive folder, optionally in a selected parent
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public createGoogleDriveFolder<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      parentId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "parentId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      CreateGoogleDriveFolderResponses,
+      CreateGoogleDriveFolderErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/drive-folders",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read Google Drive file metadata, including current parent IDs for a move
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public getGoogleDriveFileMetadata<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "fileId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetGoogleDriveFileMetadataResponses,
+      GetGoogleDriveFileMetadataErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/drive-files/{fileId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Rename, move, trash, or restore Google Drive file metadata; never permanently delete
+   *
+   * Uses the calling member's selected Google account. Perform mutations only when explicitly requested; selecting or discovering a connector does not authorize a write. Do not automatically retry an uncertain mutation.
+   */
+  public updateGoogleDriveFileMetadata<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+      name?: string;
+      addParentId?: string;
+      removeParentId?: string;
+      trashed?: boolean;
+      confirmTrash?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "fileId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "addParentId" },
+            { in: "body", key: "removeParentId" },
+            { in: "body", key: "trashed" },
+            { in: "body", key: "confirmTrash" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      UpdateGoogleDriveFileMetadataResponses,
+      UpdateGoogleDriveFileMetadataErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/drive-files/{fileId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
    * Upload one multipart workspace file directly to Google Drive
    *
    * Authenticated host transport for openwork-cloud-uploads. The route immediately forwards the file to Google and does not persist it or expose its bytes to the model.
@@ -5561,6 +6652,7 @@ export class DenClient extends HeyApiClient {
     parameters?: {
       q?: string;
       maxResults?: number;
+      pageToken?: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5571,6 +6663,7 @@ export class DenClient extends HeyApiClient {
           args: [
             { in: "query", key: "q" },
             { in: "query", key: "maxResults" },
+            { in: "query", key: "pageToken" },
           ],
         },
       ],
@@ -5752,12 +6845,15 @@ export class DenClient extends HeyApiClient {
   /**
    * Search Google Drive files as the calling member
    *
-   * Searches the calling member's Google Drive files by name and full text, using their connected Google Workspace account.
+   * Lists or searches Drive files, including an optional modifiedAfter date and direct-parent folder filter. Follow nextPageToken until absent, and honor incompleteSearch before claiming complete coverage.
    */
   public getV1CapabilitiesGoogleWorkspaceDriveFiles<ThrowOnError extends boolean = false>(
-    parameters: {
-      query: string;
+    parameters?: {
+      query?: string;
       maxResults?: number;
+      pageToken?: string;
+      modifiedAfter?: string;
+      folderId?: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5768,6 +6864,9 @@ export class DenClient extends HeyApiClient {
           args: [
             { in: "query", key: "query" },
             { in: "query", key: "maxResults" },
+            { in: "query", key: "pageToken" },
+            { in: "query", key: "modifiedAfter" },
+            { in: "query", key: "folderId" },
           ],
         },
       ],
@@ -5786,7 +6885,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read a Google Drive file's text or binary content as the calling member
    *
-   * Reads one Google Drive file, exporting Google Docs editors files as plain text. Downloaded files are content-sniffed with strict UTF-8 detection; declared text is bounded, and binary content is returned as standard base64 only up to the internal model-safety limit.
+   * Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit.
    */
   public getV1CapabilitiesGoogleWorkspaceDriveFileByFileId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5846,18 +6945,14 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Create a Gmail draft or threaded reply draft without attachments
+   * Send an existing Outlook draft after explicit user confirmation
    *
-   * Creates a plain-text Gmail draft in the calling member own mailbox. For workspace attachments, use the openwork-cloud-uploads gmail_create_draft_with_attachments action so file bytes stay outside model context. Set threadId for replies and forwards. Always share the returned draftUrl.
+   * Requires Mail.Send and the mailSend feature. Only send an existing draft the user explicitly requested to send. Graph HTTP 202 means accepted, not delivered. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
    */
-  public postV1CapabilitiesGoogleWorkspaceGmailDrafts<ThrowOnError extends boolean = false>(
-    parameters?: {
-      to?: string;
-      cc?: string;
-      bcc?: string;
-      subject?: string;
-      body?: string;
-      threadId?: string;
+  public sendMicrosoft365MailDraft<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+      microsoft365MailSendBody: Microsoft365MailSendBody;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5866,22 +6961,365 @@ export class DenClient extends HeyApiClient {
       [
         {
           args: [
-            { in: "body", key: "to" },
-            { in: "body", key: "cc" },
-            { in: "body", key: "bcc" },
-            { in: "body", key: "subject" },
-            { in: "body", key: "body" },
-            { in: "body", key: "threadId" },
+            { in: "path", key: "messageId" },
+            { key: "microsoft365MailSendBody", map: "body" },
           ],
         },
       ],
     );
     return (options?.client ?? this.client).post<
-      PostV1CapabilitiesGoogleWorkspaceGmailDraftsResponses,
-      PostV1CapabilitiesGoogleWorkspaceGmailDraftsErrors,
+      SendMicrosoft365MailDraftResponses,
+      SendMicrosoft365MailDraftErrors,
       ThrowOnError
     >({
-      url: "/v1/capabilities/google-workspace/gmail-drafts",
+      url: "/v1/capabilities/microsoft-365/mail-drafts/{messageId}/send",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Create a reply draft for a selected Outlook message
+   *
+   * Uses Graph createReply with Mail.ReadWrite and mailDraft. Preserves the selected message's reply context. Saves a draft for user review and never sends it. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public createMicrosoft365ReplyDraft<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+      microsoft365MailReplyDraftBody: Microsoft365MailReplyDraftBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "messageId" },
+            { key: "microsoft365MailReplyDraftBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      CreateMicrosoft365ReplyDraftResponses,
+      CreateMicrosoft365ReplyDraftErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/mail-message/{messageId}/reply-draft",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read an Outlook message as the calling member
+   *
+   * Reads one Outlook message and requests its body as plain text, using the calling member's delegated Microsoft 365 connection.
+   */
+  public getV1CapabilitiesMicrosoft365MailMessageByMessageId<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "messageId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses,
+      GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/mail-message/{messageId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update Outlook message read state or categories
+   *
+   * Requires Mail.ReadWrite and mailManage. Only changes isRead and/or replaces categories; cannot alter recipients or send messages. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public updateMicrosoft365MailMessage<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+      microsoft365MailMessageUpdateBody: Microsoft365MailMessageUpdateBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "messageId" },
+            { key: "microsoft365MailMessageUpdateBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      UpdateMicrosoft365MailMessageResponses,
+      UpdateMicrosoft365MailMessageErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/mail-message/{messageId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Move an Outlook message to archive, deleted items, or inbox
+   *
+   * Requires Mail.ReadWrite and mailManage. Moves one message to a fixed named folder, never permanently deletes it. Moving to deleteditems also requires confirmTrash: true. Use the returned message id after moving, since Graph can change it. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public moveMicrosoft365MailMessage<ThrowOnError extends boolean = false>(
+    parameters: {
+      messageId: string;
+      microsoft365MailMessageMoveBody: Microsoft365MailMessageMoveBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "messageId" },
+            { key: "microsoft365MailMessageMoveBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      MoveMicrosoft365MailMessageResponses,
+      MoveMicrosoft365MailMessageErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/mail-message/{messageId}/move",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete a selected Outlook calendar event
+   *
+   * Requires Calendars.ReadWrite and calendarWrite, plus explicit user deletion confirmation. Deleting an organizer's meeting can send cancellations to attendees. Graph 204 confirms deletion. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public deleteMicrosoft365CalendarEvent<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventId: string;
+      microsoft365CalendarDeleteBody: Microsoft365CalendarDeleteBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventId" },
+            { key: "microsoft365CalendarDeleteBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteMicrosoft365CalendarEventResponses,
+      DeleteMicrosoft365CalendarEventErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/calendar-events/{eventId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Edit or reschedule an Outlook calendar event
+   *
+   * Requires Calendars.ReadWrite and calendarWrite. Updates only supplied subject, body, location, or paired UTC start/end. Requires confirmNotifications: true because updates may email attendees. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public updateMicrosoft365CalendarEvent<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventId: string;
+      microsoft365CalendarEventUpdateBody: Microsoft365CalendarEventUpdateBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventId" },
+            { key: "microsoft365CalendarEventUpdateBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      UpdateMicrosoft365CalendarEventResponses,
+      UpdateMicrosoft365CalendarEventErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/calendar-events/{eventId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Cancel an Outlook meeting and notify attendees
+   *
+   * Requires Calendars.ReadWrite and calendarWrite. Only the meeting organizer can cancel via Graph. Requires explicit user cancellation confirmation; a 202 receipt means cancellation was accepted. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public cancelMicrosoft365CalendarEvent<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventId: string;
+      microsoft365CalendarCancelBody: Microsoft365CalendarCancelBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventId" },
+            { key: "microsoft365CalendarCancelBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      CancelMicrosoft365CalendarEventResponses,
+      CancelMicrosoft365CalendarEventErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/calendar-events/{eventId}/cancel",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read a OneDrive text or binary file as the calling member
+   *
+   * Returns OneDrive metadata and content using strict-UTF-8 content sniffing: text is returned regardless of MIME type, while binary files are returned as standard base64 up to 10 MiB. Folders and oversized files return metadata with an explicit contentUnavailableReason.
+   */
+  public getV1CapabilitiesMicrosoft365DriveFileByItemId<ThrowOnError extends boolean = false>(
+    parameters: {
+      itemId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "itemId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses,
+      GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/drive-file/{itemId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Rename or move a OneDrive item within the same drive
+   *
+   * Requires Files.ReadWrite (or Files.ReadWrite.All) and filesWrite (or filesFull). Updates only the name and/or parent folder id in the caller's OneDrive; cannot move across drives or upload content. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public updateMicrosoft365DriveItem<ThrowOnError extends boolean = false>(
+    parameters: {
+      itemId: string;
+      microsoft365DriveItemUpdateBody: Microsoft365DriveItemUpdateBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "itemId" },
+            { key: "microsoft365DriveItemUpdateBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      UpdateMicrosoft365DriveItemResponses,
+      UpdateMicrosoft365DriveItemErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/drive-file/{itemId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Create a folder in the calling member's OneDrive
+   *
+   * Requires Files.ReadWrite (or Files.ReadWrite.All) and filesWrite (or filesFull). Creates one folder under an existing parent id. Name conflicts fail without overwriting or silently renaming anything. Uses only the calling member's delegated Microsoft 365 connection. Never automatically retry a mutation after a timeout, cancellation, or ambiguous response; inspect current state first.
+   */
+  public createMicrosoft365DriveFolder<ThrowOnError extends boolean = false>(
+    parameters: {
+      microsoft365DriveFolderBody: Microsoft365DriveFolderBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "microsoft365DriveFolderBody", map: "body" }] }]);
+    return (options?.client ?? this.client).post<
+      CreateMicrosoft365DriveFolderResponses,
+      CreateMicrosoft365DriveFolderErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/microsoft-365/drive-folders",
       ...options,
       ...params,
       headers: {
@@ -5921,29 +7359,6 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/capabilities/microsoft-365/mail-messages",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Read an Outlook message as the calling member
-   *
-   * Reads one Outlook message and requests its body as plain text, using the calling member's delegated Microsoft 365 connection.
-   */
-  public getV1CapabilitiesMicrosoft365MailMessageByMessageId<ThrowOnError extends boolean = false>(
-    parameters: {
-      messageId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "messageId" }] }]);
-    return (options?.client ?? this.client).get<
-      GetV1CapabilitiesMicrosoft365MailMessageByMessageIdResponses,
-      GetV1CapabilitiesMicrosoft365MailMessageByMessageIdErrors,
-      ThrowOnError
-    >({
-      url: "/v1/capabilities/microsoft-365/mail-message/{messageId}",
       ...options,
       ...params,
     });
@@ -6075,29 +7490,6 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
-    });
-  }
-
-  /**
-   * Read a OneDrive text or binary file as the calling member
-   *
-   * Returns OneDrive metadata and content using strict-UTF-8 content sniffing: text is returned regardless of MIME type, while binary files are returned as standard base64 up to 10 MiB. Folders and oversized files return metadata with an explicit contentUnavailableReason.
-   */
-  public getV1CapabilitiesMicrosoft365DriveFileByItemId<ThrowOnError extends boolean = false>(
-    parameters: {
-      itemId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "itemId" }] }]);
-    return (options?.client ?? this.client).get<
-      GetV1CapabilitiesMicrosoft365DriveFileByItemIdResponses,
-      GetV1CapabilitiesMicrosoft365DriveFileByItemIdErrors,
-      ThrowOnError
-    >({
-      url: "/v1/capabilities/microsoft-365/drive-file/{itemId}",
-      ...options,
-      ...params,
     });
   }
 
@@ -6416,6 +7808,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Get the tool policy for an External MCP Connection
+   *
+   * Returns the admin-managed tool policy for one connection: whether every tool is disabled, the individual tool names that are disabled, and who last changed it. Disabled tools are hidden from capability search and Code Mode and refused when called. Workspace owners and admins only.
    */
   public getV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6437,6 +7831,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Update the tool policy for an External MCP Connection
+   *
+   * Replaces the connection's tool policy with the full desired state: allDisabled plus the complete list of disabled tool names (duplicates are collapsed). The policy takes effect immediately for capability search, Code Mode, and tool execution and records the calling admin as its author.
    */
   public putV1McpConnectionsByConnectionIdToolPolicy<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6623,6 +8019,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Remove an External MCP Connection
+   *
+   * Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.
    */
   public deleteV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6673,11 +8071,11 @@ export class DenClient extends HeyApiClient {
   public putV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
       connectionId: string;
-      expectedUpdatedAt?: string;
-      name?: string;
-      url?: string;
-      authType?: "oauth" | "apikey" | "none";
-      credentialMode?: "shared" | "per_member";
+      expectedUpdatedAt: string;
+      name: string;
+      url: string;
+      authType: "oauth" | "apikey" | "none";
+      credentialMode: "shared" | "per_member";
       exposeDirectly?: boolean;
       apiKey?: string;
       oauthClient?: {
@@ -6687,7 +8085,7 @@ export class DenClient extends HeyApiClient {
       };
       authorizationServerIssuer?: string | null;
       requestedScopes?: Array<string>;
-      access?: ExternalMcpConnectionAccessInput;
+      access: ExternalMcpConnectionAccessInput;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6736,7 +8134,7 @@ export class DenClient extends HeyApiClient {
   public putV1McpConnectionsByConnectionIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
       connectionId: string;
-      access?: ExternalMcpConnectionAccessInput;
+      access: ExternalMcpConnectionAccessInput;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6880,8 +8278,8 @@ export class DenClient extends HeyApiClient {
    * Builds a GitHub App install redirect URL for the current organization.
    */
   public postV1ConnectorsGithubInstallStart<ThrowOnError extends boolean = false>(
-    parameters?: {
-      returnPath?: string;
+    parameters: {
+      returnPath: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6908,9 +8306,9 @@ export class DenClient extends HeyApiClient {
    * Completes a GitHub App installation for the current organization and returns visible repositories.
    */
   public postV1ConnectorsGithubInstallComplete<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
-      state?: string;
+    parameters: {
+      installationId: number;
+      state: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7002,8 +8400,8 @@ export class DenClient extends HeyApiClient {
    * Creates a new private config object and initial immutable version.
    */
   public postV1ConfigObjects<ThrowOnError extends boolean = false>(
-    parameters?: {
-      type?:
+    parameters: {
+      type:
         | "skill"
         | "agent"
         | "command"
@@ -7015,9 +8413,9 @@ export class DenClient extends HeyApiClient {
         | "script"
         | "workflow"
         | "app";
-      sourceMode?: "cloud" | "import" | "connector";
+      sourceMode: "cloud" | "import" | "connector";
       pluginIds?: Array<string>;
-      input?: {
+      input: {
         rawSourceText?: string;
         normalizedPayloadJson?: {
           [key: string]: unknown;
@@ -7127,7 +8525,7 @@ export class DenClient extends HeyApiClient {
   public postV1ConfigObjectsByConfigObjectIdVersions<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      input?: {
+      input: {
         rawSourceText?: string;
         normalizedPayloadJson?: {
           [key: string]: unknown;
@@ -7327,7 +8725,7 @@ export class DenClient extends HeyApiClient {
   public postV1ConfigObjectsByConfigObjectIdPlugins<ThrowOnError extends boolean = false>(
     parameters: {
       configObjectId: string;
-      pluginId?: string;
+      pluginId: string;
       membershipSource?: "manual" | "connector" | "api" | "system";
     },
     options?: Options<never, ThrowOnError>,
@@ -7428,7 +8826,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7536,8 +8934,8 @@ export class DenClient extends HeyApiClient {
    * Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately; owners and admins only.
    */
   public postV1Plugins<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string | null;
       sourceRepositoryUrl?: string;
       components?: Array<{
@@ -7748,7 +9146,7 @@ export class DenClient extends HeyApiClient {
   public postV1PluginsByPluginIdConfigObjects<ThrowOnError extends boolean = false>(
     parameters: {
       pluginId: string;
-      configObjectId?: string;
+      configObjectId: string;
       membershipSource?: "manual" | "connector" | "api" | "system";
     },
     options?: Options<never, ThrowOnError>,
@@ -7853,8 +9251,8 @@ export class DenClient extends HeyApiClient {
         clientId: string;
         clientSecret?: string;
       };
-      configObjectId?: string;
-      serverName?: string;
+      configObjectId: string;
+      serverName: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7896,8 +9294,8 @@ export class DenClient extends HeyApiClient {
    * Reads a public GitHub plugin URL and returns skills and remote MCP servers that can be imported into an organization marketplace.
    */
   public postV1PluginsImportMcpsFromGithubUrlPreview<ThrowOnError extends boolean = false>(
-    parameters?: {
-      githubUrl?: string;
+    parameters: {
+      githubUrl: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -7924,8 +9322,8 @@ export class DenClient extends HeyApiClient {
    * Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants, and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.
    */
   public postV1PluginsImportMcpsFromGithubUrl<ThrowOnError extends boolean = false>(
-    parameters?: {
-      githubUrl?: string;
+    parameters: {
+      githubUrl: string;
       access?: {
         orgWide?: boolean;
         memberIds?: Array<string>;
@@ -8011,7 +9409,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -8128,6 +9526,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete marketplace by stable key
+   *
+   * Deletes the marketplace identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -8149,6 +9549,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read marketplace by stable key
+   *
+   * Reads the marketplace identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -8176,7 +9578,7 @@ export class DenClient extends HeyApiClient {
   public putV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      name?: string;
+      name: string;
       description?: string | null;
       logoUrl?: string | null;
     },
@@ -8251,8 +9653,8 @@ export class DenClient extends HeyApiClient {
    * Creates a new private marketplace and grants the creator manager access.
    */
   public postV1Marketplaces<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string | null;
       logoUrl?: string | null;
     },
@@ -8448,7 +9850,7 @@ export class DenClient extends HeyApiClient {
   public postV1MarketplacesByMarketplaceIdPlugins<ThrowOnError extends boolean = false>(
     parameters: {
       marketplaceId: string;
-      pluginId?: string;
+      pluginId: string;
       membershipSource?: "manual" | "connector" | "api" | "system";
     },
     options?: Options<never, ThrowOnError>,
@@ -8572,7 +9974,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -8686,11 +10088,11 @@ export class DenClient extends HeyApiClient {
    * Creates a connector account such as a GitHub App installation binding.
    */
   public postV1ConnectorAccounts<ThrowOnError extends boolean = false>(
-    parameters?: {
-      connectorType?: "github";
-      remoteId?: string;
+    parameters: {
+      connectorType: "github";
+      remoteId: string;
       externalAccountRef?: string | null;
-      displayName?: string;
+      displayName: string;
       metadata?: {
         [key: string]: unknown;
       };
@@ -8839,11 +10241,11 @@ export class DenClient extends HeyApiClient {
    * Creates a new connector instance.
    */
   public postV1ConnectorInstances<ThrowOnError extends boolean = false>(
-    parameters?: {
-      connectorAccountId?: string;
-      connectorType?: "github";
+    parameters: {
+      connectorAccountId: string;
+      connectorType: "github";
       remoteId?: string | null;
-      name?: string;
+      name: string;
       config?: {
         [key: string]: unknown;
       };
@@ -9073,7 +10475,7 @@ export class DenClient extends HeyApiClient {
   public postV1ConnectorInstancesByConnectorInstanceIdAutoImport<ThrowOnError extends boolean = false>(
     parameters: {
       connectorInstanceId: string;
-      autoImportNewPlugins?: boolean;
+      autoImportNewPlugins: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9197,7 +10599,7 @@ export class DenClient extends HeyApiClient {
     parameters: {
       connectorInstanceId: string;
       autoImportNewPlugins?: boolean;
-      selectedKeys?: Array<string>;
+      selectedKeys: Array<string>;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9263,7 +10665,7 @@ export class DenClient extends HeyApiClient {
       orgMembershipId?: string;
       teamId?: string;
       orgWide?: boolean;
-      role?: "viewer" | "editor" | "manager";
+      role: "viewer" | "editor" | "manager";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9379,11 +10781,11 @@ export class DenClient extends HeyApiClient {
   public postV1ConnectorInstancesByConnectorInstanceIdTargets<ThrowOnError extends boolean = false>(
     parameters: {
       connectorInstanceId: string;
-      connectorType?: "github";
-      remoteId?: string;
-      targetKind?: "repository_branch";
+      connectorType: "github";
+      remoteId: string;
+      targetKind: "repository_branch";
       externalTargetRef?: string | null;
-      config?: {
+      config: {
         [key: string]: unknown;
       };
     },
@@ -9574,9 +10976,9 @@ export class DenClient extends HeyApiClient {
   public postV1ConnectorTargetsByConnectorTargetIdMappings<ThrowOnError extends boolean = false>(
     parameters: {
       connectorTargetId: string;
-      mappingKind?: "path" | "api" | "custom";
-      selector?: string;
-      objectType?:
+      mappingKind: "path" | "api" | "custom";
+      selector: string;
+      objectType:
         | "skill"
         | "agent"
         | "command"
@@ -9807,11 +11209,11 @@ export class DenClient extends HeyApiClient {
    * Persists one GitHub App installation as a connector account.
    */
   public postV1ConnectorsGithubAccounts<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
-      accountLogin?: string;
-      accountType?: "Organization" | "User";
-      displayName?: string;
+    parameters: {
+      installationId: number;
+      accountLogin: string;
+      accountType: "Organization" | "User";
+      displayName: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -9850,14 +11252,14 @@ export class DenClient extends HeyApiClient {
    * Creates a GitHub connector account, instance, target, and initial mappings in one flow.
    */
   public postV1ConnectorsGithubSetup<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
+    parameters: {
+      installationId: number;
       connectorAccountId?: string;
-      connectorInstanceName?: string;
-      repositoryId?: number;
-      repositoryFullName?: string;
-      branch?: string;
-      ref?: string;
+      connectorInstanceName: string;
+      repositoryId: number;
+      repositoryFullName: string;
+      branch: string;
+      ref: string;
       mappings?: Array<{
         mappingKind: "path" | "api" | "custom";
         selector: string;
@@ -9959,12 +11361,12 @@ export class DenClient extends HeyApiClient {
    * Validates one repository-branch target before persisting it.
    */
   public postV1ConnectorsGithubValidateTarget<ThrowOnError extends boolean = false>(
-    parameters?: {
-      installationId?: number;
-      repositoryId?: number;
-      repositoryFullName?: string;
-      branch?: string;
-      ref?: string;
+    parameters: {
+      installationId: number;
+      repositoryId: number;
+      repositoryFullName: string;
+      branch: string;
+      ref: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10004,9 +11406,9 @@ export class DenClient extends HeyApiClient {
    * Creates a custom organization role with a named permission map.
    */
   public postV1Roles<ThrowOnError extends boolean = false>(
-    parameters?: {
-      roleName?: string;
-      permission?: {
+    parameters: {
+      roleName: string;
+      permission: {
         [key: string]: Array<string>;
       };
     },
@@ -10130,6 +11532,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Delete teams by stable key
+   *
+   * Deletes the team identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.
    */
   public deleteV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10147,6 +11551,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read teams by stable key
+   *
+   * Reads the team identified by the stable externalKey assigned through declarative provisioning.
    */
   public getV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10174,7 +11580,7 @@ export class DenClient extends HeyApiClient {
   public putV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
       externalKey: string;
-      name?: string;
+      name: string;
       memberIds?: Array<string>;
       grantsOrganizationAdmin?: boolean;
     },
@@ -10234,6 +11640,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read teams by id
+   *
+   * Reads a single team by id.
    */
   public getV1TeamsByTeamId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10298,8 +11706,8 @@ export class DenClient extends HeyApiClient {
    * Creates a team inside an organization and can optionally attach existing organization members to it.
    */
   public postV1Teams<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       memberIds?: Array<string>;
       grantsOrganizationAdmin?: boolean;
     },
@@ -10363,7 +11771,7 @@ export class DenClient extends HeyApiClient {
     parameters: {
       id: string;
       sentAt?: string;
-      isActiveRecently?: boolean;
+      isActiveRecently: boolean;
       lastActivityAt?: string | null;
       openSessionCount?: number;
     },
@@ -10402,15 +11810,26 @@ export class DenClient extends HeyApiClient {
   /**
    * List workers
    *
-   * Lists the workers that belong to the caller's active organization, including each worker's latest known instance state.
+   * Lists the workers that belong to the caller's active organization, newest first, including each worker's latest known instance state. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
    */
   public getV1Workers<ThrowOnError extends boolean = false>(
     parameters?: {
+      cursor?: string;
       limit?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "limit" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).get<GetV1WorkersResponses, GetV1WorkersErrors, ThrowOnError>({
       url: "/v1/workers",
       ...options,
@@ -10424,10 +11843,10 @@ export class DenClient extends HeyApiClient {
    * Creates a local worker or cloud worker for the active organization and returns the initial tokens needed to connect to it.
    */
   public postV1Workers<ThrowOnError extends boolean = false>(
-    parameters?: {
-      name?: string;
+    parameters: {
+      name: string;
       description?: string;
-      destination?: "local" | "cloud";
+      destination: "local" | "cloud";
       workspacePath?: string;
       sandboxBackend?: string;
       imageVersion?: string;
@@ -10511,7 +11930,7 @@ export class DenClient extends HeyApiClient {
   public patchV1WorkersById<ThrowOnError extends boolean = false>(
     parameters: {
       id: string;
-      name?: string;
+      name: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10649,6 +12068,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10658,6 +12082,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResourceMcp<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10667,6 +12096,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getMcpWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10676,6 +12110,11 @@ export class DenClient extends HeyApiClient {
     });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/agent
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResourceMcpAgent<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10686,6 +12125,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/.well-known/oauth-protected-resource/mcp/agent", ...options });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/agent
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getMcpAgentWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10696,6 +12140,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/mcp/agent/.well-known/oauth-protected-resource", ...options });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/admin
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getWellKnownOauthProtectedResourceMcpAdmin<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10706,6 +12155,11 @@ export class DenClient extends HeyApiClient {
     >({ url: "/.well-known/oauth-protected-resource/mcp/admin", ...options });
   }
 
+  /**
+   * Get OAuth protected resource metadata for /mcp/admin
+   *
+   * Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.
+   */
   public getMcpAdminWellKnownOauthProtectedResource<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10722,8 +12176,8 @@ export class DenClient extends HeyApiClient {
    * Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.
    */
   public postV1TelemetryIngest<ThrowOnError extends boolean = false>(
-    parameters?: {
-      events?: Array<{
+    parameters: {
+      events: Array<{
         type: string;
         timestamp: string;
         source?: string;

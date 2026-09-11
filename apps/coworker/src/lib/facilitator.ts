@@ -10,7 +10,9 @@
 import { z } from "zod";
 import type { CoworkerGroupTurn, CoworkerSummary, GroupTimelineEvent } from "./bridge.ts";
 import { MAX_SPEAKERS_PER_TURN, RECENT_CONTEXT_EVENTS, type GroupParticipant, type Mentions, type RoutingPlan } from "./groups.ts";
-import { parseModelPreference, recommendModel, type EngineModelCatalog, type EngineModelOption } from "./threads.ts";
+import { recommendModel, type EngineModelCatalog, type EngineModelOption } from "./threads.ts";
+import { DEFAULT_MODEL_DEFAULTS, type ModelDefault } from "./model-defaults.ts";
+import { chooseIndexedFallbackModel, chooseIndexedModel } from "./model-intelligence.ts";
 
 /** The whole routing pass, repair and second model included, fits in this; then the scorer decides. */
 export const ROUTING_TIMEOUT_MS = 45_000;
@@ -169,32 +171,34 @@ export function validateRoutingPlan(raw: unknown, context: { participants: reado
 }
 
 /**
- * Which connected model the facilitator uses. "Automatic" is the model the
- * group's coworkers already use — an account model first — and the second
- * choice is the next such model, so one unavailable provider does not decide
- * the routing. A model the person chose for the group comes first.
+ * Group override, then app choice, otherwise quick around the members' anchor.
+ * Explicit choices never use a secondary model. Automatic repair may use only
+ * a same-provider sibling at no higher known token prices than the first pick.
  */
 export function facilitatorModels(
   catalog: Pick<EngineModelCatalog, "models">,
   members: readonly Pick<CoworkerSummary, "model">[],
   preferred = "",
+  appDefault: ModelDefault = DEFAULT_MODEL_DEFAULTS.facilitator,
 ): { primary: EngineModelOption | null; secondary: EngineModelOption | null } {
   const byId = new Map(catalog.models.map((model) => [model.id, model]));
-  const ordered: EngineModelOption[] = [];
-  const add = (model: EngineModelOption | null | undefined) => {
-    if (model && !ordered.some((item) => item.id === model.id)) ordered.push(model);
-  };
-  add(parseModelPreference(preferred) ? byId.get(preferred.trim()) : null);
+  const explicit = preferred.trim() || appDefault.model;
+  if (explicit) {
+    const primary = byId.get(explicit) ?? null;
+    if (!preferred.trim() && appDefault.modelVariant.trim() && !primary?.variants.includes(appDefault.modelVariant.trim())) return { primary: null, secondary: null };
+    return { primary, secondary: null };
+  }
   const used = members.map((member) => byId.get(member.model.trim())).filter((model): model is EngineModelOption => Boolean(model));
   const counts = new Map<string, number>();
   for (const model of used) counts.set(model.id, (counts.get(model.id) ?? 0) + 1);
   const distinct = [...new Map(used.map((model) => [model.id, model])).values()].sort(
     (left, right) => Number(right.source === "cloud") - Number(left.source === "cloud") || (counts.get(right.id) ?? 0) - (counts.get(left.id) ?? 0),
   );
-  for (const model of distinct) add(model);
-  add(recommendModel(catalog, { exclude: ordered.map((model) => model.id) }));
-  add(recommendModel(catalog, { exclude: ordered.map((model) => model.id) }));
-  return { primary: ordered[0] ?? null, secondary: ordered[1] ?? null };
+  const anchor = distinct[0] ?? recommendModel(catalog);
+  if (!anchor) return { primary: null, secondary: null };
+  const primary = chooseIndexedModel(catalog, "quick", { standard: anchor.id }).model;
+  const secondary = primary ? chooseIndexedFallbackModel(catalog, "quick", { standard: primary.id, exclude: [primary.id] }).model : null;
+  return { primary, secondary };
 }
 
 export type FacilitatorAsk = (prompt: string, model: EngineModelOption, signal: AbortSignal) => Promise<string>;

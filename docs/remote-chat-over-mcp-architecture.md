@@ -50,7 +50,7 @@ Non-goals (v1):
 | openwork-server session API | `apps/server` (`POST /workspace/:id/opencode/session`, native prompt/transcript/status routes) | The actual chat runtime on the worker |
 | Programmatic session client | `packages/headless-threads` | Typed client for driving native sessions from code |
 | Desktop → gateway attach | `apps/app/src/react-app/domains/connections/cloud-mcp-reconciler.ts` + `apps/server/src/routes/cloud-mcp.ts` (token mint: `POST /v1/mcp/token`) | Desktop engines already have `/mcp/agent`; zero desktop changes required for v1 |
-| MCP App cards | `ee/apps/den-api/src/mcp/connection-action-app.ts` pattern + `packages/mcp-apps` | Render an "Open in OpenWork Web" card |
+| MCP App cards | `ee/apps/den-api/src/mcp/plugin-flow-app.ts` pattern + `packages/mcp-apps` | Render an "Open in OpenWork Web" card |
 
 ## Architecture
 
@@ -119,7 +119,7 @@ exists: `automation-index.ts`, `resource.ts`) — explicitly out of scope for v1
 ### 3. MCP App card
 
 `remoteSession.create` and `remoteSession.send` results include a standard
-MCP Apps `ui://` card (pattern: `connection-action-app.ts` +
+MCP Apps `ui://` card (pattern: `plugin-flow-app.ts` +
 `packages/mcp-apps` renderer): session title, state, last activity, and an
 **Open in OpenWork Web** link (`https://web.openworklabs.com/...` deep link,
 resolved from runtime config — same origin den-web's "Web tab" uses). Clients

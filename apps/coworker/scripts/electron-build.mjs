@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { opencodeTargetName } from "../electron/runtime-paths.mjs";
 
 const dirnameHere = dirname(fileURLToPath(import.meta.url));
 const coworkerRoot = resolve(dirnameHere, "..");
@@ -99,8 +100,29 @@ function buildElectron() {
 
 // pnpm 11 makes list recursive in workspaces even with --recursive=false.
 // Scope roots before the collector starts; keep the complete dependency depth.
-export function beforePack() {
+export function beforePack(context) {
   process.env.pnpm_config_filter = "@openwork/coworker";
+  const arch = { 1: "x64", 3: "arm64", x64: "x64", arm64: "arm64" }[context.arch];
+  const engine = arch && opencodeTargetName(context.electronPlatformName, arch);
+  if (!engine) throw new Error(`Unsupported Coworker sidecar target: ${context.electronPlatformName}/${context.arch}`);
+  const metadata = `versions.json-${engine.slice("opencode-".length)}`;
+  // Select files before copying. Never mutate shared sidecar staging or ship a
+  // second generic executable; the runtime already prefers the qualified name.
+  const staging = resolve(context.packager.projectDir, "resources/sidecars");
+  for (const source of [engine, metadata]) {
+    if (!existsSync(resolve(staging, source))) throw new Error(`Missing Coworker target resource: ${source}`);
+  }
+  const sidecars = [
+    // Directory copies retain electron-builder's Windows executable-signing
+    // transformer; its single-file copy fast path bypasses that transformer.
+    { from: staging, to: "sidecars", filter: [engine] },
+    { from: resolve(staging, metadata), to: "sidecars/versions.json" },
+  ];
+  // A multi-target invocation can reuse config after the preceding target.
+  context.packager.config.extraResources = [
+    ...context.packager.config.extraResources.filter((resource) => resource.to !== "sidecars" && !resource.to?.startsWith("sidecars/")),
+    ...sidecars,
+  ];
 }
 
 // electron-builder imports this hook without running the build. Desktop's full

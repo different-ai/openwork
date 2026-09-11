@@ -18,7 +18,7 @@
     "test": "pnpm run check:browser && pnpm run lint:layers && node scripts/spec-channel-ratchet.mjs && node scripts/spec-boundary-ratchet.mjs && node --test runner/*.test.ts packages/*/test/*.test.ts bin/*.test.mjs scripts/*.test.mjs",
     "typecheck": "tsc -p .",
     "typecheck:spec-layer": "tsc -p tsconfig.primitives.json",
-    "test:core": "vitest run --config vitest.config.ts --project pr specs/thread-approvals-replay.test.ts specs/effective-permissions-attribution.test.ts specs/pdf-attachments-model-routing.test.ts",
+    "test:core": "vitest run --config vitest.config.ts --project pr specs/thread-approvals-replay.test.ts specs/effective-permissions-attribution.test.ts specs/pdf-attachments-model-routing.test.ts specs/route-session-list.test.ts",
     "check:browser": "node scripts/check-browser-code.mjs"
   },
   "dependencies": {
@@ -37,10 +37,10 @@
     "@openwork/review": "link:../packages/review"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/coverage-v8": "^4.1.11",
     "dependency-cruiser": "18.1.0",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   },
   "packageManager": "pnpm@11.4.0"
 }

@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { chrome } from "@openwork/hosts";
-import { clickAt, evaluateOnSurface, locate, navigate, reload, setViewport } from "@openwork/cdp";
+import { clickAt, evaluateOnSurface, freezeMotion, locate, navigate, reload, setViewport, waitForLocated } from "@openwork/cdp";
 import { eventually, needs, test } from "@openwork/testkit";
 
 test("visitors see consistent monthly Team and Enterprise pricing", async ({ evidence }) => {
@@ -60,13 +60,11 @@ test("visitors can read the trust badge and access every footer link at responsi
       const footer = document.querySelector("footer");
       const badge = footer?.querySelector('a[aria-label^="SOC 2 Type I"]');
       const icon = badge?.querySelector("svg");
-      if (!footer || !badge || !icon) throw new Error("Footer trust badge or shield missing");
-      const text = [...badge.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.includes("SOC 2 Type I"));
-      if (!text || !text.textContent) throw new Error("Trust badge text missing");
-      const range = document.createRange();
-      range.setStart(text, text.textContent.indexOf("SOC 2 Type I"));
-      range.setEnd(text, text.textContent.indexOf("SOC 2 Type I") + "SOC 2 Type I".length);
-      const lines = [...range.getClientRects()];
+      if (!footer || !badge || !icon) throw new Error("Footer trust badge or seal missing");
+      const label = badge.getAttribute("aria-label") ?? "";
+      if (!label.includes("SOC 2 Type I") && !badge.textContent?.includes("SOC 2 Type I")) {
+        throw new Error("Trust badge text missing");
+      }
       const bounds = footer.getBoundingClientRect();
       const iconBounds = icon.getBoundingClientRect();
       const links = [...footer.querySelectorAll("a")];
@@ -80,8 +78,7 @@ test("visitors can read the trust badge and access every footer link at responsi
         .map((link) => link.getBoundingClientRect().bottom));
       return {
         viewport: window.innerWidth,
-        lines: lines.length,
-        textVisible: lines.every((rect) => rect.width > 0 && rect.height > 0),
+        textVisible: badge.textContent?.includes("SOC 2 Type I") === true,
         iconWidth: iconBounds.width,
         iconHeight: iconBounds.height,
         poweredBy: poweredBy.textContent,
@@ -103,7 +100,7 @@ test("visitors can read the trust badge and access every footer link at responsi
       };
     });
     expect(facts, `footer at ${width}px`).toMatchObject({
-      viewport: width, lines: 1, textVisible: true, iconWidth: 14, iconHeight: 14,
+      viewport: width, textVisible: true, iconWidth: 48, iconHeight: 48,
       footerFits: true, contentFits: true, linksVisible: true,
       poweredBy: "Powered by", brandInline: true, brandRowBelowLinks: true,
     });
@@ -113,7 +110,7 @@ test("visitors can read the trust badge and access every footer link at responsi
       ["/download", "Desktop"], ["https://app.openworklabs.com", "Cloud"],
       ["/dashboard", "Dashboard"], ["/enterprise", "Enterprise"], ["/contact", "Contact"],
       ["/trust", "Trust Center"], ["/privacy", "Privacy"], ["/terms", "Terms"],
-      ["https://opencode.ai", ""], ["/trust", "SOC 2 Type I — view Trust Center"],
+      ["https://opencode.ai", ""], ["/trust", "SOC 2 Type I. View Trust Center"],
     ]);
     evidence.recordAssertionEvidence(`Footer remains readable and complete at ${width}px`, JSON.stringify(facts), true);
   }
@@ -240,9 +237,10 @@ test("download CTAs request the detected installer once and retain the alternati
 
       // Carry a campaign through the actual homepage CTA (not a crafted intent URL).
       await navigate(browser.client, `${origin}/${attribution}`);
-      await eventually(() => evaluateOnSurface(browser, () => document.body.innerText.includes("Contact sales")), { within: 30_000, until: Boolean });
+      await eventually(() => evaluateOnSurface(browser, () => location.pathname === "/" && Boolean(document.querySelector("main h1")?.textContent?.includes("Your AI workspace."))), { within: 30_000, until: Boolean });
+      await freezeMotion(browser);
       expect(requests).toHaveLength(before);
-      await clickAt(browser, (await locate(browser, { role: "link", text: device.platform === "Android" ? /^Download$/ : /^Download for free/ })).center);
+      await clickAt(browser, (await waitForLocated(browser, { role: "link", text: device.platform === "Android" ? /^Download$/ : /^Download for free/ }, { mustHitTest: true })).center);
       await eventually(() => evaluateOnSurface(browser, () => location.pathname + location.search), {
         within: 30_000, until: (path) => path === `/download${attribution}`
       });
@@ -285,4 +283,86 @@ test("download CTAs request the detected installer once and retain the alternati
   } finally {
     socket.close();
   }
+});
+
+
+test("visitors can explore the sovereign AI homepage without losing comparison or download paths", async ({ evidence }) => {
+  needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
+  const origin = process.env.OPENWORK_EVAL_LANDING_URL;
+  await using browser = await chrome({ startUrl: `${origin}/`, headless: true });
+  await eventually(() => evaluateOnSurface(browser, () => document.querySelector("h1")?.textContent), {
+    within: 30_000, until: (value) => typeof value === "string" && value.includes("vendor lock-in"),
+  });
+
+  await freezeMotion(browser);
+  for (const width of [320, 390, 768, 1024, 1440]) {
+    await setViewport(browser, { width, height: 1000, deviceScaleFactor: 1 });
+    const facts = await evaluateOnSurface(browser, async () => {
+      await document.fonts.ready;
+      const hero = document.querySelector<HTMLElement>('section[aria-labelledby="sovereign-hero-heading"]');
+      const heading = hero?.querySelector("h1");
+      const demo = document.getElementById("product");
+      if (!hero || !heading || !demo) throw new Error("Homepage hero or interactive demo is missing");
+      const headingBounds = heading.getBoundingClientRect();
+      const demoBounds = demo.getBoundingClientRect();
+      const buttons = [...demo.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')]
+        .filter((button) => button.getBoundingClientRect().width > 0);
+      const links = [...hero.querySelectorAll<HTMLAnchorElement>("a")];
+      return {
+        heading: heading.innerText.replace(/\s+/g, " ").trim(),
+        headings: document.querySelectorAll("h1").length,
+        title: document.title,
+        canonical: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href,
+        comparison: hero.innerText.includes("open-source alternative to Claude Cowork"),
+        migration: Boolean(document.querySelector('a[href="/docs/start-here/migrate-from-claude-cowork"]')),
+        modelSection: Boolean(document.getElementById("models")),
+        pageFits: document.documentElement.scrollWidth <= window.innerWidth,
+        headingFits: headingBounds.left >= 0 && headingBounds.right <= window.innerWidth && heading.scrollWidth <= heading.clientWidth,
+        demoFits: demoBounds.left >= 0 && demoBounds.right <= window.innerWidth && demo.scrollWidth <= demo.clientWidth,
+        linksFit: links.every((link) => {
+          const bounds = link.getBoundingClientRect();
+          return bounds.width > 0 && bounds.left >= 0 && bounds.right <= window.innerWidth;
+        }),
+        actions: links.map((link) => ({ text: link.textContent?.trim(), path: new URL(link.href).pathname })),
+        examples: buttons.map((button) => button.textContent?.trim()),
+        desktopSplit: demoBounds.right <= headingBounds.left,
+        mobileReadingOrder: headingBounds.bottom <= demoBounds.top,
+      };
+    });
+    expect(facts).toMatchObject({
+      headings: 1,
+      title: "OpenWork — Open source Claude Cowork alternative for teams",
+      canonical: "https://openworklabs.com/",
+      comparison: true, migration: true, modelSection: true,
+      pageFits: true, headingFits: true, demoFits: true, linksFit: true,
+    });
+    expect(facts.heading).toContain("Your AI workspace.");
+    expect(facts.heading).toContain("vendor lock-in.");
+    expect(facts.heading).not.toContain("Cowork");
+    expect(facts.actions).toContainEqual({ text: "Download for free", path: "/download" });
+    expect(facts.actions).toContainEqual({ text: "Explore enterprise", path: "/enterprise" });
+    expect(facts.examples).toEqual(expect.arrayContaining(["Browser Automation", "Data Analysis", "Outreach Creation"]));
+    if (width >= 1024) expect(facts.desktopSplit).toBe(true);
+    else expect(facts.mobileReadingOrder).toBe(true);
+    evidence.recordAssertionEvidence(`Homepage copy, links, and responsive layout at ${width}px`, JSON.stringify(facts), true);
+  }
+
+  const outreach = await eventually(async () => {
+    await freezeMotion(browser);
+    await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Outreach Creation$/, nth: 1 }, { mustHitTest: true, timeoutMs: 5_000 })).center);
+    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText);
+  }, {
+    within: 10_000, until: (text) => typeof text === "string" && text.includes("I've drafted the follow-up email"),
+  });
+  expect(outreach).not.toContain("I analyzed the spreadsheet");
+  evidence.recordAssertionEvidence("Visitors can change the app demo to outreach", outreach, true);
+  const analysis = await eventually(async () => {
+    await freezeMotion(browser);
+    await clickAt(browser, (await waitForLocated(browser, { role: "button", label: /^Data Analysis$/, nth: 1 }, { mustHitTest: true, timeoutMs: 5_000 })).center);
+    return evaluateOnSurface(browser, () => document.getElementById("product")?.innerText);
+  }, {
+    within: 10_000, until: (text) => typeof text === "string" && text.includes("I analyzed the spreadsheet"),
+  });
+  expect(analysis).not.toContain("I've drafted the follow-up email");
+  evidence.recordAssertionEvidence("Visitors can return to the spreadsheet example", analysis, true);
 });

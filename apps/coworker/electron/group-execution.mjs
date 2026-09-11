@@ -2,10 +2,12 @@ import { createGroup, getGroup, listGroups, beginGroupTurn, updateGroup, updateG
 import { collaborationId, continuationPrompt, withAbort } from "./collaboration.mjs";
 import { runGroupTurn, resumeGroupTurn, fallbackPlan } from "../src/lib/groups.ts";
 import { facilitatorPrompt, earlierSpeakerOrders, routeWithFacilitator, facilitatorModels } from "../src/lib/facilitator.ts";
+import { DEFAULT_MODEL_DEFAULTS } from "../src/lib/model-defaults.ts";
+import { effortForTurn } from "../src/lib/effort.ts";
 
 /** The window only submits requests and reads projections. All group execution
  * and cancellation remain alive when that window navigates or reloads. */
-export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, onPublished = async () => {}, setupTimeoutMs = 30_000, replyTimeoutMs = 180_000, pollMs = 750 }) {
+export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, settings = async () => ({ modelDefaults: DEFAULT_MODEL_DEFAULTS }), onPublished = async () => {}, setupTimeoutMs = 30_000, replyTimeoutMs = 180_000, pollMs = 750 }) {
   const active = new Map();
   let timer;
   let closed = false;
@@ -103,7 +105,8 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
           const ready = await withAbort(coordinator(signal), signal);
           const current = await getGroup(directory, groupId);
           const catalog = await withAbort(catalogFor(ready, signal), signal);
-          const models = facilitatorModels(catalog, participants, current.facilitatorModel);
+          const appDefault = (await withAbort(settings(), signal)).modelDefaults.facilitator;
+          const models = facilitatorModels(catalog, participants, current.facilitatorModel, appDefault);
           if (!models.primary) return null;
           const prompt = facilitatorPrompt({ group: current, members: participants.map((member) => ({ ...member, busy: false })), recent: input.recent, earlierOrders: earlierSpeakerOrders(current.turns), message: request.context ? `${request.context}\n\n${input.message}` : input.message, mentions: input.mentions, nameFor: (slug) => participants.find((member) => member.slug === slug)?.name ?? slug });
           const client = await withAbort(clientFor(".coordinator", { signal }), signal);
@@ -117,7 +120,8 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
             const id = collaborationId(groupId, request.id, "route", attempt++);
             executions.add(id);
             signal.throwIfAborted();
-            const entry = await collaboration.submit({ id, groupRequestId: request.id, owner: { slug: ".coordinator", threadId, conversationId: groupId, kind: "coordinator", groupId }, prompt: words, model: { providerId: model.providerId, modelId: model.modelId, ...(model.variants[0] ? { variant: model.variants[0] } : {}) }, timeoutMs: 40_000 });
+            const variant = effortForTurn({ kind: "facilitator", stop: "balanced", fixedVariant: !current.facilitatorModel.trim() && appDefault.model ? appDefault.modelVariant : "", variants: model.variants });
+            const entry = await collaboration.submit({ id, groupRequestId: request.id, owner: { slug: ".coordinator", threadId, conversationId: groupId, kind: "coordinator", groupId }, prompt: words, model: { providerId: model.providerId, modelId: model.modelId, ...(variant ? { variant } : {}) }, timeoutMs: 40_000 });
             const onAbort = () => { void collaboration.cancel(entry.id); };
             signal.addEventListener("abort", onAbort, { once: true });
             try { return (await collaboration.wait(entry.id, signal)).text; } finally { signal.removeEventListener("abort", onAbort); }

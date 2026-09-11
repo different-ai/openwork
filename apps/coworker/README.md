@@ -434,12 +434,27 @@ sentence or current revision passed.
 
 **How hard a coworker thinks**
 
+App model defaults cover conversation, thinking Workers, delivery Workers, and
+the facilitator. Empty model/effort choices mean role-based automatic, not a
+new LLM router. Empty or app-chosen coworker records inherit conversation defaults;
+legacy personal/unknown selections stay overrides. Choosing a personal model
+opts out, while turning inheritance back on retains that override for later.
+Settings apply on the next turn or new Worker, without bulk edits to coworkers.
+Explicit app models are intentional choices: unavailable ones do not silently
+switch model/provider, and an unavailable exact app effort never becomes Automatic.
+The facilitator uses its deterministic scorer instead of calling a different effort.
+Transient retries retain the admitted model/effort and original fallback policy;
+a guarded replacement saves only a compatible personal effort preference, never
+the computed per-turn effort. Consultation replies and form-created Worker reviews
+carry the original question/goal into model resolution. Memory and progress settings
+are independent and unchanged.
+
 | Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Coverage / verification |
 |---|---|---|---|---|---|---|---|
-| The AI model when nobody chose | `recommendModel` in `lib/threads.ts`; first pick in `ui/coworker-home.tsx` and `ui/threads.tsx` | The connected catalog | A connected, tool-capable, non-deprecated model from the best tier (OpenWork account → subscription or key on this Mac → model server on this Mac → the free model), preferring the provider default, then a reasoning model, then the newest release. A model started on the local mode screen goes to the first coworker instead, once | None can use tools → "No connected AI model can use tools." with the two ways out | Coworker settings; the failure card's *Choose AI model* / *Use ‹model›*; *Start with this* on the local mode screen | One line under the model in Coworker settings when the app chose it: "Chosen for you, from your OpenWork account. It stays until you pick one; if it can't answer, the next best takes over once." | `threads.test.ts`, `model-choice.test.ts`, `open-coworker-local-first` (person-selected model and `modelChosenBy` persist after reload). Verify the explanation line directly |
-| Swapping a model that cannot answer | `wasAutoPicked` in `lib/model-choice.ts`; `fallBack` in `ui/threads.tsx` | `coworker.md` `modelChosenBy`, the failure | Only the app's own pick, only for a model-related failure, at most two more recommendations, never the person's model. The record on disk carries who chose, so the rule reads the same after a relaunch (a record that never said is the person's) | The failure card | Choosing a model or an effort makes it the person's | "‹model› could not answer, so Nova is trying ‹next› instead." then "Retried with ‹next›" | `model-choice.test.ts`, `coworkers.test.mjs`, `open-coworker-turn-recovery` (the card's choices) |
-| Thinking effort per turn | `lib/effort.ts`; the dial in the composer and Coworker settings; `submitTurn`, group replies, `localRunModel`, the facilitator | The kind of turn, the dial's stop (`effortPreference`), the model's offered efforts, an exact effort if fixed | Baseline per kind (quick reply low · reply medium · deep work, Worker turn, assignment run high · review medium · facilitator minimal), shifted −2 … +2 by the stop, snapped to what the model offers; the model default when it offers none; a fixed exact effort wins. The dial also nudges the lane and a Worker's default turns | The model default | The dial (Reset to Balanced); *Exact thinking effort* in Coworker settings fixes one for every turn | The dial's one line per stop ("The usual: quick questions get quick answers, real work and Workers think harder."); an exact effort survives a model change only when offered | `effort.test.ts`, `model-choice.test.ts`; `open-coworker-team` (fixed and per-turn `reasoning_effort` reach the provider); `open-coworker-local-first` (`effortPreference` persists after a dial change and reload). Verify dial copy and geometry directly |
-| The facilitator's model | `facilitatorModels` in `lib/facilitator.ts` | The members' models, the catalog, the group's setting | The model the person set for the group, else the coworkers' models (account first, then most used), else the recommendation; the next such model is the second try; the model default effort | The scorer | Group details › Advanced | "Automatic" in the setting | `facilitator.test.ts` |
+| The conversation model | `resolveDiscussionModel` in `lib/model-choice.ts`; private and native group/review turns | App defaults, inheritance, connected catalog, coworker anchor/recommendation | Inheritance uses the exact app model when set; otherwise the existing quick selector around the anchor. Automatic replacements stay with the same connected provider, preserving known capabilities/limits and never increasing either known token rate. Main-model overrides keep their fixed/automatic behavior | Explain unavailable selections; no silent explicit-model substitution | App defaults or Coworker settings; the local starting model opts out once | Settings distinguish inherited defaults from overrides | `model-choice.test.ts`, `coworkers.test.mjs`; native journey proof remains separate |
+| Swapping a model that cannot answer | `wasAutoPicked` in `lib/model-choice.ts`; `fallBack` in `ui/threads.tsx` | Who chose, inheritance, the failure | One guarded replacement for an automatic private-discussion pick, only on a model-related failure before tool work. Never replace an explicit app model or personal fixed model; never overwrite the retained main override while inheriting | The failure card | Choosing a model or an effort makes it the person's | "‹model› could not answer, so Nova is trying ‹next› instead." then "Retried with ‹next›" | `model-choice.test.ts`, `coworkers.test.mjs`, `open-coworker-turn-recovery` (the card's choices) |
+| Thinking effort per turn | `lib/effort.ts`; discussion resolver, `localRunModel`, facilitator | Role, existing dial, supported variants, exact choice | Inherited conversation starts at quick-reply effort (low); explicit depth requests still use deep-reply effort. An exact supported variant on an explicit model wins. Workers and assignments retain high baselines; the facilitator uses minimal supported effort, not catalog order. The existing dial shifts non-facilitator baselines; no new effort control | Model default when no variants exist | App role effort or coworker override | Model settings show the selected effort | `effort.test.ts`, `model-choice.test.ts`, `groups.test.mjs`; native provider proof remains separate |
+| The facilitator's model | `facilitatorModels` in `lib/facilitator.ts` | Group override, app default, members' models, catalog | Group override wins app model. Automatic uses the quick selector around the members' anchor (account first, then most used), else recommendation. One bounded repair per model; a secondary model only for automatic selection, same provider and no higher known prices than the primary. Mentions and admission pins stay unchanged | Deterministic scorer, never another provider for an explicit choice | Group details › Advanced; app facilitator default | "Automatic" or exact model in settings | `facilitator.test.ts`, `groups.test.mjs` |
 | A Cloud assignment's model | `resolveCloudModel` in `lib/cloud-responsibilities.ts` | The coworker's model, the organization's providers | The coworker's model when the organization authorizes it, else a mapped equivalent, else the free starter | The free starter | The coworker's model | The assignment names its model | `cloud-responsibilities.test.ts` |
 
 **Voice**
@@ -544,7 +559,7 @@ provider retention policy; the existing Models service terms still apply.
 |---|---|---|---|---|---|---|---|
 | Starting a Worker | Contract `### Which shape an answer takes` and `## Workers`; `worker_spawn`, `workerTurnTools` | The request | One bounded goal, not a schedule or quick question. Worker turns disable direct management tools and task delegation through native session permissions; the shared workspace is not a sandbox. | — | New Worker; Steer, Pause, Stop | "Started a Worker · Name" and one sentence from the coworker | `workers.test.mjs` (creation and tool handling), `open-coworker-team` (native Worker delegation), `open-coworker-turn-recovery` (native tool boundary) |
 | Its lifespan | `normalizeLifespan`; `spawnWorker` with purpose and effort | The tool's `lifespan`, purpose, and dial stop | Thinking defaults to two turns; delivery to 6 · 8 · 10 · 14 · 20 turns from Light to All in. Delegated work needs finite turns (1–100) or a deadline; only the person can choose until stopped. | Finite purpose default | New Worker; explicit finite tool limit; steer or stop | Purpose, model and remaining turns in the Worker view | `workers.test.mjs`; native purpose-control proof pending |
-| Its model and handoff | `resolveWorkerModel`; `collaboration.request` | Purpose settings, owner model, configured catalog, completed thinking brief | Pin model/effort for each new Worker. One completed thinking brief can return to the original coworker for up to two delivery Workers. No Worker recursion. | No model substitution; blank inheritance resolves the configured native default or explains ambiguity | Coworker settings → Worker models; Same as coworker | Saved model and effort remain visible; later settings affect new Workers only | `workers.test.mjs`, `groups.test.mjs`; native multi-provider proof pending |
+| Its model and handoff | `resolveWorkerModel`; existing `coworker_worker_spawn` purpose | Coworker role override, app role default, owner anchor/native default or recommendation, connected catalog | Explicit coworker role first, app role second, otherwise deep selection for thinking and standard for delivery with same-provider known-cost guards. Save model/effort snapshots at creation. Existing snapshots, unpinned legacy Workers and recovery stay unchanged. One brief can lead to at most two delivery Workers; no recursion or separate model-selection tool | Unavailable explicit choices fail; recommend only when no anchor was set | Coworker Worker-model overrides; app role defaults | Saved model and effort remain visible; later settings affect new Workers only | `workers.test.mjs`, `groups.test.mjs`; native multi-provider proof pending |
 | At most three live per coworker | `createWorker` | The live Workers | The fourth is refused with a sentence | — | Stop one | The tool's sentence, `workers_list` | `workers.test.mjs` |
 | When a turn runs | `admitWorkerTurn` in `electron/main.mjs` | This Mac's run limit (`maxParallelLocalRuns`, default 2) | Turns follow one another as soon as a slot is free; runs already in line go first | Queued | AI & local setup › the limit | "Waiting its turn" | `open-coworker-workers` (limit 1 → queued) |
 | Waking the coworker | `createReviewScheduler` | Findings | Per coworker, at most once a minute, as one turn in the open discussion once it is idle (up to five minutes); held without a discussion; retried once after a failure, then dropped and recorded on the Worker | Held / dropped, recorded | — | "Reviewed an update from Market scan"; "Not reviewed …" on the Worker | `workers.test.mjs`, `open-coworker-workers` |
@@ -620,7 +635,10 @@ line, Activity's Now card, and the journeys read the same value.
   changed, one line stays: "Retried with Claude".
 - **Stopped.** The round send control becomes a stop control while a reply runs
   and the field is empty; the live row's *Stop* and the header's *Stop* do the
-  same. Stopping leaves one quiet line — "Stopped." · *Retry* — and Retry runs
+  same. A requested stop shows **Stopping...** immediately and admits only one
+  cancellation attempt. Failed or unconfirmed cancellation offers **Retry stop**;
+  Next remains held, including when Send now cannot confirm Stop. Only confirmed
+  cancellation and an idle engine leave "Stopped." · *Retry*, and Retry runs
   the same message again under its own id, so it is never in the thread twice
   (`retryTurn` in `@openwork/headless-threads` removes the earlier attempt and
   prompts again). A stop pressed while the message is still on its way is kept
@@ -1004,7 +1022,9 @@ assignment run high · a review medium · the facilitator minimal, always), the
 stop moves it by −2 … +2 steps, and the result snaps to the nearest effort the
 model actually offers — or the model default when it offers none, whatever the
 dial says. An *exact thinking effort* fixed in Coworker settings wins over the
-dial when the model offers it. The dial also nudges the lane a message takes
+dial when the model offers it. When a refreshed catalog no longer offers that
+exact choice, admission refuses with a settings explanation instead of silently
+choosing another effort. An empty choice still follows the dial. The dial also nudges the lane a message takes
 (Thorough gives a quick ask a proper look, All in makes ordinary work deep,
 Light and Steady the other way) and sets a Worker's default lifespan when the
 coworker chose none for delivery (6 · 8 · 10 · 14 · 20 turns; thinking defaults to
@@ -1146,6 +1166,11 @@ pnpm --filter @openwork/coworker installer:background # regenerate the macOS DMG
 pnpm --filter @openwork/coworker package:electron     # platform installers
 ```
 
+Keep releases size-aware: prefer existing/native APIs, bundle build-only inputs,
+and require a measured payload cost before adding a production dependency.
+[Release size](RELEASE-SIZE.md) owns dependency classification, package reports,
+target budgets, and the checks run before release artifacts are uploaded.
+
 The macOS DMG is an Open Coworker-owned installation surface rather than the
 electron-builder default: two quiet installation stations hold the native app
 and Applications icons while three small, tilted coworkers carry the eye
@@ -1234,6 +1259,14 @@ removes the gateway again. The packaged app ships the engine's OpenWork plugins
 under `Resources/opencode-plugins`, as the desktop does.
 
 ## Apps & tools
+
+Embedded Apps carry a server-issued launch lease bound to their originating
+workspace, engine and conversation; catalog launches are explicitly sessionless.
+Actions retain that binding through approval and reject closed or read-only
+views. Closing or changing context releases the lease. Provider documents use an
+opaque inner sandbox (`allow-scripts` only); unsupported read-only host actions
+remain absent rather than advertised as available. Catalog search uses a separate
+discovery-only server route, not an App action without a lease.
 
 Apps & tools is the first row of Coworker settings and a small navigable
 surface inside the panel — tap in, read, tap back — never one long page of

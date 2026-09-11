@@ -31,6 +31,13 @@ older per-connection callback. Reconnecting therefore uses the exact redirect
 URI that was registered with the provider and does not rewrite credentials,
 tokens, access grants, or plugin bindings.
 
+One exception keeps stored state truthful: when a row still carries a
+per-connection callback mode but its administrator-supplied client recorded the
+shared callback as its registered redirect, starting authorization records the
+shared mode on that row. The redirect sent to the provider, the client
+registration, credentials, grants, and bindings do not change; only
+transactions signed with the stale mode keep failing closed.
+
 ## Add a connection
 
 In Cloud → Connections, enter the MCP server URL. OpenWork automatically runs
@@ -83,6 +90,13 @@ so a secret can never be sent to a newly selected issuer.
   protected resource. Metadata must return that exact issuer.
 - **Reauthorization required**: the refresh grant is missing, expired, rejected,
   or bound to an older issuer/client registration.
+- **OAuth client rejected** (`invalid_client`, for example "unsupported client
+  authentication method"): the provider refused the client credentials or
+  authentication method. A registration Den created dynamically is discarded and
+  registered again on the next sign-in. An administrator-supplied client is kept
+  as saved, with its registered callback; compare its client ID, secret, and
+  token endpoint authentication method with the provider application, then sign
+  in again. Rejected tokens are cleared either way.
 - **Network trust required**: verify Den's proxy, private CA, DNS, firewall, and
   service-mesh egress. Discovery uses the same Den network policy as live MCP calls.
 - **Additional permission required**: review and approve the newly challenged

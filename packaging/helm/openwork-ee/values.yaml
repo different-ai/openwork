@@ -2,7 +2,11 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  tag: latest
+  # Blank pins every image to the chart appVersion, which the publish workflow
+  # stamps with the release version, so `--version X` deploys the X images.
+  # Set a tag only to deviate from the chart version (for example a repository
+  # checkout, whose appVersion is a placeholder, or a mirrored image).
+  tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -298,7 +302,10 @@ migrations:
   hook: true
   hookDeletePolicy: before-hook-creation,hook-succeeded
   backoffLimit: 2
-  activeDeadlineSeconds: 600
+  # Counts from Job creation and includes pulling the den-api image (~800 MB),
+  # so it must cover a cold pull on the slowest node. Pass a matching Helm
+  # --timeout (default 5m) or the release fails before this deadline.
+  activeDeadlineSeconds: 1800
   podAnnotations: {}
   resources: {}
   command:

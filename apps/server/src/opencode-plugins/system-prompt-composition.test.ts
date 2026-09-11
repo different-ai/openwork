@@ -6,6 +6,7 @@ import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import {
   OPENWORK_CLOUD_CONNECTION_INSTRUCTION,
   OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
+  OPENWORK_GOOGLE_CONNECTION_INSTRUCTION,
 } from "./openwork-extensions-preview-steering.js";
 import { OpenWorkSpreadsheets } from "./openwork-spreadsheets.js";
 
@@ -13,10 +14,10 @@ function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-async function composeReadyPrompt(): Promise<string[]> {
+async function composePrompt(status = "connected"): Promise<string[]> {
   const engineMcp = {
     async status() {
-      return { data: { "openwork-cloud": { status: "connected" } } };
+      return { data: { "openwork-cloud": { status } } };
     },
   };
   const extensions = await OpenWorkExtensionsPreview({ client: { mcp: engineMcp }, directory: "/tmp/spec" });
@@ -28,7 +29,7 @@ async function composeReadyPrompt(): Promise<string[]> {
 }
 
 test("the composed OpenWork prompt is single, deduplicated, ordered, and current", async () => {
-  const system = await composeReadyPrompt();
+  const system = await composePrompt();
 
   expect(system).toHaveLength(1);
   const prompt = system[0];
@@ -74,6 +75,18 @@ test("the composed OpenWork prompt is single, deduplicated, ordered, and current
   expect(browserAt).toBeGreaterThan(appContextAt);
   expect(steeringAt).toBeGreaterThan(browserAt);
   expect(skillAuthoringAt).toBeGreaterThan(steeringAt);
+});
+
+test.each(["connected", "disabled", "needs_auth", "failed"])("the %s prompt retains shared Google guidance and Drive host discovery exactly once", async (status) => {
+  const system = await composePrompt(status);
+  expect(system).toHaveLength(1);
+  expect(occurrences(system[0], OPENWORK_GOOGLE_CONNECTION_INSTRUCTION)).toBe(1);
+  expect(occurrences(system[0], "only if gmail_create_draft_with_attachments is returned and the user authorizes draft creation")).toBe(1);
+  expect(system[0]).not.toContain("google-workspace");
+  expect(system[0]).not.toContain("legacyConfigured");
+  expect(occurrences(system[0], "Cloud search results alone do not establish that upload is unavailable")).toBe(1);
+  expect(occurrences(system[0], "first query extension.actions with extensionId openwork-cloud-uploads")).toBe(1);
+  expect(occurrences(system[0], "Only if drive_upload_file is returned and the user authorizes the upload")).toBe(1);
 });
 
 test("all OpenWork prompt hooks retain one ordered system message", async () => {

@@ -126,17 +126,20 @@ export function useBrowserViewport(viewId: string, viewport: HTMLDivElement | nu
       void coworkerBridge.browser.command(viewId, input).catch(() => { if (!disposed) last = ""; });
     };
     const schedule = () => { if (!frame) frame = window.requestAnimationFrame(update); };
+    // Zoom can change native DIPs without changing this CSS rectangle. Resend
+    // on window resize so preload supplies a fresh native zoom stamp.
+    const resized = () => { last = ""; schedule(); };
     const resize = new ResizeObserver(schedule);
     resize.observe(viewport);
     const mutations = new MutationObserver(schedule);
     mutations.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "style", "open", "aria-hidden", "data-active"] });
-    window.addEventListener("resize", schedule);
+    window.addEventListener("resize", resized);
     document.addEventListener("scroll", schedule, true);
     document.addEventListener("visibilitychange", schedule);
     schedule();
     return () => {
       disposed = true; window.cancelAnimationFrame(frame); resize.disconnect(); mutations.disconnect();
-      window.removeEventListener("resize", schedule); document.removeEventListener("scroll", schedule, true); document.removeEventListener("visibilitychange", schedule);
+      window.removeEventListener("resize", resized); document.removeEventListener("scroll", schedule, true); document.removeEventListener("visibilitychange", schedule);
       void coworkerBridge.browser.command(viewId, { action: "hide" }).catch(() => undefined);
     };
   }, [viewId, viewport, expanded, active, tabId, humanPhase, mode]);

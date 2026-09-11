@@ -1,15 +1,23 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import type { ComposerDraft } from "../src/app/types";
+import type { ComposerAttachment, ComposerDraft } from "../src/app/types";
+import {
+  consumeComposerAutoSend,
+  consumeComposerAutoSendPayload,
+  getComposerAutoSendPayload,
+  hasComposerAutoSend,
+  markComposerAutoSend,
+} from "../src/react-app/domains/session/surface/composer-auto-send";
 import {
   composerDraftNeedsHydration,
   getComposerQueuedDrafts,
   getComposerRevertMessageId,
+  type ComposerSessionState,
   useComposerStateStore,
 } from "../src/react-app/domains/session/surface/composer-state-store";
 
 function reset() {
-  useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });
+  useComposerStateStore.setState({ sessions: {}, queuedDrafts: {} });
 }
 
 function draft(text: string): ComposerDraft {
@@ -135,5 +143,63 @@ describe("composer state store", () => {
       currentText: storedText,
       storedText,
     })).toBe(true);
+  });
+
+  test("keeps auto-send payloads immutable and scoped while preserving legacy marks", () => {
+    const file = new File(["image"], "submitted.png", { type: "image/png" });
+    const attachment: ComposerAttachment = {
+      id: "attachment-a",
+      name: "submitted.png",
+      mimeType: "image/png",
+      size: file.size,
+      kind: "image",
+      file,
+      previewUrl: "blob:submitted-preview",
+    };
+    const submitted: ComposerSessionState = {
+      draft: "submitted",
+      attachments: [attachment],
+      mentions: { source: "file" },
+      pasteParts: [{ id: "paste-a", label: "A", text: "submitted paste", lines: 1 }],
+      revertMessageId: null,
+    };
+    markComposerAutoSend("scoped-session", { scopeKey: "owner-a", composer: submitted });
+    submitted.draft = "mutated after mark";
+    submitted.mentions.source = "app";
+    const submittedPaste = submitted.pasteParts[0];
+    if (!submittedPaste) throw new Error("Expected submitted paste metadata");
+    submittedPaste.text = "mutated paste";
+    attachment.name = "mutated.png";
+    attachment.previewUrl = "blob:mutated-preview";
+
+    expect(hasComposerAutoSend("scoped-session", "owner-b")).toBe(false);
+    expect(getComposerAutoSendPayload("scoped-session", "owner-b")).toBeNull();
+    expect(consumeComposerAutoSend("scoped-session", "owner-b")).toBe(false);
+    const capturedAttachment = getComposerAutoSendPayload("scoped-session", "owner-a")?.composer.attachments[0];
+    expect(capturedAttachment?.name).toBe("submitted.png");
+    expect(capturedAttachment?.previewUrl).toBe("blob:submitted-preview");
+    expect(capturedAttachment?.file).toBe(file);
+    expect(capturedAttachment).not.toBe(attachment);
+    expect(getComposerAutoSendPayload("scoped-session", "owner-a")?.composer.mentions.source).toBe("file");
+    expect(getComposerAutoSendPayload("scoped-session", "owner-a")?.composer.pasteParts[0]?.text).toBe("submitted paste");
+    markComposerAutoSend("scoped-session", {
+      scopeKey: "owner-b",
+      composer: { ...submitted, draft: "submitted by B" },
+    });
+    expect(hasComposerAutoSend("scoped-session")).toBe(false);
+    expect(consumeComposerAutoSend("scoped-session")).toBe(false);
+    expect(getComposerAutoSendPayload("scoped-session", "owner-a")?.composer.draft).toBe("submitted");
+    expect(getComposerAutoSendPayload("scoped-session", "owner-b")?.composer.draft).toBe("submitted by B");
+
+    markComposerAutoSend("scoped-session");
+    expect(hasComposerAutoSend("scoped-session")).toBe(true);
+    expect(getComposerAutoSendPayload("scoped-session", "owner-a")?.composer.draft).toBe("submitted");
+    expect(getComposerAutoSendPayload("scoped-session", "owner-b")?.composer.draft).toBe("submitted by B");
+    expect(consumeComposerAutoSend("scoped-session")).toBe(true);
+    expect(hasComposerAutoSend("scoped-session")).toBe(false);
+    expect(consumeComposerAutoSendPayload("scoped-session", "owner-a")?.composer.draft).toBe("submitted");
+    expect(getComposerAutoSendPayload("scoped-session", "owner-b")?.composer.draft).toBe("submitted by B");
+    expect(consumeComposerAutoSendPayload("scoped-session", "owner-b")?.composer.draft).toBe("submitted by B");
+    expect(hasComposerAutoSend("scoped-session")).toBe(false);
   });
 });

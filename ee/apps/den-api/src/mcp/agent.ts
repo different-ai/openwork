@@ -19,7 +19,7 @@ import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
-import { getCatalog, protectedResourceMetadata } from "./index.js"
+import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers } from "./agent-http.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
@@ -30,7 +30,7 @@ import {
   SEARCH_CAPABILITIES_TOOL_NAME,
   type CapabilityMatch,
 } from "./search.js"
-import { probeExternalConnectionStatus, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
@@ -60,6 +60,8 @@ import {
 } from "./capability-registry.js"
 import { runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
+import { parseNativeCapabilityName } from "./native-capabilities.js"
+import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
 import { recordWorkflowResult } from "../workflow-runs.js"
 import {
   activateArtifactViewRevision,
@@ -88,12 +90,9 @@ import {
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillCreatedApp } from "./skill-created-app.js"
 import {
-  connectedConnectionActionPayload,
   connectionActionSearchCard,
   connectionActionPayloadSchema,
-  connectionActionPayloadFromStatus,
-  registerAgentConnectionActionApp,
-} from "./connection-action-app.js"
+} from "./connection-action.js"
 import { registerAgentPluginFlowApp } from "./plugin-flow-app.js"
 import {
   createConfigObjectVersion,
@@ -184,7 +183,7 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "To add a public GitHub plugin to an organization marketplace, search for the marketplace list, GitHub plugin import preview, GitHub plugin marketplace import, and resolved marketplace detail capabilities. Preview first; do not recreate the plugin by hand. Before importing, confirm the target marketplace, selected skill/server keys, and who can use them. Do not choose one authentication type for every server: the import route resolves known presets and plugin declarations, and the request authType is only a fallback for unknown servers.",
   "After importing, retrieve the resolved marketplace detail and report each plugin's cloudReadiness. An import or plugin binding is not proof that an MCP connection is usable: relay needs_admin_setup or needs_signin as the next human action instead of claiming the connection is ready.",
   "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the OpenWork Cloud dashboard / Settings > Connect; when a connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
-  "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest. OpenWork always attempts the downstream provider call even when local schema checks find a mismatch; schemaGuidance is advisory: if the provider succeeded, accept the result and do not retry because of the warning; if it failed, use the warning to correct the arguments or search again.",
+  "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest. OpenWork always attempts the downstream provider call even when local schema checks find a mismatch; schemaGuidance is advisory (returned as openwork/schemaGuidance alongside provider results): if the provider succeeded, accept the result and do not retry because of the warning; if it failed, use the warning to correct the arguments or search again.",
   "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
   "When the user explicitly asks to connect or reconnect a service, search for that service by name with intent connect. Ordinary capability searches must omit intent connect: blocked connection matches are informational and must not trigger sign-in cards or automatic status calls. Only propose authorization when an explicitly requested operation actually depends on that connection. Explicit connection searches render a card when the result identifies one connection. Do not execute the same status again when the search response includes connectionAction. For an explicit connection request without a card, execute that exact status match once. When execute_capability fails with needs_connection or connection_not_connected, execute that connection's status capability (mcp:<connectionId>:*) once for the same card. For member-owned OAuth connections in OpenWork desktop, ask the user to click Connect or Reconnect on the inline card; desktop handles authorization directly, so do not send them to Den. For other actions, name connectionStatus.connectionName and relay connectionStatus.action exactly in text, distinguishing the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console. Probes are live: after the human fixes the connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
   "Successful postMarketplacesPlugins, postPluginsAccess, and postMarketplacesAccess calls render a confirmation card automatically in compatible hosts; report the outcome in text as well.",
@@ -245,13 +244,12 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
   const result = {
     matches,
     ...(hint ? { hint } : {}),
-    ...(card ? { connectionAction: card.connectionAction } : {}),
+    ...(card ? { connectionAction: card } : {}),
     ...(connectorCatalog ? { connectorCatalog } : {}),
   }
   return {
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
-    ...(card ? { _meta: card.meta } : {}),
   }
 }
 
@@ -388,9 +386,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     (error) => agentMcpLogger.warn("Agent MCP transport error", { error }),
   )
 
-  app.get("/.well-known/oauth-protected-resource/mcp/agent", publicRoute, (c) =>
+  app.get("/.well-known/oauth-protected-resource/mcp/agent", protectedResourceMetadataRoute("agent"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
-  app.get("/mcp/agent/.well-known/oauth-protected-resource", publicRoute, (c) =>
+  app.get("/mcp/agent/.well-known/oauth-protected-resource", protectedResourceMetadataRoute("agent"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
 
   app.all("/mcp/agent", tokenRoute, async (c) => {
@@ -595,6 +593,24 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             executeCapability(capabilityContext, { name, schemaDigest, path, query, body })
           ),
         })
+        // Only this direct call may hand off to the host's fixed Gmail upload
+        // action. Keep the explicit no-draft failure body; scripts stay errors.
+        const native = parseNativeCapabilityName(name)
+        if (result.isError === true
+          && native?.toolName === "postCapabilitiesGoogleWorkspaceGmailDrafts"
+          && (native.connectionId === "google-workspace" || /^emc_[0-9a-hjkmnp-tv-z]{26}$/.test(native.connectionId))
+          && result.content.length === 1) {
+          const part = result.content[0]
+          if (part?.type === "text") {
+            try {
+              if (gmailFileInputPreflightSchema.safeParse(JSON.parse(part.text)).success) {
+                return { ...result, isError: false }
+              }
+            } catch {
+              // Non-JSON and unrelated errors retain their original transport.
+            }
+          }
+        }
         return result
       },
     )
@@ -729,26 +745,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             return { ok: false, error: error.error, message: error.message }
           }
           throw error
-        }
-      },
-    })
-
-    registerAgentConnectionActionApp({
-      server,
-      probe: async ({ connectionId }) => {
-        const probe = await probeExternalConnectionStatus({
-          organizationId: principal.organizationId,
-          member: memberIdentity,
-          connectionId,
-        })
-        if (!probe.ok) {
-          return { ok: false, error: probe.error, message: probe.message }
-        }
-        return {
-          ok: true,
-          payload: probe.connected
-            ? connectedConnectionActionPayload({ connectionId: probe.connection.id, connectionName: probe.connection.name })
-            : connectionActionPayloadFromStatus(probe.status),
         }
       },
     })

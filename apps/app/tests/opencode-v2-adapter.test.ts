@@ -1,12 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import {
   createClientV2,
   createV2EventTranslationState,
   translateV2Event,
+  type V2MappedMessage,
 } from "../src/app/lib/opencode-v2-adapter";
 import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
+import { getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 
 const capturedPermissionAsked = {
   id: "evt_permission_asked",
@@ -429,6 +432,10 @@ describe("OpenCode v2 event translation", () => {
       },
       { type: "session.execution.succeeded", properties: { sessionID: "s", sequence: undefined } },
     ]);
+    expect(state.streams.size).toBe(0);
+    expect(state.latestStreamKeyBySession.size).toBe(0);
+    expect(state.nextOrdinalByMessage.size).toBe(0);
+    expect(state.executionBySession.size).toBe(0);
   });
 
   test("translates the captured v2 shell lifecycle using the bash presentation", () => {
@@ -598,6 +605,13 @@ describe("OpenCode v2 event translation", () => {
           type: `session.next.${kind}.ended`, created: 20,
           data: { sessionID: identity.sessionID, [`${kind}ID`]: `shared_${ordinal}` },
         }, state)).toMatchObject([{ properties: { part: { id, text: "legacy" } } }]);
+        expect(translateV2Event(started, state)).toBeNull();
+        expect(translateV2Event({
+          type: `session.next.${kind}.ended`, data: { sessionID: identity.sessionID },
+        }, state)).toBeNull();
+        expect(translateV2Event({
+          type: `session.next.${kind}.delta`, data: { sessionID: identity.sessionID, delta: "LATE" },
+        }, state)).toBeNull();
         expect(translateV2Event({
           type: `session.next.${kind}.delta`,
           data: { ...identity, assistantMessageID: "msg_other", [`${kind}ID`]: `shared_${ordinal}`, delta: "WRONG" },
@@ -608,6 +622,250 @@ describe("OpenCode v2 event translation", () => {
         }, state)).toBeNull();
       }
     }
+  });
+
+  test("releases completed payloads across thousands of parts and turns without disturbing active streams", () => {
+    const state = createV2EventTranslationState();
+    const other = { sessionID: "s:other", assistantMessageID: "m" };
+    const input = { command: "keep this active input" };
+    for (const kind of ["text", "reasoning"]) {
+      translateV2Event({ type: `session.${kind}.started`, data: { ...other, ordinal: 0 } }, state);
+      translateV2Event({ type: `session.${kind}.delta`, data: { ...other, ordinal: 0, delta: "still " } }, state);
+    }
+    translateV2Event({ type: "session.tool.input.started", data: { ...other, id: "call", name: "shell" } }, state);
+    translateV2Event({ type: "session.tool.called", created: 5, data: { ...other, id: "call", input } }, state);
+    const activeStreams = [...state.streams.values()];
+    const activeTool = state.tools.get(JSON.stringify([other.sessionID, "call"]));
+    const payload = "completed payload ".repeat(4_096);
+
+    for (let turn = 0; turn < 500; turn += 1) {
+      const identity = { sessionID: "s", assistantMessageID: `m_${turn}` };
+      translateV2Event({ type: "session.execution.started", data: identity }, state);
+      for (let step = 0; step < 3; step += 1) {
+        // Each kind keeps its own implicit ordinal through tool steps and retries.
+        for (const kind of ["reasoning", "text"]) {
+          const data = { ...identity, [`${kind}ID`]: `${turn}_${step}` };
+          const id = `${identity.assistantMessageID}:${kind === "reasoning" ? "reasoning:" : ""}${step}`;
+          const text = `${turn}:${step}:${kind}:${payload}`;
+          const started = { type: `session.next.${kind}.started`, created: 10, data };
+          expect(translateV2Event(started, state)?.[1]).toMatchObject({ properties: { part: { id, text: "" } } });
+          translateV2Event({ type: `session.next.${kind}.delta`, data: { ...data, delta: text } }, state);
+          const ended = { type: `session.next.${kind}.ended`, created: 20, data };
+          const completed = translateV2Event(ended, state);
+          expect(completed).toMatchObject([{ properties: { part: { id, text } } }]);
+          expect([...state.streams.values()].filter((stream) => stream.sessionID === "s").every((stream) => stream.text === undefined)).toBe(true);
+          expect(translateV2Event(ended, state)).toBeNull();
+          expect(translateV2Event(started, state)).toBeNull();
+          expect(translateV2Event({ type: `session.next.${kind}.delta`, data: { ...data, delta: "LATE" } }, state)).toBeNull();
+          expect(completed).toMatchObject([{ properties: { part: { id, text } } }]);
+        }
+
+        const data = { ...identity, id: `call_${step}` };
+        const toolInput = { command: `${turn}:${step}:${payload}` };
+        const raw = JSON.stringify(toolInput);
+        const started = { type: "session.tool.input.started", data: { ...data, name: "shell" } };
+        translateV2Event(started, state);
+        translateV2Event({ type: "session.tool.input.delta", data: { ...data, delta: raw } }, state);
+        const pending = translateV2Event({ type: "session.tool.input.ended", data: { ...data, text: raw } }, state);
+        expect(pending).toMatchObject([{ properties: { part: { state: { input: toolInput, raw } } } }]);
+        expect(state.tools.get(JSON.stringify(["s", data.id]))).toMatchObject({ raw: "", input: toolInput });
+        translateV2Event({ type: "session.tool.called", created: 30, data: { ...data, input: toolInput } }, state);
+        translateV2Event({ type: "session.tool.progress", data: { ...data, metadata: { detail: payload } } }, state);
+        const terminal = {
+          type: step === 1 ? "session.tool.failed" : "session.tool.success", created: 40,
+          data: { ...data, content: [{ type: "text", text: payload }], error: { message: "tool failed" } },
+        };
+        const completed = translateV2Event(terminal, state);
+        const expected = [{ properties: { part: { id: data.id, tool: "bash", state: {
+          input: toolInput, metadata: { detail: payload }, time: { start: 30, end: 40 },
+          ...(step === 1 ? { status: "error", error: "tool failed" } : { status: "completed", output: payload }),
+        } } } }];
+        expect(completed).toMatchObject(expected);
+        expect(state.tools.get(JSON.stringify(["s", data.id]))).toBeNull();
+        expect(translateV2Event(terminal, state)).toBeNull();
+        expect(translateV2Event(started, state)).toBeNull();
+        expect(translateV2Event({ type: "session.tool.progress", data: { ...data, metadata: { detail: "LATE" } } }, state)).toBeNull();
+        expect(completed).toMatchObject(expected);
+        translateV2Event({ type: "session.retry.scheduled", data: { ...identity, attempt: 2, at: 100, error: "retry" } }, state);
+        translateV2Event({ type: "session.step.started", data: identity }, state);
+      }
+      // Only small identity markers survive within the execution, never its output.
+      expect(state.streams.size).toBe(8);
+      expect(state.tools.size).toBe(4);
+      expect(state.nextOrdinalByMessage.get(JSON.stringify(["s", identity.assistantMessageID, "text"]))).toBe(3);
+      expect(state.nextOrdinalByMessage.get(JSON.stringify(["s", identity.assistantMessageID, "reasoning"]))).toBe(3);
+      translateV2Event({ type: "session.execution.succeeded", data: identity }, state);
+      expect([...state.streams.values()]).toEqual(activeStreams);
+      expect([...state.tools.values()]).toEqual([activeTool]);
+      expect(state.latestStreamKeyBySession.size).toBe(2);
+      expect(state.nextOrdinalByMessage.size).toBe(2);
+      expect([...state.executionBySession.keys()]).toEqual([other.sessionID]);
+    }
+
+    for (const kind of ["text", "reasoning"]) {
+      const data = { ...other, ordinal: 0 };
+      translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "active" } }, state);
+      expect(translateV2Event({ type: `session.${kind}.ended`, data }, state))
+        .toMatchObject([{ properties: { part: { text: "still active", sessionID: other.sessionID } } }]);
+    }
+    expect(translateV2Event({ type: "session.tool.success", created: 50, data: { ...other, id: "call", result: "kept" } }, state))
+      .toMatchObject([{ properties: { part: { state: { input, output: "kept", time: { start: 5, end: 50 } } } } }]);
+    translateV2Event({ type: "session.execution.succeeded", data: other }, state);
+    for (const map of [state.streams, state.tools, state.latestStreamKeyBySession, state.nextOrdinalByMessage, state.executionBySession]) {
+      expect(map.size).toBe(0);
+    }
+  });
+
+  test.each(["succeeded", "failed", "interrupted", "deleted"])("cleans up settled %s execution state and ignores late terminals for a successor", (terminal) => {
+    const state = createV2EventTranslationState();
+    const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const started = { type: "session.execution.started", created: 10, durable: { seq: 1 }, data: { sessionID: "s" } };
+    const ended = terminal === "deleted"
+      ? { type: "session.deleted", created: 20, durable: { seq: 2 }, data: { info: { id: "s" } } }
+      : { type: `session.execution.${terminal}`, created: 20, durable: { seq: 2 }, data: { sessionID: "s", reason: "shutdown" } };
+    translateV2Event(started, state);
+    translateV2Event({ type: "session.text.started", created: 11, data: identity }, state);
+    translateV2Event({ type: "session.text.delta", data: { ...identity, delta: "unfinished" } }, state);
+    translateV2Event({ type: "session.tool.input.started", data: { ...identity, id: "call", name: "shell" } }, state);
+    if (terminal !== "deleted") {
+      translateV2Event({ type: "session.text.ended", data: identity }, state);
+      translateV2Event({ type: "session.tool.failed", data: { ...identity, id: "call", error: "settled" } }, state);
+    }
+    translateV2Event(ended, state);
+    translateV2Event(ended, state);
+    for (const map of [state.streams, state.tools, state.latestStreamKeyBySession, state.nextOrdinalByMessage, state.executionBySession]) {
+      expect(map.size).toBe(0);
+    }
+    expect(translateV2Event({ type: "session.text.ended", data: { ...identity, text: "late" } }, state)).toBeNull();
+    expect(translateV2Event({ type: "session.tool.failed", data: { ...identity, id: "call", error: "late" } }, state)).toBeNull();
+    if (terminal === "deleted") return;
+
+    for (const sequenced of [true, false]) {
+      const data = { ...identity, assistantMessageID: `successor_${sequenced}` };
+      const created = sequenced ? 30 : 50;
+      translateV2Event({ ...started, created, durable: sequenced ? { seq: 3 } : undefined }, state);
+      translateV2Event({ type: "session.text.started", created: created + 1, data }, state);
+      translateV2Event({ type: "session.text.delta", data: { ...data, delta: "new " } }, state);
+      translateV2Event({ ...ended, durable: sequenced ? ended.durable : undefined }, state);
+      translateV2Event({ type: "session.text.delta", data: { ...data, delta: "execution" } }, state);
+      expect(translateV2Event({ type: "session.text.ended", created: created + 9, data }, state))
+        .toMatchObject([{ properties: { part: { id: `${data.assistantMessageID}:0`, text: "new execution" } } }]);
+      translateV2Event({ ...ended, created: created + 10, durable: sequenced ? { seq: 4 } : undefined }, state);
+      expect(state.streams.size).toBe(0);
+      expect(state.executionBySession.size).toBe(0);
+    }
+  });
+
+  test.each(["sequence", "created", "timestamp"])("rejects post-terminal replay using %s without touching a successor or another active stream", (ordering) => {
+    const state = createV2EventTranslationState();
+    const event = (type: string, data: Record<string, unknown>, sequence: number) => ({
+      type,
+      // Native sequence is authoritative even when every event shares a clock tick.
+      ...(ordering === "timestamp" ? {} : { created: ordering === "sequence" ? 10 : sequence * 10 }),
+      ...(ordering === "sequence" ? { durable: { aggregateID: data.sessionID, seq: sequence, version: 1 } } : {}),
+      data: { ...data, ...(ordering === "timestamp" ? { timestamp: sequence * 10 } : {}) },
+    });
+    const other = { sessionID: "other", assistantMessageID: "m_other", ordinal: 0 };
+    translateV2Event(event("session.text.started", other, 1), state);
+    translateV2Event({ type: "session.text.delta", data: { ...other, delta: "other " } }, state);
+    const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const started = event("session.text.started", identity, 1);
+    translateV2Event(started, state);
+    const ended = event("session.text.ended", { ...identity, text: "final answer" }, 2);
+    const final = translateV2Event(ended, state);
+    expect(final).toMatchObject([{ properties: { part: { id: "m:0", text: "final answer" } } }]);
+    const toolStarted = event("session.tool.input.started", { ...identity, id: "call", name: "shell" }, 3);
+    translateV2Event(toolStarted, state);
+    translateV2Event(event("session.tool.called", { ...identity, id: "call", input: { command: "result" } }, 4), state);
+    const toolEnded = event("session.tool.success", { ...identity, id: "call", result: "final tool output" }, 5);
+    expect(translateV2Event(toolEnded, state)).toMatchObject([{ properties: { part: { state: {
+      status: "completed", input: { command: "result" }, output: "final tool output",
+    } } } }]);
+    const terminal = event("session.execution.succeeded", { sessionID: "s" }, 6);
+    translateV2Event(terminal, state);
+    expect(state.streams.size).toBe(1);
+    expect(state.tools.size).toBe(0);
+    expect(state.executionBySession.has("s")).toBe(false);
+    for (const replay of [started, ended, toolStarted, toolEnded]) expect(translateV2Event(replay, state)).toBeNull();
+
+    const successor = { sessionID: "s", assistantMessageID: "m_next", ordinal: 0 };
+    translateV2Event(event("session.execution.started", { sessionID: "s" }, 7), state);
+    expect(translateV2Event(event("session.text.started", successor, 8), state)?.[1])
+      .toMatchObject({ properties: { part: { id: "m_next:0", text: "" } } });
+    translateV2Event({ type: "session.text.delta", data: { ...successor, delta: "new " } }, state);
+
+    // Only the idle replay window is bounded. Evicting it must not unprotect
+    // the still-active successor or cause unbounded terminal-history growth.
+    for (let index = 0; index < 1_000; index += 1) {
+      translateV2Event(event("session.execution.succeeded", { sessionID: `retired_${index}` }, 1), state);
+      expect(state.terminalBySession.size).toBeLessThanOrEqual(256);
+    }
+    expect(state.terminalBySession.has("s")).toBe(false);
+    expect(state.executionBySession.size).toBe(2);
+    for (const replay of [started, ended, toolStarted, toolEnded, event("session.execution.started", { sessionID: "s" }, 0)]) {
+      expect(translateV2Event(replay, state)).toBeNull();
+    }
+    translateV2Event(terminal, state);
+    translateV2Event({ type: "session.text.delta", data: { ...successor, delta: "answer" } }, state);
+    expect(translateV2Event(event("session.text.ended", successor, 9), state))
+      .toMatchObject([{ properties: { part: { id: "m_next:0", text: "new answer" } } }]);
+    translateV2Event(event("session.execution.succeeded", { sessionID: "s" }, 10), state);
+    translateV2Event({ type: "session.text.delta", data: { ...other, delta: "answer" } }, state);
+    expect(translateV2Event(event("session.text.ended", other, 2), state))
+      .toMatchObject([{ properties: { part: { id: "m_other:0", text: "other answer" } } }]);
+    expect(final).toMatchObject([{ properties: { part: { id: "m:0", text: "final answer" } } }]);
+    translateV2Event(event("session.execution.succeeded", { sessionID: "other" }, 3), state);
+    expect(state.streams.size).toBe(0);
+    expect(state.executionBySession.size).toBe(0);
+  });
+
+  test.each(["succeeded", "failed", "interrupted"])("keeps unresolved parts through execution.%s until late final content arrives", (terminal) => {
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const other = { sessionID: "other", assistantMessageID: "m_other", ordinal: 0 };
+    translateV2Event({ type: "session.text.started", created: 10, data: other }, state);
+    translateV2Event({ type: "session.text.delta", data: { ...other, delta: "unrelated" } }, state);
+    for (const kind of ["text", "reasoning"]) {
+      translateV2Event({ type: `session.${kind}.started`, created: 10, durable: { seq: 1 }, data }, state);
+      translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "partial " } }, state);
+    }
+    const tool = { ...data, id: "call", name: "shell" };
+    const input = { command: "kept input" };
+    translateV2Event({ type: "session.tool.input.started", created: 20, durable: { seq: 2 }, data: tool }, state);
+    translateV2Event({ type: "session.tool.input.ended", created: 21, data: { ...tool, text: JSON.stringify(input) } }, state);
+    const ended = { type: `session.execution.${terminal}`, created: 100, durable: { seq: 10 }, data: { sessionID: "s" } };
+    translateV2Event(ended, state);
+    translateV2Event(ended, state);
+    expect(state.streams.size).toBe(3);
+    expect(state.tools.size).toBe(1);
+    expect(state.executionBySession.get("s")?.terminal).toBe(true);
+
+    // Neither old timestamps nor a retired execution may suppress final content
+    // for an already-known part. Text.Ended's full value also repairs a late delta.
+    for (const kind of ["text", "reasoning"]) {
+      translateV2Event({ type: `session.${kind}.delta`, created: 30, data: { ...data, delta: "tail" } }, state);
+      const completed = translateV2Event({ type: `session.${kind}.ended`, created: 40, durable: { seq: 3 },
+        data: { ...data, ...(kind === "text" ? { text: "authoritative final answer" } : {}) } }, state);
+      expect(completed).toMatchObject([{ properties: { part: {
+        type: kind, text: kind === "text" ? "authoritative final answer" : "partial tail",
+      } } }]);
+      expect(translateV2Event({ type: `session.${kind}.delta`, created: 30, data: { ...data, delta: "late duplicate" } }, state)).toBeNull();
+    }
+    expect(translateV2Event({ type: "session.tool.called", created: 50, durable: { seq: 4 }, data: { ...tool, input } }, state))
+      .toMatchObject([{ properties: { part: { state: { status: "running", input } } } }]);
+    translateV2Event({ type: "session.tool.progress", created: 60, data: { ...tool, metadata: { detail: "kept metadata" } } }, state);
+    const completed = translateV2Event({ type: terminal === "failed" ? "session.tool.failed" : "session.tool.success",
+      created: 70, durable: { seq: 5 }, data: { ...tool, result: "final output", error: "final error" } }, state);
+    expect(completed).toMatchObject([{ properties: { part: { state: {
+      input, metadata: { detail: "kept metadata" }, time: { start: 50, end: 70 },
+      ...(terminal === "failed" ? { status: "error", error: "final error" } : { status: "completed", output: "final output" }),
+    } } } }]);
+    expect(state.tools.size).toBe(0);
+    expect([...state.streams.values()]).toMatchObject([{ sessionID: "other", text: "unrelated" }]);
+    expect(state.nextOrdinalByMessage.size).toBe(1);
+    expect(state.latestStreamKeyBySession.size).toBe(1);
+    expect(state.executionBySession.has("s")).toBe(false);
+    expect(translateV2Event({ type: "session.tool.input.started", created: 20, durable: { seq: 2 }, data: tool }, state)).toBeNull();
   });
 
   test("preserves execution failure for sequenced terminal handling", () => {
@@ -656,6 +914,39 @@ describe("OpenCode v2 event translation", () => {
       },
       { type: "session.execution.succeeded", properties: { sessionID: "ses_child", sequence: undefined } },
     ]);
+  });
+
+  test("keeps an explicit subagent session through empty updates without bleeding across messages, calls, or parents", () => {
+    const state = createV2EventTranslationState();
+    const start = (sessionID: string, id: string, assistantMessageID = `msg_${sessionID}`) => {
+      const identity = { sessionID, assistantMessageID, id };
+      translateV2Event({ type: "session.tool.input.started", data: { ...identity, name: "subagent" } }, state);
+      translateV2Event({ type: "session.tool.called", data: { ...identity, input: { agent: "general" } } }, state);
+      return identity;
+    };
+    const exact = start("ses_parent_exact", "call_exact");
+    const otherCall = start("ses_parent_exact", "call_other");
+    const otherParent = start("ses_parent_other", "call_exact");
+
+    expect(translateV2Event({ type: "session.tool.progress", data: {
+      ...exact, metadata: { sessionID: "ses_child_exact", status: "running" },
+    } }, state)).toMatchObject([{ properties: { part: { state: { metadata: {
+      sessionID: "ses_child_exact", sessionId: "ses_child_exact", status: "running",
+    } } } } }]);
+    expect(translateV2Event({ type: "session.tool.progress", data: { ...exact, metadata: {} } }, state))
+      .toMatchObject([{ properties: { part: { state: { metadata: {
+        sessionId: "ses_child_exact",
+      } } } } }]);
+    expect(JSON.stringify(translateV2Event({
+      type: "session.tool.progress", data: { ...otherCall, metadata: {} },
+    }, state))).not.toContain("ses_child_exact");
+    expect(JSON.stringify(translateV2Event({
+      type: "session.tool.progress", data: { ...otherParent, metadata: {} },
+    }, state))).not.toContain("ses_child_exact");
+    const otherMessage = start("ses_parent_exact", "call_exact", "msg_next_turn");
+    expect(JSON.stringify(translateV2Event({
+      type: "session.tool.progress", data: { ...otherMessage, metadata: {} },
+    }, state))).not.toContain("ses_child_exact");
   });
 });
 
@@ -814,7 +1105,7 @@ describe("OpenCode v2 client compatibility", () => {
         translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "partial" } }, state);
         const ended = { type: `session.${kind}.ended`, created: end, data: { ...data, text } };
         expect(translateV2Event(ended, state)).toEqual([{ type: "message.part.updated", properties: { part: parts?.[index] } }]);
-        expect(translateV2Event(ended, state)).toEqual([{ type: "message.part.updated", properties: { part: parts?.[index] } }]);
+        expect(translateV2Event(ended, state)).toBeNull();
       }
     } finally {
       globalThis.fetch = originalFetch;
@@ -854,10 +1145,10 @@ describe("OpenCode v2 client compatibility", () => {
             { id: `${tool.id}:file:1`, sessionID: "ses_files", messageID: "msg_files", type: "file", url: content[3]?.uri, mime: "image/png" },
           ],
         } });
-        // Repeated completion retains IDs, including identical URIs on distinct calls.
+        // Repeated completion is a no-op, not an empty-input overwrite of the final part.
         expect(translateV2Event({
           type: "session.tool.success", created: 30, data: { ...identity, content },
-        }, state)).toEqual(completed);
+        }, state)).toBeNull();
       }
     } finally {
       globalThis.fetch = originalFetch;
@@ -891,21 +1182,23 @@ describe("OpenCode v2 client compatibility", () => {
           tool: expectedTool, state: { input: expectedInput, ...(index > 0 ? { metadata: expectedMetadata } : {}) },
         });
       }
-      const state = createV2EventTranslationState();
       const identity = { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child" };
-      translateV2Event({ type: "session.tool.input.started", created: 10, data: { ...identity, name } }, state);
-      for (const type of ["session.tool.input.delta", "session.tool.input.ended"]) {
-        expect(translateV2Event({ type, data: { ...identity, delta: JSON.stringify(input), text: JSON.stringify(input) } }, state))
-          .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
+      for (const terminal of ["success", "failed"]) {
+        const state = createV2EventTranslationState();
+        translateV2Event({ type: "session.tool.input.started", created: 10, data: { ...identity, name } }, state);
+        for (const type of ["session.tool.input.delta", "session.tool.input.ended"]) {
+          expect(translateV2Event({ type, data: { ...identity, delta: JSON.stringify(input), text: JSON.stringify(input) } }, state))
+            .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
+        }
+        expect(translateV2Event({ type: "session.tool.called", created: 20, data: { ...identity, input, executed: false } }, state))
+          .toMatchObject([{ properties: { part: { tool: expectedTool, state: { input: expectedInput, status: "running" } } } }]);
+        expect(translateV2Event({ type: "session.tool.progress", created: 25, data: { ...identity, metadata } }, state))
+          .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[1]?.parts[0] } }]);
+        expect(translateV2Event({ type: `session.tool.${terminal}`, created: 30, data: { ...identity, metadata, content, error, executed: false } }, state))
+          .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[terminal === "success" ? 2 : 3]?.parts[0] } }]);
+        expect(translateV2Event({ type: `session.tool.${terminal === "success" ? "failed" : "success"}`, created: 31,
+          data: { ...identity, metadata, content, error, executed: false } }, state)).toBeNull();
       }
-      expect(translateV2Event({ type: "session.tool.called", created: 20, data: { ...identity, input, executed: false } }, state))
-        .toMatchObject([{ properties: { part: { tool: expectedTool, state: { input: expectedInput, status: "running" } } } }]);
-      expect(translateV2Event({ type: "session.tool.progress", created: 25, data: { ...identity, metadata } }, state))
-        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[1]?.parts[0] } }]);
-      expect(translateV2Event({ type: "session.tool.success", created: 30, data: { ...identity, metadata, content, executed: false } }, state))
-        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[2]?.parts[0] } }]);
-      expect(translateV2Event({ type: "session.tool.failed", created: 30, data: { ...identity, metadata, error, executed: false } }, state))
-        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[3]?.parts[0] } }]);
       expect(result.data?.[3]?.parts[0]).toMatchObject({ state: { error: "child failed" } });
       expect(input).not.toHaveProperty("subagent_type");
       expect(metadata).not.toHaveProperty("sessionId");
@@ -934,6 +1227,156 @@ describe("OpenCode v2 client compatibility", () => {
         .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("hydrates only exact previously observed subagent associations from live and reload caches", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const storageKey = "openwork.v2.task-session-associations.v1";
+    const previous = globalThis.sessionStorage.getItem(storageKey);
+    const liveBaseUrl = "http://live-association.test/opencode2";
+    const coldBaseUrl = "http://cold-association.test/opencode2";
+    const directory = "/workspace";
+    globalThis.sessionStorage.setItem(storageKey, JSON.stringify([
+      {
+        scope: coldBaseUrl,
+        parentSessionID: "ses_parent_cold",
+        messageID: "msg_call_evicted",
+        callID: "call_evicted",
+        childSessionID: "ses_child_evicted",
+      },
+      ...Array.from({ length: 255 }, (_, index) => ({
+        scope: coldBaseUrl,
+        parentSessionID: `ses_noise_${index}`,
+        messageID: `msg_noise_${index}`,
+        callID: `call_noise_${index}`,
+        childSessionID: `ses_child_noise_${index}`,
+      })),
+      {
+        scope: coldBaseUrl,
+        parentSessionID: "ses_parent_cold",
+        callID: "call_legacy",
+        childSessionID: "ses_child_legacy",
+      },
+      {
+        scope: coldBaseUrl,
+        parentSessionID: "ses_parent_cold",
+        messageID: "msg_call_exact",
+        callID: "call_exact",
+        childSessionID: "ses_child_cold",
+      },
+    ]));
+    const originalFetch = globalThis.fetch;
+    let liveReads = 0;
+    const message = (callID: string, metadata: Record<string, unknown>, id = `msg_${callID}`) => ({
+      id,
+      type: "assistant",
+      time: { created: 10 },
+      content: [{
+        type: "tool", id: callID, name: "subagent", time: { created: 10, ran: 20 },
+        state: { status: "running", input: { agent: "general" }, metadata },
+      }],
+    });
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const match = new URL(request.url).pathname.match(/\/api\/session\/([^/]+)\/message$/);
+      const sessionID = match?.[1];
+      const hostname = new URL(request.url).hostname;
+      if (hostname === "live-association.test" && new URL(request.url).pathname.endsWith("/api/event")) {
+        return new Response("", { headers: { "Content-Type": "text/event-stream" } });
+      }
+      if (hostname === "live-association.test" && sessionID === "ses_parent_live") {
+        liveReads += 1;
+        return jsonResponse({ data: [message("call_exact", liveReads === 1 ? { sessionID: "ses_child_live" } : {})] });
+      }
+      if (hostname === "cold-association.test" && sessionID === "ses_parent_cold") {
+        return jsonResponse({ data: [
+          message("call_exact", {}),
+          message("call_exact", {}, "msg_next_turn"),
+          message("call_other", {}),
+          message("call_legacy", {}),
+          message("call_evicted", {}),
+        ] });
+      }
+      if (hostname === "cold-association.test" && sessionID === "ses_parent_other") {
+        return jsonResponse({ data: [message("call_exact", {})] });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+    };
+    const uiPart = (messages: V2MappedMessage[] | undefined, index: number) => {
+      const part = messages?.[index]?.parts[0];
+      if (!part || part.type !== "tool") throw new Error("Missing subagent tool part");
+      return parseDynamicToolUIPart(part);
+    };
+    try {
+      const live = createClientV2(liveBaseUrl, undefined, {});
+      expect(uiPart((await live.session.messages({ sessionID: "ses_parent_live" })).data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_live" } });
+      const subscription = await live.event.subscribe();
+      await subscription.stream.return(undefined);
+      expect(uiPart((await live.session.messages({ sessionID: "ses_parent_live" })).data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_live" } });
+      const hydrated = createClientV2(liveBaseUrl, directory, {});
+      expect(uiPart((await hydrated.session.messages({ sessionID: "ses_parent_live" })).data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_live" } });
+      expect(globalThis.sessionStorage.getItem(storageKey)).toContain("ses_child_live");
+
+      const cold = createClientV2(coldBaseUrl, directory, {});
+      const exact = await cold.session.messages({ sessionID: "ses_parent_cold" });
+      expect(uiPart(exact.data, 0)?.callProviderMetadata)
+        .toMatchObject({ openwork: { childSessionId: "ses_child_cold" } });
+      for (const index of [1, 2, 3, 4]) {
+        expect(JSON.stringify(uiPart(exact.data, index)?.callProviderMetadata)).not.toContain("ses_child_");
+      }
+      const otherParent = await cold.session.messages({ sessionID: "ses_parent_other" });
+      expect(JSON.stringify(uiPart(otherParent.data, 0)?.callProviderMetadata)).not.toContain("ses_child_cold");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previous === null) globalThis.sessionStorage.removeItem(storageKey);
+      else globalThis.sessionStorage.setItem(storageKey, previous);
+      if (ownedDom) await GlobalRegistrator.unregister();
+    }
+  });
+
+  test("keeps observed subagent associations in memory when browser cache access throws", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const getItem = spyOn(globalThis.sessionStorage, "getItem").mockImplementation(() => {
+      throw new DOMException("Storage blocked", "SecurityError");
+    });
+    const setItem = spyOn(globalThis.sessionStorage, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage blocked", "SecurityError");
+    });
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    globalThis.fetch = async () => {
+      reads += 1;
+      return jsonResponse({ data: [{
+        id: "msg_storage_blocked", type: "assistant", time: { created: 10 },
+        content: [{
+          type: "tool", id: "call_storage_blocked", name: "subagent", time: { created: 10, ran: 20 },
+          state: {
+            status: "running", input: { agent: "general" },
+            metadata: reads === 1 ? { sessionID: "ses_child_storage_blocked" } : {},
+          },
+        }],
+      }] });
+    };
+    try {
+      const client = createClientV2("http://storage-blocked.test/opencode2", "/workspace", {});
+      for (let read = 0; read < 2; read += 1) {
+        const result = await client.session.messages({ sessionID: "ses_parent_storage_blocked" });
+        const part = result.data?.[0]?.parts[0];
+        if (!part || part.type !== "tool") throw new Error("Missing blocked-storage subagent");
+        expect(parseDynamicToolUIPart(part)?.callProviderMetadata)
+          .toMatchObject({ openwork: { childSessionId: "ses_child_storage_blocked" } });
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      getItem.mockRestore();
+      setItem.mockRestore();
+      if (ownedDom) await GlobalRegistrator.unregister();
     }
   });
 
@@ -1171,6 +1614,43 @@ describe("OpenCode v2 client compatibility", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("a reconnected subscription rebuilds the same completed parts without retaining old payloads or tombstones", async () => {
+    const originalFetch = globalThis.fetch;
+    const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
+    const events = [
+      { type: "session.execution.started", data: { sessionID: "s" } },
+      { type: "session.text.started", created: 10, data: identity },
+      { type: "session.text.delta", data: { ...identity, delta: "hello " } },
+      { type: "session.text.delta", data: { ...identity, delta: "world" } },
+      { type: "session.text.ended", data: identity },
+      { type: "session.execution.succeeded", created: 20, data: { sessionID: "s" } },
+      { type: "session.text.started", created: 10, data: identity },
+      { type: "session.text.ended", data: identity },
+      ...capturedV2ToolEvents,
+    ];
+    globalThis.fetch = async () => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", undefined, {});
+      // Duplicate wire frames after completion must not replace the final answer.
+      const first = await client.event.subscribe();
+      const received = [];
+      for await (const event of first.stream) received.push(event);
+      expect(received).toContainEqual({ type: "message.part.updated", properties: { part: {
+        id: "m:0", messageID: "m", sessionID: "s", type: "text", text: "hello world",
+      } } });
+      expect(received.filter((event) => event.type === "message.updated")).toHaveLength(2);
+      expect(received.at(-1)).toMatchObject({ properties: { part: { id: "call_captured_shell", state: {
+        status: "completed", input: { command: "printf 'TOOL_RESULT_OK\\n'", timeout: 30_000 },
+        output: "TOOL_RESULT_OK\n\nCommand exited with code 0.",
+      } } } });
+      // A new subscription has a fresh replay window and may rebuild the parts.
+      const reconnected = await client.event.subscribe();
+      const replayed = [];
+      for await (const event of reconnected.stream) replayed.push(event);
+      expect(replayed).toEqual(received);
+    } finally { globalThis.fetch = originalFetch; }
   });
 
   test("discovers external forks from authoritative sessions once, without fetching foreign events or the source", async () => {
@@ -1593,11 +2073,19 @@ describe("OpenCode v2 client compatibility", () => {
 });
 
 
-test("v2 provider catalog retains display names without exposing request settings", async () => {
+test("v2 provider catalog retains display names and advertised effort without exposing provider credentials", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
-    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [{ id: "coding", providerID: "lpr_fixture", name: "Coding" }] });
+    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [
+      { id: "coding", providerID: "lpr_fixture", name: "Coding", variants: [
+        { id: "low", settings: { reasoningEffort: "low" } },
+        { id: "high", settings: { reasoningEffort: "high" } },
+        { id: "CustomExact", settings: { thinking: { budgetTokens: 4096 } } },
+      ] },
+      { id: "standard", providerID: "lpr_fixture", name: "Standard", variants: [] },
+      { id: "builtin", providerID: "lpr_fixture", capabilities: { output: ["text", "reasoning"] } },
+    ] });
     if (request.url.endsWith("/api/provider")) return jsonResponse({ data: [{ id: "lpr_fixture", name: "Assigned Coding", settings: { apiKey: "fixture-private" } }] });
     if (request.url.endsWith("/api/model/default")) return jsonResponse({ data: {} });
     throw new Error(`Unexpected request: ${request.url}`);
@@ -1606,10 +2094,41 @@ test("v2 provider catalog retains display names without exposing request setting
     const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
     const result = await client.provider.list();
     expect(result.data?.all[0]?.name).toBe("Assigned Coding");
+    const models = result.data?.all[0]?.models;
+    expect(models?.coding?.variants).toEqual({ low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" }, CustomExact: { thinking: { budgetTokens: 4096 } } });
+    if (!models?.coding || !models.standard || !models.builtin) throw new Error("Missing mapped models");
+    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual(["low", "high", "CustomExact"]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.standard)).toEqual([]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.builtin)).toEqual([]);
     expect(JSON.stringify(result.data)).not.toContain("fixture-private");
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("v2 prompts set the exact selected variant on the native model ref and omit it for Default", async () => {
+  const originalFetch = globalThis.fetch;
+  const writes: { path: string; body: unknown }[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    writes.push({ path: new URL(request.url).pathname, body: await request.json() });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+    for (const variant of ["high", "CustomExact", undefined]) {
+      const result = await client.session.promptAsync({ sessionID: "ses_effort", model: { providerID: "witness", modelID: "model" }, variant, parts: [{ type: "text", text: "Hello" }] });
+      expect(result.response.status).toBe(204);
+    }
+    expect(writes.filter((write) => write.path.endsWith("/model")).map((write) => write.body)).toEqual([
+      { model: { providerID: "witness", id: "model", variant: "high" } },
+      { model: { providerID: "witness", id: "model", variant: "CustomExact" } },
+      { model: { providerID: "witness", id: "model" } },
+    ]);
+    expect(writes.filter((write) => write.path.endsWith("/prompt")).map((write) => write.body)).toEqual([
+      { text: "Hello" }, { text: "Hello" }, { text: "Hello" },
+    ]);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 describe("v2 question forms", () => {

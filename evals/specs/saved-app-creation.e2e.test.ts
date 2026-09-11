@@ -1,9 +1,74 @@
 import { expect } from "vitest";
 import { saveWorkflow, runWorkflow } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
-import { creationPrompt, creationReply, field, record, savedAppCreation } from "../worlds/saved-apps.ts";
+import { creationPrompt, creationReply, field, record, savedAppCreation, isolatedMcpApps, isolationPrompt, isolationReply } from "../worlds/saved-apps.ts";
 
 const test = spec.world(savedAppCreation, { timeout: 900_000 });
+
+const isolationTest = spec.world(isolatedMcpApps, {
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
+  needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 300_000,
+});
+
+isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initialization and helper calls work", async ({ world, agent, user, probe, evidence }) => {
+  const sinceIso = new Date().toISOString();
+  await agent.send(isolationPrompt);
+  await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
+  const reports = await probe.eventually(() => world.reports(), {
+    within: 30_000, label: "both SDK Apps received their own input, result, and helper reply",
+    until: values => values.length === 2 && values.every(value => value.complete === true),
+  });
+  for (const label of ["A", "B"]) {
+    expect(reports.find(value => value.label === label)).toMatchObject({
+      input: { marker: `input-${label}` },
+      result: { content: [{ type: "text", text: `initial-${label}` }], isError: false,
+        structuredContent: { serverTools: { provider: label }, schemaGuidance: `provider-${label}` }, _meta: { privateFixture: `view-only-${label}` } },
+      helper: { content: [{ type: "text", text: `helper-${label}` }], isError: label === "A", _meta: { privateFixture: `helper-only-${label}` } },
+      order: ["input", "result"], capabilities: { serverTools: {}, openLinks: {} },
+      displayModes: [{ mode: "inline" }, { mode: "inline" }, { mode: "inline" }], complete: true,
+    });
+  }
+  expect(reports.find(value => value.label === "A")).toMatchObject({
+    siblingReads: 0, siblingInjections: 0, readDenied: 1, injectionDenied: 1, forgedMessages: 1,
+  });
+  const firstCalls = await world.first.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 });
+  const secondCalls = await world.second.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 });
+  expect(firstCalls.map(call => call.args)).toEqual([{ marker: "legitimate-A" }]);
+  expect(secondCalls.map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);
+  evidence.recordAssertionEvidence("Sibling Apps cannot read or inject into each other", "App A attempted sibling DOM reads, proxy script injection, and a forged helper request; both DOM operations raised SecurityError and neither provider observed the forged call.", true);
+  evidence.recordAssertionEvidence("Opaque Apps retain the standard SDK round trip", "Both real SDK Apps initialized through the shared renderer, received their distinct launch input and result, and completed exactly one legitimate helper call on their own provider.", true);
+  evidence.recordAssertionEvidence("Launch delivery preserves provider data and truthfully reports inline-only display", "Complete input arrived before the result; provider structured fields, view-only metadata, and explicit false survived. The helper error flag survived too. The host advertised tools and links and returned inline for all three valid display-mode requests.", true);
+});
+
+// The v2 engine does not expose a native archive mutation yet.
+isolationTest.skipIf(process.env.OPENWORK_EVAL_ENGINE === "v2")("APP-ARCHIVE archived conversations render Apps without actions (needs v1 archive API)", async ({ world, agent, user, probe, evidence }) => {
+  const sinceIso = new Date().toISOString();
+  await agent.send(isolationPrompt);
+  await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
+  await probe.eventually(() => world.reports(), {
+    within: 30_000, label: "active Apps complete their initial helper requests",
+    until: values => values.length === 2 && values.every(value => value.complete === true && value.helper !== null),
+  });
+  await agent.run("session.archive", { sessionId: world.session.sessionId, archived: true });
+  await agent.run("session.open", { sessionId: world.session.sessionId });
+  const archived = await probe.eventually(() => world.reports(), {
+    within: 30_000, label: "archived Apps render results but reject helper actions",
+    until: values => values.length === 2 && values.every(value => value.complete === true && typeof value.helperError === "string"),
+  });
+  for (const label of ["A", "B"]) {
+    const report = archived.find(value => value.label === label);
+    expect(report).toMatchObject({
+      input: { marker: `input-${label}` },
+      result: { content: [{ type: "text", text: `initial-${label}` }], isError: false,
+        structuredContent: { serverTools: { provider: label }, schemaGuidance: `provider-${label}` }, _meta: { privateFixture: `view-only-${label}` } },
+      order: ["input", "result"], helper: null,
+    });
+    expect(report?.capabilities).toEqual({});
+  }
+  expect((await world.first.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-A" }]);
+  expect((await world.second.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);
+  evidence.recordAssertionEvidence("Archived conversations cannot dispatch App helper calls", "Reopened archived Apps received their original inputs and results, rejected helper requests, and neither provider recorded an additional call.", true);
+});
 
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
   await step("advertise direct artifact creation guidance and prerequisites", async () => {
@@ -352,8 +417,78 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see({ text: /No teammate with that email belongs to this organization/ });
     expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
     await user.type({ label: "Teammate’s email" }, colleague.email, { replace: true });
+    await world.ageAdminSession();
+    const staleShare = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
+      method: "POST", body: JSON.stringify({ email: colleague.email }),
+    });
+    expect(staleShare.response.status, staleShare.text).toBe(403);
+    expect(staleShare.body).toMatchObject({ error: "reauth" });
     await user.click("Share apps");
+    await user.see({ text: "Confirm your identity to share apps" });
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await user.click("Cancel verification");
+    expect(await probe.eval(() => document.querySelector<HTMLInputElement>('input[type="email"]')?.value)).toBe(colleague.email);
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await user.click("Share apps");
+    await user.see({ text: "Confirm your identity to share apps" });
+    const verificationUrl = await probe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification address"]')?.value);
+    if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
+    const nonce = new URL(verificationUrl).searchParams.get("nonce");
+    if (!nonce) throw new Error("Missing verification nonce");
+    expect(new URL(verificationUrl).searchParams.has("email")).toBe(false);
+    expect(new URL(verificationUrl).searchParams.has("userId")).toBe(false);
+    expect(new URLSearchParams(new URL(verificationUrl).hash.slice(1)).has("email")).toBe(false);
+    expect(verificationUrl).not.toContain(encodeURIComponent(world.den.admin.email));
+    const wrongGrant = await seed.api(colleague, "/v1/auth/desktop-handoff", { method: "POST", body: "{}" });
+    expect(wrongGrant.response.status, wrongGrant.text).toBe(200);
+    const wrongLink = `openwork://den-reauth?nonce=${nonce}&grant=${field(wrongGrant.body, "grant")}`;
+    await user.type({ label: "Or paste your verification link" }, wrongLink);
+    await user.click("Confirm and share");
+    await user.see({ text: `Sign in as ${world.den.admin.email} to confirm this share.` });
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await user.screenshot();
+    const webUser = user.on(world.web);
+    const webProbe = probe.on(world.web);
+    // Follow the address offered by the app; authentication and the returned grant are real.
+    await webUser.navigate(verificationUrl);
+    await webUser.type({ label: "OpenWork email" }, world.den.admin.email);
+    await webUser.click("Continue");
+    await webUser.see({ text: "Confirm your identity to share apps" }, { timeoutMs: 90_000 });
+    await webUser.type({ label: "Password" }, "wrong-password");
+    await webUser.click("Verify password");
+    await webUser.see({ text: /invalid.*(email|password)|incorrect.*password/i });
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await webUser.type({ label: "Password" }, world.den.admin.password, { replace: true });
+    await webUser.click("Verify password");
+    await webUser.see({ text: "Return to OpenWork to finish sharing" }, { timeoutMs: 60_000 });
+    const verifiedLink = await webProbe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification link"]')?.value);
+    if (typeof verifiedLink !== "string") throw new Error("Browser did not provide a verification link");
+    // Use a fresh grant for the correct account so only attempt binding can
+    // reject this return. The original link must remain usable afterward.
+    const unrelatedLink = new URL(verifiedLink);
+    unrelatedLink.searchParams.set("nonce", "unrelated-check");
+    await world.returnVerification(unrelatedLink.toString());
+    await user.see({ text: "Confirm your identity to share apps" });
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await webUser.screenshot();
+    await user.type({ label: "Or paste your verification link" }, verifiedLink, { replace: true });
+    await user.click("Confirm and share");
     await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    // Check server-side single use independently of the unmounted UI listener.
+    const replay = await seed.api(world.den.admin, "/v1/auth/desktop-handoff/exchange", {
+      method: "POST", body: JSON.stringify({ grant: new URL(verifiedLink).searchParams.get("grant") }),
+    });
+    expect(replay.response.status, replay.text).toBe(404);
+    expect(replay.body).toMatchObject({ error: "grant_not_found" });
+    // A late callback must also leave the completed share on the dashboard.
+    await world.returnVerification(verifiedLink);
+    expect(await probe.hash()).toBe("#/dashboard");
+    const stillStale = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
+      method: "POST", body: JSON.stringify({ email: colleague.email }),
+    });
+    expect(stillStale.response.status).toBe(403);
+    expect(stillStale.body).toMatchObject({ error: "reauth" });
+    await world.refreshFixtureAdmin();
     const sharedApp = await probe.api(colleague, `/v1/apps/${appId}`);
     expect(sharedApp.response.status, sharedApp.text).toBe(200);
     expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
@@ -384,7 +519,53 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Done");
   });
   evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
+  evidence.recordAssertionEvidence("An expired admin can verify and resume sharing without losing their selection", "A real 20-minute-old session was rejected. Cancelling, an unrelated callback, a different account’s grant, and a wrong password left the app private. Browser password verification produced a real one-time link; pasting it shared only the selected app with the preserved recipient. A second exchange of its consumed grant returned 404 grant_not_found. The original stale session still could not share, and a late callback did not duplicate the dashboard entry.", true);
   evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
+
+  await step("return from browser verification and keep subsequent sharing uninterrupted", async () => {
+    const browserRecipient = world.den.members.browserRecipient;
+    if (!browserRecipient) throw new Error("The browser-return recipient was not provisioned.");
+    expect((await probe.api(browserRecipient, `/v1/apps/${appId}`)).response.status).toBe(403);
+    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
+    await world.ageAdminSession();
+    await user.click({ role: "button", label: "Share" });
+    await user.click({ role: "checkbox", label: "Private planning" });
+    await user.type({ label: "Teammate’s email" }, browserRecipient.email);
+    await user.click("Share apps");
+    await user.see({ text: "Confirm your identity to share apps" });
+    expect((await probe.api(browserRecipient, `/v1/apps/${appId}`)).response.status).toBe(403);
+    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
+    const verificationUrl = await probe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification address"]')?.value);
+    if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
+    const webUser = user.on(world.web);
+    await webUser.navigate(verificationUrl);
+    await webUser.type({ label: "Password" }, world.den.admin.password);
+    await webUser.click("Verify password");
+    await webUser.see({ text: "Return to OpenWork to finish sharing" }, { timeoutMs: 60_000 });
+    const returned = await probe.on(world.web).eval(() => document.querySelector<HTMLAnchorElement>('a[href^="openwork://den-reauth"]')?.href);
+    if (typeof returned !== "string") throw new Error("Missing Return to OpenWork link");
+    await world.returnVerification(returned);
+    await user.see({ text: `Shared 1 app with ${browserRecipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    const granted = await probe.api(browserRecipient, `/v1/apps/${appId}`);
+    expect(granted.response.status, granted.text).toBe(200);
+    expect(granted.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
+    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(200);
+    expect((await probe.api(browserRecipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    await user.click("Done");
+    await user.click({ role: "button", label: "Share" });
+    await user.click({ role: "checkbox", label: "Private planning" });
+    await user.type({ label: "Teammate’s email" }, browserRecipient.email);
+    await user.click("Share apps");
+    await user.see({ text: `Shared 1 app with ${browserRecipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    await user.notSee({ text: "Confirm your identity to share apps" });
+    const listed = record((await probe.api(browserRecipient, "/v1/apps")).body).items;
+    if (!Array.isArray(listed)) throw new Error("Expected the recipient app list");
+    expect(listed.filter((item) => record(item).onDashboard).map((item) => field(record(item).view, "id"))).toEqual([appId]);
+    expect((await probe.api(browserRecipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    await user.click("Done");
+    await world.refreshFixtureAdmin();
+  });
+  evidence.recordAssertionEvidence("Browser return grants new access and the fresh session avoids another prompt", "A separate recipient received 403 for the app and workflow before verification, including while the share waited for verification. Navigating the real return link in an Electron browser tab exercised main-process interception, native IPC, preload forwarding, and the renderer startup bridge. The recipient then received 200 with the app's saved result, view-only access, dashboard placement, and workflow access. Sharing again immediately completed without verification, kept exactly the selected app on their dashboard, and left the unchecked private app inaccessible. OS protocol registration is outside this container journey.", true);
 
   const cleanupCompanion = await seed.api(world.den.admin, `/v1/artifact-views/${companionAppId}/retire`, { method: "POST" });
   expect(cleanupCompanion.response.status, cleanupCompanion.text).toBe(200);

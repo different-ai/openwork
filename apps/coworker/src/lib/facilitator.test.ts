@@ -66,13 +66,22 @@ test("a facilitator answer is accepted only when it names known members once, ho
   assert.throws(() => extractJson("{not json}"), /not valid JSON/);
 });
 
-test("the facilitator's model is the one the coworkers use, account models first, with a distinct second choice", () => {
-  const catalog = { models: [model("openai/gpt", { source: "local" }), model("lpr_a/claude", { source: "cloud", isProviderDefault: true }), model("openai/mini", { source: "local" })] };
+test("the facilitator uses a guarded quick policy unless the group or app pins its exact model", () => {
+  const catalog = { models: [model("openai/gpt"), model("lpr_a/claude", { source: "cloud", isProviderDefault: true, reasoning: true, knownPrice: true }), model("openai/mini"), model("lpr_a/quick", { source: "cloud", knownPrice: true })] };
   const members = [{ model: "openai/gpt" }, { model: "lpr_a/claude" }, { model: "" }];
-  assert.deepEqual(Object.values(facilitatorModels(catalog, members)).map((item) => item?.id), ["lpr_a/claude", "openai/gpt"]);
-  assert.deepEqual(Object.values(facilitatorModels(catalog, members, "openai/mini")).map((item) => item?.id), ["openai/mini", "lpr_a/claude"]);
-  // A saved model that is not connected any more is skipped rather than chosen blindly.
-  assert.deepEqual(Object.values(facilitatorModels(catalog, [{ model: "gone/model" }], "gone/other")).map((item) => item?.id), ["lpr_a/claude", "openai/gpt"]);
+  assert.deepEqual(Object.values(facilitatorModels(catalog, members)).map((item) => item?.id), ["lpr_a/quick", "lpr_a/claude"]);
+  const appDefault = { model: "openai/gpt", modelVariant: "" };
+  assert.equal(facilitatorModels(catalog, members, "", appDefault).primary?.id, appDefault.model);
+  assert.equal(facilitatorModels(catalog, members, "", appDefault).secondary, null);
+  assert.deepEqual(facilitatorModels(catalog, members, "", { ...appDefault, modelVariant: "gone-effort" }), { primary: null, secondary: null });
+  assert.equal(facilitatorModels(catalog, members, "openai/mini", { ...appDefault, modelVariant: "gone-effort" }).primary?.id, "openai/mini", "the group's override never inherits an incompatible app effort");
+  assert.deepEqual(Object.values(facilitatorModels(catalog, members, "openai/mini", appDefault)).map((item) => item?.id), ["openai/mini", undefined]);
+  assert.deepEqual(facilitatorModels(catalog, members, "", { model: "gone/exact", modelVariant: "" }), { primary: null, secondary: null });
+  assert.deepEqual(facilitatorModels(catalog, members, "gone/other", appDefault), { primary: null, secondary: null });
+  const anchor = catalog.models.find((item) => item.id === "lpr_a/claude");
+  assert.ok(anchor);
+  anchor.cost.output = 1;
+  assert.equal(facilitatorModels(catalog, members).secondary, null, "a repair cannot go above the quick pick's known prices or cross providers");
   assert.deepEqual(facilitatorModels({ models: [] }, members), { primary: null, secondary: null });
 });
 
@@ -106,6 +115,7 @@ test("a routing pass repairs once, then tries the next model once, then gives up
   asked.length = 0;
   const unexpectedAsk: NonNullable<Parameters<typeof routeWithFacilitator>[0]["ask"]> = async (_prompt, used) => { asked.push(used.id); return good; };
   assert.equal(await routeWithFacilitator({ prompt: "P", participants: team, mentions: nobody, models: { primary: null, secondary: null }, signal: new AbortController().signal, ask: unexpectedAsk }), null);
+  assert.equal(await routeWithFacilitator({ prompt: "P", participants: team, mentions: nobody, models: facilitatorModels({ models: [primary, secondary] }, [], "", { model: primary.id, modelVariant: "gone-effort" }), signal: new AbortController().signal, ask: unexpectedAsk }), null, "incompatible app effort uses the scorer without a provider call");
   const stopped = new AbortController();
   stopped.abort();
   assert.equal(await routeWithFacilitator({ prompt: "P", participants: team, mentions: nobody, models: { primary, secondary }, signal: stopped.signal, ask: unexpectedAsk }), null);

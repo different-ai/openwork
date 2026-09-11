@@ -9,6 +9,9 @@ export { coworker, desktop as relaunchDesktop, electronProfilePaths, resolveHost
 export type { CoworkerHandle, DesktopHandle } from "@openwork/hosts";
 export { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 export type { Surface } from "@openwork/cdp";
+export type { Target } from "@openwork/cdp";
+export { browserConversation } from "@openwork/behaviors";
+export type { BrowserTaskInput, BrowserTaskReply } from "@openwork/behaviors";
 export { screenshot, validate } from "@openwork/test-evidence";
 export { renderPrMarkdown } from "@openwork/test-artifacts";
 export type { TestRunRecord } from "@openwork/test-artifacts";
@@ -16,6 +19,7 @@ export type { StepRecord, TestOutcome, TraceEntry } from "@openwork/test-evidenc
 export { test } from "./fixture.ts";
 export * from "@openwork/env";
 export * from "./brief.ts";
+export * from "./daytona-witness.ts";
 export * from "./coworker-model.ts";
 export * from "./eventually.ts";
 export * from "./link.ts";

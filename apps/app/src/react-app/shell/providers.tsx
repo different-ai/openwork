@@ -19,7 +19,6 @@ import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
-import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
@@ -50,11 +49,12 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
-function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
-  const activationRequired = useEnterpriseActivationRequired();
-  if (activationRequired) {
-    return <ConnectLinkProvider>{children}</ConnectLinkProvider>;
-  }
+// One provider tree for every activation state. The runtime bridges below
+// (DesktopRuntimeBoot, BrowserLoginSyncAccessBridge, AutomationRunnerBridge,
+// GlobalQueueDrainerBridge) each render nothing until enterprise activation
+// completes, so AppRoot-level consumers such as DesktopUpdaterProvider always
+// find the same contexts and nothing privileged starts before activation.
+export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   return (
     <>
       <DesktopRuntimeBoot />

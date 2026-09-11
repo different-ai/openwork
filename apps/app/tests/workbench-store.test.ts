@@ -135,6 +135,94 @@ describe("workbench store", () => {
     expect(unchanged).toBe(state);
   });
 
+  test("archive drops persisted pairs without promoting a side chat or disturbing unrelated pairs", () => {
+    const owner = { workspaceId: "workspace-a", sessionId: "owner" };
+    const side = { workspaceId: "workspace-b", sessionId: "side" };
+    const other = { workspaceId: "workspace-a", sessionId: "other" };
+    const otherSide = { workspaceId: "workspace-b", sessionId: "other-side" };
+    let state = syncWorkbenchSnapshot(emptyWorkbench, {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [owner, other],
+    });
+    for (const tab of [side, other, otherSide]) state = openWorkbenchTab(state, tab);
+    state = setWorkbenchSideChat(state, other, otherSide);
+    state = setWorkbenchSideChat(state, owner, side);
+    const archivedSide = closeWorkbenchTab(state, side, false);
+    expect(archivedSide.primary?.sessionId).toBe(owner.sessionId);
+    expect(archivedSide.secondary).toBeNull();
+    expect(Object.values(archivedSide.sideChats)).toEqual([otherSide]);
+    const archivedOwner = closeWorkbenchTab(state, owner, false);
+    expect(archivedOwner.primary).toBeNull();
+    expect(archivedOwner.secondary).toBeNull();
+    expect(archivedOwner.focusedPane).toBe("primary");
+    expect(Object.values(archivedOwner.sideChats)).toEqual([otherSide]);
+    const restored = syncWorkbenchSnapshot(archivedOwner, {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [owner, other],
+    });
+    expect(restored.secondary).toBeNull();
+    expect(closeWorkbenchTab(state, otherSide, false).secondary).toEqual(side);
+  });
+
+  for (const archivedId of ["owner", "side"]) {
+    test(`explicit archive metadata removes a retained ${archivedId} and its pair without pruning unknown history`, () => {
+      const primary = { workspaceId: "workspace-a", sessionId: "primary" };
+      const owner = { workspaceId: "workspace-a", sessionId: "owner" };
+      const side = { workspaceId: "workspace-a", sessionId: "side" };
+      const unknown = { workspaceId: "workspace-a", sessionId: "other-engine" };
+      const otherWorkspace = { workspaceId: "workspace-b", sessionId: archivedId };
+      let state = syncWorkbenchSnapshot(emptyWorkbench, {
+        workspaceId: primary.workspaceId, primarySessionId: primary.sessionId,
+        sessionsKnown: true, sessions: [primary],
+      });
+      for (const tab of [owner, side, unknown, otherWorkspace]) state = openWorkbenchTab(state, tab);
+      state = setWorkbenchSideChat(state, owner, side);
+      state = setWorkbenchSideChat(state, primary, otherWorkspace);
+      state = syncWorkbenchSnapshot(state, {
+        workspaceId: primary.workspaceId, primarySessionId: primary.sessionId,
+        sessionsKnown: true, sessions: [primary], archivedSessionIds: [archivedId],
+      });
+
+      expect(state.tabs.some((tab) => tab.workspaceId === "workspace-a" && tab.sessionId === archivedId)).toBe(false);
+      expect(state.tabs).toContainEqual(unknown);
+      expect(state.tabs).toContainEqual(otherWorkspace);
+      expect(Object.values(state.sideChats)).toEqual([otherWorkspace]);
+      expect(state.secondary).toEqual(otherWorkspace);
+    });
+  }
+
+  test("explicitly archiving the visible side chat clears the split and restores primary focus", () => {
+    const primary = { workspaceId: "workspace-a", sessionId: "primary" };
+    const side = { workspaceId: "workspace-a", sessionId: "side" };
+    let state = syncWorkbenchSnapshot(emptyWorkbench, {
+      workspaceId: primary.workspaceId, primarySessionId: primary.sessionId,
+      sessionsKnown: true, sessions: [primary, side],
+    });
+    state = setWorkbenchSplit(openWorkbenchTab(state, side), side);
+    state = syncWorkbenchSnapshot(state, {
+      workspaceId: primary.workspaceId, primarySessionId: primary.sessionId,
+      sessionsKnown: true, sessions: [primary, side], archivedSessionIds: [side.sessionId],
+    });
+    expect(state.tabs.map((tab) => tab.sessionId)).toEqual([primary.sessionId]);
+    expect(state.sideChats).toEqual({});
+    expect(state.secondary).toBeNull();
+    expect(state.focusedPane).toBe("primary");
+  });
+
+  test("keeps an explicitly archived primary viewable until navigating away", () => {
+    const primary = { workspaceId: "workspace-a", sessionId: "primary" };
+    const input = {
+      workspaceId: primary.workspaceId, primarySessionId: primary.sessionId,
+      sessionsKnown: true, sessions: [primary], archivedSessionIds: [primary.sessionId],
+    };
+    const state = syncWorkbenchSnapshot(emptyWorkbench, input);
+    expect(state.primary).toMatchObject(primary);
+    expect(state.tabs).toHaveLength(1);
+    const navigated = syncWorkbenchSnapshot(state, { ...input, primarySessionId: null });
+    expect(navigated.primary).toBeNull();
+    expect(navigated.tabs).toEqual([]);
+  });
+
   test("does not prune retained same-workspace tabs while the session index reloads", () => {
     let state = syncWorkbenchSnapshot(emptyWorkbench, {
       workspaceId: "workspace-a",
@@ -157,6 +245,36 @@ describe("workbench store", () => {
 
     expect(loading.tabs.map((tab) => tab.sessionId)).toEqual(["session-a", "session-b"]);
     expect(loading.secondary?.sessionId).toBe("session-b");
+  });
+
+  test("retains unpaired history across engine switches, workspace navigation, and reload", () => {
+    const first = { workspaceId: "workspace-a", sessionId: "v1-first", title: "First" };
+    const second = { workspaceId: "workspace-a", sessionId: "v1-second", title: "Second" };
+    const upgraded = { workspaceId: "workspace-a", sessionId: "v2-chat", title: "Upgraded" };
+    let state = syncWorkbenchSnapshot(emptyWorkbench, {
+      workspaceId: first.workspaceId, primarySessionId: first.sessionId,
+      sessionsKnown: true, sessions: [first, second],
+    });
+    state = openWorkbenchTab(state, second);
+    state = syncWorkbenchSnapshot(state, {
+      workspaceId: upgraded.workspaceId, primarySessionId: upgraded.sessionId,
+      sessionsKnown: true, sessions: [upgraded],
+    });
+    state = syncWorkbenchSnapshot(state, {
+      workspaceId: "workspace-b", primarySessionId: null, sessionsKnown: true, sessions: [],
+    });
+    const restored = { ...emptyWorkbench, tabs: state.tabs, sideChats: state.sideChats };
+    state = syncWorkbenchSnapshot(restored, {
+      workspaceId: first.workspaceId, primarySessionId: first.sessionId,
+      sessionsKnown: true, sessions: [first, second],
+    });
+    expect(state.tabs.map(tab => tab.sessionId)).toEqual([first.sessionId, second.sessionId, upgraded.sessionId]);
+    expect(state.primary).toMatchObject(first);
+    expect(state.secondary).toBeNull();
+    const closed = closeWorkbenchTab(state, second);
+    expect(closed.tabs.map(tab => tab.sessionId)).toEqual([first.sessionId, upgraded.sessionId]);
+    const archived = closeWorkbenchTab(state, upgraded, false);
+    expect(archived.tabs.map(tab => tab.sessionId)).toEqual([first.sessionId, second.sessionId]);
   });
 
   test("restores saved pairs when an initial session index omits their sessions", () => {

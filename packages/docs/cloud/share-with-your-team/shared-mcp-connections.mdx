@@ -47,6 +47,26 @@ one with form or JSON arguments, and inspect the request and response. The tool
 policy controls on this page choose which tools the organization can use.
 **Your Connections** also shows admins a wrench shortcut to the same tester.
 
+## Organization policy and native actions
+
+Connect is default-on. A platform administrator can disable member-facing
+connections with the organization's `capabilities.mcpConnections` setting.
+Native Google Workspace and Microsoft 365 actions honor that same policy,
+including existing clients using legacy/default accounts. Client version does
+not bypass a disabled organization's authorization policy.
+
+A disabled native action returns the existing `policy_blocked` error and an
+administrator-directed message; native REST routes use HTTP `403`. This is not
+a sign-in failure: reconnecting an account does not enable Connect. Missing
+credentials in an enabled organization still return `needs_connection` and HTTP
+`409`. Success payloads and saved credentials are unchanged. Administrators can
+still manage connection configuration, and re-enabling Connect restores access
+subject to the member's existing grants and credentials.
+
+For self-hosted deployments, `DEN_MCP_CONNECTIONS_GATING_ENABLED` is deprecated
+and inert. It does not override an explicit organization disable; the existing
+organization metadata policy remains authoritative.
+
 ## OAuth redirect URL
 
 An OAuth redirect URL, also called a callback URL, is the exact address where
@@ -62,11 +82,11 @@ New MCP connections on one Den instance share this redirect URL:
 
 For the hosted OpenWork Cloud instance, the dashboard is
 `https://app.openworklabs.com` and its public Den API origin is
-`https://api.app.openworklabs.com`. Register this exact redirect URL with the OAuth
+`https://api.openworklabs.com`. Register this exact redirect URL with the OAuth
 provider:
 
 ```text
-https://api.app.openworklabs.com/v1/mcp-connections/oauth/callback
+https://api.openworklabs.com/v1/mcp-connections/oauth/callback
 ```
 
 For a self-hosted instance whose public Den API is
@@ -80,6 +100,13 @@ Use the exact scheme, hostname, optional path prefix, and port configured in
 `DEN_API_PUBLIC_URL`. Providers compare redirect URLs exactly. Existing
 connections created with an older per-connection callback keep that registered
 URL automatically; do not change it just to reconnect.
+
+If a provider refuses to register OpenWork (members see "*Provider* hasn't
+approved OpenWork yet"), or its authorization server only accepts clients it
+has pre-registered, send them
+[Make your MCP server work with OpenWork](/cloud/share-with-your-team/mcp-server-compatibility).
+It lists the redirect URL, the client metadata document, and the registration
+methods OpenWork supports, plus a request template.
 
 ## Slack
 
@@ -199,6 +226,11 @@ What stays the same:
 - Member-added local MCP servers are never touched.
 
 Directly exposed connections appear in OpenCode as `openwork-direct-<name>-…`.
+
+External provider tool calls require the caller's `mcp:write` scope even when
+the provider advertises `readOnlyHint: true`. Provider hints do not grant
+execution authority; discovery and connection-status probes remain available
+with `mcp:read`. See [MCP token scopes](/cloud/run-in-the-cloud/cloud-mcp#mcp-token-scopes).
 
 ## Notes for admins
 
