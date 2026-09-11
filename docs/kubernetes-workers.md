@@ -115,6 +115,10 @@ All optional — when unset the provisioner builds its default pod shape. Set th
 | `workerExtraVolumeMounts` | matching mounts (same collision rule) |
 | `workerExtraEnv` | extra env vars (a `name` colliding with a provisioner env var is dropped — worker tokens cannot be overridden) |
 | `workerDnsPolicy` / `workerDnsConfig` | custom pod DNS |
+| `workerInitContainers` | init containers that run before the worker container |
+| `workerLifecycleHooks` | container `lifecycle` hooks (postStart, preStop) |
+| `workerShareProcessNamespace` | share the pod's process namespace with the worker container (`"true"` to enable) |
+| `workerHostNetwork` | use the host network namespace (`"true"` to enable) |
 
 Object/array values are emitted as JSON; den-api parses them. Example:
 

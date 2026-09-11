@@ -215,6 +215,10 @@ const EnvSchema = z.object({
   KUBERNETES_WORKER_EXTRA_ENV: z.string().optional(),
   KUBERNETES_WORKER_DNS_POLICY: z.string().optional(),
   KUBERNETES_WORKER_DNS_CONFIG: z.string().optional(),
+  KUBERNETES_WORKER_INIT_CONTAINERS: z.string().optional(),
+  KUBERNETES_WORKER_LIFECYCLE_HOOKS: z.string().optional(),
+  KUBERNETES_WORKER_SHARE_PROCESS_NAMESPACE: z.string().optional(),
+  KUBERNETES_WORKER_HOST_NETWORK: z.string().optional(),
   DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
   DEN_CKPT_KEEP: z.string().optional(),
   INFERENCE_PROXY_BASE_URL: z.string().optional(),
@@ -1064,5 +1068,13 @@ export const env = {
     workerDnsPolicy: optionalString(parsed.KUBERNETES_WORKER_DNS_POLICY),
     workerDnsConfig:
       optionalJsonObject(parsed.KUBERNETES_WORKER_DNS_CONFIG),
+    workerInitContainers:
+      optionalJsonArray(parsed.KUBERNETES_WORKER_INIT_CONTAINERS),
+    workerLifecycleHooks:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_LIFECYCLE_HOOKS),
+    workerShareProcessNamespace:
+      optionalString(parsed.KUBERNETES_WORKER_SHARE_PROCESS_NAMESPACE) === "true" ? true : undefined,
+    workerHostNetwork:
+      optionalString(parsed.KUBERNETES_WORKER_HOST_NETWORK) === "true" ? true : undefined,
   },
 }

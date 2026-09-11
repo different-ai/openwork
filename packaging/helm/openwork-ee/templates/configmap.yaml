@@ -276,6 +276,18 @@ data:
   {{- with .Values.config.kubernetes.workerDnsConfig }}
   KUBERNETES_WORKER_DNS_CONFIG: {{ . | toJson | quote }}
   {{- end }}
+  {{- with .Values.config.kubernetes.workerInitContainers }}
+  KUBERNETES_WORKER_INIT_CONTAINERS: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerLifecycleHooks }}
+  KUBERNETES_WORKER_LIFECYCLE_HOOKS: {{ . | toJson | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerShareProcessNamespace }}
+  KUBERNETES_WORKER_SHARE_PROCESS_NAMESPACE: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.kubernetes.workerHostNetwork }}
+  KUBERNETES_WORKER_HOST_NETWORK: {{ . | quote }}
+  {{- end }}
 {{- end }}
   {{ with .Values.config.inference.openRouterWorkspaceId }}
   OPENROUTER_WORKSPACE_ID: {{ . | quote }}

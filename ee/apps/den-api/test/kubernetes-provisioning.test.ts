@@ -564,4 +564,21 @@ describe("Kubernetes worker pod overrides", () => {
     const volumes = podSpec.volumes as Array<{ name: string }>
     expect(volumes.map((v) => v.name).sort()).toEqual(["data", "workspace"])
   })
+
+  test("injects initContainers, lifecycle, shareProcessNamespace, and hostNetwork when configured", async () => {
+    env.kubernetes.workerInitContainers = [{ name: "init", image: "busybox:1", command: ["sh", "-c", "true"] }]
+    env.kubernetes.workerLifecycleHooks = { postStart: { exec: { command: ["true"] } } }
+    env.kubernetes.workerShareProcessNamespace = true
+    env.kubernetes.workerHostNetwork = true
+    const { podSpec } = await createdManifest()
+    expect(podSpec.shareProcessNamespace).toBe(true)
+    expect(podSpec.hostNetwork).toBe(true)
+    expect(podSpec.initContainers).toEqual([{ name: "init", image: "busybox:1", command: ["sh", "-c", "true"] }])
+    const container = (podSpec.containers as Array<{ lifecycle?: unknown }>)[0]
+    expect(container.lifecycle).toEqual({ postStart: { exec: { command: ["true"] } } })
+    env.kubernetes.workerInitContainers = undefined
+    env.kubernetes.workerLifecycleHooks = undefined
+    env.kubernetes.workerShareProcessNamespace = undefined
+    env.kubernetes.workerHostNetwork = undefined
+  })
 })

@@ -327,6 +327,9 @@ function deploymentManifest(input: ProvisionInput) {
           ...(env.kubernetes.workerDnsPolicy ? { dnsPolicy: env.kubernetes.workerDnsPolicy } : {}),
           ...(env.kubernetes.workerDnsConfig ? { dnsConfig: env.kubernetes.workerDnsConfig } : {}),
           ...(env.kubernetes.workerPodSecurityContext ? { securityContext: env.kubernetes.workerPodSecurityContext } : {}),
+          ...(env.kubernetes.workerShareProcessNamespace !== undefined ? { shareProcessNamespace: env.kubernetes.workerShareProcessNamespace } : {}),
+          ...(env.kubernetes.workerHostNetwork !== undefined ? { hostNetwork: env.kubernetes.workerHostNetwork } : {}),
+          ...(env.kubernetes.workerInitContainers ? { initContainers: env.kubernetes.workerInitContainers } : {}),
           containers: [
             {
               name: "openwork-server",
@@ -353,6 +356,7 @@ function deploymentManifest(input: ProvisionInput) {
                 },
               },
               ...(env.kubernetes.workerContainerSecurityContext ? { securityContext: env.kubernetes.workerContainerSecurityContext } : {}),
+              ...(env.kubernetes.workerLifecycleHooks ? { lifecycle: env.kubernetes.workerLifecycleHooks } : {}),
               volumeMounts: [
                 { name: "workspace", mountPath: "/workspace" },
                 { name: "data", mountPath: "/data" },

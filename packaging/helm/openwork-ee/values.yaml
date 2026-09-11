@@ -138,6 +138,10 @@ config:
     workerExtraEnv: []
     workerDnsPolicy: ""
     workerDnsConfig: {}
+    workerInitContainers: []
+    workerLifecycleHooks: {}
+    workerShareProcessNamespace: ""
+    workerHostNetwork: ""
   polar:
     featureGateEnabled: "false"
     apiBase: ""
