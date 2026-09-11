@@ -36,8 +36,8 @@ type UseSessionControlActionsInput = {
   stopSession: (sessionId: string, options?: ArchiveSessionOptions) => Promise<StopSessionOutcome>;
 };
 
-const ARCHIVE_AWAITING_CONFIRMATION_ERROR = "That session is still working. The person was asked in OpenWork to confirm Stop and archive; nothing has been stopped or archived yet.";
-const ARCHIVE_AWAITING_CONFIRMATION_HINT = "Do not retry: the request stays pending until the person answers. Check session.list_sessions later; `working` turns false once it is stopped or finished.";
+const ARCHIVE_TARGET_WORKING_HINT = "This session is still working. If the user wants it closed, call session.stop {sessionId} first, then archive. If not, leave it running.";
+const SELF_ARCHIVE_WHILE_WORKING_HINT = "A working session cannot archive itself. Finish the turn so your conclusions can be reviewed; the reviewer archives.";
 
 function findSessionWorkspace(
   workspaces: SessionControlWorkspace[],
@@ -273,7 +273,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.archive",
     label: "Archive or unarchive a session",
-    description: archiveDisabledReason ?? "Archive a session, preserving context. Check `working` in session.list_sessions first: an idle session archives immediately. A working session (including the calling session itself, which is working while it calls this) asks the person to confirm Stop and archive in the app and returns code awaiting_user_confirmation naming the target and requester; do not retry, the person decides. Pass archived=false to restore without restarting work.",
+    description: archiveDisabledReason ?? "Archive an idle session, preserving context. Check `working` in session.list_sessions first. A working session is not archived: the result is code target_working (if the user wants it closed, call session.stop first, then archive; otherwise leave it running). A session cannot archive itself or its parent during its own turn (code self_archive_while_working): finish the turn; the reviewer archives. Pass archived=false to restore without restarting work.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [
@@ -289,21 +289,16 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       const requestedBy = helpers.origin?.sessionId;
       const outcome = await archiveSession(sessionId, archived, {
         ...(requestedBy ? { requester: { sessionId: requestedBy } } : {}),
-        onAwaitingConfirmation: (target) => {
-          const requester = target.requestedBy
-            ? target.requestedBy.sessionId === target.sessionId
-              ? "Requester: this session itself, from its own running turn."
-              : `Requester: "${target.requestedBy.title ?? "session"}" (${target.requestedBy.sessionId}).`
-            : "";
-          helpers.awaitingUserConfirmation?.({
-            error: ARCHIVE_AWAITING_CONFIRMATION_ERROR,
-            hint: [ARCHIVE_AWAITING_CONFIRMATION_HINT, `Target: "${target.title}" (${target.sessionId}).`, requester].filter(Boolean).join(" "),
-          });
-        },
+        refuseWorking: helpers.bridged,
       });
-      return outcome === "done"
-        ? { ok: true, sessionId, archived }
-        : { ok: false, sessionId, error: "Session archive was cancelled or could not be confirmed" };
+      if (outcome.kind === "done") return { ok: true, sessionId, archived };
+      if (outcome.kind === "target_working") {
+        return { ok: false, code: outcome.kind, sessionId, title: outcome.title, error: `"${outcome.title}" is still working; it was not archived.`, hint: ARCHIVE_TARGET_WORKING_HINT };
+      }
+      if (outcome.kind === "self_archive_while_working") {
+        return { ok: false, code: outcome.kind, sessionId, title: outcome.title, error: "A working session cannot archive itself.", hint: SELF_ARCHIVE_WHILE_WORKING_HINT };
+      }
+      return { ok: false, sessionId, error: "Session archive was cancelled or could not be confirmed" };
     },
   }), [archiveDisabledReason, archiveSession, opencodeClient]);
   useControlAction(archiveControlAction);

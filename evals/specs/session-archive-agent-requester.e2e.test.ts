@@ -13,7 +13,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-test("agents see which sessions are working, archiving a working one asks the person naming target and requester, and stopping one by id is attributed to the requester", async ({ world, user, agent, probe, step }) => {
+test("agents see which sessions are working, an agent's archive of a working session is refused through its own channel while the person keeps a simple confirmation, and session.stop is attributed", async ({ world, user, agent, probe, step }) => {
   const { a1, a2, b1 } = world;
   const routeA = `#/workspace/${a1.workspaceId}/session/${a1.sessionId}`;
   const aborts = async () => (await world.facts()).requests.filter(request => request.action === "abort");
@@ -57,91 +57,75 @@ test("agents see which sessions are working, archiving a working one asks the pe
       return isRecord(action) && typeof action.description === "string" ? action.description : "";
     };
     expect(describe("session.list_sessions")).toContain("`working`");
-    expect(describe("session.archive")).toContain("awaiting_user_confirmation");
+    expect(describe("session.archive")).toContain("target_working");
+    expect(describe("session.archive")).toContain("self_archive_while_working");
     expect(describe("session.stop")).toContain("attributes the stop to you");
   });
 
-  await step("another agent archiving a working session gets awaiting_user_confirmation at once while the dialog names target and requester", async () => {
+  await step("an agent archiving another working session is refused with target_working: no dialog, no stop, no 5 s stall", async () => {
     const before = await world.facts();
     const result = await archiveVia(a2.sessionId, b1.sessionId);
     expect(result.status).toBe(200);
     expect(result.body).toMatchObject({
       ok: false,
       id: "session.archive",
-      code: "awaiting_user_confirmation",
-      error: expect.stringContaining("still working"),
-      hint: expect.stringContaining(`Target: "${b1.title}" (${b1.sessionId})`),
+      code: "target_working",
+      error: expect.stringContaining(b1.title),
+      hint: expect.stringContaining("call session.stop"),
     });
-    expect(isRecord(result.body) && typeof result.body.hint === "string" ? result.body.hint : "").toContain(`Requester: "${a2.title}" (${a2.sessionId})`);
-    // The old path stalled on the human dialog until the mailbox gave up after 5 s.
+    // The old path stalled on a human dialog until the mailbox gave up after 5 s.
     expect(result.elapsedMs).toBeLessThan(5_000);
-
-    await user.see({ text: "This session is still working" });
-    const dialog = await world.archiveConfirmation();
-    expect(dialog.title).toBe(`This session is still working: ${b1.title}`);
-    expect(dialog.metadata).toEqual([
-      { label: "Workspace", value: world.workspaceBName, selectable: true },
-      { label: "Session ID", value: b1.sessionId, selectable: true },
-      { label: "Requested by", value: `The agent in "${a2.title}" ${a2.sessionId}`, selectable: true },
-    ]);
-    expect(dialog.text).not.toContain(a1.sessionId);
-    const description = await world.archiveAccessibleDescription();
-    expect(description).toContain(`Session ID ${b1.sessionId}`);
-    expect(description).toContain(`Requested by The agent in "${a2.title}" ${a2.sessionId}`);
-    expect(dialog).toMatchObject({ titleUnclipped: true, fitsViewport: true, noHorizontalOverflow: true, contentReachable: true });
-    await user.screenshot();
-
-    // The request is still pending in the app: nothing was archived or stopped,
-    // and a second lifecycle command cannot slip in underneath the open dialog.
+    await user.notSee({ text: "This session is still working" });
     expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
     expect(await aborts()).toEqual([]);
-    expect((await archiveVia(a2.sessionId, b1.sessionId)).body).toMatchObject({ ok: false, code: "conflict" });
-
-    await user.click({ role: "button", label: "Keep session open" });
-    await user.notSee({ text: "This session is still working" });
     expect((await world.facts()).sessions).toEqual(before.sessions);
-    expect(await aborts()).toEqual([]);
     expect(await probe.hash()).toBe(routeA);
   });
 
-  await step("a session archiving itself mid-turn is attributed as this session itself", async () => {
+  await step("a session archiving itself mid-turn is refused with self_archive_while_working, no dialog", async () => {
     const result = await archiveVia(a1.sessionId, a1.sessionId);
-    expect(result.body).toMatchObject({ ok: false, code: "awaiting_user_confirmation", hint: expect.stringContaining("this session itself") });
+    expect(result.body).toMatchObject({
+      ok: false,
+      code: "self_archive_while_working",
+      hint: expect.stringContaining("the reviewer archives"),
+    });
     expect(result.elapsedMs).toBeLessThan(5_000);
-    await user.see({ text: "This session is still working" });
-    const dialog = await world.archiveConfirmation();
-    expect(dialog.title).toBe(`This session is still working: ${a1.title}`);
-    expect(dialog.metadata.at(-1)).toEqual({ label: "Requested by", value: "This session itself, from its own running turn", selectable: true });
-    await user.screenshot();
-    await user.click({ role: "button", label: "Keep session open" });
     await user.notSee({ text: "This session is still working" });
     expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
     expect(await aborts()).toEqual([]);
   });
 
-  await step("the person's own archive keeps the two-row dialog, and an idle bridged archive completes without one", async () => {
-    let settled = false;
-    const attempt = agent.run("session.archive", { sessionId: b1.sessionId, archived: true }).catch((error: unknown) => error).finally(() => { settled = true; });
+  await step("the person's own click keeps a simple confirmation: title, one question, Keep or Stop and archive", async () => {
+    await user.hover({ testId: `sidebar-session-${b1.sessionId}` });
+    await user.click({ testId: `session-archive-${b1.sessionId}` });
     await user.see({ text: "This session is still working" });
-    expect((await world.archiveConfirmation()).metadata.map(row => row.label)).toEqual(["Workspace", "Session ID"]);
-    expect(settled).toBe(false);
+    const dialog = await world.archiveConfirmation();
+    expect(dialog.title).toBe(`This session is still working: ${b1.title}`);
+    expect(dialog.text).toContain("Stop the current task and archive?");
+    expect(dialog.metadata).toEqual([]);
+    expect(dialog.text).not.toContain("Requested by");
+    expect(dialog.text).not.toContain(b1.sessionId);
+    expect(dialog).toMatchObject({ titleUnclipped: true, fitsViewport: true, noHorizontalOverflow: true, contentReachable: true });
+    await user.screenshot();
     await user.click({ role: "button", label: "Keep session open" });
-    expect(await attempt).toBeInstanceOf(Error);
     await user.notSee({ text: "This session is still working" });
+    expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    expect(await aborts()).toEqual([]);
+    expect(await probe.hash()).toBe(routeA);
 
+    // Idle bridged archive still completes without a dialog.
     const result = await archiveVia(a1.sessionId, a2.sessionId);
     expect(result.body).toMatchObject({ ok: true, id: "session.archive", result: { ok: true, sessionId: a2.sessionId, archived: true } });
     await user.notSee({ text: "This session is still working" });
     await probe.eventually(() => session(a2.sessionId), { within: 30_000, label: "idle neighbor is archived", until: entry => entry?.archived === true });
     expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
     expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
-    expect(await aborts()).toEqual([]);
   });
 
   await step("an agent stops a working other-session by id: its run ends, nothing navigates, and the notification names target and requester", async () => {
     const stopVia = (origin: string, target: string) => bridged({ id: "session.stop", args: { sessionId: target }, origin: { sessionId: origin } });
     expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
-    const result = await stopVia(a2.sessionId, b1.sessionId);
+    const result = await stopVia(a1.sessionId, b1.sessionId);
     expect(result.status).toBe(200);
     expect(result.body).toMatchObject({ ok: true, id: "session.stop", result: { ok: true, sessionId: b1.sessionId, title: b1.title, stopped: true } });
     await user.notSee({ text: "This session is still working" });
@@ -153,7 +137,7 @@ test("agents see which sessions are working, archiving a working one asks the pe
     expect(stops.every(request => request.sessionId === b1.sessionId)).toBe(true);
     expect(await probe.hash()).toBe(routeA);
 
-    const attribution = `Requested by The agent in "${a2.title}" ${a2.sessionId}`;
+    const attribution = `Requested by The agent in "${a1.title}" ${a1.sessionId}`;
     await user.see({ text: `Session stopped: ${b1.title}` });
     await user.see({ text: attribution });
     await user.screenshot();
@@ -168,8 +152,8 @@ test("agents see which sessions are working, archiving a working one asks the pe
     }));
 
     // Idempotent, and unknown ids are a structured error rather than a dialog.
-    expect((await stopVia(a2.sessionId, b1.sessionId)).body).toMatchObject({ ok: true, result: { ok: true, sessionId: b1.sessionId, alreadyIdle: true } });
-    expect((await stopVia(a2.sessionId, "ses_does_not_exist")).body).toMatchObject({ ok: false, error: "Session was not found in the current session list" });
+    expect((await stopVia(a1.sessionId, b1.sessionId)).body).toMatchObject({ ok: true, result: { ok: true, sessionId: b1.sessionId, alreadyIdle: true } });
+    expect((await stopVia(a1.sessionId, "ses_does_not_exist")).body).toMatchObject({ ok: false, error: "Session was not found in the current session list" });
     expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
     await user.notSee({ text: "This session is still working" });
   });

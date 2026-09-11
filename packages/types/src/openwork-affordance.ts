@@ -89,16 +89,21 @@ const openworkAffordanceSuccessSchema = z.object({
 
 /**
  * Structured outcomes an action can report so the agent can decide instead of
- * retrying a transport-looking error. `awaiting_user_confirmation`: the command
- * opened a dialog only the person can answer; the request stays pending in the
- * app and `hint` names the target and requester.
+ * retrying a transport-looking error. Warnings travel back through the channel
+ * the request came from: an agent never gets a dialog, it gets one of these.
+ * - `target_working`: the target session is still working; stop it first
+ *   (session.stop) if the person wants it closed, otherwise leave it running.
+ * - `self_archive_while_working`: a session asked to archive itself (or its
+ *   parent) from inside its own running turn; finish the turn, the reviewer
+ *   archives.
  */
 export const openworkAffordanceFailureCodeSchema = z.enum([
   "unavailable",
   "invalid-args",
   "conflict",
   "failed",
-  "awaiting_user_confirmation",
+  "target_working",
+  "self_archive_while_working",
 ])
 export type OpenworkAffordanceFailureCode = z.infer<typeof openworkAffordanceFailureCodeSchema>
 

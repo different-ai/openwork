@@ -66,12 +66,12 @@ export type OpenworkControlHelpers = {
   /** The conversation whose agent issued the request, when it came through the agent bridge. */
   origin?: OpenworkAffordanceOrigin;
   /**
-   * Present only for bridged commands (the server mailbox gives up after a few
-   * seconds). An action that opens a dialog only the person can answer calls
-   * this so the agent receives `awaiting_user_confirmation` at once while the
-   * dialog stays open; direct window callers keep awaiting the dialog.
+   * True when an agent issued the command through the server bridge, which
+   * answers within seconds and has no person on the other end. A warning for
+   * that request goes back through the agent's own conversation as a
+   * structured result, never through a dialog.
    */
-  awaitingUserConfirmation?: (detail: { error: string; hint: string }) => void;
+  bridged: boolean;
 };
 
 export type OpenworkControlTargetRef = {
@@ -414,7 +414,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     actionId: string,
     args?: unknown,
     origin?: OpenworkAffordanceOrigin,
-    awaitingUserConfirmation?: OpenworkControlHelpers["awaitingUserConfirmation"],
+    bridged = false,
   ): Promise<OpenworkControlResult> => {
     const registered = actionsRef.current.get(actionId);
     const action = registered?.ref.current;
@@ -442,7 +442,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       await playTargetChoreography(action, runId);
       setNarration(`Running ${action.label}…`);
       const effectiveArgs = args === undefined ? action.previewArgs : args;
-      const result = await action.execute(effectiveArgs, { setNarration, origin, awaitingUserConfirmation });
+      const result = await action.execute(effectiveArgs, { setNarration, origin, bridged });
       const resultError = returnedActionError(result);
       if (resultError) {
         setNarration(`Could not ${action.label}: ${resultError.error}`);
@@ -496,7 +496,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     }
     try {
       const effectiveArgs = request.args === undefined ? action.previewArgs : request.args;
-      const result = await action.execute(effectiveArgs, { setNarration: () => undefined });
+      const result = await action.execute(effectiveArgs, { setNarration: () => undefined, bridged: false });
       const resultError = returnedActionError(result);
       if (resultError) {
         return {
@@ -560,24 +560,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       };
     }
     busyActorRef.current = request.actor ?? null;
-    // A dialog only the person can answer must not look like a dead window to
-    // the bridge: answer with awaiting_user_confirmation now, keep the dialog.
-    let awaiting: (detail: { error: string; hint: string }) => void = () => undefined;
-    const confirmation = new Promise<OpenworkAffordanceResult>((resolve) => {
-      awaiting = (detail) => resolve({
-        ok: false,
-        id: request.id,
-        error: detail.error,
-        hint: detail.hint,
-        code: "awaiting_user_confirmation",
-        revision: contextRevisionRef.current,
-      });
-    });
-    const result = await Promise.race([
-      executeAction(request.id, request.args, request.origin, (detail) => awaiting(detail)),
-      confirmation,
-    ]);
-    if ("id" in result) return result;
+    const result = await executeAction(request.id, request.args, request.origin, true);
     if (!busyActionIdRef.current) busyActorRef.current = null;
     if (!result.ok) {
       return {
