@@ -499,8 +499,15 @@ describe("cloud provider sync gateway", () => {
       expect((await responseRecord(await fetch(`${base}/cloud-provider-sync/status`, { headers: clientHeaders() }), "status")))
         .toMatchObject({ hasSession: false, providers: [], lastRun: null });
       expect((await put("/den-session", "org_new")).status).toBe(204);
-      await waitForLastRun(base, "applied");
+      // Join delivery, then force the same no-op a 20 ms timer can complete before
+      // a status observer wakes. lastRun is not history; assert durable effects.
+      expect(["applied", "noop"]).toContain((await runSync(base, "identity-ready")).status);
+      expect(await runSync(base, "after-ready")).toEqual({ status: "noop" });
       expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeDefined();
+      expect((await new EnvService({ path: process.env.OPENWORK_ENV_STORE }).list())
+        .map(({ key, value }) => ({ key, value })))
+        .toEqual([{ key: "TEST_PROVIDER_API_KEY", value: provider.apiKey }]);
+      expect(engineRequests).toContain("PUT /auth/lpr_test");
       expect(denRequests).toContain("org_new /v1/llm-providers/lpr_test/connect");
     } finally {
       release.resolve();
