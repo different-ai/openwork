@@ -27,48 +27,35 @@ export function localConnectionConfig(databaseUrl: string) {
   return config
 }
 
-export function matrixPreflightQueries(plan: MigrationPlan) {
+export function matrixPreflightQueries(plan: MigrationPlan, completeSchema = true) {
   const migration = plan.find((entry) => entry.tag === "0097_gateway_access_matrix")
   if (!migration) throw new MigrationSafetyError("Missing 0097 preflight")
-  const statements = migration.sql.map((sql) => sql.replace(/^\s*--[^\n]*$/gm, "").trim())
-  const rename = statements.findIndex((sql) => /^RENAME TABLE\b/i.test(sql))
-  const queries = statements.slice(0, rename).flatMap((sql) => {
-    const match = /^INSERT INTO `__gateway_0097_preflight` \(`failure`\)\s+(SELECT '(0097_[a-z0-9_]+)'[\s\S]*)$/.exec(sql)
-    if (match) return [{ name: match[2], sql: match[1], json: false }]
-    const json = /^SELECT JSON_EXTRACT\(IF\(COUNT\((?:\*|DISTINCT TABLE_NAME, INDEX_NAME)\) = \d+, '\{\}', '(0097_[a-z0-9_]+)'\), '\$'\) AS preflight\s+FROM information_schema\.(?:TABLES|COLUMNS|STATISTICS)\s+WHERE TABLE_SCHEMA = DATABASE\(\) AND [\s\S]+;$/.exec(sql)
-    return json ? [{ name: json[1], sql, json: true }] : []
-  })
-  const seed = statements.find((sql) => /^INSERT INTO `__gateway_0097_preflight` \(`failure`\) VALUES/.test(sql))
-  const names = seed ? [...seed.matchAll(/'(0097_[a-z0-9_]+)'/g)].map((match) => match[1]) : []
-  // Only the reviewed recovery SQL has this mixed result contract. Reconstruct
-  // the original bytes, rather than trusting a caller-supplied plan hash, so
-  // unknown predicates, packets or layouts cannot silently lose a guard.
+  // Keep generated SQL untouched; the local runner owns the empty-source guard.
+  // Reconstruct the bytes rather than trusting a caller-supplied plan hash.
   const sourceHash = createHash("sha256").update(migration.sql.join("--> statement-breakpoint")).digest("hex")
-  if (sourceHash !== "2882d271052bd27a6281e5a1b161056546c817d27e218ba69fecd5f00cb4db9a"
-    || rename < 0 || names.length !== 10 || new Set(names).size !== 10 || queries.length !== 12
-    || queries.filter((query) => query.json).length !== 5
-    || new Set(queries.map((query) => query.name)).size !== names.length
-    || names.some((name) => queries.filter((query) => query.name === name).length
-      !== (name === "0097_requires_complete_0096_schema" ? 3 : 1))) {
-    throw new MigrationSafetyError("0097 preflight layout changed; review local startup integration before execution.")
+  if (sourceHash !== "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470") {
+    throw new MigrationSafetyError("0097 source changed; review local startup integration before execution.")
   }
-  return queries
+  const snapshot = plan.find((entry) => entry.tag === (completeSchema
+    ? "0096_inference_accounting_observations" : "0095_inference_gateway_providers"))?.snapshot
+  if (!snapshot) throw new MigrationSafetyError("Missing 0097 prerequisite snapshot")
+  // The caller has already verified this baseline. At 0095 only the rollup
+  // lock is absent; 0096 creates it before the full guard runs again.
+  return [
+    "inference_providers", "inference_provider_models", "inference_provider_credentials",
+    "inference_provider_access", "inference_provider_oauth_states",
+    "inference_request_logs", "inference_usage_rollups", "inference_rollup_lock",
+  ].filter((table) => {
+    if (snapshot.tables[table]) return true
+    if (!completeSchema && table === "inference_rollup_lock") return false
+    throw new MigrationSafetyError(`Missing 0097 prerequisite table ${table}`)
+  }).map((table) => ({ name: table, sql: `SELECT 1 FROM \`${table}\` LIMIT 1` }))
 }
 
 export async function preflightMatrix(executor: Executor, plan: MigrationPlan, completeSchema = true) {
-  for (const query of matrixPreflightQueries(plan)) {
-    if (!completeSchema && query.name === "0097_requires_complete_0096_schema") continue
+  for (const query of matrixPreflightQueries(plan, completeSchema)) {
     const rows = await executor.query(query.sql)
-    let passed = rows.length === 0
-    if (query.json) {
-      let value: unknown = rows[0]?.preflight
-      if (typeof value === "string") {
-        try { value = JSON.parse(value) } catch { value = undefined }
-      }
-      passed = rows.length === 1 && record(value) && Object.keys(value).length === 0
-        && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
-    }
-    if (!passed) throw new MigrationSafetyError(`Preflight rejected ${query.name}; no rows were changed. ${recovery}`)
+    if (rows.length) throw new MigrationSafetyError(`Preflight rejected nonempty ${query.name}; consolidated 0097 requires empty source tables. ${recovery}`)
   }
 }
 
@@ -120,7 +107,7 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     matrixPreflightQueries(plan)
     if (pending.some((entry) => entry.tag === "0097_gateway_access_matrix") && shape.has("table:inference_providers")) {
       await preflightMatrix(executor, plan, plan[applied - 1].tag.startsWith("0096_"))
-      console.log("[den-db] 0097 read-only data/schema guards passed")
+      console.log("[den-db] 0097 read-only empty-source guards passed against the verified baseline")
     }
     const seed = empty ? await foundationSql(plan) : []
     for (const repair of lookupRepairs) console.log(`[den-db] Planned additive auth lookup index: ${repair.key.slice("index:".length)}`)

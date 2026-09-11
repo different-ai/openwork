@@ -1,105 +1,91 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import test from "node:test"
 
 const migration = readFileSync(new URL("../drizzle/0097_gateway_access_matrix.sql", import.meta.url), "utf8")
-const packets = migration.split("--> statement-breakpoint")
-const statements = packets.map((packet) => packet.replace(/^\s*--[^\n]*$/gm, "").trim()).filter(Boolean)
-const metadata = statements.filter((sql) => /information_schema\./i.test(sql))
+const statements = migration.split("--> statement-breakpoint").map((packet) => packet.trim())
+const sourceTables = [
+  "inference_request_logs", "inference_rollup_lock", "inference_usage_rollups",
+  "inference_provider_access", "inference_provider_credentials", "inference_provider_models",
+  "inference_provider_oauth_states", "inference_providers",
+]
 
-test("0097 keeps canonical LF bytes for its reviewed migration hash", () => {
+test("0097 preserves the raw generated SQL bytes and one statement per packet", () => {
   const attributes = readFileSync(new URL("../../../../.gitattributes", import.meta.url), "utf8")
   assert.match(attributes, /^\/ee\/packages\/den-db\/drizzle\/0097_gateway_access_matrix\.sql text eol=lf$/m)
   assert.equal(migration.includes("\r"), false)
-})
-const sourceTables = [
-  "inference_providers", "inference_provider_models", "inference_provider_credentials",
-  "inference_provider_access", "inference_provider_oauth_states",
-  "inference_request_logs", "inference_usage_rollups", "inference_rollup_lock",
-]
-const observationColumns = [
-  "input_tokens_count", "output_tokens_count", "total_tokens_count", "cache_read_tokens_count",
-  "cache_write_tokens_count", "reasoning_tokens_count", "cost_count", "latency_count",
-  "ttfb_count", "request_bytes_count", "response_bytes_count",
-]
-const destinationTables = [
-  "gateway_providers", "gateway_provider_models", "gateway_provider_credentials",
-  "gateway_provider_access", "gateway_provider_oauth_states", "gateway_request_logs",
-  "gateway_usage_rollups", "gateway_rollup_lock", "gateway_keys", "gateway_model_groups",
-  "gateway_model_group_models", "gateway_credential_sets",
-]
-const requiredIndexes = [
-  ["inference_providers", "inference_providers_organization_id"],
-  ["inference_providers", "inference_providers_org_provider_id"],
-  ["inference_provider_models", "inference_provider_models_model_id"],
-  ["inference_provider_models", "inference_provider_models_provider_model"],
-  ["inference_provider_credentials", "inference_provider_credentials_org_membership_id"],
-  ["inference_provider_credentials", "inference_provider_credentials_organization_id"],
-  ["inference_provider_credentials", "inference_provider_credentials_provider_subject"],
-  ["inference_provider_access", "inference_provider_access_org_membership_id"],
-  ["inference_provider_access", "inference_provider_access_team_id"],
-  ["inference_provider_access", "inference_provider_access_provider_org_membership"],
-  ["inference_provider_access", "inference_provider_access_provider_team"],
-  ["inference_provider_oauth_states", "inference_provider_oauth_states_state"],
-  ["inference_provider_oauth_states", "inference_provider_oauth_states_expires_at"],
-  ["inference_request_logs", "inference_request_logs_openwork_request_id"],
-  ["inference_request_logs", "inference_request_logs_org_started"],
-  ["inference_request_logs", "inference_request_logs_member_started"],
-  ["inference_request_logs", "inference_request_logs_provider_started"],
-  ["inference_request_logs", "inference_request_logs_started_at"],
-  ["inference_usage_rollups", "inference_usage_rollups_bucket_dimension"],
-  ["inference_usage_rollups", "inference_usage_rollups_org_granularity_bucket"],
-]
-
-test("0097 metadata guards preserve the exact source predicates and fail-closed counts", () => {
-  const quoted = (names: string[]) => names.map((name) => `'${name}'`).join(", ")
-  const expected = [
-    { count: "COUNT(*) = 8", reason: "0097_requires_complete_0096_schema", table: "TABLES",
-      predicate: `TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME IN (${quoted(sourceTables)})` },
-    { count: "COUNT(*) = 11", reason: "0097_requires_complete_0096_schema", table: "COLUMNS",
-      predicate: `TABLE_NAME = 'inference_usage_rollups' AND COLUMN_NAME IN (${quoted(observationColumns)})` },
-    { count: "COUNT(*) = 1", reason: "0097_requires_complete_0096_schema", table: "COLUMNS",
-      predicate: "TABLE_NAME = 'inference_keys' AND COLUMN_NAME = 'encrypted_key'" },
-    { count: "COUNT(*) = 0", reason: "0097_gateway_tables_already_exist", table: "TABLES",
-      predicate: `TABLE_NAME IN (${quoted(destinationTables)})` },
-    { count: "COUNT(DISTINCT TABLE_NAME, INDEX_NAME) = 20", reason: "0097_missing_legacy_indexes", table: "STATISTICS",
-      predicate: `(${requiredIndexes.map(([table, index]) => `(TABLE_NAME = '${table}' AND INDEX_NAME = '${index}')`).join(" OR ")})` },
-  ]
-  const normalize = (sql: string) => sql.replace(/\s+/g, " ").replace(/\( /g, "(").replace(/ \)/g, ")").trim()
-  assert.equal(metadata.length, 5)
-  assert.deepEqual(metadata.map(normalize), expected.map(({ count, reason, table, predicate }) => normalize(
-    `SELECT JSON_EXTRACT(IF(${count}, '{}', '${reason}'), '$') AS preflight
-     FROM information_schema.${table} WHERE TABLE_SCHEMA = DATABASE() AND ${predicate};`,
-  )))
-  for (const sql of metadata) {
-    assert.equal(sql.match(/\bSELECT\b/gi)?.length, 1)
-    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|JOIN|UNION|EXISTS|HAVING)\b/i)
+  assert.equal(createHash("sha256").update(migration).digest("hex"),
+    "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470")
+  assert.equal(statements.length, 98)
+  for (const sql of statements) {
+    assert.ok(sql.endsWith(";"))
+    assert.equal(sql.match(/;/g)?.length, 1)
+    assert.match(sql, /^(CREATE|ALTER|RENAME|DROP INDEX)\b/)
+    assert.doesNotMatch(sql, /^(INSERT|UPDATE|DELETE|SELECT|DROP TABLE|TRUNCATE)\b|DROP COLUMN|information_schema|__gateway_0097_preflight/i)
   }
-  const rename = statements.findIndex((sql) => sql.startsWith("RENAME TABLE"))
-  assert.ok(rename > 0)
-  assert.ok(metadata.every((sql) => statements.indexOf(sql) < rename))
 })
 
-test("0097 keeps every non-metadata SQL packet unchanged from the recovery base", () => {
-  // Fingerprint of comment-stripped non-metadata packets at 667b450fd; original
-  // full SQL SHA-256: dec021c8b3bb9fb139b3e0737ac5618ab1ed74d64d82fe36e1fcfe71306f378d.
-  // Includes temporary guard creation/seeds/drop, version/mode/data guards,
-  // and every persistent DDL, backfill and index change, in their original order.
-  const unchanged = statements.filter((sql) => !/information_schema\./i.test(sql))
-  assert.equal(statements.length, 40)
-  assert.equal(unchanged.length, 35)
-  assert.equal(createHash("sha256").update(unchanged.join("\n--> statement-breakpoint\n")).digest("hex"),
-    "6dd874e369061b0b85623ecbec6073c52cb61bdabc718efbfd7373694e9300dd")
-})
-
-test("0097-0099 breakpoint packets end in SQL, not trailing comments", () => {
-  for (const file of ["0097_gateway_access_matrix.sql", "0098_gateway_provider_model_universe.sql", "0099_gateway_credential_set_creator.sql"]) {
-    const sql = readFileSync(new URL(`../drizzle/${file}`, import.meta.url), "utf8")
-    for (const [index, packet] of sql.split("--> statement-breakpoint").entries()) {
-      assert.ok(packet.trim().endsWith(";"), `${file} packet ${index + 1} must end with its SQL semicolon`)
-      const executable = packet.replace(/^\s*--[^\n]*$/gm, "").trim()
-      assert.equal(executable.match(/;/g)?.length, 1, `${file} packet ${index + 1} must contain one statement`)
-    }
+test("0097 creates four final tables and renames all eight intermediate tables", () => {
+  assert.deepEqual(statements.filter((sql) => sql.startsWith("CREATE TABLE")).map((sql) => /^CREATE TABLE `([^`]+)`/.exec(sql)?.[1]), [
+    "gateway_credential_sets", "gateway_keys", "gateway_model_group_models", "gateway_model_groups",
+  ])
+  assert.deepEqual(statements.filter((sql) => sql.startsWith("RENAME TABLE")), sourceTables.map((table) =>
+    `RENAME TABLE \`${table}\` TO \`${table.replace("inference_", "gateway_")}\`;`))
+  assert.equal(statements.filter((sql) => sql.includes("RENAME COLUMN")).length, 7)
+  assert.match(statements[0], /`created_by_org_membership_id` varchar\(64\),/)
+  assert.ok(statements.includes("ALTER TABLE `gateway_providers` ADD `model_ids` json DEFAULT (JSON_ARRAY()) NOT NULL;"))
+  assert.match(migration, /ADD CONSTRAINT `gateway_provider_access_audience` CHECK/)
+  // Generated table-derived PK renames cause separate drops/adds. Preserve
+  // them here, but this shape assertion is not target-engine replay evidence.
+  for (const source of sourceTables) {
+    const table = source.replace("inference_", "gateway_")
+    assert.ok(statements.includes(`ALTER TABLE \`${table}\` DROP PRIMARY KEY;`))
+    assert.ok(statements.includes(`ALTER TABLE \`${table}\` ADD PRIMARY KEY(\`id\`);`))
   }
+})
+
+test("pre-consolidation 0095/0096 SQL and snapshots retain base f128bff74 bytes", () => {
+  const hashes = {
+    "0095_inference_gateway_providers.sql": "3d030e1cc022d40ac5c0627920e035d6f9639bf265f022b39321d53004f6a6f9",
+    "0096_inference_accounting_observations.sql": "19e12d4f2f8247febe5a6882969f9408bfc0eb3fb2acc3d999847bc49027cd3a",
+    "meta/0095_snapshot.json": "84cac88328f1b3cc09f52644b82345b63cc4834340b25594af9aa24961b39b6c",
+    "meta/0096_snapshot.json": "62c1d2787cd6064a258238dfc1c066bfa3bde1dbf4a33b4ebc8f1af906a74282",
+  }
+  for (const [file, hash] of Object.entries(hashes)) {
+    assert.equal(createHash("sha256").update(readFileSync(new URL(`../drizzle/${file}`, import.meta.url))).digest("hex"), hash, file)
+  }
+})
+
+test("all 186 historical artifacts and journal entries through 0096 retain base f128bff74 bytes", () => {
+  const files = [
+    ...readdirSync(new URL("../drizzle/", import.meta.url)),
+    ...readdirSync(new URL("../drizzle/meta/", import.meta.url)).map((file) => `meta/${file}`),
+  ].filter((file) => {
+    const match = /^(?:meta\/)?(\d{4})(?:_|\.)/.exec(file)
+    return match && Number(match[1]) <= 96
+  }).sort()
+  const hash = createHash("sha256")
+  for (const file of files) {
+    hash.update(`${file}\0`)
+    hash.update(readFileSync(new URL(`../drizzle/${file}`, import.meta.url)))
+    hash.update("\0")
+  }
+  assert.equal(files.length, 186)
+  assert.equal(hash.digest("hex"), "30f23bddc8c4457ee2fb379a2640c806fdc110bf01bbfc7252f09c3516027763")
+  const journal = JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"))
+  assert.equal(createHash("sha256").update(JSON.stringify(journal.entries.slice(0, 96))).digest("hex"),
+    "c4e85b6219cefe3d0fb3630e69804bb09be6932e8101c9983a0a30ed94389985")
+})
+
+test("the journal ends at consolidated 0097 with no obsolete 0098/0099 artifacts", () => {
+  const journal = JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"))
+  assert.equal(journal.entries.length, 97)
+  assert.deepEqual(journal.entries.at(-1), {
+    idx: 97, version: "5", when: 1788895934602, tag: "0097_gateway_access_matrix", breakpoints: true,
+  })
+  for (const file of [
+    "0098_gateway_provider_model_universe.sql", "0099_gateway_credential_set_creator.sql",
+    "meta/0098_snapshot.json", "meta/0099_snapshot.json",
+  ]) assert.equal(existsSync(new URL(`../drizzle/${file}`, import.meta.url)), false)
 })
