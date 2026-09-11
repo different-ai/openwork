@@ -148,6 +148,38 @@ test("test evidence records the selected engine in JSON and the HTML header", as
   }
 });
 
+test("test evidence records the sandbox ref next to the runner gitSha under Daytona placement only", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-ref-"));
+  const previous = {
+    OPENWORK_WORLD_PLACE: process.env.OPENWORK_WORLD_PLACE,
+    OPENWORK_EVAL_DAYTONA: process.env.OPENWORK_EVAL_DAYTONA,
+    OPENWORK_EVAL_REF: process.env.OPENWORK_EVAL_REF,
+  };
+  try {
+    process.env.OPENWORK_WORLD_PLACE = "daytona";
+    process.env.OPENWORK_EVAL_DAYTONA = "1";
+    process.env.OPENWORK_EVAL_REF = "0123456789abcdef0123456789abcdef01234567";
+    await createTestEvidence({ name: "ref lane", outDir: dir }).close();
+    const daytonaRun = await payload(dir);
+    assert.equal(daytonaRun.sandboxRef, "0123456789abcdef0123456789abcdef01234567");
+    assert.equal(typeof daytonaRun.gitSha, "string");
+    assert.match(await readFile(join(dir, "index.html"), "utf8"), /sandbox ref 0123456789abcdef/);
+
+    process.env.OPENWORK_WORLD_PLACE = "local";
+    delete process.env.OPENWORK_EVAL_DAYTONA;
+    await createTestEvidence({ name: "ref lane", outDir: dir }).close();
+    const localRun = await payload(dir);
+    assert.equal(localRun.sandboxRef, undefined);
+    assert.doesNotMatch(await readFile(join(dir, "index.html"), "utf8"), /sandbox ref/);
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("test evidence accepts unchanged screenshots and only lets one validation use their pixel hash", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-retake-"));
   try {

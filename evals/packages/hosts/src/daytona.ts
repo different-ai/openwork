@@ -837,8 +837,12 @@ PYEOF`;
     const sandbox = requireSandbox();
     const safeName = sanitizeName(name);
     const port = await allocateSandboxPort(chromePorts, exec, sandbox);
-    const profileDir = `/tmp/daytona-chrome-${safeName}`;
-    const logPath = `/tmp/daytona-chrome-${safeName}.log`;
+    // Per-spawn profile: a second Chrome with the same name (a spec calling
+    // seed.web() twice) must not hit Chromium's profile lock and lose CDP. The
+    // CDP port is unique per live surface, so it keeps same-millisecond spawns apart.
+    const spawnStamp = `${timestamp()}-${port}`;
+    const profileDir = `/tmp/daytona-chrome-${safeName}-${spawnStamp}`;
+    const logPath = `/tmp/daytona-chrome-${safeName}-${spawnStamp}.log`;
     const startUrl = opts.startUrl?.trim() || "about:blank";
     const command = [
       "set -euo pipefail",

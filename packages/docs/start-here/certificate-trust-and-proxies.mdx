@@ -38,7 +38,7 @@ For Kubernetes Den installs, use the Helm chart's `customCa` support when Den mu
 /etc/openwork/custom-ca/ca-bundle.pem
 ```
 
-It sets `NODE_EXTRA_CA_CERTS` to that file for `den-api`, `den-web`, enabled `inference`, and the migration Job. CA rotation requires restarting the running workloads so Node reloads the file.
+It sets `NODE_EXTRA_CA_CERTS` to that file for `den-api`, `den-web`, enabled OpenWork Gateway (the retained `inference` workload), and the migration Job. CA rotation requires restarting the running workloads so Node reloads the file. Gateway's internal and desktop-reachable origins are separate; see [Gateway configuration](/self-host/gateway#internal-and-public-origins) for production HTTPS requirements.
 
 The low-level values and conflict rules are in the Helm README's [Custom CA certificates](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/README.md#custom-ca-certificates) section.
 
@@ -47,8 +47,7 @@ The low-level values and conflict rules are in the Helm README's [Custom CA cert
 For MySQL-compatible databases, encryption and certificate identity verification are separate decisions.
 
 - `sslaccept=accept` keeps TLS enabled but does not verify the certificate chain. Use it only for smoke tests or transitional setup.
-- `sslmode=require` encrypts the connection, but do not describe it as certificate identity verification.
-- `sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` are certificate-verifying modes. Pair them with the correct CA bundle, usually through Helm `customCa`.
+- `sslmode=require`, `sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` are all certificate-verifying modes in OpenWork: Den's MySQL client rejects untrusted chains and checks the hostname for each of them, so `verify-ca` behaves like `verify-full`. The server certificate needs the database hostname in its SAN. Prefer `sslmode=verify-full` and pair it with the correct CA bundle, usually through Helm `customCa`.
 
 ## Proxy guidance
 

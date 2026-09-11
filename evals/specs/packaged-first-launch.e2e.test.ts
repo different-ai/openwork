@@ -24,9 +24,9 @@ const FIRST_LAUNCH_HEADING: Partial<Record<PackagedFlavor, string>> = {
 };
 
 /** Heading of the root error boundary's recovery screen (app-error-boundary.tsx). */
-const RECOVERY_HEADING = /OpenWork hit an unexpected error/;
+const RECOVERY_HEADING = /OpenWork hit an unexpected error|OpenWork couldn't start/;
 
-/** Late boot work (config refresh, bridge calls) settles well inside this after the gate mounts. */
+/** Bounded observation window, not a guarantee against faults after it ends. */
 const REJECTION_SETTLE_MS = 3_000;
 
 test("a packaged flavor renders its first-launch gate without a render crash", async ({ world, user, probe, evidence }) => {
@@ -63,6 +63,19 @@ test("a packaged flavor renders its first-launch gate without a render crash", a
   // A rejected bootstrap promise can leave the app unusable without ever
   // throwing during render, so only exactly-matched known rejections pass.
   await sleep(REJECTION_SETTLE_MS);
+  // A caught React error need not emit a Runtime exception. Re-read the actual
+  // surface and usable controls after the last wait, not the pre-screenshot DOM.
+  const final = await world.health();
+  expect(final.rootText, "startup recovery appeared during settle").not.toMatch(RECOVERY_HEADING);
+  expect(final.rootText, "the first-launch gate disappeared during settle").toContain(heading);
+  const usable = final.controls.filter((control) => control.visible && control.enabled);
+  if (flavor === "enterprise") {
+    expect(usable.some((control) => control.tag === "input" && control.testId === "organization-server-input"), "Workspace address must remain visible and enabled").toBe(true);
+    expect(usable.some((control) => control.tag === "button" && control.testId === "organization-server-continue"), "Continue must remain visible and enabled").toBe(true);
+  } else {
+    expect(usable.some((control) => control.tag === "button" && control.text === "Sign in to OpenWork"), "Sign in must remain visible and enabled").toBe(true);
+    expect(usable.some((control) => control.tag === "button" && control.text === "Paste sign-in code"), "Sign-in code disclosure must remain visible and enabled").toBe(true);
+  }
   const exceptions = world.exceptions();
   const knownRejections = exceptions.filter(isKnownRejection);
   const unexpected = exceptions.filter((exception) => !isRenderCrash(exception) && !isKnownRejection(exception));
@@ -71,7 +84,7 @@ test("a packaged flavor renders its first-launch gate without a render crash", a
 
   evidence.recordAssertionEvidence(
     `The ${flavor} desktop mounts "${heading}" on first launch without a render crash or an unexpected unhandled rejection`,
-    `#root text: ${JSON.stringify(rootText.slice(0, 200))}; render crashes: ${crashes.length}; allowlisted rejections: ${knownRejections.length} of ${KNOWN_LAUNCH_REJECTIONS.length} known; unexpected rejections: ${unexpected.length}`,
+    `Final #root after ${REJECTION_SETTLE_MS} ms: ${JSON.stringify(final.rootText.slice(0, 200))}; visible enabled controls: ${JSON.stringify(usable)}; render crashes: ${exceptions.filter(isRenderCrash).length}; allowlisted rejections: ${knownRejections.length} of ${KNOWN_LAUNCH_REJECTIONS.length} known; unexpected rejections: ${unexpected.length}`,
     crashes.length === 0 && unexpected.length === 0,
   );
 });

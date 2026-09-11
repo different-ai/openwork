@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, X, Zap } from "lucide-react";
 
 import { DEFAULT_MODEL } from "@/app/constants";
@@ -15,6 +15,8 @@ import {
   useOpenWorkModelsPromoEligibility,
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { persistableComposerDraftText } from "@/react-app/domains/session/surface/composer-state-store";
+import { useNewTaskDraftState } from "@/react-app/domains/session/sync/draft-store";
 import {
   NewTaskComposer,
   type NewTaskComposerContext,
@@ -73,7 +75,27 @@ export type SessionEmptyHeroProps = {
  * built-in defaults otherwise.
  */
 export function SessionEmptyHero(props: SessionEmptyHeroProps) {
-  const [prompt, setPrompt] = useState("");
+  // The session is created on submit, so until then the prompt has no
+  // conversation to live in. Persist it under the workspace's reserved slot so
+  // opening another session (or restarting) does not lose it; the sidebar
+  // offers a Draft row for the same slot. The parent keys this component by
+  // draft owner, so the initial read is the only hydration needed.
+  const persistedDraft = useNewTaskDraftState(props.composer?.draftScope, props.composer?.workspaceId);
+  const [prompt, setPromptState] = useState(() => persistedDraft.snapshot?.text ?? "");
+  const promptRef = useRef(prompt);
+  // Once a send is in flight the composer has cleared the slot, and anything
+  // typed until its route lands is carried into the created session as the
+  // continuation. Persisting it here would pre-fill the next new task. On
+  // success this hero unmounts, so the flag only resets when the send fails.
+  const sendInFlightRef = useRef(false);
+  const persistPrompt = persistedDraft.save;
+  const setPrompt = useCallback((value: string) => {
+    setPromptState(value);
+    promptRef.current = value;
+    if (sendInFlightRef.current) return;
+    // Attachment chips only exist in memory (File objects); the stored text drops their tokens.
+    persistPrompt({ text: persistableComposerDraftText(value), mode: "prompt" });
+  }, [persistPrompt]);
   const orgRestrictions = useOrgRestrictions();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
@@ -124,14 +146,23 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     })
     : DEFAULT_SUGGESTIONS;
 
-  const submit = (
+  const submit = async (
     resolvedPrompt: string,
     attachments: ComposerAttachment[],
     handoff?: NewTaskComposerHandoff,
   ) => {
     const trimmedPrompt = resolvedPrompt.trim();
     if ((!trimmedPrompt && !attachments.length) || props.busy) return;
-    return props.onRunTask(trimmedPrompt, attachments, handoff);
+    sendInFlightRef.current = true;
+    try {
+      await props.onRunTask(trimmedPrompt, attachments, handoff);
+    } catch (error) {
+      // The composer stays on this route, so whatever it holds now is once
+      // again the unsent new-task prompt and must stay reachable.
+      sendInFlightRef.current = false;
+      persistPrompt({ text: persistableComposerDraftText(promptRef.current), mode: "prompt" });
+      throw error;
+    }
   };
 
   const fillPrompt = (value: string) => {

@@ -6,6 +6,7 @@ import { AlertTriangle, Check, ChevronUp, CircleHelp, CirclePause, Copy, MoreHor
 import { FileChip } from "@/components/chat/file-chip"
 import { ShellCommandText } from "@/components/chat/shell-command-text"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
+import { useWorkbenchDisclosure } from "@/react-app/domains/session/chat/workbench-ui-state"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,12 +28,9 @@ import { cn } from "@/lib/utils"
 
 const ROW_CAP = 8
 
-/** Expansion persists per group while the session stays mounted (Paper rule). */
-const expandedByGroupKey = new Map<string, boolean>()
-const showAllByGroupKey = new Map<string, boolean>()
-
 type ToolAggregateGroupProps = {
   parts: AnyToolPart[]
+  messageId?: string
   /** Thoughts that happened inside the run, anchored by afterIndex. */
   thoughts?: AggregateThought[]
   className?: string
@@ -138,6 +136,11 @@ export function DetailBox({ kind, text, expanded, onToggle }: DetailBoxProps) {
   )
 }
 
+function RetainedDetailBox({ disclosureKey, ...props }: Pick<DetailBoxProps, "kind" | "text"> & { disclosureKey?: string }) {
+  const [expanded, setExpanded] = useWorkbenchDisclosure(disclosureKey)
+  return <DetailBox {...props} expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+}
+
 type AggregateRow = {
   /** The most recent call in the row (drives status, label, key). */
   part: AnyToolPart
@@ -189,42 +192,22 @@ export function buildAggregateRows(parts: AnyToolPart[], thoughts: AggregateThou
  * current action; past-tense summary when done. Chevron expands the chronological list — status
  * dot, monospace action, per-item duration — capped with "Show N more".
  */
-export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggregateGroupProps) {
+export function ToolAggregateGroup({ parts, messageId, thoughts = [], className }: ToolAggregateGroupProps) {
   const groupKey = parts[0]?.toolCallId ?? "aggregate"
   const latestToolCallId = parts.at(-1)?.toolCallId ?? groupKey
-  const [expanded, setExpandedState] = useState(() => expandedByGroupKey.get(groupKey) ?? false)
-  const [showAll, setShowAllState] = useState(() => showAllByGroupKey.get(groupKey) ?? false)
-  // Which detail boxes (command / pattern / error, per call) show full text.
-  const [fullDetailKeys, setFullDetailKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const keyFor = (id: string, detail: string) => messageId ? JSON.stringify(["tool", messageId, id, detail]) : undefined
+  const [expanded, setExpanded] = useWorkbenchDisclosure(keyFor(groupKey, "expanded"))
+  const [showAll, setShowAll] = useWorkbenchDisclosure(keyFor(groupKey, "show-all"))
   const resolveLifecycle = useCurrentToolLifecycleResolver()
 
-  const detailKey = (toolCallId: string, kind: DetailBoxProps["kind"]) => `${toolCallId}:${kind}`
   const detailBox = (kind: DetailBoxProps["kind"], toolCallId: string, text: string) => {
-    const key = detailKey(toolCallId, kind)
     return (
-      <DetailBox
+      <RetainedDetailBox
+        disclosureKey={keyFor(toolCallId, kind)}
         kind={kind}
         text={text}
-        expanded={fullDetailKeys.has(key)}
-        onToggle={() =>
-          setFullDetailKeys((current) => {
-            const next = new Set(current)
-            if (next.has(key)) next.delete(key)
-            else next.add(key)
-            return next
-          })
-        }
       />
     )
-  }
-
-  const setExpanded = (value: boolean) => {
-    expandedByGroupKey.set(groupKey, value)
-    setExpandedState(value)
-  }
-  const setShowAll = (value: boolean) => {
-    showAllByGroupKey.set(groupKey, value)
-    setShowAllState(value)
   }
 
   const inFlightPart = parts.find((part) => isToolPartInFlight(part))
@@ -247,7 +230,8 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
   // line for the same scrollable, copyable box the history uses, so the
   // whole command is readable while it is still running.
   const nowCommand = nowPart && isBashToolPart(nowPart) ? nowPart.input?.command?.trim() ?? "" : ""
-  const nowCommandShown = Boolean(nowPart && nowCommand && fullDetailKeys.has(detailKey(nowPart.toolCallId, "command")))
+  const [fullNowCommand, setFullNowCommand] = useWorkbenchDisclosure(keyFor(nowPart?.toolCallId ?? "", "command"))
+  const nowCommandShown = Boolean(nowPart && nowCommand && fullNowCommand)
   // The model is thinking mid-run: no tool is in flight but the run's
   // latest thought is still streaming. Show that instead of dead air.
   const lastThought = thoughts.at(-1)
@@ -360,7 +344,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
 
       {nowPart && nowCommandShown ? (
         <div data-tool-aggregate-now className="mt-1.5 min-w-0">
-          {detailBox("command", nowPart.toolCallId, nowCommand)}
+          <DetailBox kind="command" text={nowCommand} expanded={fullNowCommand} onToggle={() => setFullNowCommand(false)} />
         </div>
       ) : nowLabel ? (
         <div
@@ -369,10 +353,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
           title={nowCommand ? "Double-click to show the full command" : undefined}
           onDoubleClick={
             nowPart && nowCommand
-              ? () =>
-                  setFullDetailKeys((current) =>
-                    new Set(current).add(detailKey(nowPart.toolCallId, "command")),
-                  )
+              ? () => setFullNowCommand(true)
               : undefined
           }
         >
@@ -409,7 +390,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
               <Fragment key={part.toolCallId}>
               {thoughtsAt(row.index).map((thought) => (
                 <div key={`thought-${row.index}-${thought.afterIndex}`} data-tool-aggregate-thought className="py-1">
-                  <ReasoningBlock text={thought.text} isStreaming={thought.isStreaming} />
+                  <ReasoningBlock disclosureKey={keyFor(groupKey, `thought-${thought.afterIndex}`)} text={thought.text} isStreaming={thought.isStreaming} />
                 </div>
               ))}
               <div data-tool-aggregate-row className="flex min-w-0 flex-col gap-1.5 py-1">
@@ -483,7 +464,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
           })}
           {trailingThoughts.map((thought) => (
             <div key={`thought-trailing-${thought.afterIndex}`} data-tool-aggregate-thought className="py-1">
-              <ReasoningBlock text={thought.text} isStreaming={thought.isStreaming} />
+              <ReasoningBlock disclosureKey={keyFor(groupKey, `thought-${thought.afterIndex}`)} text={thought.text} isStreaming={thought.isStreaming} />
             </div>
           ))}
           {hiddenCount > 0 ? (

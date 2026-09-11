@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { waitUntilInteractive } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
@@ -418,6 +420,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
   let browser: AttachedSurface | null = null;
   let mocks: Record<string, MockHandle> = {};
   let source: SandboxRepoSourceReceipt | null = null;
+  let localSourceSha: string | null = null;
   try {
     if (remote) {
       const repoSource = options.place.denBase();
@@ -436,8 +439,9 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         name: worldName,
         host: options.place.host(),
         startUrl: "about:blank",
-        headless: options.headless,
+        headless: options.headless ?? true,
       });
+      if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
       const sandbox = browser.handle.sandboxId;
       if (browser.handle.hostKind !== "daytona" || !sandbox) {
         throw new Error("Daytona app-web Chrome did not expose its owning sandbox.");
@@ -460,14 +464,31 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source);
       await navigate(browser.client, runtime.webUrl);
     } else {
+      // Capture only the commit identity, before mocks or app processes launch.
+      // Do not expose git stderr, checkout paths, or environment in evidence.
+      try {
+        const receipt = await promisify(execFile)("git", ["rev-parse", "--verify", "HEAD"], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        localSourceSha = receipt.stdout.trim();
+      } catch {
+        throw new Error("Could not capture local app-web source SHA before launch.");
+      }
+      if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(localSourceSha)) {
+        throw new Error("Invalid local app-web source SHA receipt.");
+      }
       mocks = await bootLocalMocks(options.place, options.mocks ?? {});
       runtime = await startLocalRuntime(worldName, workspaceRoot);
       browser = await chrome({
         name: worldName,
         host: options.place.host(),
         startUrl: runtime.webUrl,
-        headless: options.headless,
+        headless: options.headless ?? true,
       });
+      if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
+      browser.handle.meta = { ...browser.handle.meta, actualSourceSha: localSourceSha };
     }
     await waitUntilInteractive(browser, { timeoutMs: 60_000 });
 
@@ -483,7 +504,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       openworkUrl: runtime.openworkUrl,
       workspaceRoot,
       mocks,
-      actualSourceSha: runtime.source?.actualSha ?? null,
+      actualSourceSha: runtime.source?.actualSha ?? localSourceSha,
       source: runtime.source,
     }, stop);
     return browser;

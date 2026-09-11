@@ -1,4 +1,4 @@
-import { browserScript } from "@openwork/cdp";
+import { browserScript, evaluate } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { configureBrowserFixtureModel, startBrowserFixture } from "@openwork/env";
 import type { Den, Seed } from "@openwork/env";
@@ -10,7 +10,22 @@ function record(value: unknown): value is Record<string, unknown> { return !!val
 export async function browserBackgroundWorld(seed: Seed) {
   const base = await builtinBrowserWorld(seed);
   const fixture = await startBrowserFixture(base.app, { requireSignIn: false });
-  return { ...base, origin: fixture.origin, async [Symbol.asyncDispose]() { await fixture[Symbol.asyncDispose](); } };
+  return {
+    ...base,
+    origin: fixture.origin,
+    /**
+     * A command stamped with the conversation it comes from, exactly as the
+     * server hands mailbox requests to the window. The HTTP mailbox itself
+     * answers "did not answer within 5 seconds", so a command that must wait
+     * for the user's approval is issued at the window boundary.
+     */
+    async commandFrom(sessionId: string, id: string, args: Record<string, unknown>): Promise<unknown> {
+      return evaluate(base.app.client, browserScript((id, encodedArgs, sessionId) =>
+        window.__openworkControl.command({ id, args: JSON.parse(encodedArgs), origin: { sessionId } }),
+      [id, JSON.stringify(args), sessionId]), { awaitPromise: true, timeoutMs: 120_000 });
+    },
+    async [Symbol.asyncDispose]() { await fixture[Symbol.asyncDispose](); },
+  };
 }
 
 export async function browserWebMcpWorld(seed: Seed) {

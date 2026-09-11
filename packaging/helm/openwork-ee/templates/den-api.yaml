@@ -1,3 +1,4 @@
+{{- include "openwork-ee.gateway.validate" . }}
 {{- include "openwork-ee.customCa.validate" . }}
 apiVersion: v1
 kind: Service
@@ -81,7 +82,7 @@ spec:
       {{- end }}
       containers:
         - name: den-api
-          image: "{{ .Values.denApi.image.repository }}:{{ default .Values.image.tag .Values.denApi.image.tag }}"
+          image: "{{ .Values.denApi.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.denApi.image.tag) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -129,6 +130,7 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- include "openwork-ee.gatewayDeploymentEnv" (dict "root" . "env" .Values.denApi.env) | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /health

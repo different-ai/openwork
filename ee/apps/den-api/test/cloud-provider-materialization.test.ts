@@ -2,6 +2,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
 import type { CloudProviderMaterializationProvider } from "../src/llm/cloud-provider-materialization.js"
 import { runtimeProviderEnvTag } from "../src/llm/provider-credentials.js"
+import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
 
 // Fixed row ids so the provider-scoped runtime env names are stable across
 // the suite: a models.dev provider's declared names leave Den as
@@ -351,6 +352,35 @@ async function materialize(input: {
 }
 
 describe("Cloud provider materialization", () => {
+  test("preserves catalog Fast metadata and accepts expanded v1 readback without repeated writes", async () => {
+    const provider = makeAnthropicProvider({ apiKey: "synthetic" })
+    provider.providerConfig = { npm: "@ai-sdk/openai", env: ["SYNTHETIC_API_KEY"] }
+    provider.models = [{ modelId: "model", name: "Model", modelConfig: {
+      reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+    } }]
+    const before = computeCloudProviderMaterializationFingerprint([provider])
+    provider.models[0].modelConfig.experimental = { modes: { fast: { provider: { body: { service_tier: "priority" } } } } }
+    expect(computeCloudProviderMaterializationFingerprint([provider])).not.toBe(before)
+    const instance = makeInstance()
+    const result = await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })
+    expect(result.status).toBe("applied")
+    const written = instance.calls.find((call) => call.path === "/runtime-config/providers")?.body
+    expect(written).toMatchObject({ provider: { [provider.id]: { models: { model: { variants: {
+      __openwork_catalog_fast_v1: { disabled: true, openworkNativeFast: 1, reasoningEfforts: ["low", "medium", "high", "xhigh", "max"] },
+    } } } } } })
+    expect(JSON.stringify(written)).not.toContain('"reasoningEffort"')
+    expect(JSON.stringify(written)).not.toContain('"experimental"')
+    const runtime = instance.runtimeProvider(provider.id)
+    if (!runtime) throw new Error("Missing materialized provider")
+    const compiled = materializeLegacyFastProviders({ [provider.id]: runtime })
+    const configuredEnv = Array.isArray(runtime.env) ? runtime.env : []
+    const envName = configuredEnv.find((value): value is string => typeof value === "string")
+    if (!envName) throw new Error("Missing synthetic credential name")
+    const restarted = makeInstance({ runtimeProviders: compiled, envValues: { [envName]: "synthetic" } })
+    const next = await materialize({ providers: () => [provider], fetchImpl: restarted.fetchImpl, force: true })
+    expect(next.status).toBe("noop")
+    expect(writeCalls(restarted.calls)).toEqual([])
+  })
   test("does not rewrite matching provider state after the den-api cache is lost", async () => {
     const provider = makeAnthropicProvider({ apiKey: "sk-anthropic" })
     const instance = makeInstance({

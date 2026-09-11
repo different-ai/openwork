@@ -248,6 +248,17 @@ describe("runtime provider env names", () => {
     expect(runtimeProviderEnvTag("lpr_01kx4t3apjendr685c2ryzevqe")).toBe("LPR_ZEVQE")
   })
 
+  test("gateway tags use the full row identity even when suffixes collide; LPR tags remain unchanged", () => {
+    const first = "ipr_01kx4t3amgendr682dmp6120jv"
+    const second = "ipr_01kx4t3apjendr685c2r6120jv"
+    expect(first.slice(-5)).toBe(second.slice(-5))
+    expect(runtimeProviderEnvTag(first)).toBe("IPR_01KX4T3AMGENDR682DMP6120JV")
+    expect(runtimeProviderEnvTag(second)).toBe("IPR_01KX4T3APJENDR685C2R6120JV")
+    expect(runtimeProviderEnvName({ id: first, source: "openwork_gateway" }, "ANTHROPIC_API_KEY"))
+      .not.toBe(runtimeProviderEnvName({ id: second, source: "openwork_gateway" }, "ANTHROPIC_API_KEY"))
+    expect(runtimeProviderEnvTag(rowId)).toBe("LPR_120JV")
+  })
+
   test("catalog providers get provider-scoped names that still rank as credentials", () => {
     const provider = { id: rowId, source: "models_dev", providerConfig: { env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] } }
     const names = runtimeProviderEnvNames(provider)

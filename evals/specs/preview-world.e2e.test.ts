@@ -22,6 +22,21 @@ const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../..", import.meta.url));
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 
+// The pooled lane exports its worker's shared Den/desktop sandboxes for a spec's
+// own seeds. Preview worlds refuse to run on borrowed infrastructure, so hide
+// those overrides from the worlds this spec launches and restore them after.
+const POOLED_SLOT_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DAYTONA_DEN_SANDBOX", "OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX", "OPENWORK_EVAL_DAYTONA_SANDBOX"] as const;
+function withoutPooledSlotEnv(): () => void {
+  const saved = POOLED_SLOT_ENV.map((key) => [key, process.env[key]] as const);
+  for (const key of POOLED_SLOT_ENV) delete process.env[key];
+  return () => {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
 async function rfbHandshake(url: string): Promise<string> {
   const endpoint = new URL("/websockify", url);
   endpoint.protocol = "wss:";
@@ -39,10 +54,15 @@ interface DaytonaSandboxSummary {
   autoStopInterval: number;
 }
 
+// `daytona sandbox list` paginates by cursor (`-c/--cursor`, `nextCursor` in the JSON body) in every
+// released CLI (v0.191.0 through v0.211.2, including the v0.204.0 CI pin); it has no page flag.
 async function daytonaSandboxes(): Promise<DaytonaSandboxSummary[]> {
   const summaries: DaytonaSandboxSummary[] = [];
-  for (let page = 1; ; page += 1) {
-    const result = await exec("daytona", ["sandbox", "list", "-f", "json", "-l", "200", "-p", String(page)], { timeout: 30000 });
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (;;) {
+    const args = ["sandbox", "list", "-f", "json", "-l", "200", ...(cursor === undefined ? [] : ["--cursor", cursor])];
+    const result = await exec("daytona", args, { timeout: 30000 });
     const value: unknown = JSON.parse(result.stdout);
     const entries = Array.isArray(value) ? value : record(value) && Array.isArray(value.items) ? value.items : null;
     if (!entries) throw new Error("Daytona sandbox list did not return items.");
@@ -53,7 +73,10 @@ async function daytonaSandboxes(): Promise<DaytonaSandboxSummary[]> {
         summaries.push({ identities, autoStopInterval: entry.autoStopInterval });
       }
     }
-    if (!record(value) || typeof value.totalPages !== "number" || page >= value.totalPages) break;
+    if (!record(value) || typeof value.nextCursor !== "string" || value.nextCursor.length === 0 || entries.length === 0) break;
+    if (seenCursors.has(value.nextCursor)) throw new Error("Daytona sandbox list repeated a pagination cursor.");
+    seenCursors.add(value.nextCursor);
+    cursor = value.nextCursor;
   }
   return summaries;
 }
@@ -73,6 +96,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
   const snapshots = await mkdtemp(join(tmpdir(), "openwork-preview-proof-"));
   const previous = process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
   process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
+  const restorePooledSlotEnv = withoutPooledSlotEnv();
   const stage = `proof-${Date.now()}`;
   const options = { cwd: root, worldsDirectory: join(root, "worlds"), print: (line: string) => console.error(line) };
   const up = (name: string, scenario: string, lifetime = "30") => main(["up", name, "--stage", stage, "--place", "daytona", "--detach", "--timeout", "600000", "--", "--scenario", scenario, "--lifetime", lifetime], options);
@@ -94,8 +118,19 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     }
     await assert.rejects(exec("python3", [join(root, ".opencode/skills/preview-my-work/scripts/update-preview.py"), "preview-den", "--stage", stage, "--ref", "dev"], { cwd: root, timeout: 10000 }), (error: unknown) => record(error) && error.code === 2 && typeof error.stderr === "string" && error.stderr.includes("full 40-character commit SHA"));
     evidence.recordAssertionEvidence("Mutable refs are rejected before preview execution", "Launch with a branch name fails without a live receipt; the updater rejects a branch name before reading a receipt or invoking Daytona.", true);
-    assert.equal(await up("preview-den", "fresh"), 0);
+    const { stdout: remoteDev } = await exec("git", ["ls-remote", "--exit-code", "origin", "refs/heads/dev"], { cwd: root, timeout: 30000 });
+    const expectedDefaultRef = remoteDev.trim().split(/\s+/)[0];
+    assert.match(expectedDefaultRef ?? "", /^[0-9a-f]{40}$/);
+    try {
+      delete process.env.OPENWORK_EVAL_REF;
+      assert.equal(await up("preview-den", "fresh"), 0);
+    } finally {
+      process.env.OPENWORK_EVAL_REF = pinnedRef;
+    }
     const den = await snapshot("preview-den");
+    assert.equal(den.outputs.ref, expectedDefaultRef);
+    assert.equal(den.outputs.denRef, expectedDefaultRef);
+    evidence.recordAssertionEvidence("Omitting the preview ref pins remote dev", "Fresh Den launches without OPENWORK_EVAL_REF and records the remote dev commit SHA in both ref outputs.", true);
     assert.equal(den.outputs.scenario, "fresh");
     assert.equal(den.outputs.password, undefined);
     assert.equal((await fetch(den.outputs.preview)).status, 200);
@@ -107,6 +142,8 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
 
     assert.equal(await up("preview-desktop", "restricted"), 0);
     const desktop = await snapshot("preview-desktop");
+    assert.equal(desktop.outputs.ref, pinnedRef);
+    assert.equal(desktop.outputs.denRef, pinnedRef);
     assert.notEqual(desktop.outputs.denSandbox, den.outputs.denSandbox);
     assert.ok(desktop.outputs.desktopSandbox);
     assert.equal((await fetch(desktop.outputs.preview)).status, 200);
@@ -173,6 +210,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     }
     if (previous === undefined) delete process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
     else process.env.OPENWORK_WORLD_SNAPSHOT_DIR = previous;
+    restorePooledSlotEnv();
     await rm(snapshots, { recursive: true, force: true });
   }
 });
@@ -182,6 +220,7 @@ test("preview-desktop retains an exact blank published release and tears down it
   const snapshots = await mkdtemp(join(tmpdir(), "openwork-release-preview-proof-"));
   const previous = process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
   process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
+  const restorePooledSlotEnv = withoutPooledSlotEnv();
   const suffix = Date.now();
   const stage = `release-${suffix}`;
   const invalidStage = `invalid-${suffix}`;
@@ -317,6 +356,7 @@ test("preview-desktop retains an exact blank published release and tears down it
     }
     if (previous === undefined) delete process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
     else process.env.OPENWORK_WORLD_SNAPSHOT_DIR = previous;
+    restorePooledSlotEnv();
     await rm(snapshots, { recursive: true, force: true });
   }
 });

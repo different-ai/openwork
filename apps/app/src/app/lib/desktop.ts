@@ -243,7 +243,7 @@ declare global {
       };
       browser?: {
         show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<boolean | void>;
-        hide?: () => Promise<void>;
+        hide?: (options?: { preserveShortcutFocus?: boolean }) => Promise<void>;
         openUrl?: (
           url: string,
           provider?: "auto" | "builtin" | "external",

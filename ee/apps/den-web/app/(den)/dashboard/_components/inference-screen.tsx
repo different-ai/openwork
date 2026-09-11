@@ -12,9 +12,10 @@ import { parseInferencePayload, type InferenceStatus } from "../../_lib/inferenc
 import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getBillingRoute, getCustomLlmProvidersRoute, getGatewayProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
 
 /**
  * Editorial detail per model: what a knowledge worker should reach for it for,
@@ -103,6 +104,36 @@ function ModelsLineup({ subscribed }: { subscribed: boolean }) {
 export function InferenceScreen() {
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const dashboard = useOrgDashboard();
+  const gatewayAccess = getGatewayDashboardAccess(dashboard);
+  const checking = gatewayAccess === "checking" || !runtimeConfigLoaded;
+  const access = getOrgAccessFlags(
+    dashboard.orgContext?.currentMember.role ?? "member",
+    dashboard.orgContext?.currentMember.isOwner ?? false,
+    dashboard.orgContext?.roles,
+  );
+  const redirect = !access.isAdmin ? "/dashboard"
+    : gatewayAccess === "enabled" ? getGatewayProvidersRoute(dashboard.orgSlug)
+    : runtimeConfig.orgMode === "single_org" ? getCustomLlmProvidersRoute(dashboard.orgSlug)
+    : null;
+
+  useEffect(() => {
+    if (!checking && !dashboard.orgError && redirect) router.replace(redirect);
+  }, [checking, dashboard.orgError, redirect, router]);
+
+  if (dashboard.orgError && !checking) return <DenNotice tone="error" message={dashboard.orgError} />;
+  if (checking || redirect) {
+    return <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500" data-testid="models-access-state" data-access-state={checking ? "checking" : "denied"}>
+      {checking ? "Checking workspace access..." : "Redirecting to your dashboard..."}
+    </div>;
+  }
+
+  // Do not mount data fetching or management actions until this workspace is verified.
+  return <InferenceContent key={dashboard.orgId} />;
+}
+
+function InferenceContent() {
+  const router = useRouter();
   const { activeOrg, orgContext, refreshOrgData, runReauthableAction } = useOrgDashboard();
   const [status, setStatus] = useState<InferenceStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -116,15 +147,7 @@ export function InferenceScreen() {
     orgContext?.roles,
   );
   const canManageModels = access.isAdmin;
-  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
-  // (single-org) deployments manage their own LLM providers instead.
-  const isSelfHosted = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const activeOrgSlug = activeOrg?.slug ?? null;
-
-  useEffect(() => {
-    if (!isSelfHosted) return;
-    router.replace(getCustomLlmProvidersRoute(activeOrgSlug));
-  }, [isSelfHosted, activeOrgSlug, router]);
 
   async function loadStatus() {
     setLoading(true);
@@ -222,10 +245,6 @@ export function InferenceScreen() {
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to update inference settings.");
     }
-  }
-
-  if (isSelfHosted) {
-    return null;
   }
 
   const enabled = status?.enabled === true;

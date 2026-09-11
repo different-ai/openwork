@@ -24,13 +24,13 @@ on:
       - "packaging/docker/Dockerfile.den"
       - "packaging/docker/Dockerfile.den-gateway"
       - "packaging/docker/Dockerfile.den-web"
-      - "packaging/docker/Dockerfile.inference"
+      - "packaging/docker/Dockerfile.gateway"
       - "packaging/helm/openwork-ee/**"
       - "ee/apps/den-api/**"
       - "ee/apps/den-gateway/**"
       - "ee/apps/den-web/**"
-      - "ee/apps/inference/**"
-      - "!ee/apps/inference/src/models/base.json"
+      - "ee/apps/gateway/**"
+      - "!ee/apps/gateway/src/models/base.json"
       - "ee/packages/**"
       - "packages/automations/**"
       - "packages/codemode/**"
@@ -157,7 +157,8 @@ jobs:
             health_path: /api/health
             smoke_env: ""
           - image: openwork-inference
-            dockerfile: packaging/docker/Dockerfile.inference
+            # Stable image repository for existing Gateway deployments.
+            dockerfile: packaging/docker/Dockerfile.gateway
             port: 8791
             health_path: /health
             smoke_env: >-

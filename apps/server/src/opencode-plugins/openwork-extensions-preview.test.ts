@@ -254,12 +254,13 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
 }
 
 describe("OpenWorkExtensionsPreview MCP Apps result preservation", () => {
-  test("keeps standard MCP UI result fields in completed tool metadata", async () => {
+  test.each([true, false, undefined])("keeps standard MCP UI result fields in completed tool metadata (isError=%s)", async (isError) => {
     const plugin = await OpenWorkExtensionsPreview();
     const output: Record<string, unknown> = {
       content: [{ type: "text", text: "Fallback" }],
       structuredContent: { value: 42 },
       _meta: { receiptId: "receipt_1" },
+      ...(isError === undefined ? {} : { isError }),
     };
 
     await plugin["tool.execute.after"]?.(
@@ -272,6 +273,7 @@ describe("OpenWorkExtensionsPreview MCP Apps result preservation", () => {
         content: [{ type: "text", text: "Fallback" }],
         structuredContent: { value: 42 },
         _meta: { receiptId: "receipt_1" },
+        ...(isError === undefined ? {} : { isError }),
       },
     });
   });
@@ -490,6 +492,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {
+    startFakeOpenWorkServer();
     const requests: unknown[] = [];
     const mcp = {
       result: { data: { "openwork-cloud": { status: "connected" } } },
@@ -510,6 +513,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("uses neutral transform steering when the engine reports failed Cloud status", async () => {
+    startFakeOpenWorkServer();
     const requests: unknown[] = [];
     const mcp = {
       result: { data: { "openwork-cloud": { status: "failed" } } },
@@ -537,6 +541,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("extends the engine system entry instead of adding a second system message", async () => {
+    startFakeOpenWorkServer();
     const mcp = {
       async status() {
         return { data: { "openwork-cloud": { status: "connected" } } };

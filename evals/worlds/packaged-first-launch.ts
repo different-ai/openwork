@@ -1,6 +1,5 @@
 import { allocateFreePort, attachSurface, evaluateOnSurface } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
-import { SkipError } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { localHost } from "@openwork/hosts";
 import type { ElectronSurfaceOptions } from "@openwork/hosts";
@@ -30,20 +29,16 @@ export interface RendererException {
  * to empty once that caller is fixed; anything not listed fails the launch
  * specs.
  *
- * - The decorative `Dithering` background (`@paper-design/shaders-react`) on
- *   the activation gate (enterprise-activation-gate.tsx) and the sign-in
- *   surface (den-signin-surface.tsx) rejects when the GPU offers no WebGL,
- *   which is every Xvfb CI runner and some VDI desktops. The page itself
- *   still mounts. Clear when those surfaces skip the shader without WebGL.
- *
- * The renderer's fire-and-forget window-chrome IPC (theme.ts,
- * ui-state-store.ts) used to add "Error: Error invoking remote method
- * 'openwork:desktop': Error: OpenWork must be activated from your Den portal
- * before this command is available." until it caught its own rejection.
+ * Retired entries, kept so their shape is recognisable if they return:
+ * - "Error: Paper Shaders: WebGL is not supported in this browser" from the
+ *   decorative `Dithering` background on WebGL-less GPUs (Xvfb CI, some VDI),
+ *   until DitherBackdrop started skipping the shader without WebGL2.
+ * - "Error: Error invoking remote method 'openwork:desktop': Error: OpenWork
+ *   must be activated from your Den portal before this command is available."
+ *   from the fire-and-forget window-chrome IPC (theme.ts, ui-state-store.ts),
+ *   until it caught its own rejection.
  */
-export const KNOWN_LAUNCH_REJECTIONS: readonly string[] = [
-  "Error: Paper Shaders: WebGL is not supported in this browser",
-];
+export const KNOWN_LAUNCH_REJECTIONS: readonly string[] = [];
 
 const UNHANDLED_REJECTION_PREFIX = /^Uncaught \(in promise\)\s*/i;
 
@@ -100,11 +95,13 @@ function exceptionFrom(params: unknown): RendererException | null {
  * second session on the same page target. Enabling the Runtime domain replays
  * exceptions recorded before the session attached.
  */
-async function observeRendererExceptions(surface: AttachedSurface) {
-  const debuggerUrl = surface.client.webSocketDebuggerUrl;
+export async function observeRendererExceptions(debuggerUrl: string | null | undefined) {
   if (!debuggerUrl) throw new Error("Renderer exception witness needs a page debugger URL");
   const socket = new WebSocket(debuggerUrl);
   const exceptions: RendererException[] = [];
+  let disconnected = false;
+  socket.addEventListener("close", () => { disconnected = true; });
+  socket.addEventListener("error", () => { disconnected = true; });
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Renderer exception witness did not attach")), 15_000);
     socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method: "Runtime.enable", params: {} })));
@@ -127,6 +124,11 @@ async function observeRendererExceptions(surface: AttachedSurface) {
   });
   return {
     exceptions,
+    assertConnected() {
+      if (disconnected || socket.readyState !== WebSocket.OPEN) {
+        throw new Error("Renderer exception witness disconnected during startup");
+      }
+    },
     close() {
       socket.close();
     },
@@ -135,7 +137,7 @@ async function observeRendererExceptions(surface: AttachedSurface) {
 
 async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptions["bootstrap"]) {
   if (!process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim()) {
-    throw new SkipError("OPENWORK_EVAL_ELECTRON_BINARY points at a packaged desktop binary");
+    throw new Error("OPENWORK_EVAL_ELECTRON_BINARY must point at a packaged desktop binary");
   }
   const host = localHost();
   const handle = await host.spawnElectron(name, {
@@ -156,7 +158,7 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
   };
   try {
     app = await attachSurface(handle, { timeoutMs: 60_000 });
-    witness = await observeRendererExceptions(app);
+    witness = await observeRendererExceptions(app.client.webSocketDebuggerUrl);
   } catch (error) {
     await dispose().catch(() => undefined);
     throw error;
@@ -178,7 +180,34 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
     }),
     /** Text React actually mounted, as opposed to the body chrome. */
     rootText: () => evaluateOnSurface(attached, () => document.getElementById("root")?.innerText ?? ""),
-    exceptions: () => [...observed.exceptions],
+    /** One fresh final observation; never heal a lost observer into a green run. */
+    async health() {
+      observed.assertConnected();
+      if (!handle.pid) throw new Error("Packaged startup has no process liveness witness");
+      process.kill(handle.pid, 0);
+      const state = await evaluateOnSurface(attached, () => {
+        const root = document.getElementById("root");
+        return {
+          rootText: root?.innerText ?? "",
+          controls: Array.from(root?.querySelectorAll("input, button") ?? [], (control) => ({
+            tag: control.tagName.toLowerCase(),
+            text: control.textContent?.trim() ?? "",
+            testId: control.getAttribute("data-testid"),
+            visible: control.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+              && control.getBoundingClientRect().width > 0 && control.getBoundingClientRect().height > 0,
+            enabled: !control.matches(":disabled") && control.getAttribute("aria-disabled") !== "true"
+              && !control.closest("[inert]"),
+          })),
+        };
+      }, { timeoutMs: 5_000, reattachAttempts: 0 });
+      observed.assertConnected();
+      process.kill(handle.pid, 0);
+      return state;
+    },
+    exceptions: () => {
+      observed.assertConnected();
+      return [...observed.exceptions];
+    },
     [Symbol.asyncDispose]: dispose,
   };
 }

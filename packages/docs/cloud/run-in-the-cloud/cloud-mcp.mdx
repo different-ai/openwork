@@ -196,11 +196,35 @@ Search can include OpenWork Cloud resources such as skills, plugins, connectors,
 
 Availability is governed by organization membership, role, policy, and exposure allowlists. It intentionally does not expose authentication internals, admin-only system routes, webhooks, API-key creation or deletion, or credential-returning endpoints.
 
+### MCP token scopes
+
+`mcp:read` permits discovery, connection-status probes, and read-only native API
+operations. **Every external MCP provider tool invocation requires `mcp:write`,
+including tools advertising `readOnlyHint: true`.** The provider controls those
+hints, and OpenWork has no trusted classification proving that a provider tool
+cannot modify data through the connected credential. Hints describe a tool;
+they do not grant execution authorization.
+
+This requirement applies to generic execution, direct connections, compatibility
+wrappers, Code Mode, and MCP App helper calls. The private `mcp:app-host` scope
+selects the App audience; it does not replace `mcp:write`. Scripts that only
+compute or call read-only native APIs do not require write scope.
+
+The desktop app already requests both read and write scopes, and its separately
+minted App-host token carries both. Existing read-only tokens are not upgraded:
+to invoke an external provider tool, explicitly authorize the OpenWork client
+for `mcp:write`. This is separate from reconnecting the provider account, and
+does not bypass connection grants or organization tool policy.
+
 ## MCP Apps
 
-Some gateway results come back as MCP Apps: rich, interactive UI rendered from a tool result instead of plain text — great for dynamic interfaces like a created-skill confirmation card or a workflow result view. OpenWork implements the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools), so first-party OpenWork apps render in any MCP client that supports the extension, and fall back to readable text everywhere else.
+Some gateway results come back as MCP Apps: interactive UI rendered from a tool result instead of plain text, such as a created-skill confirmation card or a workflow result view. These use the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools). Rendering requires a compatible host and its advertised capabilities; clients without App support receive readable fallback content.
 
 To put an MCP App on a team dashboard, see [Dashboards](/cloud/share-with-your-team/dashboards).
+
+OpenWork's renderer supports a [documented subset of the stable 2026-01-26 host protocol](/cloud/share-with-your-team/dashboards#supported-host-protocol): complete launch input before result, inline display, bounded resizing and teardown, and server tools and links gated by the originating view. Conversation actions keep their original endpoint, workspace, session and live launch lease, including in split panes; dashboard actions keep their exact launching endpoint with no conversation session. Archived conversations, cached dashboard previews without a fresh launch, and generated read-only views cannot call tools or open links. Message/context writes, View tools, resource proxies, streaming input, and full progress/cancellation forwarding are not supported. This is not a claim that every App feature runs in OpenWork.
+
+The gateway preserves provider `structuredContent` rather than adding fields to it. OpenWork launch and helper information lives in namespaced `_meta` keys (`openwork/mcpApp`, `openwork/serverTools`). Advisory schema warnings use `openwork/schemaGuidance` in `_meta` and a separate model-visible text block; private provider `_meta` is not copied into that text. See [Provider data and gateway additions](/cloud/share-with-your-team/dashboards#provider-data-and-gateway-additions).
 
 <Frame>
   ![The skill-created MCP App rendering in the OpenWork desktop app after a create-skill request](/images/skill-created-mcp-app-card.png)
