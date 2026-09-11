@@ -462,6 +462,12 @@ jitTest("SKILL-CLOUD-02 two accounts on one endpoint never see each other's skil
     const removal = await world.removeCloud();
     expect(removal.status).toBe(200);
     expect(removal.remaining).not.toContain("openwork-cloud");
+    // The DELETE itself must clear the private file and the registry, before
+    // any later prompt admission gets a chance to reconcile them away.
+    await probe.eventually(() => world.materializedFileExists(locationB), {
+      within: 5_000, label: "the removed account's private SKILL.md is deleted by the Cloud removal", until: (exists) => exists === false,
+    });
+    expect(await world.cloudNativeSkills()).toEqual([]);
     const contactsBefore = world.cloud.log().length;
     const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
     talk.expectNoCodes(turn.fresh);
