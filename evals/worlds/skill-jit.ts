@@ -1,7 +1,7 @@
 import { browserScript } from "@openwork/cdp";
 import { deriveMockEnv, type MockBoot, type Place, type Seed } from "@openwork/env";
 import { startMockCloudSkills, type MockAgentRequest, type MockCloudSkillsHandle } from "@openwork/labs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { configureProvider } from "./chat.ts";
@@ -259,6 +259,10 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
         if (needles.some((needle) => text.includes(needle))) matches.push(relative(workspacePath, path));
       }
       return matches.sort();
+    },
+    /** Whether a previously reported engine-private SKILL.md still exists on disk (the engine runs on this host). */
+    async materializedFileExists(location: string): Promise<boolean> {
+      return access(location).then(() => true, () => false);
     },
     /** Whether a registry location sits inside the workspace or the real home directory. */
     locationLeaks(location: string): { workspace: boolean; home: boolean } {

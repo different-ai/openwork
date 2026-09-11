@@ -453,18 +453,12 @@ jitTest("SKILL-CLOUD-02 two accounts on one endpoint never see each other's skil
     );
   });
 
-  await step("de-authorizing account B makes the skill disappear before the next prompt", async () => {
-    world.cloud.setAuthorization(skillJitAccounts.b, false);
-    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
-    talk.expectNoCodes(turn.fresh);
-    expect(await world.cloudNativeSkills()).toEqual([]);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
-    const refused = world.cloud.log({ sinceIso: turn.startedAt, identity: skillJitAccounts.b }).filter((entry) => entry.status === 401);
-    expect(refused.length).toBeGreaterThan(0);
-    expect(world.cloud.resourceReads({ sinceIso: turn.startedAt }).filter((read) => read.status === 200)).toEqual([]);
-  });
-
-  await step("removing the Cloud config empties the registry, stops all endpoint contact, and leaves no private files in the workspace or home", async () => {
+  await step("removing the Cloud config while B's skill is materialized deletes the private files, empties the registry, stops all endpoint contact, and leaves nothing in the workspace or home", async () => {
+    // Switching to B already deleted A's private file; B's is live until the config goes away.
+    const [locationA, locationB] = locations;
+    if (!locationA || !locationB) throw new Error("Both account materializations must have been recorded");
+    expect(await world.materializedFileExists(locationA)).toBe(false);
+    expect(await world.materializedFileExists(locationB)).toBe(true);
     const removal = await world.removeCloud();
     expect(removal.status).toBe(200);
     expect(removal.remaining).not.toContain("openwork-cloud");
@@ -474,13 +468,38 @@ jitTest("SKILL-CLOUD-02 two accounts on one endpoint never see each other's skil
     expect(await world.cloudNativeSkills()).toEqual([]);
     expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
     expect(world.cloud.log().length).toBe(contactsBefore);
+    // The engine-private bodies are gone from disk, not merely unregistered.
+    for (const location of locations) expect(await world.materializedFileExists(location)).toBe(false);
     expect(await world.workspaceFilesContaining([codeA, codeB, cloudNativeSkillIdPrefix])).toEqual([]);
     for (const location of locations) expect(world.locationLeaks(location)).toEqual({ workspace: false, home: false });
     expect(world.cloud.toolCallNames()).toEqual([]);
     evidence.recordAssertionEvidence(
-      "Without a Cloud config the host never contacts the endpoint, the registry has no Cloud entries, and no skill body reached the workspace or home",
-      `fixtureRequestsBefore=${contactsBefore}; after=${world.cloud.log().length}; workspaceMatches=0; privateLocations=${locations.length}`,
+      "Removing the Cloud config with an active materialization deletes the private SKILL.md files, empties the registry, and stops endpoint contact; no body reached the workspace or home",
+      `fixtureRequestsBefore=${contactsBefore}; after=${world.cloud.log().length}; privateLocations=${locations.length}; filesRemaining=0; workspaceMatches=0`,
       true,
+    );
+  });
+
+  await step("re-authorizing B then losing authorization (401) fails closed: the skill and its file disappear before the next prompt", async () => {
+    expect((await world.authorizeCloud(skillJitAccounts.b)).status).toBe(200);
+    const restored = await talk.ask(catalogTurn, codeB);
+    expect(restored.text).not.toContain(codeA);
+    const entry = expectCloudNativeEntry((await world.cloudNativeSkills())[0], world, codeB);
+    expect(await world.materializedFileExists(entry.location)).toBe(true);
+    world.cloud.setAuthorization(skillJitAccounts.b, false);
+    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
+    talk.expectNoCodes(turn.fresh);
+    expect(await world.cloudNativeSkills()).toEqual([]);
+    expect(await world.materializedFileExists(entry.location)).toBe(false);
+    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
+    const refused = world.cloud.log({ sinceIso: turn.startedAt, identity: skillJitAccounts.b }).filter((log) => log.status === 401);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(world.cloud.resourceReads({ sinceIso: turn.startedAt }).filter((read) => read.status === 200)).toEqual([]);
+    expect(world.cloud.toolCallNames()).toEqual([]);
+    evidence.recordAssertionEvidence(
+      "A 401 from the Cloud endpoint clears the materialized skill and its file before the prompt is admitted; the conversation still answers",
+      `refused401=${refused.length}; registryAfter=0; fileRemaining=false; answeredUnavailable=${turn.text.includes("UNAVAILABLE")}`,
+      turn.text.includes("UNAVAILABLE"),
     );
   });
 });
