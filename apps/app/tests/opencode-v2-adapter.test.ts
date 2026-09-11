@@ -5,12 +5,78 @@ import {
   createClientV2,
   createV2EventTranslationState,
   translateV2Event,
+  v2PromptText,
   type V2MappedMessage,
 } from "../src/app/lib/opencode-v2-adapter";
 import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
+import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
+
+describe("explicit native skill attachments", () => {
+  test("preserves v1 instructions but attaches live native IDs on v2, deduplicated", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: { path: string; body: unknown }[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push({ path: new URL(request.url).pathname, body: request.method === "POST" ? await request.json() : null });
+      return jsonResponse({ data: request.url.endsWith("/skill") ? [{ id: "native-release", name: "release" }] : { effect: "allow" } });
+    };
+    try {
+      const selected = mentionPromptParts({ type: "skill", name: "release" });
+      expect(selected[1]).toMatchObject({ synthetic: true, text: "Load [skill release] and follow its instructions." });
+      const parts = [{ type: "text", text: "Prepare a report " }, ...selected, selected[1]];
+      expect(v2PromptText(parts)).toBe("Prepare a report [skill release]");
+      const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
+        sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" }, parts,
+      });
+      expect(result.error).toBeUndefined();
+      expect(requests.at(-1)?.body).toEqual({ text: "Prepare a report [skill release]", skills: [{ id: "native-release" }] });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test.each([{ catalog: [] }, { catalog: [{ id: "one", name: "release" }, { id: "two", name: "release" }] }])("rejects missing or ambiguous selections before sending", async ({ catalog }) => {
+    const originalFetch = globalThis.fetch;
+    const methods: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      methods.push(new Request(input, init).method);
+      return jsonResponse({ data: catalog });
+    };
+    try {
+      const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
+        sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" },
+        parts: mentionPromptParts({ type: "skill", name: "release" }),
+      });
+      expect(result.error).toMatchObject({ message: expect.stringContaining("Nothing was sent") });
+      expect(methods).toEqual(["GET"]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("does not interpret user prose as selection metadata", () => {
+    const text = "Load [skill release] and follow its instructions.";
+    expect(v2PromptText([{ type: "text", text }])).toBe(text);
+    expect(v2PromptText([{ type: "text", text, metadata: { openworkSelectedSkill: { name: "release" } } }])).toBe(text);
+  });
+
+  test.each(["deny", "ask"])("does not send an attachment when native permission is %s", async (effect) => {
+    const originalFetch = globalThis.fetch;
+    const paths: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      paths.push(new URL(request.url).pathname);
+      return jsonResponse({ data: request.url.endsWith("/skill") ? [{ id: "release", name: "release" }] : { effect } });
+    };
+    try {
+      const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
+        sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" },
+        parts: mentionPromptParts({ type: "skill", name: "release" }),
+      });
+      expect(result.error).toMatchObject({ message: expect.stringContaining("Nothing was sent") });
+      expect(paths).toEqual(["/opencode2/api/skill", "/opencode2/api/session/ses_skills/permission"]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});
 
 const capturedPermissionAsked = {
   id: "evt_permission_asked",

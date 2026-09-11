@@ -13,7 +13,13 @@ export function mentionPromptParts(part: InstructionMention): [TextPartInput, Te
     type: "text",
     text: label,
     ...(part.type === "connect-skill" ? { metadata: { openworkComposerToken: encodeConnectSkillToken(part) } } : {}),
-  }, { type: "text", text: instruction, synthetic: true }];
+  }, {
+    type: "text", text: instruction, synthetic: true,
+    // Preserve selection identity through every send path. v1 still receives
+    // the instruction; the v2 adapter replaces it with a native attachment.
+    ...(part.type === "skill" ? { metadata: { openworkSelectedSkill: { name: part.name } } } : {}),
+    ...(part.type === "connect-skill" ? { metadata: { openworkSelectedSkill: { id: part.capability } } } : {}),
+  }];
 }
 
 function mentionContent(part: InstructionMention): { label: string; instruction: string } {
