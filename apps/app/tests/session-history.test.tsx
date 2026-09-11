@@ -97,12 +97,21 @@ function fixture() {
       <div>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.id}</div>)}
     </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} failed={failed} onRetry={() => full.refetch()} /></div></>;
   }
+  let mountKey = 0;
+  let mounted: ReturnType<typeof input> | null = null;
   async function renderInput(options: ReturnType<typeof input>) {
-    await act(async () => flushSync(() => root.render(<QueryClientProvider client={client}><Harness options={options} /></QueryClientProvider>)));
+    mounted = options;
+    await act(async () => flushSync(() => root.render(<QueryClientProvider client={client}><Harness key={mountKey} options={options} /></QueryClientProvider>)));
+  }
+  // StrictMode re-runs mount effects and a pane can unmount: both remove, then re-add, every query observer.
+  async function remount() {
+    if (!mounted) throw new Error("History is not mounted");
+    mountKey += 1;
+    await renderInput(mounted);
   }
   cleanups.push(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
   return {
-    reads, host, client, input, renderInput,
+    reads, host, client, input, renderInput, remount,
     get runWithFullSnapshot() {
       if (!runWithFullSnapshot) throw new Error("History is not mounted");
       return runWithFullSnapshot;
@@ -532,6 +541,32 @@ describe("opening a thread", () => {
     expect((await sameRead).session.title).toBe("Full current turn");
     expect((await view.ensureFullSnapshot()).session.title).toBe("Full current turn");
     expect(view.reads).toHaveLength(2);
+  });
+
+  test("a send survives its shared read being reverted by an observer teardown", async () => {
+    const view = fixture();
+    await view.render();
+    // The hero auto-send fires from the mount effects, before any preview resolved.
+    const pending = view.ensureFullSnapshot();
+    expect(view.reads).toHaveLength(2);
+    await view.remount();
+    expect(view.reads[1].signal.aborted).toBe(true);
+    const retried = view.reads.findIndex((read, index) => index > 1 && read.window === undefined && !read.signal.aborted);
+    expect(retried).toBeGreaterThan(1);
+    await view.resolve(retried, "Sent after the remount");
+    expect((await pending).session.title).toBe("Sent after the remount");
+  });
+
+  test("a send survives its shared read being cancelled by an owner-flip cancel", async () => {
+    const view = fixture();
+    await view.render();
+    const pending = view.ensureFullSnapshot();
+    expect(view.reads).toHaveLength(2);
+    await act(async () => { await view.client.cancelQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    expect(view.reads[1].signal.aborted).toBe(true);
+    expect(view.reads).toHaveLength(3);
+    await view.resolve(2, "Sent after the cancel");
+    expect((await pending).session.title).toBe("Sent after the cancel");
   });
 
   test("announces immediately, reveals fast content without a spinner, and stages the uncapped read", async () => {

@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { isCancelledError, queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types";
@@ -127,11 +127,27 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
     activeOwner.current = input.owner;
     return () => { activeOwner.current = null; };
   }, [input.owner]);
-  const ensureFullSnapshot = useCallback(() => client.ensureQueryData({
+  const readFullSnapshot = useCallback(() => client.ensureQueryData({
     queryKey: input.snapshotQueryKey,
     queryFn: ({ signal }) => input.readSnapshot(signal),
     networkMode: "always",
   }), [client, input.snapshotQueryKey, input.readSnapshot]);
+  // A send is an imperative reader, not an observer. TanStack reverts the
+  // shared read when its last observer unsubscribes (StrictMode re-runs the
+  // mount effects that fire the hero auto-send; a pane can unmount) or when
+  // an owner flip cancels it explicitly, and rejects every waiter. The
+  // submitted message still needs its snapshot, so read again instead of
+  // failing the send with "CancelledError". History actions below stay
+  // owner-fenced and give up with the aborted read instead.
+  const ensureFullSnapshot = useCallback(async () => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await readFullSnapshot();
+      } catch (error) {
+        if (attempt >= 2 || !isCancelledError(error) || error.revert !== true) throw error;
+      }
+    }
+  }, [readFullSnapshot]);
   const runWithFullSnapshot = useCallback(async (
     action: (snapshot: OpenworkSessionSnapshot) => void | Promise<unknown>,
     options: { fresh?: boolean } = {},
@@ -145,11 +161,11 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
       staleTime: 0,
       gcTime: 15_000,
       networkMode: "always",
-    }) : ensureFullSnapshot());
+    }) : readFullSnapshot());
     if (activeOwner.current !== input.owner) return;
     if (snapshot.session.id !== input.sessionId) throw new Error("Conversation history belongs to another session.");
     await action(snapshot);
-  }, [client, ensureFullSnapshot, input.owner, input.sessionId, input.readSnapshot]);
+  }, [client, readFullSnapshot, input.owner, input.sessionId, input.readSnapshot]);
   const [backgroundOwner, setBackgroundOwner] = useState<string | null>(null);
   useEffect(() => {
     if (!query.isSuccess || hasFullSnapshot) return;
