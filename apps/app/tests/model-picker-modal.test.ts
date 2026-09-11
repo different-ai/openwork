@@ -300,6 +300,62 @@ test("Automation preserves same-model settings, recovers Default and saves only 
   }
 });
 
+test("long picker labels retain full hover text and select the complete model ID", async () => {
+  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+  const den = await import("../src/app/lib/den");
+  const organization = "Synthetic organization with a very long display name";
+  const settingsSpy = spyOn(den, "readDenSettings").mockReturnValue({ ...den.readDenSettings(), activeOrgName: organization });
+  const providerID = "ipr_synthetic";
+  const modelID = `gwm_${"synthetic_gateway_model_revision_".repeat(4)}`;
+  const title = "Synthetic model with a long human-readable display name";
+  const providerName = "Synthetic gateway provider with a long display name";
+  const current = { providerID, modelID };
+  const options: ModelOption[] = [{ ...current, title, description: providerName, source: "cloud", isRecommended: true, isFree: false }];
+  const selected: unknown[] = [];
+  const toggled: unknown[] = [];
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  function Picker() {
+    const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
+    return createElement(ModelPickerModal, { open: true, options, current, disabledProviders,
+      target: "session", query: "", setQuery: () => undefined, gatewayProviderIds: new Set([providerID]),
+      onSelect: (model) => selected.push(model), onBehaviorChange: () => undefined,
+      onToggleProvider: (id, enabled) => { toggled.push({ id, enabled }); setDisabledProviders(enabled ? [] : [id]); },
+      onOpenSettings: () => undefined, onClose: () => undefined });
+  }
+  const label = (text: string) => Array.from(document.querySelectorAll<HTMLElement>("[title]"))
+    .find((element) => element.title === text);
+  const toggle = async (text: string) => {
+    const button = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((element) => element.textContent === text);
+    if (!button) throw new Error(`Missing provider toggle: ${text}`);
+    await act(async () => button.click());
+  };
+  try {
+    await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children: createElement(Picker) })));
+    for (const text of [providerName, organization, "via OpenWork Gateway", title, modelID]) {
+      expect(label(text)?.textContent).toBe(text);
+    }
+    const header = label(providerName)?.closest("button");
+    expect(header?.textContent).toMatch(/1 model\b/);
+    expect(header?.querySelectorAll('[data-slot="badge"]')).toHaveLength(4);
+    await toggle("Enabled");
+    expect(label(modelID)).toBeUndefined();
+    expect(selected).toEqual([]);
+    await toggle("Enable");
+    const modelButton = label(modelID)?.closest("button");
+    if (!modelButton) throw new Error("The gateway model did not return after enabling its provider");
+    await act(async () => modelButton.click());
+    expect(selected).toEqual([current]);
+    expect(toggled).toEqual([{ id: providerID, enabled: false }, { id: providerID, enabled: true }]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    settingsSpy.mockRestore();
+    authSpy.mockRestore();
+  }
+});
+
 describe("model picker provider badges", () => {
   const importedCloudProviders = {
     ipr_gateway: { providerId: "ipr_gateway", source: "openwork_gateway" },

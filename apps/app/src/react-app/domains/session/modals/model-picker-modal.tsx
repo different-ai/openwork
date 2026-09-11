@@ -316,7 +316,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         if (!open) props.onClose();
       }}
     >
-      <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden lg:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t("models.title")}</DialogTitle>
           <DialogDescription>
@@ -354,7 +354,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
           ) : null}
 
-          <div className="max-h-40 shrink-0 overflow-y-auto">
+          <div className="max-h-40 shrink-0 overflow-x-hidden overflow-y-auto">
           {props.gatewayConnectProviders?.map((provider) => (
             <div
               key={gatewayConnectProviderKey(provider)}
@@ -362,13 +362,13 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             >
               <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} className="shrink-0 text-dls-secondary" />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
-                  <span className="truncate">{provider.name}</span>
-                  <Badge variant="outline" className="h-auto rounded-md px-1.5 py-0.5 text-[10px] text-dls-secondary">
-                    {OPENWORK_GATEWAY_BADGE_LABEL}
+                <div className="flex min-w-0 flex-col items-start gap-1 text-[13px] font-medium text-dls-text">
+                  <span className="max-w-full truncate" title={provider.name}>{provider.name}</span>
+                  <Badge variant="outline" title={OPENWORK_GATEWAY_BADGE_LABEL} className="h-auto min-w-0 max-w-full rounded-md px-1.5 py-0.5 text-[10px] text-dls-secondary">
+                    <span className="truncate">{OPENWORK_GATEWAY_BADGE_LABEL}</span>
                   </Badge>
                 </div>
-                <div className="truncate text-[11px] text-dls-secondary">{gatewayConnectCopy(provider.name)}</div>
+                <div className="truncate text-[11px] text-dls-secondary" title={gatewayConnectCopy(provider.name)}>{gatewayConnectCopy(provider.name)}</div>
               </div>
               <Button
                 size="sm"
@@ -384,10 +384,10 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           </div>
 
           {/* Content */}
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">
+          <div className="min-h-0 flex-1 space-y-1 overflow-x-hidden overflow-y-auto pr-1 -mr-1">
             {currentOption && !disabledSet.has(currentOption.providerID) ? (
               <section aria-label={`Settings for ${currentOption.title}`} className="mb-3 rounded-xl border border-dls-border p-3" data-testid="current-model-settings">
-                <div className="text-xs font-medium">{currentOption.title} · {currentBehavior.label}</div>
+                <div className="truncate text-xs font-medium" title={`${currentOption.title} · ${currentBehavior.label}`}>{currentOption.title} · {currentBehavior.label}</div>
                 <p role="status" className="mt-1 text-xs text-muted-foreground">{currentBehavior.description}</p>
                 {behaviorControls.hasFast ? (
                   <div className="mt-2 space-y-1">
@@ -500,24 +500,27 @@ function ProviderAccordion({
           <Chevron size={14} className="shrink-0 text-dls-secondary" />
           <ProviderIcon providerId={group.id} size={18} className="shrink-0 text-dls-text" />
           <div className="min-w-0 flex-1">
-            <span className="text-[13px] font-medium text-dls-text">{group.name}</span>
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span className="truncate text-[13px] font-medium text-dls-text" title={group.name}>{group.name}</span>
+              {" "}
+              <span className="shrink-0 whitespace-nowrap text-[11px] text-dls-secondary">
+                {totalModels} model{totalModels === 1 ? "" : "s"}
+              </span>
+            </div>
             {" "}
-            <span className="ml-2 text-[11px] text-dls-secondary">
-              {totalModels} model{totalModels === 1 ? "" : "s"}
-            </span>
+            <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
+              {resolveProviderGroupBadges(group, organizationProviderLabel).map((badge) => (
+                <Badge
+                  key={badge.label}
+                  variant="outline"
+                  title={badge.label}
+                  className={`h-auto min-w-0 max-w-full rounded-md border-transparent px-1.5 py-0.5 text-[10px] ${badge.className}`}
+                >
+                  <span className="truncate">{badge.label}</span>
+                </Badge>
+              ))}
+            </div>
           </div>
-          {" "}
-          <span className="flex shrink-0 items-center gap-1.5">
-            {resolveProviderGroupBadges(group, organizationProviderLabel).map((badge) => (
-              <Badge
-                key={badge.label}
-                variant="outline"
-                className={`h-auto rounded-md border-transparent px-1.5 py-0.5 text-[10px] ${badge.className}`}
-              >
-                {badge.label}
-              </Badge>
-            ))}
-          </span>
         </button>
         {canToggleProvider ? (
           <button
@@ -589,8 +592,8 @@ function DefaultModelRow({
     >
       {recommended ? <Star size={12} className="shrink-0 text-amber-9" /> : <div className="w-3 shrink-0" />}
       <div className="min-w-0 flex-1">
-        <span className={["text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")}>{opt.title}</span>
-        <span className="ml-2 font-mono text-[10px] text-dls-secondary/60">{opt.modelID}</span>
+        <span className={["block truncate text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")} title={opt.title}>{opt.title}</span>
+        <span className="block truncate font-mono text-[10px] text-dls-secondary/60" title={opt.modelID}>{opt.modelID}</span>
       </div>
       {active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
     </button>

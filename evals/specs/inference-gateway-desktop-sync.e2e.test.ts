@@ -1,5 +1,6 @@
 import { expect, onTestFinished } from "vitest";
 import { screenshot, validate } from "@openwork/test-evidence";
+import { setViewport } from "@openwork/cdp";
 import { denFetch, evalIn, go, readAvailableModels } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { app, browserScript, eventually, needs, server, SkipError, test } from "@openwork/testkit";
@@ -290,9 +291,27 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   expect(gatewayModel?.selectable).toBe(true);
   expect(gatewayModel?.providerName).toBe(PROVIDER_NAME);
 
-  const badgeState = await evalIn(desktopApp, browserScript((providerName: string, badgeLabel: string) => {
-    const dialog = document.querySelector('[data-slot="dialog-content"]');
-    if (!dialog) return { error: "dialog missing" };
+  const readBadgeState = () => evalIn(desktopApp, browserScript((providerName: string, badgeLabel: string, modelID: string) => {
+    const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+    if (!dialog) throw new Error("dialog missing");
+    const rect = dialog.getBoundingClientRect();
+    const overflow = [dialog, ...dialog.querySelectorAll<HTMLElement>("div, button, span")].filter((node) => {
+      if (!node.clientWidth) return false;
+      const box = node.getBoundingClientRect();
+      return box.left < rect.left - 1 || box.right > rect.right + 1
+        || (node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).textOverflow !== "ellipsis");
+    }).map((node) => `${node.tagName}.${node.className}`);
+    const labels = [["span.font-mono", modelID], ["button span.text-dls-text", providerName]].map(([selector, text]) => {
+      const node = [...dialog.querySelectorAll<HTMLElement>(selector)].find((span) => span.textContent === text);
+      if (!node) return null;
+      const style = getComputedStyle(node);
+      const height = node.getBoundingClientRect().height;
+      return {
+        text: node.textContent, title: node.title,
+        singleLineEllipsis: node.clientWidth > 0 && height > 0 && height <= parseFloat(style.lineHeight) + 1
+          && style.whiteSpace === "nowrap" && style.textOverflow === "ellipsis" && style.overflowX === "hidden",
+      };
+    });
     // Group headers read "<provider> <n> model(s) <badges…>"; badges follow the count.
     const headers = [...dialog.querySelectorAll("button")].filter((button) => /\b\d+ models?\b/.test((button.textContent ?? "").replace(/\s+/g, " ").trim()));
     const describe = (header: HTMLButtonElement) => ({
@@ -305,8 +324,14 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
       otherBadgedGroups: groups.filter((group) => !group.text.includes(providerName) && group.badged),
       unbadgedGroups: groups.filter((group) => !group.text.includes(providerName) && !group.badged),
       groupCount: groups.length,
+      viewport: { width: window.innerWidth, height: window.innerHeight, deviceScaleFactor: window.devicePixelRatio },
+      dialogWidth: rect.width,
+      dialogFits: rect.width > 0 && rect.height > 0 && rect.left >= -1 && rect.top >= -1
+        && rect.right <= window.innerWidth + 1 && rect.bottom <= window.innerHeight + 1,
+      overflow, labels,
     };
-  }, [PROVIDER_NAME, GATEWAY_BADGE_LABEL]));
+  }, [PROVIDER_NAME, GATEWAY_BADGE_LABEL, wireModelId]));
+  const badgeState = await readBadgeState();
   const gatewayGroup = isRecord(badgeState) && isRecord(badgeState.gatewayGroup) ? badgeState.gatewayGroup : null;
   const otherBadged = isRecord(badgeState) && Array.isArray(badgeState.otherBadgedGroups) ? badgeState.otherBadgedGroups : [];
   const unbadged = isRecord(badgeState) && Array.isArray(badgeState.unbadgedGroups) ? badgeState.unbadgedGroups : [];
@@ -319,6 +344,25 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
     `Model ${wireModelId} is selectable under ${String(gatewayModel?.providerName)}; group header ${JSON.stringify(gatewayGroup?.text)} carries the badge, ${otherBadged.length} other group(s) do, and ${unbadged.length} non-gateway group(s) do not.`,
     gatewayModel?.selectable === true && gatewayGroup?.badged === true && otherBadged.length === 0 && unbadged.length > 0,
   );
+  try {
+    for (const width of [320, 390, 1024, 1440]) {
+      await setViewport(desktopApp, { ...badgeState.viewport, width });
+      await eventually(async () => {
+        const layout = await readBadgeState();
+        const detail = `Models picker at ${width}px: ${JSON.stringify(layout)}`;
+        expect(layout.viewport.width, detail).toBe(width);
+        expect(layout.dialogFits, detail).toBe(true);
+        if (width >= 1024) expect(layout.dialogWidth, detail).toBeGreaterThan(512);
+        expect(layout.overflow, detail).toEqual([]);
+        expect(layout.labels, detail).toEqual([wireModelId, PROVIDER_NAME].map((text) => ({
+          text, title: text, singleLineEllipsis: true,
+        })));
+        return true;
+      }, { within: 5_000, intervalMs: 100, label: `Models picker containment at ${width}px` });
+    }
+  } finally {
+    await setViewport(desktopApp, badgeState.viewport);
+  }
   {
     const shot = await screenshot(desktopApp);
     const seen = await validate(shot, [
