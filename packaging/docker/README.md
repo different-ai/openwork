@@ -47,7 +47,7 @@ What it does:
 Production-oriented EE images:
 - `Dockerfile.den` -> `ghcr.io/different-ai/openwork-den-api`
 - `Dockerfile.den-web` -> `ghcr.io/different-ai/openwork-den-web`
-- `Dockerfile.inference` -> `ghcr.io/different-ai/openwork-inference`
+- `Dockerfile.gateway` -> `ghcr.io/different-ai/openwork-inference` (OpenWork Gateway; image repository retained for existing deployments)
 
 These images are intended for Terraform, Helm, ECS, EKS, and customer-cloud deployments. Prefer immutable tags or digests in production.
 
@@ -58,7 +58,7 @@ Publish flow:
 
 Health and smoke expectations:
 - Published service images include shallow Docker healthchecks for the HTTP process only.
-- Den API and inference probe `GET /health`; Den web probes `GET /api/health`.
+- Den API and Gateway probe `GET /health`; Den web probes `GET /api/health`.
 - The publish workflow loads each PR image locally and probes the same endpoint without cloud secrets. Production deployments should still add dependency-aware readiness checks where needed.
 
 ### Demo org seed

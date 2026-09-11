@@ -10,8 +10,6 @@ export type SidebarContextValue = {
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
   newTaskDisabled: boolean;
-  /** Account/organization scope of persisted composer drafts; null while unverified. */
-  newTaskDraftScope: string | null;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;

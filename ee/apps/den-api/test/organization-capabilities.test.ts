@@ -5,7 +5,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, gatewayDashboard: false }
 
 describe("normalizeOrganizationCapabilities", () => {
   test("defaults every capability to false when metadata is empty", () => {
@@ -22,7 +22,7 @@ describe("normalizeOrganizationCapabilities", () => {
   })
 
   test("reads an explicit opt-in from JSON string metadata", () => {
-    expect(normalizeOrganizationCapabilities(JSON.stringify({ capabilities: { installLinks: true, mcpConnections: true } }))).toEqual({ installLinks: true, mcpConnections: true })
+    expect(normalizeOrganizationCapabilities(JSON.stringify({ capabilities: { installLinks: true, mcpConnections: true } }))).toEqual({ ...defaultCapabilities, installLinks: true, mcpConnections: true })
   })
 
   test("ignores retired rollout keys for features that are now always on", () => {
@@ -78,6 +78,27 @@ describe("readOrganizationCapabilityOverrides", () => {
 })
 
 describe("organizationHasCapability", () => {
+  test("gateway dashboard requires a literal true in object or JSON metadata", () => {
+    for (const gatewayDashboard of [undefined, null, false, "true", "false", 1, 0, {}, []]) {
+      const metadata = { capabilities: { gatewayDashboard } }
+      expect(organizationHasCapability(metadata, "gatewayDashboard")).toBe(false)
+      expect(organizationHasCapability(JSON.stringify(metadata), "gatewayDashboard")).toBe(false)
+      expect(readOrganizationCapabilityOverrides(metadata)).toEqual(gatewayDashboard === false ? { gatewayDashboard: false } : {})
+    }
+
+    for (const metadata of [null, undefined, "not json", "null", "[]", {}, { capabilities: null }, { capabilities: "true" }, { capabilities: [] }]) {
+      expect(organizationHasCapability(metadata, "gatewayDashboard")).toBe(false)
+      expect(readOrganizationCapabilityOverrides(metadata)).toEqual({})
+    }
+
+    const metadata = { capabilities: { gatewayDashboard: true } }
+    for (const input of [metadata, JSON.stringify(metadata)]) {
+      expect(normalizeOrganizationCapabilities(input)).toEqual({ ...defaultCapabilities, gatewayDashboard: true })
+      expect(organizationHasCapability(input, "gatewayDashboard")).toBe(true)
+      expect(readOrganizationCapabilityOverrides(input)).toEqual({ gatewayDashboard: true })
+    }
+  })
+
   test("is false by default and true only with an explicit opt-in", () => {
     expect(organizationHasCapability(null, "installLinks")).toBe(false)
     expect(organizationHasCapability(null, "mcpConnections")).toBe(false)

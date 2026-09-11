@@ -63,6 +63,18 @@ import type {
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
   DeleteV1InferenceAnalyticsLangfuseErrors,
   DeleteV1InferenceAnalyticsLangfuseResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors,
+  DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses,
+  DeleteV1InferenceProvidersByInferenceProviderIdResponses,
   DeleteV1LlmProvidersByKeyByExternalKeyResponses,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdErrors,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses,
@@ -259,6 +271,26 @@ import type {
   GetV1InferenceAnalyticsConsumptionResponses,
   GetV1InferenceAnalyticsSettingsResponses,
   GetV1InferenceErrors,
+  GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+  GetV1InferenceProvidersByInferenceProviderIdConnectErrors,
+  GetV1InferenceProvidersByInferenceProviderIdConnectResponses,
+  GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+  GetV1InferenceProvidersByInferenceProviderIdErrors,
+  GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
+  GetV1InferenceProvidersByInferenceProviderIdModelsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdModelsResponses,
+  GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors,
+  GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses,
+  GetV1InferenceProvidersByInferenceProviderIdResponses,
+  GetV1InferenceProvidersErrors,
+  GetV1InferenceProvidersOauthCallbackErrors,
+  GetV1InferenceProvidersOauthCallbackResponses,
+  GetV1InferenceProvidersResponses,
+  GetV1InferenceProvidersUsageErrors,
+  GetV1InferenceProvidersUsageResponses,
   GetV1InferenceResponses,
   GetV1InstallByPlatformErrors,
   GetV1InstallByPlatformResponses,
@@ -457,6 +489,14 @@ import type {
   PatchV1DesktopPoliciesByDesktopPolicyIdResponses,
   PatchV1InferenceAnalyticsSettingsResponses,
   PatchV1InferenceErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+  PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
+  PatchV1InferenceProvidersByInferenceProviderIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
+  PatchV1InferenceProvidersByInferenceProviderIdResponses,
   PatchV1InferenceResponses,
   PatchV1LlmProvidersByLlmProviderIdErrors,
   PatchV1LlmProvidersByLlmProviderIdResponses,
@@ -593,6 +633,16 @@ import type {
   PostV1InferenceAnalyticsLangfuseConnectResponses,
   PostV1InferenceAnalyticsLangfuseTestErrors,
   PostV1InferenceAnalyticsLangfuseTestResponses,
+  PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+  PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+  PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+  PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+  PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+  PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
+  PostV1InferenceProvidersErrors,
+  PostV1InferenceProvidersMigrateFromLlmProviderErrors,
+  PostV1InferenceProvidersMigrateFromLlmProviderResponses,
+  PostV1InferenceProvidersResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
   PostV1InstallConnectPreviewErrors,
@@ -5439,6 +5489,976 @@ export class DenClient extends HeyApiClient {
       url: "/v1/llm-providers/{llmProviderId}/access/{accessId}",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Read organization Gateway usage by UTC day
+   *
+   * Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts only org_provider traffic. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.
+   */
+  public getV1InferenceProvidersUsage<ThrowOnError extends boolean = false>(
+    parameters?: {
+      groupBy?: "model" | "team" | "person";
+      days?: string;
+      filterIds?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "groupBy" },
+            { in: "query", key: "days" },
+            { in: "query", key: "filterIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersUsageResponses,
+      GetV1InferenceProvidersUsageErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/usage",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List organization inference gateway providers
+   *
+   * Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires owner/admin permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned.
+   */
+  public getV1InferenceProviders<ThrowOnError extends boolean = false>(
+    parameters?: {
+      scope?: "usable" | "manageable";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "scope" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersResponses,
+      GetV1InferenceProvidersErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create inference gateway provider
+   *
+   * Creates an organization Gateway provider from the trusted catalog and returns its management details. Empty modelIds follows all supported catalog models; a nonempty list restricts the provider universe. Creates an initial model group; legacy credential and audience fields can also create a default credential set and grants. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProviders<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      providerId: string;
+      modelIds?: Array<string>;
+      settings?: {
+        project?: string;
+        location?: string;
+        resourceName?: string;
+        apiVersion?: string;
+        region?: string;
+        upstreamBaseUrl?: string;
+      };
+      status?: "active" | "disabled";
+      credentialMode?: "org" | "member";
+      credential?: {
+        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        secret: string;
+      };
+      apiKeys?: {
+        [key: string]: string;
+      };
+      oauthClientId?: string;
+      oauthClientSecret?: string;
+      allMembers?: boolean;
+      memberIds?: Array<string>;
+      teamIds?: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "providerId" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "settings" },
+            { in: "body", key: "status" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "credential" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "oauthClientId" },
+            { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "allMembers" },
+            { in: "body", key: "memberIds" },
+            { in: "body", key: "teamIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersResponses,
+      PostV1InferenceProvidersErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete inference gateway provider
+   *
+   * Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public deleteV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Get inference gateway provider
+   *
+   * Returns management details for an organization provider, including public settings, model groups, credential-set status, access grants and credential metadata without secrets. Requires owner/admin permission and enabled Gateway management.
+   */
+  public getV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdResponses,
+      GetV1InferenceProvidersByInferenceProviderIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update inference gateway provider
+   *
+   * Partially updates the provider name, model universe or status and returns management details. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public patchV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      name?: string;
+      providerId?: string;
+      modelIds?: Array<string>;
+      settings?: {
+        project?: string;
+        location?: string;
+        resourceName?: string;
+        apiVersion?: string;
+        region?: string;
+        upstreamBaseUrl?: string;
+      };
+      status?: "active" | "disabled";
+      credentialMode?: "org" | "member";
+      credential?: {
+        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        secret: string;
+      };
+      apiKeys?: {
+        [key: string]: string;
+      };
+      oauthClientId?: string;
+      oauthClientSecret?: string;
+      allMembers?: boolean;
+      memberIds?: Array<string>;
+      teamIds?: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "providerId" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "settings" },
+            { in: "body", key: "status" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "credential" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "oauthClientId" },
+            { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "allMembers" },
+            { in: "body", key: "memberIds" },
+            { in: "body", key: "teamIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Get inference gateway provider connect payload
+   *
+   * Returns the caller's provider summary plus their Gateway apiKey and an apiKeys map for the provider's runtime environment names, never upstream provider secrets. Requires an active provider and an effective grant through active model groups and credential sets; member authorization may still be required before models are usable.
+   */
+  public getV1InferenceProvidersByInferenceProviderIdConnect<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdConnectResponses,
+      GetV1InferenceProvidersByInferenceProviderIdConnectErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/connect",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List configured gateway catalog models
+   *
+   * Refreshes and returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires owner/admin permission and enabled Gateway management.
+   */
+  public getV1InferenceProvidersByInferenceProviderIdModels<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdModelsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdModelsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/models",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List gateway model groups
+   *
+   * Returns the provider's model groups, including disabled groups, with catalog model IDs in the current provider universe. Requires owner/admin permission and enabled Gateway management.
+   */
+  public getV1InferenceProvidersByInferenceProviderIdModelGroups<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create gateway model group
+   *
+   * Creates and returns a model group using supported catalog model IDs from this provider; creating a group alone grants no access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProvidersByInferenceProviderIdModelGroups<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      name: string;
+      description?: string | null;
+      modelIds: Array<string>;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "description" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
+      PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete gateway model group
+   *
+   * Deletes the group and its model links, returning an empty 204. Referencing access grants must be removed first or the operation returns model_group_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      groupId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "groupId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups/{groupId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update gateway model group
+   *
+   * Partially updates a group's name, description, status or model membership. Supplied modelIds replaces membership; omitted modelIds preserves it. IDs must belong to the provider's supported catalog universe. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      groupId: string;
+      name?: string;
+      description?: string | null;
+      modelIds?: Array<string>;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "groupId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "description" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/model-groups/{groupId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List gateway credential sets
+   *
+   * Returns credential-set configuration status, creator metadata and OAuth client metadata without stored secrets. Member credential readiness is evaluated for the caller. Requires owner/admin permission and enabled Gateway management.
+   */
+  public getV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create gateway credential set
+   *
+   * Creates an organization credential set with a supported shared credential, or a member set with a Google OAuth client for each member's own sign-in. Returns configuration status without secrets; access grants are created separately. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      name: string;
+      credentialMode: "org" | "member";
+      credential?: {
+        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        secret: string;
+      };
+      apiKeys?: {
+        [key: string]: string;
+      };
+      oauthClientId?: string;
+      oauthClientSecret?: string;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "credential" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "oauthClientId" },
+            { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+      PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete gateway credential set
+   *
+   * Deletes a credential set, its credentials and pending sign-ins, revokes applicable Google tokens, and returns an empty 204. Referencing grants must be removed first or the operation returns credential_set_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetId<
+    ThrowOnError extends boolean = false,
+  >(
+    parameters: {
+      inferenceProviderId: string;
+      credentialSetId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "credentialSetId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets/{credentialSetId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update gateway credential set
+   *
+   * Partially updates a credential set and returns status without secrets. Omitted credential fields preserve stored credentials. Changing mode or OAuth client configuration, or disabling the set, invalidates pending sign-ins and revokes affected credentials; renaming alone does not. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetId<
+    ThrowOnError extends boolean = false,
+  >(
+    parameters: {
+      inferenceProviderId: string;
+      credentialSetId: string;
+      name?: string;
+      credentialMode?: "org" | "member";
+      credential?: {
+        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        secret: string;
+      };
+      apiKeys?: {
+        [key: string]: string;
+      };
+      oauthClientId?: string;
+      oauthClientSecret?: string;
+      status?: "active" | "disabled";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "credentialSetId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "credential" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "oauthClientId" },
+            { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/credential-sets/{credentialSetId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List gateway access grants
+   *
+   * Returns all provider grants linking a model group and credential set to an organization, team or member audience. Requires owner/admin permission and enabled Gateway management.
+   */
+  public getV1InferenceProvidersByInferenceProviderIdAccessGrants<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Create gateway access grant
+   *
+   * Links a model group and credential set from this provider to an organization, team or member audience and returns the grant. An identical existing grant returns access_grant_exists. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProvidersByInferenceProviderIdAccessGrants<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      modelGroupId: string;
+      credentialSetId: string;
+      audience:
+        | {
+            type: "organization";
+          }
+        | {
+            type: "team";
+            /**
+             * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+             */
+            teamId: string;
+          }
+        | {
+            type: "member";
+            /**
+             * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+             */
+            memberId: string;
+          };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "modelGroupId" },
+            { in: "body", key: "credentialSetId" },
+            { in: "body", key: "audience" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+      PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Remove inference provider access grant
+   *
+   * Deletes exactly the selected grant and returns an empty 204; the legacy /access/{grantId} URL has the same behavior. Other grants and member credentials are retained, and OAuth callbacks recheck remaining access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      grantId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "grantId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants/{grantId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update gateway access grant
+   *
+   * Partially updates one grant's model group, credential set or audience, preserving omitted fields. Both resources must belong to this provider and a team or member must belong to this organization. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      grantId: string;
+      modelGroupId?: string;
+      credentialSetId?: string;
+      audience?:
+        | {
+            type: "organization";
+          }
+        | {
+            type: "team";
+            /**
+             * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+             */
+            teamId: string;
+          }
+        | {
+            type: "member";
+            /**
+             * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+             */
+            memberId: string;
+          };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "grantId" },
+            { in: "body", key: "modelGroupId" },
+            { in: "body", key: "credentialSetId" },
+            { in: "body", key: "audience" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access-grants/{grantId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Remove inference provider access grant
+   *
+   * Deletes exactly the selected grant and returns an empty 204; the legacy /access/{grantId} URL has the same behavior. Other grants and member credentials are retained, and OAuth callbacks recheck remaining access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdAccessByGrantId<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      grantId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "path", key: "grantId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdAccessByGrantIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/access/{grantId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Begin Google sign-in for a member inference credential
+   *
+   * Requires a signed-in user session, not an API key, and an active provider with an effective grant to a member credential set. Specify credentialSetId when multiple sets are available. Creates a ten-minute, single-use PKCE state and returns { authUrl } for Accept: application/json, otherwise redirects to Google. An optional redirectTo must use an allowed web origin or the openwork scheme. The callback browser must independently be signed in to Den as the same user.
+   */
+  public getV1InferenceProvidersByInferenceProviderIdOauthStart<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      credentialSetId?: string;
+      redirectTo?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "query", key: "credentialSetId" },
+            { in: "query", key: "redirectTo" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses,
+      GetV1InferenceProvidersByInferenceProviderIdOauthStartErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/oauth/start",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Google OAuth callback for a member inference credential
+   *
+   * Browser callback with no bearer-token or API-key authentication. The handler requires a signed Den session cookie backed by an unexpired live session for the same user who started Connect; OAuth state alone is not browser authentication. Validates single-use, unexpired state, rechecks current membership and active provider/group/set access before and after the PKCE exchange, and stores only that member's credential. Returns HTML on success or failure when no validated client redirect applies; otherwise redirects to the validated destination, with an error parameter on failure. Invalid query parameters return a JSON validation error.
+   */
+  public getV1InferenceProvidersOauthCallback<ThrowOnError extends boolean = false>(
+    parameters?: {
+      code?: string;
+      state?: string;
+      error?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "code" },
+            { in: "query", key: "state" },
+            { in: "query", key: "error" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersOauthCallbackResponses,
+      GetV1InferenceProvidersOauthCallbackErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/callback",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Disconnect the caller's Google credential for an inference provider
+   *
+   * Revokes only the caller's Google credential and cancels their pending sign-ins for a granted member credential set, returning an empty 204. Other members and grants are unchanged. Requires an active provider and current access; specify credentialSetId when multiple member sets are available.
+   */
+  public deleteV1InferenceProvidersByInferenceProviderIdOauth<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      credentialSetId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "query", key: "credentialSetId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses,
+      DeleteV1InferenceProvidersByInferenceProviderIdOauthErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/oauth",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Move an LLM provider to the inference gateway
+   *
+   * Atomically converts a supported shared models.dev LLM provider into a Gateway provider with its models, shared credential and audiences, then deletes the source. Returns Gateway management details; validation failure preserves the source. Per-member credentials and providers needing explicit Azure/Vertex configuration are rejected. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProvidersMigrateFromLlmProvider<ThrowOnError extends boolean = false>(
+    parameters: {
+      llmProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "llmProviderId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersMigrateFromLlmProviderResponses,
+      PostV1InferenceProvidersMigrateFromLlmProviderErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/migrate-from-llm-provider",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

@@ -5,6 +5,9 @@ import type { AuthContextVariables } from "../src/session.js"
 
 const adminUserId = createDenTypeId("user")
 const adminAllowlistId = createDenTypeId("adminAllowlist")
+const ownerUserId = createDenTypeId("user")
+const ownerMemberId = createDenTypeId("member")
+const ownerEmail = `owner-capabilities+${ownerUserId}@test.local`
 const organizationId = createDenTypeId("organization")
 const adminEmail = `admin-capabilities+${adminUserId}@test.local`
 const organizationSlug = `admin-capabilities-${organizationId}`
@@ -64,7 +67,9 @@ async function cleanup() {
 
   await db.delete(schema.AuditEventTable).where(drizzle.eq(schema.AuditEventTable.org_id, organizationId))
   await db.delete(schema.OrgSubscriptionTable).where(drizzle.eq(schema.OrgSubscriptionTable.organization_id, organizationId))
+  await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, ownerMemberId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
+  await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, ownerUserId))
   await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, adminUserId))
   await db.delete(schema.AdminAllowlistTable).where(drizzle.eq(schema.AdminAllowlistTable.id, adminAllowlistId))
 }
@@ -92,7 +97,7 @@ async function replaceOrganizationMetadata(metadata: Record<string, unknown>) {
     .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
 }
 
-async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null }) {
+async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; gatewayDashboard?: boolean | null }) {
   return routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -158,6 +163,18 @@ beforeAll(async () => {
       slug: organizationSlug,
       metadata: { brandAppName: "Admin Capabilities" },
     })
+    await db.insert(schema.AuthUserTable).values({
+      id: ownerUserId,
+      name: "Organization Owner",
+      email: ownerEmail,
+      emailVerified: true,
+    })
+    await db.insert(schema.MemberTable).values({
+      id: ownerMemberId,
+      organizationId,
+      userId: ownerUserId,
+      role: "owner",
+    })
   } catch (error) {
     routeTestUnavailable = errorMessage(error)
     return
@@ -165,10 +182,11 @@ beforeAll(async () => {
 
   app = new Hono<{ Variables: AuthContextVariables }>()
   app.use("*", async (c, next) => {
-    c.set("user", {
-      id: adminUserId,
+    const caller = c.req.header("x-test-caller")
+    c.set("user", caller === "anonymous" ? null : {
+      id: caller === "owner" ? ownerUserId : adminUserId,
       name: "Admin Capabilities",
-      email: adminEmail,
+      email: caller === "owner" ? ownerEmail : adminEmail,
       emailVerified: true,
       image: null,
       createdAt: new Date(),
@@ -337,4 +355,76 @@ test("platform admins grant and revoke audited complimentary Web access", async 
   expect(paidConflict.status).toBe(409)
   await expect(paidConflict.json()).resolves.toMatchObject({ error: "openwork_web_subscription_exists" })
   expect(await readOrganizationMetadata()).not.toHaveProperty("complimentaryAccess.openworkWeb")
+})
+
+test("gateway dashboard defaults off and merges true, false, omitted, and null overrides per organization", async () => {
+  if (!shouldRunRouteDbCoverage()) return
+  if (routeTestUnavailable) throw new Error(`Gateway capability route coverage unavailable: ${routeTestUnavailable}`)
+
+  const url = `http://den.local/v1/admin/organizations/${organizationId}/capabilities`
+  for (const gatewayDashboard of [undefined, null, "true", 1]) {
+    await replaceOrganizationMetadata({ capabilities: { gatewayDashboard } })
+    const response = await routeApp().request(url)
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
+    const clearMalformed = await putCapabilities({ gatewayDashboard: null })
+    expect(clearMalformed.status).toBe(200)
+    expect(readCapabilityMetadata(await readOrganizationMetadata())).not.toHaveProperty("gatewayDashboard")
+  }
+
+  const metadata = {
+    brandAppName: "Capability Merge",
+    inference: { enabled: true, tier: "tier1" },
+    capabilities: { installLinks: false, modelsAnalytics: true, otherCapability: "preserved" },
+  }
+  await replaceOrganizationMetadata(metadata)
+  const enable = await putCapabilities({ gatewayDashboard: true })
+  expect(enable.status).toBe(200)
+  await expect(enable.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true, installLinks: false, modelsAnalytics: true } })
+  expect(await readOrganizationMetadata()).toEqual({ ...metadata, capabilities: { ...metadata.capabilities, gatewayDashboard: true } })
+
+  const listed = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
+  expect(listed.status).toBe(200)
+  await expect(listed.json()).resolves.toMatchObject({ organizations: [{ id: organizationId, capabilities: { gatewayDashboard: true } }] })
+
+  const partial = await putCapabilities({ mcpConnections: false })
+  expect(partial.status).toBe(200)
+  await expect(partial.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true } })
+  const disable = await putCapabilities({ gatewayDashboard: false })
+  expect(disable.status).toBe(200)
+  await expect(disable.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
+  expect(readCapabilityMetadata(await readOrganizationMetadata())).toHaveProperty("gatewayDashboard", false)
+
+  const clear = await putCapabilities({ gatewayDashboard: null })
+  expect(clear.status).toBe(200)
+  await expect(clear.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
+  expect(await readOrganizationMetadata()).toEqual({ ...metadata, capabilities: { ...metadata.capabilities, mcpConnections: false } })
+  const readBack = await routeApp().request(url)
+  await expect(readBack.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
+
+  const invalid = await routeApp().request(url, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capabilities: { gatewayDashboard: "true" } }),
+  })
+  expect(invalid.status).toBe(400)
+  expect(readCapabilityMetadata(await readOrganizationMetadata())).not.toHaveProperty("gatewayDashboard")
+})
+
+test("gateway capability administration requires the platform allowlist, not organization ownership", async () => {
+  if (!shouldRunRouteDbCoverage()) return
+  if (routeTestUnavailable) throw new Error(`Gateway capability authorization coverage unavailable: ${routeTestUnavailable}`)
+
+  const before = await readOrganizationMetadata()
+  for (const caller of ["anonymous", "owner"]) {
+    for (const method of ["GET", "PUT"]) {
+      const response = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
+        method,
+        headers: { "content-type": "application/json", "x-test-caller": caller },
+        ...(method === "PUT" ? { body: JSON.stringify({ capabilities: { gatewayDashboard: true } }) } : {}),
+      })
+      expect(response.status).toBe(caller === "anonymous" ? 401 : 403)
+    }
+  }
+  expect(await readOrganizationMetadata()).toEqual(before)
 })

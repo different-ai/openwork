@@ -659,6 +659,41 @@
       "when": 1788895934599,
       "tag": "0094_managed_usage_facts",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "5",
+      "when": 1788895934600,
+      "tag": "0095_inference_gateway_providers",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "5",
+      "when": 1788895934601,
+      "tag": "0096_inference_accounting_observations",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "5",
+      "when": 1788895934602,
+      "tag": "0097_gateway_access_matrix",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "5",
+      "when": 1788958587949,
+      "tag": "0098_gateway_provider_model_universe",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "5",
+      "when": 1788961365465,
+      "tag": "0099_gateway_credential_set_creator",
+      "breakpoints": true
     }
   ]
 }

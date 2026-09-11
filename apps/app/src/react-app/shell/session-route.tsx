@@ -152,7 +152,14 @@ import { assertQueuedSendCurrent, getQueuedSendGeneration } from "@/react-app/do
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
-import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import {
+  connectGatewayProvider,
+  isGatewaySetConnected,
+  type GatewayConnectProvider,
+  isCloudManagedProviderKey,
+  resolveGatewayConnectProviders,
+  resolveGatewayProviderIds,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
@@ -491,7 +498,6 @@ export function SessionRoute() {
     legacySelectedWorkspaceId,
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
-    loadedWorkspaceIds,
     setRetryingWorkspaceIds,
     startupRetryTimerRef,
     selectedWorkspaceId,
@@ -797,8 +803,8 @@ export function SessionRoute() {
 
 
   const workspaceSessionGroups = useMemo(
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds), loadedWorkspaceIds),
-    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces, loadedWorkspaceIds],
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
+    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
   );
   useSessionGroupSync({ workspaces, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
@@ -959,6 +965,42 @@ export function SessionRoute() {
     sessionProviderAuthSnapshot.cloudOrgProviders,
     sessionProviderAuthSnapshot.importedCloudProviders,
   ]);
+  const gatewayProviderIds = useMemo(
+    () => resolveGatewayProviderIds(sessionProviderAuthSnapshot.importedCloudProviders),
+    [sessionProviderAuthSnapshot.importedCloudProviders],
+  );
+  const gatewayConnectProviders = useMemo(
+    () => resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders),
+    [sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+  );
+  const gatewayConnectAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const cancel = () => gatewayConnectAbort.current?.abort();
+    window.addEventListener(denSessionUpdatedEvent, cancel);
+    window.addEventListener(denSettingsChangedEvent, cancel);
+    return () => {
+      cancel();
+      window.removeEventListener(denSessionUpdatedEvent, cancel);
+      window.removeEventListener(denSettingsChangedEvent, cancel);
+    };
+  }, []);
+  const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
+    gatewayConnectAbort.current?.abort();
+    const controller = new AbortController();
+    gatewayConnectAbort.current = controller;
+    try {
+      await connectGatewayProvider({
+        provider,
+        signal: controller.signal,
+        startOAuth: sessionProviderAuthStore.startGatewayProviderOAuth,
+        openUrl: (url) => platform.openLink(url),
+        resync: () => refreshCloudProviderSync("manual"),
+        isConnected: () => isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders),
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) toast.error(describeRouteError(error));
+    }
+  }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
   const refreshOrganizationModelAccess = useCallback(async () => {
     await refreshCloudProviderSync("manual");
   }, [refreshCloudProviderSync]);
@@ -3869,6 +3911,9 @@ export function SessionRoute() {
         modelPicker.setOpen(false);
       }}
       disabledProviders={disabledProviderIds}
+      gatewayProviderIds={gatewayProviderIds}
+      gatewayConnectProviders={gatewayConnectProviders}
+      onConnectGatewayProvider={handleConnectGatewayProvider}
       onBehaviorChange={(model, value) => {
         if (modelPickerSessionId) {
           const store = useSessionModelStore.getState();

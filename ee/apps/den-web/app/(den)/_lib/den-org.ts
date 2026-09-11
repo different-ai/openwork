@@ -1,3 +1,5 @@
+import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
+
 export type DenOrgSummary = {
   id: string;
   name: string;
@@ -231,6 +233,7 @@ export type DenOrgContext = {
   entitlements: DenOrgEntitlements;
   authMethods: DenOrgAuthMethods;
   capabilities: DenOrgCapabilities;
+  deploymentCapabilities: DeploymentCapabilities;
 };
 
 export type DenOrgAuthMethods = {
@@ -247,6 +250,8 @@ export type DenOrgEntitlements = {
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
+  /** Platform-admin opt-in for the Gateway dashboard only; never a runtime inference gate. */
+  gatewayDashboard: boolean;
   orgManagedDashboards: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
@@ -605,6 +610,22 @@ export function getEditLlmProviderRoute(orgSlug: string | null | undefined, llmP
 
 export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
+}
+
+export function getGatewayProvidersRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/gateway-providers`;
+}
+
+export function getGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getGatewayProvidersRoute(orgSlug)}/${encodeURIComponent(inferenceProviderId)}`;
+}
+
+export function getEditGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
+}
+
+export function getNewGatewayProviderRoute(orgSlug?: string | null): string {
+  return `${getGatewayProvidersRoute(orgSlug)}/new`;
 }
 
 export function getBillingRoute(orgSlug?: string | null): string {
@@ -974,6 +995,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     entitlements: parseOrgEntitlements(payload.entitlements),
     authMethods: parseOrgAuthMethods(payload.authMethods),
     capabilities: parseOrgCapabilities(payload.capabilities),
+    deploymentCapabilities: parseDeploymentCapabilities(payload.deploymentCapabilities),
   };
 }
 
@@ -990,11 +1012,12 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
+    return { gatewayDashboard: false, orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
   }
 
   return {
     orgManagedDashboards: value.orgManagedDashboards === true,
+    gatewayDashboard: value.gatewayDashboard === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
     // Workflows are enabled everywhere on current servers; only an explicit

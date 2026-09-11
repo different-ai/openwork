@@ -389,7 +389,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
               const next = { ...current, [workspace.id]: nextItems };
               sessionsByWorkspaceIdRef.current = next;
               setSessionsByWorkspaceId(next);
-              loadedWorkspaceIdsRef.current = new Set([...loadedWorkspaceIdsRef.current, workspace.id]);
+              loadedWorkspaceIdsRef.current.add(workspace.id);
               setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
               setWorkspaceConnectionOverrides((current) => {
                 if (isRemoteOpenworkWorkspace) {
@@ -455,8 +455,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const reloadWorkspaceSessions = useCallback(async (workspaceId: string): Promise<void> => {
     const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
     if (!workspace) return;
-    loadedWorkspaceIdsRef.current = new Set([...loadedWorkspaceIdsRef.current].filter((id) => id !== workspaceId));
-    setRetryingWorkspaceIds((current) => Array.from(new Set([...current, workspaceId])));
+    loadedWorkspaceIdsRef.current.delete(workspaceId);
     await loadWorkspaceSessionsInBackground([workspace]);
   }, [loadWorkspaceSessionsInBackground]);
   const workspaceSelectionCommitRef = useRef<(workspaceId: string) => Promise<void>>(async () => undefined);
@@ -554,7 +553,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         const orderedDesktopWorkspaces = commitStableWorkspaceOrder(desktopWorkspaces);
         setWorkspaces(orderedDesktopWorkspaces);
         sessionsByWorkspaceIdRef.current = {};
-        loadedWorkspaceIdsRef.current = new Set();
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
         setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "");
@@ -1331,7 +1329,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     sessionsByWorkspaceId,
     setSessionsByWorkspaceId,
     sessionsByWorkspaceIdRef,
-    loadedWorkspaceIds: loadedWorkspaceIdsRef.current,
     errorsByWorkspaceId,
     setErrorsByWorkspaceId,
     workspaceConnectionOverrides,
