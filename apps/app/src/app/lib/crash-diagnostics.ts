@@ -9,9 +9,12 @@ const FALLBACK_MESSAGE = "An unexpected error occurred.";
  * LAST `@` (or encoded `%40`) inside the authority, which ends at the first `/`, `?`
  * or `#`. A password may itself contain `@`, so stopping at the first one leaks it.
  */
-function stripUserinfo(url: string): string {
+function stripUserinfo(url: string, cutShort: boolean): string {
   const start = url.indexOf("//") + 2;
   const end = url.slice(start).search(/[/?#]/);
+  // The work bound cut this URL before its authority ended, so its `@` may be
+  // missing: the whole remainder could be userinfo. Keep only the scheme.
+  if (end === -1 && cutShort) return url.slice(0, start);
   const authorityEnd = end === -1 ? url.length : start + end;
   const authority = url.slice(start, authorityEnd);
   return url.slice(0, start) + authority.replace(/^.*(@|%40)/i, "") + url.slice(authorityEnd);
@@ -19,8 +22,11 @@ function stripUserinfo(url: string): string {
 
 /** Bound work before redaction; bound output only after credentials are removed. */
 export function redactCrashText(text: string): string {
-  const urlsRemoved = text.slice(0, 16000).replace(URL_PATTERN, (url) => {
-    const withoutUserinfo = stripUserinfo(url);
+  const bounded = text.slice(0, 16000);
+  // URL_PATTERN has no capture groups, so the callback's second argument is the match offset.
+  const urlsRemoved = bounded.replace(URL_PATTERN, (url, offset: number) => {
+    const cutShort = text.length > bounded.length && offset + url.length === bounded.length;
+    const withoutUserinfo = stripUserinfo(url, cutShort);
     const cut = withoutUserinfo.search(/[?#]/);
     if (cut === -1) return withoutUserinfo;
     const position = /(:\d+){1,2}$/.exec(withoutUserinfo)?.[0] ?? "";

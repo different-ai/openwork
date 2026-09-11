@@ -68,6 +68,23 @@ test.each([
   expect(redactCrashText(url)).toBe(url);
 });
 
+test("userinfo cut by the work bound before its @ cannot survive into any bounded field", () => {
+  const prefix = "x".repeat(7000) + " https://user:";
+  const source = prefix + "FAKE_".repeat(2500) + "@host/path";
+  expect(source.indexOf("@")).toBeGreaterThan(16000);
+  const clean = redactCrashText(source);
+  expect(clean).toBe("x".repeat(7000) + " https://");
+  expect(redactCrashText(clean)).toBe(clean);
+  const diagnostic = formatCrashDiagnostic({ name: source, message: source, stack: source });
+  expect(JSON.stringify(diagnostic)).not.toMatch(/FAKE_|user:/);
+  // A URL whose authority ended before the bound keeps its host even when its path is cut.
+  const pathCut = "https://user:p@ss@host/" + "a".repeat(20000);
+  expect(redactCrashText(pathCut)).toBe("https://host/" + "a".repeat(16000 - "https://host/".length - "user:p@ss@".length));
+  // A complete URL that merely ends at the bound is not mistaken for a cut one.
+  const exact = "y".repeat(16000 - "https://host".length) + "https://host";
+  expect(redactCrashText(exact)).toBe(exact);
+});
+
 test("long diagnostics are bounded after sanitizing, without masking ordinary text or HTML", () => {
   const diagnostic = formatCrashDiagnostic({ name: "N".repeat(50000), message: "m".repeat(50000), stack: "s".repeat(50000) });
   expect(diagnostic.name).toHaveLength(100);
