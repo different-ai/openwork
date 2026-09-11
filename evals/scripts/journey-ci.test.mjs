@@ -140,8 +140,6 @@ test('mixed-world specs: a prerequisite one case declares is never promoted to t
 test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
   const entries = await catalog();
   assert.deepEqual(registeredCases.map(({ spec, id, engines }) => ({ spec, id, engines })), [
-    { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-ATTACH', engines: ['v1', 'v2'] },
-    { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-MISSING', engines: ['v2'] },
     {
       spec: 'composer-model-picker-no-subscribe-promo.e2e.test.ts',
       id: 'MODEL-01',
@@ -177,6 +175,8 @@ test('registered case metadata names exact files, supported execution axes, and 
       id: 'APP-ISOLATION',
       engines: ['v1', 'v2'],
     },
+    { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-ATTACH', engines: ['v1', 'v2'] },
+    { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-MISSING', engines: ['v2'] },
     {
       spec: 'opencode-v2-skill-jit.e2e.test.ts',
       id: 'SKILL-CLOUD-01',
