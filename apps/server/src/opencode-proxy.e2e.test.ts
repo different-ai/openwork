@@ -288,7 +288,9 @@ async function startV2Proxy() {
   const preview = spyOn(engineV2Preview, "createEngineV2Preview").mockReturnValue({
     start() {}, status, setEnabled: async () => status(), setChatRouting: async () => status(),
     connection: () => ({ url: `http://127.0.0.1:${engine.server.port}`, username: "opencode", password: "fixture" }),
-    ensureWorkspaceReady: provider.wait, syncWorkspaceMcp: mcp.wait, stop: async () => {},
+    ensureWorkspaceReady: provider.wait, syncWorkspaceMcp: mcp.wait,
+    syncCloudSkills: async () => ({ root: join(workspaceRoot, "cloud-skills"), state: { root: null, skills: [] } }),
+    stop: async () => {},
   });
   try {
     const openwork = await startOpenworkServer({ workspaceRoot, secondWorkspaceRoot, readOnly: false });
