@@ -24,7 +24,7 @@ import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
 import type {
   OpenworkServerClient,
-  OpenworkSessionSnapshot,
+  OpenworkSessionHistory,
 } from "@/app/lib/openwork-server";
 import { isLoopbackOpenworkServerUrl } from "@/app/lib/openwork-server";
 import type {
@@ -107,6 +107,7 @@ import {
   markSessionSnapshotFetchStart,
   reconcileFailureDegradedThreshold,
   seedSessionState,
+  seedSessionStatus,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
   useWorkspaceSyncStreamStore,
@@ -707,10 +708,10 @@ function resolveFindOwnerSessionId() {
   return firstMountedSessionSurfaceId();
 }
 
-function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
+function statusLabel(status: SessionStatus, busy: boolean) {
   if (busy) return "Running...";
-  if (snapshot?.status.type === "busy") return "Running...";
-  if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
+  if (status.type === "busy") return "Running...";
+  if (status.type === "retry") return `Retrying: ${status.message}`;
   return "Ready";
 }
 
@@ -997,7 +998,7 @@ function composerSessionHasContent(state: ComposerSessionState | undefined) {
   ));
 }
 
-function hiddenMessageCount(snapshot: OpenworkSessionSnapshot, revertMessageId: string): number {
+function hiddenMessageCount(snapshot: OpenworkSessionHistory, revertMessageId: string): number {
   const index = snapshot.messages.findIndex((message) => message.info.id === revertMessageId);
   return index < 0 ? snapshot.messages.length : snapshot.messages.length - index;
 }
@@ -1177,7 +1178,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Terminal invariant: an accepted admission that reached idle with no
   // assistant result surfaces a bounded recovery card instead of plain idle.
   const [admissionOutcomeUnresolved, setAdmissionOutcomeUnresolved] = useState(false);
-  const [rendered, setRendered] = useState<{ owner: string; sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
+  const [rendered, setRendered] = useState<{ owner: string; sessionId: string; snapshot: OpenworkSessionHistory } | null>(null);
   const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
@@ -1246,12 +1247,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // The preview is bounded; the second read MUST remain uncapped. A preview
       // is never written to the authoritative snapshot cache as complete history.
       const item = useDesktopLoopbackSnapshotRetry
-        ? await opencodeSessionNative.composeNativeSessionSnapshotWithRetry(
+        ? await opencodeSessionNative.composeNativeSessionHistoryWithRetry(
           sessionOwner,
           () => snapshotTargetRef.current,
           { ...window, signal },
         )
-        : await opencodeSessionNative.composeNativeSessionSnapshot(
+        : await opencodeSessionNative.composeNativeSessionHistory(
           { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
           props.sessionId,
           { ...window, signal },
@@ -1260,7 +1261,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return item;
   }, [props.opencodeBaseUrl, props.openworkToken, props.sessionId, sessionOwner, useDesktopLoopbackSnapshotRetry]);
   const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, authToken: props.openworkToken, snapshotQueryKey, readSnapshot });
-  const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
+  const snapshotQuery = useQuery<OpenworkSessionHistory>({
     queryKey: snapshotQueryKey,
     queryFn: ({ signal }) => readSnapshot(signal),
     enabled: openingHistory.backgroundReady,
@@ -2409,6 +2410,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     const probeAt = nextObservationProbeAt(queuedDrainState, lastObservationProbeAtRef.current);
     if (probeAt === null) return;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       const startedAt = Date.now();
       lastObservationProbeAtRef.current = startedAt;
@@ -2419,9 +2421,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
             await checkUnknownAdmission();
             return;
           }
-          const result = await snapshotQuery.refetch();
-          const probed = result.data?.session.id === props.sessionId ? result.data.status : null;
-          if (!probed) return;
+          // Admission still needs a fresh observed status. History deliberately
+          // carries no activity fields; never infer completion from their absence.
+          const [result, statusResult] = await Promise.all([
+            snapshotQuery.refetch(),
+            opencodeClient.session.status(undefined, { signal: controller.signal }),
+          ]);
+          if (controller.signal.aborted || snapshotTargetRef.current.owner !== sessionOwner
+            || result.isError || result.data?.session.id !== props.sessionId) return;
+          const statuses = unwrap(statusResult);
+          const record = useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId];
+          if (record && record.runStatusAt >= startedAt) return;
+          const probed = statuses[props.sessionId] ?? IDLE_STATUS;
+          seedSessionStatus(props.workspaceId, props.sessionId, probed, { snapshotStartedAt: startedAt });
           if (probed.type === "idle") {
             const phase = getQueuedDrainState(props.sessionId).phase;
             if (result.data) sessionHasPendingSubmission(props.opencodeBaseUrl, props.sessionId, result.data.messages);
@@ -2436,12 +2448,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
           // Probe failed (for example the local server was briefly
           // unreachable); the version bump below re-arms a spaced retry.
         } finally {
-          setObservationProbeVersion((version) => version + 1);
+          if (!controller.signal.aborted) setObservationProbeVersion((version) => version + 1);
         }
       })();
     }, Math.max(0, probeAt - Date.now()));
-    return () => window.clearTimeout(timer);
-  }, [checkUnknownAdmission, observationProbeVersion, props.opencodeBaseUrl, props.sessionId, queuedDrainState, snapshotQuery.refetch]);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [checkUnknownAdmission, observationProbeVersion, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceId, queuedDrainState, sessionOwner, snapshotQuery.refetch]);
 
   useEffect(() => {
     if (drainingQueueRef.current || sendingQueued) return;
@@ -3412,7 +3424,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         modelUnavailable={sessionModelUnavailable}
         modelUnavailableMessage={sessionModelUnavailable ? props.modelUnavailableMessage : null}
         organizationModelsEmpty={props.organizationModelsEmpty}
-        statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
+        statusLabel={statusLabel(liveStatus, chatStreaming)}
         modelPickerOpen={modelPickerOpen}
         selectedModel={sessionModel.selectedModel}
         openWorkModelsEntitled={props.openWorkModelsEntitled}
@@ -3500,7 +3512,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </>}
       </div>
       {/* Error display moved inline into the session conversation area */}
-      {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
+      {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot ? { ...snapshot, status: liveStatus, todos: props.todos ?? [] } : null} /> : null}
     </div>
     </DevProfiler>
   );

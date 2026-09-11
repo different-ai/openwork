@@ -130,9 +130,14 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   const nativePromptTexts: string[] = [];
   const nativeMessages: { id: string; role: "user"; text: string }[] = [];
   const forkRequests: Request[] = [];
+  const admissionStatusRequests: Request[] = [];
   const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const path = new URL(request.url).pathname;
+    if (request.method === "GET" && path.endsWith("/session/status")) {
+      admissionStatusRequests.push(request);
+      return Response.json({});
+    }
     if (request.method === "POST" && path.endsWith("/fork")) {
       forkRequests.push(request);
       await forkCompletion;
@@ -159,6 +164,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
   let fetchedSnapshot = createSnapshot({ type: "busy" }, 1);
   let snapshotRead: Promise<OpenworkSessionSnapshot> | null = null;
+  let historyOnly = false;
   const otherSessionId = `${sessionId}-other`;
   const otherSnapshot = createSnapshot({ type: "busy" }, 1, otherSessionId);
   const interruptionModule = await import("../src/app/lib/opencode-interruption");
@@ -173,7 +179,10 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
   const nativeSessionModule = await import("../src/app/lib/opencode-session-native");
   mock.module("@/app/lib/opencode-session-native", () => ({
     ...nativeSessionModule,
-    composeNativeSessionSnapshot: async (_target: unknown, id: string) => id === otherSessionId ? otherSnapshot : snapshotRead ?? fetchedSnapshot,
+    composeNativeSessionHistory: async (_target: unknown, id: string) => {
+      const value = await (id === otherSessionId ? otherSnapshot : snapshotRead ?? fetchedSnapshot);
+      return historyOnly ? { session: value.session, messages: value.messages } : value;
+    },
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey, statusKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
@@ -1238,6 +1247,41 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Send now"]')?.click());
     expect(sentDrafts).toHaveLength(sendsBeforeQueue + 5);
     expect(getQueuedDrainState(sessionId).phase.kind).toBe("admission_unknown");
+
+    // A send without queued drafts must still recover a missed busy edge from
+    // fresh status plus a correlated terminal reply, not history.status.
+    await act(async () => {
+      resetQueuedDrainForTests();
+      useComposerStateStore.setState({ queuedDrafts: {}, pendingMessages: {}, failedDrafts: {} });
+      historyOnly = true;
+      fetchedSnapshot = createSnapshot({ type: "idle" }, 32);
+      fetchedSnapshot.messages.push({
+        info: {
+          id: "terminal-command-reply", sessionID: sessionId, role: "assistant", parentID: "existing-user-message",
+          time: { created: 32, completed: 33 }, finish: "stop", modelID: "test-model", providerID: "test",
+          mode: "build", agent: "build", path: { cwd: "/tmp/project-focus-continuity", root: "/tmp/project-focus-continuity" },
+          cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+        parts: [],
+      });
+      queryClient.setQueryData(snapshotKey(workspaceId, sessionId), { session: fetchedSnapshot.session, messages: fetchedSnapshot.messages });
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "idle" });
+      renderSurface();
+    });
+    const statusReadsBeforeProbe = admissionStatusRequests.length;
+    const sendsBeforeProbe = sentDrafts.length;
+    await act(async () => {
+      dispatchQueuedDrain(sessionId, { type: "send_started", itemId: "deferred-command-probe" });
+      dispatchQueuedDrain(sessionId, {
+        type: "send_result", itemId: "deferred-command-probe", outcome: "accepted", at: Date.now() - 20_000,
+        deferredMessageID: "existing-user-message",
+      });
+    });
+    await waitFor(() => getQueuedDrainState(sessionId).phase.kind === "ready", "a terminal command to settle from independent status and history");
+    expect(admissionStatusRequests.length).toBeGreaterThan(statusReadsBeforeProbe);
+    expect(queryClient.getQueryData<OpenworkSessionSnapshot>(snapshotKey(workspaceId, sessionId))?.status).toBeUndefined();
+    expect(sentDrafts).toHaveLength(sendsBeforeProbe);
+    expect(getQueuedDrainState(sessionId).lastResolution).toEqual({ itemId: "deferred-command-probe", resolution: "completed" });
 
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
     let creation = Promise.withResolvers<void>();

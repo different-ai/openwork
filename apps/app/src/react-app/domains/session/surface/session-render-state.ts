@@ -1,6 +1,6 @@
 import type { UIMessage } from "ai";
 
-import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
+import type { OpenworkSessionHistory } from "../../../../app/lib/openwork-server";
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
 import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
@@ -9,8 +9,8 @@ import { parseSlashCommandInvocation } from "./composer/slash-command";
 
 export function resolveRenderedSessionSnapshot(input: {
   sessionId: string;
-  currentSnapshot: OpenworkSessionSnapshot | null | undefined;
-  cachedRendered: { sessionId: string; snapshot: OpenworkSessionSnapshot } | null | undefined;
+  currentSnapshot: OpenworkSessionHistory | null | undefined;
+  cachedRendered: { sessionId: string; snapshot: OpenworkSessionHistory } | null | undefined;
 }) {
   if (input.currentSnapshot?.session.id === input.sessionId) {
     return input.currentSnapshot;
@@ -26,7 +26,7 @@ export function resolveRenderedSessionSnapshot(input: {
 
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
-  snapshot: OpenworkSessionSnapshot | null | undefined;
+  snapshot: OpenworkSessionHistory | null | undefined;
   historyComplete?: boolean;
 }) {
   const revertMessageId = input.snapshot?.session.revert?.messageID ?? null;

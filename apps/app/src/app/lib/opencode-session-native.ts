@@ -3,7 +3,7 @@ import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/s
 import { closeSessionBrowserTabs } from "./desktop";
 import { createClient, unwrap, type FieldsResult } from "./opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
-import type { OpenworkSessionSnapshot } from "./openwork-server";
+import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "./openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "./workspace-endpoint";
 
 type NativeSessionEndpoint = Pick<ResolvedWorkspaceEndpoint, "opencodeBaseUrl" | "token">;
@@ -112,13 +112,11 @@ export async function getNativeSessionMessages(
   return unwrapSessionResult(result, "session_not_found");
 }
 
-export async function composeNativeSessionSnapshot(
-  endpoint: NativeSessionEndpoint,
+async function readNativeSessionHistory(
+  operations: NativeSessionOperations,
   sessionId: string,
   options?: RequestOptions & { limit?: number; messageIds?: readonly string[] },
-  dependencies?: NativeSessionDependencies,
-): Promise<OpenworkSessionSnapshot> {
-  const operations = sessionOperations(endpoint, dependencies);
+): Promise<Pick<OpenworkSessionSnapshot, "session" | "messages">> {
   const readMessages = async () => {
     if (options?.messageIds === undefined) {
       return unwrapSessionResult(await operations.messages(sessionId, options?.limit, options), "session_not_found");
@@ -143,24 +141,52 @@ export async function composeNativeSessionSnapshot(
     }));
     return records.flat();
   };
-  const [sessionResult, messages, todoResult, statusResult] = await Promise.all([
+  const [sessionResult, messages] = await Promise.all([
     operations.get(sessionId, options),
     readMessages(),
+  ]);
+  options?.signal?.throwIfAborted();
+  const session = unwrapSessionResult(sessionResult, "session_not_found");
+  if (session.id !== sessionId || messages.some((record) => record.info.sessionID !== sessionId
+    || record.parts.some((part) => part.sessionID !== sessionId || part.messageID !== record.info.id))) {
+    throw new Error("Could not verify the session history owner.");
+  }
+  return { session, messages };
+}
+
+export async function composeNativeSessionHistory(
+  endpoint: NativeSessionEndpoint,
+  sessionId: string,
+  options?: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  dependencies?: NativeSessionDependencies,
+): Promise<OpenworkSessionHistory> {
+  return readNativeSessionHistory(sessionOperations(endpoint, dependencies), sessionId, options);
+}
+
+export async function composeNativeSessionSnapshot(
+  endpoint: NativeSessionEndpoint,
+  sessionId: string,
+  options?: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  dependencies?: NativeSessionDependencies,
+): Promise<OpenworkSessionSnapshot> {
+  const operations = sessionOperations(endpoint, dependencies);
+  const [history, todoResult, statusResult] = await Promise.all([
+    readNativeSessionHistory(operations, sessionId, options),
     operations.todo(sessionId, options),
     operations.status(options),
   ]);
-  const session = unwrapSessionResult(sessionResult, "session_not_found");
   const todos = unwrapSessionResult(todoResult, "session_not_found");
   const statuses = unwrapSessionResult(statusResult);
-  return { session, messages, todos, status: statuses[sessionId] ?? { type: "idle" } };
+  return { ...history, todos, status: statuses[sessionId] ?? { type: "idle" } };
 }
 
-export async function composeNativeSessionSnapshotWithRetry(
+async function readOwnedNativeSessionWithRetry<T>(
   expectedOwner: string,
   readCurrentTarget: () => NativeSessionSnapshotTarget,
   options: RequestOptions & { limit?: number; messageIds?: readonly string[] },
-  dependencies?: NativeSessionDependencies,
-): Promise<OpenworkSessionSnapshot> {
+  dependencies: NativeSessionDependencies | undefined,
+  read: (endpoint: NativeSessionEndpoint, sessionId: string, readOptions: RequestOptions & { limit?: number; messageIds?: readonly string[] }, dependencies?: NativeSessionDependencies) => Promise<T>,
+): Promise<T> {
   const signal = options.signal ?? new AbortController().signal;
   const waitForRetry = dependencies?.waitForSnapshotRetry ?? waitForSnapshotRetry;
   let attempt = 0;
@@ -168,7 +194,7 @@ export async function composeNativeSessionSnapshotWithRetry(
     signal.throwIfAborted();
     const target = readOwnedSnapshotTarget(expectedOwner, readCurrentTarget);
     try {
-      const snapshot = await composeNativeSessionSnapshot(
+      const snapshot = await read(
         target.endpoint,
         target.sessionId,
         options,
@@ -186,6 +212,24 @@ export async function composeNativeSessionSnapshotWithRetry(
       await waitForRetry(delayMs, signal);
     }
   }
+}
+
+export function composeNativeSessionHistoryWithRetry(
+  expectedOwner: string,
+  readCurrentTarget: () => NativeSessionSnapshotTarget,
+  options: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  dependencies?: NativeSessionDependencies,
+) {
+  return readOwnedNativeSessionWithRetry(expectedOwner, readCurrentTarget, options, dependencies, composeNativeSessionHistory);
+}
+
+export function composeNativeSessionSnapshotWithRetry(
+  expectedOwner: string,
+  readCurrentTarget: () => NativeSessionSnapshotTarget,
+  options: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  dependencies?: NativeSessionDependencies,
+) {
+  return readOwnedNativeSessionWithRetry(expectedOwner, readCurrentTarget, options, dependencies, composeNativeSessionSnapshot);
 }
 
 export async function deleteNativeSession(

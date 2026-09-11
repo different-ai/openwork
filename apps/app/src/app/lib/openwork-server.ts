@@ -267,6 +267,11 @@ export type OpenworkSessionSnapshot = {
     | { type: "retry"; attempt: number; message: string; next: number };
 };
 
+// Stored history is independently readable. Missing activity fields are not an
+// observed idle state or an empty todo list; live hydration owns those values.
+export type OpenworkSessionHistory = Pick<OpenworkSessionSnapshot, "session" | "messages">
+  & Partial<Pick<OpenworkSessionSnapshot, "status" | "todos">>;
+
 export type OpenworkPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";

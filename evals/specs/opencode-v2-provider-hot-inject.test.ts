@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eventually, test } from "@openwork/testkit";
+import { eventually, mcpMock, needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
 import {
@@ -47,6 +47,207 @@ function sessionId(payload: unknown): string | undefined {
   if (!isRecord(payload) || !isRecord(payload.data)) return undefined;
   return typeof payload.data.id === "string" ? payload.data.id : undefined;
 }
+
+// Complements the real HTTP proxy + fake readiness cases in opencode-proxy.e2e:
+// this crosses the pinned native engine's storage boundary, not the proxy gate.
+test("V2-STORED-01: cold stored reads survive pending catalog and MCP readiness", { timeout: 60_000 }, async ({ evidence, place }) => {
+  needs({ placement: "local", env: ["OPENWORK_EVAL_OPENCODE2_BIN"] });
+  const binary = process.env.OPENWORK_EVAL_OPENCODE2_BIN;
+  if (!binary) throw new Error("A pre-cached native-v2 binary is required; this case never installs one");
+  expect((await stat(binary)).isFile()).toBe(true);
+  const rootDir = await mkdtemp(join(tmpdir(), "oc2-stored-reads-"));
+  const directory = join(rootDir, "workspace");
+  const foreignDirectory = join(rootDir, "foreign-workspace");
+  const home = join(rootDir, "home");
+  const env = {
+    HOME: home,
+    XDG_CACHE_HOME: join(home, "cache"),
+    XDG_CONFIG_HOME: join(home, "config"),
+    XDG_DATA_HOME: join(home, "data"),
+    XDG_STATE_HOME: join(home, "state"),
+    XDG_RUNTIME_DIR: join(home, "run"),
+    OPENCODE_CONFIG: join(rootDir, "fixture.json"),
+  };
+  await Promise.all([directory, foreignDirectory, ...Object.values(env).filter((path) => path !== env.OPENCODE_CONFIG)]
+    .map((path) => mkdir(path, { recursive: true })));
+  // The managed launcher allowlists OS variables and accepts only explicit
+  // OPENCODE_CONFIG/MODELS_URL; inherited OPENCODE_*, credentials and DB paths
+  // cannot enter this child. HOME, XDG paths, config and DB are fixture-owned.
+  const { handle: mcp } = await mcpMock({ allowUnauthenticatedMcp: true, isolatedProcessEnv: true, tools: [] }).boot(place);
+  const catalogPending = new Set<ServerResponse>();
+  const mcpPending = new Set<ServerResponse>();
+  const unexpected: string[] = [];
+  let providerRequests = 0;
+  let server: ManagedOpencodeV2Server | undefined;
+  const hold = (pending: Set<ServerResponse>, response: ServerResponse) => {
+    pending.add(response);
+    response.once("close", () => pending.delete(response));
+  };
+  // mcpMock owns the protocol; this loopback fault holds its initialize reply.
+  // Neither gate is released before the stored-read assertions finish.
+  const witness = createServer(async (request, response) => {
+    try {
+      if (request.url === "/seed/api.json") {
+        response.writeHead(200, { "content-type": "application/json" }).end("{}");
+        return;
+      }
+      if (request.url === "/cold/api.json") {
+        hold(catalogPending, response);
+        return;
+      }
+      if (request.url?.split("?")[0] === "/mcp") {
+        const body = request.method === "POST" ? await readRequestBody(request) : undefined;
+        const reply = await fetch(mcp.mcpUrl, {
+          method: request.method,
+          headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(3_000),
+        });
+        const text = await reply.text();
+        if (isRecord(body) && body.method === "initialize" && reply.ok) {
+          hold(mcpPending, response);
+          return;
+        }
+        response.writeHead(reply.status, { "content-type": reply.headers.get("content-type") ?? "application/json" }).end(text);
+        return;
+      }
+      if (request.url?.startsWith("/provider/")) providerRequests += 1;
+      else unexpected.push(`${request.method} ${request.url}`);
+      response.writeHead(503).end();
+    } catch {
+      unexpected.push("witness forwarding failed");
+      response.writeHead(500).end();
+    }
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      witness.once("error", reject);
+      witness.listen(0, "127.0.0.1", resolve);
+    });
+    const address = witness.address();
+    if (address === null || typeof address === "string") throw new Error("Stored-read witness did not bind");
+    const witnessUrl = `http://127.0.0.1:${address.port}`;
+    const model = { providerID: "stored-read-witness", id: "stored-model" };
+    const config = {
+      providers: {
+        [model.providerID]: {
+          package: "@opencode-ai/ai/providers/openai-compatible",
+          settings: { baseURL: `${witnessUrl}/provider/v1`, apiKey: "fixture-only" },
+          models: { [model.id]: { name: "Stored model", limit: { context: 4096, output: 512 } } },
+        },
+      },
+    };
+    await writeFile(env.OPENCODE_CONFIG, JSON.stringify(config));
+    server = await createManagedOpencodeV2Server({
+      bin: binary, rootDir, bootTimeoutMs: 10_000,
+      env: { ...env, OPENCODE_MODELS_URL: `${witnessUrl}/seed` },
+    });
+    const firstHealth = await server.health();
+    expect(firstHealth.version).toBe("0.0.0-beta-19086");
+    const time = 1_700_000_000_000;
+    const transcript = (id: string, workspace: string, marker: string) => ({
+      location: { directory: workspace },
+      info: {
+        id, projectID: "global", title: marker, location: { directory: workspace },
+        agent: "build", model, cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        time: { created: time, updated: time + 2, idle: time + 2 }, outcome: "succeeded",
+        metadata: { fixture: marker },
+      },
+      messages: [
+        { id: `msg_${marker}_user`, type: "user", text: `Stored question ${marker}`, time: { created: time } },
+        { id: `msg_${marker}_answer`, type: "assistant", agent: "build", model,
+          content: [{ type: "text", text: `Stored answer ${marker}` }], finish: "stop",
+          time: { created: time + 1, completed: time + 2 } },
+      ],
+    });
+    const owned = transcript("ses_stored_owner", directory, "owner");
+    const foreign = transcript("ses_stored_foreign", foreignDirectory, "foreign");
+    const imported = [];
+    for (const body of [owned, foreign]) {
+      const result = await server.fetchJson("/api/session/import", { method: "POST", body, timeoutMs: 3_000 });
+      expect(result.status, JSON.stringify(result.json)).toBe(200);
+      expect(result.json).toMatchObject({ data: { id: body.info.id, location: body.location, metadata: body.info.metadata } });
+      imported.push(result.json);
+    }
+    await server.close();
+    expect(server.exitCode).not.toBeNull();
+    const database = await stat(join(rootDir, "opencode.db"));
+    expect(database.size).toBeGreaterThan(0);
+    await writeFile(env.OPENCODE_CONFIG, JSON.stringify({ ...config, mcp: { servers: {
+      "pending-witness": { type: "remote", url: `${witnessUrl}/mcp`, oauth: false, timeout: { startup: 30_000 } },
+    } } }));
+    // Same DB, new process and catalog source key: no prior location runtime or
+    // catalog cache can satisfy this cold startup. The launcher waits on health only.
+    server = await createManagedOpencodeV2Server({
+      bin: binary, rootDir, bootTimeoutMs: 10_000,
+      env: { ...env, OPENCODE_MODELS_URL: `${witnessUrl}/cold` },
+    });
+    const health = await server.health();
+    expect(health.version).toBe("0.0.0-beta-19086");
+    expect(health.pid).toBe(server.childPid);
+    expect(health.pid).not.toBe(firstHealth.pid);
+    expect((await stat(join(rootDir, "opencode.db"))).ino).toBe(database.ino);
+    // Start location-dependent readiness, never a prompt. Observe the actual
+    // native requests reaching the held witnesses rather than relying on sleep.
+    const catalogSnapshot = await server.fetchJson("/api/model", { directory, timeoutMs: 15_000 });
+    expect(catalogSnapshot.status).toBe(200);
+    await eventually(() => ({ catalog: catalogPending.size, mcp: mcpPending.size, unexpected }), {
+      within: 5_000, intervalMs: 20, label: "native catalog and MCP initialization at local gates",
+      until: (state) => state.catalog > 0 && state.mcp > 0,
+    });
+    const assertPending = async () => {
+      const nativeMcp = await server!.fetchJson("/api/mcp", { directory, timeoutMs: 1_000 });
+      expect(nativeMcp.status).toBe(200);
+      expect(nativeMcp.json).toMatchObject({ data: [{ name: "pending-witness", status: { status: "pending" } }] });
+      expect(catalogPending.size).toBeGreaterThan(0);
+      expect(mcpPending.size).toBeGreaterThan(0);
+      expect(providerRequests).toBe(0);
+      expect(unexpected).toEqual([]);
+    };
+    await assertPending();
+    const timings: Record<string, number> = {};
+    const read = async (label: string, path: string) => {
+      await assertPending();
+      const start = Date.now();
+      const result = await server!.fetchJson(path, { directory, timeoutMs: 1_000 });
+      timings[label] = Date.now() - start;
+      await assertPending();
+      return result;
+    };
+    const metadata = await read("metadata", `/api/session/${owned.info.id}`);
+    expect(metadata.status).toBe(200);
+    expect(metadata.json).toEqual(imported[0]);
+    // Small settled transcript only: this does not prove the adapter paginates >50.
+    const messages = await read("messages", `/api/session/${owned.info.id}/message?order=asc&limit=10`);
+    expect(messages.status).toBe(200);
+    expect(messages.json).toMatchObject({ data: owned.messages });
+    if (!isRecord(messages.json) || !Array.isArray(messages.json.data)) throw new Error("Missing native message list");
+    expect(messages.json.data).toHaveLength(2);
+    const single = await read("single", `/api/session/${owned.info.id}/message/${owned.messages[1].id}`);
+    expect(single.status).toBe(200);
+    expect(single.json).toEqual({ data: owned.messages[1] });
+    const foreignExists = await read("foreign-owner", `/api/session/${foreign.info.id}/message/${foreign.messages[1].id}`);
+    expect(foreignExists.status).toBe(200);
+    expect(foreignExists.json).toEqual({ data: foreign.messages[1] });
+    const refused = await read("foreign-refused", `/api/session/${owned.info.id}/message/${foreign.messages[1].id}`);
+    expect(refused.status).toBe(404);
+    expect(JSON.stringify(refused.json)).not.toContain("Stored answer foreign");
+    expect(server.exitCode).toBeNull();
+    evidence.recordAssertionEvidence(
+      "V2-STORED-01 native cold storage reads before location readiness",
+      `Native version ${health.version}; seed PID ${firstHealth.pid}, cold PID ${health.pid}, child PID ${server.childPid}; placement ${place.kind}. Cold-restarted the same isolated DB after HTTP import. Exact metadata, two settled messages and single-message reads completed within 1s each while catalog/MCP replies remained held and the native MCP status remained pending; /api/model returned its nonblocking snapshot. A foreign message existed under its owner but returned 404 under the other session. Provider requests: 0. Read timings (ms): ${JSON.stringify(timings)}. Direct native boundary only; proxy gate and >50 adapter pagination are not exercised.`,
+      true,
+    );
+  } finally {
+    await server?.close();
+    for (const response of [...catalogPending, ...mcpPending]) response.destroy();
+    witness.closeAllConnections();
+    await new Promise<void>((resolve) => witness.close(() => resolve()));
+    await mcp.stop();
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
 
 test("opencode v2 injects providers at runtime without an engine reload", { timeout: 240_000 }, async ({ evidence }) => {
   const binary = await resolveOpencodeV2Bin();

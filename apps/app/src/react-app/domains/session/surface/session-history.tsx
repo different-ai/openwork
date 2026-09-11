@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CancelledError, queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
-import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
+import type { OpenworkSessionHistory } from "@/app/lib/openwork-server";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types";
 import { snapshotKey } from "../sync/session-sync";
 import { composerAutoSendScopeKey } from "./composer-auto-send";
@@ -42,7 +42,7 @@ type OpeningHistoryInput = {
   sessionId: string;
   authToken?: string | null;
   snapshotQueryKey: readonly unknown[];
-  readSnapshot: (signal: AbortSignal, window?: OpeningHistoryWindow) => Promise<OpenworkSessionSnapshot>;
+  readSnapshot: (signal: AbortSignal, window?: OpeningHistoryWindow) => Promise<OpenworkSessionHistory>;
 };
 
 // Opaque, bounded credential identities keep secrets out of query keys and
@@ -62,7 +62,7 @@ export function openingSessionHistoryOptions(input: OpeningHistoryInput, saved =
   }
   return queryOptions({
     queryKey: ["react-session-opening", input.owner, credential],
-    queryFn: async ({ signal }): Promise<{ snapshot: OpenworkSessionSnapshot | null }> => {
+    queryFn: async ({ signal }): Promise<{ snapshot: OpenworkSessionHistory | null }> => {
       try {
         const snapshot = await input.readSnapshot(signal, openingHistoryWindow(saved));
         signal.throwIfAborted();
@@ -85,7 +85,7 @@ export function openingSessionHistoryOptions(input: OpeningHistoryInput, saved =
 }
 
 export function prefetchOpeningSessionHistory(client: QueryClient, input: OpeningHistoryInput) {
-  if (client.getQueryData<OpenworkSessionSnapshot>(input.snapshotQueryKey)?.session.id === input.sessionId) return;
+  if (client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey)?.session.id === input.sessionId) return;
   // No queue and no neighboring reads: only one speculative opening at a time.
   if (client.isFetching({ queryKey: ["react-session-opening"] })) return;
   const options = openingSessionHistoryOptions(input);
@@ -118,7 +118,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
   const saved = useMemo(() => {
     return getSessionScrollState(useSessionScrollStore.getState().sessions, input.sessionId, input.owner);
   }, [input.owner, input.sessionId, hasLegacyPosition]);
-  const hasFullSnapshot = client.getQueryData<OpenworkSessionSnapshot>(input.snapshotQueryKey)?.session.id === input.sessionId;
+  const hasFullSnapshot = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey)?.session.id === input.sessionId;
   const options = openingSessionHistoryOptions(input, saved);
   const query = useQuery({ ...options, enabled: !hasFullSnapshot });
   const activeOwner = useRef<string | null>(input.owner);
@@ -149,7 +149,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput) {
     }
   }, [client, input.snapshotQueryKey, input.readSnapshot]);
   const runWithFullSnapshot = useCallback(async (
-    action: (snapshot: OpenworkSessionSnapshot) => void | Promise<unknown>,
+    action: (snapshot: OpenworkSessionHistory) => void | Promise<unknown>,
     options: { fresh?: boolean } = {},
   ) => {
     if (activeOwner.current !== input.owner) return;

@@ -28,7 +28,7 @@ import {
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
-import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
+import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
@@ -118,8 +118,8 @@ type DeltaFlushScheduler = (
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
-const sessionSnapshotFetchStarts = new WeakMap<OpenworkSessionSnapshot, number>();
-const todoSnapshotFirstSeen = new WeakMap<OpenworkSessionSnapshot, number>();
+const sessionSnapshotFetchStarts = new WeakMap<OpenworkSessionHistory, number>();
+const todoSnapshotFirstSeen = new WeakMap<OpenworkSessionHistory, number>();
 const workspaceSyncDisposeGraceMs = 2_000;
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
@@ -238,7 +238,7 @@ const defaultDeltaFlushScheduler: DeltaFlushScheduler = (lane, run) => {
 
 let deltaFlushScheduler = defaultDeltaFlushScheduler;
 
-export function markSessionSnapshotFetchStart(snapshot: OpenworkSessionSnapshot, startedAt: number) {
+export function markSessionSnapshotFetchStart(snapshot: OpenworkSessionHistory, startedAt: number) {
   sessionSnapshotFetchStarts.set(snapshot, startedAt);
 }
 
@@ -418,25 +418,6 @@ function getSessionCreatedInfo(event: OpencodeEvent): Session | null {
 
 function isLiveStatus(status: SessionStatus | null | undefined) {
   return status?.type === "busy" || status?.type === "retry";
-}
-
-function messageHasVisibleAssistantOutput(message: UIMessage) {
-  if (message.role !== "assistant") return false;
-  return message.parts.some((part) => {
-    if ("text" in part && typeof part.text === "string") return part.text.trim().length > 0;
-    return part.type === "dynamic-tool" || part.type === "file";
-  });
-}
-
-function assistantOutputAfterLatestUser(messages: UIMessage[]) {
-  let lastUserIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === "user") {
-      lastUserIndex = index;
-      break;
-    }
-  }
-  return messages.slice(lastUserIndex + 1).some(messageHasVisibleAssistantOutput);
 }
 
 function sessionIdFromProperties(properties: unknown) {
@@ -1031,6 +1012,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       stopTrackingLiveSession(entry, sessionId);
       if (isTrackedSession(entry, sessionId)) {
         flushSessionDeltas(entry, workspaceId, sessionId);
+        void refreshSessionTodos(workspaceId, sessionId);
         // The activity store treats session.error as terminal (setError
         // lowers runActive), but the chat surface derives its thread status
         // from this react-query cache. An engine that errors without a
@@ -1522,6 +1504,7 @@ function applySessionRunStatus(
     const shouldRecordTerminal = wasLive || runStartedAt !== null;
     const shouldConvergeTerminal = shouldRecordTerminal || options.terminalEvent === true;
     if (shouldConvergeTerminal) void reconcileSessionPermissions(entry, sessionId);
+    if (tracked && shouldConvergeTerminal) void refreshSessionTodos(workspaceId, sessionId);
     if (tracked && shouldConvergeTerminal) {
       flushSessionDeltas(entry, workspaceId, sessionId);
       void getReactQueryClient().invalidateQueries({
@@ -1603,6 +1586,7 @@ async function reconcileSessionRunStatuses(
     const records = useSessionActivityStore.getState().recordsByWorkspaceId[input.workspaceId] ?? {};
     for (const sessionId of new Set([...Object.keys(records), ...entry.trackedSessionRefs.keys()])) {
       void reconcileSessionPermissions(entry, sessionId);
+      void refreshSessionTodos(input.workspaceId, sessionId);
     }
   }
   let statuses: Record<string, SessionStatus>;
@@ -1854,7 +1838,62 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   }, workspaceSyncDisposeGraceMs);
 }
 
-export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot, options: { preview?: boolean } = {}) {
+export function seedSessionStatus(
+  workspaceId: string,
+  sessionId: string,
+  incomingStatus: SessionStatus,
+  options: { snapshotStartedAt: number },
+) {
+  const queryClient = getReactQueryClient();
+  const { snapshotStartedAt } = options;
+  const record = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId];
+  // A read cannot supersede a live edge from the same clock tick either.
+  if (record && snapshotStartedAt <= record.runStatusAt) return;
+  const currentStatus = queryClient.getQueryData<SessionStatus>(statusKey(workspaceId, sessionId));
+  const terminal = [...syncs.values()].some((entry) => entry.input.workspaceId === workspaceId
+    && entry.nativeTerminalSessions.has(sessionId));
+  const status = incomingStatus.type === "busy" && currentStatus && (currentStatus.type === "retry" || terminal)
+    ? currentStatus : incomingStatus;
+  useSessionActivityStore.getState().seedSessionRun(
+    workspaceId,
+    sessionId,
+    status,
+    undefined,
+    { snapshotStartedAt },
+  );
+  queryClient.setQueryData(statusKey(workspaceId, sessionId), status);
+  if (isLiveStatus(status)) {
+    for (const entry of syncs.values()) {
+      if (entry.input.workspaceId === workspaceId) {
+        trackLiveSession(entry, sessionId, status, "snapshot");
+      }
+    }
+  }
+}
+
+export function seedSessionTodos(
+  workspaceId: string,
+  sessionId: string,
+  todos: Todo[],
+  options: { snapshotStartedAt: number },
+) {
+  const queryClient = getReactQueryClient();
+  const key = todoKey(workspaceId, sessionId);
+  const state = queryClient.getQueryState(key);
+  // Millisecond ties cannot establish that a snapshot is newer than live data.
+  if (state?.data === undefined || options.snapshotStartedAt > state.dataUpdatedAt) {
+    queryClient.setQueryData(key, todos, { updatedAt: options.snapshotStartedAt });
+  }
+}
+
+async function refreshSessionTodos(workspaceId: string, sessionId: string) {
+  const queryClient = getReactQueryClient();
+  const queryKey = [...todoKey(workspaceId, sessionId), "hydration"];
+  await queryClient.cancelQueries({ queryKey });
+  await queryClient.invalidateQueries({ queryKey });
+}
+
+export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionHistory, options: { preview?: boolean } = {}) {
   // A reverted window cannot establish which messages are still visible.
   if (options.preview && snapshot.session.revert?.messageID) return;
   const queryClient = getReactQueryClient();
@@ -1903,30 +1942,10 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   }
 
   const snapshotStartedAt = sessionSnapshotFetchStarts.get(snapshot);
-  if (typeof snapshotStartedAt === "number") {
-    const record = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[snapshot.session.id];
-    const currentStatus = queryClient.getQueryData<SessionStatus>(statusKey(workspaceId, snapshot.session.id));
-    const terminal = [...syncs.values()].some((entry) => entry.input.workspaceId === workspaceId
-      && entry.nativeTerminalSessions.has(snapshot.session.id));
-    const status = snapshot.status.type === "busy" && currentStatus && (currentStatus.type === "retry" || terminal)
-      ? currentStatus : snapshot.status;
-    useSessionActivityStore.getState().seedSessionRun(
-      workspaceId,
-      snapshot.session.id,
-      status,
-      assistantOutputAfterLatestUser(incoming),
-      { snapshotStartedAt },
-    );
-    if (snapshotStartedAt >= (record?.runStatusAt ?? 0)) {
-      queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), status);
-      if (isLiveStatus(status)) {
-        for (const entry of syncs.values()) {
-          if (entry.input.workspaceId === workspaceId) {
-            trackLiveSession(entry, snapshot.session.id, status, "snapshot");
-          }
-        }
-      }
-    }
+  if (snapshot.status !== undefined && typeof snapshotStartedAt === "number") {
+    seedSessionStatus(workspaceId, snapshot.session.id, snapshot.status, {
+      snapshotStartedAt,
+    });
   }
 
   // The snapshot's revert cursor is authoritative: messages at/after it are
@@ -1942,18 +1961,17 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   ));
   settleOrphanedInteractions(workspaceId, snapshot.session.id, terminalToolCallIds(snapshot.messages));
 
-  const todosKey = todoKey(workspaceId, snapshot.session.id);
-  // Remember first observation for unmarked snapshots too, so reselecting a
-  // cached object never makes it newer than a subsequent todo.updated event.
-  const todosStartedAt = snapshotStartedAt ?? todoSnapshotFirstSeen.get(snapshot) ?? Date.now();
-  todoSnapshotFirstSeen.set(snapshot, todosStartedAt);
-  const todosState = queryClient.getQueryState(todosKey);
-  // Millisecond ties cannot establish that a snapshot is newer than live data.
-  if (todosState?.data === undefined || todosStartedAt > todosState.dataUpdatedAt) {
-    queryClient.setQueryData(todosKey, snapshot.todos, { updatedAt: todosStartedAt });
+  if (snapshot.todos !== undefined) {
+    // Remember first observation for unmarked snapshots too, so reselecting a
+    // cached object never makes it newer than a subsequent todo.updated event.
+    const todosStartedAt = snapshotStartedAt ?? todoSnapshotFirstSeen.get(snapshot) ?? Date.now();
+    todoSnapshotFirstSeen.set(snapshot, todosStartedAt);
+    seedSessionTodos(workspaceId, snapshot.session.id, snapshot.todos, { snapshotStartedAt: todosStartedAt });
   }
-  useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id,
-    queryClient.getQueryData<UIMessage[]>(key) ?? [], true);
+  const transcript = queryClient.getQueryData<UIMessage[]>(key) ?? [];
+  useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id, transcript, true, {
+    snapshotStartedAt,
+  });
 }
 
 /**

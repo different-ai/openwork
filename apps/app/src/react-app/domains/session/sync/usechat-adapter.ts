@@ -162,7 +162,7 @@ const snapshotMessageCache = new WeakMap<SnapshotMessages[number], UIMessage[]>(
 // Query snapshots are immutable. Share the projection between rendering and
 // hydration; a refreshed tail can also reuse unchanged historical messages.
 // Callers must copy before applying live updates to these cached messages.
-export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
+export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "messages">): UIMessage[] {
   const cached = snapshotMessagesCache.get(snapshot.messages);
   if (cached) return cached;
   const messages = snapshot.messages.flatMap((message) => {

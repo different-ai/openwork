@@ -35,6 +35,9 @@ function safeToolActivity(part: UIMessage["parts"][number]): string {
 }
 
 type Progress = {
+  latestUserId: string | null;
+  latestUserCreated: number | null;
+  assistantOutput: boolean;
   revision: string;
   parts: Record<string, string>;
   label: string | null;
@@ -66,10 +69,16 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
   let label: string | null = null;
   let timestamp = 0;
   let activeStartedAt = 0;
+  let assistantOutput = false;
   let latestUserIndex = -1;
+  let latestUserCreated: number | null = null;
   for (let index = messages.length - 1; index >= 0; index--) {
     if (messages[index]?.role === "user") {
       latestUserIndex = index;
+      const metadata = messages[index].metadata;
+      const time = metadata && typeof metadata === "object" ? Reflect.get(metadata, "opencode") : undefined;
+      const created = time && typeof time === "object" ? Reflect.get(time, "created") : undefined;
+      if (typeof created === "number" && Number.isFinite(created)) latestUserCreated = created;
       break;
     }
   }
@@ -96,6 +105,7 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
         parts[key] = partFingerprint(part, () => [part.type, part.url]);
         activity = "File output received";
       } else continue;
+      if (messageIndex > latestUserIndex) assistantOutput = true;
       if (parts[key] !== previousParts[key]) label = activity;
       meaningful = true;
     }
@@ -115,7 +125,12 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
       activeStartedAt = activeStartedAt === 0 ? created : Math.min(activeStartedAt, created);
     }
   }
-  return { revision: fingerprint(parts), parts, label, timestamp, activeStartedAt };
+  return {
+    latestUserId: messages[latestUserIndex]?.id ?? null,
+    latestUserCreated,
+    assistantOutput,
+    revision: fingerprint(parts), parts, label, timestamp, activeStartedAt,
+  };
 }
 
 export function lastTaskProgressAt(

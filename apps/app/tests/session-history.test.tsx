@@ -5,7 +5,7 @@ import { act, StrictMode, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
-import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { openingHistoryWindow, openingSessionHistoryOptions, prefetchOpeningSessionHistory, sessionHistoryIdentity, SessionHistoryBoundary, SessionHistoryStatus, useOpeningSessionHistory, useSessionPrefetchIntent, type OpeningHistoryWindow } from "../src/react-app/domains/session/surface/session-history";
 import { resolveWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 import { flushSessionScrollState, useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
@@ -72,16 +72,16 @@ function fixture() {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  let ensureFullSnapshot: (() => Promise<OpenworkSessionSnapshot>) | undefined;
+  let ensureFullSnapshot: (() => Promise<OpenworkSessionHistory>) | undefined;
   let runWithFullSnapshot: ReturnType<typeof useOpeningSessionHistory>["runWithFullSnapshot"] | undefined;
-  const reads: { owner: string; authToken?: string; window?: OpeningHistoryWindow; signal: AbortSignal; resolve: (snapshot: OpenworkSessionSnapshot) => void; reject: (error: Error) => void }[] = [];
+  const reads: { owner: string; authToken?: string; window?: OpeningHistoryWindow; signal: AbortSignal; resolve: (snapshot: OpenworkSessionHistory) => void; reject: (error: Error) => void }[] = [];
   function input(owner = "a", authToken?: string, cacheOwner = owner) {
-    const readSnapshot = (signal: AbortSignal, window?: OpeningHistoryWindow) => new Promise<OpenworkSessionSnapshot>((resolve, reject) => {
+    const readSnapshot = (signal: AbortSignal, window?: OpeningHistoryWindow) => new Promise<OpenworkSessionHistory>((resolve, reject) => {
       reads.push({ owner, authToken, window, signal, resolve, reject });
     });
     return { owner: cacheOwner, sessionId: owner, authToken, snapshotQueryKey: snapshotKey("workspace", owner), readSnapshot };
   }
-  function Harness({ options, onMount }: { options: ReturnType<typeof input>; onMount?: (ensure: () => Promise<OpenworkSessionSnapshot>) => void }) {
+  function Harness({ options, onMount }: { options: ReturnType<typeof input>; onMount?: (ensure: () => Promise<OpenworkSessionHistory>) => void }) {
     const { sessionId: owner, owner: cacheOwner } = options;
     const key = options.snapshotQueryKey;
     const workspaceId = key[1];
@@ -102,7 +102,7 @@ function fixture() {
       <div>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.id}</div>)}
     </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} loading={full.isFetching && opening.partial} failed={failed} onRetry={() => full.refetch()} /></div></>;
   }
-  async function renderInput(options: ReturnType<typeof input>, mount: { strict?: boolean; onMount?: (ensure: () => Promise<OpenworkSessionSnapshot>) => void } = {}) {
+  async function renderInput(options: ReturnType<typeof input>, mount: { strict?: boolean; onMount?: (ensure: () => Promise<OpenworkSessionHistory>) => void } = {}) {
     const tree = <QueryClientProvider client={client}><Harness options={options} onMount={mount.onMount} /></QueryClientProvider>;
     await act(async () => flushSync(() => root.render(mount.strict ? <StrictMode>{tree}</StrictMode> : tree)));
   }
@@ -118,7 +118,7 @@ function fixture() {
       return ensureFullSnapshot();
     },
     render(owner = "a", authToken?: string, cacheOwner = owner) { return renderInput(input(owner, authToken, cacheOwner)); },
-    async resolve(index: number, title: string | OpenworkSessionSnapshot) {
+    async resolve(index: number, title: string | OpenworkSessionHistory) {
       await act(async () => reads[index].resolve(typeof title === "string" ? snapshot(reads[index].owner, title) : title));
       await settle();
     },
@@ -126,6 +126,26 @@ function fixture() {
 }
 
 describe("opening a thread", () => {
+  test("preview and full history become readable without an activity snapshot", async () => {
+    const view = fixture();
+    await view.render();
+    const preview = snapshot("a", "Readable preview", ["msg_latest"]);
+    await view.resolve(0, { session: preview.session, messages: preview.messages });
+    expect(view.host.textContent).toContain("msg_latest");
+    expect(view.host.querySelector("[data-thread-loading]")).toBeNull();
+    expect(view.client.getQueryData(snapshotKey("workspace", "a"))).toBeUndefined();
+    await paint();
+    await paint();
+    const full = snapshot("a", "Readable full history", ["msg_old", "msg_latest"]);
+    await view.resolve(1, { session: full.session, messages: full.messages });
+    expect(view.host.textContent).toContain("msg_old");
+    expect(view.host.textContent).toContain("msg_latest");
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    const cached = view.client.getQueryData<OpenworkSessionHistory>(snapshotKey("workspace", "a"));
+    expect(cached?.status).toBeUndefined();
+    expect(cached?.todos).toBeUndefined();
+  });
+
   for (const openworkWorkspaceId of [undefined, "runtime-x"]) test(`remote sidebar alias shares runtime preview/full keys with click (explicit runtime ID=${Boolean(openworkWorkspaceId)})`, async () => {
     const sidebarWorkspaceId = "rem_x";
     const endpoint = resolveWorkspaceEndpoint({ id: sidebarWorkspaceId, workspaceType: "remote", baseUrl: "https://worker.example", openworkToken: "remote-token", openworkWorkspaceId }, { baseUrl: "http://localhost:7777", token: "local-token" });

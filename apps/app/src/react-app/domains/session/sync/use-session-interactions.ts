@@ -1,6 +1,7 @@
 // Pending interactions for a conversation and its descendants. Requests stay
 // owned by the session that asked; only their presentation bubbles to the parent.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { QueryObserver } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { unwrap } from "@/app/lib/opencode";
@@ -8,20 +9,86 @@ import { isOpencodeV2Client } from "@/app/lib/opencode-v2-adapter";
 import type { Client, PendingPermission, PendingQuestion, TodoItem } from "@/app/types";
 import { t } from "@/i18n";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
+import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
 import {
   permissionKey,
   questionKey,
   seedPermissionState,
   seedQuestionState,
+  seedSessionStatus,
+  seedSessionTodos,
   settleQuestionState,
   settlePermissionState,
+  statusKey,
   todoKey,
 } from "./session-sync";
 
 const emptyPendingPermissions: PendingPermission[] = [];
 const emptyPendingQuestions: PendingQuestion[] = [];
 const emptyTodos: TodoItem[] = [];
+const hydrationRetryDelaysMs = [100, 250, 500];
+const hydrationClients = new WeakMap<Client, number>();
+let nextHydrationClient = 0;
+
+function observeActivityRead(
+  client: Client,
+  key: readonly unknown[],
+  directory: string,
+  read: (signal: AbortSignal, startedAt: number) => Promise<void>,
+  recoverOnly = false,
+) {
+  let owner = hydrationClients.get(client);
+  if (owner === undefined) {
+    owner = ++nextHydrationClient;
+    hydrationClients.set(client, owner);
+  }
+  const observer = new QueryObserver(getReactQueryClient(), {
+    queryKey: [...key, "hydration", owner, directory],
+    queryFn: async ({ signal }) => {
+      for (let attempt = 0; ; attempt += 1) {
+        signal.throwIfAborted();
+        try {
+          await read(signal, Date.now());
+          return null;
+        } catch (error) {
+          signal.throwIfAborted();
+          const delay = hydrationRetryDelaysMs[attempt];
+          if (delay === undefined) throw error;
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => { clearTimeout(timer); reject(signal.reason); };
+            const timer = setTimeout(() => {
+              signal.removeEventListener("abort", abort);
+              resolve();
+            }, delay);
+            signal.addEventListener("abort", abort, { once: true });
+          });
+        }
+      }
+    },
+    retry: false,
+    gcTime: 0,
+    networkMode: "always",
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  const refresh = () => {
+    const result = observer.getCurrentResult();
+    if (result.isFetching || (recoverOnly && !result.isError)) return;
+    void observer.refetch({ cancelRefetch: false });
+  };
+  const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
+  window.addEventListener("online", refresh);
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  return () => {
+    unsubscribe();
+    window.removeEventListener("online", refresh);
+    window.removeEventListener("focus", refresh);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+}
 
 export type UseSessionInteractionsInput = {
   client: Client | null;
@@ -74,6 +141,24 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     [sessionId, workspaceId],
   );
   const todos = useQueryCacheState<TodoItem[]>(todoQueryKey, emptyTodos);
+
+  useEffect(() => {
+    if (!client || !workspaceId || !sessionId) return;
+    return observeActivityRead(client, statusKey(workspaceId, sessionId), workspaceRoot, async (signal, snapshotStartedAt) => {
+      const statuses = unwrap(await client.session.status({ directory: workspaceRoot || undefined }, { signal }));
+      signal.throwIfAborted();
+      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, { snapshotStartedAt });
+    }, true);
+  }, [client, workspaceId, sessionId, workspaceRoot]);
+
+  useEffect(() => {
+    if (!client || !workspaceId || !sessionId) return;
+    return observeActivityRead(client, todoKey(workspaceId, sessionId), workspaceRoot, async (signal, snapshotStartedAt) => {
+      const todos = unwrap(await client.session.todo({ sessionID: sessionId, directory: workspaceRoot || undefined }, { signal }));
+      signal.throwIfAborted();
+      seedSessionTodos(workspaceId, sessionId, todos, { snapshotStartedAt });
+    });
+  }, [client, workspaceId, sessionId, workspaceRoot]);
 
   useEffect(() => {
     if (!client || !workspaceId || interactionSessionIds.length === 0) return;

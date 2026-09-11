@@ -18,6 +18,7 @@ declare global {
   interface Window {
     __modelEffortRequests?: unknown[];
     __openworkSubmissionFault?: { attempts: number; release: () => void };
+    __openworkLongHistoryFault?: { dispose: () => void };
     __openworkStoppingFault?: {
       state: {
         attempts: number;
@@ -1847,10 +1848,27 @@ export const longHistoryFirst = "LONG-HISTORY-FIRST-MESSAGE 7c31";
 export const longHistoryLast = "LONG-HISTORY-LAST-MESSAGE 7c31";
 
 /** A long stored conversation opened cold, from another selected session. */
-export async function longHistory(seed: Seed) {
+export async function longHistory(seed: Seed, options: { holdAncillaryReads?: boolean } = {}) {
+  if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 stored history (OPENWORK_EVAL_ENGINE=v1)");
   const app = await seed.desktop({ name: "session-full-history" });
   const workspace = await seed.workspace(app, seed.tmpPath("session-full-history"));
-  const session = await seedSessionRetry(seed, app, { title: longHistoryTitle });
+  const createStoredSession = (title: string) => seed.evalIn(app, browserScript(async (workspaceId, title) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) throw new Error("Long history arrangement requires the owned local server");
+    const response = await fetch(`http://127.0.0.1:${port}/workspace/${encodeURIComponent(workspaceId)}/opencode/session`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Long history session creation failed: ${response.status}`);
+    const body: unknown = await response.json();
+    if (!body || typeof body !== "object" || !("id" in body) || typeof body.id !== "string"
+      || !("title" in body) || body.title !== title) throw new Error("Native session did not preserve its seeded title");
+    return { sessionId: body.id, title };
+  }, [workspace.workspaceId, title]), { timeoutMs: 20_000 });
+  const session = options.holdAncillaryReads
+    ? await createStoredSession(longHistoryTitle)
+    : await seedSessionRetry(seed, app, { title: longHistoryTitle });
   // TODO(primitive): store many engine messages without a model turn.
   const seeded = await seed.evalIn(app, browserScript(async (workspaceId, sessionId, count, first, last) => {
     const port = localStorage.getItem("openwork.server.port");
@@ -1875,8 +1893,195 @@ export async function longHistory(seed: Seed) {
     return Array.isArray(storedMessages) ? storedMessages.length : "stored:not-an-array";
   }, [workspace.workspaceId, session.sessionId, longHistoryCount, longHistoryFirst, longHistoryLast]), { awaitPromise: true, timeoutMs: 180_000 });
   if (seeded !== longHistoryCount) throw new Error(`Long history was not stored: ${String(seeded)}`);
-  const other = await seedSessionRetry(seed, app, { title: longHistoryOtherTitle });
-  return { app, workspace, session, other };
+  const other = options.holdAncillaryReads
+    ? await createStoredSession(longHistoryOtherTitle)
+    : await seedSessionRetry(seed, app, { title: longHistoryOtherTitle });
+  if (options.holdAncillaryReads) {
+    await seed.evalIn(app, browserScript((workspaceId, sessionId) => {
+      location.hash = `/workspace/${encodeURIComponent(workspaceId)}/session/${encodeURIComponent(sessionId)}`;
+    }, [workspace.workspaceId, other.sessionId]));
+  }
+  const ancillaryFaultKey = `openwork.eval.long-history-ancillary.${session.sessionId}`;
+  const ancillaryFault = options.holdAncillaryReads
+    ? await addInitScript(app.client, browserScript((workspaceId, sessionId, storageKey, count, last) => {
+      if (window.top !== window) return;
+      const port = localStorage.getItem("openwork.server.port");
+      if (!port || !/^\d+$/.test(port)) throw new Error("Long history fault requires the owned local server port");
+      const serverOrigin = `http://127.0.0.1:${port}`;
+      const paths = ["workspace", "w"].map((mount) => `/${mount}/${encodeURIComponent(workspaceId)}/opencode/session`);
+      const statusPaths = new Set(paths.map((path) => `${path}/status`));
+      const todoPaths = new Set(paths.map((path) => `${path}/${encodeURIComponent(sessionId)}/todo`));
+      const messagePaths = new Set(paths.map((path) => `${path}/${encodeURIComponent(sessionId)}/message`));
+      const originalFetch = window.fetch;
+      type Read = {
+        id: number;
+        kind: "status" | "todo";
+        openedAt: number | null;
+        startedAt: number;
+        settledAt: number | null;
+        outcome: "pending" | "aborted" | "failed";
+        abortName: string | null;
+        sameTurnAbort: boolean;
+      };
+      type Paint = {
+        at: number;
+        elapsedMs: number;
+        messageCount: number;
+        latestVisible: boolean;
+        historyComplete: boolean;
+        reads: Read[];
+        released: boolean;
+        expired: boolean;
+      };
+      const reads: Read[] = [];
+      const opening: { openedAt: number | null; trusted: boolean; first: Paint | null; latest: Paint | null; full: Paint | null } = {
+        openedAt: null, trusted: false, first: null, latest: null, full: null,
+      };
+      const state = {
+        workspaceId, sessionId, documentId: performance.timeOrigin, opening, reads,
+        status: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
+        todo: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
+        history: { limited: 0, full: 0, fullSucceeded: 0 },
+        released: false,
+        expired: false,
+      };
+      const publish = () => localStorage.setItem(storageKey, JSON.stringify(state));
+      let frame = 0;
+      const sample = () => {
+        if (opening.openedAt === null || state.released) return;
+        const root = document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`);
+        const viewport = root?.querySelector<HTMLElement>("[data-thread-scroll]")?.getBoundingClientRect();
+        if (root && viewport && document.visibilityState === "visible") {
+          const messages = [...root.querySelectorAll<HTMLElement>("[data-message-id]")];
+          const visible = (element: HTMLElement) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
+              && rect.bottom > Math.max(0, viewport.top) && rect.top < Math.min(innerHeight, viewport.bottom)
+              && rect.right > Math.max(0, viewport.left) && rect.left < Math.min(innerWidth, viewport.right);
+          };
+          const latest = messages.find((message) => message.textContent?.includes(last));
+          const at = performance.now();
+          const paint: Paint = {
+            at, elapsedMs: at - opening.openedAt, messageCount: messages.length,
+            latestVisible: Boolean(latest && visible(latest)),
+            historyComplete: Boolean(root.querySelector('[data-thread-history-complete="true"]')),
+            reads: reads.map((read) => ({ ...read })), released: state.released, expired: state.expired,
+          };
+          let changed = false;
+          if (!opening.first && messages.some(visible)) { opening.first = paint; changed = true; }
+          if (!opening.latest && paint.latestVisible) { opening.latest = paint; changed = true; }
+          if (!opening.full && paint.messageCount === count && paint.historyComplete && messages.some(visible)) {
+            opening.full = paint;
+            changed = true;
+          }
+          if (changed) publish();
+        }
+        if (!opening.first || !opening.latest || !opening.full) frame = requestAnimationFrame(sample);
+      };
+      const captureOpen = (event: MouseEvent) => {
+        if (opening.openedAt !== null || !event.isTrusted) return;
+        const button = event.composedPath().find((node): node is HTMLElement => node instanceof HTMLElement
+          && node.getAttribute("data-testid") === `sidebar-session-${sessionId}`);
+        if (!button || button.closest("[data-sidebar-session-workspace-id]")?.getAttribute("data-sidebar-session-workspace-id") !== workspaceId) return;
+        opening.openedAt = performance.now();
+        opening.trusted = true;
+        publish();
+        frame = requestAnimationFrame(sample);
+      };
+      window.addEventListener("click", captureOpen, true);
+      const pending = new Set<() => void>();
+      const wrappedFetch: typeof window.fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+        const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+        if (method !== "GET" || url.origin !== serverOrigin) return originalFetch.call(window, input, init);
+        const kind = statusPaths.has(url.pathname) ? "status" : todoPaths.has(url.pathname) ? "todo" : null;
+        if (!kind) {
+          const historyRead = messagePaths.has(url.pathname);
+          const full = historyRead && !url.searchParams.has("limit");
+          if (historyRead) {
+            if (full) state.history.full += 1;
+            else state.history.limited += 1;
+            publish();
+          }
+          const response = await originalFetch.call(window, input, init);
+          if (full && response.ok) { state.history.fullSucceeded += 1; publish(); }
+          return response;
+        }
+        const counter = state[kind];
+        const read: Read = {
+          id: reads.length + 1, kind, openedAt: opening.openedAt, startedAt: performance.now(),
+          settledAt: null, outcome: "pending", abortName: null, sameTurnAbort: false,
+        };
+        reads.push(read);
+        counter.attempts += 1;
+        const unavailable = () => new Response(JSON.stringify({ message: "Long history ancillary read unavailable" }), {
+          status: 503, headers: { "content-type": "application/json" },
+        });
+        if (state.released) {
+          read.outcome = "failed";
+          read.settledAt = performance.now();
+          counter.failed += 1;
+          publish();
+          return unavailable();
+        }
+        counter.pending += 1;
+        publish();
+        return new Promise<Response>((resolve, reject) => {
+          const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+          let sameTurn = true;
+          queueMicrotask(() => { sameTurn = false; });
+          const settle = (aborted: boolean) => {
+            if (read.settledAt !== null) return;
+            read.settledAt = performance.now();
+            read.outcome = aborted ? "aborted" : "failed";
+            read.abortName = aborted && signal?.reason instanceof Error ? signal.reason.name : null;
+            read.sameTurnAbort = aborted && sameTurn && read.abortName === "AbortError"
+              && read.settledAt - read.startedAt < 50 && opening.first === null;
+            signal?.removeEventListener("abort", onAbort);
+            pending.delete(fail);
+            counter.pending -= 1;
+            if (aborted) counter.aborted += 1;
+            else counter.failed += 1;
+            publish();
+            if (aborted) reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+            else resolve(unavailable());
+          };
+          const onAbort = () => settle(true);
+          const fail = () => settle(false);
+          pending.add(fail);
+          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) onAbort();
+        });
+      };
+      const release = () => {
+        state.released = true;
+        cancelAnimationFrame(frame);
+        for (const fail of pending) fail();
+        publish();
+      };
+      const expiry = window.setTimeout(() => { state.expired = true; release(); }, 180_000);
+      const dispose = () => {
+        window.clearTimeout(expiry);
+        release();
+        if (window.fetch === wrappedFetch) window.fetch = originalFetch;
+        window.removeEventListener("pagehide", dispose);
+        window.removeEventListener("click", captureOpen, true);
+      };
+      window.__openworkLongHistoryFault = { dispose };
+      window.addEventListener("pagehide", dispose, { once: true });
+      window.fetch = wrappedFetch;
+      publish();
+    }, [workspace.workspaceId, session.sessionId, ancillaryFaultKey, longHistoryCount, longHistoryLast]))
+    : null;
+  return {
+    app, workspace, session, other, ancillaryFaultKey,
+    async [Symbol.asyncDispose]() {
+      if (!ancillaryFault) return;
+      try { await evalIn(app, () => window.__openworkLongHistoryFault?.dispose(), { timeoutMs: 5_000, reattachAttempts: 0 }); }
+      finally { await ancillaryFault.dispose(); }
+    },
+  };
 }
 
 export async function taskActivity(seed: Seed) {

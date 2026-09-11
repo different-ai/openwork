@@ -889,10 +889,17 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
-          await engineV2Preview.ensureWorkspaceReady(workspace.path);
-          // Reconcile through v2's runtime MCP API before the next call. The
-          // ordinary connection routes remain authoritative; v1 is untouched.
-          await engineV2Preview.syncWorkspaceMcp(workspace.id, workspace.path);
+          // Only exact native history reads may skip execution readiness. Keep
+          // IDs literal (no encoded separators or route-prefix matches), and
+          // still verify session ownership in proxyOpencodeV2Request below.
+          const isSessionHistoryRead = request.method === "GET"
+            && /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?$/.test(mount.restPath);
+          if (!isSessionHistoryRead) {
+            await engineV2Preview.ensureWorkspaceReady(workspace.path);
+            // Reconcile through v2's runtime MCP API before execution admission.
+            // The ordinary connection routes remain authoritative.
+            await engineV2Preview.syncWorkspaceMcp(workspace.id, workspace.path);
+          }
           const send = () => proxyOpencodeV2Request({
             config,
             request,
