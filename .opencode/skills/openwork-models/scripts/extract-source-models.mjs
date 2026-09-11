@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-const basePath = path.resolve("ee/apps/inference/src/models/base.json")
+const basePath = path.resolve("ee/apps/gateway/src/models/base.json")
 
 function readFlag(name) {
   const index = process.argv.indexOf(name)

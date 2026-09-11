@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  MODELS_PATH: ee/apps/inference/src/models/base.json
+  MODELS_PATH: ee/apps/gateway/src/models/base.json
   MODELS_URL: https://models.dev/api.json
   BASE_BRANCH: ${{ inputs.base_branch }}
   BRANCH_NAME: automation/update-models-${{ github.run_id }}-${{ github.run_attempt }}
@@ -232,7 +232,7 @@ jobs:
             exit 1
           fi
 
-          BODY="Machine-generated snapshot of \`ee/apps/inference/src/models/base.json\` from https://models.dev/api.json, schema-validated by the Update Models workflow before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
+          BODY="Machine-generated snapshot of \`ee/apps/gateway/src/models/base.json\` from https://models.dev/api.json, schema-validated by the Update Models workflow before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
           gh api "repos/$REPO/pulls/$PR/reviews" \
             -f event=APPROVE \
             -f commit_id="$HEAD_SHA" \

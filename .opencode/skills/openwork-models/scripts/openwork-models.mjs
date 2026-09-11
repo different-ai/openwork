@@ -3,8 +3,8 @@ import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 const paths = {
-  source: path.resolve("ee/apps/inference/src/models/base.json"),
-  models: path.resolve("ee/apps/inference/src/models/openwork-models.json"),
+  source: path.resolve("ee/apps/gateway/src/models/base.json"),
+  models: path.resolve("ee/apps/gateway/src/models/openwork-models.json"),
   aliases: path.resolve("packages/types/src/den/inference.ts"),
 }
 

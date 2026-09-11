@@ -98,6 +98,7 @@ export function registerDeprecatedMemoryRoutes<T extends { Variables: AuthContex
     "/v1/memory",
     describeRoute({
       tags: ["Deprecated"],
+      security: [],
       deprecated: true,
       summary: "Save a memory (removed feature)",
       description: "The Memory Bank feature has been removed. Saving is refused outright so no caller can believe a memory was persisted.",

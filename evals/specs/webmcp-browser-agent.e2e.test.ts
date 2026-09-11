@@ -395,13 +395,32 @@ test("a conversation signs in, uses site tools and page controls with consent, i
 
   await step("Frame delegation follows actual child frames, with image-only controls still usable", async () => {
     expect((await task("navigate", { tabId, url: `${world.origin}/frames` })).ok).toBe(true);
-    const frames = await probe.eventually(() => task("site_tools", { tabId }), { within: 15_000, until: (value) => !!value.tools?.some((tool) => tool.name === "frame_allowed"), label: "the delegated frame registers its tool" });
-    expect(frames.tools?.map((tool) => tool.name)).toEqual(["frame_allowed"]);
-    const state = await probe.eventually(witness, { within: 10_000, until: (value) => value.privileges.filter((item) => item.page.startsWith("/frame-")).length === 2, label: "both frames report their isolation" });
+    const policy = await probe.eventually(witness, { within: 10_000, until: (value) => value.framePolicyReports.length === 2, label: "both same-origin frames finish their container-policy checks" });
+    expect(policy.framePolicyReports.sort((a, b) => a.page.localeCompare(b.page))).toEqual([
+      { page: "/frame-same-allowed", registration: "registered", execution: "not_requested" },
+      { page: "/frame-same-denied", registration: "NotAllowedError", execution: "NotAllowedError" },
+    ]);
+    expect(policy.frameToolCalls).toEqual([]);
+    const frames = await probe.eventually(() => task("site_tools", { tabId }), { within: 15_000, until: (value) => ["frame_allowed", "frame_same_allowed"].every((name) => value.tools?.some((tool) => tool.name === name)), label: "the delegated and allowed same-origin frames register their tools" });
+    expect(frames.tools?.map((tool) => tool.name).sort()).toEqual(["frame_allowed", "frame_same_allowed"]);
+    const sameOriginTool = frames.tools?.find((tool) => tool.name === "frame_same_allowed");
+    if (!sameOriginTool) throw new Error("Missing allowed same-origin frame tool.");
+    expect(sameOriginTool.origin).toBe(world.origin);
+    const state = await probe.eventually(witness, { within: 10_000, until: (value) => value.privileges.filter((item) => item.page.startsWith("/frame-")).length === 4, label: "all four frames report their isolation" });
     expect(state.privileges.filter((item) => item.page.startsWith("/frame-")).sort((a, b) => a.page.localeCompare(b.page))).toEqual([
       { page: "/frame-allowed", require: "undefined", process: "undefined", Buffer: "undefined" },
       { page: "/frame-denied", require: "undefined", process: "undefined", Buffer: "undefined" },
+      { page: "/frame-same-allowed", require: "undefined", process: "undefined", Buffer: "undefined" },
+      { page: "/frame-same-denied", require: "undefined", process: "undefined", Buffer: "undefined" },
     ]);
+    const allowedCall = task("site_tool", { tabId, toolId: sameOriginTool.toolId });
+    await user.see({ role: "button", label: "Allow once" });
+    expect((await witness()).frameToolCalls).toEqual([]);
+    await user.click({ role: "button", label: "Allow once" });
+    await user.see({ role: "button", label: "Share result" });
+    expect((await witness()).frameToolCalls).toEqual(["/frame-same-allowed"]);
+    await user.click({ role: "button", label: "Share result" });
+    expect(await allowedCall).toMatchObject({ ok: true, dispatched: true, result: { ok: true } });
     const observed = await task("observe", { tabId, includeImage: true });
     expect(observed.elements?.some((element) => element.name === "Frame action")).toBe(false);
     const point = browserImageTarget(observed.image, [238, 111, 18]);
@@ -423,7 +442,7 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(fresh.observationId).not.toBe(observed.observationId);
     expect(fresh.image?.data).not.toBe(observed.image?.data);
     expect((await witness()).records).toHaveLength(2);
-    evidence.recordAssertionEvidence("Frame permissions and visual fallback preserve isolation", "Nested fallback iframe markup did not grant the undelegated sibling tools. Both cross-origin frames reported no Node globals. The approved PNG-derived click reached the child control once, changed a fresh image, and could not reuse the consumed observation.", true);
+    evidence.recordAssertionEvidence("Frame permissions and visual fallback preserve isolation", "Nested fallback iframe markup did not grant the undelegated sibling tools. Explicit same-origin denial blocked registration and execution without a callback; the allowed same-origin tool ran once after approval and released its result only after separate sharing. All four frames reported no Node globals. The approved PNG-derived click reached the child control once, changed a fresh image, and could not reuse the consumed observation.", true);
   });
 
   await step("Spoofed page globals and forged policy payloads cannot expose non-origin-keyed callbacks", async () => {

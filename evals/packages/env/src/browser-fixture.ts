@@ -72,6 +72,11 @@ for(const name of ['denied','allowed']){
   const frame=document.createElement('iframe');frame.src='http://localhost:'+location.port+'/frame-'+name;
   if(name==='allowed')frame.allow='tools *';document.body.append(frame);
 }
+if(location.pathname==='/frames'){
+  for(const [name,allow] of [['denied',"tools 'none'"],['allowed',"tools 'self'"]]){
+    const frame=document.createElement('iframe');frame.src='/frame-same-'+name;frame.allow=allow;document.body.append(frame);
+  }
+}
 if(location.pathname==='/origin-policy'){
   const hostile=document.createElement('iframe');hostile.allow='tools *';
   hostile.src='http://127.0.0.2:'+location.port+'/origin-policy-opt-out';document.body.append(hostile);
@@ -81,7 +86,17 @@ if(location.pathname==='/origin-policy'){
 const framePage = `<!doctype html><title>Frame tool</title><body><script>
 ${frameInputWitness}
 fetch('http://127.0.0.1:'+location.port+'/privileges',{method:'POST',mode:'no-cors',body:JSON.stringify({page:location.pathname,require:typeof require,process:typeof process,Buffer:typeof Buffer})});
-document.modelContext.registerTool({name:location.pathname.slice(1).replace('-','_'),description:'Controlled frame tool.',execute:()=>({ok:true})});
+const tool={name:location.pathname.slice(1).replaceAll('-','_'),description:'Controlled frame tool.',execute:async()=>{
+  await fetch('http://127.0.0.1:'+location.port+'/frame-tool-call',{method:'POST',mode:'no-cors',body:location.pathname});return {ok:true};
+}};
+(async()=>{
+  const context=document.modelContext;let registration='registered',execution='not_requested';
+  try{await context.registerTool(tool);}catch(error){registration=error.name;}
+  if(location.pathname==='/frame-same-denied'){
+    try{await context.executeTool({...tool,window,origin:location.origin},{});execution='executed';}catch(error){execution=error.name;}
+  }
+  if(location.pathname.startsWith('/frame-same-'))await fetch('/frame-policy-report',{method:'POST',body:JSON.stringify({page:location.pathname,registration,execution})});
+})();
 if(location.pathname==='/frame-allowed'){
   const button=document.createElement('button');button.textContent='Frame action';button.style='background:rgb(238,111,18);width:120px;height:40px;border:0';
   button.onclick=()=>{fetch('http://127.0.0.1:'+location.port+'/frame-click',{method:'POST',mode:'no-cors'});button.textContent='Frame complete';};document.body.append(button);
@@ -152,6 +167,8 @@ export interface BrowserFixtureState {
   inputValue: string;
   frameClicks: number;
   frameInputs: Array<{ page: string; type: string; x: number; y: number; target: string; trusted: boolean }>;
+  frameToolCalls: string[];
+  framePolicyReports: Array<{ page: string; registration: string; execution: string }>;
   uploads: number;
   originPolicyCallbacks: number;
   originPolicyReports: Array<{ page: string; nativeOriginAgentCluster: boolean; spoofedOriginAgentCluster: boolean; spoofedDomainMatchesHost: boolean; directOriginKeyed: boolean; forgedOriginKeyed: boolean; reason: string; registration: string; execution: string }>;
@@ -163,7 +180,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
   const ready = `/tmp/browser-task-fixture-${randomUUID()}.json`;
   const fixturePage = requireSignIn ? page : page.replace(/<form id="signin">[\s\S]*?<\/form>/, "");
   const source = `import {createServer} from 'node:http';import {writeFileSync} from 'node:fs';
-    const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[],originPolicyReports=[],stylesheetRequests=[],stylesheetReports=[];
+    const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[],frameToolCalls=[],framePolicyReports=[],originPolicyReports=[],stylesheetRequests=[],stylesheetReports=[];
     let signInCount=0,sessionReads=0,frameClicks=0,uploads=0,inputValue='',originPolicyCallbacks=0;
     let holdDiscovery=false;
     const discovery={waiting:0,released:0,canceled:0,resumed:0,callbacks:0},pendingDiscovery=new Set();
@@ -176,7 +193,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
       res.setHeader('Cache-Control','no-store');res.setHeader('Origin-Agent-Cluster',url.pathname==='/origin-policy-opt-out'?'?0':'?1');
       res.setHeader('Permissions-Policy',url.pathname==='/denied'?'tools=()':['/frames','/origin-policy'].includes(url.pathname)?'tools=(self "http://localhost:'+server.address().port+'" "http://127.0.0.2:'+server.address().port+'")':'tools=(self)');
       if(req.method==='GET'&&url.pathname==='/state'){
-        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,frameInputs,uploads,inputValue,model,discovery,originPolicyReports,originPolicyCallbacks,stylesheetRequests,stylesheetReports}));return;
+        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,frameInputs,frameToolCalls,framePolicyReports,uploads,inputValue,model,discovery,originPolicyReports,originPolicyCallbacks,stylesheetRequests,stylesheetReports}));return;
       }
       if(req.method==='GET'&&url.pathname==='/project.css'){
         stylesheetRequests.push(url.searchParams.get('documentId'));res.setHeader('Content-Type','text/css');res.end('h1{color:rgb(23,87,131)}');return;
@@ -208,6 +225,8 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
         else if(url.pathname==='/input')inputValue=body;
         else if(url.pathname==='/frame-click')frameClicks++;
         else if(url.pathname==='/frame-input'){if(frameInputs.length<100)frameInputs.push(JSON.parse(body));}
+        else if(url.pathname==='/frame-tool-call')frameToolCalls.push(body);
+        else if(url.pathname==='/frame-policy-report')framePolicyReports.push(JSON.parse(body));
         else if(url.pathname==='/upload')uploads++;
         else if(url.pathname==='/origin-policy-report')originPolicyReports.push(JSON.parse(body));
         else if(url.pathname==='/origin-policy-callback')originPolicyCallbacks++;
@@ -273,6 +292,8 @@ export async function readBrowserFixtureState(app: Surface, origin: string): Pro
     signInCount: number(state.signInCount), sessionReads: number(state.sessionReads), frameClicks: number(state.frameClicks), uploads: number(state.uploads), inputValue: string(state.inputValue),
     signals: array(state.signals).map(string), popups: array(state.popups).map(boolean),
     frameInputs: array(state.frameInputs).map((item) => { const row = object(item); return { page: string(row.page), type: string(row.type), x: number(row.x), y: number(row.y), target: string(row.target), trusted: boolean(row.trusted) }; }),
+    frameToolCalls: array(state.frameToolCalls).map(string),
+    framePolicyReports: array(state.framePolicyReports).map((item) => { const row = object(item); return { page: string(row.page), registration: string(row.registration), execution: string(row.execution) }; }),
     records: array(state.records).map((item) => { const row = object(item); return { method: string(row.method), count: number(row.count), signedIn: boolean(row.signedIn) }; }),
     pageRequests: array(state.pageRequests).map((item) => { const row = object(item); return { path: string(row.path), signedIn: boolean(row.signedIn) }; }),
     stylesheetRequests: array(state.stylesheetRequests).map(string),

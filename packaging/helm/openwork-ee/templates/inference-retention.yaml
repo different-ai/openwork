@@ -1,0 +1,65 @@
+{{- include "openwork-ee.gateway.validate" . }}
+{{- $gateway := include "openwork-ee.gateway" . | fromYaml }}
+{{- if and $gateway.enabled $gateway.retention.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-inference-retention
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "inference-retention") | nindent 4 }}
+spec:
+  schedule: {{ $gateway.retention.schedule | quote }}
+  timeZone: {{ $gateway.retention.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: retention
+              image: "{{ $gateway.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" $gateway.image.tag) }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["node", "--input-type=module", "-e"]
+              args:
+                - |
+                  try {
+                    const response = await fetch(process.env.ROLLUP_URL, {
+                      method: "POST",
+                      headers: { authorization: `Bearer ${process.env.GATEWAY_ADMIN_TOKEN}` },
+                      signal: AbortSignal.timeout(180000),
+                    });
+                    await response.body?.cancel();
+                    if (!response.ok) throw new Error();
+                    console.log("Gateway retention batch completed");
+                  } catch {
+                    console.error("Gateway retention batch failed");
+                    process.exitCode = 1;
+                  }
+              env:
+                - name: ROLLUP_URL
+                  value: "http://{{ include "openwork-ee.inferenceServiceName" . }}:{{ $gateway.service.port }}/internal/rollups/run"
+                {{- range $name := list "GATEWAY_ADMIN_TOKEN" "INFERENCE_ADMIN_TOKEN" }}
+                - name: {{ $name }}
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $gateway.retention.adminTokenSecret | quote }}
+                      key: {{ $gateway.retention.adminTokenKey | quote }}
+                      optional: false
+                {{- end }}
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+{{- end }}

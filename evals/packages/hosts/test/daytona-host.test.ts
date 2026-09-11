@@ -410,9 +410,33 @@ test("spawnChrome launches Chromium with Daytona CDP flags and allocates a secon
   assert(firstLaunch.includes("--remote-debugging-address=0.0.0.0"));
   assert(firstLaunch.includes("--remote-debugging-port=9222"));
   assert(firstLaunch.includes("--user-data-dir="));
-  assert(firstLaunch.includes("/tmp/daytona-chrome-browser"));
+  assert(firstLaunch.includes("/tmp/daytona-chrome-browser-"));
   assert(secondLaunch.includes("--remote-debugging-port=9230"));
   assert(/https:\/\/app\.example\.test(["'\s]|$)/.test(secondLaunch));
+});
+
+test("spawnChrome stamps each launch's profile so a second surface with the same name never hits Chromium's profile lock", async () => {
+  const { exec, calls } = createFakeExec((port) => `https://chrome-${port}.example.test`);
+  const host = createDaytonaHost({
+    sandboxId: "openwork-test-chrome-twice",
+    log: () => undefined,
+    exec,
+    repoRoot: "/repo",
+    waitForCdp: successfulPolls(),
+  });
+
+  const first = await host.spawnChrome("spec-web");
+  const second = await host.spawnChrome("spec-web");
+
+  assert(first.profileDir?.startsWith("/tmp/daytona-chrome-spec-web-"));
+  assert(second.profileDir?.startsWith("/tmp/daytona-chrome-spec-web-"));
+  assert.notEqual(first.profileDir, second.profileDir);
+  assert.notEqual(first.meta?.log, second.meta?.log);
+  const launchCalls = calls.filter((call) => argsText(call).includes("nohup \"$CHROME_BIN\""));
+  assert.equal(launchCalls.length, 2);
+  assert(first.profileDir && argsText(launchCalls[0]).includes(first.profileDir));
+  assert(second.profileDir && argsText(launchCalls[1]).includes(second.profileDir));
+  assert(!argsText(launchCalls[1]).includes(first.profileDir));
 });
 
 test("disposeSurface uses self-match-safe pkill patterns in separate execs", async () => {

@@ -10,9 +10,13 @@ import {
   consentVarsFromSource,
   exitCodeFor,
   parseArgs,
+  refAlignmentLabel,
+  refAlignmentWarning,
   resolveExecutionSelection,
+  resolveRefAlignment,
   resolveRunEnvironment,
   resolveTestNames,
+  strictRefRequested,
   summarize,
   summarizeSelectedCase,
   verdictFor,
@@ -156,6 +160,68 @@ test("parseArgs validates values, exclusivity, and unknown flags", () => {
   assert.throws(() => parseArgs(["--case", "CONT-01"]), /requires exactly one named test/);
   assert.throws(() => parseArgs(["--list", "--engine", "v2"]), /--list is mutually exclusive/);
   assert.throws(() => parseArgs(["--publish", "--dry-run", "--engine", "v2"]), /mutually exclusive with --engine/);
+  assert.equal(parseArgs(["app-smoke", "--strict-ref"]).strictRef, true);
+  assert.throws(() => parseArgs(["--publish", "--dry-run", "--strict-ref"]), /mutually exclusive with --strict-ref/);
+});
+
+const RUNNER_SHA = "1111111111111111111111111111111111111111";
+const DEV_SHA = "2222222222222222222222222222222222222222";
+
+function fakeGit(remoteListing = "") {
+  const calls = [];
+  const exec = (command, args) => {
+    calls.push([command, ...args]);
+    const stdout = args[0] === "rev-parse" && args[1] === "HEAD" ? `${RUNNER_SHA}\n`
+      : args[0] === "rev-parse" ? "e2e/feature\n"
+        : args[0] === "ls-remote" ? remoteListing
+          : "";
+    return { status: 0, stdout };
+  };
+  return { exec, calls };
+}
+
+test("resolveRefAlignment only inspects Daytona placement and compares the runner HEAD with the sandbox ref", () => {
+  assert.equal(resolveRefAlignment("local", {}, fakeGit().exec, "/repo"), null);
+  assert.equal(resolveRefAlignment("attached", {}, fakeGit().exec, "/repo"), null);
+
+  const pinned = fakeGit();
+  const aligned = resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: RUNNER_SHA.toUpperCase() }, pinned.exec, "/repo");
+  assert.deepEqual(aligned, { sandboxRef: RUNNER_SHA.toUpperCase(), sandboxSha: RUNNER_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: false });
+  assert.ok(!pinned.calls.some((call) => call[1] === "ls-remote"), "immutable refs never hit the network");
+  assert.equal(resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: RUNNER_SHA.slice(0, 9) }, fakeGit().exec, "/repo").mismatch, false);
+  assert.equal(resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: DEV_SHA }, fakeGit().exec, "/repo").mismatch, true);
+
+  const branch = fakeGit(`${DEV_SHA}\trefs/heads/dev\n3333333333333333333333333333333333333333\trefs/tags/dev\n`);
+  const drifted = resolveRefAlignment("daytona", {}, branch.exec, "/repo");
+  assert.deepEqual(drifted, { sandboxRef: "dev", sandboxSha: DEV_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: true });
+  assert.deepEqual(branch.calls.at(-1), ["git", "ls-remote", "--quiet", "origin", "dev"]);
+  assert.equal(resolveRefAlignment("daytona", { GITHUB_SHA: RUNNER_SHA }, fakeGit().exec, "/repo").mismatch, false);
+
+  const unresolved = resolveRefAlignment("daytona", { OPENWORK_EVAL_REF: "missing-branch" }, fakeGit("").exec, "/repo");
+  assert.equal(unresolved.sandboxSha, "");
+  assert.equal(unresolved.mismatch, null);
+});
+
+test("ref alignment renders a placement label and a warning only when the runner and sandbox differ", () => {
+  const aligned = { sandboxRef: RUNNER_SHA, sandboxSha: RUNNER_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: false };
+  const drifted = { sandboxRef: "dev", sandboxSha: DEV_SHA, runnerSha: RUNNER_SHA, runnerBranch: "e2e/feature", mismatch: true };
+  const unresolved = { sandboxRef: "missing-branch", sandboxSha: "", runnerSha: RUNNER_SHA, runnerBranch: "HEAD", mismatch: null };
+
+  assert.equal(refAlignmentLabel(null), "");
+  assert.equal(refAlignmentLabel(aligned), ` ref=${RUNNER_SHA}`);
+  assert.equal(refAlignmentLabel(drifted), " ref=dev@222222222 [RUNNER/REF MISMATCH]");
+  assert.equal(refAlignmentLabel(unresolved), " ref=missing-branch [unresolved]");
+
+  assert.equal(refAlignmentWarning(null), null);
+  assert.equal(refAlignmentWarning(aligned), null);
+  assert.match(refAlignmentWarning(drifted), /^runner HEAD 111111111 \(e2e\/feature\) differs from the ref the Daytona sandbox builds: dev \(222222222\)\./);
+  assert.match(refAlignmentWarning(drifted), /OPENWORK_EVAL_REF=\$\(git rev-parse HEAD\)/);
+  assert.match(refAlignmentWarning(unresolved), /^could not resolve sandbox ref missing-branch against origin.*runner HEAD 111111111\.$/);
+
+  assert.equal(strictRefRequested({}, {}), false);
+  assert.equal(strictRefRequested({ strictRef: true }, {}), true);
+  assert.equal(strictRefRequested({}, { OPENWORK_EVAL_STRICT_REF: "1" }), true);
+  assert.equal(strictRefRequested({}, { OPENWORK_EVAL_STRICT_REF: "0" }), false);
 });
 
 test("registered cases validate file and effective engine/surface before placement", () => {
@@ -272,6 +338,8 @@ test("explicit local placement removes inherited remote provisioning inputs", ()
     OPENWORK_EVAL_DAYTONA_SANDBOX: "desktop-sandbox",
     OPENWORK_EVAL_DAYTONA_SANDBOX_ID: "legacy-sandbox",
     OPENWORK_EVAL_DAYTONA_DEN_SANDBOX: "den-sandbox",
+    OPENWORK_EVAL_DAYTONA_DEN_WEB_URL: "https://3005-baked.example.test",
+    OPENWORK_EVAL_DAYTONA_DEN_API_URL: "https://8788-baked.example.test",
     OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX: "prepared-desktop",
     OPENWORK_EVAL_DEN_API_URL: "https://den-api.example.test",
     OPENWORK_EVAL_DEN_WEB_URL: "https://den.example.test",

@@ -38,7 +38,7 @@ For Kubernetes Den installs, use the Helm chart's `customCa` support when Den mu
 /etc/openwork/custom-ca/ca-bundle.pem
 ```
 
-It sets `NODE_EXTRA_CA_CERTS` to that file for `den-api`, `den-web`, enabled `inference`, and the migration Job. CA rotation requires restarting the running workloads so Node reloads the file.
+It sets `NODE_EXTRA_CA_CERTS` to that file for `den-api`, `den-web`, enabled OpenWork Gateway (the retained `inference` workload), and the migration Job. CA rotation requires restarting the running workloads so Node reloads the file. Gateway's internal and desktop-reachable origins are separate; see [Gateway configuration](/self-host/gateway#internal-and-public-origins) for production HTTPS requirements.
 
 The low-level values and conflict rules are in the Helm README's [Custom CA certificates](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/README.md#custom-ca-certificates) section.
 

@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
+import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
+import { rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
+import { ApiError } from "./errors.js";
 import { selectPrimaryCredentialEnvName, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import {
@@ -44,6 +48,7 @@ export type CloudProviderSyncStatusProvider = {
   updatedAt: string | null;
   modelIds: string[];
   importedAt: number;
+  modelConfigVersion: number;
 };
 
 /**
@@ -56,8 +61,18 @@ export type CloudProviderSyncSkippedProvider = {
   cloudProviderId: string;
   providerId: string;
   name: string;
-  /** Why materialization skipped this provider (e.g. declared env vars but no credential to fill them). */
-  reason: "missing_credentials" | "needs_key";
+  /**
+   * Why materialization skipped this provider (e.g. declared env vars but no
+   * credential to fill them). Gateway providers report Den's credentialStatus
+   * verbatim when it is not "ready".
+   */
+  reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing" | "no_accessible_models";
+  credentialSetId?: string;
+  /**
+   * Legacy Den OAuth URL, kept for older readers. Current clients must start
+   * OAuth using the host-authenticated provider-ID action, not this URL.
+   */
+  authUrl?: string | null;
 };
 
 export type CloudProviderSyncRunDetail = {
@@ -96,7 +111,7 @@ type DenProviderModel = {
   id: string;
   name: string;
   config: JsonRecord;
-};
+} & Partial<Pick<GatewayUsableModel, "upstreamModelId" | "modelGroupId" | "modelGroupName" | "credentialSetId" | "credentialSetName">>;
 
 type DenProvider = {
   id: string;
@@ -119,7 +134,14 @@ type DenProviderConnection = DenProvider & {
    * earlier release put this credential.
    */
   declaredEnvNames: string[];
+  /** Gateway providers only: Den's readiness verdict for this member. */
+  credentialStatus: "ready" | "member_auth_required" | "org_credential_missing" | null;
+  /** Gateway providers only: OAuth start URL when the member must authorize. */
+  authUrl: string | null;
+  authorizationRequests?: GatewayAuthorizationRequest[];
 };
+
+const gatewayProviderSource = "openwork_gateway";
 
 type EnvEntry = {
   key: string;
@@ -177,7 +199,13 @@ type CloudProviderSyncPendingSession = {
 export type CloudProviderSyncOptions = {
   config: ServerConfig;
   env: EnvService;
-  reloadEngine: () => Promise<void>;
+  /**
+   * Bring the engine onto the materialized config and credentials. The
+   * outcome decides whether the owed reload clears: only an applied action
+   * (`rolled_over`, `reloaded_in_place`) proves the engine read them. A
+   * `skipped` or `coalesced` answer leaves the reload pending and retried.
+   */
+  reloadEngine: () => Promise<RolloverOutcome>;
   /**
    * Reports whether the managed engine currently has non-idle sessions.
    * When it returns true a pending engine reload is deferred to a later
@@ -255,15 +283,22 @@ function parseModel(value: unknown): DenProviderModel | null {
   const id = readRequiredString(value.id);
   const name = readRequiredString(value.name);
   if (!id || !name || (!isRecord(value.config) && typeof value.config !== "string")) return null;
-  return { id, name, config: parseJsonRecord(value.config) };
+  return {
+    id, name, config: parseJsonRecord(value.config),
+    upstreamModelId: readOptionalString(value.upstreamModelId) ?? undefined,
+    modelGroupId: readOptionalString(value.modelGroupId) ?? undefined,
+    modelGroupName: readOptionalString(value.modelGroupName) ?? undefined,
+    credentialSetId: readOptionalString(value.credentialSetId) ?? undefined,
+    credentialSetName: readOptionalString(value.credentialSetName) ?? undefined,
+  };
 }
 
-function parseProvider(value: unknown): DenProvider | null {
+function parseProvider(value: unknown, idPattern: RegExp = /^lpr_/i): DenProvider | null {
   if (!isRecord(value)) return null;
   const id = readRequiredString(value.id);
   const providerId = readRequiredString(value.providerId);
   const name = readRequiredString(value.name);
-  if (!id || !/^lpr_/i.test(id) || !providerId || !name || !Array.isArray(value.models)) return null;
+  if (!id || !idPattern.test(id) || !providerId || !name || !Array.isArray(value.models)) return null;
 
   const models: DenProviderModel[] = [];
   for (const modelValue of value.models) {
@@ -323,6 +358,88 @@ function parseProviderConnection(payload: unknown, listed: DenProvider): DenProv
     apiKeys: parseApiKeys(payload.llmProvider.apiKeys),
     memberCredentialState,
     declaredEnvNames: readProviderEnvNames(listed.providerConfig),
+    credentialStatus: null,
+    authUrl: null,
+  };
+}
+
+type DenInferenceProviderSummary = DenProvider & {
+  credentialStatus: NonNullable<DenProviderConnection["credentialStatus"]>;
+  authUrl: string | null;
+  authorizationRequests: GatewayAuthorizationRequest[];
+};
+
+function parseCredentialStatus(value: unknown): DenInferenceProviderSummary["credentialStatus"] | null {
+  return value === "ready" || value === "member_auth_required" || value === "org_credential_missing"
+    ? value
+    : null;
+}
+
+// Gateway rows (`ipr_*`) are a distinct Den resource: one runtime provider per
+// row, `source` pinned to "openwork_gateway" so the desktop can badge them.
+function parseInferenceProvider(value: unknown): DenInferenceProviderSummary | null {
+  const provider = parseProvider(value, /^ipr_/i);
+  if (!provider || !isRecord(value)) return null;
+  const credentialStatus = parseCredentialStatus(value.credentialStatus);
+  if (!credentialStatus) return null;
+  for (const model of provider.models) {
+    if (!/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(model.id)
+      || model.config.id !== model.id || !model.upstreamModelId || !model.modelGroupId || !model.modelGroupName
+      || !model.credentialSetId || !model.credentialSetName) return null;
+  }
+  const authorizationRequests: GatewayAuthorizationRequest[] = [];
+  if (value.authorizationRequests !== undefined) {
+    if (!Array.isArray(value.authorizationRequests)) return null;
+    for (const request of value.authorizationRequests) {
+      if (!isRecord(request)) return null;
+      const credentialSetId = readRequiredString(request.credentialSetId);
+      const name = readRequiredString(request.name);
+      const authUrl = readRequiredString(request.authUrl);
+      if (!credentialSetId || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(credentialSetId) || !name || !authUrl) return null;
+      authorizationRequests.push({ credentialSetId, name, authUrl });
+    }
+  }
+  // Tolerant: older Den servers omit authUrl; a non-string is treated as absent.
+  const authUrl = typeof value.authUrl === "string" && value.authUrl.trim() ? value.authUrl : null;
+  return { ...provider, source: gatewayProviderSource, credentialStatus, authUrl, authorizationRequests };
+}
+
+function parseInferenceProviderList(payload: unknown): DenInferenceProviderSummary[] {
+  if (!isRecord(payload) || !Array.isArray(payload.inferenceProviders)) {
+    throw new Error("den_inference_provider_list_invalid_response");
+  }
+  const providers: DenInferenceProviderSummary[] = [];
+  for (const value of payload.inferenceProviders) {
+    const provider = parseInferenceProvider(value);
+    if (!provider) throw new Error("den_inference_provider_list_invalid_response");
+    providers.push(provider);
+  }
+  return providers;
+}
+
+function parseInferenceProviderConnection(payload: unknown, expectedId: string): DenProviderConnection {
+  if (!isRecord(payload) || !isRecord(payload.inferenceProvider)) {
+    throw new Error(`den_inference_provider_connect_invalid_response_${expectedId}`);
+  }
+  const provider = parseInferenceProvider(payload.inferenceProvider);
+  if (!provider || provider.id !== expectedId) {
+    throw new Error(`den_inference_provider_connect_invalid_response_${expectedId}`);
+  }
+  const envNames = readProviderEnvNames(provider.providerConfig);
+  const scopedPrefix = `${provider.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_`;
+  const apiKeys = parseApiKeys(payload.inferenceProvider.apiKeys);
+  const apiKey = readRequiredString(payload.inferenceProvider.apiKey);
+  if (!envNames.length || envNames.some((name) => !name.startsWith(scopedPrefix))
+    || !apiKey?.startsWith("ow_gw_") || envNames.some((name) => apiKeys?.[name] !== apiKey)
+    || Object.keys(apiKeys ?? {}).some((name) => !envNames.includes(name))) {
+    throw new Error(`den_inference_provider_unscoped_credentials_${expectedId}`);
+  }
+  return {
+    ...provider,
+    apiKey,
+    apiKeys,
+    memberCredentialState: null,
+    declaredEnvNames: [],
   };
 }
 
@@ -346,6 +463,7 @@ async function requestJson(
   session: CloudProviderDenSession,
   path: string,
   signal: AbortSignal,
+  options: { allowUnavailableResource?: boolean } = {},
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -354,11 +472,22 @@ async function requestJson(
         Accept: "application/json",
         Authorization: `Bearer ${session.token}`,
         "x-openwork-legacy-org-id": session.orgId,
+        "x-openwork-org-id": session.orgId,
       },
       signal: AbortSignal.any([signal, AbortSignal.timeout(requestTimeoutMs)]),
+      redirect: "error",
     });
   } catch (error) {
     throw new Error(error instanceof Error ? `den_request_failed: ${error.message}` : "den_request_failed");
+  }
+  // JSON null is an invalid payload, not evidence that the resource is absent.
+  if (options.allowUnavailableResource && [404, 405, 501].includes(response.status)) return undefined;
+  if (response.status === 409 && path.startsWith("/v1/inference-providers/")) {
+    const conflict: unknown = await response.json().catch(() => null);
+    const code = isRecord(conflict) ? (isRecord(conflict.error) ? conflict.error.code : conflict.error) : null;
+    if (code === "gateway_selection_required" || code === "credential_set_required") {
+      throw new ApiError(409, "gateway_selection_required", "Choose a model group and credential set in the model picker, or select the named credential set's Connect row in AI Providers.");
+    }
   }
   if (!response.ok) throw new Error(`den_request_failed_${response.status}`);
   try {
@@ -369,7 +498,7 @@ async function requestJson(
   }
 }
 
-async function fetchProviders(
+async function fetchLlmProviders(
   fetchImpl: typeof globalThis.fetch,
   session: CloudProviderDenSession,
   signal: AbortSignal,
@@ -382,6 +511,43 @@ async function fetchProviders(
         provider,
       )),
   );
+}
+
+async function fetchInferenceProviders(
+  fetchImpl: typeof globalThis.fetch,
+  session: CloudProviderDenSession,
+  signal: AbortSignal,
+): Promise<DenProviderConnection[]> {
+  // Only an unavailable list resource permits legacy-only sync. Once Gateway
+  // advertises a row, connect failures must abort rather than retire owned rows
+  // or send Gateway IDs/credentials through the legacy provider API.
+  const payload = await requestJson(fetchImpl, session, "/v1/inference-providers?scope=usable", signal, { allowUnavailableResource: true });
+  if (payload === undefined) return [];
+  const providers = parseInferenceProviderList(payload);
+  return Promise.all(
+    providers.map(async (provider) => {
+      // Ready combinations and pending member-auth sets can coexist.
+      if (provider.models.length === 0) {
+        return { ...provider, apiKey: null, apiKeys: null, memberCredentialState: null, declaredEnvNames: [] };
+      }
+      return parseInferenceProviderConnection(
+        await requestJson(fetchImpl, session, `/v1/inference-providers/${encodeURIComponent(provider.id)}/connect`, signal),
+        provider.id,
+      );
+    }),
+  );
+}
+
+async function fetchProviders(
+  fetchImpl: typeof globalThis.fetch,
+  session: CloudProviderDenSession,
+  signal: AbortSignal,
+): Promise<DenProviderConnection[]> {
+  const [llmProviders, inferenceProviders] = await Promise.all([
+    fetchLlmProviders(fetchImpl, session, signal),
+    fetchInferenceProviders(fetchImpl, session, signal),
+  ]);
+  return [...llmProviders, ...inferenceProviders];
 }
 
 function stableValue(value: unknown): unknown {
@@ -404,10 +570,6 @@ function hashString(value: string): string {
 
 function runtimeProviderId(provider: DenProvider): string {
   return provider.source === "openwork" ? "openwork" : provider.id;
-}
-
-function isCloudManagedProviderKey(providerId: string): boolean {
-  return /^lpr_/i.test(providerId) || providerId.trim() === "openwork";
 }
 
 function readProviderEnvNames(providerConfig: JsonRecord): string[] {
@@ -457,19 +619,27 @@ function providerEnvEntries(provider: DenProviderConnection): EnvEntry[] {
   return entries;
 }
 
-function buildModelConfig(model: DenProviderModel): JsonRecord {
-  const next: JsonRecord = { id: model.id, name: model.name };
+function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRecord {
+  // Older Den responses included routing labels in the display name. Keep the
+  // wire ID and selection metadata, but don't expose those labels in the picker.
+  const selection = model.modelGroupName && model.credentialSetName ? ` (${model.modelGroupName} / ${model.credentialSetName})` : "";
+  const next: JsonRecord = {
+    id: model.id,
+    name: selection && model.name.endsWith(selection) ? model.name.slice(0, -selection.length) : model.name,
+  };
   for (const key of modelConfigPassthroughKeys) {
     const value = model.config[key];
     if (value !== undefined) next[key] = value;
   }
+  const variants = catalogFastVariants(model.config, providerNpm);
+  if (variants) next.variants = variants;
   return next;
 }
 
 function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   const models: JsonRecord = {};
   for (const model of [...provider.models].sort((left, right) => left.id.localeCompare(right.id))) {
-    models[model.id] = buildModelConfig(model);
+    models[model.id] = buildModelConfig(model, provider.providerConfig.npm);
   }
   const config: JsonRecord = {
     id: provider.providerId,
@@ -498,12 +668,28 @@ function prepareMaterialization(
   const skipped: CloudProviderSyncSkippedProvider[] = [];
   const availableLocalEnvNames = [...localEnvNames];
   for (const provider of providers) {
+    for (const request of provider.authorizationRequests ?? []) {
+      skipped.push({
+        cloudProviderId: provider.id, providerId: runtimeProviderId(provider),
+        credentialSetId: request.credentialSetId, name: `${provider.name} / ${request.name}`,
+        reason: "member_auth_required",
+      });
+    }
     if (provider.memberCredentialState && provider.memberCredentialState !== "active") {
       skipped.push({
         cloudProviderId: provider.id,
         providerId: runtimeProviderId(provider),
         name: provider.name,
         reason: "needs_key",
+      });
+      continue;
+    }
+    if (provider.source === gatewayProviderSource && provider.models.length === 0) {
+      if (!provider.authorizationRequests?.length) skipped.push({
+        cloudProviderId: provider.id,
+        providerId: runtimeProviderId(provider),
+        name: provider.name,
+        reason: provider.credentialStatus === "member_auth_required" ? "member_auth_required" : provider.credentialStatus === "org_credential_missing" ? "org_credential_missing" : "no_accessible_models",
       });
       continue;
     }
@@ -538,8 +724,15 @@ function prepareMaterialization(
   materialized.sort((left, right) => left.runtimeProviderId.localeCompare(right.runtimeProviderId));
 
   const envEntries: EnvEntry[] = [];
+  const gatewayEnvNames = new Set(materialized.filter((entry) => entry.provider.source === gatewayProviderSource)
+    .flatMap((entry) => entry.envEntries.map((env) => env.key)));
   for (const provider of materialized) {
-    for (const entry of provider.envEntries) upsertEnvEntry(envEntries, entry.key, entry.value);
+    for (const entry of provider.envEntries) {
+      if (gatewayEnvNames.has(entry.key) && envEntries.some((other) => other.key === entry.key)) {
+        throw new Error("den_inference_provider_env_collision");
+      }
+      upsertEnvEntry(envEntries, entry.key, entry.value);
+    }
   }
   const desiredKeys = new Set(envEntries.map((entry) => entry.key));
   const supersededEntries: EnvEntry[] = [];
@@ -577,8 +770,8 @@ function desiredProviderMap(prepared: PreparedMaterialization): JsonRecord {
   return Object.fromEntries(prepared.providers.map((provider) => [provider.runtimeProviderId, provider.config]));
 }
 
-function managedProviderMap(providers: Record<string, Record<string, unknown>>): JsonRecord {
-  return Object.fromEntries(Object.entries(providers).filter(([providerId]) => isCloudManagedProviderKey(providerId)));
+function managedProviderMap(providers: Record<string, Record<string, unknown>>, ownedIds: Set<string>): JsonRecord {
+  return Object.fromEntries(Object.entries(providers).filter(([providerId]) => ownedIds.has(providerId)));
 }
 
 function removeCloudProviderImportBaselines(openwork: JsonRecord): JsonRecord | null {
@@ -615,7 +808,7 @@ function configuredReloadRetryMs(): number {
 export class CloudProviderSync {
   private readonly config: ServerConfig;
   private readonly env: EnvService;
-  private readonly reloadEngine: () => Promise<void>;
+  private readonly reloadEngine: () => Promise<RolloverOutcome>;
   private readonly engineBusy?: () => Promise<boolean>;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly logger?: CloudProviderSyncLogger;
@@ -626,7 +819,7 @@ export class CloudProviderSync {
   private skippedProviders: CloudProviderSyncSkippedProvider[] = [];
   private fingerprint: string | null = null;
   private materializationContextKey: string | null = null;
-  private ownedEnvKeys = new Set<string>();
+  private ownedEnvKeys = new Map<string, string>();
   private managedProviderIds = new Set<string>();
   private importedAtByCloudProviderId = new Map<string, number>();
   private reloadPending = false;
@@ -788,6 +981,35 @@ export class CloudProviderSync {
     };
   }
 
+  async startProviderOAuth(providerId: string, orgId: string, credentialSetId?: string): Promise<GatewayDesktopOauthStartResponse> {
+    if (!/^ipr_[a-z0-9]+$/.test(providerId)) throw new ApiError(400, "invalid_provider", "A gateway provider ID is required");
+    if (credentialSetId !== undefined && !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(credentialSetId)) throw new ApiError(400, "invalid_credential_set", "A credential set ID is required");
+    const session = this.session;
+    const generation = this.contextGeneration;
+    if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
+    if (session.orgId !== orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
+    const query = credentialSetId ? `?credentialSetId=${encodeURIComponent(credentialSetId)}` : "";
+    const payload = await requestJson(this.fetchImpl, session, `/v1/inference-providers/${providerId}/oauth/start${query}`, this.providerFetchController.signal);
+    if (generation !== this.contextGeneration || this.session !== session) {
+      throw new ApiError(409, "session_changed", "The active account changed; try again");
+    }
+    const rawUrl = isRecord(payload) ? readRequiredString(payload.authUrl) : null;
+    let url: URL;
+    try {
+      url = new URL(rawUrl ?? "");
+    } catch {
+      throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+    }
+    // Vertex is the only supported member OAuth provider. Never open a Den
+    // session URL, arbitrary upstream URL, or a URL carrying our bearer.
+    if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth"
+      || url.username || url.password || url.hash || url.href.includes(session.token)
+      || [...url.searchParams.values()].some((value) => value.includes(session.token))) {
+      throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+    }
+    return { authorizationUrl: url.href };
+  }
+
   stop(): void {
     this.stopInterval();
     this.stopReloadRetry();
@@ -896,7 +1118,12 @@ export class CloudProviderSync {
           return;
         }
         try {
-          await this.reloadEngine();
+          const outcome = await this.reloadEngine();
+          if (!rolloverOutcomeApplied(outcome)) {
+            // Still owed: the engine did not read the materialized config.
+            this.scheduleReloadRetry();
+            return;
+          }
           this.reloadPending = false;
           // A landed retry settles a previously failed run: without this the
           // status would stay "failed" forever even though the engine now
@@ -948,6 +1175,7 @@ export class CloudProviderSync {
     const { reason, session } = request;
     if (request.generation !== this.contextGeneration) return { status: "no_session" };
     try {
+      await this.restoreOwnership();
       const [providers, storedEnv] = await Promise.all([
         fetchProviders(this.fetchImpl, session, this.providerFetchController.signal),
         this.env.list(),
@@ -993,8 +1221,28 @@ export class CloudProviderSync {
   ): Promise<{ changed: boolean; detail: CloudProviderSyncRunDetail; reloadError?: unknown }> {
     const desiredProviders = desiredProviderMap(prepared);
     const globalRuntime = await readGlobalRuntimeOpencodeConfig(this.config);
-    const currentManagedProviders = managedProviderMap(runtimeProviderMap(globalRuntime));
+    const currentManagedProviders = managedProviderMap(runtimeProviderMap(globalRuntime), this.managedProviderIds);
+    const retiredProviderIds = [...this.managedProviderIds].filter((id) => !(id in desiredProviders));
     const providerStateChanged = stableJson(currentManagedProviders) !== stableJson(desiredProviders);
+    const storedEnv = new Map((await this.env.list()).map((entry) => [entry.key, entry.value]));
+    for (const { provider, envEntries } of prepared.providers) {
+      if (provider.source !== gatewayProviderSource) continue;
+      for (const entry of envEntries) {
+        const previous = storedEnv.get(entry.key);
+        if (previous?.startsWith("ow_inf_") && (!this.managedProviderIds.has(provider.id) || this.ownedEnvKeys.get(entry.key) !== hashString(previous))) {
+          throw new Error("gateway_credential_ownership_conflict: Existing key is not a proven Gateway-owned binding; reconnect this provider without changing OpenWork Models credentials.");
+        }
+      }
+    }
+    const envDeletes = [...this.ownedEnvKeys].filter(([key, hash]) => {
+      const value = storedEnv.get(key);
+      return !prepared.envEntries.some((entry) => entry.key === key)
+        && value !== undefined && hashString(value) === hash;
+    }).map(([key]) => key);
+    for (const providerId of Object.keys(desiredProviders)) this.managedProviderIds.add(providerId);
+    for (const entry of prepared.envEntries) this.ownedEnvKeys.set(entry.key, hashString(entry.value));
+    // Keep retired rows until auth removal has been persisted by its owner.
+    await this.persistOwnership();
 
     if (providerStateChanged) {
       const patch: JsonRecord = {};
@@ -1007,25 +1255,11 @@ export class CloudProviderSync {
         provider: mergeRuntimeProviderUpdate(current.provider, patch),
       }));
     }
-    for (const providerId of Object.keys(desiredProviders)) this.managedProviderIds.add(providerId);
-
-    const storedEnv = new Map((await this.env.list()).map((entry) => [entry.key, entry.value]));
     const envUpserts = prepared.envEntries.filter((entry) => storedEnv.get(entry.key) !== entry.value);
     if (envUpserts.length > 0) {
       await this.env.upsertMany(envUpserts);
     }
-    const desiredEnvKeys = new Set(prepared.envEntries.map((entry) => entry.key));
-    // Ownership follows the active cloud materialization, not whether this
-    // process happened to write the value. After an app/server restart the
-    // persisted credential can already equal Den's value, so envUpserts is
-    // empty. Reclaim every desired key or the next logout will leave that
-    // cloud credential behind permanently.
-    for (const key of desiredEnvKeys) this.ownedEnvKeys.add(key);
-    const envDeletes = [...this.ownedEnvKeys].filter((key) => !desiredEnvKeys.has(key));
-    // Ownership is in-memory, so after the app restarts nothing remembers the
-    // credential an earlier release wrote under the bare catalog name — and
-    // left there it keeps enabling OpenCode's built-in vendor catalog. Remove
-    // it only on an exact value match: a different value is the user's own.
+    // Migrate earlier bare catalog slots only on an exact credential match.
     for (const entry of prepared.supersededEntries) {
       if (storedEnv.get(entry.key) === entry.value && !envDeletes.includes(entry.key)) envDeletes.push(entry.key);
     }
@@ -1049,6 +1283,7 @@ export class CloudProviderSync {
       env: this.env,
       fetchImpl: this.fetchImpl,
       logger: this.logger,
+      retiredProviderIds,
     });
     // Only a rotated value or a removal invalidates cached SDK clients.
     // Re-seeding the same key to a replaced engine generation is not a
@@ -1077,8 +1312,22 @@ export class CloudProviderSync {
         this.scheduleReloadRetry();
       } else {
         try {
-          await this.reloadEngine();
-          this.reloadPending = false;
+          const outcome = await this.reloadEngine();
+          if (rolloverOutcomeApplied(outcome)) {
+            this.reloadPending = false;
+          } else if (outcome.action === "coalesced") {
+            // Parked behind a drain or throttle inside the pool: it lands
+            // later, so keep it owed and visible rather than calling it done.
+            reloadDeferred = true;
+            this.scheduleReloadRetry();
+          } else {
+            // The engine answered "skipped" to a change it must apply (a
+            // rotated key never shows in its config fingerprint). Clearing
+            // reloadPending here is what reported "applied" while the engine
+            // still served the previous credential.
+            reloadError = new Error(`cloud_provider_engine_reload_skipped: ${outcome.reason}`);
+            this.scheduleReloadRetry();
+          }
         } catch (error) {
           reloadError = error;
           // Self-heal like the busy-deferral path: without this, a failed
@@ -1089,6 +1338,7 @@ export class CloudProviderSync {
       }
     }
     this.managedProviderIds = new Set(Object.keys(desiredProviders));
+    await this.persistOwnership();
     const detail: CloudProviderSyncRunDetail = {
       fingerprintChanged: this.fingerprint !== prepared.fingerprint,
       providerStateChanged,
@@ -1115,7 +1365,7 @@ export class CloudProviderSync {
       const runtime = await readRuntimeOpencodeConfig(this.config, workspace.id);
       const providerPatch: JsonRecord = {};
       for (const providerId of Object.keys(runtimeProviderMap(runtime))) {
-        if (isCloudManagedProviderKey(providerId)) providerPatch[providerId] = null;
+        if (this.managedProviderIds.has(providerId)) providerPatch[providerId] = null;
       }
       if (Object.keys(providerPatch).length > 0) {
         const result = await writeRuntimeOpencodeConfig(this.config, workspace.id, (current) => ({
@@ -1158,12 +1408,14 @@ export class CloudProviderSync {
         source: entry.provider.source,
         updatedAt: entry.provider.updatedAt,
         modelIds: entry.provider.models.map((model) => model.id).sort(),
+        modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
         importedAt,
       };
     });
   }
 
   private async sweep(options: { forceReload?: boolean } = {}): Promise<void> {
+    await this.restoreOwnership();
     const providerPatch = Object.fromEntries([...this.managedProviderIds].map((providerId) => [providerId, null]));
     let providerChanged = false;
     if (Object.keys(providerPatch).length > 0) {
@@ -1173,7 +1425,12 @@ export class CloudProviderSync {
       }));
       providerChanged = result.changed;
     }
-    for (const key of this.ownedEnvKeys) await this.env.delete(key);
+    const storedEnv = new Map((await this.env.list()).map((entry) => [entry.key, entry.value]));
+    for (const [key, hash] of this.ownedEnvKeys) {
+      const value = storedEnv.get(key);
+      if (value !== undefined && hashString(value) === hash) await this.env.delete(key);
+    }
+    await this.cleanupWorkspaceTakeovers();
 
     const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
     if (engineWorkspace) {
@@ -1185,7 +1442,11 @@ export class CloudProviderSync {
       env: this.env,
       fetchImpl: this.fetchImpl,
       logger: this.logger,
+      retiredProviderIds: [...this.managedProviderIds],
     });
+    this.ownedEnvKeys.clear();
+    this.managedProviderIds.clear();
+    await this.persistOwnership();
     this.reloadPending = this.reloadPending
       || authResult.delivered.length > 0
       || authResult.removed.length > 0;
@@ -1194,8 +1455,9 @@ export class CloudProviderSync {
       this.scheduleReloadRetry();
     } else if (this.reloadPending) {
       try {
-        await this.reloadEngine();
-        this.reloadPending = false;
+        const outcome = await this.reloadEngine();
+        if (rolloverOutcomeApplied(outcome)) this.reloadPending = false;
+        else this.scheduleReloadRetry();
       } catch (error) {
         reloadError = error;
         // Sign-out cleanup must still reach the engine once it recovers.
@@ -1203,5 +1465,45 @@ export class CloudProviderSync {
       }
     }
     if (reloadError) throw reloadError;
+  }
+
+  private async persistOwnership(): Promise<void> {
+    await writeOpenworkWorkspaceConfig(this.config, "__cloud_provider_ownership__", () => ({
+      envHashes: Object.fromEntries(this.ownedEnvKeys),
+      providerIds: [...this.managedProviderIds],
+    }));
+  }
+
+  private async restoreOwnership(): Promise<void> {
+    const saved = await readOpenworkWorkspaceConfig(this.config, "__cloud_provider_ownership__");
+    if (isRecord(saved.envHashes)) {
+      for (const [key, hash] of Object.entries(saved.envHashes)) {
+        if (typeof hash === "string") this.ownedEnvKeys.set(key, hash);
+      }
+    }
+    for (const id of readStringList(saved.providerIds)) this.managedProviderIds.add(id);
+    // Workspace import baselines are collaborator-writable metadata, not proof
+    // of ownership for runtime, credential, or auth cleanup.
+    const storedEnv = new Map((await this.env.list()).map((entry) => [entry.key, entry.value]));
+    const runtimes = [await readGlobalRuntimeOpencodeConfig(this.config)];
+    for (const workspace of this.config.workspaces) {
+      runtimes.push(await readRuntimeOpencodeConfig(this.config, workspace.id));
+    }
+    for (const runtime of runtimes) {
+      for (const [id, provider] of Object.entries(runtimeProviderMap(runtime))) {
+        // Upgrade current dev's BYOK config: only the exact row's scoped env
+        // binding is evidence. A bare key or an orphan LPR_/IPR_ prefix is not.
+        if (!/^lpr_[a-z0-9]{26}$/.test(id) || typeof provider.npm !== "string" || typeof provider.id !== "string") continue;
+        const prefix = `LPR_${id.slice(-5).toUpperCase()}_`;
+        const names = readProviderEnvNames(provider);
+        if (!names.length || !names.every((name) => name.startsWith(prefix))) continue;
+        this.managedProviderIds.add(id);
+        for (const name of names) {
+          const value = storedEnv.get(name);
+          if (value !== undefined && !this.ownedEnvKeys.has(name)) this.ownedEnvKeys.set(name, hashString(value));
+        }
+      }
+    }
+    await this.persistOwnership();
   }
 }
