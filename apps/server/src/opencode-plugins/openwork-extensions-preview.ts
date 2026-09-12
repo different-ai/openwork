@@ -119,6 +119,15 @@ const sessionPartSchema = z.object({
   text: z.string().optional(),
   synthetic: z.boolean().optional(),
   ignored: z.boolean().optional(),
+  tool: z.string().optional(),
+  callID: z.string().optional(),
+  state: z.object({
+    status: z.enum(["pending", "running", "completed", "error"]),
+    input: z.record(z.string(), z.unknown()),
+    output: z.string().optional(),
+    error: z.string().optional(),
+    time: z.object({ start: z.number(), end: z.number().optional() }).optional(),
+  }).optional(),
 }).passthrough();
 
 const sessionMessageSchema = z.object({
@@ -173,7 +182,10 @@ type SessionSearchResult = {
   updatedAt: number;
   archived: boolean;
   parentId: string | null;
-  kind: "title" | "message";
+  kind: "title" | "message" | "tool";
+  tool?: string;
+  callId?: string;
+  status?: string;
   /** The whole query text appeared contiguously (not just every term). */
   phrase: boolean;
   snippet: SessionSearchSnippet;
@@ -583,6 +595,54 @@ function messageText(message: SessionMessage): string {
   return parts.join("\n\n");
 }
 
+function redactSessionText(text: string): string {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (isRecord(parsed) || Array.isArray(parsed)) return JSON.stringify(redactSessionValue(parsed));
+  } catch {}
+  return text
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi, (url) => {
+      const start = url.indexOf("//") + 2;
+      const end = url.slice(start).search(/[/?#]/);
+      const authorityEnd = end === -1 ? url.length : start + end;
+      const safe = url.slice(0, start) + url.slice(start, authorityEnd).replace(/^.*(@|%40)/i, "") + url.slice(authorityEnd);
+      const cut = safe.search(/[?#]/);
+      return cut === -1 ? safe : safe.slice(0, cut) + (/(:\d+){1,2}$/.exec(safe)?.[0] ?? "");
+    })
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[redacted]")
+    .replace(/\bow[thc]_[A-Za-z0-9_-]+\b/g, "[redacted]")
+    .replace(/((["'])(?:token|grant|code|secret|key|password|authorization)\2\s*:\s*)(?:"(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^,\s"'{}\[\]]+)/gi, '$1"[redacted]"')
+    .replace(/(token|grant|code|secret|key)=(?:"(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^&\s"'<>()]+)/gi, "$1=[redacted]");
+}
+
+function redactSessionValue(value: unknown): unknown {
+  if (typeof value === "string") return redactSessionText(value);
+  if (Array.isArray(value)) return value.map(redactSessionValue);
+  if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, nested]) => [
+    redactSessionText(key),
+    /(?:token|grant|code|secret|key|password|authorization|cookie)$/i.test(key.trim()) ? "[redacted]" : redactSessionValue(nested),
+  ]));
+  return value ?? null;
+}
+
+function sessionToolParts(message: SessionMessage) {
+  return message.parts.flatMap((part) => part.type === "tool" && part.tool && part.callID && part.state
+    ? [{ tool: part.tool, callId: part.callID, state: part.state }]
+    : []);
+}
+
+function sessionToolFields(state: NonNullable<z.infer<typeof sessionPartSchema>["state"]>): string[] {
+  return [state.input, state.output, state.error].map((value) => JSON.stringify(redactSessionValue(value)));
+}
+
+function isPreToolText(message: SessionMessage): boolean {
+  const textParts = message.parts.filter((part) => part.type === "text");
+  if (textParts.length !== 1) return false;
+  const index = message.parts.indexOf(textParts[0]);
+  return message.parts[index + 1]?.type === "tool";
+}
+
 type TextMatch = { index: number; length: number; phrase: boolean };
 
 function findTextMatch(text: string, queryLower: string, mode: SessionSearchMatchMode): TextMatch | null {
@@ -622,12 +682,31 @@ function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, q
   };
 }
 
-function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
+function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode, parts: SessionSearchArgs["in"]): SessionSearchResult | null {
   let fallback: SessionSearchResult | null = null;
   for (const [index, message] of messages.entries()) {
     const role = message.info.role;
     if (role !== "user" && role !== "assistant") continue;
-    const text = messageText(message);
+    if (parts.includes("tool")) {
+      for (const part of sessionToolParts(message)) {
+        const text = sessionToolFields(part.state).join("\n\n");
+        const match = findTextMatch(text, queryLower, mode);
+        if (!match || fallback) continue;
+        fallback = {
+          ...sessionMetadata(workspace, session),
+          kind: "tool",
+          tool: part.tool,
+          callId: part.callId,
+          status: part.state.status,
+          phrase: match.phrase,
+          role,
+          messageId: message.info.id,
+          messageIndex: index,
+          snippet: buildSessionSnippet(text, match.index, match.length),
+        };
+      }
+    }
+    const text = parts.includes("text") ? messageText(message) : "";
     if (!text) continue;
     const match = findTextMatch(text, queryLower, mode);
     if (!match) continue;
@@ -778,7 +857,7 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
 
   // Title phase: every filtered root session, one list call per workspace.
   for (const { workspace, session } of sessions.slice(scanLimit)) {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+    const titleMatch = args.in.includes("text") ? titleSearchResult(workspace, session, queryLower, mode) : null;
     if (!titleMatch) continue;
     titleMatched.add(session.id);
     matches.push(titleMatch);
@@ -787,11 +866,11 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   // Transcript phase: only the scanLimit newest sessions are read. A message
   // match wins the snippet, but the title match still owns the rank.
   await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session }) => {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+    const titleMatch = args.in.includes("text") ? titleSearchResult(workspace, session, queryLower, mode) : null;
     if (titleMatch) titleMatched.add(session.id);
     try {
       const messages = await readSessionMessages(workspace, session.id, messageLimit);
-      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode);
+      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode, args.in);
       if (messageMatch) matches.push(messageMatch);
       else if (titleMatch) matches.push(titleMatch);
     } catch {
@@ -817,18 +896,32 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   };
 }
 
-type ReadableMessage = { index: number; id: string; role: string; createdAt: number | null; text: string };
-
-function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
+function readableMessages(messages: SessionMessage[], parts: z.infer<typeof sessionReadArgsSchema>["parts"]) {
   return messages
     .map((message, index) => ({
       index,
       id: message.info.id,
       role: message.info.role,
       createdAt: message.info.time?.created ?? null,
-      text: messageText(message),
+      text: parts.includes("text") ? messageText(message) : "",
+      ...(parts.includes("tool") ? { tools: sessionToolParts(message).map((part) => {
+        const fields = sessionToolFields(part.state);
+        return {
+          type: "tool",
+          tool: part.tool,
+          callId: part.callId,
+          status: part.state.status,
+          input: fields[0].slice(0, 2000),
+          output: fields[1].slice(0, 2000),
+          error: fields[2].slice(0, 2000),
+          ...(fields.some((field) => field.length > 2000) ? { truncated: true } : {}),
+        };
+      }) } : {}),
+      ...(parts.includes("reasoning") ? { reasoning: message.parts
+        .filter((part) => part.type === "reasoning" && !part.synthetic && !part.ignored)
+        .map((part) => redactSessionText(part.text?.trim() ?? "")).filter(Boolean).join("\n\n") } : {}),
     }))
-    .filter((message) => message.text.trim().length > 0);
+    .filter((message) => message.text.trim().length > 0 || message.tools?.length || message.reasoning);
 }
 
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
@@ -852,7 +945,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
         readSessionMessages(workspace, args.sessionId, needsFullTranscript ? undefined : count),
         readSessionActivity(workspace, args.sessionId),
       ]);
-      const readable = readableMessages(messages);
+      const readable = readableMessages(messages, args.parts);
       const metadata = {
         ...sessionMetadata(workspace, session),
         status: activity.status,
@@ -865,7 +958,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
           model: sessionModelOf(session),
           totalMessages: readable.length,
           firstUser: readable.find((message) => message.role === "user") ?? null,
-          lastAssistant: [...readable].reverse().find((message) => message.role === "assistant") ?? null,
+          lastAssistant: [...readable].reverse().find((message) => message.role === "assistant" && messageText(messages[message.index]) && !isPreToolText(messages[message.index])) ?? null,
         };
       }
       const window = from === "start" ? readable.slice(0, count) : readable.slice(-count);

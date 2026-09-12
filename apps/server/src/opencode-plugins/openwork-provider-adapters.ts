@@ -27,6 +27,7 @@ export const sessionSearchArgsSchema = z.object({
   limit: z.number().int().positive().max(20).optional().describe("Maximum matching sessions to return. Defaults to 10, max 20."),
   scanLimit: z.number().int().positive().max(500).optional().describe("Maximum newest sessions whose transcripts are scanned across matching workspaces; every root session's title is matched regardless. Defaults to 100, max 500."),
   messageLimit: z.number().int().positive().max(1000).optional().describe("Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
+  in: z.array(z.enum(["text", "tool"])).default(["text"]).describe("Parts to search: text (default [text]) or tool input/output/error. Tool snippets are redacted; matching scans the full redacted fields before the read cap."),
   match: z.enum(["all", "any", "phrase"]).optional().describe("all (default): every whitespace-separated term must appear; any: one term suffices; phrase: the exact query text must appear."),
   createdAfter: sessionTimestampArgSchema.optional().describe("Only sessions created at or after this time (epoch milliseconds or ISO-8601 string)."),
   createdBefore: sessionTimestampArgSchema.optional().describe("Only sessions created at or before this time (epoch milliseconds or ISO-8601 string)."),
@@ -38,7 +39,8 @@ export const sessionReadArgsSchema = z.object({
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
   count: z.number().int().positive().max(100).optional().describe("Number of transcript messages to return. Defaults to 30, max 100."),
   from: z.enum(["start", "end"]).optional().describe("end (default): the last `count` messages; start: the first `count` messages."),
-  summary: z.boolean().optional().describe("When true, return only the first user message and the last assistant message plus session metadata."),
+  parts: z.array(z.enum(["text", "tool", "reasoning"])).default(["text"]).describe("Parts to return: text (default [text]), tool, reasoning. Tool input/output/error are redacted then JSON-stringified, each capped at 2000 characters; truncated: true flags clipping. Tool-only messages are retained when requested."),
+  summary: z.boolean().optional().describe("Return the first user and last assistant with text, excluding a sole text part immediately preceding a tool part. No eligible assistant returns null; normal reads preserve that text."),
 });
 
 // Same contract agents read back as `model`; `variant` may be omitted on input.
@@ -152,6 +154,7 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("limit", "number", false, "Maximum matching sessions to return. Defaults to 10, max 20."),
           argument("scanLimit", "number", false, "Maximum newest sessions whose transcripts are scanned across matching workspaces; every root session's title is matched regardless. Defaults to 100, max 500."),
           argument("messageLimit", "number", false, "Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
+          argument("in", "array", false, "Parts to search: text (default [text]) or tool input/output/error. Tool matches return kind: tool, tool, callId, status and a redacted snippet; matching scans full redacted fields before the 2000-character read cap. Titles are searched only with text."),
           argument("match", "string", false, "all (default): every whitespace-separated term must appear; any: one term suffices; phrase: the exact query text must appear."),
           argument("createdAfter", "unknown", false, "Only sessions created at or after this time (epoch milliseconds or ISO-8601 string)."),
           argument("createdBefore", "unknown", false, "Only sessions created at or before this time (epoch milliseconds or ISO-8601 string)."),
@@ -170,7 +173,8 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("workspaceId", "string", false, "Optional workspace id or name."),
           argument("count", "number", false, "Number of messages to return. Defaults to 30, max 100."),
           argument("from", "string", false, "end (default): the last `count` messages; start: the first `count` messages."),
-          argument("summary", "boolean", false, "When true, return only the first user and last assistant messages plus metadata."),
+          argument("parts", "array", false, "Parts to return: text (default [text]), tool, reasoning. Adds tools [{type: tool, tool, callId, status, input, output, error, truncated?: true}] and reasoning string when requested. Tool fields are redacted then JSON-stringified, each capped at 2000 characters; truncated flags clipping. Tool-only messages are retained."),
+          argument("summary", "boolean", false, "Return the first user and last assistant with text, excluding a sole text part immediately preceding a tool part. No eligible assistant returns null; normal reads preserve that text."),
         ],
         effects: readEffects,
       }),

@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import type { ToolPart } from "@opencode-ai/sdk/v2";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
@@ -123,7 +124,14 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExten
   return output.system.join("\n");
 }
 
-function startFakeOpenWorkServer(options: { failPromptText?: string; failSessionListWorkspaceId?: string } = {}) {
+function completedTool(callId: string, input: Record<string, unknown>, output: string, start = 310, end = start + 1): ToolPart {
+  return {
+    id: `part_${callId}`, sessionID: "ses_alpha", messageID: "msg_tools", type: "tool", tool: "openwork_execute", callID: callId,
+    state: { status: "completed", input, output, title: "Execute", metadata: {}, time: { start, end } },
+  };
+}
+
+function startFakeOpenWorkServer(options: { failPromptText?: string; failSessionListWorkspaceId?: string; messages?: unknown[] } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
   const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
   let createdCount = 0;
@@ -255,6 +263,10 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
       }
 
       if (url.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message") {
+        if (options.messages) {
+          const limit = url.searchParams.get("limit");
+          return Response.json(limit ? options.messages.slice(-Number(limit)) : options.messages);
+        }
         return Response.json([
           {
             info: { id: "msg_assistant", role: "assistant", time: { created: 301 } },
@@ -470,6 +482,104 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(parsed.result.sessionId).toBe("ses_archive");
     expect(parsed.result.messages.at(-1)?.text).toContain("archive importer");
+  });
+
+  test("session.read default bytes stay identical for an ordinary transcript", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_archive", count: 2, ...args } });
+    const expected = JSON.stringify({
+      ok: true, id: "session.read", result: {
+        ok: true, workspaceId: "ws_2", workspace: "Archive", sessionId: "ses_archive", title: "Archive decisions",
+        createdAt: 10, updatedAt: 100, archived: true, parentId: null, status: "idle", working: false, model: null,
+        from: "end", returned: 1, requested: 2,
+        messages: [{ index: 1, id: "msg_latest", role: "assistant", createdAt: 102, text: "We decided to ship the archive importer first." }],
+      }, effects: { data: "read", ui: "none", external: false },
+    }, null, 2);
+    expect(await read({})).toBe(expected);
+    expect(await read({ parts: ["text"] })).toBe(expected);
+  });
+
+  test("session.read exposes SDK tool states, reasoning, caps and post-redaction truncation only on opt-in", async () => {
+    const secret = 'token="quoted private value" grant=\'grant private value\' code="code private value" secret="secret private value" key="key private value" https://name:password@host.test/path?hidden=query-private Bearer bearer-private';
+    const failed: ToolPart = {
+      ...completedTool("call_error", {}, ""),
+      state: { status: "error", input: { secret: "object-private" }, error: `${secret} ${"e".repeat(2100)}`, time: { start: 312, end: 313 } },
+    };
+    startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_tools", role: "assistant", time: { created: 300 } }, parts: [
+        completedTool("call_long", { nested: { authorization: "nested-private", value: secret }, long: "i".repeat(2100) }, `${secret} ${"o".repeat(2100)}`),
+        failed,
+        completedTool("call_short", { token: "s".repeat(3000) }, JSON.stringify({ nested: { password: 'escaped-"private', text: secret } })),
+        { ...completedTool("call_pending", {}, ""), state: { status: "pending", input: {}, raw: "" } },
+        { ...completedTool("call_running", {}, ""), state: { status: "running", input: {}, time: { start: 315 } } },
+      ] },
+      { info: { id: "msg_reasoning", role: "assistant" }, parts: [{ type: "reasoning", text: "Compare the options." }] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", ...args } });
+    expect(affordanceResultSchema("session.read", readResultSchema).parse(JSON.parse(await read({}))).result.messages).toEqual([]);
+    const raw = await read({ parts: ["tool", "reasoning"] });
+    const messages = affordanceResultSchema("session.read", z.object({ messages: z.array(z.object({
+      text: z.string(), reasoning: z.string(), tools: z.array(z.object({
+        type: z.literal("tool"), tool: z.string(), callId: z.string(), status: z.string(), input: z.string().max(2000), output: z.string().max(2000), error: z.string().max(2000), truncated: z.literal(true).optional(),
+      }).strict()),
+    }).passthrough()) })).parse(JSON.parse(raw)).result.messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].tools.map((tool) => tool.status)).toEqual(["completed", "error", "completed", "pending", "running"]);
+    expect(messages[0].tools[0]).toMatchObject({ callId: "call_long", tool: "openwork_execute", truncated: true, error: "null" });
+    expect(messages[0].tools[0].input).toHaveLength(2000);
+    expect(messages[0].tools[0].output).toHaveLength(2000);
+    expect(messages[0].tools[1].error).toHaveLength(2000);
+    expect(messages[0].tools[1].truncated).toBe(true);
+    expect(messages[0].tools[2].truncated).toBeUndefined();
+    expect(messages[0].tools[2].input).toBe('{"token":"[redacted]"}');
+    expect(messages[1].reasoning).toBe("Compare the options.");
+    for (const leak of ["private", "name:", "password@", "hidden=", "s".repeat(100)]) expect(raw).not.toContain(leak);
+    expect(raw).toContain("[redacted]");
+    const capped = affordanceResultSchema("session.read", readResultSchema).parse(JSON.parse(await read({ parts: ["tool", "reasoning"], count: 1 })));
+    expect(capped.result.messages).toHaveLength(1);
+    expect(capped.result.messages[0].id).toBe("msg_reasoning");
+  });
+
+  test.each(["input-only-needle", "beyond-cap-needle", "error-only-needle"])("session.search finds %s in tools without leaking secrets", async (query) => {
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant" }, parts: [
+      completedTool("call_search", { target: "input-only-needle", token: "input-private" }, `${"x".repeat(2200)} token="output private" beyond-cap-needle`),
+      { ...completedTool("call_error", {}, ""), state: { status: "error", input: {}, error: 'error-only-needle Bearer error-private', time: { start: 312, end: 313 } } },
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const search = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.search", args: { query, ...args } });
+    expect(affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await search({}))).result.results).toEqual([]);
+    const raw = await search({ in: ["tool"] });
+    const result = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(raw)).result.results[0];
+    expect(result).toMatchObject({ kind: "tool", tool: "openwork_execute", callId: query === "error-only-needle" ? "call_error" : "call_search", status: query === "error-only-needle" ? "error" : "completed", snippet: { match: query } });
+    expect(raw).not.toContain("private");
+    expect(affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await search({ in: ["tool"], query: "input-private" }))).result.results).toEqual([]);
+  });
+
+  test("summary skips only sole text immediately before a tool; normal reads retain it", async () => {
+    const tool = completedTool("call_thinking", {}, "done");
+    startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_user", role: "user" }, parts: [{ type: "text", text: "Investigate." }] },
+      { info: { id: "msg_reply", role: "assistant" }, parts: [{ type: "text", text: "This is the reply." }] },
+      { info: { id: "msg_thinking", role: "assistant" }, parts: [{ type: "step-start" }, { type: "text", text: "This is also a reply in plain language." }, tool, { type: "step-finish" }] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", ...args } });
+    const summary = affordanceResultSchema("session.read", z.object({ lastAssistant: z.object({ id: z.string() }) })).parse(JSON.parse(await read({ summary: true })));
+    expect(summary.result.lastAssistant.id).toBe("msg_reply");
+    expect(await read({})).toContain("This is also a reply in plain language.");
+  });
+
+  test.each([
+    [{ type: "text", text: "Before" }, completedTool("call", {}, ""), { type: "text", text: "After" }],
+    [{ type: "text", text: "Thinking is a normal word." }, { type: "step-finish" }],
+    [completedTool("call", {}, ""), { type: "text", text: "After the tool" }],
+  ])("summary keeps an assistant outside the conservative structural pattern", async (...parts) => {
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_reply", role: "assistant" }, parts }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", summary: true } });
+    expect(affordanceResultSchema("session.read", z.object({ lastAssistant: z.object({ id: z.string() }) })).parse(JSON.parse(raw)).result.lastAssistant.id).toBe("msg_reply");
   });
 
   test("session.read reports live status and working so agents can check before archiving", async () => {
