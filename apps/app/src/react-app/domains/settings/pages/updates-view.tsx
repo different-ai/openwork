@@ -104,6 +104,11 @@ export function UpdatesView(props: UpdatesViewProps) {
       ? t("settings.update_download_failed")
       : t("settings.update_check_failed");
   const updateNotes = props.updateStatus?.notes ?? null;
+  const checkingForNewer = updateState === "ready" && props.updateStatus?.checkingForNewer;
+  const checkError = props.updateStatus?.checkError;
+  const checkCooldown = updateState === "ready" && Boolean(props.updateStatus?.checkCooldownUntil);
+  const candidate = updateState === "ready" ? props.updateStatus?.candidate : undefined;
+  const installLabel = t("updates.install_version", undefined, { version: updateVersion ?? "" });
 
   const updateRestartActiveRunsMessage =
     updateState === "ready" && props.anyActiveRuns
@@ -132,13 +137,15 @@ export function UpdatesView(props: UpdatesViewProps) {
                       : updateState === "downloading"
                         ? t("settings.update_downloading")
                         : updateState === "ready"
-                          ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
+                          ? t(props.updateStatus?.newest ? "updates.ready_newest" : "settings.update_ready_version", undefined, { version: updateVersion ?? "" })
                           : updateState === "error"
                             ? updateErrorTitle
                             : t("settings.update_uptodate")}
                 </LayoutSectionItemTitle>
                 <LayoutSectionItemDescription>
-                  {(updateState === "idle" || updateState === "blocked") && updateLastCheckedAt
+                  {candidate
+                    ? t("updates.candidate_available", undefined, { version: candidate.version, stagedVersion: updateVersion ?? "" })
+                    : (updateState === "idle" || updateState === "blocked") && updateLastCheckedAt
                     ? t("settings.update_last_checked", undefined, {
                         time: formatRelativeTime(updateLastCheckedAt),
                       })
@@ -151,10 +158,10 @@ export function UpdatesView(props: UpdatesViewProps) {
                     <Button
                       variant="outline"
                       onClick={() => void props.checkForUpdates()}
-                      disabled={props.busy || updateState === "checking" || updateState === "downloading"}
+                      disabled={props.busy || updateState === "checking" || updateState === "downloading" || checkingForNewer || checkCooldown}
                     >
-                      {updateState === "checking" ? <Spinner className="size-4" /> : null}
-                      {t("settings.update_check_button")}
+                      {updateState === "checking" || checkingForNewer ? <Spinner className="size-4" /> : null}
+                      {checkingForNewer ? t("updates.checking") : checkError ? t("updates.retry") : checkCooldown ? t("updates.check_cooldown") : t("settings.update_check_button")}
                     </Button>
 
                     {updateState === "available" ? (
@@ -169,7 +176,6 @@ export function UpdatesView(props: UpdatesViewProps) {
 
                     {updateState === "ready" ? (
                       <Button
-                        variant="secondary"
                         onClick={() => {
                           if (props.anyActiveRuns) {
                             setConfirmRestartOpen(true);
@@ -179,7 +185,22 @@ export function UpdatesView(props: UpdatesViewProps) {
                         }}
                         disabled={props.busy}
                       >
-                        {t("settings.update_install_button")}
+                        {installLabel}
+                      </Button>
+                    ) : null}
+
+                    {candidate ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => void props.downloadUpdate()}
+                        disabled={props.busy || checkingForNewer}
+                      >
+                        {t("updates.download_version", undefined, {
+                          version: candidate.version,
+                          size: candidate.totalBytes != null && candidate.totalBytes > 0
+                            ? formatBytes(candidate.totalBytes)
+                            : t("updates.size_unknown"),
+                        })}
                       </Button>
                     ) : null}
                   </div>
@@ -188,6 +209,19 @@ export function UpdatesView(props: UpdatesViewProps) {
 
               {updateState === "downloading" ? (
                 <UpdateDownloadProgress downloadedBytes={updateDownloadedBytes} totalBytes={updateTotalBytes} />
+              ) : null}
+
+              {candidate?.date ? (
+                <LayoutSectionItemDescription>
+                  {t("settings.update_published", undefined, { date: candidate.date })}
+                </LayoutSectionItemDescription>
+              ) : null}
+
+              {updateState === "ready" && checkError ? (
+                <Alert variant="destructive">
+                  <CircleAlert />
+                  <AlertDescription>{checkError}</AlertDescription>
+                </Alert>
               ) : null}
 
               {updateState === "error" && updateErrorMessage ? (
@@ -215,7 +249,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                 open={confirmRestartOpen}
                 title={t("settings.update_restart_confirm_title")}
                 message={t("settings.update_restart_confirm_message")}
-                confirmLabel={t("settings.update_install_button")}
+                confirmLabel={installLabel}
                 cancelLabel={t("common.cancel")}
                 onConfirm={() => {
                   setConfirmRestartOpen(false);
@@ -225,9 +259,9 @@ export function UpdatesView(props: UpdatesViewProps) {
               />
             </LayoutSectionItem>
 
-            {updateState === "available" && updateNotes ? (
+            {(updateState === "available" && updateNotes) || candidate?.notes ? (
               <LayoutSectionItem className="max-h-40 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
-                {updateNotes}
+                {candidate ? candidate.notes : updateNotes}
               </LayoutSectionItem>
             ) : null}
 

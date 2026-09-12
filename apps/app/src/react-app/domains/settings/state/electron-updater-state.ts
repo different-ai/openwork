@@ -3,6 +3,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import type { DenDesktopConfig } from "../../../../app/lib/den";
 import {
+  compareVersions,
   isAlphaChannelAllowedByDesktopConfig,
   isAlphaUpdateAllowed,
   isUpdateAllowed,
@@ -26,6 +27,17 @@ export type SettingsUpdateStatus = {
   downloadedBytes?: number;
   message?: string;
   failedAction?: "check" | "download" | "install";
+  checkingForNewer?: boolean;
+  checkError?: string;
+  checkCooldownUntil?: number;
+  newest?: boolean;
+  candidate?: {
+    version: string;
+    totalBytes: number | null;
+    date?: string;
+    notes?: string;
+    channel: ReleaseChannel;
+  };
 } | null;
 
 type ElectronUpdaterBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>["updater"] & {
@@ -169,6 +181,9 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   const autoCheckInFlightRef = useRef(false);
   const autoCheckKeyRef = useRef<string | null>(null);
   const checkRequestRef = useRef(0);
+  const readyCheckInFlightRef = useRef<number | null>(null);
+  const readyCheckCooldownRef = useRef(0);
+  const stagedUpdateRevisionRef = useRef(0);
   const releaseChannelRequestRef = useRef(0);
   const availableReleaseChannelRef = useRef<ReleaseChannel | null>(null);
   const downloadedReleaseChannelRef = useRef<ReleaseChannel | null>(null);
@@ -256,6 +271,25 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   }, [onReleaseChannelChange, policyReleaseChannel]);
 
   const downloadUpdate = useCallback(async (channelOverride?: ReleaseChannel) => {
+    const status = updateStatusRef.current;
+    if (!channelOverride && (status?.state === "downloading" || (status?.state === "ready" && readyCheckInFlightRef.current === checkRequestRef.current))) return;
+    const candidate = !channelOverride && status?.state === "ready" ? status.candidate : undefined;
+    if (candidate) {
+      stagedUpdateRevisionRef.current += 1;
+      checkRequestRef.current += 1;
+      downloadedReleaseChannelRef.current = null;
+      availableReleaseChannelRef.current = candidate.channel;
+      const nextStatus: SettingsUpdateStatus = {
+        state: "downloading",
+        version: candidate.version,
+        totalBytes: candidate.totalBytes,
+        date: candidate.date,
+        notes: candidate.notes,
+        downloadedBytes: 0,
+      };
+      updateStatusRef.current = nextStatus;
+      setUpdateStatus(nextStatus);
+    }
     const releaseChannelRequestId = releaseChannelRequestRef.current;
     const isCurrentReleaseChannel = () =>
       releaseChannelRequestRef.current === releaseChannelRequestId;
@@ -370,6 +404,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   const runCheckForUpdates = useCallback(async (
     channelOverride?: ReleaseChannel,
     manual = false,
+    suppressAutoDownload = false,
   ) => {
     if (!isElectronRuntime()) return;
     const requestId = checkRequestRef.current + 1;
@@ -519,7 +554,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         : null;
       downloadedReleaseChannelRef.current = null;
       setUpdateStatus(nextStatus);
-      if (availableAllowed && updateAutoDownload) {
+      if (availableAllowed && updateAutoDownload && !suppressAutoDownload) {
         await downloadUpdate(checkedReleaseChannel);
       }
     } catch (error) {
@@ -532,13 +567,113 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     }
   }, [appVersion, downloadUpdate, onReleaseChannelChange, refreshDesktopConfig, releaseChannel, resolvePolicyReleaseChannel, setError, updateAutoDownload]);
 
+  const checkWhileReady = useCallback(async () => {
+    const staged = updateStatusRef.current;
+    if (staged?.state !== "ready" || readyCheckInFlightRef.current === checkRequestRef.current || Date.now() < readyCheckCooldownRef.current) return;
+    readyCheckCooldownRef.current = Date.now() + 15_000;
+    const requestId = ++checkRequestRef.current;
+    readyCheckInFlightRef.current = requestId;
+    const isCurrentRequest = () => checkRequestRef.current === requestId &&
+      updateStatusRef.current?.state === "ready" && updateStatusRef.current.version === staged.version;
+    setUpdateStatus({
+      ...staged,
+      checkingForNewer: true,
+      checkError: undefined,
+      candidate: undefined,
+      newest: false,
+      checkCooldownUntil: readyCheckCooldownRef.current,
+    });
+    try {
+      const bridge = electronUpdaterBridge();
+      if (!bridge?.check) throw new Error(t("updates.bridge_unavailable"));
+      const channel = downloadedReleaseChannelRef.current ?? releaseChannel;
+      let targetVersion: string | undefined;
+      if (channel === "stable") {
+        const channelState = await bridge.getChannel?.();
+        if (!isCurrentRequest()) return;
+        const currentVersion = channelState?.currentVersion ?? appVersion;
+        if (!currentVersion) throw new Error(t("updates.installed_version_unknown"));
+        const selection = await resolveFreshStableDesktopUpdate({ currentVersion, refreshDesktopConfig });
+        if (!isCurrentRequest()) return;
+        if (!selection) throw new Error(t("updates.release_inventory_invalid"));
+        if (selection.kind === "update") targetVersion = selection.targetVersion;
+      }
+      const result = await bridge.check(channel, targetVersion, { preserveStaged: true });
+      if (!isCurrentRequest()) return;
+      if (!staged.version || result.stagedVersion !== staged.version) {
+        stagedUpdateRevisionRef.current += 1;
+        downloadedReleaseChannelRef.current = null;
+        availableReleaseChannelRef.current = null;
+        readyCheckCooldownRef.current = 0;
+        const message = t("updates.staged_unavailable");
+        const nextStatus: SettingsUpdateStatus = { state: "error", failedAction: "check", message, checkError: message };
+        updateStatusRef.current = nextStatus;
+        setUpdateStatus(nextStatus);
+        return;
+      }
+      if (result.reason) throw new Error(result.reason);
+      const comparison = result.latestVersion
+        ? compareVersions(result.latestVersion, staged.version)
+        : null;
+      const allowed = result.available && result.latestVersion && comparison === 1
+        ? channel === "stable"
+          ? result.latestVersion === targetVersion
+          : await isAlphaUpdateAllowed(result.latestVersion, desktopConfigRef.current, appVersion)
+        : false;
+      if (!isCurrentRequest()) return;
+      setUpdateStatus({
+        ...staged,
+        checkingForNewer: false,
+        checkError: undefined,
+        checkCooldownUntil: readyCheckCooldownRef.current > Date.now() ? readyCheckCooldownRef.current : undefined,
+        newest: comparison === 0,
+        candidate: allowed && result.latestVersion ? {
+          version: result.latestVersion,
+          totalBytes: result.totalBytes ?? null,
+          date: result.releaseDate ?? undefined,
+          notes: releaseNotesToText(result.releaseNotes),
+          channel,
+        } : undefined,
+      });
+    } catch (error) {
+      if (!isCurrentRequest()) return;
+      readyCheckCooldownRef.current = 0;
+      setUpdateStatus({
+        ...staged,
+        checkingForNewer: false,
+        checkError: describeError(error),
+        checkCooldownUntil: undefined,
+        newest: false,
+        candidate: undefined,
+      });
+    } finally {
+      if (readyCheckInFlightRef.current === requestId) readyCheckInFlightRef.current = null;
+    }
+  }, [appVersion, refreshDesktopConfig, releaseChannel]);
+
+  const checkCooldownUntil = updateStatus?.checkCooldownUntil;
+  useEffect(() => {
+    if (!checkCooldownUntil) {
+      readyCheckCooldownRef.current = 0;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setUpdateStatus((current) => current?.checkCooldownUntil === checkCooldownUntil
+        ? { ...current, checkCooldownUntil: undefined }
+        : current);
+    }, Math.max(0, checkCooldownUntil - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [checkCooldownUntil]);
+
   const checkForUpdates = useCallback(
     (channelOverride?: ReleaseChannel) => {
-      const state = updateStatusRef.current?.state;
-      if (!channelOverride && (state === "downloading" || state === "ready")) return Promise.resolve();
-      return runCheckForUpdates(channelOverride, true);
+      const status = updateStatusRef.current;
+      const state = status?.state;
+      if (!channelOverride && state === "ready") return checkWhileReady();
+      if (!channelOverride && state === "downloading") return Promise.resolve();
+      return runCheckForUpdates(channelOverride, true, !channelOverride && Boolean(status?.checkError));
     },
-    [runCheckForUpdates],
+    [checkWhileReady, runCheckForUpdates],
   );
 
   useEffect(() => {
@@ -549,6 +684,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       const status = updateStatusRef.current;
       const state = status?.state;
       if (autoCheckInFlightRef.current || state === "checking" || state === "downloading" || state === "ready") return;
+      if (status?.checkError) return;
       // A failed install needs the person: the update was already downloaded,
       // so a background re-check would only re-download it and re-offer the
       // same restart. Keep the failure (and Settings' Check now) until they retry.
@@ -586,8 +722,10 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
   const installUpdateAndRestart = useCallback(async () => {
     const releaseChannelRequestId = releaseChannelRequestRef.current;
+    const stagedUpdateRevision = stagedUpdateRevisionRef.current;
     const isCurrentReleaseChannel = () =>
-      releaseChannelRequestRef.current === releaseChannelRequestId;
+      releaseChannelRequestRef.current === releaseChannelRequestId &&
+      stagedUpdateRevisionRef.current === stagedUpdateRevision;
     const bridge = electronUpdaterBridge();
     if (!bridge?.installAndRestart) {
       const message = "Electron update install is available only in the Electron desktop app.";
