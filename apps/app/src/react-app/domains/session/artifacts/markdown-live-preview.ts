@@ -262,6 +262,7 @@ class TableWidget extends WidgetType {
     // renderMarkdownHtml sanitizes its output.
     wrapper.innerHTML = renderMarkdownHtml(this.source, "surface");
     wrapper.addEventListener("mousedown", (event) => {
+      if (event.target === wrapper) return;
       event.preventDefault();
       const doc = view.state.doc;
       const lineNumber = doc.lineAt(this.from).number + clickedRowOffset(event.target);
