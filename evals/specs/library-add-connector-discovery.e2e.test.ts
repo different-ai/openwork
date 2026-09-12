@@ -1,5 +1,4 @@
 import { expect } from "vitest";
-import { evalIn } from "@openwork/behaviors";
 import { needs, spec, unmetNeeds } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
 import { libraryConnectorDiscovery } from "../worlds/library.ts";
@@ -28,7 +27,7 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     "The upgraded profile retains openwork.extension.enabled.google-workspace=1. Settings retains the Cloud account entry without restoring Google Workspace or local Google OAuth setup.",
     true,
   );
-  const bootstrap = await evalIn(
+  const bootstrap = await probe.eval(
     desktop,
     () => (window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig")
       .then((config) => ({
@@ -82,9 +81,20 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     await user.screenshot();
   });
 
-  await step("normal MCP Add never opens a local form or the retired picker", async () => {
+  await step("admin MCP Add requests this Den's MCP connections without local creation UI", async () => {
     const libraryHash = await probe.hash();
+    const expectedUrl = new URL("/dashboard/mcp-connections", denWebUrl).toString();
+    const openedBefore = await probe.eventually(() => world.browserUrls.opened(), {
+      within: 10_000, label: "external-open requests before admin Add MCP",
+    });
     await user.click({ role: "button", label: "Add MCP", nth: 0 });
+    const openedAfter = await probe.eventually(() => world.browserUrls.opened(), {
+      within: 10_000,
+      label: "admin Add MCP issues a fresh external-open request",
+      until: (urls) => urls.length > openedBefore.length,
+    });
+    expect(openedAfter).toHaveLength(openedBefore.length + 1);
+    expect(openedAfter.slice(openedBefore.length)).toEqual([expectedUrl]);
     await user.notSee({ role: "textbox", label: "App name" });
     await user.notSee({ text: "Add workspace MCP" });
     await user.notSee({ testId: "library-add-choices" });
@@ -93,12 +103,10 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     expect(await probe.storage("openwork.den.activeOrgId")).toBe(orgId);
     await user.see({ role: "button", label: "Add MCP", nth: 0 });
     expect((await probe.dom('header button[aria-label="Add MCP"]:not(:disabled):not([aria-disabled="true"])')).elements).toHaveLength(1);
-    // The current world exposes bootstrap context, not an external-URL receipt.
-    // The Cloud destination needs that world-owned witness; absence of a modal is only the negative half.
     evidence.recordAssertionEvidence(
-      "Cloud MCP Add leaves the Library intact without local creation UI",
-      `Bootstrap context=${JSON.stringify(bootstrap)}; the Library route and organization were retained with zero dialogs after the trusted Add MCP click. The outgoing URL is not witnessed by this fixture.`,
-      true,
+      "Admin Cloud MCP Add requests the exact fixture Den MCP connections URL without local creation UI",
+      `Bootstrap context=${JSON.stringify(bootstrap)}; external-open count=${openedBefore.length}->${openedAfter.length}; captured URL=${openedAfter.at(-1)}; expected=${expectedUrl}; Library route and organization retained with zero dialogs. The fixture captures the final desktop boundary without launching an OS browser.`,
+      openedAfter.length === openedBefore.length + 1 && openedAfter.at(-1) === expectedUrl,
     );
   });
 

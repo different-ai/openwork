@@ -2,27 +2,60 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { libraryMcpServersFromConfig } from "../worlds/desktop.ts";
 
-const test = spec.world(libraryMcpServersFromConfig);
+const test = spec.world(libraryMcpServersFromConfig, {
+  resources: {
+    surfaces: ["desktop"],
+    services: ["den", "mock"],
+    nativeReason: "Read hand-written workspace MCP configuration through the Electron desktop bridge.",
+  },
+});
 
 // People paste MCP servers into opencode.json from Claude Desktop or Cursor,
 // where the shape is `command: "python3", args: [...]`. OpenWork must list that
 // server beside its own `command: [...]` shape instead of blanking Settings.
 test("the Library lists MCP servers written by hand into opencode.json, whichever command shape they use", async ({ world, user, agent, probe, step, evidence }) => {
-  await step("the workspace fixture wrote three servers into opencode.json", async () => {
+  await step("the workspace fixture wrote three disabled servers and one enabled mock into opencode.json", async () => {
     expect(world.configWrite).toMatchObject({ ok: true });
+    expect(world.mockRegistration).toEqual({ status: 200 });
   });
 
-  await step("the MCPs category lists the workspace's servers as local items under their live status", async () => {
+  await step("the enabled mock completes a real MCP handshake and reaches connected", async () => {
     await agent.run("route.extensions.skills");
     await user.see({ text: "Library" });
     await user.click({ role: "button", label: "MCPs" });
-    // All three are written with enabled: false, so they wait under Disabled
-    // rather than claiming to be ready.
+    await probe.eventually(async () => {
+      const status = await probe.desktopApi(`/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode/mcp`);
+      expect(status).toMatchObject({ status: 200, body: { "ready-helper": { status: "connected" } } });
+      return true;
+    }, { within: 60_000, label: "ready-helper connected in the workspace engine" });
+    await probe.eventually(async () => {
+      const handshakes = await world.readyMock.handshakes({ sinceIso: world.handshakeSince });
+      expect(handshakes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ method: "POST", path: "/mcp", status: 200 }),
+      ]));
+      return true;
+    }, { within: 15_000, label: "the mock witnessed a successful MCP initialize" });
+  });
+
+  await step("Ready contains the connected mock but excludes disabled workspace servers", async () => {
+    await user.click({ role: "tab", label: /^Ready\b/ });
+    await user.see({ text: "ready-helper" }, { timeoutMs: 60_000 });
     await user.notSee({ text: "docs-helper" });
+    await user.notSee({ text: "files-helper" });
+    await user.notSee({ text: "remote-helper" });
+    evidence.recordAssertionEvidence(
+      "Library readiness follows a real MCP connection",
+      "ready-helper completed MCP initialize, the workspace engine reported connected, and Ready displayed it without any of the three disabled entries.",
+      true,
+    );
+  });
+
+  await step("Disabled retains the hand-written entries and Advanced still owns creation only", async () => {
     await user.click({ role: "tab", label: /^Disabled\b/ });
     await user.see({ text: "docs-helper" });
     await user.see({ text: "files-helper" });
     await user.see({ text: "remote-helper" });
+    await user.notSee({ text: "ready-helper" });
     await user.see({ text: "Local · this workspace" });
     // Advanced still owns creation only; the inventory does not live there.
     await user.click({ role: "button", label: /^Advanced\b/ });

@@ -25,10 +25,39 @@ export async function emptySession(seed: Seed) {
 }
 
 export async function libraryMcpServersFromConfig(seed: Seed) {
+  const den = await seed.den({
+    provision: false,
+    web: false,
+    mocks: { ready: seed.mock({ allowUnauthenticatedMcp: true, isolatedProcessEnv: true }) },
+  });
+  const readyMock = den.mocks.ready;
+  if (!readyMock) throw new Error("Missing Library readiness MCP witness");
+  const handshakeSince = new Date().toISOString();
   const world = await emptySession(seed);
+  const mockRegistration = await seed.evalIn(world.app, browserScript(async (workspaceId: string, url: string) => {
+    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+    if (!info?.running || !info.baseUrl) throw new Error("Library fixture requires the local OpenWork server");
+    const response = await fetch(`${info.baseUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${info.ownerToken ?? info.clientToken ?? ""}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "ready-helper", config: { type: "remote", url, enabled: true, oauth: false } }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    return { status: response.status };
+  }, [world.workspace.workspaceId, readyMock.mcpUrl]), { timeoutMs: 35_000 });
+  const config = {
+    ...handWrittenConfig,
+    mcp: {
+      ...handWrittenConfig.mcp,
+      "ready-helper": { type: "remote", url: readyMock.mcpUrl, enabled: true, oauth: false },
+    },
+  };
   const configWrite = await seed.evalIn(world.app, browserScript(async (workspacePath: string, content: string) => {
     const result = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("writeOpencodeConfig", "project", workspacePath, content);
     return result ?? { ok: false, stderr: "desktop bridge unavailable" };
-  }, [world.workspacePath, `${JSON.stringify(handWrittenConfig, null, 2)}\n`]));
-  return { ...world, configWrite };
+  }, [world.workspacePath, `${JSON.stringify(config, null, 2)}\n`]));
+  return { ...world, configWrite, mockRegistration, readyMock, handshakeSince };
 }
