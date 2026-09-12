@@ -7,6 +7,7 @@ import { go, runWorkflow, saveWorkflow, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { configureProvider } from "./chat.ts";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
+import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
 
 export const creationPrompt = "Create a reusable app for my dashboard that shows a weekly briefing using my existing Weekly briefing workflow.";
 export const creationReply = "Your briefing app draft is ready. Try the preview, then choose Save.";
@@ -212,15 +213,16 @@ export async function cloudDraftRouting(seed: Seed) {
   await configureProvider(seed, app, workspace.workspaceId, "draft-model", "draft-model", {
     provider: { "draft-model": { npm: "@ai-sdk/openai-compatible", name: "Draft model fixture", options: { baseURL: `${den.mocks.slack.url}/v1`, apiKey: "sk-draft-fixture" }, models: { "draft-model": { name: "Draft model fixture" } } } },
   });
-  const reconciled = await seed.evalIn(app, browserScript(async (workspaceId, cloudUrl, authorization, appHostAuthorization) => {
-    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
-    const response = await fetch(base + "/workspace/" + encodeURIComponent(workspaceId) + "/mcp/openwork-cloud/reconcile", {
-      method: "POST", headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
-      body: JSON.stringify({ config: { type: "remote", url: cloudUrl, enabled: true, headers: { Authorization: authorization }, oauth: false }, appHostAuthorization, trigger: "draft-routing-world" }),
-    });
-    const result = await response.json();
-    return { status: response.status, phase: result.phase, diagnostic: result.connectCatalogDiagnostic };
-  }, [workspace.workspaceId, `${den.ref.apiUrl}/mcp/agent`, `Bearer ${field(credentials, "token")}`, `Bearer ${field(credentials, "appHostToken")}`]), { awaitPromise: true, timeoutMs: 120_000 });
+  const hostSetup = {
+    name: app.handle.name, openworkUrl: app.openworkUrl, workspaceRoot: app.workspaceRoot,
+    workspaceId: workspace.workspaceId, cloudUrl: `${den.ref.apiUrl}/mcp/agent`,
+    token: field(credentials, "token"), appHostToken: field(credentials, "appHostToken"),
+  };
+  const reconciled = app.handle.sandboxId
+    ? record(JSON.parse((await execInSandbox(defaultDaytonaExec, app.handle.sandboxId,
+      `node /workspace/evals/fixtures/cloud-draft-host.ts ${Buffer.from(JSON.stringify(hostSetup)).toString("base64url")}`,
+      { context: "Reconcile the owned draft host", timeoutMs: 150_000 })).stdout.trim()))
+    : await reconcileDraftHost(hostSetup);
   if (record(reconciled).status !== 200 || record(reconciled).phase !== "ready") throw new Error(`Cloud reconcile failed: ${JSON.stringify(reconciled)}`);
   const session = await seed.session(app, { title: "Slack draft review" });
   return { app, session, den, connectionId: connection.id, reconciled,
