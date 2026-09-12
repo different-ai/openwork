@@ -1,4 +1,5 @@
 /** Typed access to the Open Coworker main-process bridge. */
+import type { CoworkerAbilities, CoworkerAbilitiesCatalog } from "./abilities";
 import type { CoworkerDocument, CoworkerDocumentSummary, DocumentRevision, DocumentStatus } from "./documents";
 import type { GroupDocument, GroupDocumentSave, GroupDocumentSaved, GroupDocumentSummary, GroupDocumentsApi } from "./group-documents";
 import type { LocalSchedule } from "./local-schedule.ts";
@@ -148,6 +149,7 @@ export type CoworkerSummary = {
   modelSelectionPreferences?: ModelSelectionPreferences;
   /** The effort dial (Light … All in): a preference each turn's effort is derived from, never used as is. */
   effortPreference: EffortStop;
+  abilities?: CoworkerAbilities;
   automations: string[];
   createdAt: string;
 };
@@ -548,6 +550,10 @@ export const coworkerBridge = {
     listRetired: () => invoke<RetiredCoworker[]>("coworkers.retired.list"),
     restore: (archiveId: string) => invoke<CoworkerSummary>("coworkers.restore", { archiveId }),
     deleteRetired: (archiveId: string) => invoke<{ ok: boolean }>("coworkers.retired.delete", { archiveId }),
+  },
+  abilities: {
+    catalog: (input: { slug: string; createdAt: string }) => invoke<CoworkerAbilitiesCatalog>("abilities.catalog", input),
+    update: (input: { slug: string; createdAt: string; expectedRevision: number; abilities: CoworkerAbilities }) => invoke<CoworkerSummary>("abilities.update", input),
   },
   groups: {
     documents: {

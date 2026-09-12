@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
 import { usesAppConversationDefault } from "../src/lib/model-defaults.ts";
+import { defaultCoworkerAbilities } from "../src/lib/abilities.ts";
 import {
   AGENTS_CONTRACT_VERSION,
   agentsContractVersion,
@@ -26,6 +27,7 @@ import {
   retireCoworker,
   serializeFrontmatter,
   updateCoworker,
+  updateCoworkerAbilities,
   writeCoworkerFile,
 } from "./coworkers.mjs";
 
@@ -35,6 +37,36 @@ async function tempCoworkersDir() {
   roots.push(dir);
   return path.join(dir, "coworkers");
 }
+
+test("abilities persist per identity without losing profile edits or widening empty selections", async () => {
+  const dir = await tempCoworkersDir();
+  const alpha = await createCoworker(dir, { name: "Abilities Alpha" });
+  const beta = await createCoworker(dir, { name: "Abilities Beta" });
+  assert.deepEqual(alpha.abilities, defaultCoworkerAbilities());
+  const selected = { version: 1, revision: 0, skills: { mode: "selected", ids: ["cloud:skill:example"] }, mcpServers: { mode: "selected", ids: [] } };
+  const [saved] = await Promise.all([
+    updateCoworkerAbilities(dir, alpha.slug, { createdAt: alpha.createdAt, expectedRevision: 0, abilities: selected }),
+    updateCoworker(dir, alpha.slug, { mission: "Keep this concurrent profile change." }),
+  ]);
+  assert.equal(saved.abilities.revision, 1);
+  const reloaded = await getCoworker(dir, alpha.slug);
+  assert.deepEqual(reloaded.abilities, { ...selected, revision: 1 });
+  assert.equal(reloaded.mission, "Keep this concurrent profile change.");
+  assert.deepEqual((await getCoworker(dir, beta.slug)).abilities, defaultCoworkerAbilities());
+  await assert.rejects(updateCoworkerAbilities(dir, alpha.slug, { createdAt: alpha.createdAt, expectedRevision: 0, abilities: selected }), /changed elsewhere/);
+  await updateCoworker(dir, alpha.slug, { abilities: defaultCoworkerAbilities() });
+  assert.deepEqual((await getCoworker(dir, alpha.slug)).abilities, reloaded.abilities, "the generic patch cannot replace the dedicated selection");
+  const restoredAll = await updateCoworkerAbilities(dir, alpha.slug, { createdAt: alpha.createdAt, expectedRevision: 1, abilities: { ...reloaded.abilities, skills: { ...selected.skills, mode: "all" }, mcpServers: { mode: "all", ids: [] } } });
+  assert.deepEqual(restoredAll.abilities.skills.ids, selected.skills.ids, "switching back to all keeps the person's saved picks");
+  const retired = await retireCoworker(dir, alpha.slug);
+  const replacement = await createCoworker(dir, { name: alpha.name });
+  assert.deepEqual(replacement.abilities, defaultCoworkerAbilities());
+  await assert.rejects(updateCoworkerAbilities(dir, replacement.slug, { createdAt: alpha.createdAt, expectedRevision: 0, abilities: selected }), /replaced/);
+  await retireCoworker(dir, replacement.slug, { now: Date.now() + 10_000 });
+  assert.deepEqual((await restoreCoworker(dir, retired.archiveId)).abilities, restoredAll.abilities);
+  assert.deepEqual(parseFrontmatter('---\nabilities: malformed\n---\n').data.abilities.skills, { mode: "selected", ids: [] });
+  assert.deepEqual(parseFrontmatter('---\nabilities: malformed\n---\n').data.abilities.mcpServers, { mode: "selected", ids: [] });
+});
 
 test("template import gives a recoverable message for invalid JSON and private fields", () => {
   for (const contents of ["not json", JSON.stringify({ kind: "coworker", schemaVersion: 1, name: "Invalid", memory: "private" })]) {

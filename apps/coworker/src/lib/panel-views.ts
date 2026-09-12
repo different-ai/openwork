@@ -50,12 +50,14 @@ export function activityRoute(level: ActivityLevel): PanelRoute<PanelView> {
 
 /** The first row of Coworker settings, and the level Apps & tools lives under. */
 export const APPS_TOOLS_CRUMB: PanelCrumb = { id: "apps-tools", title: APPS_TOOLS_TITLE };
+export const ABILITIES_CRUMB: PanelCrumb = { id: "abilities", title: "Abilities" };
 
-export type SettingsScreen = { kind: "root" } | { kind: "apps-tools"; path: PanelCrumb[] };
+export type SettingsScreen = { kind: "root" } | { kind: "abilities" } | { kind: "apps-tools"; path: PanelCrumb[] };
 
 /** Which screen Coworker settings shows: its own rows, or Apps & tools with the levels below it. */
 export function settingsScreen(path: readonly PanelCrumb[]): SettingsScreen {
   const first = path[0];
+  if (first?.id === ABILITIES_CRUMB.id) return { kind: "abilities" };
   if (!first || first.id !== APPS_TOOLS_CRUMB.id) return { kind: "root" };
   return { kind: "apps-tools", path: path.slice(1) };
 }

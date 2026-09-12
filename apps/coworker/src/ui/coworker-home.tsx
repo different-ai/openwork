@@ -1,5 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo, type TeamStates } from "@/lib/bridge";
+import { abilitiesSummary } from "@/lib/abilities";
+import { CoworkerAbilitiesEditor } from "@/ui/coworker-abilities";
 import { describeHeaderStatus, describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
 import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind } from "@/lib/coworker-summary";
@@ -15,6 +17,7 @@ import { useResizablePanel } from "@/ui/use-resizable-panel";
 import { PanelContent, PanelHeader, PanelLevel, usePanelNavigation } from "@/ui/panel-nav";
 import { pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
 import {
+  ABILITIES_CRUMB,
   ACTIVITY_CRUMBS,
   APPS_TOOLS_CRUMB,
   PANEL_VIEWS,
@@ -678,7 +681,17 @@ export function CoworkerHome({
                 onOpenModelDefaults={() => onOpenOpenWork("model-defaults")}
                 onOpenMemory={() => nav.showView("memory")}
                 onOpenAppsTools={() => nav.push(APPS_TOOLS_CRUMB, APPS_TOOLS_CRUMB.id)}
+                onOpenAbilities={() => nav.push(ABILITIES_CRUMB, ABILITIES_CRUMB.id)}
                 focus={settingsFocus}
+              />
+            </PanelLevel>
+          ) : null}
+          {contextView === "settings" && settingsLevel.kind === "abilities" ? (
+            <PanelLevel key="abilities" direction={nav.direction}>
+              <CoworkerAbilitiesEditor
+                key={`${coworker.slug}:${coworker.createdAt}`}
+                coworker={coworker}
+                onCoworkerChanged={onCoworkerChanged}
               />
             </PanelLevel>
           ) : null}
@@ -899,6 +912,7 @@ function CoworkerSettings({
   onOpenModelDefaults,
   onOpenMemory,
   onOpenAppsTools,
+  onOpenAbilities,
   focus,
 }: {
   runtime: RuntimeInfo;
@@ -912,6 +926,7 @@ function CoworkerSettings({
   onOpenMemory: () => void;
   /** Apps & tools is the first level under these settings. */
   onOpenAppsTools: () => void;
+  onOpenAbilities: () => void;
   /** Section to bring into view on open; the id makes repeat requests distinct. */
   focus: { id: number; section: "model" } | null;
 }) {
@@ -985,9 +1000,17 @@ function CoworkerSettings({
           id={APPS_TOOLS_CRUMB.id}
           icon={<AppsIcon />}
           title={APPS_TOOLS_CRUMB.title}
-          status={`Apps, skills, and the tools ${coworker.name} can use`}
+          status="Browse available apps, skills, and tools"
           onOpen={onOpenAppsTools}
           testId="settings-row-apps-tools"
+        />
+        <Row
+          id={ABILITIES_CRUMB.id}
+          icon={<SlidersIcon />}
+          title={ABILITIES_CRUMB.title}
+          status={abilitiesSummary(coworker.abilities)}
+          onOpen={onOpenAbilities}
+          testId="settings-row-abilities"
         />
       </RowList>
 

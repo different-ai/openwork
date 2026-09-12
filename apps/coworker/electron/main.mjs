@@ -27,6 +27,8 @@ import { readExecutionActivity } from "../src/lib/progress-activity.ts";
 import { PROGRESS_LIMITS } from "../src/lib/progress-config.ts";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
 import { installCollaborationPlugin } from "./collaboration-plugin.mjs";
+import { createAbilitiesRuntime, readAbilitiesCatalog } from "./abilities.mjs";
+import { installAbilitiesPlugin } from "./abilities-plugin.mjs";
 import { assertGroupDocumentToolContext, createGroupDocumentService, groupDocumentToolCatalog } from "./group-documents.mjs";
 import { installGroupDocumentPlugin } from "./group-document-plugin.mjs";
 import { createEvents, eventNativeSchemas, assertEventToolContext } from "./events.mjs";
@@ -66,6 +68,7 @@ import {
   restoreCoworker,
   retireCoworker,
   updateCoworker,
+  updateCoworkerAbilities,
   writeCoworkerFile,
 } from "./coworkers.mjs";
 import { COWORKER_TOOLS_MCP_NAME, DEFAULT_INSTRUCTIONS, createCoworkerToolsServer, createToolHandlers, toolCatalog } from "./coworker-tools.mjs";
@@ -1095,15 +1098,37 @@ async function computerDiscussion(slug, threadId) {
   return { workspaceId: coworker.workspaceId, directory: path.resolve(coworker.path) };
 }
 
+// Short-lived metadata only. Refresh and account/workspace changes invalidate it;
+// saved selections are read separately on every call and are never cached here.
+const abilitiesCatalogReads = new Map();
+const abilitiesRuntime = createAbilitiesRuntime({
+  coworkerFor: (slug) => getCoworker(coworkersDir, slug),
+  readCatalog: async (coworker) => {
+    const handle = await ensurePlatformServer();
+    const identity = JSON.stringify([coworker.createdAt, coworker.workspaceId, handle.url, denSession?.baseUrl, denSession?.orgId, denSession?.userEmail]);
+    const cached = abilitiesCatalogReads.get(coworker.path);
+    if (cached?.identity === identity && cached.expiresAt > Date.now()) return cached.result;
+    const result = readAbilitiesCatalog(coworker, (route) => fetchJson(`${handle.url}${route}`, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    }, 5_000));
+    abilitiesCatalogReads.set(coworker.path, { identity, expiresAt: Date.now() + 10_000, result });
+    return result;
+  },
+});
+
 const nativePluginInstalls = new Map();
 async function installNativeCoworkerPlugins(coworker, server) {
   const key = path.resolve(coworker.path);
   const pending = (nativePluginInstalls.get(key) ?? Promise.resolve()).catch(() => undefined).then(async () => {
-    await installCollaborationPlugin(coworker, { url: server.url.replace(/\/mcp$/, "/context"), token: coworkerToolToken(coworker.slug) });
-    await installComputerPlugin(coworker);
-    await installBrowserPlugin(coworker);
-    await installGroupDocumentPlugin(coworker);
-    await installEventPlugin(coworker);
+    const current = await getCoworker(coworkersDir, coworker.slug);
+    if (current.createdAt !== coworker.createdAt || path.resolve(current.path) !== key) throw new Error("This coworker was replaced before its tools were prepared.");
+    const context = { url: server.url.replace(/\/mcp$/, "/context"), token: coworkerToolToken(current.slug) };
+    await installCollaborationPlugin(current, context);
+    await installComputerPlugin(current);
+    await installBrowserPlugin(current);
+    await installGroupDocumentPlugin(current);
+    await installEventPlugin(current);
+    await installAbilitiesPlugin(current, context);
   });
   nativePluginInstalls.set(key, pending);
   try { await pending; } finally { if (nativePluginInstalls.get(key) === pending) nativePluginInstalls.delete(key); }
@@ -1761,6 +1786,8 @@ async function ensureToolsServer() {
     resolveSlug: (token) => maintenanceAdmission.closed ? null : toolTokenSlugs.get(token) ?? null,
     onContextTool: (slug, input, transportSignal) => maintenanceAdmission.run(async () => {
       const { name, args, context, cancel } = input;
+      if (name === "abilities_check") return abilitiesRuntime.check(slug, { ...args, ...context });
+      if (name === "abilities_transform") return abilitiesRuntime.transform(slug, { ...args, ...context });
       if (Object.hasOwn(COMPUTER_TOOLS, name)) return computerControl.execute(slug, { name, args, context, cancel });
       if (Object.hasOwn(BROWSER_TOOLS, name)) return browserControl.execute(slug, { name, args, context, cancel });
       if (groupDocumentTools.has(name)) return groupDocuments.executeNative(slug, { name, args, context });
@@ -2505,6 +2532,19 @@ const commands = {
   "coworkers.update": async ({ slug, patch }) => {
     if (patch?.conversationThreadId) await privateOwner(slug, patch.conversationThreadId);
     return updateCoworker(coworkersDir, slug, patch ?? {});
+  },
+  "abilities.catalog": async ({ slug, createdAt }) => {
+    const coworker = await getCoworker(coworkersDir, slug);
+    abilitiesCatalogReads.delete(coworker.path);
+    return abilitiesRuntime.catalog({ slug, createdAt });
+  },
+  "abilities.update": async ({ slug, createdAt, expectedRevision, abilities }) => {
+    const updated = await updateCoworkerAbilities(coworkersDir, slug, { createdAt, expectedRevision, abilities });
+    // Update the live plugin's small config, not engine permissions or account-wide
+    // MCP settings. Already-dispatched calls are not cancelled or replayed.
+    const server = await ensureToolsServer();
+    await installNativeCoworkerPlugins(updated, server);
+    return getCoworker(coworkersDir, slug);
   },
   "coworkers.delete": async ({ slug }) => {
     const activeIds = [...activeLocalRunIds(String(slug ?? ""))];

@@ -27,6 +27,7 @@ import {
 import { TEAM_ROSTER_FILE, refreshTeamRosters, roleById, writeTeamRoster } from "./team.mjs";
 import { effortStopOf } from "../src/lib/effort.ts";
 import { normalizeModelSelectionPreferences } from "../src/lib/model-intelligence-index.ts";
+import { coworkerAbilitiesSchema, readCoworkerAbilities } from "../src/lib/abilities.ts";
 
 // The shared document codec is flat. Only coworker preferences use a nested JSON object.
 export function parseFrontmatter(content) {
@@ -41,14 +42,29 @@ export function parseFrontmatter(content) {
     }
     parsed.data.modelSelectionPreferences = normalizeModelSelectionPreferences(input);
   }
+  if (Object.hasOwn(parsed.data, "abilities")) {
+    let input = parsed.data.abilities;
+    if (typeof input === "string") {
+      try { input = JSON.parse(input); } catch { /* Invalid selections never mean all available. */ }
+    }
+    parsed.data.abilities = readCoworkerAbilities(input);
+  }
   return parsed;
 }
 
 export function serializeFrontmatter(data, body) {
-  if (!Object.hasOwn(data, "modelSelectionPreferences")) return serializeFlatFrontmatter(data, body);
-  const preferences = normalizeModelSelectionPreferences(data.modelSelectionPreferences);
-  const content = serializeFlatFrontmatter({ ...data, modelSelectionPreferences: undefined }, body);
-  return content.replace("---\n", `---\nmodelSelectionPreferences: ${JSON.stringify(preferences)}\n`);
+  const flat = { ...data };
+  const nested = [];
+  if (Object.hasOwn(data, "modelSelectionPreferences")) {
+    nested.push(`modelSelectionPreferences: ${JSON.stringify(normalizeModelSelectionPreferences(data.modelSelectionPreferences))}`);
+    delete flat.modelSelectionPreferences;
+  }
+  if (Object.hasOwn(data, "abilities")) {
+    nested.push(`abilities: ${JSON.stringify(readCoworkerAbilities(data.abilities))}`);
+    delete flat.abilities;
+  }
+  const content = serializeFlatFrontmatter(flat, body);
+  return nested.length ? content.replace("---\n", `---\n${nested.join("\n")}\n`) : content;
 }
 
 export const COWORKERS_DIR_NAME = "coworkers";
@@ -584,6 +600,7 @@ async function readCoworkerRecord(coworkersDir, slug) {
     /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
     modelMode: modelModeOf(data.modelMode),
     modelSelectionPreferences: normalizeModelSelectionPreferences(data.modelSelectionPreferences),
+    abilities: readCoworkerAbilities(data.abilities),
     /** The effort dial: how hard the person wants this coworker to work in general; each turn's effort is derived from it, never taken as is. */
     effortPreference: effortStopOf(data.effortPreference),
     automations,
@@ -612,7 +629,12 @@ export async function getCoworker(coworkersDir, slug) {
   return readCoworkerRecord(coworkersDir, slug);
 }
 
-export async function createCoworker(coworkersDir, input) {
+export function createCoworker(coworkersDir, input) {
+  const root = coworkerPath(coworkersDir, slugifyCoworkerName(input?.name));
+  return withRecordWrite(root, () => createCoworkerRecord(coworkersDir, input));
+}
+
+async function createCoworkerRecord(coworkersDir, input) {
   const name = String(input?.name ?? "").trim();
   if (!name) throw new Error("Coworker name is required");
   const role = String(input?.role ?? "").trim();
@@ -704,8 +726,39 @@ export async function repairCoworkerContract(coworkersDir, slug) {
   return { slug, changed };
 }
 
+const recordWrites = new Map();
+
+/** Profile edits and selection saves share one writer; neither can erase the other's fields. */
+function withRecordWrite(root, change) {
+  const pending = (recordWrites.get(root) ?? Promise.resolve()).catch(() => undefined).then(change);
+  recordWrites.set(root, pending);
+  return pending.finally(() => { if (recordWrites.get(root) === pending) recordWrites.delete(root); });
+}
+
+/** Abilities use a dedicated revision/identity-checked save, not the general profile patch. */
+export function updateCoworkerAbilities(coworkersDir, slug, { createdAt, expectedRevision, abilities }) {
+  const next = coworkerAbilitiesSchema.parse(abilities);
+  const root = coworkerPath(coworkersDir, slug);
+  return withRecordWrite(root, async () => {
+    const configPath = path.join(root, COWORKER_CONFIG_FILE);
+    const { data, body } = parseFrontmatter(await readFile(configPath, "utf8"));
+    if (typeof createdAt !== "string" || !createdAt || createdAt !== data.createdAt) throw new Error("This coworker was replaced. Reopen its abilities settings.");
+    const current = readCoworkerAbilities(data.abilities);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== current.revision || next.revision !== expectedRevision) {
+      throw new Error("Abilities changed elsewhere. Reopen the editor before saving.");
+    }
+    data.abilities = { ...next, revision: current.revision + 1 };
+    await writeAtomic(configPath, serializeFrontmatter(data, body));
+    return readCoworkerRecord(coworkersDir, slug);
+  });
+}
+
 /** Patch platform references (workspace, discussion, automations, model) inside coworker.md. */
-export async function updateCoworker(coworkersDir, slug, patch) {
+export function updateCoworker(coworkersDir, slug, patch) {
+  return withRecordWrite(coworkerPath(coworkersDir, slug), () => updateCoworkerRecord(coworkersDir, slug, patch));
+}
+
+async function updateCoworkerRecord(coworkersDir, slug, patch) {
   const root = coworkerPath(coworkersDir, slug);
   const configPath = path.join(root, COWORKER_CONFIG_FILE);
   const { data, body } = parseFrontmatter(await readFile(configPath, "utf8"));
@@ -739,7 +792,7 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
   if (typeof patch?.personality === "string") data.personality = personality(patch.personality);
-  await writeFile(configPath, serializeFrontmatter(data, body), "utf8");
+  await writeAtomic(configPath, serializeFrontmatter(data, body));
   // Only what teammates read about this coworker refreshes their descriptions; model and thread writes do not.
   if (before.role !== data.role || before.mission !== data.mission) {
     await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
@@ -747,10 +800,12 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   return readCoworkerRecord(coworkersDir, slug);
 }
 
-export async function deleteCoworker(coworkersDir, slug) {
+export function deleteCoworker(coworkersDir, slug) {
   const root = coworkerPath(coworkersDir, slug);
-  await rm(root, { recursive: true, force: true });
-  await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
+  return withRecordWrite(root, async () => {
+    await rm(root, { recursive: true, force: true });
+    await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
+  });
 }
 
 export const RETIRED_DIR_NAME = ".retired";
@@ -799,7 +854,11 @@ async function countFiles(root) {
  * archive is explicitly removed. `coworker.md` records where it came from so a
  * restore needs no external bookkeeping.
  */
-export async function retireCoworker(coworkersDir, slug, { now = Date.now() } = {}) {
+export function retireCoworker(coworkersDir, slug, options = {}) {
+  return withRecordWrite(coworkerPath(coworkersDir, slug), () => retireCoworkerRecord(coworkersDir, slug, options));
+}
+
+async function retireCoworkerRecord(coworkersDir, slug, { now = Date.now() } = {}) {
   const root = coworkerPath(coworkersDir, slug);
   if (!(await pathExists(path.join(root, COWORKER_CONFIG_FILE)))) {
     throw new Error(`Coworker "${slug}" does not exist`);
@@ -862,16 +921,18 @@ export async function restoreCoworker(coworkersDir, archiveId) {
   const { data } = parseFrontmatter(await readFile(configPath, "utf8"));
   const slug = typeof data.retiredSlug === "string" ? data.retiredSlug : String(archiveId).replace(/-\d{8,14}$/, "");
   const root = coworkerPath(coworkersDir, slug);
-  if (await pathExists(root)) {
-    throw new Error(`A coworker named "${slug}" already exists. Retire or rename it before restoring this one.`);
-  }
-  await patchFrontmatter(configPath, (record) => {
-    delete record.retiredSlug;
-    delete record.retiredAt;
+  return withRecordWrite(root, async () => {
+    if (await pathExists(root)) {
+      throw new Error(`A coworker named "${slug}" already exists. Retire or rename it before restoring this one.`);
+    }
+    await patchFrontmatter(configPath, (record) => {
+      delete record.retiredSlug;
+      delete record.retiredAt;
+    });
+    await rename(archivePath, root);
+    await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
+    return readCoworkerRecord(coworkersDir, slug);
   });
-  await rename(archivePath, root);
-  await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
-  return readCoworkerRecord(coworkersDir, slug);
 }
 
 /** Permanently remove a retired coworker archive. This is the only destructive step. */
