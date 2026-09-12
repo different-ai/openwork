@@ -186,7 +186,7 @@ type CreatedOpenWorkSessionResult = {
   sessionId: string;
   title: string;
   titleTruncated: boolean;
-  started: boolean;
+  accepted: true;
   /** The model the engine bound to the session, read from its create response. */
   model: OpenworkSessionModel | null;
   route: string;
@@ -195,6 +195,8 @@ type FailedOpenWorkSessionResult = {
   ok: false;
   title: string;
   titleTruncated: boolean;
+  sessionId?: string;
+  path: string;
   error: string;
 };
 
@@ -248,6 +250,7 @@ function affordanceResult(
       id,
       error: typeof result.error === "string" ? result.error : `${id} failed`,
       ...(Array.isArray(result.issues) ? { issues: result.issues } : {}),
+      ...(id === "session.create" && Array.isArray(result.created) ? { result, effects } : {}),
       code: "failed",
     };
   }
@@ -1023,7 +1026,7 @@ function getStringProperty(value: unknown, key: string): string | null {
 }
 
 function errorMessage(payload: unknown, fallback: string): string {
-  return getStringProperty(payload, "message") ?? getStringProperty(payload, "code") ?? fallback;
+  return getStringProperty(payload, "message") ?? (isRecord(payload) ? getStringProperty(payload.data, "message") : null) ?? getStringProperty(payload, "code") ?? fallback;
 }
 
 function unknownErrorMessage(error: unknown): string {
@@ -1104,12 +1107,14 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
     const inputTitle = argumentAtPath(rawArgs, ["sessions", index, "title"]);
     const titleTruncated = typeof inputTitle === "string" && inputTitle.trim().length > 120;
     const model = session.model ?? args.model;
+    let sessionId: string | undefined;
     try {
       const payload = sessionInfoSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
         { title: session.title, ...(model ? { model: engineSessionCreateModel(model) } : {}) },
       ));
       createdOnEngine = true;
+      sessionId = payload.id;
       await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
         { ...(model ? enginePromptModel(model) : {}), parts: [{ type: "text", text: session.prompt }] },
@@ -1119,7 +1124,7 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
         sessionId: payload.id,
         title: session.title,
         titleTruncated,
-        started: true,
+        accepted: true,
         model: sessionModelOf(payload),
         route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.id)}`,
       };
@@ -1128,6 +1133,8 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
         ok: false,
         title: session.title,
         titleTruncated,
+        ...(sessionId ? { sessionId } : {}),
+        path: `sessions[${index}]${sessionId ? ".prompt" : ""}`,
         error: unknownErrorMessage(error),
       };
     }
@@ -1145,8 +1152,14 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
       args: { workspaceId: workspace.id },
     });
   }
+  const issues = failures.map((failure) => ({
+    path: failure.path,
+    message: `${failure.path}: ${failure.error}`,
+    ...(failure.sessionId ? { sessionId: failure.sessionId } : {}),
+  }));
   return {
     ok: failures.length === 0,
+    ...(issues.length ? { error: issues.map((issue) => issue.message).join("; "), issues } : {}),
     workspaceId: workspace.id,
     workspace: workspaceLabel(workspace),
     created,
