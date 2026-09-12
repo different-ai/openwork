@@ -34,7 +34,7 @@ async function stop(child) {
   await exited;
 }
 
-test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 10_000 }, async (context) => {
+async function startMock(context) {
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [serverPath], {
@@ -65,6 +65,11 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     }
   });
 
+  return { origin, stderr: () => stderr };
+}
+
+test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 10_000 }, async (context) => {
+  const { origin, stderr } = await startMock(context);
   const authorizeUrl = new URL(`${origin}/authorize`);
   authorizeUrl.searchParams.set("client_id", "test-client");
   authorizeUrl.searchParams.set("redirect_uri", `${origin}/callback`);
@@ -311,5 +316,61 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   });
   assert.equal(failedResponse.status, 500);
   assert.deepEqual(await failedResponse.json(), { error: "internal_server_error" });
-  await waitFor(() => stderr.includes("[mock-oauth-mcp] request failed"));
+  await waitFor(() => stderr().includes("[mock-oauth-mcp] request failed"));
+});
+
+test("provider witnesses classify bearer credentials without exposing keys or miscounting utility turns", { timeout: 10_000 }, async (context) => {
+  const { origin } = await startMock(context);
+  const credentialKeys = { managed: "managed-fixture-key", pinned: "pinned-fixture-key" };
+  const credentialWorkload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ credentials: credentialKeys, workloads: [{
+      promptMarker: "Credential witness", finalReply: "Credential checked", steps: [],
+    }] }),
+  });
+  assert.equal(credentialWorkload.status, 200);
+  const credentialCases = [
+    [`Bearer ${credentialKeys.managed}`, "managed"],
+    [`bEaReR\t${" ".repeat(4_096)}${credentialKeys.pinned}`, "pinned"],
+    ["Bearer unrelated-fixture-key", "unknown"],
+    [`Basic ${credentialKeys.managed}`, "unknown"],
+    [`Bearer${credentialKeys.managed}`, "unknown"],
+    [`Bearer ${" ".repeat(4_096)}`, "unknown"],
+    ["", "missing"],
+    [undefined, "missing"],
+  ];
+  for (const path of ["/v1/responses", "/v1/chat/completions"]) {
+    for (const [authorization] of credentialCases) {
+      const completion = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(authorization === undefined ? {} : { authorization }) },
+        body: JSON.stringify({ model: "credential-model", input: "Credential witness",
+          messages: [{ role: "user", content: "Credential witness" }],
+          tools: [{ type: "function", name: "question", function: { name: "question" } }],
+        }),
+        signal: AbortSignal.timeout(2_000),
+      });
+      assert.equal(completion.status, 200);
+      await completion.body.cancel();
+    }
+    const utility = await fetch(`${origin}${path}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${credentialKeys.managed}` },
+      body: JSON.stringify({ model: "credential-model", input: "Credential witness",
+        messages: [{ role: "user", content: "Credential witness" }], tools: [],
+      }),
+    });
+    assert.equal(utility.status, 200);
+    await utility.body.cancel();
+  }
+  const credentialLog = await (await fetch(`${origin}/requests`)).json();
+  const completions = credentialLog.requests.flatMap((entry) => entry.agentCompletion ?? [])
+    .filter((entry) => entry.model === "credential-model");
+  const expectedCredentials = [...credentialCases.map(([, label]) => label), "managed"];
+  assert.deepEqual(completions.map((entry) => entry.credential), [...expectedCredentials, ...expectedCredentials]);
+  const expectedKinds = [...credentialCases.map(() => "final"), "utility"];
+  assert.deepEqual(completions.map((entry) => entry.kind), [...expectedKinds, ...expectedKinds]);
+  for (const key of [...Object.values(credentialKeys), "unrelated-fixture-key"]) {
+    assert.equal(JSON.stringify(credentialLog).includes(key), false);
+  }
+
 });

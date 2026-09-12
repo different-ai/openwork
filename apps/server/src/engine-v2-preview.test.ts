@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
+import { renderOpencodeV2Config } from "./managed-opencode-v2.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -199,6 +201,107 @@ test("native organization providers retain their transport without an endpoint o
   ]);
   expect(result.specs.every((spec) => spec.baseUrl === undefined)).toBe(true);
   expect(result.specs[1]?.models[0]?.config).toMatchObject({ id: "wire-model", tool_call: false, limit: { context: 1000000, output: 64000 } });
+});
+
+test("managed providers with a catalog identity defer reasoning variants to the engine catalog", () => {
+  const result = mapRuntimeProvidersToV2Specs({
+    lpr_openai: {
+      id: "openai", name: "Org OpenAI", npm: "@ai-sdk/openai", api: "https://api.openai.com/v1", options: { apiKey: "fixture-key" },
+      models: {
+        "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4", reasoning: true, release_date: "2026-03-05" },
+        "gpt-4.1": { id: "gpt-4.1", name: "GPT-4.1", reasoning: false },
+      },
+    },
+    lpr_anthropic: { id: "anthropic", npm: "@ai-sdk/anthropic", options: { apiKey: "fixture-key" }, models: { "claude-opus-4-6": { id: "claude-opus-4-6", name: "Opus", reasoning: true } } },
+    lpr_proxy: { id: "my-proxy", npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://proxy.example/v1", apiKey: "fixture-key" }, models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" } } },
+  });
+  expect(result.skippedProviderIds).toEqual([]);
+  expect(result.specs.map((spec) => [spec.id, spec.package, spec.canonical])).toEqual([
+    ["lpr_anthropic", "aisdk:@ai-sdk/anthropic", "anthropic"],
+    ["lpr_openai", "aisdk:@ai-sdk/openai", "openai"],
+    ["lpr_proxy", "aisdk:@ai-sdk/openai-compatible", "my-proxy"],
+  ]);
+  // Model records stay untouched: no effort list is invented on this side.
+  expect(result.specs[1]?.models.map((model) => model.id)).toEqual(["gpt-4.1", "gpt-5.4"]);
+  expect(JSON.stringify(result)).not.toContain("variants");
+  expect(result.specs[1]?.baseUrl).toBe("https://api.openai.com/v1");
+  expect(result.specs[1]?.apiKey).toBe("fixture-key");
+});
+
+test("the model-less openwork provider keeps its own catalog identity without a canonical alias", () => {
+  const result = mapRuntimeProvidersToV2Specs({
+    openwork: {
+      id: "openwork", name: "OpenWork Models", npm: "@openrouter/ai-sdk-provider", env: ["OPENWORK_API_KEY"],
+      api: "https://inference.example/api/v1", options: { baseURL: "https://inference.example/api/v1" },
+    },
+  }, new Map([["OPENWORK_API_KEY", "fixture-openwork-key"]]));
+  expect(result.specs).toEqual([{
+    id: "openwork", name: "OpenWork Models", baseUrl: "https://inference.example/api/v1",
+    package: "aisdk:@openrouter/ai-sdk-provider", apiKey: "fixture-openwork-key", models: [],
+  }]);
+  expect(result.specs[0]).not.toHaveProperty("canonical");
+});
+
+test("explicit Den variants on any model turn off catalog enrichment for that provider", () => {
+  const explicit = mapRuntimeProvidersToV2Specs({
+    lpr_openai: {
+      id: "openai", npm: "@ai-sdk/openai", options: { apiKey: "fixture-key" },
+      models: {
+        "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4", reasoning: true, variants: {} },
+        "gpt-5.1": { id: "gpt-5.1", name: "GPT-5.1", reasoning: true },
+      },
+    },
+    lpr_disabled: {
+      id: "openai", npm: "@ai-sdk/openai", options: { apiKey: "fixture-key" },
+      models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4", reasoning: true, variants: { high: { disabled: true, reasoningEffort: "high" } } } },
+    },
+  });
+  for (const spec of explicit.specs) {
+    expect(spec.package).toBe("@opencode-ai/ai/providers/openai");
+    expect(spec).not.toHaveProperty("canonical");
+  }
+  expect(explicit.specs[1]?.models.find((model) => model.id === "gpt-5.4")?.config).toMatchObject({ variants: {} });
+});
+
+test("managed Fast metadata retains native effort and priority variants without catalog enrichment", () => {
+  const variants = {
+    [CATALOG_FAST_VARIANT]: { disabled: true, openworkNativeFast: 1, reasoningEfforts: ["low", "high"] },
+    low: { reasoningEffort: "medium" },
+    high: { disabled: true, reasoningEffort: "high" },
+  };
+  const result = mapRuntimeProvidersToV2Specs({
+    lpr_fast: {
+      id: "openai", npm: "@ai-sdk/openai", options: { apiKey: "fast-fixture-key" },
+      models: { "gpt-5.4": { id: "gpt-5.4", name: "Fast model", reasoning: true, variants } },
+    },
+  });
+  expect(result.skippedProviderIds).toEqual([]);
+  expect(result.specs[0]?.package).toBe("@opencode-ai/ai/providers/openai");
+  expect(result.specs[0]).not.toHaveProperty("canonical");
+  expect(renderOpencodeV2Config({ providers: result.specs, skills: [] })).toMatchObject({ providers: {
+    lpr_fast: {
+      package: "@opencode-ai/ai/providers/openai",
+      settings: { apiKey: "fast-fixture-key" },
+      models: { "gpt-5.4": { variants: [
+        { id: "low", settings: { providerOptions: { reasoningEffort: "medium" } } },
+        { id: FAST_DEFAULT_VARIANT, settings: { providerOptions: { serviceTier: "priority" } } },
+        { id: fastVariantId("low"), settings: { providerOptions: { reasoningEffort: "medium", serviceTier: "priority" } } },
+      ] } },
+    },
+  } });
+  expect(variants.high.disabled).toBe(true);
+  expect(Object.keys(variants)).toEqual([CATALOG_FAST_VARIANT, "low", "high"]);
+});
+
+test("providers without a catalog identity keep the native package path", () => {
+  const result = mapRuntimeProvidersToV2Specs({
+    "user-proxy": { npm: "@ai-sdk/openai", options: { baseURL: "https://proxy.example/v1", apiKey: "fixture-key" }, models: { "gpt-5.4": { name: "GPT-5.4", reasoning: true } } },
+    "blank-id": { id: "  ", npm: "@ai-sdk/openai", options: { apiKey: "fixture-key" } },
+  });
+  expect(result.specs.map((spec) => [spec.id, spec.package, spec.canonical])).toEqual([
+    ["blank-id", "@opencode-ai/ai/providers/openai", undefined],
+    ["user-proxy", "@opencode-ai/ai/providers/openai", undefined],
+  ]);
 });
 
 test("native provider api endpoint and headers survive conversion", () => {

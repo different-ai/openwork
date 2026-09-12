@@ -10,6 +10,10 @@ import { loopbackFetch } from "./server-fetch.js";
 
 const roots: string[] = [];
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 afterEach(async () => {
   while (roots.length > 0) await rm(roots.pop()!, { recursive: true, force: true });
 });
@@ -188,6 +192,57 @@ describe("managed OpenCode startup", () => {
       } } } });
       expect(JSON.stringify(config)).not.toContain('"hidden"');
       expect(JSON.stringify(config)).not.toContain('"disabled"');
+    } finally { await managed.close(); }
+  });
+
+  test("writes catalog identity so the engine derives variants, and keeps explicit variants authoritative", async () => {
+    const root = await createRoot();
+    const bin = await writeExecutable(root, "provider-config.mjs", [
+      "const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => Response.json({ healthy: true, version: 'test', pid: process.pid }) });",
+      "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
+      "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
+    ]);
+    const managed = await createManagedOpencodeV2Server({ bin, rootDir: root });
+    try {
+      await managed.setProviders([
+        {
+          id: "lpr_catalog", name: "Catalog backed", apiKey: "catalog-key",
+          package: "aisdk:@ai-sdk/openai", canonical: "openai",
+          models: [{ id: "gpt-5.4", name: "GPT-5.4", config: { id: "gpt-5.4", reasoning: true, release_date: "2026-03-05" } }],
+        },
+        {
+          id: "openwork", name: "OpenWork Models", apiKey: "openwork-key", baseUrl: "https://inference.example/api/v1",
+          package: "aisdk:@openrouter/ai-sdk-provider", models: [],
+        },
+        {
+          id: "lpr_explicit", name: "Explicit", apiKey: "explicit-key", package: "@opencode-ai/ai/providers/openai",
+          models: [
+            { id: "silenced", name: "Silenced", config: { reasoning: true, variants: {} } },
+            { id: "all-disabled", name: "All disabled", config: { reasoning: true, variants: { high: { disabled: true, reasoningEffort: "high" } } } },
+          ],
+        },
+      ]);
+      const config: unknown = JSON.parse(await readFile(join(root, "config", "opencode.json"), "utf8"));
+      expect(config).toMatchObject({ providers: {
+        lpr_catalog: {
+          package: "aisdk:@ai-sdk/openai", canonical: "openai",
+          settings: { apiKey: "catalog-key", name: "lpr_catalog" },
+          models: { "gpt-5.4": { modelID: "gpt-5.4", capabilities: { output: ["text", "reasoning"] } } },
+        },
+        openwork: { package: "aisdk:@openrouter/ai-sdk-provider", settings: { baseURL: "https://inference.example/api/v1", apiKey: "openwork-key" }, models: {} },
+        lpr_explicit: {
+          package: "@opencode-ai/ai/providers/openai",
+          models: { silenced: { variants: [] }, "all-disabled": { variants: [] } },
+        },
+      } });
+      const providers = isRecord(config) && isRecord(config.providers) ? config.providers : {};
+      // The engine only invents variants for catalog-backed models; this side never does.
+      expect(isRecord(providers.lpr_catalog) && isRecord(providers.lpr_catalog.models) && isRecord(providers.lpr_catalog.models["gpt-5.4"])
+        ? providers.lpr_catalog.models["gpt-5.4"] : {}).not.toHaveProperty("variants");
+      expect(providers.openwork).not.toHaveProperty("canonical");
+      expect(providers.lpr_explicit).not.toHaveProperty("canonical");
+      // Catalog identity never carries credentials: the only key material is ours.
+      expect(JSON.stringify(config)).not.toContain('"env"');
     } finally { await managed.close(); }
   });
 
