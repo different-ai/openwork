@@ -1,7 +1,8 @@
-import type { OpenworkSessionModel } from "@openwork/types/openwork-affordance";
+import type { OpenworkSessionActivityInventory, OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { SessionActivityStatus } from "../status/session-activity-store";
+import { selectSessionAttention, type SessionAttention } from "../status/session-attention";
 
 export type ControlSessionWorkspace = {
   id: string;
@@ -34,7 +35,7 @@ export type ControlSessionLike = {
   model?: ControlSessionEngineModel | null;
 };
 
-export type ListedControlSession = {
+export type ListedControlSession = OpenworkSessionActivityInventory & {
   sessionId: string;
   title: string;
   workspace: string;
@@ -43,8 +44,6 @@ export type ListedControlSession = {
   archived: boolean;
   /** Live activity, the same source as the sidebar indicator. */
   status: SessionActivityStatus;
-  /** True while a turn, subtask, compaction, permission, or question is still open. */
-  working: boolean;
   /** Model and reasoning effort the session is bound to; null before any model is bound. */
   model: OpenworkSessionModel | null;
 };
@@ -54,6 +53,7 @@ export type ListControlSessionsState = {
   sessionsByWorkspaceId: Record<string, ControlSessionLike[]>;
   pinnedIds: readonly string[];
   statusFor: (workspaceId: string, sessionId: string) => SessionActivityStatus;
+  attentionFor?: (workspaceId: string, sessionId: string) => SessionAttention | undefined;
 };
 
 /** Anything but a finished or failed turn still needs Stop before archive. */
@@ -102,13 +102,20 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
   const out: ListedControlSession[] = [];
   for (const workspace of state.workspaces) {
     if (workspaceQuery && !matchesWorkspace(workspace, workspaceQuery)) continue;
-    for (const session of state.sessionsByWorkspaceId[workspace.id] ?? []) {
+    const sessions = state.sessionsByWorkspaceId[workspace.id] ?? [];
+    const attention = state.attentionFor ? undefined : selectSessionAttention(
+      sessions.flatMap((session) => session.id ? [{ ...session, id: session.id }] : []),
+      (id) => state.statusFor(workspace.id, id),
+      () => undefined,
+    );
+    for (const session of sessions) {
       const sessionId = session.id?.trim() ?? "";
       if (!sessionId) continue;
       const archived = typeof session.time?.archived === "number" && session.time.archived > 0;
       if (record.archived === "exclude" && archived) continue;
       if (record.archived === "only" && !archived) continue;
-      const status = state.statusFor(workspace.id, sessionId);
+      const activity = state.attentionFor?.(workspace.id, sessionId) ?? attention?.get(sessionId);
+      if (!activity) continue;
       out.push({
         sessionId,
         title: getDisplaySessionTitle(session.title ?? ""),
@@ -116,8 +123,10 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
         archived,
-        status,
-        working: isWorkingStatus(status),
+        status: activity.status,
+        working: activity.working,
+        descendantActivity: activity.descendantActivity,
+        inventoryComplete: activity.inventoryComplete,
         model: controlSessionModel(session),
       });
     }

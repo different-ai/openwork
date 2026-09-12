@@ -151,6 +151,7 @@ export type SessionPageSidebarProps = {
   developerMode: boolean;
   sessionStatusById: Record<string, string>;
   sessionAttentionLabelById?: Record<string, string>;
+  sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -1369,6 +1370,7 @@ export function SessionPage(props: SessionPageProps) {
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
+          sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}

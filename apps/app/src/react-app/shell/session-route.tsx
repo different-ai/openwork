@@ -121,7 +121,7 @@ import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-co
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
-import { selectSessionAttention, sessionAttentionLabel } from "@/react-app/domains/session/status/session-attention";
+import { selectSessionAttention, sessionAttentionLabel, sessionAttentionSidebarStatus } from "@/react-app/domains/session/status/session-attention";
 import { buildOpenworkSessionSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
   applySessionRevert,
@@ -818,6 +818,7 @@ export function SessionRoute() {
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
   const sessionWaitingByWorkspaceId = useSessionActivityStore((state) => state.waitingByWorkspaceId);
+  const sessionRecordsByWorkspaceId = useSessionActivityStore((state) => state.recordsByWorkspaceId);
 
   useEffect(() => {
     for (const group of workspaceSessionGroups) {
@@ -829,12 +830,10 @@ export function SessionRoute() {
     }
   }, [seedWorkspaceActivitySessions, workspaceSessionGroups]);
 
-  // A delegated child's pending permission or question rolls up to its parent
-  // row: the person must answer before anything moves, so the parent shows
-  // "needs you" instead of the working spinner.
   const sidebarSessionAttention = useMemo(() => {
     const statusById: Record<string, string> = {};
     const labelById: Record<string, string> = {};
+    const sourceById: Record<string, "child" | "descendant"> = {};
     for (const group of workspaceSessionGroups) {
       const serverId = workspaceServerId(group.workspace);
       const workspaceStatuses = {
@@ -849,16 +848,23 @@ export function SessionRoute() {
         group.sessions,
         (sessionId) => workspaceStatuses[sessionId],
         (sessionId) => workspaceWaiting[sessionId],
+        (sessionId) => [
+          ...(sessionRecordsByWorkspaceId[group.workspace.id]?.[sessionId]?.childSessionIds ?? []),
+          ...(serverId ? sessionRecordsByWorkspaceId[serverId]?.[sessionId]?.childSessionIds ?? [] : []),
+        ],
       );
       for (const session of group.sessions) {
         const entry = attention.get(session.id);
-        if (!entry || (!workspaceStatuses[session.id] && !entry.blockedBy)) continue;
-        statusById[session.id] = entry.status;
-        if (entry.blockedBy) labelById[session.id] = sessionAttentionLabel(entry.blockedBy);
+        if (!entry) continue;
+        statusById[session.id] = sessionAttentionSidebarStatus(entry);
+        if (entry.blockedBy) {
+          labelById[session.id] = sessionAttentionLabel(entry.blockedBy);
+          sourceById[session.id] = entry.blockedBy.relationship;
+        }
       }
     }
-    return { statusById, labelById };
-  }, [sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, workspaceSessionGroups]);
+    return { statusById, labelById, sourceById };
+  }, [sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionRecordsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
 
   const sidebarActiveWorkspaceId = useMemo(() => {
@@ -3511,6 +3517,7 @@ export function SessionRoute() {
         developerMode: false,
         sessionStatusById: sidebarSessionStatusById,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
+        sessionAttentionSourceById: sidebarSessionAttention.sourceById,
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
         newTaskDisabled: !canCreateTask,

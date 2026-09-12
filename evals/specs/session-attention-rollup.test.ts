@@ -37,6 +37,7 @@ function listed() {
     sessionsByWorkspaceId: { [workspaceId]: sessions },
     pinnedIds: [],
     statusFor: (_workspace, sessionId) => rolled.get(sessionId)?.status ?? "idle",
+    attentionFor: (_workspace, sessionId) => rolled.get(sessionId),
   }).map((entry) => [entry.sessionId, entry]));
 }
 
@@ -50,12 +51,12 @@ test("the activity store keeps a delegating parent at thinking while its child's
   const rolled = attention();
   expect(own).toBe("thinking");
   expect(store.getStatus(workspaceId, child.id)).toBe("waiting");
-  expect(rolled.get(parent.id)).toEqual({
+  expect(rolled.get(parent.id)).toMatchObject({
     status: "waiting",
     blockedBy: { sessionId: child.id, title: child.title, kind: "permission" },
   });
-  expect(rolled.get(child.id)).toEqual({ status: "waiting", blockedBy: null });
-  expect(rolled.get(unrelated.id)).toEqual({ status: "idle", blockedBy: null });
+  expect(rolled.get(child.id)).toMatchObject({ status: "waiting", blockedBy: null });
+  expect(rolled.get(unrelated.id)).toMatchObject({ status: "idle", blockedBy: null });
   expect(sessionAttentionLabel({ sessionId: child.id, title: child.title, kind: "permission" }))
     .toBe(`Needs permission: ${child.title}`);
   evidence.recordAssertionEvidence(
@@ -93,13 +94,13 @@ test("the parent's own error or own request outranks a descendant's request", as
   store.setWaitingRequest(workspaceId, child.id, "permission", "per_1", true);
   store.setError(workspaceId, parent.id, "Provider failed");
   const errored = attention().get(parent.id);
-  expect(errored).toEqual({ status: "error", blockedBy: null });
+  expect(errored).toMatchObject({ status: "error", blockedBy: null });
 
   store.clearError(workspaceId, parent.id);
   store.setRunStatus(workspaceId, parent.id, "running");
   store.setWaitingRequest(workspaceId, parent.id, "question", "que_own", true);
   const own = attention().get(parent.id);
-  expect(own).toEqual({ status: "waiting", blockedBy: null });
+  expect(own).toMatchObject({ status: "waiting", blockedBy: null });
   evidence.recordAssertionEvidence(
     "Precedence is error > own waiting > descendant waiting",
     `With a child permission pending, an errored parent reports ${errored?.status}; a parent with its own question reports ${own?.status} with blockedBy ${String(own?.blockedBy)}.`,
