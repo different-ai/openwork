@@ -3,6 +3,7 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promise
 import { devNull, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { currentTestEvidence } from "@openwork/test-evidence";
 import { needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
@@ -52,6 +53,11 @@ async function withScratch(check: (directory: string) => Promise<void>) {
     expect(version.status, "Betterleaks version command must succeed").toBe(0);
     expect(version.stdout.trim() === "1.8.1", "use pinned Betterleaks 1.8.1 via BETTERLEAKS_BIN or tmp/betterleaks").toBe(true);
     await check(directory);
+    currentTestEvidence()?.recordAssertionEvidence(
+      "The named pinned-binary proof completed every observable assertion",
+      "Local Betterleaks 1.8.1; explicit exit-code, rule, path, policy or redaction assertions in this test all passed. Reproduce: pnpm evals:pr specs/ci-secret-scan.test.ts. No live validation or historical credential access.",
+      true,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
