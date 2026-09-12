@@ -55,7 +55,7 @@ let nextOpeningCredential = 0;
 const hydratingTranscripts = new WeakSet<object>();
 const EMPTY_HISTORY: UIMessage[] = [];
 
-async function readHistoryWithDeadline<T>(read: (signal: AbortSignal) => Promise<T>, signal: AbortSignal, timeoutMs: number, timeoutMessage: string) {
+async function readLatestHistory<T>(read: (signal: AbortSignal) => Promise<T>, signal: AbortSignal) {
   signal.throwIfAborted();
   const deadline = new AbortController();
   const readSignal = AbortSignal.any([signal, deadline.signal]);
@@ -63,8 +63,10 @@ async function readHistoryWithDeadline<T>(read: (signal: AbortSignal) => Promise
   const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
   const onAbort = () => rejectAborted(readSignal.reason);
   readSignal.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(() => deadline.abort(new Error(timeoutMessage)), timeoutMs);
+  const timer = setTimeout(() => deadline.abort(new Error("Latest history read timed out.")), 2_000);
   try {
+    // Some transports cannot abort an already-dispatched request. The optional
+    // newest read must still release full-history loading at its deadline.
     return await Promise.race([read(readSignal), aborted]);
   } finally {
     clearTimeout(timer);
@@ -167,7 +169,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
       const initial = client.getQueryData<LatestSessionHistory>(latestKey) ?? {
         messages: mergeHistoryWindow(projectHistoryRead(full), readSource()), source: readSource(),
       };
-      const history = await readHistoryWithDeadline(input.readLatest, signal, 2_000, "Latest history read timed out.");
+      const history = await readLatestHistory(input.readLatest, signal);
       signal.throwIfAborted();
       if (history.session.id !== input.sessionId || history.messages.some(({ info, parts }) =>
         info.sessionID !== input.sessionId || parts.some((part) =>
@@ -207,7 +209,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     const cached = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
     const baseline = client.getQueryData<LatestSessionHistory>(latestKey)?.messages
       ?? (cached ? snapshotToUIMessages(cached) : EMPTY_HISTORY);
-    const snapshot = await readHistoryWithDeadline(input.readSnapshot, signal, 30_000, "Conversation history read timed out.");
+    const snapshot = await input.readSnapshot(signal);
     signal.throwIfAborted();
     entry.fullRead = { baseline, updateCount: (client.getQueryState(input.snapshotQueryKey)?.dataUpdateCount ?? 0) + 1 };
     return snapshot;
@@ -234,6 +236,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     }
   }, [client, entry, input.readLatest, input.sessionId, input.snapshotQueryKey, input.transcriptQueryKey, latestKey, latestQuery.isFetching, readSource]);
   const latestHistory = entry.warm ? latestQuery.data ?? null : null;
+  const fullReader = entry.warm ? readFullSnapshot : input.readSnapshot;
   const activeOwner = useRef<string | null>(input.owner);
   activeOwner.current = input.owner;
   useEffect(() => {
@@ -243,7 +246,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
   const ensureFullSnapshot = useCallback(async () => {
     const options = {
       queryKey: input.snapshotQueryKey,
-      queryFn: ({ signal }: { signal: AbortSignal }) => readFullSnapshot(signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fullReader(signal),
       networkMode: "always" as const,
     };
     try {
@@ -260,7 +263,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
       if (!query || query.getObserversCount() === 0) throw error;
       return client.fetchQuery(options);
     }
-  }, [client, input.snapshotQueryKey, readFullSnapshot]);
+  }, [client, input.snapshotQueryKey, fullReader]);
   const runWithFullSnapshot = useCallback(async (
     action: (snapshot: OpenworkSessionHistory) => void | Promise<unknown>,
     options: { fresh?: boolean } = {},
@@ -299,7 +302,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     options,
     snapshot,
     latestHistory,
-    readFullSnapshot,
+    readFullSnapshot: fullReader,
     seedSnapshot,
     // A newest window that came back shorter than its limit already holds the
     // whole conversation. Only a full window, a saved-position window, or an

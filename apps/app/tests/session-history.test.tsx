@@ -213,7 +213,7 @@ describe("opening a thread", () => {
     expect(view.latestReads).toHaveLength(0);
   });
 
-  test("a stalled full history read releases loading for Retry without losing the active preview", async () => {
+  test("a failed long history read retries without losing the active preview", async () => {
     const view = fixture();
     const event = sessionEvents();
     const full = longHistory();
@@ -228,9 +228,8 @@ describe("opening a thread", () => {
     expect(view.reads).toHaveLength(2);
     expect(view.reads[1].window).toBeUndefined();
     expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
-    await act(async () => { jest.advanceTimersByTime(30_000); });
+    await act(async () => view.reads[1].reject(new Error("Full read failed")));
     await settle();
-    expect(view.reads[1].signal.aborted).toBe(true);
     expect(view.client.getQueryState(snapshotKey("workspace", "a"))).toMatchObject({ status: "error", fetchStatus: "idle" });
     expect(view.host.querySelector('[role="alert"]')?.textContent).toContain("The rest of this conversation could not be loaded.");
     expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(24);
@@ -245,10 +244,8 @@ describe("opening a thread", () => {
     await act(async () => view.host.querySelector("button")?.click());
     expect(view.reads).toHaveLength(4);
     await view.resolve(3, full);
-    await view.resolve(1, snapshot("a", "Obsolete timed-out result", ["obsolete"]));
     expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(440);
     expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
-    expect(view.host.textContent).not.toContain("Obsolete timed-out result");
     expect(view.host.querySelector("input")).toBe(composer);
     expect(composer.value).toBe("Keep my unsent draft");
   });
