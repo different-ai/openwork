@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { needs, spec, unmetNeeds } from "@openwork/testkit";
+import { browserScript, needs, spec, unmetNeeds } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
 import { libraryConnectorDiscovery } from "../worlds/library.ts";
 
@@ -13,7 +13,7 @@ const title = missingRequirements.length > 0
   ? `Library connector discovery skipped — needs: ${missingRequirements.join(", ")}`
   : "Library starts with Cloud MCPs and keeps local MCP creation in Advanced";
 
-test(title, async ({ evidence, world, user, probe, step }) => {
+test(title, async ({ evidence, world, seed, user, probe, step }) => {
   needs(requirements);
   const { app: desktop, workspaceId, organizationId: orgId, denWebUrl } = world;
   await user.see({ text: "OpenWork Cloud account and organization." }, { timeoutMs: 30_000 });
@@ -42,9 +42,10 @@ test(title, async ({ evidence, world, user, probe, step }) => {
   });
 
   await step("Library defaults to MCPs, Ready to use, and cards with only three type filters", async () => {
-    // Open the main Library route, independent of responsive Settings navigation.
-    const currentUrl = await probe.eval(() => location.href);
-    await user.navigate(new URL(`#/workspace/${workspaceId}/extensions`, currentUrl).href);
+    // Arrange the surface under test without exercising responsive Settings navigation.
+    await seed.evalIn(desktop, browserScript((id: string) => {
+      location.hash = `#/workspace/${id}/extensions`;
+    }, [workspaceId]));
     await user.see({ role: "button", label: "Add MCP", nth: 0 }, { timeoutMs: 90_000 });
     await probe.eventually(() => probe.dom('header button[aria-label="Add MCP"]:not(:disabled):not([aria-disabled="true"])'), {
       within: 90_000,
