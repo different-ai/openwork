@@ -411,6 +411,75 @@ test("a healthy native MCP App preserves its resource and same-server app-visibl
   })
 })
 
+test("explicit app-visible unbound helpers stay private and dispatch only on their connection", async () => {
+  const helper: Tool = {
+    name: "update_fixture_draft",
+    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    _meta: { ui: { visibility: ["app"] } },
+  }
+  const calls: unknown[] = []
+  let reads = 0
+  const overrides = {
+    listTools: async () => [helper],
+    callTool: async (input: unknown) => {
+      calls.push(input)
+      return { content: [], structuredContent: { updated: true } }
+    },
+    readResource: async () => { reads += 1; return { contents: [] } },
+  }
+  await withClient({ tools: {}, resources: {} }, async (client) => {
+    const tools = (await client.listTools()).tools
+    expect(tools.map((tool) => tool.name)).toEqual(["search_capabilities", "execute_capability", helper.name])
+    expect(tools[2]).toEqual(helper)
+    expect((await client.listResources()).resources).toEqual([])
+    await expect(client.readResource({ uri: resourceUri })).rejects.toThrow("not bound to an available MCP App tool")
+    await expect(client.callTool({ name: "unknown_fixture", arguments: {} })).rejects.toThrow("not available on the MCP Apps endpoint")
+    expect(calls).toHaveLength(0)
+    expect(reads).toBe(0)
+    expect((await client.callTool({ name: helper.name, arguments: { text: "updated" } })).structuredContent).toEqual({ updated: true })
+    expect(calls).toEqual([expect.objectContaining({ connection, member: operation.member, toolName: helper.name, args: { text: "updated" } })])
+  }, overrides)
+  for (const proxiedConnection of [connection, directConnection]) {
+    await withClient({ tools: {} }, async (client) => {
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(proxiedConnection === connection ? ["search_capabilities", "execute_capability"] : [])
+      await expect(client.callTool({ name: helper.name, arguments: {} })).rejects.toThrow()
+    }, overrides, false, proxiedConnection)
+  }
+  await withClient({ tools: {} }, async (client) => {
+    await expect(client.callTool({ name: helper.name, arguments: {} })).rejects.toThrow("not available on the MCP Apps endpoint")
+  }, { ...overrides, listTools: async () => [] }, true, { ...connection, id: "emc_other_fixture" })
+  expect(calls).toHaveLength(1)
+})
+
+test("unbound App helpers retain write scope and live tool policy enforcement", async () => {
+  const helper: Tool = {
+    name: "update_fixture_draft",
+    inputSchema: { type: "object" },
+    annotations: { readOnlyHint: true, destructiveHint: false },
+    _meta: { ui: { visibility: ["app"] } },
+  }
+  let calls = 0
+  const toolPolicy: { allDisabled: boolean; disabledTools: string[] } = { allDisabled: false, disabledTools: [] }
+  const overrides = {
+    listTools: async () => [helper],
+    callTool: async () => { calls += 1; return { content: [] } },
+  }
+  await withClient({ tools: {} }, async (client) => {
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toContain(helper.name)
+    expect(await client.callTool({ name: helper.name, arguments: {} })).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: JSON.stringify({ error: "insufficient_mcp_scope", requiredScope: "mcp:write", message: `${helper.name} requires the mcp:write scope.` }) }],
+    })
+  }, overrides, true, connection, true, new Set(["mcp:read", "mcp:app-host"]))
+  await withClient({ tools: {} }, async (client) => {
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toContain(helper.name)
+    toolPolicy.disabledTools.push(helper.name)
+    expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain(helper.name)
+    await expect(client.callTool({ name: helper.name, arguments: {} })).rejects.toThrow("not available on the MCP Apps endpoint")
+  }, overrides, true, { ...connection, toolPolicy })
+  expect(calls).toBe(0)
+})
+
 test.each([true, false, undefined])("App proxy preserves CallToolResult fields (isError=%s)", async (isError) => {
   const result = {
     content: [{ type: "audio", data: "AAAA", mimeType: "audio/wav" }],

@@ -138,16 +138,17 @@ function toolVisibleToApp(tool: ExternalMcpProxyTool): boolean {
 
 function appOnlyProxyTool(tool: ExternalMcpProxyTool): ExternalMcpProxyTool | null {
   const resourceUri = externalMcpAppResourceUri(tool)
-  if (!resourceUri || !toolVisibleToApp(tool)) return null
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
+  if (!toolVisibleToApp(tool)) return null
+  if (!resourceUri && !(Array.isArray(ui.visibility) && ui.visibility.includes("app"))) return null
   return {
     ...tool,
     _meta: {
       ...meta,
       ui: {
         ...ui,
-        resourceUri,
+        ...(resourceUri ? { resourceUri } : {}),
         visibility: ["app"],
       },
     },

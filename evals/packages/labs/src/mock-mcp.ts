@@ -128,7 +128,7 @@ export interface MockMcpTool {
   inputSchema: Record<string, unknown>;
   title?: string;
   annotations?: { readOnlyHint: boolean; destructiveHint: boolean };
-  _meta?: { ui: { resourceUri: string; visibility?: string[] } };
+  _meta?: { ui: { resourceUri?: string; visibility?: string[] } };
   /** Serve the HTML bound to this tool's _meta.ui.resourceUri. */
   appHtml?: string;
   /** Reject absent required input keys with JSON-RPC invalid params. */
