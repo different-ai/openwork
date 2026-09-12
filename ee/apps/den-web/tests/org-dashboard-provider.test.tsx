@@ -58,6 +58,8 @@ async function withDashboard(check: (fixture: {
   rerender: (user: typeof account | null) => void;
   unmount: () => void;
   verifyReauth: () => Promise<void>;
+  tick: () => void;
+  workerRefreshCount: () => number;
 }) => Promise<void>, options: {
   setupOrganizationId?: string; activeOrgId?: string; singleOrg?: boolean; metadata?: string; role?: string;
   page?: ReactNode; pathname?: string; outsideGateway?: boolean; deploymentCapabilities?: unknown;
@@ -68,6 +70,18 @@ async function withDashboard(check: (fixture: {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
+  const intervals = new Map<number, () => void>();
+  const setInterval = window.setInterval.bind(window);
+  const clearInterval = window.clearInterval.bind(window);
+  spyOn(window, "setInterval").mockImplementation((handler, timeout, ...args) => {
+    const id = setInterval(handler, timeout, ...args);
+    if (timeout === 5000 && typeof handler === "function") intervals.set(id, () => handler(...args));
+    return id;
+  });
+  spyOn(window, "clearInterval").mockImplementation((id) => {
+    if (typeof id === "number") intervals.delete(id);
+    clearInterval(id);
+  });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   let mounted = true;
   let current: ReturnType<typeof useOrgDashboard> | null = null;
@@ -88,7 +102,8 @@ async function withDashboard(check: (fixture: {
   const config = { ...runtime.EMPTY_RUNTIME_CONFIG, orgMode: options.singleOrg ? "single_org" : "multi_org" } satisfies runtime.DenWebRuntimeConfig;
   const useRealDenFlow = flow.useDenFlow;
   const setScope = scope.setRequestOrgScope;
-  const refreshWorkers = async () => { await workers?.promise; };
+  let workerRefreshCount = 0;
+  const refreshWorkers = async () => { workerRefreshCount += 1; await workers?.promise; };
   spyOn(scope, "setRequestOrgScope").mockImplementation((id) => {
     scopeWrites.push({ id, busy: current?.orgBusy, contextId: current?.orgContext?.organization.id,
       gatewayMounted: Boolean(container.querySelector("[data-gateway]")) });
@@ -109,7 +124,7 @@ async function withDashboard(check: (fixture: {
     const held = pending.get(`${path}:${orgId ?? ""}`)?.shift();
     const reply: Reply = held ? await held.promise : path === "/v1/me/orgs"
       ? { payload: { orgs: orgs.map((org) => ({ ...org, isActive: org.id === activeOrgId })) } }
-      : path === "/v1/org" ? options.initialContext ? await options.initialContext.promise
+      : path === "/v1/org" || path === "/v1/org?refreshRoles=true" ? options.initialContext ? await options.initialContext.promise
         : context(orgId ?? "missing", options.metadata, options.role, "deploymentCapabilities" in options ? { deploymentCapabilities: options.deploymentCapabilities } : undefined)
       : options.gatewayFailure && path.startsWith("/v1/inference-providers") ? { status: 503, payload: { message: "Upstream gateway is offline" } }
       : path === "/v1/inference" ? { payload: { inference: { enabled: true, tier: "tier1", subscribed: true } } }
@@ -153,6 +168,8 @@ async function withDashboard(check: (fixture: {
       rerender: (user) => { sessionUser = user; render(); },
       unmount: () => { root.unmount(); mounted = false; },
       verifyReauth: () => verifyReauth(),
+      tick: () => { for (const tick of intervals.values()) tick(); },
+      workerRefreshCount: () => workerRefreshCount,
     });
   } finally {
     if (mounted) await act(async () => root.unmount());
@@ -178,6 +195,75 @@ test("switch commits default-deny state and unmounts Gateway before changing req
       { path: "/v1/inference-providers?scope=manageable", orgId: "org-a" },
     ]);
   });
+});
+
+test.each(["/dashboard/members", "/dashboard/manage-members"])("%s quietly refreshes only visible members context on poll, focus and visibility", async (pathname) => {
+  await withDashboard(async ({ state, calls, hold, tick, workerRefreshCount }) => {
+    const workersBefore = workerRefreshCount();
+    calls.length = 0;
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const next = hold("/v1/org", "org-a");
+    await act(async () => tick());
+    expect(state().orgBusy).toBe(false);
+    expect(state().orgContext?.organization.metadata).toBe(enabledMetadata);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(calls).toEqual([{ path: "/v1/org", orgId: "org-a" }]);
+    await act(async () => next.resolve(context("org-a", "{}")));
+    expect(state().orgContext?.organization.metadata).toBe("{}");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await act(async () => { tick(); window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(calls).toHaveLength(1);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(calls).toEqual(Array.from({ length: 3 }, () => ({ path: "/v1/org", orgId: "org-a" })));
+    expect(workerRefreshCount()).toBe(workersBefore);
+    expect(state()).toMatchObject({ orgBusy: false, orgError: null });
+  }, { pathname, outsideGateway: true });
+});
+
+test("non-members pages do not poll or refresh on focus", async () => {
+  await withDashboard(async ({ calls, tick }) => {
+    calls.length = 0;
+    await act(async () => { tick(); window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(calls).toEqual([]);
+  }, { outsideGateway: true });
+});
+
+test.each(["switch", "refresh", "sign-out", "user-change", "unmount"])("quiet members refresh cannot overwrite %s", async (operation) => {
+  await withDashboard(async ({ state, calls, hold, tick, rerender, unmount }) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const old = hold("/v1/org", "org-a");
+    await act(async () => tick());
+    await act(async () => {
+      if (operation === "switch") state().switchOrganization("b");
+      else if (operation === "refresh") await state().refreshOrgData();
+      else if (operation === "sign-out") rerender(null);
+      else if (operation === "user-change") rerender({ ...account, id: "user-2" });
+      else unmount();
+    });
+    const current = state().orgContext;
+    calls.length = 0;
+    await act(async () => old.resolve(context("org-a", "{}")));
+    expect(state().orgContext).toBe(current);
+    expect(calls).toEqual([]);
+    if (operation === "sign-out" || operation === "unmount") {
+      await act(async () => { tick(); window.dispatchEvent(new Event("focus")); });
+      expect(calls).toEqual([]);
+    }
+  }, { pathname: "/dashboard/members", outsideGateway: true });
+});
+
+test("failed quiet refresh leaves the members page intact", async () => {
+  await withDashboard(async ({ state, hold, tick }) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const current = state().orgContext;
+    const next = hold("/v1/org", "org-a");
+    await act(async () => tick());
+    await act(async () => next.resolve({ status: 503, payload: { message: "Unavailable" } }));
+    expect(state().orgContext).toBe(current);
+    expect(state()).toMatchObject({ orgBusy: false, orgError: null });
+  }, { pathname: "/dashboard/members", outsideGateway: true });
 });
 
 test.each([

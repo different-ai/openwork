@@ -378,8 +378,8 @@ function readRequestQueryParam(request: Request | undefined, propertyName: strin
   return value || null;
 }
 
-async function hasPendingInvitationForEmail(input: { invitationIdOrToken: string | null; email: string | null }) {
-  if (!input.invitationIdOrToken || !input.email) {
+async function hasPendingInvitationForEmail(input: { inviteToken: string | null; email: string | null }) {
+  if (!input.inviteToken || !input.email) {
     return false;
   }
 
@@ -387,14 +387,14 @@ async function hasPendingInvitationForEmail(input: { invitationIdOrToken: string
     .select({ inviteToken: schema.InvitationTable.inviteToken })
     .from(schema.InvitationTable)
     .where(and(
-      sql`(${schema.InvitationTable.id} = ${input.invitationIdOrToken} or ${schema.InvitationTable.inviteToken} = ${input.invitationIdOrToken})`,
+      eq(schema.InvitationTable.inviteToken, input.inviteToken),
       eq(schema.InvitationTable.status, "pending"),
       gt(schema.InvitationTable.expiresAt, new Date()),
-      sql`lower(${schema.InvitationTable.email}) = ${input.email.trim().toLowerCase()}`,
+      sql`lower(${schema.InvitationTable.email}) = ${normalizeLoginEmail(input.email)}`,
     ))
     .limit(1);
 
-  return Boolean(invitation);
+  return invitation?.inviteToken === input.inviteToken;
 }
 
 function normalizeRawRoleValue(roleValue: string) {
@@ -650,10 +650,17 @@ export const auth = betterAuth({
           if (ssoProviderId && await isScimDeprovisionedEmailForSsoProvider({ ssoProviderId, email })) {
             throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
           }
+          const emailVerified = context?.path === "/sign-up/email"
+            ? await hasPendingInvitationForEmail({
+              inviteToken: readRequestQueryParam(context.request, "invite"),
+              email,
+            })
+            : user.emailVerified;
           return {
             data: {
               ...user,
               email,
+              emailVerified,
             },
           };
         },
@@ -902,7 +909,7 @@ export const auth = betterAuth({
       const email = getAuthBodyEmail(ctx.body);
       if (ctx.path === "/sign-up/email") {
         const invitationAllowsSignup = await hasPendingInvitationForEmail({
-          invitationIdOrToken: readRequestQueryParam(ctx.request, "invite") ?? readStringProperty(ctx.query, "invite") ?? readStringProperty(ctx.body, "invite"),
+          inviteToken: readRequestQueryParam(ctx.request, "invite") ?? readStringProperty(ctx.query, "invite") ?? readStringProperty(ctx.body, "invite"),
           email,
         });
         const bootstrapGrant = readInitialAdminBootstrapGrantFromBody(ctx.body);
@@ -1101,6 +1108,14 @@ export const auth = betterAuth({
   emailVerification: {
     sendOnSignUp: env.requireEmailVerification,
     sendOnSignIn: env.requireEmailVerification,
+    autoSignInAfterVerification: true,
+    beforeEmailVerification: async (user) => {
+      if (await findEnterpriseAuthRequirementForEmail(normalizeLoginEmail(user.email))) {
+        throw new APIError("FORBIDDEN", {
+          message: "This account is managed by an organization. Use SSO to sign in.",
+        });
+      }
+    },
     afterEmailVerification: async (user) => {
       await syncDenSignupContact({
         email: user.email,
@@ -1128,11 +1143,18 @@ export const auth = betterAuth({
       otpLength: 6,
       expiresIn: 600,
       allowedAttempts: 5,
-      async sendVerificationOTP({ email, otp, type }) {
+      async sendVerificationOTP({ email, otp, type }, context) {
+        if (type === "email-verification") {
+          const account = await context?.context.internalAdapter.findUserByEmail(email);
+          if (account?.user.emailVerified) return;
+        }
         await sendEmail({
           to: email,
           template: "verification",
-          props: { verificationCode: otp },
+          props: {
+            verificationCode: otp,
+            recoveryUrl: new URL(`/verify?email=${encodeURIComponent(normalizeLoginEmail(email))}`, env.webUrl).toString(),
+          },
         });
       },
     }),

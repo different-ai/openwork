@@ -1102,16 +1102,18 @@ export function AuthPanel({
             >
               Resend code
             </button>
-            <button
-              type="button"
-              className="den-button-secondary w-full"
-              onClick={() => {
-                cancelVerification();
-              }}
-              disabled={authBusy || desktopRedirectBusy}
-            >
-              Change email
-            </button>
+            {!lockEmail ? (
+              <button
+                type="button"
+                className="den-button-secondary w-full"
+                onClick={() => {
+                  cancelVerification();
+                }}
+                disabled={authBusy || desktopRedirectBusy}
+              >
+                Change email
+              </button>
+            ) : null}
           </div>
         ) : null}
       </form>

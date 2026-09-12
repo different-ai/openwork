@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import { parseInvitationPreviewPayload } from "../app/(den)/_lib/den-org";
+import { isEmailNotVerified } from "../app/(den)/_providers/den-flow-provider";
 
 const joinOrgScreenPath = fileURLToPath(
   new URL("../app/(den)/_components/join-org-screen.tsx", import.meta.url),
@@ -45,6 +46,31 @@ function readOnboardingShellSource() {
 }
 
 describe("join organization invite clean layout contract", () => {
+  test("only exact email-not-verified codes open verification in either sign-in path", () => {
+    for (const payload of [{ code: "EMAIL_NOT_VERIFIED" }, { error: "EMAIL_NOT_VERIFIED" }, { code: "email_not_verified" }]) {
+      expect(isEmailNotVerified(payload)).toBe(true);
+    }
+    for (const payload of [null, {}, { code: "ACCESS_DENIED" }, { status: 403 }, { message: "EMAIL_NOT_VERIFIED" }, { error: "EMAIL_NOT_VERIFIED_EXTRA" }, { code: { error: "EMAIL_NOT_VERIFIED" } }]) {
+      expect(isEmailNotVerified(payload)).toBe(false);
+    }
+    const source = readFileSync(denFlowProviderPath, "utf8");
+    expect(source).toContain("isEmailNotVerified(payload) && !isSingleOrgMode");
+    expect(source).toContain("isEmailNotVerified(signInResult.payload) && !isSingleOrgMode");
+    expect(source).not.toContain("response.status === 403 && !isSingleOrgMode");
+    expect(source).toMatch(/if \(submitMode === "sign-up" && !token\) \{[\s\S]*?if \(pendingInvitationId\) \{\s*return await finalizeEmailPasswordSignIn\(submitMode, trimmedEmail, payload\);/);
+  });
+
+  test("verification recovery route only restores code entry for the query email", () => {
+    const page = readFileSync(new URL("../app/(den)/verify/page.tsx", import.meta.url), "utf8");
+    const screen = readFileSync(new URL("../app/(den)/_components/verification-recovery-screen.tsx", import.meta.url), "utf8");
+    expect(page).toContain('typeof params.email === "string"');
+    expect(page).toContain("<VerificationRecoveryScreen key={email} email={email} />");
+    expect(screen).toContain("openVerificationStep(email)");
+    expect(screen).toContain("prefilledEmail={email} lockEmail");
+    expect(screen).not.toContain("requestJson");
+    expect(screen).not.toContain("submitVerificationCode");
+  });
+
   test("uses the organization picker Dithering layer", () => {
     const source = readFileSync(onboardingShellPath, "utf8");
     const ditheringImports = source.match(/import \{ Dithering \} from "@paper-design\/shaders-react"/g) ?? [];
@@ -156,7 +182,10 @@ describe("join organization invite clean layout contract", () => {
     const authPanelSource = readAuthPanelSource();
 
     expect(source).toContain("resolveEmailFirstOnPrefill");
-    expect(source).toContain("emailFirstInvitationId={preview.invitation.id}");
+    expect(source).toContain("emailFirstInvitationId={invitationId}");
+    expect(source).not.toContain("emailFirstInvitationId={preview.invitation.id}");
+    expect(source).not.toContain("hideSocialAuth");
+    expect(source).toContain("invitationId={invitationId} initialMode=\"sign-up\"");
     expect(authPanelSource).toContain("function getLoginOptionsPath(targetEmail: string)");
     expect(authPanelSource).toContain('params.set("invite", emailFirstInvite);');
     expect(authPanelSource).toContain('emailFirstStep === "sso"');

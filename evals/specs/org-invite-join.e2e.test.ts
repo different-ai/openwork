@@ -42,6 +42,9 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     await user.type({ role: "textbox", label: "Name" }, person.name);
     await user.type({ role: "textbox", label: "Password" }, person.password);
     await user.click({ role: "button", label: "Create account" });
+    await user.see({ role: "button", label: `Join ${text(world.organization.name)}` });
+    await pending(person.email);
+    await user.click({ role: "button", label: `Join ${text(world.organization.name)}` });
     await joined(person.email);
     await user.notSee({ role: "textbox", label: "Verification code" });
     await user.notSee({ role: "button", label: "Resend code" });
@@ -73,6 +76,9 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     const verificationBefore = await witnesses.emails("verification", person.email);
     await actor.type({ role: "textbox", label: "Password" }, person.password);
     await actor.click({ role: "button", label: "Create account" });
+    await actor.see({ role: "button", label: `Join ${text(world.organization.name)}` });
+    await pending(person.email);
+    await actor.click({ role: "button", label: `Join ${text(world.organization.name)}` });
     await joined(person.email, "admin");
     await actor.notSee({ role: "textbox", label: "Verification code" });
     expect(await witnesses.emails("verification", person.email)).toEqual(verificationBefore);
@@ -84,7 +90,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
       const person = identity(`${state}-invitee`);
       const invite = await witnesses.invite(person.email, orgId);
       if (state === "canceled") {
-        const canceled = await witnesses.api(`/v1/invitations/${invite.id}`, { method: "DELETE", headers: { "x-openwork-org-id": orgId } });
+        const canceled = await witnesses.api(`/v1/invitations/${invite.id}/cancel`, { method: "POST", headers: { "x-openwork-org-id": orgId }, body: JSON.stringify({}) });
         expect(canceled.response.ok, canceled.text).toBe(true);
       }
       if (state === "blocked") {

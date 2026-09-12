@@ -1,10 +1,11 @@
-import { Body, Container, Head, Heading, Html, Preview, Section, Text } from "@react-email/components"
+import { Body, Container, Head, Heading, Html, Link, Preview, Section, Text } from "@react-email/components"
 
 export type VerificationEmailProps = {
   verificationCode: string
+  recoveryUrl: string
 }
 
-export function VerificationEmail({ verificationCode }: VerificationEmailProps) {
+export function VerificationEmail({ verificationCode, recoveryUrl }: VerificationEmailProps) {
   return (
     <Html>
       <Head />
@@ -17,6 +18,9 @@ export function VerificationEmail({ verificationCode }: VerificationEmailProps) 
           <Section style={styles.codeBox}>
             <Text style={styles.code}>{verificationCode}</Text>
           </Section>
+          <Text style={styles.text}>
+            Closed the sign-in page? <Link href={recoveryUrl}>Return to enter your verification code</Link>.
+          </Text>
           <Text style={styles.footer}>This code expires in 10 minutes. If you did not request it, you can ignore this email.</Text>
         </Container>
       </Body>
