@@ -1,0 +1,173 @@
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { expect } from "vitest";
+import { appWeb, eventually, needs, SkipError, test } from "@openwork/testkit";
+import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
+import { OpenWorkExtensionsPreview } from "../../apps/server/src/opencode-plugins/openwork-extensions-preview";
+import { buildOpenworkProviderContributions, sessionActivityArgsSchema, sessionReadArgsSchema, sessionSearchArgsSchema } from "../../apps/server/src/opencode-plugins/openwork-provider-adapters";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function record(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error("Expected an object response");
+  return value;
+}
+
+function records(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) throw new Error("Expected an array response");
+  return value.map(record);
+}
+
+function text(value: unknown): string {
+  if (typeof value !== "string") throw new Error("Expected a string response");
+  return value;
+}
+
+test("session tool descriptors advertise accepted enums, text defaults, caps and read-only activity", async ({ evidence }) => {
+  const affordances = buildOpenworkProviderContributions([]).flatMap((entry) => entry.affordances);
+  const read = affordances.find((entry) => entry.id === "session.read");
+  const search = affordances.find((entry) => entry.id === "session.search");
+  const activity = affordances.find((entry) => entry.id === "session.activity");
+  const parts = read?.arguments.find((argument) => argument.name === "parts")?.description;
+  const scope = search?.arguments.find((argument) => argument.name === "in")?.description;
+  const readEnums = sessionReadArgsSchema.shape.parts.unwrap().element.options;
+  const searchEnums = sessionSearchArgsSchema.shape.in.unwrap().element.options;
+  expect(readEnums).toEqual(["text", "tool", "reasoning"]);
+  expect(searchEnums).toEqual(["text", "tool"]);
+  for (const value of readEnums) expect(parts).toContain(value);
+  for (const value of searchEnums) expect(scope).toContain(value);
+  for (const description of [parts, scope]) {
+    expect(description).toContain("default [text]");
+    expect(description).toContain("2000");
+    expect(description).toContain("redacted");
+  }
+  expect(sessionReadArgsSchema.parse({ sessionId: "ses_fixture" }).parts).toEqual(["text"]);
+  expect(sessionSearchArgsSchema.parse({ query: "needle" }).in).toEqual(["text"]);
+  expect(sessionReadArgsSchema.safeParse({ sessionId: "ses_fixture", parts: ["unknown"] }).success).toBe(false);
+  expect(sessionSearchArgsSchema.safeParse({ query: "needle", in: ["reasoning"] }).success).toBe(false);
+  expect(sessionActivityArgsSchema.safeParse({ sessionId: "ses_fixture", since: "invalid" }).success).toBe(false);
+  expect(activity?.arguments.map((argument) => argument.name).sort()).toEqual(Object.keys(sessionActivityArgsSchema.shape).sort());
+  expect(activity).toMatchObject({ kind: "query", effects: { data: "read", ui: "none", external: false }, executor: { kind: "openwork" } });
+  for (const value of ["300", "byAffordanceId", "ok: false", "callId", "not capped"]) expect(activity?.description).toContain(value);
+  evidence.recordAssertionEvidence("Tool opt-in and activity contracts are discoverable", "Descriptors match accepted enum values and text defaults, advertise redaction and field caps, reject unsupported scopes and invalid timestamps, and declare activity read-only.", true);
+});
+
+test("session.read and session.activity expose a real isolated headless shell call without leaking tool data by default", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"] });
+  if (place.kind !== "local") throw new SkipError("this headless manifest proof uses the explicitly requested local lane");
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), "session-tool-parts-")));
+  const original = { url: process.env.OPENWORK_SERVER_URL, token: process.env.OPENWORK_SERVER_TOKEN };
+  try {
+    await using app = await appWeb({ name: "session-tool-parts", workspacePath: scratch, place });
+    const paths = resolveHeadlessWorldRuntimePaths(fileURLToPath(new URL("../../", import.meta.url)), app.handle.name);
+    const runtime = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
+    if (!runtime || runtime.openworkUrl !== app.openworkUrl || runtime.workspace !== scratch) throw new Error("Could not identify the test-owned headless runtime");
+    process.env.OPENWORK_SERVER_URL = runtime.openworkUrl;
+    process.env.OPENWORK_SERVER_TOKEN = runtime.token;
+    const request = async (path: string, body?: unknown): Promise<unknown> => {
+      const response = await fetch(`${runtime.openworkUrl}${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: { Authorization: `Bearer ${runtime.token}`, "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error(`Isolated engine request ${path} returned HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      return response.status === 204 ? null : response.json();
+    };
+    const workspace = records(record(await request("/workspaces")).items).find((entry) => entry.path === scratch);
+    if (!workspace) throw new Error("Isolated workspace not found");
+    const workspaceId = text(workspace.id);
+    const base = `/workspace/${encodeURIComponent(workspaceId)}/opencode/session`;
+    const model = { providerID: "tool-parts-unconfigured", modelID: "unused" };
+    const sessionId = text(record(await request(base, { title: "Tool execution witness" })).id);
+    const outputMarker = "witness-output-only-7c93";
+    const neighborId = text(record(await request(base, { title: outputMarker })).id);
+    const firstUser = "Keep this user message in the default transcript.";
+    await request(`${base}/${sessionId}/message`, { noReply: true, model, parts: [{ type: "text", text: firstUser }] });
+    await request(`${base}/${neighborId}/message`, { noReply: true, model, parts: [{ type: "text", text: outputMarker }] });
+    const plugin = await OpenWorkExtensionsPreview({ directory: scratch });
+    const query = async (id: string, args: Record<string, unknown>) => {
+      const output = record(JSON.parse(await plugin.tool.openwork_query.execute({ id, args: { workspaceId, ...args } })));
+      expect(output.ok).toBe(true);
+      const result = record(output.result);
+      expect(result.ok).toBe(true);
+      return result;
+    };
+    const before = await query("session.activity", { sessionId });
+    expect(before.toolCalls).toEqual({ total: 0, byTool: {}, byAffordanceId: {} });
+    const source = `process.stdout.write(JSON.stringify({ok:false,error:"intentional failure token=fixture-secret " + "E".repeat(400),payload:"P".repeat(2400)+["witness","output","only","7c93"].join("-")}))`;
+    const command = `${JSON.stringify(process.execPath)} -e '${source}'`;
+    expect(command).not.toContain(outputMarker);
+    const shell = record(await request(`${base}/${sessionId}/shell`, { agent: "build", model, command }));
+    const actualTool = records(shell.parts).find((part) => part.type === "tool");
+    if (!actualTool) throw new Error("Real engine shell did not persist a tool part");
+    const actualState = record(actualTool.state);
+    expect(actualState.status).toBe("completed");
+    expect(actualTool.tool).toBe("bash");
+    expect(actualState.input).toMatchObject({ command });
+    expect(text(actualState.output)).toContain(outputMarker);
+    expect(text(actualState.output)).toContain("fixture-secret");
+    const callId = text(actualTool.callID);
+    const toolRead = await eventually(() => query("session.read", { sessionId, parts: ["tool"], from: "start" }), {
+      within: 15_000, intervalMs: 250, label: "persisted real shell call visible through session.read",
+      until: (result) => records(result.messages).some((message) => records(message.tools).some((tool) => tool.callId === callId)),
+    });
+    const tools = records(toolRead.messages).flatMap((message) => records(message.tools));
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({ type: "tool", tool: "bash", callId, status: "completed", truncated: true });
+    expect(text(tools[0]?.output)).toHaveLength(2000);
+    expect(text(tools[0]?.output)).not.toContain(outputMarker);
+    for (const field of ["input", "output", "error"]) expect(text(tools[0]?.[field]).length).toBeLessThanOrEqual(2000);
+    expect(JSON.stringify(toolRead)).toContain("[redacted]");
+    expect(JSON.stringify(toolRead)).not.toContain("fixture-secret");
+    expect(records(toolRead.messages).every((message) => message.text === "")).toBe(true);
+    const defaultRead = await query("session.read", { sessionId, from: "start" });
+    expect(records(defaultRead.messages).some((message) => message.text === firstUser)).toBe(true);
+    expect(records(defaultRead.messages).every((message) => message.tools === undefined && message.reasoning === undefined)).toBe(true);
+    expect(JSON.stringify(defaultRead)).not.toContain(outputMarker);
+    const summary = await query("session.read", { sessionId, summary: true, parts: ["text", "tool"] });
+    expect(record(summary.firstUser).text).toBe(firstUser);
+    expect(summary.lastAssistant).toBeNull();
+    const toolSearch = await query("session.search", { query: outputMarker, in: ["tool"], match: "phrase" });
+    expect(records(toolSearch.results).map((entry) => entry.sessionId)).toEqual([sessionId]);
+    expect(records(toolSearch.results)[0]).toMatchObject({ kind: "tool", tool: "bash", callId, status: "completed" });
+    expect(JSON.stringify(toolSearch)).not.toContain("fixture-secret");
+    const defaultSearch = await query("session.search", { query: outputMarker, match: "phrase" });
+    expect(records(defaultSearch.results).map((entry) => entry.sessionId)).toEqual([neighborId]);
+    const secretSearch = await query("session.search", { query: "fixture-secret", in: ["tool"] });
+    expect(secretSearch.results).toEqual([]);
+    evidence.recordAssertionEvidence("Real shell tool opt-in, default isolation, full-field search and redaction", "The engine persisted exactly one completed bash call; session.read returned the same call ID with redacted fields capped at 2000 characters. Tool search found an output-only marker beyond the read cap, excluded the text/title neighbor and could not find the secret. Default read/search excluded tool data; a tool-only assistant did not become the summary reply.", true);
+    const activity = await query("session.activity", { sessionId });
+    expect(activity.toolCalls).toEqual({ total: 1, byTool: { bash: 1 }, byAffordanceId: {} });
+    const errors = record(activity.errors);
+    expect(errors.total).toBe(1);
+    const failures = records(errors.list);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ callId, tool: "bash" });
+    expect(text(failures[0]?.message)).toHaveLength(300);
+    expect(text(failures[0]?.message)).toContain("token=[redacted]");
+    expect(JSON.stringify(activity)).not.toContain("fixture-secret");
+    expect(activity.firstAt).toBeTypeOf("number");
+    expect(activity.lastAt).toBeTypeOf("number");
+    expect(activity.messages).toMatchObject({ assistant: 1 });
+    const inclusive = await query("session.activity", { sessionId, since: failures[0]?.at });
+    expect(record(inclusive.toolCalls).total).toBe(1);
+    if (typeof activity.lastAt !== "number") throw new Error("Expected dated real engine activity");
+    const future = await query("session.activity", { sessionId, since: activity.lastAt + 1 });
+    expect(future).toMatchObject({ toolCalls: { total: 0, byTool: {}, byAffordanceId: {} }, errors: { total: 0, list: [] }, messages: { user: 0, assistant: 0 }, firstAt: null, lastAt: null });
+    const neighbor = await query("session.activity", { sessionId: neighborId });
+    expect(neighbor.toolCalls).toEqual({ total: 0, byTool: {}, byAffordanceId: {} });
+    expect(neighbor.errors).toEqual({ total: 0, list: [] });
+    evidence.recordAssertionEvidence("Activity counts the real call and its failed JSON outcome exactly once", "Activity changed from zero to one bash call and one completed ok:false outcome with the same call ID. Error text was redacted before its 300-character cap. Inclusive since preserved the call, future since returned honest zeros, and the neighbor retained zero tool calls/errors.", true);
+  } finally {
+    if (original.url === undefined) delete process.env.OPENWORK_SERVER_URL;
+    else process.env.OPENWORK_SERVER_URL = original.url;
+    if (original.token === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
+    else process.env.OPENWORK_SERVER_TOKEN = original.token;
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
