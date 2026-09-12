@@ -43,7 +43,7 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.notSee({ role: "option", label: /^Experimental engine/ });
     await user.looks([
       "The command palette is visibly open with its search field, result groups, and keyboard footer intact.",
-      "The empty-query palette visibly offers actions and settings, including Permissions, without a Recent group.",
+      "The empty-query palette visibly shows Settings including Permissions, without a Recent group.",
     ]);
   });
 
