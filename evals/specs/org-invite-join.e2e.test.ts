@@ -63,7 +63,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     const wrongAccountMembershipIds = membersFor(await witnesses.org(orgId), world.other.email).map((member) => member.id);
     const surface = await world.fresh(invite.link, world.other);
     const actor = user.on(surface);
-    await actor.see({ text: "Switch accounts to continue." }, { timeoutMs: 90_000 });
+    await actor.see({ text: /Switch accounts to continue\./ }, { timeoutMs: 90_000 });
     await actor.notSee({ role: "button", label: `Join ${text(world.organization.name)}` });
     const denied = await seed.api(world.other, "/v1/orgs/invitations/accept", { method: "POST", body: JSON.stringify({ id: invite.token }) });
     expect(denied.response.ok).toBe(false);
