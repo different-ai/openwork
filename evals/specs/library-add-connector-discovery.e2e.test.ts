@@ -42,7 +42,8 @@ test(title, async ({ evidence, world, user, probe, step }) => {
   });
 
   await step("Library defaults to MCPs, Ready to use, and cards with only three type filters", async () => {
-    // This fixture uses a narrow window; reveal its navigation if collapsed.
+    // Leave Settings first: its sidebar has a different Library destination.
+    await user.click({ role: "button", label: "Close settings" });
     if (!await probe.has("Library")) await user.click({ role: "button", label: "Toggle Sidebar" });
     await user.click("Library");
     await user.see({ role: "button", label: "Add MCP", nth: 0 }, { timeoutMs: 90_000 });
