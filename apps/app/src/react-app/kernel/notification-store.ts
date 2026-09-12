@@ -25,7 +25,8 @@ export type NotificationAction =
   | { type: "open-model-picker"; providerIds: string[] }
   | { type: "reload-engine" }
   | { type: "open-extensions-marketplace"; pluginName?: string }
-  | { type: "install-marketplace-plugin"; pluginName: string };
+  | { type: "install-marketplace-plugin"; pluginName: string }
+  | { type: "open-session"; workspaceId: string; sessionId: string };
 
 export type AppNotification = {
   id: string;
@@ -92,6 +93,9 @@ function isAction(value: unknown): value is NotificationAction {
   if (type === "open-model-picker") {
     const providerIds = Reflect.get(value, "providerIds");
     return Array.isArray(providerIds) && providerIds.every((id) => typeof id === "string");
+  }
+  if (type === "open-session") {
+    return typeof Reflect.get(value, "workspaceId") === "string" && typeof Reflect.get(value, "sessionId") === "string";
   }
   return false;
 }
