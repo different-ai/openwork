@@ -230,7 +230,7 @@ test("opening a long conversation shows the latest and full history while ancill
   });
 });
 
-warmTest("returning to a fully cached conversation refreshes its persisted tail before the uncapped read completes", async ({ user, agent, probe, step, world }) => {
+warmTest("returning to a fully cached conversation refreshes its persisted tail before the uncapped read completes", async ({ user, agent, probe, step, world, evidence }) => {
   const messagesPath = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode/session/${encodeURIComponent(world.session.sessionId)}/message`;
   const surface = `[data-session-surface-id="${world.session.sessionId}"]`;
   const historyDom = async () => {
@@ -359,5 +359,11 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     expect(messageTexts(stored.body)).toEqual(persisted);
     expect((await observeReturn()).rows.map((row) => row.text)).toEqual(refreshed);
     expect(maxAnchorDrift).toBeLessThanOrEqual(1);
+    evidence.recordAssertionEvidence(
+      "Warm history retains the refreshed tail, unchanged source, and manual anchor after full-read release",
+      JSON.stringify({ cachedMessages: cached.texts.length, refreshedMessages: refreshed.length, finalMessages: complete.rows.length,
+        persistedMessages: messageTexts(stored.body).length, historyChanged, maxAnchorDrift, state: complete.state }),
+      true,
+    );
   });
 });
