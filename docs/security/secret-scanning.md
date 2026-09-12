@@ -23,9 +23,11 @@ This workflow does not configure required branch checks or push protection.
 
 ## Policy and review
 
-CI loads `.betterleaks.toml` from the **base commit**, not the PR head. Until the
-policy first lands, CI uses embedded defaults without repository exemptions.
-Policy changes require review and take effect after merging into the base.
+CI loads an established `.betterleaks.toml` from the **base commit**, not the PR
+head. Only the initial installation, when the base has no policy, bootstraps
+from the head and emits a maintainer-review notice. Ben must review that initial
+policy with this workflow. Later policy changes require review and take effect
+after merging into the base. Missing or malformed bootstrap policy fails closed.
 A bare clone and a temporary working directory prevent PR-controlled config or
 ignore-file discovery. Inline allow comments are ignored. No repository code,
 hooks or dependencies are executed. Workflow edits remain subject to ordinary

@@ -15,7 +15,7 @@ const githubToken = ["ghp_", "q7N4r2W6t", "3Y5u2I7o9", "P8a1S6d4F", "3g2H5j8K9"]
 const uriPassword = ["q7N4r2", "W6t3Y5u2"].join("");
 const credentialUri = `postgresql://scan_user:${uriPassword}@db.scan.invalid:5432/service`;
 
-function run(command: string, args: string[], cwd: string) {
+function run(command: string, args: string[], cwd: string, extraEnv: Record<string, string> = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
   return spawnSync(command, args, {
     cwd,
@@ -31,6 +31,7 @@ function run(command: string, args: string[], cwd: string) {
       GIT_AUTHOR_EMAIL: "secret-scan@openwork.invalid",
       GIT_COMMITTER_NAME: "Secret scan fixture",
       GIT_COMMITTER_EMAIL: "secret-scan@openwork.invalid",
+      ...extraEnv,
     },
   });
 }
@@ -242,6 +243,38 @@ test("CI secret scan sanitizes SARIF metadata and context with the exact workflo
         region: { startLine: 3, snippet: { text: "REDACTED" } },
       } }],
     }] }] });
+  });
+});
+
+test("CI secret scan bootstraps once then uses base policy and preserves detached base objects", async () => {
+  await withScratch(async (directory) => {
+    needs({ commands: ["bash"] });
+    const workflow = await readFile(join(repository, ".github/workflows/secret-scan.yml"), "utf8");
+    const step = workflow.indexOf("      - name: Prepare trusted policy");
+    const start = workflow.indexOf("        run: |\n", step);
+    const end = workflow.indexOf("      - name: Scan only", start);
+    expect(step >= 0 && start > step && end > start).toBe(true);
+    const script = workflow.slice(start + "        run: |\n".length, end)
+      .split("\n").map((line) => line.replace(/^          /, "")).join("\n");
+    const { repo, base } = await fixtureRepository(directory);
+    const policy = await readFile(config, "utf8");
+    const installed = await commitFile(repo, ".betterleaks.toml", policy);
+    async function prepare(name: string, baseSha: string, headSha: string) {
+      const temp = join(directory, name);
+      await mkdir(temp);
+      const result = run("bash", ["-c", script], repo, { RUNNER_TEMP: temp, BASE_SHA: baseSha, HEAD_SHA: headSha });
+      expect(result.status).toBe(0);
+      expect(await readFile(join(temp, "secret-scan.toml"), "utf8")).toBe(policy);
+      expect(git(join(temp, "secret-scan.git"), ["cat-file", "-t", baseSha])).toBe("commit");
+      return result;
+    }
+    expect((await prepare("bootstrap", base, installed)).stdout.includes("Bootstrapping")).toBe(true);
+    const trusted = await commitFile(repo, "trusted.txt", "trusted-base\n");
+    git(repo, ["update-ref", "refs/remotes/origin/review-base", trusted]);
+    git(repo, ["checkout", "--detach", installed]);
+    const head = await commitFile(repo, ".betterleaks.toml", "[extend]\nuseDefault = true\n");
+    git(repo, ["branch", "-D", "main"]);
+    expect((await prepare("established", trusted, head)).stdout.includes("Bootstrapping")).toBe(false);
   });
 });
 
