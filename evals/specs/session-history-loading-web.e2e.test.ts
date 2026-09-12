@@ -111,16 +111,52 @@ test("mixed active history clears its loading status and short history never ann
   await step("PageUp and Find do not resurrect history loading or lose earlier messages", async () => {
     await user.press(place.kind === "local" && process.platform === "darwin" ? "Meta+f" : "Control+f");
     await user.type({ placeholder: "Find in conversation" }, "Mixed history user 120", { replace: true });
-    await user.see({ text: /^Mixed history user 120$/ });
+    const reading = async () => {
+      const { elements } = await probe.dom(`${surface} [data-thread-scroll], ${surface} [data-message-role="user"]`);
+      const [viewport, ...users] = elements;
+      const row = users[119];
+      if (!viewport || !row) throw new Error("Find did not retain user 120");
+      return { text: row.text, offset: row.rect.top - viewport.rect.top, users: users.length,
+        visible: row.rect.width > 0 && row.rect.height > 0 && row.rect.top >= viewport.rect.top && row.rect.bottom <= viewport.rect.bottom };
+    };
+    let previous = Number.NaN;
+    let stable = 0;
+    const found = await probe.eventually(async () => {
+      const current = await reading();
+      stable = current.visible ? Math.abs(current.offset - previous) <= 1 ? stable + 1 : 1 : 0;
+      previous = current.offset;
+      return current;
+    }, { within: 5_000, intervalMs: 100, label: "Find passively reveals user 120 at a settled offset", until: current => current.visible && current.text.includes("Mixed history user 120") && stable >= 3 });
     await user.click({ role: "button", label: "Close find" });
+    let maxCloseDrift = 0;
+    stable = 0;
+    const closed = await probe.eventually(async () => {
+      const current = await reading();
+      expect(current.text).toBe(found.text);
+      maxCloseDrift = Math.max(maxCloseDrift, Math.abs(current.offset - found.offset));
+      stable = current.visible ? Math.abs(current.offset - previous) <= 1 ? stable + 1 : 1 : 0;
+      previous = current.offset;
+      return current;
+    }, { within: 5_000, intervalMs: 100, label: "Close Find retains the same visible message and offset", until: current => current.visible && stable >= 3 });
+    expect(maxCloseDrift).toBeLessThanOrEqual(2);
+    evidence.recordAssertionEvidence("Closing Find retains the exact visible user row within 2px", JSON.stringify({ found, closed, maxCloseDrift }), true);
     await user.click({ text: /^Mixed history user 120$/ });
-    const before = (await rows()).elements[119];
-    if (!before) throw new Error("Find did not retain user 120");
+    const before = await reading();
+    expect(before.text).toBe(found.text);
+    expect(Math.abs(before.offset - closed.offset)).toBeLessThanOrEqual(2);
     await user.press("PageUp");
-    const after = await probe.eventually(rows, { within: 5_000, label: "PageUp moves the reading position above its Find anchor", until: ({ elements }) => (elements[119]?.rect.top ?? 0) > before.rect.top + 16 });
-    expect(after.elements).toHaveLength(world.turns);
+    previous = Number.NaN;
+    stable = 0;
+    const after = await probe.eventually(async () => {
+      const current = await reading();
+      expect(current.text).toBe(found.text);
+      stable = current.offset > before.offset + 16 ? Math.abs(current.offset - previous) <= 1 ? stable + 1 : 1 : 0;
+      previous = current.offset;
+      return current;
+    }, { within: 5_000, intervalMs: 100, label: "PageUp moves above the Find anchor and settles for three polls within 1px", until: current => current.offset > before.offset + 16 && stable >= 3 });
+    expect(after.users).toBe(world.turns);
     const status = (await probe.dom(`${surface} [data-thread-history-status]`)).elements.length;
     expect(status).toBe(0);
-    evidence.recordAssertionEvidence("PageUp and Find retain earlier messages without reviving history status", JSON.stringify({ users: after.elements.length, before: before.rect.top, after: after.elements[119]?.rect.top, status }), true);
+    evidence.recordAssertionEvidence("PageUp and Find retain earlier messages without reviving history status", JSON.stringify({ before, after, stablePolls: stable, status }), true);
   });
 });
