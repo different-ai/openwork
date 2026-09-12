@@ -1,0 +1,217 @@
+---
+title: "Agent diagnostics reference"
+description: "Decode OpenWork agent diagnostic reports, Cloud MCP probe cause codes, TLS transport evidence, and engine registration failures."
+---
+
+Use this page when the app can sign in and use models, but OpenWork Cloud MCP tools fail, disappear, or show engine registration errors. It is the code-level reference for reports produced by OpenWork v0.18.7 and newer.
+
+## Produce a report
+
+1. Open **Settings → Advanced** and enable **Developer mode**.
+2. Open **Settings → Debug**.
+3. Click **Run agent diagnostics**.
+4. When **Agent diagnostics report** appears, click **Copy report** and share the JSON with support.
+
+The report is designed to be safe to copy. It contains only bounded, allowlisted evidence. Token values, Authorization header values, credential values, raw prompts, provider responses, stack traces, raw engine errors, and secret-bearing URLs are excluded. Some fields can include a bare origin such as `https://den.example.com`, but paths, query strings, fragments, credentials, and bearer values are rejected or scrubbed.
+
+## Report checks
+
+The report contains the checks below in a fixed order.
+
+| Check id | What it proves |
+| --- | --- |
+| `request-safety` | The client request matched the strict diagnostics schema and only included safe organization summaries. |
+| `workspace-runtime` | The selected workspace has a readable OpenWork runtime row and engine endpoint intent. |
+| `connect-steering-scope` | Connect state points the selected workspace at the expected Cloud, disconnected, or extensions-only branch. |
+| `agent-resolution` | The effective or configured OpenWork agent is present, selected, visible, and usable as the default agent. |
+| `agent-prompt-markers` | The OpenWork prompt contains the required `search_capabilities`, `execute_capability`, and memory markers. |
+| `agent-connect-tool-permissions` | Effective or static tool policy does not deny the required OpenWork Cloud agent tool IDs. |
+| `plugin-registration` | The Connect steering plugin is present in the effective engine config or runtime injection intent. |
+| `mcp-inventory` | Managed runtime MCPs and available static MCP layers were inventoried without claiming full OpenCode resolution unless the engine returned it. |
+| `engine-config` | The selected engine returned its effective merged configuration, or explains why it could not be read. |
+| `engine-agent` | The selected engine resolved the OpenWork agent, or explains why that could not be read. |
+| `engine-plugin-tools` | Intentionally warns that diagnostics did not run an LLM turn, so per-request plugin transforms and the full live tool registry were not proven. |
+| `engine-mcp-sync` | OpenWork-managed remote MCP registration records are connected, missing, stale, or failed; failed rows include the engine's own sanitized error string. |
+| `engine-mcp-status` | Intentionally skipped because querying the live MCP status endpoint can connect every enabled MCP. |
+| `cloud-tool-catalog` | An independent OpenWork runtime probe either completed the credentialed MCP initialize/tools-list handshake against the managed `openwork-cloud` endpoint or reports the exact closed cause code that stopped it. |
+| `cloud-endpoint-differential` | Compares the independent runtime probe with cached engine registration evidence to identify whether the endpoint, runtime path, or engine path is implicated. |
+| `cloud-endpoint-transport` | Performs a credential-free DNS/TCP/TLS probe when useful and reports certificate-chain and trust-store evidence. |
+| `organization-connections` | Client-observed organization connection readiness is ready, needs member sign-in, needs admin repair, or was unavailable/skipped. |
+| `report-safety` | Confirms the final report omitted sensitive values and did not directly mutate config, call providers, mint credentials, or call MCP tools. |
+
+## `cloud-tool-catalog`
+
+This check probes only the managed `openwork-cloud` MCP entry. It never discovers another MCP, follows redirects, calls a tool, mutates configuration, or returns endpoint, credential, header, response-body, or caught-error values.
+
+### Stages
+
+| Stage | Meaning |
+| --- | --- |
+| `eligibility` | Local, structural, trust, credential, or privacy preflight before any egress. |
+| `dns` | DNS resolution failed or was classified before a request completed. |
+| `connect` | TCP connect, timeout, refused, or reset before a response completed. |
+| `tls` | TLS negotiation or certificate validation failed. |
+| `proxy` | A configured proxy failed before the request could complete. |
+| `initialize_request` | The probe is sending the MCP `initialize` JSON-RPC request. |
+| `initialize_http` | The initialize request received HTTP but not necessarily valid MCP protocol. |
+| `initialize_protocol` | The initialize response is being parsed as MCP JSON-RPC and protocol metadata. |
+| `initialized_notification` | The probe sent `notifications/initialized` after a successful initialize response. |
+| `tools_list_request` | The probe is sending MCP `tools/list`. |
+| `tools_list_http` | The tools-list request received HTTP but not necessarily valid MCP protocol. |
+| `tools_list_protocol` | The tools-list response is being parsed as MCP JSON-RPC. |
+| `catalog_validation` | The tools array is being bounded and checked for the required tool IDs. |
+| `session_cleanup` | Best-effort session deletion after a session was established; cleanup failure does not convert a success into failure. |
+| `complete` | The probe completed and observed the required catalog. |
+
+### Cause codes
+
+| Code | Meaning | Owner | Action |
+| --- | --- | --- | --- |
+| `catalog_observed` | The bounded MCP handshake completed and the required catalog was observed. | No owner | No action. Use the differential if the engine still fails. |
+| `runtime_config_unavailable` | The passive runtime configuration snapshot was unavailable, so the probe did not start. | OpenWork runtime/server | Start or repair the selected workspace runtime, then rerun diagnostics. |
+| `remote_workspace_unavailable` | A local runtime credential was not inspected or used for a remote workspace shell. | OpenWork/server owner | Run diagnostics on the OpenWork server that owns the workspace. |
+| `cloud_mcp_missing` | The selected workspace has no synced managed `openwork-cloud` MCP entry. | Member action | Reconnect OpenWork Cloud from Settings, then rerun diagnostics. |
+| `cloud_mcp_not_remote` | The managed OpenWork Cloud entry is not configured as a remote MCP. | Member action | Reconnect OpenWork Cloud to restore the managed remote configuration. |
+| `cloud_mcp_disabled` | The selected workspace's OpenWork Cloud MCP entry is disabled. | Member action | Enable or reconnect OpenWork Cloud, then rerun diagnostics. |
+| `invalid_endpoint` | The endpoint is not credential-safe or does not end at the required `/mcp/agent` route. | Member action | Reconnect OpenWork Cloud to restore the managed endpoint. |
+| `untrusted_endpoint` | The endpoint origin is not trusted for diagnostics, so no request was sent. | Customer server admin | Activate the install against the Den origin or set `OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS` in the launch environment. |
+| `credential_missing` | The managed entry does not contain one valid bearer Authorization value. | Member action | Reconnect OpenWork Cloud so the client replaces the managed credential. |
+| `duplicate_authorization` | The managed entry contains more than one Authorization header. | Member action | Reconnect OpenWork Cloud so the client writes one unambiguous credential. |
+| `probe_busy` | The bounded active-probe capacity was full, so no new egress was started. | OpenWork server | Wait briefly and rerun diagnostics. |
+| `timeout` | The probe timed out. | Customer network or server admin | Check endpoint availability, DNS, firewall, proxy, and service latency; rerun after changes. |
+| `network_error` | An unclassified network error stopped the fetch. | Customer network or server admin | Verify server egress, DNS, TLS, proxy policy, and endpoint availability. |
+| `dns_error` | The runtime could not resolve the configured hostname. | Customer network admin | Fix DNS or VPN/split-horizon resolution from the OpenWork runtime. |
+| `connection_refused` | The service refused the TCP connection. | Customer network or server admin | Check listener, firewall, port, service, and route. |
+| `connection_reset` | The connection reset before a response completed. | Customer network or server admin | Check proxies, gateways, service restarts, and network path resets. |
+| `tls_error` | TLS negotiation or certificate validation failed in the OpenWork runtime trust store. | Customer network or server admin | Fix fullchain/trust/hostname/expiry or provide the required CA chain to OpenWork. |
+| `proxy_error` | A configured proxy could not complete the probe. | Customer network admin | Check proxy reachability, authentication, and bypass policy. |
+| `redirect_rejected` | The endpoint returned a redirect; the probe rejects redirects so credentials and MCP headers cannot move to another origin. | Customer server admin | Remove the redirect from the MCP route or reconnect to the final `/mcp/agent` endpoint. |
+| `unauthorized` | The service returned HTTP 401 for the managed credential. | Member action | Reconnect OpenWork Cloud to replace the credential. |
+| `forbidden` | The service returned HTTP 403 for membership, scope, or policy reasons. | Organization admin | Verify organization membership, workspace scope, and Cloud policy. |
+| `mcp_route_not_found` | The service answered, but `/mcp/agent` was not found. | OpenWork deployment/support | Verify the Cloud or on-prem Den deployment version and route configuration. |
+| `rate_limited` | The service returned HTTP 429. | OpenWork deployment/support | Wait before rerunning; contact support if it persists. |
+| `gateway_unavailable` | A gateway or upstream returned HTTP 502, 503, or 504. | Customer server admin | Check service status, gateway health, and upstream routing. |
+| `http_error` | The service returned another unexpected HTTP status. | Customer server admin | Inspect the endpoint, proxy, and Den route for the reported `httpStatus`. |
+| `response_too_large` | A response exceeded the bounded 64 KiB response budget. | OpenWork bug/deployment | Restore a bounded MCP handshake response. |
+| `invalid_content_type` | The response was not `application/json` or `text/event-stream`. | OpenWork bug/deployment | Restore a conformant MCP response content type. |
+| `invalid_utf8` | The response body could not be decoded as UTF-8. | OpenWork bug/deployment | Restore a UTF-8 MCP response. |
+| `invalid_json` | The JSON or SSE data payload could not be parsed as JSON. | OpenWork bug/deployment | Restore valid JSON-RPC response encoding. |
+| `invalid_jsonrpc_envelope` | The response was not a valid JSON-RPC 2.0 result envelope. | OpenWork bug/deployment | Restore the MCP JSON-RPC envelope. |
+| `request_id_mismatch` | The JSON-RPC response id did not match the probe request id. | OpenWork bug/deployment | Fix the MCP route or proxy so responses match requests. |
+| `jsonrpc_error` | The service returned a JSON-RPC error object. | OpenWork bug/deployment | Inspect the Den MCP handler and restore a successful handshake. |
+| `unsupported_protocol_version` | The initialize result did not match the expected MCP protocol version. | OpenWork bug/deployment | Upgrade or configure the endpoint to the expected MCP protocol. |
+| `invalid_session_header` | The MCP session or protocol header was empty, too long, or contained unsafe characters. | OpenWork bug/deployment | Fix MCP session header generation. |
+| `pagination_unsupported` | `tools/list` returned a `nextCursor`; this bounded diagnostic does not follow pagination. | OpenWork bug/deployment | Keep the canonical Cloud catalog within the non-paginated diagnostic contract. |
+| `invalid_catalog` | The tools list was missing, too large, duplicated names, or invalid tool identifiers. | OpenWork bug/deployment | Restore a valid bounded MCP tools catalog. |
+| `required_tools_missing` | The catalog handshake succeeded, but `search_capabilities` and/or `execute_capability` were missing. | OpenWork bug/deployment | Restore the canonical OpenWork Cloud catalog. |
+
+### Network codes by stage family
+
+`networkCode` is set only for network-layer fetch failures. HTTP, protocol, and catalog failures usually have `networkCode: null` and should be decoded from `stage`, `code`, and `httpStatus`.
+
+| Family | Network codes | Resulting cause code | Meaning and first action |
+| --- | --- | --- | --- |
+| DNS | `ENOTFOUND`, `EAI_AGAIN` | `dns_error` | Host does not resolve or DNS is transient; check VPN, split-horizon DNS, and resolver reachability. |
+| Connect | `ECONNREFUSED` | `connection_refused` | Nothing accepted the TCP connection; check listener, firewall, and port. |
+| Connect | `ECONNRESET` | `connection_reset` | TCP was reset; check proxy, gateway, and upstream service behavior. |
+| Connect | `ETIMEDOUT`, `UND_ERR_CONNECT_TIMEOUT` | `timeout` | TCP/connect timed out; check firewall, routing, VPN, and gateway latency. |
+| Proxy | `PROXY_ERROR` | `proxy_error` | Proxy setup failed; check proxy authentication, reachability, and bypass rules. |
+| TLS | `CERT_HAS_EXPIRED` | `tls_error` | The served certificate is expired; renew or replace it. |
+| TLS | `SELF_SIGNED_CERT_IN_CHAIN`, `DEPTH_ZERO_SELF_SIGNED_CERT` | `tls_error` | The chain includes or is a self-signed certificate not trusted by this runtime; provide trust or serve a public chain. |
+| TLS | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | `tls_error` | The runtime could not build a chain from the leaf; usually missing intermediate or untrusted issuer. Serve the fullchain first. |
+| TLS | `ERR_TLS_CERT_ALTNAME_INVALID` | `tls_error` | Hostname/SAN mismatch; issue a certificate for the exact Den origin. |
+| TLS or unknown network | `UNKNOWN_NETWORK_ERROR` | `tls_error` or `network_error` | TLS-looking errors map to `tls_error`; otherwise inspect the surrounding stage and endpoint path. |
+| HTTP | None | `redirect_rejected`, `unauthorized`, `forbidden`, `mcp_route_not_found`, `rate_limited`, `gateway_unavailable`, `http_error` | Decode from `httpStatus`; the runtime did receive an HTTP response. |
+| Protocol | None | `response_too_large`, `invalid_content_type`, `invalid_utf8`, `invalid_json`, `invalid_jsonrpc_envelope`, `request_id_mismatch`, `jsonrpc_error`, `unsupported_protocol_version`, `invalid_session_header`, `pagination_unsupported` | The endpoint responded, but not with the bounded MCP handshake contract. |
+| Catalog | None | `invalid_catalog`, `required_tools_missing` | The MCP route responded, but the tools catalog violated the canonical contract. |
+
+## `cloud-endpoint-transport`
+
+This check is credential-free. It is used when the managed OpenWork Cloud MCP registration is not already connected and the selected workspace has an enabled remote Cloud endpoint. It opens a TLS connection to the endpoint origin and records bounded certificate evidence.
+
+| Detail field | Meaning |
+| --- | --- |
+| `endpointOrigin` | Bare origin only, without path, query, fragment, credentials, or token-bearing data. |
+| `endpointProtocol` | `https:` or loopback `http:` if the endpoint was structurally valid. |
+| `skipReason` | `perform_probe_false`, `missing_endpoint`, `invalid_endpoint`, `http_loopback_no_tls`, or `null`. |
+| `handshakePerformed` | Whether the credential-free transport probe actually opened a connection. |
+| `verifiedHandshake` | `ok`, `failed`, or `not-performed`. |
+| `verifyErrorCode` | Sanitized TLS or network error code/message from the verified handshake attempt, such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. |
+| `dnsResolved` | `true`, `false`, or `null` based on the error classifier; certificate errors imply DNS resolved. |
+| `tcpConnected` | `true`, `false`, or `null` based on the error classifier; certificate errors imply TCP connected. |
+| `servedChainLength` | Number of certificates the server actually sent, collected only after a certificate-verification failure by retrying without verification. |
+| `servedChain` | Up to five served certificates with `subjectCN`, `issuerCN`, `selfIssued`, and `notAfter`; full PEM values are not included. |
+| `systemCaCertificateCount` | Count from the runtime TLS module's system CA store, if available. |
+| `bundledCaCertificateCount` | Count from the runtime TLS module's default/bundled CA store, if available. |
+| `nodeExtraCaCertsSet` | Whether `NODE_EXTRA_CA_CERTS` is set in the runtime environment. |
+| `nodeExtraCaCertsFileReadable` | Whether the configured `NODE_EXTRA_CA_CERTS` file could be read, or `null` when not set. |
+| `nodeExtraCaCertsCertCount` | Count of `BEGIN CERTIFICATE` blocks in the `NODE_EXTRA_CA_CERTS` file, or `null` when unset/unreadable. |
+
+Important TLS chain rule: `servedChainLength: 1` means the server sent only its leaf certificate. Browsers may hide this by fetching intermediates through AIA. OpenWork's engine/runtime clients do not rely on browser AIA fetching and can fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. The fix is to serve the fullchain at the TLS terminator, not to assume a successful browser or macOS `curl` proves the chain is complete.
+
+## `cloud-endpoint-differential`
+
+| Verdict | What it implies |
+| --- | --- |
+| `runtime_and_engine_connected` | The independent runtime probe and the engine registration evidence both report Cloud reachable. No endpoint action is required. |
+| `runtime_connected_engine_failed` | The runtime reached the endpoint directly with the managed credential and catalog handshake, but the engine registration failed. Endpoint, credential, TLS, and route are proven fine; investigate engine-side connection path, registration lifecycle, restart, or repair. |
+| `runtime_failed_engine_connected` | The engine reports connected, but the independent runtime probe failed. Compare runtime vs engine proxy, DNS, trust store, and process environment. |
+| `runtime_and_engine_failed` | Both runtime and engine evidence failed. The endpoint, credential, or shared network path is implicated. |
+| `runtime_probe_not_performed` | The runtime probe did not pass eligibility, trust, structure, or credential gates. Resolve the `cloud-tool-catalog` cause code first. |
+| `engine_evidence_stale_or_unavailable` | Engine registration evidence was not recorded or a failure was stale while the engine was reachable. Restart/repair or rerun diagnostics to refresh engine evidence. |
+
+## `engine-mcp-sync`
+
+`engine-mcp-sync.details.failedRegistrations` reports failed OpenWork-managed remote MCP registrations. Each row contains:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Sanitized MCP name. |
+| `status` | Engine registration status: `connected`, `disabled`, `failed`, `needs-auth`, `needs-client-registration`, or `not-recorded`. |
+| `source` | `transport_failure`, `engine_status`, or `null`. |
+| `recordAgeMs` | Age of the engine registration evidence, or `null`. |
+| `errorSummary` | The engine's own sanitized error string, bounded to 400 characters. This is the string support should compare with the Advanced panel and engine logs. |
+| `transportCause` | Closed classifier result derived from `errorSummary`, or `null` when there is no error string. |
+| `engineReachableNow` | Whether diagnostics could currently read the selected engine. |
+
+If every failed registration is older than 60 seconds while the engine is reachable, `engine-mcp-sync` returns `mcp_registration_stale_failure` as a warning. Rerun diagnostics or restart/repair the engine before treating stale failures as current.
+
+### `transportCause` values
+
+| Value | Classifier meaning | First action |
+| --- | --- | --- |
+| `tls_incomplete_chain` | Engine string contains `unable to verify the first certificate` or `unable_to_verify_leaf_signature`. | Serve the fullchain at the TLS terminator; check `servedChainLength`. |
+| `tls_untrusted_ca` | Engine string indicates unknown CA, self-signed certificate, local issuer missing, or certificate verify failed. | Install the required root/intermediate for the runtime or fix the served chain. |
+| `tls_hostname_mismatch` | Engine string mentions altname or hostname/IP mismatch. | Reissue the certificate for the exact Den origin. |
+| `tls_expired` | Engine string says the certificate has expired or `cert_has_expired`. | Renew the certificate. |
+| `tls_error` | Generic certificate/TLS/SSL text without a more specific match. | Inspect transport details and TLS chain. |
+| `dns_error` | Engine string contains DNS failure terms such as `enotfound`, `eai_again`, or `getaddrinfo`. | Fix DNS/VPN/split-horizon resolution. |
+| `connection_refused` | Engine string contains refused-connection terms. | Check listener, firewall, port, and service availability. |
+| `connection_reset` | Engine string contains reset, EPIPE, socket hang-up, or connection-closed terms. | Check proxy/gateway resets and upstream stability. |
+| `timeout` | Engine string contains timeout terms. | Check network path, firewall, VPN, proxy, and server latency. |
+| `http_error` | Engine string contains HTTP text or a 100-599 status not classified as auth. | Inspect proxy/gateway/route status. |
+| `auth_error` | Engine string contains 401, 403, unauthorized, or forbidden. | Reconnect Cloud or verify membership, scopes, and organization policy. |
+| `unknown` | Error string exists but matched none of the classifiers. | Preserve the exact sanitized string and escalate with the report. |
+
+## Trust gating for self-hosted Den
+
+The credentialed Cloud catalog probe fails closed. `untrusted_endpoint` means no request was sent. Treat it as diagnostics trust configuration, not as DNS, TLS, HTTP, or MCP failure.
+
+`cloud-tool-catalog.details.trustSource` can be:
+
+| `trustSource` | Meaning |
+| --- | --- |
+| `builtin-cloud` | The endpoint origin is one of the built-in hosted origins: `https://app.openworklabs.com` or `https://api.openworklabs.com`. |
+| `loopback` | The endpoint hostname is local loopback, such as `localhost`, `127.0.0.1`, or `::1`. |
+| `administrator-env` | The exact endpoint origin matched `OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS`. |
+| `enterprise-activation` | The exact endpoint origin matched the activated enterprise/on-prem Den origin from `desktop-bootstrap.json`. |
+| `untrusted` | A structurally valid endpoint existed, but no trust source authorized diagnostics egress. |
+| `not-evaluated` | The endpoint was absent or structurally invalid, so trust was never evaluated. |
+
+For on-prem Den, eligibility can come from exactly one of these sources:
+
+- Built-in hosted OpenWork Cloud origins.
+- The activated on-prem origin read from `desktop-bootstrap.json` under `enterpriseActivation`. The reader requires both `enterpriseActivation.activatedAt` and `enterpriseActivation.denBaseUrl`; missing, unreadable, malformed, or deleted bootstrap state makes `enterpriseActivationPresent: false` and diagnostics stay gated.
+- `OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS`, set before the OpenWork desktop/server process launches. The value is a comma-separated list of bare origins. `https:` is required except for loopback `http:` origins.
+
+`OPENWORK_*` and `OPENCODE_*` keys are reserved and stripped from the user environment JSON file, so `OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS` must be supplied by the launcher, MDM profile, service wrapper, or shell environment that starts OpenWork.
