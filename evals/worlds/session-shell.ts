@@ -1414,7 +1414,7 @@ export async function commandPaletteSearch(seed: Seed) {
   return oneWorkspace(seed, `command-palette-search-${Date.now()}`);
 }
 
-type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "hold_archive";
+type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "accepted_prompt" | "hold_archive";
 type ArchiveRequest = {
   path: string; sessionId: string; action: string; messageID: string | null; result: string | number | null;
   command?: { name: string; arguments: string; model: string | null; agent: string | null };
@@ -1611,7 +1611,10 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
         await new Promise<void>(resolve => { state.release = resolve; });
         state.release = null;
       }
-      if (record?.action === "command" && target && state.mode === "accepted_command") {
+      if (record && target && (
+        (record.action === "command" && state.mode === "accepted_command")
+        || (record.action === "prompt_async" && state.mode === "accepted_prompt")
+      )) {
         record.result = "accepted, not dispatched";
         const admitted = new Request(request, { signal: new AbortController().signal });
         state.release = async () => {
@@ -1620,13 +1623,13 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
             const response = await original(admitted);
             record.result = response.status;
             record.responseBody = (await response.text()).slice(0, 2000);
-            if (!response.ok) throw new Error("Admitted command dispatch failed: " + response.status + " " + record.responseBody);
+            if (!response.ok) throw new Error("Admitted " + record.action + " dispatch failed: " + response.status + " " + record.responseBody);
           } catch (error) {
             record.dispatchError = error instanceof Error ? error.message : String(error);
             throw error;
           }
         };
-        return Response.json({ ok: true, accepted: true });
+        return record.action === "prompt_async" ? new Response(null, { status: 204 }) : Response.json({ ok: true, accepted: true });
       }
       if (record?.action === "prompt_async" && target && state.mode === "prompt_error") {
         record.result = 400;
