@@ -49,6 +49,17 @@ const readResultSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
+const activityResultSchema = z.object({
+  ok: z.literal(true),
+  sessionId: z.string(),
+  workspaceId: z.string(),
+  toolCalls: z.object({ total: z.number(), byTool: z.record(z.string(), z.number()), byAffordanceId: z.record(z.string(), z.number()) }),
+  errors: z.object({ total: z.number(), list: z.array(z.object({ callId: z.string(), tool: z.string(), affordanceId: z.string().optional(), message: z.string().max(300), at: z.number().nullable() }).strict()) }),
+  firstAt: z.number().nullable(),
+  lastAt: z.number().nullable(),
+  messages: z.object({ user: z.number(), assistant: z.number() }).strict(),
+}).passthrough();
+
 const createResultSchema = z.object({
   ok: z.boolean(),
   workspaceId: z.string(),
@@ -131,7 +142,7 @@ function completedTool(callId: string, input: Record<string, unknown>, output: s
   };
 }
 
-function startFakeOpenWorkServer(options: { failPromptText?: string; failSessionListWorkspaceId?: string; messages?: unknown[] } = {}) {
+function startFakeOpenWorkServer(options: { failPromptText?: string; failSessionListWorkspaceId?: string; failMessages?: boolean; messages?: unknown[] } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
   const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
   let createdCount = 0;
@@ -263,6 +274,7 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
       }
 
       if (url.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message") {
+        if (options.failMessages) return Response.json({ message: "Unavailable" }, { status: 503 });
         if (options.messages) {
           const limit = url.searchParams.get("limit");
           return Response.json(limit ? options.messages.slice(-Number(limit)) : options.messages);
@@ -580,6 +592,109 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     const plugin = await OpenWorkExtensionsPreview();
     const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", summary: true } });
     expect(affordanceResultSchema("session.read", z.object({ lastAssistant: z.object({ id: z.string() }) })).parse(JSON.parse(raw)).result.lastAssistant.id).toBe("msg_reply");
+  });
+
+  test.each(["error", "completed"])("session.activity counts three session.create calls and one %s failure", async (status) => {
+    const failing = completedTool("call_bad", { id: "session.create" }, JSON.stringify({ ok: false, error: "too_big: prompt exceeds 100000 characters" }), 330, 331);
+    if (status === "error") failing.state = { status: "error", input: { id: "session.create" }, error: "too_big: prompt exceeds 100000 characters", time: { start: 330, end: 331 } };
+    const fake = startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_user", role: "user", time: { created: 100 } }, parts: [{ type: "text", text: "Create three sessions." }] },
+      { info: { id: "msg_tools", role: "assistant", time: { created: 300 } }, parts: [
+        completedTool("call_1", { id: "session.create" }, '{"ok":true}', 310, 311),
+        completedTool("call_2", { id: "session.create" }, '{"ok":true}', 320, 321), failing,
+      ] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    expect(affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(raw)).result).toMatchObject({
+      sessionId: "ses_alpha", workspaceId: "ws_1",
+      toolCalls: { total: 3, byTool: { openwork_execute: 3 }, byAffordanceId: { "session.create": 3 } },
+      errors: { total: 1, list: [{ callId: "call_bad", tool: "openwork_execute", affordanceId: "session.create", message: "too_big: prompt exceeds 100000 characters", at: 331 }] },
+      firstAt: 100, lastAt: 331, messages: { user: 1, assistant: 1 },
+    });
+    expect(fake.uiControlRequests).toHaveLength(0);
+    expect(fake.requests.find((request) => request.pathname.endsWith("/message"))?.search).toBe("");
+  });
+
+  test("session.activity deduplicates calls, groups only OpenWork input.id, and redacts bounded failures", async () => {
+    const bad = completedTool("call_bad", { id: "session.read" }, JSON.stringify({ ok: true, result: { ok: false, error: { reason: `Bearer bearer-private token="quoted private" https://user:pass-private@host.test/path?secret=private ${"x".repeat(600)}`, nested: { password: "nested-private" } } } }), 200, 250);
+    bad.tool = "openwork_query";
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant", time: { created: 100 } }, parts: [
+      { ...bad, state: { status: "running", input: { id: "session.read" }, time: { start: 200 } } },
+      bad,
+      { ...completedTool("call_external", { id: "not.an.affordance" }, 'ordinary text containing "ok":false', 260, 270), tool: "external_tool" },
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    const result = affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(raw)).result;
+    expect(result.toolCalls).toEqual({ total: 2, byTool: { openwork_query: 1, external_tool: 1 }, byAffordanceId: { "session.read": 1 } });
+    expect(result.errors.total).toBe(1);
+    expect(result.errors.list).toHaveLength(1);
+    expect(result.errors.list[0]).toMatchObject({ callId: "call_bad", affordanceId: "session.read", at: 250 });
+    expect(result.errors.list[0].message).toHaveLength(300);
+    expect(raw).toContain("[redacted]");
+    expect(raw).not.toContain("private");
+  });
+
+  test("session.activity since is inclusive and uses tool end/start independently of message creation", async () => {
+    startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_zero", role: "user", time: { created: 0 } }, parts: [] },
+      { info: { id: "msg_tools", role: "assistant", time: { created: 100 } }, parts: [
+        completedTool("call_early", {}, "ok", 150, 200),
+        completedTool("call_boundary", {}, '{"ok":false,"message":"boundary failure"}', 210, 300),
+        { ...completedTool("call_running", {}, ""), state: { status: "running", input: {}, time: { start: 400 } } },
+        { ...completedTool("call_pending", {}, ""), state: { status: "pending", input: {}, raw: "" } },
+      ] },
+      { info: { id: "msg_undated", role: "assistant" }, parts: [{ ...completedTool("call_undated", {}, ""), state: { status: "pending", input: {}, raw: "" } }] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const activity = async (args: Record<string, unknown>) => affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha", ...args } }))).result;
+    const result = await activity({ since: 300 });
+    expect(result).toEqual(await activity({ since: "1970-01-01T00:00:00.300Z" }));
+    expect(result).toMatchObject({ toolCalls: { total: 2 }, errors: { total: 1 }, firstAt: 300, lastAt: 400, messages: { user: 0, assistant: 0 } });
+    expect(await activity({ since: 301 })).toMatchObject({ toolCalls: { total: 1 }, errors: { total: 0 }, firstAt: 400, lastAt: 400 });
+    expect(await activity({ since: 0 })).toMatchObject({ toolCalls: { total: 4 }, firstAt: 0, messages: { user: 1, assistant: 1 } });
+    expect(await activity({})).toMatchObject({ toolCalls: { total: 5 }, firstAt: 0, messages: { user: 1, assistant: 2 } });
+    expect(await activity({ since: 999 })).toMatchObject({ toolCalls: { total: 0, byTool: {}, byAffordanceId: {} }, errors: { total: 0, list: [] }, firstAt: null, lastAt: null, messages: { user: 0, assistant: 0 } });
+  });
+
+  test("session.activity returns honest zero counts for an empty session", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_beta" } });
+    expect(affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(raw)).result).toMatchObject({
+      toolCalls: { total: 0, byTool: {}, byAffordanceId: {} }, errors: { total: 0, list: [] }, firstAt: null, lastAt: null, messages: { user: 0, assistant: 0 },
+    });
+  });
+
+  test.each([
+    { sessionId: "ses_foreign" },
+    { sessionId: "ses_alpha", workspaceId: "Archive" },
+    { sessionId: "ses_alpha", workspaceId: "missing" },
+    { sessionId: "ses_missing" },
+  ])("session.activity refuses missing or foreign workspaces and sessions", async (args) => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args });
+    expect(z.object({ ok: z.literal(false), error: z.string() }).parse(JSON.parse(raw)).error).toMatch(/not found|No workspace/);
+    expect(fake.requests.filter((request) => request.pathname.endsWith("/message"))).toHaveLength(0);
+    expect(raw).not.toContain("toolCalls");
+  });
+
+  test("session.activity refuses a failed transcript read rather than reporting zero", async () => {
+    startFakeOpenWorkServer({ failMessages: true });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    expect(z.object({ ok: z.literal(false) }).parse(JSON.parse(raw)).ok).toBe(false);
+    expect(raw).not.toContain("toolCalls");
+  });
+
+  test("session.activity validates since before I/O", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const output = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha", since: "invalid" } });
+    expect(argumentErrorSchema.parse(JSON.parse(output)).issues.map((issue) => issue.path)).toEqual(["since"]);
+    expect(fake.requests).toHaveLength(0);
   });
 
   test("session.read reports live status and working so agents can check before archiving", async () => {

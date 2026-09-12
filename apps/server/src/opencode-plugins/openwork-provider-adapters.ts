@@ -43,6 +43,12 @@ export const sessionReadArgsSchema = z.object({
   summary: z.boolean().optional().describe("Return the first user and last assistant with text, excluding a sole text part immediately preceding a tool part. No eligible assistant returns null; normal reads preserve that text."),
 });
 
+export const sessionActivityArgsSchema = z.object({
+  sessionId: sessionReadArgsSchema.shape.sessionId,
+  workspaceId: sessionReadArgsSchema.shape.workspaceId,
+  since: sessionTimestampArgSchema.optional().describe("Inclusive epoch milliseconds or ISO-8601 timestamp. Messages use creation time; calls use end, then start, then message creation time. Undated events are excluded when since is set."),
+});
+
 // Same contract agents read back as `model`; `variant` may be omitted on input.
 export const sessionModelArgSchema = openworkSessionModelSchema.extend({
   variant: openworkSessionModelSchema.shape.variant.optional().describe("Reasoning effort variant (e.g. low, medium, high). Omit or null for the provider default."),
@@ -69,6 +75,7 @@ export const sessionSendArgsSchema = z.object({
 export const sessionAffordanceArgsSchemas = {
   "session.search": sessionSearchArgsSchema,
   "session.read": sessionReadArgsSchema,
+  "session.activity": sessionActivityArgsSchema,
   "session.create": sessionCreateArgsSchema,
   "session.send": sessionSendArgsSchema,
 };
@@ -175,6 +182,19 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("from", "string", false, "end (default): the last `count` messages; start: the first `count` messages."),
           argument("parts", "array", false, "Parts to return: text (default [text]), tool, reasoning. Adds tools [{type: tool, tool, callId, status, input, output, error, truncated?: true}] and reasoning string when requested. Tool fields are redacted then JSON-stringified, each capped at 2000 characters; truncated flags clipping. Tool-only messages are retained."),
           argument("summary", "boolean", false, "Return the first user and last assistant with text, excluding a sole text part immediately preceding a tool part. No eligible assistant returns null; normal reads preserve that text."),
+        ],
+        effects: readEffects,
+      }),
+      affordance({
+        id: "session.activity",
+        kind: "query",
+        title: "Read session activity counts",
+        description: "Read the full session transcript without opening it, using session.read workspace ownership checks. Returns toolCalls {total, byTool, byAffordanceId} (openwork_execute/openwork_query input.id), errors {total, list: [{callId, tool, affordanceId?, message, at}]}, firstAt, lastAt and messages {user, assistant}. Each callId counts once; both tool state error and completed JSON output with ok: false (including result.ok: false) count as failed outcomes, once per call. Error messages are redacted before the 300-character cap. Counts and error list are not capped. firstAt/lastAt are the earliest/latest included message or tool start/end timestamps (epoch milliseconds), null when none are dated.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id returned by session.search."),
+          argument("workspaceId", "string", false, "Optional workspace id or name. Omit to resolve across workspaces."),
+          argument("since", "unknown", false, "Inclusive epoch milliseconds or ISO-8601 timestamp. Messages use creation time; calls use end, then start, then message creation time. Undated events are excluded when since is set. firstAt/lastAt include only timestamps at or after since. Omit for the full transcript."),
         ],
         effects: readEffects,
       }),

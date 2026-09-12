@@ -22,6 +22,7 @@ import {
 } from "./openwork-extensions-preview-steering.js";
 import {
   buildOpenworkProviderContributions,
+  sessionActivityArgsSchema,
   sessionCreateArgsSchema,
   sessionModelArgSchema,
   sessionReadArgsSchema,
@@ -432,6 +433,13 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
     return affordanceResult(
       request.id,
       await readOpenWorkSession(request.args ?? {}),
+      affordanceReadEffects,
+    );
+  }
+  if (request.id === "session.activity") {
+    return affordanceResult(
+      request.id,
+      await readOpenWorkSessionActivity(request.args ?? {}),
       affordanceReadEffects,
     );
   }
@@ -1000,6 +1008,84 @@ async function locateOpenWorkSession(
     }
   }
   return { error: `Session ${sessionId} was not found in matching OpenWork workspaces` };
+}
+
+function sessionToolFailure(state: NonNullable<z.infer<typeof sessionPartSchema>["state"]>): unknown {
+  if (state.status === "error") return state.error ?? "Tool failed";
+  if (state.status !== "completed" || state.output === undefined) return null;
+  try {
+    const output: unknown = JSON.parse(state.output);
+    if (!isRecord(output)) return null;
+    const failure = output.ok === false ? output : isRecord(output.result) && output.result.ok === false ? output.result : null;
+    if (failure) return failure.error ?? failure.message ?? failure;
+  } catch {}
+  return null;
+}
+
+async function readOpenWorkSessionActivity(rawArgs: unknown): Promise<object> {
+  const parsed = sessionActivityArgsSchema.safeParse(rawArgs);
+  if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
+  const args = parsed.data;
+  const located = await locateOpenWorkSession(args.sessionId, args.workspaceId);
+  if ("error" in located) return { ok: false, error: located.error };
+  const { workspace, session } = located;
+  let transcript: SessionMessage[];
+  try {
+    transcript = await readSessionMessages(workspace, args.sessionId);
+  } catch {
+    return { ok: false, error: `Session ${args.sessionId} was not found in matching OpenWork workspaces` };
+  }
+  const since = args.since === undefined ? undefined : sessionTimestampMs(args.since);
+  const included = (at: number | null) => since === undefined || (at !== null && at >= since);
+  const messages = { user: 0, assistant: 0 };
+  let firstAt: number | null = null;
+  let lastAt: number | null = null;
+  const recordTime = (at: number | null) => {
+    if (at === null || !included(at)) return;
+    firstAt = firstAt === null ? at : Math.min(firstAt, at);
+    lastAt = lastAt === null ? at : Math.max(lastAt, at);
+  };
+  const calls = new Map<string, { part: ReturnType<typeof sessionToolParts>[number]; createdAt: number | null }>();
+  for (const message of transcript) {
+    const at = message.info.time?.created ?? null;
+    const role = message.info.role;
+    if (included(at) && (role === "user" || role === "assistant")) {
+      messages[role] += 1;
+      recordTime(at);
+    }
+    for (const part of sessionToolParts(message)) calls.set(part.callId, { part, createdAt: at });
+  }
+  const byTool = new Map<string, number>();
+  const byAffordanceId = new Map<string, number>();
+  const errors: Array<{ callId: string; tool: string; affordanceId?: string; message: string; at: number | null }> = [];
+  let total = 0;
+  for (const { part, createdAt } of calls.values()) {
+    const at = part.state.time?.end ?? part.state.time?.start ?? createdAt;
+    if (!included(at)) continue;
+    total += 1;
+    recordTime(part.state.time?.start ?? createdAt);
+    recordTime(at);
+    byTool.set(part.tool, (byTool.get(part.tool) ?? 0) + 1);
+    const affordanceId = (part.tool === "openwork_execute" || part.tool === "openwork_query") && typeof part.state.input.id === "string" ? part.state.input.id : undefined;
+    if (affordanceId !== undefined) byAffordanceId.set(affordanceId, (byAffordanceId.get(affordanceId) ?? 0) + 1);
+    const failure = sessionToolFailure(part.state);
+    if (failure !== null) errors.push({
+      callId: part.callId,
+      tool: part.tool,
+      ...(affordanceId === undefined ? {} : { affordanceId }),
+      message: (typeof failure === "string" ? redactSessionText(failure) : JSON.stringify(redactSessionValue(failure))).slice(0, 300),
+      at,
+    });
+  }
+  return {
+    ok: true,
+    ...sessionMetadata(workspace, session),
+    toolCalls: { total, byTool: Object.fromEntries(byTool), byAffordanceId: Object.fromEntries(byAffordanceId) },
+    errors: { total: errors.length, list: errors },
+    firstAt,
+    lastAt,
+    messages,
+  };
 }
 
 let lastSendMessageStamp = 0;

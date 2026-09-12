@@ -52,6 +52,14 @@ describe("OpenWork provider adapters", () => {
     expect(create?.arguments.find((argument) => argument.name === "sessions")?.description).toContain("title (≤120 chars, longer is clipped)");
   });
 
+  test("activity advertises its query, error cap and timestamp semantics", () => {
+    const activity = buildOpenworkProviderContributions([]).flatMap((entry) => entry.affordances).find((entry) => entry.id === "session.activity");
+    expect(activity).toMatchObject({ kind: "query", effects: { data: "read", ui: "none", external: false }, executor: { kind: "openwork" } });
+    for (const value of ["300", "byAffordanceId", "ok: false", "firstAt", "lastAt", "not capped", "callId"]) expect(activity?.description).toContain(value);
+    const since = activity?.arguments.find((argument) => argument.name === "since")?.description;
+    for (const value of ["Inclusive", "ISO-8601", "end, then start", "Undated"]) expect(since).toContain(value);
+  });
+
   test("normalizes sessions and extensions into semantic contributions", () => {
     const contributions = buildOpenworkProviderContributions([]);
 
