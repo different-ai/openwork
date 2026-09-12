@@ -8,7 +8,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
   const { witnesses, identity } = world;
   const orgId = text(world.organization.id);
   const otherId = text(world.otherOrg.id);
-  const otherWitness = invitationWitnesses(world.other);
+  const otherWitness = invitationWitnesses(world.owner);
   const otherBefore = await otherWitness.org(otherId);
   const noCrossOrg = async () => expect(await otherWitness.org(otherId)).toEqual(otherBefore);
   const pending = async (email: string) => {
