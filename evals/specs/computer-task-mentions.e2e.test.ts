@@ -5,8 +5,22 @@ import { computerMentions } from "../worlds/chat.ts";
 const test = spec.world(computerMentions);
 
 test("computer mentions steer tasks through Connect and Automations names the computer", async ({ world, user, probe, step, evidence }) => {
+  await step("mention selection follows the caret and preserves later draft text", async () => {
+    for (const method of ["Enter", "Tab", "mouse"]) {
+      await user.type("composer", "@openwork @cl @notes", { replace: true });
+      for (let index = 0; index < " @notes".length; index += 1) await user.press("ArrowLeft");
+      await user.see({ role: "button", label: /^@cloud/ });
+      await user.notSee({ role: "button", label: /^@desktop/ });
+      if (method === "mouse") await user.click({ role: "button", label: /^@cloud/ });
+      else await user.press(method);
+      await user.see("composer", { text: "@openwork @cloud @notes" });
+      expect((await probe.composer()).userMessageCount).toBe(0);
+    }
+    evidence.recordAssertionEvidence("Mention acceptance preserves the draft suffix", "Selection-only caret movement offers cloud for the middle @cl mention. Enter, Tab, and mouse replace that mention without changing the later @notes text or sending a message.", true);
+  });
+
   await step("the mention menu explains both computers without starting a task", async () => {
-    await user.type("composer", "@");
+    await user.type("composer", "@", { replace: true });
     await user.see({ text: "Start a task on your cloud computer" });
     await user.see({ text: "Start a task on your connected desktop computer" });
     await user.screenshot();

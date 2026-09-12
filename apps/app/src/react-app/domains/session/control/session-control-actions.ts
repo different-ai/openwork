@@ -102,7 +102,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error) and `working` (true while a turn, subtask, permission, or question is still open). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (true while a turn, subtask, permission, or question is still open) and `model` ({ providerId, modelId, variant }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",

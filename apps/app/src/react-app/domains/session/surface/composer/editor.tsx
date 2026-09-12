@@ -59,6 +59,7 @@ type EditorProps = {
   submitDisabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
+  onMentionQueryChange?: (query: string | null) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
   onExpandAttachment?: (id: string) => void;
@@ -72,6 +73,7 @@ type EditorProps = {
 
 export type LexicalPromptEditorHandle = {
   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
+  insertMentionAtSelection: (kind: ComposerMentionKind, value: string) => string | null;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -880,6 +882,41 @@ function setPrompt(
   }
 }
 
+function mentionAtSelection() {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+  let node = selection.anchor.getNode();
+  let end = selection.anchor.offset;
+  if ($isElementNode(node)) {
+    const previous = node.getChildAtIndex(end - 1);
+    if (!$isTextNode(previous)) return null;
+    node = previous;
+    end = node.getTextContentSize();
+  }
+  if (!$isTextNode(node) || isComposerInlineTokenNode(node)) return null;
+  const text = node.getTextContent();
+  const match = text.slice(0, end).match(/@([^\s@]*)$/);
+  if (!match) return null;
+  const remaining = text.slice(end).match(/^[^\s@]*/)?.[0] ?? "";
+  return { node, start: end - match[0].length, end: end + remaining.length, query: match[1] ?? "" };
+}
+
+function insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
+  const match = mentionAtSelection();
+  if (!match) return false;
+  const end = match.end + (kind !== "agent" && match.node.getTextContent()[match.end] === " " ? 1 : 0);
+  const selection = match.node.select(match.start, end);
+  if (kind === "agent") {
+    selection.removeText();
+    return true;
+  }
+  const mention = $createComposerMentionNode(value, kind);
+  const space = $createTextNode(" ");
+  selection.insertNodes([mention, space]);
+  space.selectEnd();
+  return true;
+}
+
 function appendSkillAtEnd(skillName: string, skillToken?: string) {
   const root = $getRoot();
   const lastChild = root.getLastChild();
@@ -1293,6 +1330,13 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       editor.update(() => insertSkillAtSelection(skillName, skillToken));
       editor.focus();
     },
+    insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
+      let draft: string | null = null;
+      editor.update(() => {
+        if (insertMentionAtSelection(kind, value)) draft = serializePromptFromRoot();
+      }, { discrete: true });
+      return draft;
+    },
   }), [editor]);
 
   return null;
@@ -1347,6 +1391,7 @@ function AttachmentChipPlugin(props: { onRemoveAttachment?: (id: string) => void
 export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
+  const onMentionQueryChangeRef = useRef(props.onMentionQueryChange);
 
   useEffect(() => {
     valueRef.current = props.value;
@@ -1354,7 +1399,8 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 
   useEffect(() => {
     onChangeRef.current = props.onChange;
-  }, [props.onChange]);
+    onMentionQueryChangeRef.current = props.onMentionQueryChange;
+  }, [props.onChange, props.onMentionQueryChange]);
 
   const initialConfig = useMemo(
     () => ({
@@ -1374,6 +1420,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
+        onMentionQueryChangeRef.current?.(mentionAtSelection()?.query ?? null);
         const next = serializePromptFromRoot();
         if (next === valueRef.current) return;
         valueRef.current = next;

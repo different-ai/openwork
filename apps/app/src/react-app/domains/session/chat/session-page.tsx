@@ -980,14 +980,13 @@ export function SessionPage(props: SessionPageProps) {
     }, 5000);
     return () => window.clearTimeout(id);
   }, [pendingConversationHistoryNavigation]);
-  useEffect(() => {
+  const workbenchInventory = useMemo(() => {
     const workspaceGroup = props.sidebar.workspaceSessionGroups.find(
       (group) => group.workspace.id === props.selectedWorkspaceId,
     );
-    syncWorkbench({
+    return {
       workspaceId: props.selectedWorkspaceId,
       workspaceTitle: workspaceName,
-      primarySessionId: props.selectedSessionId,
       sessionsKnown: workspaceGroup?.status === "ready",
       archivedSessionIds: (workspaceGroup?.sessions ?? []).filter((session) => session.time?.archived).map((session) => session.id),
       sessions: (workspaceGroup?.sessions ?? []).map((session) => ({
@@ -996,14 +995,11 @@ export function SessionPage(props: SessionPageProps) {
         title: getDisplaySessionTitle(session.title),
         workspaceTitle: workspaceName,
       })),
-    });
-  }, [
-    props.selectedSessionId,
-    props.selectedWorkspaceId,
-    props.sidebar.workspaceSessionGroups,
-    syncWorkbench,
-    workspaceName,
-  ]);
+    };
+  }, [props.selectedWorkspaceId, props.sidebar.workspaceSessionGroups, workspaceName]);
+  useEffect(() => {
+    syncWorkbench({ ...workbenchInventory, primarySessionId: props.selectedSessionId });
+  }, [props.selectedSessionId, syncWorkbench, workbenchInventory]);
   useEffect(() => {
     props.onSessionTabsChange?.(sessionTabs);
   }, [sessionTabs, props.onSessionTabsChange]);

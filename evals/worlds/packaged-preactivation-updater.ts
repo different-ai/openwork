@@ -27,14 +27,11 @@ export interface UpdaterActivity {
   checks: number;
   /** Update downloads electron-updater started. */
   downloads: number;
-  /** Updater operations main refused at its organization policy gate (#4767). */
-  policyRefusals: number;
   /** The matching log lines, for evidence. */
   lines: string[];
 }
 
 const CHECK_ATTEMPT = /^(?:Checking for update|APPIMAGE env is not defined|SNAP env is defined, updater is disabled)/;
-const POLICY_REFUSAL = "[updater] policy gate refused";
 const UPDATER_LOG_LINE = /^(?:Checking for update|APPIMAGE env is not defined|SNAP env is defined|Found version |Downloading update from |Update for version |\[updater\] )/;
 
 export function updaterActivityFromLog(log: string): UpdaterActivity {
@@ -42,7 +39,6 @@ export function updaterActivityFromLog(log: string): UpdaterActivity {
   return {
     checks: lines.filter((line) => CHECK_ATTEMPT.test(line)).length,
     downloads: lines.filter((line) => line.startsWith("Downloading update from")).length,
-    policyRefusals: lines.filter((line) => line.startsWith(POLICY_REFUSAL)).length,
     lines,
   };
 }

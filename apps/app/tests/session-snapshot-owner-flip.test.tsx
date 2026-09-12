@@ -8,7 +8,7 @@ import { createRoot } from "react-dom/client";
 
 import type { FieldsResult } from "../src/app/lib/opencode";
 import type { NativeSessionOperations, NativeSessionSnapshotTarget } from "../src/app/lib/opencode-session-native";
-import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import type { Platform } from "../src/react-app/kernel/platform";
 
 const workspaceId = "workspace-snapshot-owner-flip";
@@ -143,6 +143,8 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
 
   const readEndpoints: string[] = [];
+  const historyWindows: Array<number | undefined> = [];
+  const readLimits: (number | undefined)[] = [];
   let releaseRetry: (() => void) | null = null;
   const snapshot = createSnapshot();
   const operationsFor = (endpoint: { opencodeBaseUrl: string }): NativeSessionOperations => {
@@ -150,7 +152,10 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
     const v2 = endpoint.opencodeBaseUrl === v2BaseUrl;
     return {
       get: async () => (v2 ? ok(snapshot.session) : notFound()),
-      messages: async () => (v2 ? ok(snapshot.messages) : notFound()),
+      messages: async (_sessionId, limit) => {
+        historyWindows.push(limit);
+        return v2 ? ok(snapshot.messages) : notFound();
+      },
       todo: async () => (v2 ? ok(snapshot.todos) : notFound()),
       status: async () => ok({}),
       delete: async () => ok(true),
@@ -162,21 +167,24 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
   mock.module("@/components/chat/task-suggestions", () => ({ ...taskSuggestions, TaskSuggestions: () => null }));
   mock.module("../src/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
   // Bind the real implementation first: mocking rewires the loaded module's live bindings.
-  const composeWithRetry = sessionNative.composeNativeSessionSnapshotWithRetry;
+  const composeWithRetry = sessionNative.composeNativeSessionHistoryWithRetry;
   mock.module("@/app/lib/opencode-session-native", () => ({
     ...sessionNative,
-    composeNativeSessionSnapshotWithRetry: (
+    composeNativeSessionHistoryWithRetry: (
       expectedOwner: string,
       readCurrentTarget: () => NativeSessionSnapshotTarget,
-      options: { signal?: AbortSignal },
-    ) => composeWithRetry(expectedOwner, readCurrentTarget, options, {
-      createOperations: operationsFor,
-      // The first (v1) read parks here until the test flips the owner.
-      waitForSnapshotRetry: (_delayMs, signal) => new Promise<void>((resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-        releaseRetry = resolve;
-      }),
-    }),
+      options: { signal?: AbortSignal; limit?: number },
+    ) => {
+      readLimits.push(options.limit);
+      return composeWithRetry(expectedOwner, readCurrentTarget, options, {
+        createOperations: operationsFor,
+        // The first (v1) read parks here until the test flips the owner.
+        waitForSnapshotRetry: (_delayMs, signal) => new Promise<void>((resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          releaseRetry = resolve;
+        }),
+      });
+    },
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey } = await import("../src/react-app/domains/session/sync/session-sync");
@@ -244,11 +252,19 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
     await act(async () => root.render(surface(v2BaseUrl)));
     await act(async () => { releaseRetry?.(); });
 
-    await waitFor(() => container.textContent?.includes(transcriptText) === true, "the transcript read under the v2 owner");
+    await waitFor(() => container.textContent?.includes(transcriptText) === true
+      && queryClient.getQueryState(key)?.status === "success", "the full transcript read under the v2 owner");
     expect(queryClient.getQueryState(key)?.status).toBe("success");
     expect(queryClient.getQueryState(key)?.error).toBeNull();
     expect(container.textContent).not.toContain("owner changed");
-    expect(readEndpoints).toEqual([v1BaseUrl, v2BaseUrl]);
+    // The new owner's preview paints before its separate uncapped history read.
+    // The abandoned owner must never retry or populate either result.
+    expect(readEndpoints).toEqual([v1BaseUrl, v2BaseUrl, v2BaseUrl]);
+    expect(historyWindows).toEqual([24, 24, undefined]);
+    expect(readLimits).toEqual([24, 24, undefined]);
+    const cached = queryClient.getQueryData<OpenworkSessionHistory>(key);
+    expect(cached?.status).toBeUndefined();
+    expect(cached?.todos).toBeUndefined();
   } finally {
     await act(async () => root.unmount());
     useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });

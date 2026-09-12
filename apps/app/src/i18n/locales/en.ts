@@ -127,6 +127,8 @@ export default {
   "composer.queued_send_now_hint": "Send this message now instead of waiting for the agent to finish",
   "composer.queued_reorder": "Drag to reorder",
   "composer.queued_edit": "Edit queued message",
+  "composer.queue_restored_as_draft_one": "1 message waiting to be sent was kept as a draft during the restart. Review it and send it when you're ready.",
+  "composer.queue_restored_as_draft_other": "{count} messages waiting to be sent were kept as a draft during the restart. Review them and send when you're ready.",
   "composer.escape_to_stop": "Hit Escape again to stop the agent",
   "composer.skill_source": "Skill",
   "composer.stop": "Stop",

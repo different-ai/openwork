@@ -294,15 +294,15 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     return plugins;
   };
 
-  const handleInsertMention = (kind: ComposerMentionKind, value: string) => {
+  const handleInsertMention = (kind: ComposerMentionKind, value: string, nextDraft?: string) => {
     // @agent mentions switch the pending task's agent instead of inserting a
     // mention token (mirrors the session composer, #2101).
     if (kind === "agent") {
-      updateDraft(continuationHolderRef.current.state.draft.replace(/@([^\s@]*)$/, ""));
+      updateDraft(nextDraft ?? continuationHolderRef.current.state.draft.replace(/@([^\s@]*)$/, ""));
       context?.onSelectAgent(value);
       return;
     }
-    updateDraft(continuationHolderRef.current.state.draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
+    updateDraft(nextDraft ?? continuationHolderRef.current.state.draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
     updateMentions({ ...continuationHolderRef.current.state.mentions, [value]: kind });
   };
 

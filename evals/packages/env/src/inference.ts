@@ -9,6 +9,11 @@ import type { Place } from "./place.ts";
 import { ephemeralDatabaseName, localMysqlIsRunning } from "./place.ts";
 import { SkipError } from "./needs.ts";
 
+// Lookup witnesses use purpose-specific 256-bit bearer keys, not password hashing.
+// Keep the algorithms in the product helpers; fixed-vector tests pin their formats.
+export { gatewayBearerKey, gatewayBearerKeyLookupDigest } from "../../../../ee/packages/utils/src/gateway-bearer-key.ts";
+export { inferenceBearerKey, legacyInferenceBearerKeyLookupDigest } from "../../../../ee/packages/utils/src/inference-bearer-key.ts";
+
 const root = fileURLToPath(new URL("../../../..", import.meta.url));
 const encryptionSecret = "local-dev-db-encryption-key-please-change-1234567890";
 const exec = promisify(execFile);

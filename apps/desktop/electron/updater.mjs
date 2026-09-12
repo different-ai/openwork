@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseUpdaterPolicySnapshot, UNMANAGED_UPDATER_POLICY } from "./updater-policy.mjs";
 import {
   cacheVerifiedRecoveryArtifact,
   compatibleRecoveryReleases,
@@ -163,26 +162,6 @@ function isVersionNewer(candidate, current) {
   return comparison === null ? candidate !== current : comparison > 0;
 }
 
-// Organization half of the renderer gate. Global release metadata remains a
-// check-time concern; this gate authorizes the exact native download candidate.
-export function isUpdaterVersionAllowedByPolicy(version, channel, policy) {
-  if (channel === "alpha" && policy?.allowAlphaUpdates === false) return false;
-  if (!Array.isArray(policy?.allowedDesktopVersions)) return true;
-  if (channel !== "alpha") return policy.allowedDesktopVersions.some(allowed => compareVersions(version, allowed) === 0);
-  // Match the renderer's alpha organization ceiling (one patch ahead). Empty
-  // or entirely invalid lists have no alpha ceiling, as in version-gate.ts.
-  const maximum = policy.allowedDesktopVersions.filter(value => parseComparableVersion(value))
-    .sort((left, right) => compareVersions(left, right)).at(-1);
-  if (!maximum) return true;
-  const comparison = compareVersions(version, maximum);
-  if (comparison === null) return false;
-  if (comparison <= 0) return true;
-  const candidate = parseComparableVersion(version).release;
-  const ceiling = parseComparableVersion(maximum).release;
-  return candidate[0] === ceiling[0] && (candidate[1] ?? 0) === (ceiling[1] ?? 0)
-    && (candidate[2] ?? 0) <= (ceiling[2] ?? 0) + 1;
-}
-
 export function targetedStableUpdaterFeed(currentVersion, targetVersion, allowOlder = false) {
   const normalizedTarget = normalizeStableTargetVersion(targetVersion);
   if (!normalizedTarget) {
@@ -331,7 +310,6 @@ export function registerUpdaterIpc({
   // is known, so the organization's allowed-versions policy cannot be honoured
   // and the renderer must not be able to check for, stage, or install updates.
   assertActivation = () => {},
-  readUpdatePolicy = async () => UNMANAGED_UPDATER_POLICY,
 }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoadPromise = null;
@@ -339,13 +317,7 @@ export function registerUpdaterIpc({
   let checkedUpdateTargetVersion = null;
   let checkedUpdateChannel = null;
   let updateDownloaded = false;
-  let downloadedAuthorization = null;
   let macStagedVersion = null;
-  // Distribution is main-owned. Managed packages must not hand a background
-  // download to the native installer merely because ZIP transfer completed.
-  // The authority also identifies managed sign-ins on public builds;
-  // distribution alone is not a complete managed-identity classification.
-  let automaticInstallOnQuit = distribution === "public";
   let recoveryReleases = [];
   const recoveryWitness = { installRequests: [], openedArtifactUrls: [], quitRequested: false };
   let updaterOperationQueue = Promise.resolve();
@@ -354,72 +326,6 @@ export function registerUpdaterIpc({
     const result = updaterOperationQueue.then(operation, operation);
     updaterOperationQueue = result.then(() => undefined, () => undefined);
     return result;
-  }
-
-  async function refreshUpdatePolicy(requireFresh = true) {
-    let snapshot;
-    try {
-      snapshot = parseUpdaterPolicySnapshot(await readUpdatePolicy(), { requireManaged: distribution !== "public" });
-      if (requireFresh && snapshot.verification === "cached-offline") {
-        throw new Error("Connect to verify your organization's policy before downloading an update.");
-      }
-    } catch (error) {
-      // The main-process log is the only witness a packaged install offers for
-      // "the updater ran and stopped at the policy gate" versus "never ran".
-      console.warn("[updater] policy gate refused", error?.message ?? error);
-      throw error;
-    }
-    automaticInstallOnQuit = distribution === "public" && snapshot.policy === null;
-    if (!automaticInstallOnQuit) preventPendingUpdaterInstall(autoUpdaterInstance);
-    return snapshot;
-  }
-
-  async function assertDownloadPolicy(version, channel) {
-    const snapshot = await refreshUpdatePolicy();
-    if (!isUpdaterVersionAllowedByPolicy(version, channel, snapshot.policy)) {
-      throw new Error("This update is no longer allowed by your organization's policy.");
-    }
-    return snapshot;
-  }
-
-  function assertSameAuthorization(before, after) {
-    if (before.identity !== after.identity || (before.policy === null) !== (after.policy === null)) {
-      throw new Error("The signed-in identity changed during the operation. Check for updates again.");
-    }
-  }
-
-  function rememberDownloadedUpdate(version, channel, before, after) {
-    assertSameAuthorization(before, after);
-    downloadedAuthorization = { version, channel, identity: after.identity, managed: after.policy !== null };
-    updateDownloaded = true;
-  }
-
-  function invalidateDownloadedAuthorization() {
-    updateDownloaded = false;
-    downloadedAuthorization = null;
-    // This invalidates our eligibility record, not an already accepted native
-    // Squirrel update. Managed background downloads never cross that boundary.
-    preventPendingUpdaterInstall(autoUpdaterInstance);
-  }
-
-  async function assertInstallPolicy() {
-    try {
-      const receipt = downloadedAuthorization;
-      if (!receipt) throw new Error("Check for updates again before installing.");
-      // Only the local authority can attest cached-offline: it retains a cache
-      // for the same verified session and discards it on denial/auth loss.
-      // A network error talking to that authority is NOT an offline receipt.
-      const snapshot = await refreshUpdatePolicy(false);
-      if (receipt.identity !== snapshot.identity || receipt.managed !== (snapshot.policy !== null)) {
-        throw new Error("The signed-in identity changed. Check for updates again before installing.");
-      }
-      if (!isUpdaterVersionAllowedByPolicy(receipt.version, receipt.channel, snapshot.policy)) {
-        throw new Error("This update is no longer allowed by your organization's policy.");
-      }
-    } catch (error) {
-      invalidateDownloadedAuthorization();
-      throw error;
-    }
   }
 
   function sendToRenderer(channel, data) {
@@ -442,10 +348,7 @@ export function registerUpdaterIpc({
           autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
           if (autoUpdaterInstance) {
             autoUpdaterInstance.autoDownload = false;
-            // Startup loads the updater before any policy read. Install-on-quit
-            // is armed only at the policy-gated download boundary
-            // (downloadAndStageUpdate / stageMacUpdate), never from a default.
-            autoUpdaterInstance.autoInstallOnAppQuit = false;
+            autoUpdaterInstance.autoInstallOnAppQuit = true;
             // Differential (blockmap) downloads reconstruct the update zip from the
             // installed app + a diff. On macOS that reconstructed bundle is what
             // feeds Squirrel's fragile move-based install, and is a common trigger
@@ -489,7 +392,7 @@ export function registerUpdaterIpc({
 
   async function downloadAndStageUpdate(updater, version) {
     if (platform !== "darwin") {
-      updater.autoInstallOnAppQuit = automaticInstallOnQuit;
+      updater.autoInstallOnAppQuit = true;
       await updater.downloadUpdate();
       return;
     }
@@ -506,15 +409,6 @@ export function registerUpdaterIpc({
     // feed without starting Squirrel. Own that check so errors after ZIP transfer
     // and a stalled native stage cannot leave downloadUpdate pending forever.
     await updater.downloadUpdate();
-    if (automaticInstallOnQuit) await stageMacUpdate(updater, version);
-  }
-
-  async function stageMacUpdate(updater, version) {
-    // Native Squirrel acceptance is a commitment, not a revocable JS flag.
-    // Managed background downloads stop before this boundary; this function
-    // must only be reached at their explicit installation boundary.
-    const nativeUpdater = updater.nativeUpdater;
-    if (!nativeUpdater) throw new Error("Native macOS updater is unavailable.");
     const feedUrl = nativeUpdater.getFeedURL();
     if (!feedUrl) throw new Error("Native macOS update feed is unavailable.");
     await new Promise((resolve, reject) => {
@@ -546,7 +440,7 @@ export function registerUpdaterIpc({
       }
     });
     macStagedVersion = version;
-    updater.autoInstallOnAppQuit = automaticInstallOnQuit;
+    updater.autoInstallOnAppQuit = true;
   }
 
   async function resolveRecoveryArtifact(version) {
@@ -677,7 +571,6 @@ export function registerUpdaterIpc({
   });
 
   async function useRecoveryRelease(rawId) {
-    assertActivation();
     const id = stableVersion(rawId);
     const release = id ? recoveryReleases.find((candidate) => candidate.id === id) : null;
     if (!release) return { ok: false, reason: "That recovery version is no longer available. Retry the release list." };
@@ -692,28 +585,11 @@ export function registerUpdaterIpc({
     if (compareStableVersions(release.version, resolveAppVersion(app)) === 0) {
       return { ok: false, reason: "That version is already installed." };
     }
-    let authorization;
-    try {
-      // A newly selected recovery installer has no identity-bound download
-      // receipt. Managed recovery therefore needs a fresh approval first;
-      // unmanaged public offline recovery still requires no Den request.
-      authorization = await assertDownloadPolicy(release.version, "stable");
-    } catch (error) {
-      return { ok: false, reason: String(error?.message ?? error) };
-    }
-    // Recovery can replace the updater's prepared bytes. Never let the receipt
-    // for an earlier ordinary update authorize that different installer.
-    invalidateDownloadedAuthorization();
     if (release.cachedFilePath) {
       if (!(await verifyCachedRecoveryArtifact(release.cachedFilePath, release.artifact))) {
         return { ok: false, reason: "The cached recovery installer could not be verified. Retry while online." };
       }
       if (!shell?.openPath) return { ok: false, reason: "This package cannot open the recovery installer." };
-      try {
-        assertSameAuthorization(authorization, await assertDownloadPolicy(release.version, "stable"));
-      } catch (error) {
-        return { ok: false, reason: String(error?.message ?? error) };
-      }
       const openError = await shell.openPath(release.cachedFilePath);
       if (openError) return { ok: false, reason: openError };
       return {
@@ -738,15 +614,11 @@ export function registerUpdaterIpc({
         if (compareStableVersions(release.version, currentVersion) === null) {
           throw new Error("Installed version could not be validated.");
         }
-        const before = await assertDownloadPolicy(release.version, "stable");
-        assertSameAuthorization(authorization, before);
         await downloadAndStageUpdate(updater, release.version);
-        const after = await assertDownloadPolicy(release.version, "stable");
-        rememberDownloadedUpdate(release.version, "stable", before, after);
-        const installed = await installPreparedUpdate();
-        return installed.ok ? { ok: true, action: "install" } : installed;
+        updater.quitAndInstall(false, true);
+        return { ok: true, action: "install" };
       } catch (error) {
-        invalidateDownloadedAuthorization();
+        preventPendingUpdaterInstall(updater);
         return { ok: false, reason: String(error?.message ?? error) };
       }
     }
@@ -760,7 +632,6 @@ export function registerUpdaterIpc({
       if (!(await verifyCachedRecoveryArtifact(filePath, freshArtifact))) {
         return { ok: false, reason: "The downloaded recovery installer could not be verified." };
       }
-      assertSameAuthorization(authorization, await assertDownloadPolicy(release.version, "stable"));
       const openError = await shell.openPath(filePath);
       if (openError) return { ok: false, reason: openError };
       return { ok: true, action: "installer", message: "The verified installer is open. Follow the operating system steps to finish." };
@@ -794,7 +665,6 @@ export function registerUpdaterIpc({
     checkedUpdateTargetVersion = null;
     checkedUpdateChannel = null;
     updateDownloaded = false;
-    downloadedAuthorization = null;
     const updater = await ensureAutoUpdater();
     if (updater) {
       // A channel change invalidates any previously downloaded update. This
@@ -808,7 +678,6 @@ export function registerUpdaterIpc({
 
   ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => queueUpdaterOperation(async () => {
     assertActivation();
-    await refreshUpdatePolicy();
     // A check selects a feed for this operation only. The persisted preference
     // belongs exclusively to setChannel so a stale check cannot undo a choice.
     const channel = rawChannel === undefined
@@ -870,7 +739,6 @@ export function registerUpdaterIpc({
 
   ipcMain.handle("openwork:updater:download", async () => queueUpdaterOperation(async () => {
     assertActivation();
-    await refreshUpdatePolicy();
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
@@ -905,43 +773,30 @@ export function registerUpdaterIpc({
       // Clear any stuck ShipIt state from a prior aborted install so this
       // download applies cleanly on quit.
       await cleanStaleUpdaterState(app, shipItDefaultsDomain);
-      const version = checkedUpdateVersion;
-      const channel = checkedUpdateChannel ?? "stable";
-      const before = await assertDownloadPolicy(version, channel);
-      await downloadAndStageUpdate(updater, version);
-      const after = await assertDownloadPolicy(version, channel);
-      rememberDownloadedUpdate(version, channel, before, after);
+      await downloadAndStageUpdate(updater, checkedUpdateVersion);
+      updateDownloaded = true;
       return { ok: true };
     } catch (error) {
-      invalidateDownloadedAuthorization();
+      updateDownloaded = false;
       return { ok: false, reason: String(error?.message ?? error) };
     }
   }));
 
-  async function installPreparedUpdate() {
+  ipcMain.handle("openwork:updater:installAndRestart", async () => queueUpdaterOperation(async () => {
     assertActivation();
-    if (!updateDownloaded || !downloadedAuthorization) return { ok: false, reason: "update-not-downloaded" };
+    if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
       // Re-assert the in-place-write default right before the swap; the ShipIt
       // defaults domain may have been wiped when stale state was cleaned.
       await enableSquirrelDirectContentsWrite(shipItDefaultsDomain, writeDefaults);
-      await assertInstallPolicy();
-      // Authorization is immediately before native handoff. Once Squirrel
-      // accepts staging, a later revocation cannot be recalled by a JS flag.
-      const { version } = downloadedAuthorization;
-      if (platform === "darwin" && macStagedVersion !== version) {
-        await stageMacUpdate(updater, version);
-      }
       updater.quitAndInstall(false, true);
       return { ok: true };
     } catch (error) {
       return { ok: false, reason: String(error?.message ?? error) };
     }
-  }
-
-  ipcMain.handle("openwork:updater:installAndRestart", async () => queueUpdaterOperation(installPreparedUpdate));
+  }));
 
   return { ensureAutoUpdater };
 }

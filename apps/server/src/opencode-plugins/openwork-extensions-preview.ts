@@ -6,7 +6,7 @@ import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } fr
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
 import { visualizationSchema } from "@openwork/types/visualization";
-import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
+import { openworkSessionModelSchema, type OpenworkAffordanceEffects, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
   appendAgentInstructions,
@@ -23,6 +23,7 @@ import {
 import {
   buildOpenworkProviderContributions,
   sessionCreateArgsSchema,
+  sessionModelArgSchema,
   sessionReadArgsSchema,
   sessionSearchArgsSchema,
   sessionSendArgsSchema,
@@ -96,12 +97,21 @@ const sessionTimeSchema = z.object({
   archived: z.number().nullish(),
 }).passthrough();
 
+// The engine's session-level model: set from `model` at creation and updated
+// by every prompt (`variant` is the reasoning effort the turn ran with).
+const engineSessionModelSchema = z.object({
+  id: z.string(),
+  providerID: z.string(),
+  variant: z.string().optional(),
+}).passthrough();
+
 const sessionInfoSchema = z.object({
   id: z.string(),
   title: z.string().nullish(),
   directory: z.string().optional(),
   parentID: z.string().nullish(),
   time: sessionTimeSchema.optional(),
+  model: engineSessionModelSchema.nullish(),
 }).passthrough();
 
 const sessionPartSchema = z.object({
@@ -149,6 +159,7 @@ const WEBMCP_EXECUTION_TIMEOUT_MS = 125_000;
 
 type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;
+type SessionModelArg = z.infer<typeof sessionModelArgSchema>;
 type SessionMessage = z.infer<typeof sessionMessageSchema>;
 type SessionSearchArgs = z.infer<typeof sessionSearchArgsSchema>;
 type SessionSearchMatchMode = NonNullable<SessionSearchArgs["match"]>;
@@ -175,6 +186,8 @@ type CreatedOpenWorkSessionResult = {
   sessionId: string;
   title: string;
   started: boolean;
+  /** The model the engine bound to the session, read from its create response. */
+  model: OpenworkSessionModel | null;
   route: string;
 };
 type FailedOpenWorkSessionResult = {
@@ -544,6 +557,18 @@ function sessionPassesFilters(session: SessionInfo, args: SessionSearchArgs): bo
   return true;
 }
 
+/**
+ * Session-level model from the engine record, or null when no model was ever
+ * bound. The engine writes the literal variant "default" for a turn that
+ * named none; agents pass and read null for that, like the composer pill.
+ */
+function sessionModelOf(session: SessionInfo): OpenworkSessionModel | null {
+  const model = session.model;
+  if (!model) return null;
+  const variant = model.variant?.trim();
+  return { providerId: model.providerID, modelId: model.id, variant: variant && variant !== "default" ? variant : null };
+}
+
 function messageText(message: SessionMessage): string {
   const parts: string[] = [];
   for (const part of message.parts) {
@@ -830,6 +855,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
         return {
           ok: true,
           ...metadata,
+          model: sessionModelOf(session),
           totalMessages: readable.length,
           firstUser: readable.find((message) => message.role === "user") ?? null,
           lastAssistant: [...readable].reverse().find((message) => message.role === "assistant") ?? null,
@@ -839,6 +865,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
       return {
         ok: true,
         ...metadata,
+        model: sessionModelOf(session),
         from,
         returned: window.length,
         requested: count,
@@ -1006,26 +1033,42 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
   throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
 }
 
+/**
+ * The engine takes the model in two shapes: `{ id, providerID, variant }` on
+ * the session record at creation, and `{ providerID, modelID }` plus a
+ * top-level `variant` on prompt_async. Both are sent so the session is bound
+ * to the model before its first turn and that turn runs at the same effort.
+ */
+function engineSessionCreateModel(model: SessionModelArg) {
+  return { providerID: model.providerId, id: model.modelId, ...(model.variant ? { variant: model.variant } : {}) };
+}
+
+function enginePromptModel(model: SessionModelArg) {
+  return { model: { providerID: model.providerId, modelID: model.modelId }, ...(model.variant ? { variant: model.variant } : {}) };
+}
+
 async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const args = sessionCreateArgsSchema.parse(rawArgs);
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
   let createdOnEngine = false;
   const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
+    const model = session.model ?? args.model;
     try {
       const payload = sessionInfoSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
-        { title: session.title },
+        { title: session.title, ...(model ? { model: engineSessionCreateModel(model) } : {}) },
       ));
       createdOnEngine = true;
       await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
-        { parts: [{ type: "text", text: session.prompt }] },
+        { ...(model ? enginePromptModel(model) : {}), parts: [{ type: "text", text: session.prompt }] },
       );
       return {
         ok: true,
         sessionId: payload.id,
         title: payload.title?.trim() || session.title,
         started: true,
+        model: sessionModelOf(payload),
         route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.id)}`,
       };
     } catch (error) {

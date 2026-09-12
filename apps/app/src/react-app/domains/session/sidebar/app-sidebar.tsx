@@ -1226,15 +1226,16 @@ function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntr
 }
 
 function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry) {
-  const pinnedIds = usePinnedSessionIds();
+  const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
+  const pinnedIds = React.useMemo(() => new Set(pinnedIdList), [pinnedIdList]);
   const rootIds = React.useMemo(() => new Set([sessionId]), [sessionId]);
-  const rows = flattenSessionRows(
+  const rows = React.useMemo(() => flattenSessionRows(
     group.sessions,
     1,
     pinnedIds,
     [],
     { include: rootIds },
-  );
+  ), [group.sessions, pinnedIds, rootIds]);
 
   return rows.map((row) => (
     <SessionMenuItem
@@ -1404,7 +1405,8 @@ function WorkspaceSidebarGroup({
     return workspaceKindLabel(workspace);
   })();
 
-  const pinnedIds = usePinnedSessionIds();
+  const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
+  const pinnedIds = React.useMemo(() => new Set(pinnedIdList), [pinnedIdList]);
   const orderIds = useSessionOrder(workspace.id);
   const { groups: wsGroups, assignments: wsAssignments } = useWorkspaceGroups(workspace.id);
   const store = useSessionManagementStore;
@@ -1413,13 +1415,13 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
-  const sessionRows = flattenSessionRows(
+  const sessionRows = React.useMemo(() => flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
     EMPTY_PINNED_IDS,
     orderIds,
     { exclude: pinnedIds },
-  );
+  ), [group.sessions, orderIds, pinnedIds, previewCount, wsGroups.length]);
   const visibleRootIds = React.useMemo(
     () => sessionRows.map((row) => row.session.id),
     [sessionRows],

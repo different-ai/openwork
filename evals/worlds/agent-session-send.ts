@@ -9,6 +9,7 @@ import {
   listen,
   readBody,
   sendJson,
+  sendMockError,
   sendStream,
   type ManagedOpenworkServer,
 } from "./openwork-server-cli.ts";
@@ -131,8 +132,7 @@ function mockProvider(
       }
       sendJson(response, 200, { object: "list", data: [] });
     })().catch((error: unknown) => {
-      if (!response.headersSent) sendJson(response, 500, { error: String(error) });
-      else response.destroy(error instanceof Error ? error : undefined);
+      sendMockError(response, error);
     });
   });
 }

@@ -8,6 +8,7 @@ import {
   MAX_SESSION_DRAFT_COUNT,
   resolveSessionDraftScope,
   SESSION_DRAFT_STORAGE_KEY,
+  sessionDraftScopeKey,
 } from "../src/react-app/domains/session/sync/draft-store";
 
 type StorageMutation = { key: string | null; newValue: string | null };
@@ -236,6 +237,44 @@ describe("session draft storage v2", () => {
     }).status).toBe("saved");
     expect(() => JSON.parse(shared.values.get(SESSION_DRAFT_STORAGE_KEY) ?? "")).not.toThrow();
     expect(store.get(aliceOps, "workspace-a", "session-a")?.text).toBe("recovered");
+  });
+
+  test("keeps queued follow-ups beside the composer text and hands them back only while they wait", () => {
+    const shared = sharedStorageContexts();
+    const writer = createSessionDraftStore(shared.context("writer"));
+    const key = sessionDraftScopeKey(aliceOps, "workspace-a", "session-a");
+
+    writer.save(aliceOps, "workspace-a", "session-a", { text: "typed later", mode: "prompt" });
+    expect(writer.saveQueued(key, ["first follow-up", "second follow-up"]).status).toBe("saved");
+    expect(writer.get(aliceOps, "workspace-a", "session-a")).toEqual({
+      text: "typed later", mode: "prompt", queued: ["first follow-up", "second follow-up"],
+    });
+
+    // Composer edits and clears never touch the waiting follow-ups.
+    writer.save(aliceOps, "workspace-a", "session-a", { text: "edited", mode: "prompt" });
+    expect(writer.get(aliceOps, "workspace-a", "session-a")?.queued).toEqual(["first follow-up", "second follow-up"]);
+    expect(writer.clear(aliceOps, "workspace-a", "session-a").status).toBe("saved");
+    expect(writer.get(aliceOps, "workspace-a", "session-a")).toEqual({
+      text: "", mode: "prompt", queued: ["first follow-up", "second follow-up"],
+    });
+
+    // A relaunch reads the same entry, and an explicit queued: [] retires it.
+    writer.dispose();
+    const relaunched = createSessionDraftStore(shared.context("relaunch"));
+    expect(relaunched.get(aliceOps, "workspace-a", "session-a")?.queued).toEqual(["first follow-up", "second follow-up"]);
+    expect(relaunched.save(aliceOps, "workspace-a", "session-a", {
+      text: "first follow-up\n\nsecond follow-up", mode: "prompt", queued: [],
+    }).status).toBe("saved");
+    expect(relaunched.get(aliceOps, "workspace-a", "session-a")).toEqual({
+      text: "first follow-up\n\nsecond follow-up", mode: "prompt",
+    });
+
+    // Draining the last follow-up with no composer text removes the entry entirely.
+    relaunched.saveQueued(key, ["only"]);
+    relaunched.clear(aliceOps, "workspace-a", "session-a");
+    expect(relaunched.saveQueued(key, []).status).toBe("saved");
+    expect(relaunched.get(aliceOps, "workspace-a", "session-a")).toBeNull();
+    expect(relaunched.get(bobOps, "workspace-a", "session-a")).toBeNull();
   });
 
   test("never crashes when reads, migration, or quota-limited writes fail", () => {

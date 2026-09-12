@@ -24,7 +24,7 @@ import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
 import type {
   OpenworkServerClient,
-  OpenworkSessionSnapshot,
+  OpenworkSessionHistory,
 } from "@/app/lib/openwork-server";
 import { isLoopbackOpenworkServerUrl } from "@/app/lib/openwork-server";
 import type {
@@ -107,6 +107,7 @@ import {
   markSessionSnapshotFetchStart,
   reconcileFailureDegradedThreshold,
   seedSessionState,
+  seedSessionStatus,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
   useWorkspaceSyncStreamStore,
@@ -707,10 +708,10 @@ function resolveFindOwnerSessionId() {
   return firstMountedSessionSurfaceId();
 }
 
-function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
+function statusLabel(status: SessionStatus, busy: boolean) {
   if (busy) return "Running...";
-  if (snapshot?.status.type === "busy") return "Running...";
-  if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
+  if (status.type === "busy") return "Running...";
+  if (status.type === "retry") return `Retrying: ${status.message}`;
   return "Ready";
 }
 
@@ -997,7 +998,7 @@ function composerSessionHasContent(state: ComposerSessionState | undefined) {
   ));
 }
 
-function hiddenMessageCount(snapshot: OpenworkSessionSnapshot, revertMessageId: string): number {
+function hiddenMessageCount(snapshot: OpenworkSessionHistory, revertMessageId: string): number {
   const index = snapshot.messages.findIndex((message) => message.info.id === revertMessageId);
   return index < 0 ? snapshot.messages.length : snapshot.messages.length - index;
 }
@@ -1055,14 +1056,30 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     const currentState = useComposerStateStore.getState();
     const currentDraft = getComposerDraft(currentState, props.sessionId);
-    const nextDraft = persistedDraftSnapshot?.text ?? "";
-    const needsHydration = composerDraftNeedsHydration({
+    const storedDraft = persistedDraftSnapshot?.text ?? "";
+    // Follow-ups that were still waiting behind a running task when the last
+    // renderer went away come back as unsent composer text, ahead of whatever
+    // was typed after them. They are never re-queued: across a restart nobody
+    // can vouch that "the agent finished" still means what it meant, so the
+    // person reviews and sends. A queue this renderer already holds for the
+    // conversation is the live truth and its mirror is left alone.
+    const restoredQueue = getComposerQueuedDrafts(currentState, props.sessionId).length === 0
+      ? persistedDraftSnapshot?.queued ?? []
+      : [];
+    const nextDraft = restoredQueue.length > 0
+      ? [...restoredQueue, storedDraft].filter((text) => text.length > 0).join("\n\n")
+      : storedDraft;
+    const needsHydration = restoredQueue.length > 0 || composerDraftNeedsHydration({
       claimedScopeKey,
       nextScopeKey: persistedDraftKey,
       currentText: currentDraft,
       storedText: nextDraft,
     });
 
+    if (restoredQueue.length > 0) {
+      persistDraft({ text: nextDraft, mode: persistedDraftSnapshot?.mode ?? "prompt", queued: [] });
+      toast.info(t("composer.queue_restored_as_draft", { count: restoredQueue.length }));
+    }
     if (needsHydration) {
       for (const attachment of getComposerAttachments(currentState, props.sessionId)) {
         revokeAttachmentPreview(attachment);
@@ -1070,7 +1087,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       hydrateComposerDraft(props.sessionId, nextDraft);
     }
     setHydratedDraftScopeKey(persistedDraftKey);
-  }, [hydrateComposerDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
+  }, [hydrateComposerDraft, persistDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
   // Queued follow-up drafts live in the shared composer store keyed by session
   // id. That keeps a queued message in session A from being drained into
   // session B when the route swaps the same surface component to another
@@ -1177,7 +1194,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Terminal invariant: an accepted admission that reached idle with no
   // assistant result surfaces a bounded recovery card instead of plain idle.
   const [admissionOutcomeUnresolved, setAdmissionOutcomeUnresolved] = useState(false);
-  const [rendered, setRendered] = useState<{ owner: string; sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
+  const [rendered, setRendered] = useState<{ owner: string; sessionId: string; snapshot: OpenworkSessionHistory } | null>(null);
   const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
@@ -1246,12 +1263,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // The preview is bounded; the second read MUST remain uncapped. A preview
       // is never written to the authoritative snapshot cache as complete history.
       const item = useDesktopLoopbackSnapshotRetry
-        ? await opencodeSessionNative.composeNativeSessionSnapshotWithRetry(
+        ? await opencodeSessionNative.composeNativeSessionHistoryWithRetry(
           sessionOwner,
           () => snapshotTargetRef.current,
           { ...window, signal },
         )
-        : await opencodeSessionNative.composeNativeSessionSnapshot(
+        : await opencodeSessionNative.composeNativeSessionHistory(
           { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
           props.sessionId,
           { ...window, signal },
@@ -1259,10 +1276,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
       markSessionSnapshotFetchStart(item, startedAt);
       return item;
   }, [props.opencodeBaseUrl, props.openworkToken, props.sessionId, sessionOwner, useDesktopLoopbackSnapshotRetry]);
-  const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, authToken: props.openworkToken, snapshotQueryKey, readSnapshot });
-  const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
+  const readLatest = useCallback(async (signal: AbortSignal) => {
+    const endpoint = { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken };
+    const [session, messages] = await Promise.all([
+      opencodeSessionNative.getNativeSession(endpoint, props.sessionId, { signal }),
+      opencodeSessionNative.getNativeSessionMessages(endpoint, props.sessionId, { signal, limit: 24 }),
+    ]);
+    return { session, messages };
+  }, [props.opencodeBaseUrl, props.openworkToken, props.sessionId]);
+  const openingHistory = useOpeningSessionHistory({ owner: sessionOwner, sessionId: props.sessionId, authToken: props.openworkToken, snapshotQueryKey, transcriptQueryKey, readSnapshot, readLatest });
+  const snapshotQuery = useQuery<OpenworkSessionHistory>({
     queryKey: snapshotQueryKey,
-    queryFn: ({ signal }) => readSnapshot(signal),
+    queryFn: ({ signal }) => openingHistory.readFullSnapshot(signal),
     enabled: openingHistory.backgroundReady,
     staleTime: 500,
     networkMode: useDesktopLoopbackSnapshotRetry ? "always" : undefined,
@@ -1412,8 +1437,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (!currentSnapshot) return;
-    seedSessionState(props.workspaceId, currentSnapshot, { preview: !hasFullHistory });
-  }, [currentSnapshot, hasFullHistory, props.sessionId, props.workspaceId]);
+    openingHistory.seedSnapshot(currentSnapshot, () => seedSessionState(props.workspaceId, currentSnapshot, { preview: !hasFullHistory }));
+  }, [currentSnapshot, hasFullHistory, openingHistory.seedSnapshot, props.sessionId, props.workspaceId]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
@@ -1478,8 +1503,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId]);
 
   const baseRenderedMessages = useMemo(
-    () => deriveRenderedSessionMessages({ transcriptState, snapshot, historyComplete: hasFullHistory }),
-    [snapshot, transcriptState, hasFullHistory],
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot, historyComplete: hasFullHistory, latestHistory: openingHistory.latestHistory }),
+    [snapshot, transcriptState, hasFullHistory, openingHistory.latestHistory],
   );
   const pendingMessages = useComposerStateStore((state) => state.pendingMessages[sessionOwner]);
   const [submittedMessage, setSubmittedMessage] = useState<{ owner: string; id: string } | null>(null);
@@ -2409,6 +2434,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     const probeAt = nextObservationProbeAt(queuedDrainState, lastObservationProbeAtRef.current);
     if (probeAt === null) return;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       const startedAt = Date.now();
       lastObservationProbeAtRef.current = startedAt;
@@ -2419,9 +2445,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
             await checkUnknownAdmission();
             return;
           }
-          const result = await snapshotQuery.refetch();
-          const probed = result.data?.session.id === props.sessionId ? result.data.status : null;
-          if (!probed) return;
+          // Admission still needs a fresh observed status. History deliberately
+          // carries no activity fields; never infer completion from their absence.
+          const [result, statusResult] = await Promise.all([
+            snapshotQuery.refetch(),
+            opencodeClient.session.status(undefined, { signal: controller.signal }),
+          ]);
+          if (controller.signal.aborted || snapshotTargetRef.current.owner !== sessionOwner
+            || result.isError || result.data?.session.id !== props.sessionId) return;
+          const statuses = unwrap(statusResult);
+          const record = useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId];
+          if (record && record.runStatusAt >= startedAt) return;
+          const probed = statuses[props.sessionId] ?? IDLE_STATUS;
+          seedSessionStatus(props.workspaceId, props.sessionId, probed, { snapshotStartedAt: startedAt });
           if (probed.type === "idle") {
             const phase = getQueuedDrainState(props.sessionId).phase;
             if (result.data) sessionHasPendingSubmission(props.opencodeBaseUrl, props.sessionId, result.data.messages);
@@ -2436,12 +2472,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
           // Probe failed (for example the local server was briefly
           // unreachable); the version bump below re-arms a spaced retry.
         } finally {
-          setObservationProbeVersion((version) => version + 1);
+          if (!controller.signal.aborted) setObservationProbeVersion((version) => version + 1);
         }
       })();
     }, Math.max(0, probeAt - Date.now()));
-    return () => window.clearTimeout(timer);
-  }, [checkUnknownAdmission, observationProbeVersion, props.opencodeBaseUrl, props.sessionId, queuedDrainState, snapshotQuery.refetch]);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [checkUnknownAdmission, observationProbeVersion, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceId, queuedDrainState, sessionOwner, snapshotQuery.refetch]);
 
   useEffect(() => {
     if (drainingQueueRef.current || sendingQueued) return;
@@ -2563,18 +2599,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setComposerDraft(props.sessionId, draft.replaceAll(`[attachment ${id}]`, ""));
   }, [attachments, draft, props.sessionId, setComposerAttachments, setComposerDraft]);
 
-  const handleInsertMention = useCallback((kind: ComposerMentionKind, value: string) => {
+  const handleInsertMention = useCallback((kind: ComposerMentionKind, value: string, nextDraft?: string) => {
     // @agent mentions switch the session agent instead of inserting an agent
     // part. Agent parts are treated as *subagent* (task tool) calls by the
     // engine, which silently fails for primary agents and left every reply
     // coming from the default agent (#2101).
     if (kind === "agent") {
-      setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, ""));
+      setComposerDraft(props.sessionId, nextDraft ?? draft.replace(/@([^\s@]*)$/, ""));
       props.onSelectAgent(value);
       toast.success(t("composer.agent_selected", { agent: value }));
       return;
     }
-    setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
+    setComposerDraft(props.sessionId, nextDraft ?? draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
     setComposerMentions(props.sessionId, { ...mentions, [value]: kind });
     // Pre-flight Computer Use permissions when an app is mentioned so missing
     // Accessibility / Screen Recording grants surface before send, not as a
@@ -3412,7 +3448,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         modelUnavailable={sessionModelUnavailable}
         modelUnavailableMessage={sessionModelUnavailable ? props.modelUnavailableMessage : null}
         organizationModelsEmpty={props.organizationModelsEmpty}
-        statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
+        statusLabel={statusLabel(liveStatus, chatStreaming)}
         modelPickerOpen={modelPickerOpen}
         selectedModel={sessionModel.selectedModel}
         openWorkModelsEntitled={props.openWorkModelsEntitled}
@@ -3500,7 +3536,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </>}
       </div>
       {/* Error display moved inline into the session conversation area */}
-      {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
+      {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot ? { ...snapshot, status: liveStatus, todos: props.todos ?? [] } : null} /> : null}
     </div>
     </DevProfiler>
   );

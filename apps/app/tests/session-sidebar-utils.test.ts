@@ -57,6 +57,33 @@ describe("sidebar session rows", () => {
     expect(rows.map((row) => row.session.id)).toEqual(["session-b"]);
   });
 
+  test("keeps large-inventory preview counts, manual order, and original session identities", () => {
+    const inventory: SidebarSessionItem[] = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `session-${index}`, title: `Session ${index}`,
+    }));
+    const pinned = inventory[9_999]!;
+    const ordered = inventory[9_998]!;
+    const pinnedIds = new Set([pinned.id]);
+    const input = [
+      { id: "archived", title: "Archived", time: { archived: 1 } },
+      { id: "child", title: "Child", parentID: pinned.id },
+      ...inventory,
+    ];
+    const rows = flattenSessionRows(input, 6, new Set(), [ordered.id], { exclude: pinnedIds });
+    const pinnedRows = flattenSessionRows(input, 1, pinnedIds, [], { include: pinnedIds });
+
+    expect(rows).toHaveLength(6);
+    expect(rows.map((row) => row.session.id)).toEqual([ordered.id, ...inventory.slice(0, 5).map((session) => session.id)]);
+    expect(rows[0]!.session).toBe(ordered);
+    expect(rows[1]!.session).toBe(inventory[0]);
+    expect(pinnedRows).toHaveLength(1);
+    expect(pinnedRows[0]!.session).toBe(pinned);
+    const expanded = flattenSessionRows(input, Number.MAX_SAFE_INTEGER, new Set(), [ordered.id], { exclude: pinnedIds });
+    expect(expanded).toHaveLength(inventory.length - 1);
+    expect(expanded.slice(0, rows.length)).toEqual(rows);
+    expect(expanded.at(-1)!.session).toBe(inventory[9_997]);
+  });
+
   test("hides a child even when its parent is archived or outside the list", () => {
     const orphaned: SidebarSessionItem[] = [
       { id: "session-c", title: "Orphan child", parentID: "missing-parent" },

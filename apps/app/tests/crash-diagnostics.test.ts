@@ -85,6 +85,24 @@ test("userinfo cut by the work bound before its @ cannot survive into any bounde
   expect(redactCrashText(exact)).toBe(exact);
 });
 
+test.each([
+  ["double-quoted value", 'token="DEMO_SECRET"', "token=[redacted]"],
+  ["single-quoted value", "key='abc'", "key=[redacted]"],
+  ["double-quoted value containing & and )", 'secret="a&b)")', "secret=[redacted])"],
+  ["single-quoted value containing & and )", "code='x&y)')", "code=[redacted])"],
+  ["unquoted value followed by )", "grant=abc)", "grant=[redacted])"],
+  ["unquoted value followed by ) in a stack frame", "at fn (file?token=abc)", "at fn (file?token=[redacted])"],
+])("redacts %s", (_label, input, expected) => {
+  expect(redactCrashText(input)).toBe(expected);
+  expect(redactCrashText(input)).not.toContain("DEMO_SECRET");
+  expect(redactCrashText(input)).not.toContain("abc");
+});
+
+test("JSON colon syntax is not widened to pair redaction (documented current behavior)", () => {
+  const json = '{"token":"abc"}';
+  expect(redactCrashText(json)).toBe(json);
+});
+
 test("long diagnostics are bounded after sanitizing, without masking ordinary text or HTML", () => {
   const diagnostic = formatCrashDiagnostic({ name: "N".repeat(50000), message: "m".repeat(50000), stack: "s".repeat(50000) });
   expect(diagnostic.name).toHaveLength(100);

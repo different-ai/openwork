@@ -26,40 +26,14 @@ const RETRYABLE_TRANSPORT_CODES = new Set([
   "ENETDOWN",
   "ENETRESET",
   "ENETUNREACH",
-  "ENOTFOUND",
   "EPIPE",
   "ERR_STREAM_PREMATURE_CLOSE",
   "ETIMEDOUT",
   "UND_ERR_CONNECT_TIMEOUT",
   "UND_ERR_HEADERS_TIMEOUT",
   "UND_ERR_SOCKET",
-  // Bun's fetch reports this name rather than Node's ECONNREFUSED.
-  "ConnectionRefused",
-]);
-const RETRYABLE_ELECTRON_NETWORK_ERRORS = new Set([
-  "net::ERR_INTERNET_DISCONNECTED",
-  "net::ERR_CONNECTION_REFUSED",
-  "net::ERR_CONNECTION_RESET",
-  "net::ERR_CONNECTION_CLOSED",
-  "net::ERR_CONNECTION_TIMED_OUT",
-  "net::ERR_TIMED_OUT",
-  "net::ERR_NAME_NOT_RESOLVED",
-  "net::ERR_NETWORK_CHANGED",
 ]);
 type DenRetryReason = "http_transient" | "transport_temporary" | "transport_timeout";
-
-// Private classification: the existing strict policy API retains its same
-// public error shape. Only the updater-specific read may use a verified cache.
-class PolicyTransportUnavailable extends Error {}
-class UpdaterPolicyOffline extends ApiError {
-  constructor() {
-    super(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
-  }
-}
-
-export type UpdaterPolicySnapshot =
-  | { verification: "unmanaged"; identity: null; policy: null }
-  | { verification: "fresh" | "cached-offline"; identity: string; policy: DesktopConfig };
 
 function transientTransportReason(error: unknown): DenRetryReason | null {
   const visited = new Set<object>();
@@ -73,9 +47,6 @@ function transientTransportReason(error: unknown): DenRetryReason | null {
     if (current.name === "NetworkError" || (typeof current.code === "string" && RETRYABLE_TRANSPORT_CODES.has(current.code))) {
       return "transport_temporary";
     }
-    // Electron net.fetch exposes exact Chromium error strings. Never use a
-    // generic message match: certificate/auth failures are not offline grants.
-    if (typeof current.message === "string" && RETRYABLE_ELECTRON_NETWORK_ERRORS.has(current.message)) return "transport_temporary";
     current = current.cause;
   }
   return null;
@@ -94,18 +65,8 @@ class ManagedDesktopPolicy {
   private session: CloudProviderDenSession | null = null;
   private generation = 0;
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
-  private updaterIdentity = randomBytes(32).toString("base64url");
-  private updaterCacheEpoch = 0;
-  private verifiedUpdaterPolicy: { identity: string; policy: DesktopConfig } | null = null;
   onChange: (() => void) | undefined;
   constructor(private readonly config: ServerConfig) {}
-  private revokeUpdaterCache(): void {
-    this.updaterCacheEpoch++;
-    this.verifiedUpdaterPolicy = null;
-  }
-  private checkUpdaterCacheEpoch(epoch: number): void {
-    if (epoch !== this.updaterCacheEpoch) throw new ApiError(403, "policy_unavailable", "Policy authorization changed. Verify it again before continuing.");
-  }
   authenticatesEvaluation(request: Request): boolean {
     const supplied = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
     if (!supplied) return false;
@@ -115,22 +76,17 @@ class ManagedDesktopPolicy {
   }
   async setSession(session: CloudProviderDenSession): Promise<void> {
     // The desktop re-delivers the same identity on every launch, reload, and
-    // resume. Only a different account may invalidate in-flight verifications,
-    // rotate the updater identity, and revoke the attested offline cache.
+    // resume. Only a different account may invalidate in-flight verifications.
     const current = this.session;
     if (!current || current.baseUrl !== session.baseUrl || current.token !== session.token || current.orgId !== session.orgId) {
-      this.updaterIdentity = randomBytes(32).toString("base64url");
-      this.revokeUpdaterCache();
       this.generation++;
     }
-    this.session = { ...session };
+    this.session = session;
     await this.current();
   }
   async clearSession(): Promise<void> {
     this.session = null;
     this.generation++;
-    this.updaterIdentity = randomBytes(32).toString("base64url");
-    this.revokeUpdaterCache();
     // Keep the last managed restrictions until a fresh identity is verified.
   }
   current(): Promise<DesktopConfig | null> {
@@ -140,27 +96,6 @@ class ManagedDesktopPolicy {
     this.fetching = { generation, promise };
     void promise.finally(() => { if (this.fetching?.promise === promise) this.fetching = undefined; }).catch(() => undefined);
     return promise;
-  }
-
-  async forUpdater(): Promise<UpdaterPolicySnapshot> {
-    const generation = this.generation;
-    const cacheEpoch = this.updaterCacheEpoch;
-    try {
-      const policy = await this.current();
-      this.identityChanged(generation);
-      this.checkUpdaterCacheEpoch(cacheEpoch);
-      return policy === null
-        ? { verification: "unmanaged", identity: null, policy: null }
-        : { verification: "fresh", identity: this.updaterIdentity, policy };
-    } catch (error) {
-      this.identityChanged(generation);
-      this.checkUpdaterCacheEpoch(cacheEpoch);
-      const cached = this.verifiedUpdaterPolicy;
-      if (error instanceof UpdaterPolicyOffline && this.session && cached?.identity === this.updaterIdentity) {
-        return { verification: "cached-offline", identity: cached.identity, policy: structuredClone(cached.policy) };
-      }
-      throw error;
-    }
   }
   private identityChanged(generation: number): void {
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
@@ -188,9 +123,6 @@ class ManagedDesktopPolicy {
         this.identityChanged(generation);
         if (allowNotFound && response.status === 404) return null;
         if (!response.ok) {
-          // Authentication/org loss observed by any read in this authority
-          // invalidates offline updater permission, not just policy-route loss.
-          if (response.status === 401 || response.status === 403) this.revokeUpdaterCache();
           if (attempt < DEN_READ_MAX_ATTEMPTS && RETRYABLE_DEN_STATUSES.has(response.status)) {
             console.warn("[openwork:managed-policy] retrying Den verification", {
               reason: "http_transient", status: response.status, attempt: attempt + 1,
@@ -198,7 +130,6 @@ class ManagedDesktopPolicy {
             void response.body?.cancel().catch(() => undefined);
             continue;
           }
-          if (RETRYABLE_DEN_STATUSES.has(response.status)) throw new PolicyTransportUnavailable();
           throw new Error("Den request failed");
         }
         const payload: unknown = await response.json();
@@ -226,32 +157,14 @@ class ManagedDesktopPolicy {
       return null;
     }
     const generation = this.generation;
-    const cacheEpoch = this.updaterCacheEpoch;
     let policy: DesktopConfig;
     try {
-      const payload = await this.readDenJson(session, "/v1/me/desktop-config", generation);
-      policy = desktopConfigSchema.parse(payload);
-      // Optional policy fields make {} a valid unrestricted policy, but a 200
-      // error/envelope must not become {} merely because Zod strips its keys.
-      if (isRecord(payload) && ("error" in payload || (Object.keys(payload).length > 0 && Object.keys(policy).length === 0))) {
-        throw new Error("Invalid desktop policy response");
-      }
+      policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
     } catch (error) {
       if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
-      this.identityChanged(generation);
-      if (error instanceof PolicyTransportUnavailable || transientTransportReason(error)) throw new UpdaterPolicyOffline();
-      // An explicit denial, invalid response, or unrecognized error revokes the
-      // cache too. A later outage must not resurrect previously denied access.
-      this.revokeUpdaterCache();
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
-    // A late successful policy reply must not overwrite a denial observed by
-    // another authority read after this request began.
-    this.checkUpdaterCacheEpoch(cacheEpoch);
-    // Remember the latest authoritative response before persistence. Even a
-    // storage failure must not make a newly observed revocation disappear.
-    this.verifiedUpdaterPolicy = { identity: this.updaterIdentity, policy: structuredClone(policy) };
     const result = await writeManagedDesktopPolicy(this.config, policy);
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
     if (result.changed) this.onChange?.();

@@ -45,6 +45,7 @@ type MountState = {
 
 type Segment = { key: string; start: number; end: number; height: number; placeholder: boolean }
 type Plan = { keys: string[]; heights: number[]; segments: Segment[]; complete: boolean }
+type HeightPlan = { keys: string[]; scrollHeight: number | undefined; heights: number[]; totalHeight: number }
 type ReadingPosition = {
   reservedTop?: number
   element: HTMLElement | null
@@ -76,6 +77,10 @@ function sameStructure(a: Plan, b: Plan) {
       const other = b.segments[index]
       return segment.key === other.key && (!segment.placeholder || segment.height === other.height)
     })
+}
+
+function sameKeys(a: readonly string[], b: readonly string[]) {
+  return a === b || (a.length === b.length && a.every((key, index) => key === b[index]))
 }
 
 /** Whole groups mount once, then stay mounted. The key cancels work on a session switch. */
@@ -150,6 +155,7 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
   private active = false
   private estimates = new Map<string, number>()
   private estimateScope = ""
+  private heightPlan: HeightPlan | null = null
 
   private cacheKey(width = this.state.width) {
     return JSON.stringify([this.props.viewport?.sessionKey, width])
@@ -363,27 +369,38 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
 
   render() {
     const { groups, keys, renderGroup, viewport, header, children, className } = this.props
-    const cache = heightCache.get(this.cacheKey())
     const estimateScope = JSON.stringify([this.state.width, viewport?.historyComplete])
     if (estimateScope !== this.estimateScope) {
       this.estimateScope = estimateScope
       this.estimates = new Map()
+      this.heightPlan = null
     }
-    const known = keys.reduce((sum, key) => sum + (this.estimates.get(key) ?? cache?.get(key) ?? 0), 0)
-    const unknown = keys.filter((key) => !this.estimates.has(key) && !cache?.has(key)).length
-    const estimate = viewport?.historyComplete && viewport.scrollHeight && unknown > 0
-      ? Math.max(32, (viewport.scrollHeight - known - GROUP_GAP * Math.max(0, keys.length - 1)) / unknown)
-      : ESTIMATED_HEIGHT
-    // Freeze skipped geometry for this data/width scope. Learning a mounted
-    // group's size must not redistribute every other spacer during live reflow.
-    const heights = keys.map((key) => {
-      const height = this.estimates.get(key) ?? cache?.get(key) ?? estimate
-      this.estimates.set(key, height)
-      return height
-    })
+    let heightPlan = this.heightPlan
+    // Mount batches keep the same keys. Content-only parent updates may supply
+    // a new array with the same order, including after every group is mounted.
+    if (!heightPlan || heightPlan.scrollHeight !== viewport?.scrollHeight || !sameKeys(heightPlan.keys, keys)) {
+      const cache = heightCache.get(this.cacheKey())
+      const known = keys.reduce((sum, key) => sum + (this.estimates.get(key) ?? cache?.get(key) ?? 0), 0)
+      const unknown = keys.filter((key) => !this.estimates.has(key) && !cache?.has(key)).length
+      const estimate = viewport?.historyComplete && viewport.scrollHeight && unknown > 0
+        ? Math.max(32, (viewport.scrollHeight - known - GROUP_GAP * Math.max(0, keys.length - 1)) / unknown)
+        : ESTIMATED_HEIGHT
+      // Freeze skipped geometry for this data/width scope. Learning a mounted
+      // group's size must not redistribute every other spacer during live reflow.
+      let totalHeight = 0
+      const heights = keys.map((key) => {
+        const height = this.estimates.get(key) ?? cache?.get(key) ?? estimate
+        this.estimates.set(key, height)
+        totalHeight = totalHeight + height + GROUP_GAP
+        return height
+      })
+      heightPlan = { keys, scrollHeight: viewport?.scrollHeight, heights, totalHeight }
+      this.heightPlan = heightPlan
+    } else heightPlan.keys = keys
+    const { heights, totalHeight } = heightPlan
     const segments: Segment[] = []
     const reserved = viewport && !viewport.historyComplete
-      ? Math.max(0, (viewport.scrollHeight ?? 0) - heights.reduce((sum, height) => sum + height + GROUP_GAP, 0)) : 0
+      ? Math.max(0, (viewport.scrollHeight ?? 0) - totalHeight) : 0
     const leading = !viewport?.historyComplete ? viewport?.leadingHeight ?? reserved : 0
     const trailing = !viewport?.historyComplete ? viewport?.trailingHeight ?? 0 : 0
     if (leading > 0) segments.push({ key: "history-prefix", start: 0, end: 0, height: leading, placeholder: true })

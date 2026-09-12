@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import type { UIMessage } from "ai";
 import type { PermissionRequest, PermissionV2Request, QuestionRequest } from "@opencode-ai/sdk/v2/client";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -8,7 +8,7 @@ import { createRoot } from "react-dom/client";
 import { createClient } from "../src/app/lib/opencode";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import { useSessionInteractions, type UseSessionInteractionsInput } from "../src/react-app/domains/session/sync/use-session-interactions";
-import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
@@ -121,13 +121,561 @@ function snapshotWithMessages(
   } as unknown as OpenworkSessionSnapshot;
 }
 
+async function withInteractionHydration(
+  fetchResponse: (request: Request) => Promise<Response>,
+  run: (harness: {
+    client: UseSessionInteractionsInput["client"];
+    calls: Request[];
+    container: HTMLDivElement;
+    render: (overrides?: Partial<UseSessionInteractionsInput>) => Promise<void>;
+    unmount: () => Promise<void>;
+    runRetry: (delay: number) => Promise<void>;
+    pendingRetryDelays: () => number[];
+  }) => Promise<void>,
+) {
+  GlobalRegistrator.register({ url: "http://localhost/" });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  // Leave React/DOM scheduling real; only hold the bounded hydration retries.
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const retries = new Map<ReturnType<typeof setTimeout>, { delay: number; run: () => void }>();
+  const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+    if (typeof callback === "function" && (delay === 100 || delay === 250 || delay === 500)) {
+      const timer = originalSetTimeout(() => {}, 60_000);
+      retries.set(timer, { delay, run: () => callback(...args) });
+      return timer;
+    }
+    return originalSetTimeout(callback, delay, ...args);
+  });
+  const clearTimeoutSpy = spyOn(globalThis, "clearTimeout").mockImplementation((timer) => {
+    for (const key of retries.keys()) if (key === timer) retries.delete(key);
+    originalClearTimeout(timer);
+  });
+  const originalFetch = globalThis.fetch;
+  const calls: Request[] = [];
+  const fetchStub = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    calls.push(request);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/permission")) return Response.json(path.includes("/api/session/") ? { data: [] } : []);
+    if (path.endsWith("/question")) return Response.json([]);
+    return fetchResponse(request);
+  };
+  Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true, value: fetchStub });
+  const client = createClient("http://localhost/opencode", "/project");
+  function Interactions(props: UseSessionInteractionsInput) {
+    const interactions = useSessionInteractions(props);
+    return createElement("div", null, interactions.todos.map((todo) => todo.content).join(", "));
+  }
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  let mounted = true;
+  const unmount = async () => {
+    if (!mounted) return;
+    mounted = false;
+    await act(async () => root.unmount());
+  };
+  try {
+    await run({
+      client, calls, container, unmount,
+      pendingRetryDelays: () => [...retries.values()].map((retry) => retry.delay),
+      runRetry: async (delay) => {
+        const next = retries.entries().next().value;
+        if (!next) throw new Error("Missing hydration retry");
+        const [timer, retry] = next;
+        expect(retry.delay).toBe(delay);
+        retries.delete(timer);
+        originalClearTimeout(timer);
+        setSystemTime(Date.now() + delay);
+        await act(async () => { retry.run(); });
+      },
+      render: async (overrides = {}) => {
+        await act(async () => root.render(createElement(Interactions, {
+          client, workspaceId: "workspace-a", workspaceRoot: "/project", sessionId: "session-a", ...overrides,
+        })));
+      },
+    });
+  } finally {
+    await unmount();
+    for (const timer of retries.keys()) originalClearTimeout(timer);
+    timeoutSpy.mockRestore();
+    clearTimeoutSpy.mockRestore();
+    Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true, value: originalFetch });
+    await GlobalRegistrator.unregister();
+  }
+}
+
 afterEach(() => {
   __setWorkspaceSessionSyncPermissionFetcherForTest(null);
   __setWorkspaceSessionSyncStatusFetcherForTest(null);
   setSystemTime();
   getReactQueryClient().clear();
-  for (const sessionId of ["session-a", "session-b", "session-child"]) {
-    useSessionActivityStore.getState().removeSession("workspace-a", sessionId);
+  for (const workspaceId of ["workspace-a", "workspace-b"]) {
+    for (const sessionId of ["session-a", "session-b", "session-child"]) {
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  }
+});
+
+describe("independent session status and todo hydration", () => {
+  test("initial status failure recovers with bounded retries even without a workspace sync", async () => {
+    let statusReads = 0;
+    await withInteractionHydration(async (request) => {
+      if (!new URL(request.url).pathname.endsWith("/status")) return Response.json([]);
+      statusReads += 1;
+      return statusReads === 1 ? Response.json({ message: "starting" }, { status: 503 })
+        : Response.json({ "session-a": { type: "busy" } });
+    }, async ({ render, runRetry, pendingRetryDelays, calls }) => {
+      setSystemTime(100);
+      await render();
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(pendingRetryDelays()).toEqual([100]);
+      await runRetry(100);
+      expect(statusReads).toBe(2);
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toEqual({ type: "busy" });
+      expect(pendingRetryDelays()).toEqual([]);
+      expect(calls.some((request) => /\/(message|messages|snapshot)$/.test(new URL(request.url).pathname))).toBe(false);
+    });
+  });
+
+  test("status recovery is bounded, coalesces wake events, and cancels on unmount", async () => {
+    let statusReads = 0;
+    let failing = true;
+    const held = Promise.withResolvers<Response>();
+    await withInteractionHydration(async (request) => {
+      if (!new URL(request.url).pathname.endsWith("/status")) return Response.json([]);
+      statusReads += 1;
+      return failing ? Response.json({ message: "offline" }, { status: 503 }) : held.promise;
+    }, async ({ render, runRetry, pendingRetryDelays, unmount }) => {
+      await render();
+      for (const delay of [100, 250, 500]) await runRetry(delay);
+      expect(statusReads).toBe(4);
+      expect(pendingRetryDelays()).toEqual([]);
+      failing = false;
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        window.dispatchEvent(new Event("online"));
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(statusReads).toBe(5);
+      await unmount();
+      await act(async () => { held.resolve(Response.json({ "session-a": { type: "busy" } })); });
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(pendingRetryDelays()).toEqual([]);
+    });
+  });
+
+  test("navigation cancels a scheduled initial status retry", async () => {
+    let statusReads = 0;
+    await withInteractionHydration(async (request) => {
+      if (!new URL(request.url).pathname.endsWith("/status")) return Response.json([]);
+      statusReads += 1;
+      return statusReads === 1 ? Response.json({ message: "offline" }, { status: 503 }) : Response.json({});
+    }, async ({ render, pendingRetryDelays }) => {
+      await render();
+      expect(pendingRetryDelays()).toEqual([100]);
+      await render({ sessionId: "session-b" });
+      expect(pendingRetryDelays()).toEqual([]);
+      expect(statusReads).toBe(2);
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toBeUndefined();
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-b"))).toEqual({ type: "idle" });
+    });
+  });
+
+  for (const terminal of ["idle", "error", "native-success", "native-cancel", "poll", "reconnect"]) {
+    test(`${terminal} reconciliation repairs a missed todo event without focus or history`, async () => {
+      const input = { workspaceId: "workspace-a", baseUrl: terminal.startsWith("native") ? "http://localhost/opencode2" : "http://localhost/opencode", openworkToken: "token" };
+      const cleanup = __createWorkspaceSessionSyncForTest(input);
+      const release = trackWorkspaceSessionSync(input, "session-a");
+      __setWorkspaceSessionSyncStatusFetcherForTest(async () => ({}));
+      __setWorkspaceSessionSyncPermissionFetcherForTest(async () => []);
+      let completed = false;
+      let todoReads = 0;
+      try {
+        await withInteractionHydration(async (request) => {
+          if (new URL(request.url).pathname.endsWith("/status")) return Response.json({});
+          todoReads += 1;
+          return Response.json([{ id: "task", content: completed ? "Completed task" : "Running task", status: completed ? "completed" : "in_progress", priority: "high" }]);
+        }, async ({ render, container, runRetry, calls }) => {
+          setSystemTime(100);
+          await render();
+          expect(container.textContent).toBe("Running task");
+          setSystemTime(150);
+          if (terminal !== "reconnect") {
+            __applySessionSyncEventForTest(input, { type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+          }
+          completed = true;
+          setSystemTime(200);
+          if (terminal === "poll") await runRetry(250);
+          else await act(async () => {
+            if (terminal === "reconnect") __revalidateWorkspaceSyncsForTest();
+            else if (terminal === "error") __applySessionSyncEventForTest(input, { type: "session.error", properties: { sessionID: "session-a", error: { name: "UnknownError", data: { message: "Stopped" } } } });
+            else if (terminal === "native-success") __applySessionSyncEventForTest(input, { type: "session.execution.succeeded", properties: { sessionID: "session-a", sequence: 2 } });
+            else if (terminal === "native-cancel") __applySessionSyncEventForTest(input, { type: "session.execution.interrupted", properties: { sessionID: "session-a", sequence: 2, reason: "user" } });
+            else __applySessionSyncEventForTest(input, { type: "session.idle", properties: { sessionID: "session-a" } });
+          });
+          expect(container.textContent).toBe("Completed task");
+          expect(todoReads).toBe(2);
+          expect(calls.some((request) => /\/(message|messages|snapshot)$/.test(new URL(request.url).pathname))).toBe(false);
+        });
+      } finally { release(); cleanup(); }
+    });
+  }
+
+  test("terminal todo reconciliation replaces an older in-flight initial read and ignores its late body", async () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://localhost/opencode", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    const held = Promise.withResolvers<Response>();
+    let todoReads = 0;
+    try {
+      await withInteractionHydration(async (request) => {
+        if (new URL(request.url).pathname.endsWith("/status")) return Response.json({});
+        todoReads += 1;
+        return todoReads === 1 ? held.promise : Response.json([{ id: "done", content: "Completed task", status: "completed", priority: "high" }]);
+      }, async ({ render, container, client }) => {
+        if (!client) throw new Error("Missing client");
+        const reads = spyOn(client.session, "todo");
+        try {
+          setSystemTime(100);
+          await render();
+          const oldSignal = reads.mock.calls[0]?.[1]?.signal;
+          setSystemTime(200);
+          await act(async () => { __applySessionSyncEventForTest(input, { type: "session.idle", properties: { sessionID: "session-a" } }); });
+          expect(oldSignal?.aborted).toBe(true);
+          expect(todoReads).toBe(2);
+          expect(container.textContent).toBe("Completed task");
+          await act(async () => { held.resolve(Response.json([])); });
+          expect(container.textContent).toBe("Completed task");
+        } finally { reads.mockRestore(); }
+      });
+    } finally { release(); cleanup(); }
+  });
+
+  test("terminal todo retry preserves cached data on failure and rejects a same-clock live overwrite", async () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://localhost/opencode", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    const held = Promise.withResolvers<Response>();
+    let reads = 0;
+    try {
+      await withInteractionHydration(async (request) => {
+        if (new URL(request.url).pathname.endsWith("/status")) return Response.json({});
+        reads += 1;
+        if (reads === 1) return Response.json([{ id: "task", content: "Cached task", status: "in_progress", priority: "high" }]);
+        if (reads === 2) return Response.json({ message: "offline" }, { status: 503 });
+        return held.promise;
+      }, async ({ render, container, runRetry, pendingRetryDelays }) => {
+        setSystemTime(100);
+        await render();
+        setSystemTime(200);
+        await act(async () => { __applySessionSyncEventForTest(input, { type: "session.idle", properties: { sessionID: "session-a" } }); });
+        expect(reads).toBe(2);
+        expect(container.textContent).toBe("Cached task");
+        expect(pendingRetryDelays()).toEqual([100]);
+        await runRetry(100);
+        expect(reads).toBe(3);
+        const live = [{ id: "task", content: "Live completed task", status: "completed", priority: "high" }];
+        await act(async () => { __applySessionSyncEventForTest(input, { type: "todo.updated", properties: { sessionID: "session-a", todos: live } }); });
+        setSystemTime(400);
+        await act(async () => { held.resolve(Response.json([])); });
+        expect(container.textContent).toBe("Live completed task");
+        expect(getReactQueryClient().getQueryState(todoKey("workspace-a", "session-a"))?.dataUpdatedAt).toBe(300);
+        expect(pendingRetryDelays()).toEqual([]);
+      });
+    } finally { release(); cleanup(); }
+  });
+
+  for (const terminal of ["error", "native-cancel"]) {
+    test(`retried status cannot overwrite a same-clock ${terminal}`, async () => {
+      const input = { workspaceId: "workspace-a", baseUrl: "http://localhost/opencode2", openworkToken: "token" };
+      const cleanup = __createWorkspaceSessionSyncForTest(input);
+      const release = trackWorkspaceSessionSync(input, "session-a");
+      __setWorkspaceSessionSyncPermissionFetcherForTest(async () => []);
+      const held = Promise.withResolvers<Response>();
+      let reads = 0;
+      try {
+        await withInteractionHydration(async (request) => {
+          if (!new URL(request.url).pathname.endsWith("/status")) return Response.json([]);
+          reads += 1;
+          return reads === 1 ? Response.json({ message: "offline" }, { status: 503 }) : held.promise;
+        }, async ({ render, runRetry }) => {
+          setSystemTime(100);
+          await render();
+          await runRetry(100);
+          await act(async () => {
+            if (terminal === "error") __applySessionSyncEventForTest(input, { type: "session.error", properties: { sessionID: "session-a", error: { name: "UnknownError", data: { message: "Stopped" } } } });
+            else __applySessionSyncEventForTest(input, { type: "session.execution.interrupted", properties: { sessionID: "session-a", sequence: 2, reason: "user" } });
+          });
+          setSystemTime(300);
+          await act(async () => { held.resolve(Response.json({ "session-a": { type: "busy" } })); });
+          expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toEqual({ type: "idle" });
+          expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"])
+            .toMatchObject({ runActive: false, runStatusAt: 200, errorActive: terminal === "error" });
+        });
+      } finally { release(); cleanup(); }
+    });
+  }
+
+  test("a failed todo read retries independently with a fresh timestamp and recovers the cached list", async () => {
+    let todoReads = 0;
+    const fresh = [{ id: "fresh", content: "Recovered task", status: "completed", priority: "high" }];
+    await withInteractionHydration(async (request) => {
+      if (new URL(request.url).pathname.endsWith("/status")) return Response.json({});
+      todoReads += 1;
+      return todoReads === 1 ? Response.json({ message: "offline" }, { status: 503 }) : Response.json(fresh);
+    }, async ({ render, calls, container, runRetry }) => {
+      setSystemTime(100);
+      await render();
+      expect(todoReads).toBe(1);
+      setSystemTime(150);
+      await act(async () => {
+        getReactQueryClient().setQueryData(todoKey("workspace-a", "session-a"), [
+          { id: "cached", content: "Cached task", status: "pending", priority: "high" },
+        ]);
+      });
+      expect(container.textContent).toBe("Cached task");
+      await runRetry(100);
+      expect(todoReads).toBe(2);
+      expect(container.textContent).toBe("Recovered task");
+      expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toEqual(fresh);
+      expect(getReactQueryClient().getQueryState(todoKey("workspace-a", "session-a"))?.dataUpdatedAt).toBeGreaterThan(150);
+      expect(calls.filter((request) => new URL(request.url).pathname.endsWith("/status"))).toHaveLength(1);
+      expect(calls.some((request) => /\/(message|messages|snapshot)$/.test(new URL(request.url).pathname))).toBe(false);
+    });
+  });
+
+  for (const recovery of ["online", "focus"]) {
+    test(`todo retries are bounded and ${recovery} restarts recovery after exhaustion`, async () => {
+      let todoReads = 0;
+      let failing = true;
+      await withInteractionHydration(async (request) => {
+        if (new URL(request.url).pathname.endsWith("/status")) return Response.json({});
+        todoReads += 1;
+        return failing ? Response.json({ message: "offline" }, { status: 503 })
+          : Response.json([{ id: "recovered", content: "Recovered task", status: "pending", priority: "high" }]);
+      }, async ({ render, calls, container, unmount, runRetry, pendingRetryDelays }) => {
+        await render();
+        for (const delay of [100, 250, 500]) {
+          await runRetry(delay);
+        }
+        expect(todoReads).toBe(4);
+        expect(pendingRetryDelays()).toEqual([]);
+        failing = false;
+        await act(async () => { window.dispatchEvent(new Event(recovery)); });
+        expect(todoReads).toBe(5);
+        expect(container.textContent).toBe("Recovered task");
+        expect(calls.filter((request) => new URL(request.url).pathname.endsWith("/status"))).toHaveLength(1);
+        await unmount();
+        window.dispatchEvent(new Event(recovery));
+        expect(pendingRetryDelays()).toEqual([]);
+        expect(todoReads).toBe(5);
+      });
+    });
+  }
+
+  test("navigation cancels queued todo retries and recovery only reads the current owner", async () => {
+    const todoPaths: string[] = [];
+    await withInteractionHydration(async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/status")) return Response.json({});
+      todoPaths.push(path);
+      return path.includes("/session-a/") ? Response.json({ message: "offline" }, { status: 503 }) : Response.json([]);
+    }, async ({ render, pendingRetryDelays }) => {
+      await render();
+      expect(pendingRetryDelays()).toEqual([100]);
+      await render({ sessionId: "session-b" });
+      expect(pendingRetryDelays()).toEqual([]);
+      expect(todoPaths).toEqual(["/opencode/session/session-a/todo", "/opencode/session/session-b/todo"]);
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+      expect(todoPaths).toEqual([
+        "/opencode/session/session-a/todo", "/opencode/session/session-b/todo", "/opencode/session/session-b/todo",
+      ]);
+      expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toBeUndefined();
+    });
+  });
+
+  test("a recovering todo read still cannot replace a newer live event", async () => {
+    const pending = Promise.withResolvers<Response>();
+    let todoReads = 0;
+    const input = { workspaceId: "workspace-a", baseUrl: "http://localhost/opencode", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    try {
+      await withInteractionHydration(async (request) => {
+        if (new URL(request.url).pathname.endsWith("/status")) return Response.json({});
+        todoReads += 1;
+        return todoReads === 1 ? Response.json({ message: "offline" }, { status: 503 }) : pending.promise;
+      }, async ({ render, runRetry }) => {
+        setSystemTime(100);
+        await render();
+        await runRetry(100);
+        expect(todoReads).toBe(2);
+        setSystemTime(300);
+        const live = [{ id: "live", content: "Live task", status: "completed", priority: "high" }];
+        await act(async () => {
+          __applySessionSyncEventForTest(input, { type: "todo.updated", properties: { sessionID: "session-a", todos: live } });
+          pending.resolve(Response.json([]));
+        });
+        expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toEqual(live);
+      });
+    } finally { release(); cleanup(); }
+  });
+
+  for (const first of ["status", "todos"]) {
+    test(`${first} hydrates while the other read is held and neither blocks history`, async () => {
+      const status = Promise.withResolvers<Response>();
+      const todos = Promise.withResolvers<Response>();
+      const queryClient = getReactQueryClient();
+      const cachedTodos = [{ id: "cached", content: "Cached task", status: "pending", priority: "high" }];
+      const freshTodos = [{ id: "fresh", content: "Fresh task", status: "completed", priority: "high" }];
+      setSystemTime(50);
+      queryClient.setQueryData(todoKey("workspace-a", "session-a"), cachedTodos);
+      await withInteractionHydration(async (request) => {
+        return new URL(request.url).pathname.endsWith("/status") ? status.promise : todos.promise;
+      }, async ({ calls, container, render }) => {
+        setSystemTime(100);
+        await render({ interactionSessionIds: ["session-child"] });
+        expect(calls.filter((request) => /\/(status|todo)$/.test(new URL(request.url).pathname))
+          .map((request) => new URL(request.url).pathname))
+          .toEqual(["/opencode/session/status", "/opencode/session/session-a/todo"]);
+        const { session, messages } = snapshotWithMessages([{ id: "answer", role: "assistant", text: "History is ready" }]);
+        const history: OpenworkSessionHistory = { session, messages };
+        markSessionSnapshotFetchStart(history, 100);
+        setSystemTime(150);
+        seedSessionState("workspace-a", history);
+        expect(queryClient.getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"))?.[0]?.parts[0])
+          .toMatchObject({ text: "History is ready" });
+        expect(queryClient.getQueryData(statusKey("workspace-a", "session-a"))).toBeUndefined();
+        expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual(cachedTodos);
+        expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"]?.runStatusAt).toBe(0);
+        setSystemTime(200);
+        await act(async () => {
+          if (first === "status") status.resolve(Response.json({}));
+          else todos.resolve(Response.json(freshTodos));
+        });
+        expect(queryClient.getQueryData(statusKey("workspace-a", "session-a")))
+          .toEqual(first === "status" ? { type: "idle" } : undefined);
+        expect(container.textContent).toBe(first === "todos" ? "Fresh task" : "Cached task");
+        setSystemTime(300);
+        await act(async () => {
+          if (first === "status") todos.resolve(Response.json(freshTodos));
+          else status.resolve(Response.json({}));
+        });
+        expect(queryClient.getQueryData(statusKey("workspace-a", "session-a"))).toEqual({ type: "idle" });
+        expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"]?.runStatusAt).toBe(100);
+        expect(container.textContent).toBe("Fresh task");
+        expect(queryClient.getQueryData(todoKey("workspace-a", "session-child"))).toBeUndefined();
+        expect(queryClient.getQueryData(statusKey("workspace-a", "session-child"))).toBeUndefined();
+        // Changing the descendants only refreshes their interactions.
+        await render({ interactionSessionIds: ["session-b"] });
+        expect(calls.filter((request) => /\/(status|todo)$/.test(new URL(request.url).pathname))).toHaveLength(2);
+        expect(calls.some((request) => /\/(message|messages|snapshot|session)$/.test(new URL(request.url).pathname))).toBe(false);
+      });
+    });
+  }
+
+  for (const cached of [false, true]) {
+    test(`failed status and todo reads retain ${cached ? "cached" : "unobserved"} state`, async () => {
+      const queryClient = getReactQueryClient();
+      const cachedTodos = [{ id: "cached", content: "Keep this task", status: "pending", priority: "high" }];
+      setSystemTime(50);
+      if (cached) {
+        useSessionActivityStore.getState().setRunStatus("workspace-a", "session-a", { type: "busy" });
+        queryClient.setQueryData(statusKey("workspace-a", "session-a"), { type: "busy" });
+        queryClient.setQueryData(todoKey("workspace-a", "session-a"), cachedTodos);
+      }
+      await withInteractionHydration(async () => Response.json({ message: "unavailable" }, { status: 503 }), async ({ render }) => {
+        setSystemTime(100);
+        await render();
+        expect(queryClient.getQueryData(statusKey("workspace-a", "session-a"))).toEqual(cached ? { type: "busy" } : undefined);
+        expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual(cached ? cachedTodos : undefined);
+        expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"]?.runStatusAt ?? 0).toBe(cached ? 50 : 0);
+      });
+    });
+  }
+
+  for (const eventTime of [100, 200]) {
+    test(`status and todo events at ${eventTime} beat held reads started at 100`, async () => {
+      const status = Promise.withResolvers<Response>();
+      const todos = Promise.withResolvers<Response>();
+      const input = { workspaceId: "workspace-a", baseUrl: "http://localhost/opencode", openworkToken: "token" };
+      const cleanup = __createWorkspaceSessionSyncForTest(input);
+      const release = trackWorkspaceSessionSync(input, "session-a");
+      const liveTodos = [{ id: "live", content: "Live task", status: "completed", priority: "high" }];
+      try {
+        await withInteractionHydration(async (request) => {
+          return new URL(request.url).pathname.endsWith("/status") ? status.promise : todos.promise;
+        }, async ({ render }) => {
+          setSystemTime(100);
+          await render();
+          setSystemTime(eventTime);
+          await act(async () => {
+            __applySessionSyncEventForTest(input, {
+              type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } },
+            });
+            __applySessionSyncEventForTest(input, {
+              type: "todo.updated", properties: { sessionID: "session-a", todos: liveTodos },
+            });
+          });
+          setSystemTime(300);
+          await act(async () => {
+            status.resolve(Response.json({}));
+            todos.resolve(Response.json([]));
+          });
+          expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toEqual({ type: "busy" });
+          expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toEqual(liveTodos);
+          expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"]?.runStatusAt).toBe(eventTime);
+        });
+      } finally { release(); cleanup(); }
+    });
+  }
+
+  for (const change of ["client", "workspace", "session", "unmount"]) {
+    test(`${change} cancels both independent reads and ignores late successful bodies`, async () => {
+      const status = Promise.withResolvers<Response>();
+      const todos = Promise.withResolvers<Response>();
+      let hold = true;
+      await withInteractionHydration(async (request) => {
+        const statusRead = new URL(request.url).pathname.endsWith("/status");
+        if (hold) return statusRead ? status.promise : todos.promise;
+        return Response.json(statusRead ? {} : []);
+      }, async ({ client, render, unmount }) => {
+        if (!client) throw new Error("Missing hydration client");
+        const statusSpy = spyOn(client.session, "status");
+        const todoSpy = spyOn(client.session, "todo");
+        try {
+          setSystemTime(100);
+          await render();
+          const statusSignal = statusSpy.mock.calls[0]?.[1]?.signal;
+          const todoSignal = todoSpy.mock.calls[0]?.[1]?.signal;
+          expect(statusSignal?.aborted).toBe(false);
+          expect(todoSignal?.aborted).toBe(false);
+          expect(statusSignal).not.toBe(todoSignal);
+          hold = false;
+          setSystemTime(200);
+          if (change === "client") await render({ client: createClient("http://localhost/opencode", "/project") });
+          else if (change === "workspace") await render({ workspaceId: "workspace-b" });
+          else if (change === "session") await render({ sessionId: "session-b" });
+          else await unmount();
+          expect(statusSignal?.aborted).toBe(true);
+          expect(todoSignal?.aborted).toBe(true);
+          const queryClient = getReactQueryClient();
+          const statusBefore = queryClient.getQueryState(statusKey("workspace-a", "session-a"));
+          const todosBefore = queryClient.getQueryState(todoKey("workspace-a", "session-a"));
+          setSystemTime(300);
+          await act(async () => {
+            status.resolve(Response.json({ "session-a": { type: "busy" } }));
+            todos.resolve(Response.json([{ id: "late", content: "Obsolete task", status: "pending", priority: "high" }]));
+          });
+          expect(queryClient.getQueryState(statusKey("workspace-a", "session-a"))).toBe(statusBefore);
+          expect(queryClient.getQueryState(todoKey("workspace-a", "session-a"))).toBe(todosBefore);
+        } finally {
+          statusSpy.mockRestore();
+          todoSpy.mockRestore();
+        }
+      });
+    });
   }
 });
 
@@ -147,6 +695,8 @@ describe("session permission sync", () => {
         calls.push(request);
         const path = new URL(request.url).pathname;
         if (path.endsWith("/api/session")) throw new Error("Unrelated session sweep must not run");
+        if (path.endsWith("/session/status")) return Response.json({});
+        if (path.endsWith("/session/active")) return Response.json({ data: {} });
         if (path.endsWith("/api/session/session-a/permission") && hold) return delayed.promise;
         if ((path.endsWith("/form/request") || path.endsWith("/question")) && hold) return delayedQuestion.promise;
         if (path.endsWith("/api/session/session-child/permission")) {
@@ -508,6 +1058,69 @@ describe("session question sync", () => {
 });
 
 describe("session transcript sync", () => {
+  test("history-only hydration and cached revisits preserve busy status and cached todos", () => {
+    const queryClient = getReactQueryClient();
+    const snapshot = snapshotWithMessages([{ id: "answer", role: "assistant", text: "Answer" }]);
+    snapshot.status = { type: "busy" };
+    snapshot.todos = [{ id: "todo", content: "Keep working", status: "in_progress", priority: "high" }];
+    setSystemTime(100);
+    markSessionSnapshotFetchStart(snapshot, 100);
+    seedSessionState("workspace-a", snapshot);
+    const statusBefore = queryClient.getQueryState(statusKey("workspace-a", "session-a"));
+    const todosBefore = queryClient.getQueryState(todoKey("workspace-a", "session-a"));
+    const { session, messages } = snapshotWithMessages([{ id: "answer", role: "assistant", text: "Answer continues" }]);
+    const history: OpenworkSessionHistory = { session, messages };
+    markSessionSnapshotFetchStart(history, 200);
+    for (const now of [200, 300]) {
+      setSystemTime(now);
+      seedSessionState("workspace-a", history);
+      expect(queryClient.getQueryState(statusKey("workspace-a", "session-a"))).toBe(statusBefore);
+      expect(queryClient.getQueryState(todoKey("workspace-a", "session-a"))).toBe(todosBefore);
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"])
+        .toMatchObject({ runActive: true, runStatusAt: 100 });
+    }
+    expect(queryClient.getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"))?.[0]?.parts[0])
+      .toMatchObject({ text: "Answer continues" });
+  });
+
+  test("full history without status or todos reconciles reverts, settles orphans, and observes transcript progress", () => {
+    const { session, messages } = snapshotWithMessages([
+      { id: "answer", role: "assistant", text: "Completed answer" },
+      { id: "reverted", role: "user", text: "Reverted prompt" },
+    ]);
+    const tool = { messageID: "answer", callID: "finished-call" };
+    messages[0]!.parts.push({
+      id: "finished-part", sessionID: session.id, messageID: "answer", type: "tool",
+      callID: tool.callID, tool: "lookup",
+      state: { status: "completed", input: {}, output: "Found it", title: "Lookup", metadata: {}, time: { start: 1, end: 2 } },
+    });
+    const history: OpenworkSessionHistory = { session: { ...session, revert: { messageID: "reverted" } }, messages };
+    seedPermissionState("workspace-a", "session-a", [{ ...permission("orphaned-permission", "session-a"), tool }]);
+    seedQuestionState("workspace-a", "session-a", [
+      { ...question("orphaned-question", "session-a"), tool },
+      question("still-pending", "session-a"),
+    ]);
+    const queryClient = getReactQueryClient();
+    queryClient.setQueryData(transcriptKey("workspace-a", "session-a"), [
+      uiMessage("answer", "assistant", "Completed"), uiMessage("reverted", "user", "Reverted prompt"),
+    ]);
+    markSessionSnapshotFetchStart(history, 100);
+    seedSessionState("workspace-a", history);
+    const transcript = queryClient.getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+    expect(transcript?.map((message) => message.id)).toEqual(["answer"]);
+    expect(transcript?.[0]?.parts[0]).toMatchObject({ text: "Completed answer" });
+    expect(queryClient.getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
+    expect(queryClient.getQueryData(questionKey("workspace-a", "session-a"))).toMatchObject([{ id: "still-pending" }]);
+    expect(queryClient.getQueryData(statusKey("workspace-a", "session-a"))).toBeUndefined();
+    expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toBeUndefined();
+    const record = useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]?.["session-a"];
+    expect(record?.runStatusAt).toBe(0);
+    expect(record?.progressRevision).not.toBeNull();
+    // Settlement watermarks also reject a later list containing the orphan.
+    seedQuestionState("workspace-a", "session-a", [{ ...question("orphaned-question", "session-a"), tool }]);
+    expect(queryClient.getQueryData(questionKey("workspace-a", "session-a"))).toEqual([]);
+  });
+
   test("coalesces token-sized deltas by transcript part", () => {
     const deltas = coalescePendingDeltas([
       { sessionId: "session-a", messageId: "msg-a", partId: "part-a", reasoning: false, delta: "hel" },

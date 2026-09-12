@@ -19,7 +19,7 @@ import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2PromptText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { composeNativeSessionSnapshot, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { composeNativeSessionHistory, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
@@ -563,7 +563,7 @@ export function SessionRoute() {
       ...sessionHistoryIdentity({ draftScope: sessionDraftScope, opencodeBaseUrl: endpoint.opencodeBaseUrl, runtimeWorkspaceId: prefetchRuntimeWorkspaceId, sessionId }),
       sessionId,
       authToken: endpoint.token,
-      readSnapshot: (signal, window) => composeNativeSessionSnapshot(endpoint, sessionId, { ...window, signal }),
+      readSnapshot: (signal, window) => composeNativeSessionHistory(endpoint, sessionId, { ...window, signal }),
     });
     if (cancel) cancelOpeningPrefetchRef.current = cancel;
     return cancel;

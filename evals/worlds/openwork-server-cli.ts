@@ -27,6 +27,15 @@ export function sendJson(response: ServerResponse, status: number, body: unknown
   response.end(JSON.stringify(body));
 }
 
+export function sendMockError(response: ServerResponse, error: unknown): void {
+  console.error("[mock] Request failed", error);
+  if (response.headersSent) {
+    response.destroy();
+    return;
+  }
+  sendJson(response, 500, { error: "mock_request_failed" });
+}
+
 export function sendStream(response: ServerResponse, chunks: unknown[]): void {
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);

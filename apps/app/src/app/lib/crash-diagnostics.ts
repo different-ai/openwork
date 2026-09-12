@@ -1,7 +1,7 @@
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer";
 
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi;
-const SECRET_PAIR_PATTERN = /(token|grant|code|secret|key)=[^&\s"'<>()]+/gi;
+const SECRET_PAIR_PATTERN = /(token|grant|code|secret|key)=(?:"[^"]*"|'[^']*'|[^&\s"'<>()]+)/gi;
 const FALLBACK_MESSAGE = "An unexpected error occurred.";
 
 /**

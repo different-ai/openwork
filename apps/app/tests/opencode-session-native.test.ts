@@ -6,6 +6,8 @@ import { createClient, createPromptMessageID, hasAcceptedPromptMessage, PromptAd
 import { holdSessionWork, interruptSessionTurn, sendSessionCommand, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn } from "../src/app/lib/opencode-interruption";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import {
+  composeNativeSessionHistory,
+  composeNativeSessionHistoryWithRetry,
   composeNativeSessionSnapshot,
   composeNativeSessionSnapshotWithRetry,
   deleteNativeSession,
@@ -102,6 +104,71 @@ function turnMessages(sessionID: string, parts: ReturnType<typeof delegatedTool>
 }
 
 describe("native OpenCode session operations", () => {
+  test.each([undefined, { limit: 24 }, { messageIds: ["msg_1"] }])("history reads verify metadata/messages without reading activity (%j)", async (window) => {
+    const metadata = Promise.withResolvers<FieldsResult<Session>>();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    let settled = false;
+    const history = composeNativeSessionHistory(endpoint, session.id, { ...window, signal: controller.signal }, {
+      createOperations: () => operations({
+        get: async (_id, options) => { expect(options?.signal).toBe(controller.signal); calls.push("get"); return metadata.promise; },
+        messages: async (_id, limit, options) => {
+          expect(limit).toBe(window && "limit" in window ? window.limit : undefined);
+          expect(options?.signal).toBe(controller.signal);
+          calls.push("messages"); return result(messages);
+        },
+        message: async (_id, _messageId, options) => {
+          expect(options?.signal).toBe(controller.signal);
+          calls.push("message"); return result(messages[0]!);
+        },
+        todo: async () => { calls.push("todo"); throw new Error("Todos unavailable"); },
+        status: async () => { calls.push("status"); throw new Error("Status unavailable"); },
+      }),
+    }).then((value) => { settled = true; return value; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    metadata.resolve(result(session));
+    expect(await history).toEqual({ session, messages });
+    expect(calls).toEqual(["get", window && "messageIds" in window ? "message" : "messages"]);
+  });
+
+  test("history-only reads reject mismatched metadata, messages, and parts", async () => {
+    const record = messages[0]!;
+    for (const overrides of [
+      { get: async () => result({ ...session, id: "ses_other" }) },
+      { messages: async () => result([{ ...record, info: { ...record.info, sessionID: "ses_other" } }]) },
+      { messages: async () => result([{ ...record, parts: record.parts.map((part) => ({ ...part, sessionID: "ses_other" })) }]) },
+      { messages: async () => result([{ ...record, parts: record.parts.map((part) => ({ ...part, messageID: "msg_other" })) }]) },
+    ]) {
+      await expect(composeNativeSessionHistory(endpoint, session.id, { limit: 24 }, {
+        createOperations: () => operations(overrides),
+      })).rejects.toThrow("verify the session history owner");
+    }
+  });
+
+  test.each(["abort", "owner"])("history retry cannot publish after its %s changes", async (change) => {
+    const pending = Promise.withResolvers<FieldsResult<Session>>();
+    const controller = new AbortController();
+    const aborted = new Error("history cancelled");
+    let owner = "owner-a";
+    let attempts = 0;
+    const history = composeNativeSessionHistoryWithRetry(owner, () => ({ owner, endpoint, sessionId: session.id }), {
+      limit: 24, signal: controller.signal,
+    }, {
+      createOperations: () => {
+        attempts += 1;
+        return operations({ get: async () => pending.promise });
+      },
+      waitForSnapshotRetry: async () => { throw new Error("Unexpected retry"); },
+    });
+    if (change === "abort") controller.abort(aborted);
+    else owner = "owner-b";
+    pending.resolve(result(session));
+    if (change === "abort") await expect(history).rejects.toBe(aborted);
+    else await expect(history).rejects.toThrow("Session snapshot owner changed");
+    expect(attempts).toBe(1);
+  });
+
   test("acceptance requires an exact native user-message GET, never absence or another message", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];
@@ -204,6 +271,37 @@ describe("native OpenCode session operations", () => {
     expect(receivedEndpoint).toEqual(endpoint);
   });
 
+  test.each(["opencode", "opencode2"])("%s newest session/messages reads need no status or todos", async (engine) => {
+    const target = { ...endpoint, opencodeBaseUrl: endpoint.opencodeBaseUrl.replace("opencode", engine) };
+    const controller = new AbortController();
+    const history = Array.from({ length: 30 }, (_, index) => ({
+      info: { ...messages[0]!.info, id: `msg_${index}`, time: { created: index } },
+      parts: [],
+    }));
+    await withSessionFetch((request) => {
+      const url = new URL(request.url);
+      expect(request.headers.get("authorization")).toBe(`Bearer ${target.token}`);
+      if (url.pathname.endsWith(`/session/${session.id}`)) {
+        return Response.json(engine === "opencode2" ? { data: session } : session);
+      }
+      if (url.pathname.endsWith("/message")) {
+        expect(url.searchParams.get("limit")).toBe("24");
+        return Response.json(engine === "opencode2" ? {
+          data: history.slice(-24).map(({ info }) => ({ ...info, type: "user", content: [] })),
+        } : history.slice(-24));
+      }
+      throw new Error(`Unexpected newest-read dependency: ${url.pathname}`);
+    }, async (requests) => {
+      const [current, newest] = await Promise.all([
+        getNativeSession(target, session.id, { signal: controller.signal }),
+        getNativeSessionMessages(target, session.id, { signal: controller.signal, limit: 24 }),
+      ]);
+      expect(current.id).toBe(session.id);
+      expect(newest.map(({ info }) => info.id)).toEqual(history.slice(-24).map(({ info }) => info.id));
+      expect(requests).toHaveLength(2);
+    });
+  });
+
   test("composes get, messages, todo, and status in parallel with limit and signal", async () => {
     const calls: string[] = [];
     const controller = new AbortController();
@@ -260,8 +358,10 @@ describe("native OpenCode session operations", () => {
       if (url.pathname.endsWith("/active")) return Response.json({ data: {} });
       throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
     }, async () => {
-      const preview = await composeNativeSessionSnapshot(target, session.id, { limit: 24 });
-      const full = await composeNativeSessionSnapshot(target, session.id);
+      const preview = await composeNativeSessionHistory(target, session.id, { limit: 24 });
+      const full = await composeNativeSessionHistory(target, session.id);
+      expect(preview.status).toBeUndefined();
+      expect(full.todos).toBeUndefined();
       const newestIds = history.slice(-24).map(({ info }) => info.id);
       const allIds = history.map(({ info }) => info.id);
       expect(preview.messages.map(({ info }) => info.id)).toEqual(engine === "opencode2" ? newestIds.toReversed() : newestIds);
@@ -293,7 +393,7 @@ describe("native OpenCode session operations", () => {
       if (path.endsWith("/active")) return Response.json({ data: {} });
       throw new Error(`Unexpected request: ${request.method} ${path}`);
     }, async (requests) => {
-      const snapshot = await composeNativeSessionSnapshot(target, session.id, { messageIds: ids, limit: 24, signal: controller.signal });
+      const snapshot = await composeNativeSessionHistory(target, session.id, { messageIds: ids, limit: 24, signal: controller.signal });
       expect(snapshot.messages.map(({ info }) => info.id)).toEqual(["msg_z", "msg_m"]);
       expect(snapshot.messages.every(({ info, parts }) => info.sessionID === session.id && parts.length === 1
         && parts.every((part) => part.sessionID === session.id && part.messageID === info.id))).toBe(true);
@@ -303,6 +403,7 @@ describe("native OpenCode session operations", () => {
       expect(requests.some((request) => new URL(request.url).pathname.endsWith("/message"))).toBe(false);
       for (const request of requests) {
         expect(request.method).toBe("GET");
+        expect(/\/(todo|status|active)$/.test(new URL(request.url).pathname)).toBe(false);
         expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
       }
     });

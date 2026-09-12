@@ -1,8 +1,9 @@
-import type {
-  OpenworkAffordanceArgument,
-  OpenworkAffordanceDescriptor,
-  OpenworkAffordanceEffects,
-  OpenworkProviderRef,
+import {
+  openworkSessionModelSchema,
+  type OpenworkAffordanceArgument,
+  type OpenworkAffordanceDescriptor,
+  type OpenworkAffordanceEffects,
+  type OpenworkProviderRef,
 } from "@openwork/types/openwork-affordance";
 import type {
   OpenworkFeatureContribution,
@@ -40,12 +41,19 @@ export const sessionReadArgsSchema = z.object({
   summary: z.boolean().optional().describe("When true, return only the first user message and the last assistant message plus session metadata."),
 });
 
+// Same contract agents read back as `model`; `variant` may be omitted on input.
+export const sessionModelArgSchema = openworkSessionModelSchema.extend({
+  variant: openworkSessionModelSchema.shape.variant.optional().describe("Reasoning effort variant (e.g. low, medium, high). Omit or null for the provider default."),
+});
+
 export const sessionCreateArgsSchema = z.object({
   sessions: z.array(z.object({
     title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
+    model: sessionModelArgSchema.optional().describe("Model and reasoning effort for this session. Overrides the top-level model."),
   })).min(1).describe("One entry per new session to create and start."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+  model: sessionModelArgSchema.optional().describe("Model and reasoning effort for every created session unless an entry overrides it. Omit to use the engine default."),
 });
 
 export const sessionSendArgsSchema = z.object({
@@ -155,7 +163,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read messages from a session without opening it. The result also carries `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting) and `working`; check `working` before session.archive. Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call.",
+        description: "Read messages from a session without opening it. The result also carries `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),
@@ -170,11 +178,12 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.create",
         kind: "command",
         title: "Create sessions",
-        description: "Create and start one or more sessions without navigating away.",
+        description: "Create and start one or more sessions without navigating away. Pass `model` ({ providerId, modelId, variant }) to bind the sessions to a model and reasoning effort; it is applied at creation and to the first turn, and read back as `model` by session.read and session.list_sessions.",
         provider,
         arguments: [
-          argument("sessions", "array", true, "Session titles and self-contained prompts."),
+          argument("sessions", "array", true, "Session titles and self-contained prompts; an entry may carry its own `model`."),
           argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the requesting session's workspace."),
+          argument("model", "object", false, "Optional providerId, modelId and variant (reasoning effort) for every created session. Omit to use the engine default."),
         ],
         effects: writeEffects,
       }),

@@ -1,3 +1,5 @@
+import type { OpenworkSessionModel } from "@openwork/types/openwork-affordance";
+
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { SessionActivityStatus } from "../status/session-activity-store";
 
@@ -6,6 +8,17 @@ export type ControlSessionWorkspace = {
   name?: string | null;
   path?: string | null;
   displayName?: string | null;
+};
+
+/**
+ * The engine's session-level model as it arrives on the session record:
+ * bound at creation or by the last prompt, `variant` being the reasoning
+ * effort. The pinned SDK types predate this field, so it is declared here.
+ */
+export type ControlSessionEngineModel = {
+  id?: string;
+  providerID?: string;
+  variant?: string | null;
 };
 
 export type ControlSessionLike = {
@@ -17,6 +30,7 @@ export type ControlSessionLike = {
     updated?: number;
     created?: number;
   };
+  model?: ControlSessionEngineModel | null;
 };
 
 export type ListedControlSession = {
@@ -29,6 +43,8 @@ export type ListedControlSession = {
   status: SessionActivityStatus;
   /** True while a turn, subtask, compaction, permission, or question is still open. */
   working: boolean;
+  /** Model and reasoning effort the session is bound to; null before any model is bound. */
+  model: OpenworkSessionModel | null;
 };
 
 export type ListControlSessionsState = {
@@ -41,6 +57,20 @@ export type ListControlSessionsState = {
 /** Anything but a finished or failed turn still needs Stop before archive. */
 export function isWorkingStatus(status: SessionActivityStatus): boolean {
   return status !== "idle" && status !== "error";
+}
+
+/**
+ * Session-level model from the engine record, or null when none was ever
+ * bound. The engine writes the literal variant "default" for a turn that
+ * named none; agents read null for that, the composer pill's value.
+ */
+export function controlSessionModel(session: ControlSessionLike): OpenworkSessionModel | null {
+  const model = session.model;
+  const providerId = model?.providerID?.trim();
+  const modelId = model?.id?.trim();
+  if (!providerId || !modelId) return null;
+  const variant = model?.variant?.trim();
+  return { providerId, modelId, variant: variant && variant !== "default" ? variant : null };
 }
 
 export function controlWorkspaceLabel(workspace: ControlSessionWorkspace) {
@@ -82,6 +112,7 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         pinned: state.pinnedIds.includes(sessionId),
         status,
         working: isWorkingStatus(status),
+        model: controlSessionModel(session),
       });
     }
   }

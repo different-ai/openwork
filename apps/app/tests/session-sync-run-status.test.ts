@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, jest, setSystemTime, spyOn, test } from "bun:test";
 import type { PermissionV2Request, SessionStatus } from "@opencode-ai/sdk/v2/client";
 
-import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { markTaskRunStart, takeTaskRunStart } from "../src/app/lib/analytics";
 import * as notifications from "../src/react-app/shell/desktop-notifications";
 import { createClientV2, createV2EventTranslationState, translateV2Event } from "../src/app/lib/opencode-v2-adapter";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import { hasNoNewActivity } from "../src/react-app/domains/session/status/session-progress";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
@@ -26,6 +27,7 @@ import {
   seedPermissionState,
   seedQuestionState,
   seedSessionState,
+  seedSessionStatus,
   snapshotKey,
   statusKey,
   todoKey,
@@ -66,6 +68,27 @@ function createSnapshot(status: SessionStatus): OpenworkSessionSnapshot {
     messages: [],
     todos: [],
     status,
+  };
+}
+
+function createActiveHistory(kind: "text" | "tool" = "tool"): OpenworkSessionHistory {
+  const { session } = createSnapshot({ type: "busy" });
+  return {
+    session,
+    messages: [{
+      info: {
+        id: "persisted-assistant", sessionID: sessionId, role: "assistant", parentID: "persisted-user",
+        time: { created: 1_000 }, modelID: "test", providerID: "test", mode: "default", agent: "build",
+        path: { cwd: "/tmp/project-run-status", root: "/tmp/project-run-status" },
+        cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+      parts: kind === "text" ? [{
+        id: "persisted-part", sessionID: sessionId, messageID: "persisted-assistant", type: "text", text: "Already responding",
+      }] : [{
+        id: "persisted-part", sessionID: sessionId, messageID: "persisted-assistant", type: "tool", callID: "persisted-call", tool: "read",
+        state: { status: "running", input: { filePath: "/tmp/project-run-status/result.txt" }, time: { start: 1_000 } },
+      }],
+    }],
   };
 }
 
@@ -237,6 +260,28 @@ describe("native v2 run lifecycle", () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 
+  test("independent status hydration cannot resurrect a native terminal or erase richer retry detail", () => {
+    jest.useFakeTimers();
+    __setWorkspaceSessionSyncPermissionFetcherForTest(async () => []);
+    const { emit } = nativeSync();
+    setSystemTime(100);
+    emit("session.execution.started", 1);
+    setSystemTime(200);
+    emit("session.retry.scheduled", 2, { attempt: 2, at: 1_000, error: { message: "Rate limited" } });
+    setSystemTime(350);
+    seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 300 });
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId)))
+      .toEqual({ type: "retry", attempt: 2, message: "Rate limited", next: 1_000 });
+    setSystemTime(400);
+    emit("session.execution.succeeded", 3);
+    setSystemTime(600);
+    for (const snapshotStartedAt of [300, 400, 500]) {
+      seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt });
+      expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(false);
+    }
+  });
+
   test.each(["user", "shutdown", "superseded", "unknown"])("%s interruption never reports completed or stops a newer execution", async (reason) => {
     jest.useFakeTimers();
     const notify = spyOn(notifications, "notifyDesktopEvent").mockImplementation(() => {});
@@ -292,6 +337,208 @@ describe("native v2 run lifecycle", () => {
 });
 
 describe("session run status ordering", () => {
+  for (const first of ["user", "status"]) {
+    for (const sameClock of [false, true]) {
+      test(`cached activity follows the latest user turn (${first} first, same clock=${sameClock})`, () => {
+        const { input } = createTestSync();
+        setSystemTime(60_000);
+        applyStatus(input, { type: "idle" });
+        const history = createActiveHistory();
+        markSessionSnapshotFetchStart(history, 61_000);
+        setSystemTime(62_000);
+        seedSessionState(workspaceId, history);
+        const userAt = sameClock ? 62_000 : 63_000;
+        const user = () => __applySessionSyncEventForTest(input, {
+          type: "message.updated", properties: { info: { id: "current-user", sessionID: sessionId, role: "user", time: { created: userAt } } },
+        });
+        const busy = () => seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 61_500 });
+        setSystemTime(userAt);
+        if (first === "user") { user(); busy(); }
+        else { busy(); user(); }
+        const readRecord = () => useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId];
+        expect(readRecord()).toMatchObject({ runActive: true, assistantOutput: false, status: "thinking", latestActivity: null });
+        expect(readRecord()?.runStartedAt).toBeGreaterThanOrEqual(userAt);
+        const startedAt = readRecord()?.runStartedAt;
+        setSystemTime(64_000);
+        user();
+        seedSessionState(workspaceId, history);
+        seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 63_500 });
+        expect(readRecord()).toMatchObject({ assistantOutput: false, status: "thinking", runStartedAt: startedAt });
+        expect(hasNoNewActivity({ active: true, lastProgressAt: Math.max(readRecord()?.runStartedAt ?? 0, readRecord()?.lastProgressAt ?? 0), now: 64_000 })).toBe(false);
+        setSystemTime(65_000);
+        __applySessionSyncEventForTest(input, { type: "message.updated", properties: { info: { id: "current-assistant", sessionID: sessionId, role: "assistant", time: { created: 65_000 } } } });
+        __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { id: "current-part", messageID: "current-assistant", sessionID: sessionId, type: "text", text: "Current answer" } } });
+        expect(readRecord()).toMatchObject({ assistantOutput: true, status: "responding", runStartedAt: startedAt });
+      });
+    }
+  }
+
+  test("a new snapshot turn uses its user timestamp without backdating a newer admission", () => {
+    const store = useSessionActivityStore.getState();
+    const history: Parameters<typeof store.observeTranscript>[2] = [
+      { id: "old-user", role: "user", parts: [], metadata: { opencode: { created: 500 } } },
+      { id: "old-assistant", role: "assistant", metadata: { opencode: { created: 1_000 } }, parts: [
+        { type: "dynamic-tool", toolName: "read", toolCallId: "old-call", state: "input-available", input: {} },
+      ] },
+    ];
+    setSystemTime(62_000);
+    store.seedSessionRun(workspaceId, sessionId, { type: "busy" }, undefined, { snapshotStartedAt: 62_000 });
+    store.observeTranscript(workspaceId, sessionId, history, true, { snapshotStartedAt: 61_000 });
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runStartedAt).toBe(1_000);
+    setSystemTime(63_000);
+    history.push({ id: "new-user", role: "user", parts: [], metadata: { opencode: { created: 62_500 } } });
+    store.observeTranscript(workspaceId, sessionId, history, true, { snapshotStartedAt: 62_501 });
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId])
+      .toMatchObject({ runStartedAt: 62_500, assistantOutput: false, status: "thinking" });
+    setSystemTime(64_000);
+    store.setRunStatus(workspaceId, sessionId, { type: "idle" });
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    setSystemTime(65_000);
+    history.push({ id: "accepted-user", role: "user", parts: [], metadata: { opencode: { created: 63_500 } } });
+    store.observeTranscript(workspaceId, sessionId, history, true, { snapshotStartedAt: 64_500 });
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId])
+      .toMatchObject({ runStartedAt: 64_000, assistantOutput: false, status: "thinking" });
+  });
+
+  test("metadata-only updates cannot make old history fresh enough to enrich a newer admission", () => {
+    const { input } = createTestSync();
+    const history = createActiveHistory();
+    markSessionSnapshotFetchStart(history, 61_000);
+    setSystemTime(62_000);
+    seedSessionState(workspaceId, history);
+    const store = useSessionActivityStore.getState();
+    store.markMessageRole(workspaceId, sessionId, "persisted-assistant", "assistant");
+    setSystemTime(63_000);
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    const before = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId];
+    setSystemTime(64_000);
+    __applySessionSyncEventForTest(input, {
+      type: "message.updated", properties: { info: {
+        id: "persisted-assistant", sessionID: sessionId, role: "assistant", time: { created: 1_000, completed: 2_000 },
+      } },
+    });
+    expect(store.getStatus(workspaceId, sessionId)).toBe("thinking");
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]).toBe(before);
+    setSystemTime(65_000);
+    seedSessionState(workspaceId, history);
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]).toBe(before);
+  });
+
+  for (const first of ["status", "history"]) {
+    const kinds: Array<"text" | "tool"> = ["text", "tool"];
+    for (const kind of kinds) {
+      test(`${first} first hydrates persisted ${kind} activity without a new stream event`, () => {
+        const history = createActiveHistory(kind);
+        markSessionSnapshotFetchStart(history, 61_001);
+        setSystemTime(62_000);
+        if (first === "status") seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 61_000 });
+        else seedSessionState(workspaceId, history);
+        setSystemTime(63_000);
+        if (first === "status") seedSessionState(workspaceId, history);
+        else seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 61_000 });
+        const record = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId];
+        expect(record).toMatchObject({ runActive: true, assistantOutput: true, status: "responding", runStatusAt: 61_000, lastProgressAt: 1_000 });
+        if (kind === "tool") {
+          expect(record?.runStartedAt).toBe(1_000);
+          expect(hasNoNewActivity({ active: true, lastProgressAt: Math.max(record?.runStartedAt ?? 0, record?.lastProgressAt ?? 0), now: 63_000 })).toBe(true);
+        }
+        const statusState = getReactQueryClient().getQueryState(statusKey(workspaceId, sessionId));
+        setSystemTime(130_000);
+        seedSessionState(workspaceId, history);
+        expect(getReactQueryClient().getQueryState(statusKey(workspaceId, sessionId))).toBe(statusState);
+        expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]).toBe(record);
+      });
+    }
+
+    test(`${first} first cannot backdate or enrich a newer admitted run with old persisted activity`, () => {
+      const history = createActiveHistory();
+      markSessionSnapshotFetchStart(history, 61_001);
+      setSystemTime(62_000);
+      if (first === "status") seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 61_000 });
+      else seedSessionState(workspaceId, history);
+      const store = useSessionActivityStore.getState();
+      setSystemTime(62_500);
+      store.setRunStatus(workspaceId, sessionId, { type: "idle" });
+      store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+      setSystemTime(63_000);
+      if (first === "status") seedSessionState(workspaceId, history);
+      else seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 61_000 });
+      // A later successful poll still belongs to the admitted run, not the
+      // older persisted tool that happened to finish loading after admission.
+      seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 62_750 });
+      expect(store.getStatus(workspaceId, sessionId)).toBe("thinking");
+      const record = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId];
+      expect(record).toMatchObject({ runActive: true, assistantOutput: false, runStartedAt: 62_500, runStatusAt: 62_750 });
+      expect(hasNoNewActivity({ active: true, lastProgressAt: Math.max(record?.runStartedAt ?? 0, record?.lastProgressAt ?? 0), now: 63_000 })).toBe(false);
+    });
+  }
+
+  test("a live terminal edge between status and history prevents deferred activity enrichment", () => {
+    const { input } = createTestSync();
+    const history = createActiveHistory();
+    markSessionSnapshotFetchStart(history, 61_000);
+    setSystemTime(62_000);
+    seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 61_000 });
+    setSystemTime(62_500);
+    applyStatus(input, { type: "idle" });
+    const statusState = getReactQueryClient().getQueryState(statusKey(workspaceId, sessionId));
+    setSystemTime(63_000);
+    seedSessionState(workspaceId, history);
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId])
+      .toMatchObject({ runActive: false, assistantOutput: false, runStatusAt: 62_500, runStartedAt: 62_000 });
+    expect(getReactQueryClient().getQueryState(statusKey(workspaceId, sessionId))).toBe(statusState);
+  });
+
+  test("a same-clock admission cancels pending age hydration even when the busy status is unchanged", () => {
+    const history = createActiveHistory();
+    markSessionSnapshotFetchStart(history, 62_000);
+    setSystemTime(62_000);
+    seedSessionStatus(workspaceId, sessionId, { type: "busy" }, { snapshotStartedAt: 62_000 });
+    useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
+    setSystemTime(63_000);
+    seedSessionState(workspaceId, history);
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId])
+      .toMatchObject({ runActive: true, assistantOutput: false, runStartedAt: 62_000, runStatusAt: 62_000 });
+  });
+
+  test("fresh history can reveal output after a live busy edge without backdating that observed run", () => {
+    const { input } = createTestSync();
+    setSystemTime(62_000);
+    applyStatus(input, { type: "busy" });
+    const history = createActiveHistory();
+    markSessionSnapshotFetchStart(history, 62_001);
+    setSystemTime(63_000);
+    seedSessionState(workspaceId, history);
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId])
+      .toMatchObject({ runActive: true, assistantOutput: true, status: "responding", runStartedAt: 62_000, runStatusAt: 62_000 });
+  });
+
+  for (const todosPresent of [false, true]) {
+    test(`${todosPresent ? "todos-only" : "history-only"} hydration does not establish observed idle`, () => {
+      const { session, messages } = createSnapshot({ type: "idle" });
+      const history: OpenworkSessionHistory = { session, messages, ...(todosPresent ? { todos: [] } : {}) };
+      setSystemTime(100);
+      markSessionSnapshotFetchStart(history, 100);
+      seedSessionState(workspaceId, history);
+      expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toBeUndefined();
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runStatusAt ?? 0).toBe(0);
+      expect(getReactQueryClient().getQueryData(todoKey(workspaceId, sessionId))).toEqual(todosPresent ? [] : undefined);
+    });
+  }
+
+  test("status-only history seeds the observed status without clearing cached todos", () => {
+    const { session, messages } = createSnapshot({ type: "idle" });
+    const history: OpenworkSessionHistory = { session, messages, status: { type: "idle" } };
+    const todos = [{ id: "keep", content: "Keep this task", status: "pending", priority: "high" }];
+    getReactQueryClient().setQueryData(todoKey(workspaceId, sessionId), todos);
+    const todosBefore = getReactQueryClient().getQueryState(todoKey(workspaceId, sessionId));
+    markSessionSnapshotFetchStart(history, 100);
+    seedSessionState(workspaceId, history);
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runStatusAt).toBe(100);
+    expect(getReactQueryClient().getQueryState(todoKey(workspaceId, sessionId))).toBe(todosBefore);
+  });
+
   test("preserves the activity snapshot when workspace seeds are unchanged", () => {
     const store = useSessionActivityStore.getState();
     store.seedWorkspaceSessions(workspaceId, [{ id: sessionId, status: { type: "idle" } }]);
