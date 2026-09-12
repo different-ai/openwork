@@ -57,6 +57,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
   await step("a different current account cannot consume an invite and can switch to the invited account", async () => {
     const person = identity("switch-invitee");
     const invite = await witnesses.invite(person.email, orgId, "admin");
+    const wrongAccountMembershipIds = membersFor(await witnesses.org(orgId), world.other.email).map((member) => member.id);
     const surface = await world.fresh(invite.link, world.other);
     const actor = user.on(surface);
     await actor.see({ text: "Switch accounts to continue." }, { timeoutMs: 90_000 });
@@ -65,7 +66,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     expect(denied.response.ok).toBe(false);
     expect(denied.body).not.toHaveProperty("accepted", true);
     await pending(person.email);
-    expect(membersFor(await witnesses.org(orgId), world.other.email)).toHaveLength(0);
+    expect(membersFor(await witnesses.org(orgId), world.other.email).map((member) => member.id)).toEqual(wrongAccountMembershipIds);
     await actor.click({ role: "button", label: "Use a different account" });
     await actor.see({ text: person.email });
     await actor.type({ role: "textbox", label: "Name" }, person.name);
@@ -75,7 +76,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     await joined(person.email, "admin");
     await actor.notSee({ role: "textbox", label: "Verification code" });
     expect(await witnesses.emails("verification", person.email)).toEqual(verificationBefore);
-    expect(membersFor(await witnesses.org(orgId), world.other.email)).toHaveLength(0);
+    expect(membersFor(await witnesses.org(orgId), world.other.email).map((member) => member.id)).toEqual(wrongAccountMembershipIds);
   });
 
   await step("canceled and domain-blocked invites do not authenticate or add members", async () => {

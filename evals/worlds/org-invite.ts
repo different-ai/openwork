@@ -99,29 +99,14 @@ export async function orgInvite(seed: Seed, { place }: { place: { kind: "local" 
   const createdOrganization = await seed.api(owner, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Invite workspace ${runId}` }) });
   if (!createdOrganization.response.ok) throw new Error(`Organization: HTTP ${createdOrganization.response.status}`);
   const organization = record(record(createdOrganization.body).organization);
-  const otherPerson = identity("other-owner");
-  const signUp = await denFetch(den.ref, "/api/auth/sign-up/email", {
-    method: "POST", body: JSON.stringify(otherPerson), signal: AbortSignal.timeout(15_000),
-  });
-  if (!signUp.response.ok) throw new Error(`Other owner sign-up: HTTP ${signUp.response.status}`);
-  const deadline = Date.now() + 15_000;
-  let otp: string | null = null;
-  while (Date.now() < deadline && !otp) {
-    try {
-      otp = await witnesses.otp(otherPerson.email);
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-  if (!otp) throw new Error("Other owner verification email did not arrive");
-  const verified = await denFetch(den.ref, "/api/auth/email-otp/verify-email", {
-    method: "POST", body: JSON.stringify({ email: otherPerson.email, otp }), signal: AbortSignal.timeout(15_000),
-  });
-  if (!verified.response.ok) throw new Error(`Other owner verification: HTTP ${verified.response.status}`);
-  const other = await signIn(den.ref, otherPerson);
-  const createdOther = await seed.api(other, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Other workspace ${runId}` }) });
+  const createdOther = await seed.api(owner, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Other workspace ${runId}` }) });
   if (!createdOther.response.ok) throw new Error(`Second organization: HTTP ${createdOther.response.status}`);
   const otherOrg = record(record(createdOther.body).organization);
+  const selected = await seed.api(owner, "/v1/me/active-organization", {
+    method: "POST", body: JSON.stringify({ organizationId: text(organization.id) }),
+  });
+  if (!selected.response.ok) throw new Error(`Select organization: HTTP ${selected.response.status}`);
+  const other = owner;
   const web = await seed.web({ den, startPath: "/", headless: true });
   return {
     den, web, owner, other, organization, otherOrg, identity, witnesses,
