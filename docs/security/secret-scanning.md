@@ -1,165 +1,130 @@
 # Secret scanning
 
-## Scope and rollout
+## What runs
 
-`.github/workflows/secret-scan.yml` runs the MIT-licensed
-[Betterleaks CLI 1.8.1](https://github.com/betterleaks/betterleaks/releases/tag/v1.8.1).
-The release version and Linux x64 archive SHA-256 are pinned in the workflow;
-the checksum is verified before extraction. Actions are pinned to commit SHAs.
-No scanner license key, package-manager installation, or provider credential is
-required. The Gitleaks Action is not used: its organization license can be free,
-but its proprietary EULA is distinct from the MIT scanner's license.
+`.github/workflows/secret-scan.yml` runs checksum-pinned, MIT-licensed
+[Betterleaks 1.8.1](https://github.com/betterleaks/betterleaks/releases/tag/v1.8.1)
+on pull requests (opened, synchronize, reopened, ready_for_review, edited) and
+pushes to `dev`. Actions are SHA-pinned. No license key is required.
 
-This preparation does **not** establish a reviewed history baseline. Do not
-publish an ignore file or claim rollout complete until security review accepts
-its individual entries and both enforcement proof runs are complete.
+The gate scans ordinary Git commit patches in `base..head` for PRs and
+`before..sha` for pushes, including intermediate commits. A secret added then
+removed within that range still fails. Commits already reachable from the base
+are not scanned. Missing or invalid SHAs fail closed. Exit 0 means no findings;
+exit 1 means findings or an error, and every nonzero exit fails CI.
 
-The job runs on PR opened/synchronize/reopened/ready_for_review/edited events
-(including retargeting a PR) and pushes to `dev`. It scans Git patches in the
-exclusive `base..head` range: the PR base
-and head SHAs, or the push's before and after SHAs. This includes intermediate
-commits, not only the final working tree; adding then removing a secret in the
-same PR still fails. Commits already reachable from the base are not rescanned.
-Missing/invalid commit objects fail closed rather than silently skipping a scan.
+The job uses `--redact=100`, disables live credential validation, and uploads
+sanitized SARIF to GitHub's Security tab, including when findings fail the job.
+Sanitization removes commit metadata, finding properties, match context and
+fingerprints, and replaces messages/snippets with fixed redacted text. Raw
+reports are not uploaded as artifacts. Permissions are `contents: read` and
+`security-events: write`; no repository secrets or PR comments are needed.
+This workflow does not configure required branch checks or push protection.
 
-This is a commit-patch check, not exhaustive secret-novelty analysis. Standard
-Git log patches do not include merge-resolution-only changes. We deliberately
-do not expand merges against each parent: doing so can report old base content
-as new. Separate merge-resolution coverage needs a validated parser strategy;
-this initial job does not claim it. Reintroduced content in a new ordinary
-commit can also be detected again.
+## Policy and review
 
-Exit status 0 means clean, 2 means findings, and other nonzero statuses mean a
-scanner/setup error; all nonzero statuses fail CI. The repository has active
-CodeQL code-scanning analyses, so sanitized SARIF is uploaded to the Security
-tab even when findings fail the scan. The job requests only `contents: read`
-and `security-events: write`; it never uses `pull_request_target`, PR comments,
-or repository secrets. The scanner check does not itself configure required
-branch-protection checks.
+CI loads `.betterleaks.toml` from the **base commit**, not the PR head. Until the
+policy first lands, CI uses embedded defaults without repository exemptions.
+Policy changes require review and take effect after merging into the base.
+A bare clone and a temporary working directory prevent PR-controlled config or
+ignore-file discovery. Inline allow comments are ignored. No repository code,
+hooks or dependencies are executed. Workflow edits remain subject to ordinary
+GitHub Actions PR semantics and require Ben's review; trusted policy is not a
+replacement for protecting workflow changes.
 
-## Trusted policy and accepted fingerprints
+The config extends the default rules without disabling `generic-password` or
+`generic-credential-uri`. Its global `prefilter` and `filter` use Betterleaks
+1.8.1's **Expr** syntax (not CEL); `true` means discard. These global expressions
+replace the corresponding default expressions; the JavaScript lockfile exclusion
+is retained explicitly, and default per-rule filters remain enabled.
 
-The policy names are `.gitleaks.toml` (Betterleaks-compatible TOML) and
-`.betterleaksignore`. CI reads both from the **base commit**, never the PR head.
-Before policy is first introduced, it uses embedded default rules with no
-fingerprint exclusions. An existing malformed policy fails rather than falling
-back. Policy updates take effect only after they land in the trusted base.
+Reviewed path classes are annotated individually in the config:
 
-The default extension syntax is:
+- `**/test/**`, `**/tests/**`, `**/testdata/**`, `**/*.test.*`, `**/*.e2e.*`:
+  synthetic test data and test modules.
+- `evals/**`: evaluation harnesses/fixtures, **except the unresolved report**.
+- `**/*.example` (including `**/.env.example`): instructional configuration.
+- `**/docker-compose*.yml`, `packaging/**/values*.yaml`: local deployment defaults.
+- `packaging/**/README.md` (including `packaging/docker/README.md`): deployment
+  instructions.
+- `scripts/build-microsandbox-openwork-image.sh`: sandbox-image build defaults.
 
-```toml
-[extend]
-useDefault = true
-```
+Path exclusions are deliberately broad and can hide actual secrets in those
+classes; never put live credentials in fixtures. The historical July token is
+outside this PR's commit range, remains untouched and explicitly not path-exempt,
+and its disposition belongs to Ben on Monday.
 
-Betterleaks' preferred ignore filename is `.betterleaksignore`; it also supports
-`.gitleaksignore`. The explicit flag is still `--gitleaks-ignore-path=PATH` (`-i`).
-CI supplies a base-derived file under the runner's temporary directory. A bare
-clone is the scan target because an explicit `-i` does **not** prevent automatic
-loading of the target directory's own ignore file. The PR's TOML, Expr filters,
-ignore files and inline allow comments cannot weaken this job's scanner policy.
-No repository scripts, dependencies or hooks are executed. The workflow itself
-remains PR-editable under ordinary GitHub Actions semantics: trusted scanner
-policy is not a substitute for protected workflow changes and maintainer review.
-Changes under `.github/` require Ben's review.
+The literal filter accepts only `changeme`, `example`, `YOUR_TOKEN`,
+`YOUR_API_KEY`, `YOUR_PASSWORD`, and the `postgres:postgres` URI tuple on
+`localhost`/`127.0.0.1`. It does not accept strings merely containing those words.
+To propose an exception, add a narrowly anchored path class or exact literal
+with a one-line rationale, request review, and rerun the positive and negative
+controls below. Never add an issued credential to the filter. There is no ignore
+file, fingerprint list or baseline.
 
-After individual security review, record one emitted, commit-qualified
-fingerprint per line in `.betterleaksignore`:
+## Reading a failure
 
-```text
-<full-commit-sha>:<repository-relative-file>:<rule-id>:<start-line>
-```
+1. Check the job status and Security findings for file, line and rule. An error
+   or missing SARIF is not a clean scan.
+2. If potentially real, report only location/rule privately using
+   [SECURITY.md](../../SECURITY.md). Do not paste values into PRs, issues or logs.
+3. Have the owner revoke/rotate the credential, update consumers through their
+   secret store, and check issuer audit logs. Do not probe it for validity.
+4. Remove exposures in a separately reviewed change. Deleting current content
+   does not remove history, forks or caches. Do not rewrite history in this PR.
+5. If synthetic, prefer nonmatching placeholders or a reviewed policy change;
+   do not silence a whole rule to get a green run.
 
-Use the actual fingerprint, not a secret hash or value. Deduplicate identical
-fingerprints: multiple findings on one line can share one fingerprint. Include
-the commit; do not use the broader commit-independent `file:rule:line` form.
-Blank lines and whole-line `#` comments are supported; trailing inline comments
-are not. LF and CRLF are accepted. Document each accepted entry's fixture/false-
-positive rationale without copying credentials, private metadata or scan logs.
-Never generate the accepted file automatically from every finding.
+The private pre-existing 619-row inventory is not an accepted baseline: 455 rows
+match the reviewed path classes, while 164 remain unexempted before literal
+filtering (52 URI, 102 password, 7 PostHog project-key, 3 generic-key findings).
+These are **to triage**, not a declaration that they are live or all false
+positives. Redacted historical rows alone do not establish exact literal values.
 
-## Synthetic fixtures
+## Local reproduction
 
-Prefer unmistakable noncredential placeholders. Betterleaks' default
-`generic-api-key` Expr filter includes token-efficiency checks; ordinary words
-may be rejected automatically. That reduces some generic false positives but
-does not classify all findings: the scanner also has URI/password rules.
+Use the pinned CLI in ignored `tmp/`, verifying the release archive checksum.
+The macOS arm64 archive SHA-256 is
+`8e80f33b5f2a7426b390347b9fd466033723cb94b6bdffa7572632e2eaec964e`;
+the Linux x64 checksum is pinned in the workflow. Keep raw reports owner-only:
+redaction covers detected values, not every possible secret in surrounding text.
 
-For local scans, a `gitleaks:allow` or `betterleaks:allow` comment on the matching
-line suppresses that line. **CI passes `--ignore-gitleaks-allow`**, so an inline
-comment alone cannot make a PR pass. For CI fixtures, request a narrow,
-reviewed `.gitleaks.toml` exception in the trusted base first, or use a clearly
-nonmatching synthetic value. Prefer exact anchored secret regexes/stopwords,
-ideally scoped to the relevant rule, over a whole-file exception when a file
-mixes fixtures and production code. Never exclude an entire tests tree.
-Retain default lockfile handling rather than duplicating broad exclusions.
-
-`reports/` is Git-excluded; untracked local reports are not Git-history inputs.
-Git ignore rules do not remove files already committed. A tracked report must
-be reviewed like any other tracked file, not treated as automatically safe.
-
-## Investigating a finding and rotating credentials
-
-1. Stop publication if a finding might be a real credential. Report only the
-   file, line, rule and commit through the private channel in
-   [SECURITY.md](../../SECURITY.md); do not copy the value into an issue or PR.
-2. Have the credential owner revoke/rotate it at the issuer, update consumers
-   through their secret store, and check access/audit logs. Do not validate a
-   discovered credential against a provider without explicit authorization.
-3. Remove the exposed value from current code or reports in a separately
-   reviewed change. Deletion does **not** remove the credential from Git
-   history, caches, forks or published artifacts. Do not rewrite shared history
-   as part of this CI change.
-4. Do not add real credentials to the ignore file. A deletion that already
-   landed in the base avoids those old commits in subsequent range scans, but
-   a full-history scan will still report them. Do not claim that history is
-   clean or accept a real finding merely to obtain a green baseline run.
-5. For an actual fixture/false positive, review the exact fingerprint and
-   rationale, update the accepted file, and rerun the same range and synthetic
-   positive-control proofs. Re-review findings when upgrading scanner versions;
-   rule/filter changes can change the finding set and fingerprints.
-
-## Local inspection and proof
-
-Use the workflow's pinned release binary in an ignored temporary directory and
-verify the platform-specific SHA-256 from the pinned release. The macOS arm64
-1.8.1 archive SHA-256 is
-`8e80f33b5f2a7426b390347b9fd466033723cb94b6bdffa7572632e2eaec964e`.
-Never use a floating `latest` binary to reproduce CI.
-
-The CI scan command, after preparing the base-derived policy and bare clone, is:
+After preparing a bare clone and copying the reviewed policy to a private
+temporary directory, run from that directory:
 
 ```sh
 betterleaks git "$HISTORY_REPO" \
   --config="$TRUSTED_CONFIG" \
-  --gitleaks-ignore-path="$TRUSTED_IGNORE" \
   --ignore-gitleaks-allow --validation=false --git-workers=0 \
   --log-opts="$BASE_SHA..$HEAD_SHA" \
-  --redact=100 --log-level=info --no-color --exit-code=2 \
-  --report-format=sarif --report-path="$PRIVATE_REPORT"
+  --redact=100 --log-level=info --no-color --exit-code=1 \
+  --report-format=sarif --report-path=secret-scan.raw.sarif
 ```
 
-Full-history triage instead uses `--log-opts='--full-history HEAD'` and a private
-redacted JSON report, in a detached worktree. It is a separate review, not the
-PR gate. There is no tracked JSON baseline. Keep raw reports in ignored,
-owner-only storage: `--redact=100` redacts detected secrets, **not all metadata**.
-Never use debug/trace logs or live validation. The workflow strips commit
-metadata, finding properties and match context, and forces redacted snippets
-before uploading SARIF; paths and rule identifiers necessarily remain visible.
-It does not upload the raw report as an Actions artifact.
+Required proofs use the pinned **local binary**, not a hosted service:
 
-Before rollout, use a disposable, signed synthetic-secret commit in a
-non-allowlisted file. Run the exact CI range command and assert exit 2 plus the
-expected finding, remove the disposable commit without rewriting a published
-branch, and assert exit 0 for the intended clean range with accepted policy.
-Capture commands, exit codes and redacted finding counts, not secret values.
-Test scanner errors separately so a missing report cannot become a successful
-scan. Full-history findings are never evidence of a passing clean-range proof.
+1. A disposable signed commit containing a synthetic AWS key pair and GitHub PAT
+   in a nonexempt path: exit 1, both rule IDs, redacted; then reset that unpublished
+   commit. AWS's literal `EXAMPLE` suffix is ignored by default, so use an
+   unissued synthetic ID of the same shape and its required paired secret.
+2. The same command on `origin/dev~5..origin/dev`: exit 0.
+3. A synthetic credential URI under `tests/`: exit 0; identical nonexempt content
+   must still be detected.
+4. `tmp/betterleaks config check --config .betterleaks.toml`: exit 0.
 
-## Runtime redaction is separate
+`pnpm evals:pr specs/ci-secret-scan.test.ts` automates these controls using
+isolated repositories; set `BETTERLEAKS_BIN` if the verified binary is elsewhere.
 
-CI detects committed material; runtime redaction protects user data in logs,
-diagnostics and tool results before publication. The in-flight
-[`feat/shared-secret-redaction`](https://github.com/different-ai/openwork/tree/feat/shared-secret-redaction)
-work adds `packages/secret-redaction`. Neither runtime redaction nor this
-heuristic CI scanner replaces credential rotation or review of exported data.
+## Boundaries and follow-ups
+
+This is not a full-history scan, a live-secret validity check, or exhaustive
+secret detection. Plain Git log patches miss merge-resolution-only changes.
+No scheduled job is added. Follow-ups, **not implemented here**:
+
+- Weekly full-history **reporting** scan.
+- Ben: disposition of the July report (also tracked as the 2026-07-22 report)
+  and archived sandbox; this PR does not modify either.
+- Guillaume: GitHub push-protection toggle.
+- Runtime redaction: `packages/secret-redaction` on sibling branch
+  [`feat/shared-secret-redaction`](https://github.com/different-ai/openwork/tree/feat/shared-secret-redaction).
+  Runtime output protection and committed-secret scanning serve different roles.
