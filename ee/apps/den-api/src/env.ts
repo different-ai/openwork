@@ -104,7 +104,9 @@ const EnvSchema = z.object({
   CLOUD_IDLE_STOP_MINUTES: z.string().optional(),
   CLOUD_IDLE_LOOP_SECONDS: z.string().optional(),
   CLOUD_IDLE_STOP_BATCH_SIZE: z.string().optional(),
-  PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
+  PROVISIONER_MODE: z.enum(["stub", "render", "daytona", "kubernetes"]).optional(),
+  // {workerId} receives the DNS-safe hyphenated worker name (e.g. wrk-abc...) for
+  // the kubernetes provisioner; the raw worker id's underscore is invalid in DNS.
   WORKER_URL_TEMPLATE: z.string().optional(),
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
@@ -180,6 +182,40 @@ const EnvSchema = z.object({
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_STOP_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  KUBERNETES_API_URL: z.string().optional(),
+  KUBERNETES_API_TOKEN: z.string().optional(),
+  KUBERNETES_API_CA_FILE: z.string().optional(),
+  KUBERNETES_WORKER_NAMESPACE: z.string().optional(),
+  KUBERNETES_WORKER_IMAGE: z.string().optional(),
+  KUBERNETES_WORKER_IMAGE_PULL_POLICY: z.string().optional(),
+  KUBERNETES_WORKER_PORT: z.string().optional(),
+  KUBERNETES_WORKER_APPROVAL_MODE: z.string().optional(),
+  KUBERNETES_WORKER_CPU_REQUEST: z.string().optional(),
+  KUBERNETES_WORKER_CPU_LIMIT: z.string().optional(),
+  KUBERNETES_WORKER_MEMORY_REQUEST: z.string().optional(),
+  KUBERNETES_WORKER_MEMORY_LIMIT: z.string().optional(),
+  KUBERNETES_WORKER_WORKSPACE_VOLUME_SIZE: z.string().optional(),
+  KUBERNETES_WORKER_DATA_VOLUME_SIZE: z.string().optional(),
+  KUBERNETES_WORKER_STORAGE_CLASS: z.string().optional(),
+  KUBERNETES_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  KUBERNETES_POLL_INTERVAL_MS: z.string().optional(),
+  KUBERNETES_WORKER_RECORD_TTL_SECONDS: z.string().optional(),
+  // Optional operator overrides for the worker pod spec.
+  KUBERNETES_WORKER_IMAGE_PULL_SECRETS: z.string().optional(),
+  KUBERNETES_WORKER_NODE_SELECTOR: z.string().optional(),
+  KUBERNETES_WORKER_TOLERATIONS: z.string().optional(),
+  KUBERNETES_WORKER_AFFINITY: z.string().optional(),
+  KUBERNETES_WORKER_TOPOLOGY_SPREAD_CONSTRAINTS: z.string().optional(),
+  KUBERNETES_WORKER_PRIORITY_CLASS_NAME: z.string().optional(),
+  KUBERNETES_WORKER_POD_ANNOTATIONS: z.string().optional(),
+  KUBERNETES_WORKER_POD_LABELS: z.string().optional(),
+  KUBERNETES_WORKER_POD_SECURITY_CONTEXT: z.string().optional(),
+  KUBERNETES_WORKER_CONTAINER_SECURITY_CONTEXT: z.string().optional(),
+  KUBERNETES_WORKER_EXTRA_VOLUMES: z.string().optional(),
+  KUBERNETES_WORKER_EXTRA_VOLUME_MOUNTS: z.string().optional(),
+  KUBERNETES_WORKER_EXTRA_ENV: z.string().optional(),
+  KUBERNETES_WORKER_DNS_POLICY: z.string().optional(),
+  KUBERNETES_WORKER_DNS_CONFIG: z.string().optional(),
   DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
   DEN_CKPT_KEEP: z.string().optional(),
   GATEWAY_PROXY_BASE_URL: z.string().optional(),
@@ -234,6 +270,18 @@ const EnvSchema = z.object({
       }
     }
   }
+
+  if (value.PROVISIONER_MODE === "kubernetes") {
+    for (const key of ["KUBERNETES_WORKER_IMAGE"] as const) {
+      if (!value[key]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${key} is required when PROVISIONER_MODE=kubernetes`,
+          path: [key],
+        })
+      }
+    }
+  }
 })
 
 const gatewayDeployment = parseGatewayDeploymentEnv(process.env)
@@ -264,6 +312,43 @@ function automationTuning(value: string | undefined, fallback: number) {
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+function optionalJsonObject(value: string | undefined): Record<string, unknown> | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function optionalJsonArray(value: string | undefined): unknown[] | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    return Array.isArray(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function optionalStringList(value: string | undefined): string[] | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  const names = trimmed.split(",").map((s) => s.trim()).filter(Boolean)
+  return names.length ? names : undefined
 }
 
 function readOptionalSecretFile(envName: string, pathValue: string | undefined) {
@@ -927,5 +1012,69 @@ export const env = {
     checkpointIntervalSeconds: Number(parsed.DEN_CKPT_INTERVAL_SECONDS ?? "300"),
     checkpointKeep: Number(parsed.DEN_CKPT_KEEP ?? "3"),
     pollIntervalMs: DEN_WORKER_POLL_INTERVAL_MS,
+  },
+  kubernetes: {
+    apiUrl: optionalString(parsed.KUBERNETES_API_URL),
+    apiToken: optionalString(parsed.KUBERNETES_API_TOKEN),
+    apiCaFile: optionalString(parsed.KUBERNETES_API_CA_FILE),
+    workerNamespace:
+      optionalString(parsed.KUBERNETES_WORKER_NAMESPACE) ?? "openwork-workers",
+    workerImage: optionalString(parsed.KUBERNETES_WORKER_IMAGE),
+    workerImagePullPolicy:
+      optionalString(parsed.KUBERNETES_WORKER_IMAGE_PULL_POLICY) ?? "IfNotPresent",
+    workerPort: Number(parsed.KUBERNETES_WORKER_PORT ?? "8787"),
+    workerApprovalMode:
+      // Cloud workers run --approval auto: manual mode's gated writes time out
+      // with 403 because nothing is wired to answer approvals in a sandbox.
+      optionalString(parsed.KUBERNETES_WORKER_APPROVAL_MODE) ?? "auto",
+    workerResources: {
+      cpuRequest: optionalString(parsed.KUBERNETES_WORKER_CPU_REQUEST) ?? "500m",
+      cpuLimit: optionalString(parsed.KUBERNETES_WORKER_CPU_LIMIT) ?? "2",
+      memoryRequest: optionalString(parsed.KUBERNETES_WORKER_MEMORY_REQUEST) ?? "1Gi",
+      memoryLimit: optionalString(parsed.KUBERNETES_WORKER_MEMORY_LIMIT) ?? "4Gi",
+    },
+    workspaceVolumeSize:
+      optionalString(parsed.KUBERNETES_WORKER_WORKSPACE_VOLUME_SIZE) ?? "10Gi",
+    dataVolumeSize:
+      optionalString(parsed.KUBERNETES_WORKER_DATA_VOLUME_SIZE) ?? "10Gi",
+    workerStorageClass: optionalString(parsed.KUBERNETES_WORKER_STORAGE_CLASS),
+    healthcheckTimeoutMs: Number(
+      parsed.KUBERNETES_HEALTHCHECK_TIMEOUT_MS ?? "300000",
+    ),
+    pollIntervalMs: Number(parsed.KUBERNETES_POLL_INTERVAL_MS ?? "1000"),
+    workerRecordTtlSeconds: Number(
+      parsed.KUBERNETES_WORKER_RECORD_TTL_SECONDS ?? "3600",
+    ),
+    // Optional operator overrides for the worker pod spec. All default
+    // unset, leaving the manifest exactly as the provisioner builds it.
+    workerImagePullSecrets:
+      optionalStringList(parsed.KUBERNETES_WORKER_IMAGE_PULL_SECRETS),
+    workerNodeSelector:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_NODE_SELECTOR),
+    workerTolerations:
+      optionalJsonArray(parsed.KUBERNETES_WORKER_TOLERATIONS),
+    workerAffinity:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_AFFINITY),
+    workerTopologySpreadConstraints:
+      optionalJsonArray(parsed.KUBERNETES_WORKER_TOPOLOGY_SPREAD_CONSTRAINTS),
+    workerPriorityClassName:
+      optionalString(parsed.KUBERNETES_WORKER_PRIORITY_CLASS_NAME),
+    workerPodAnnotations:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_POD_ANNOTATIONS),
+    workerPodLabels:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_POD_LABELS),
+    workerPodSecurityContext:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_POD_SECURITY_CONTEXT),
+    workerContainerSecurityContext:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_CONTAINER_SECURITY_CONTEXT),
+    workerExtraVolumes:
+      optionalJsonArray(parsed.KUBERNETES_WORKER_EXTRA_VOLUMES),
+    workerExtraVolumeMounts:
+      optionalJsonArray(parsed.KUBERNETES_WORKER_EXTRA_VOLUME_MOUNTS),
+    workerExtraEnv:
+      optionalJsonArray(parsed.KUBERNETES_WORKER_EXTRA_ENV),
+    workerDnsPolicy: optionalString(parsed.KUBERNETES_WORKER_DNS_POLICY),
+    workerDnsConfig:
+      optionalJsonObject(parsed.KUBERNETES_WORKER_DNS_CONFIG),
   },
 }

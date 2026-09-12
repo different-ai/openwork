@@ -153,7 +153,7 @@ export function persistedWorkerInstanceUrl(provisioned: Pick<ProvisionedWorker, 
 }
 
 export function workerSandboxBackend(input: Pick<z.infer<typeof createWorkerSchema>, "destination" | "sandboxBackend">) {
-  if (input.destination === "cloud" && env.provisionerMode === "daytona") return CLOUD_INSTANCE_BACKEND
+  if (input.destination === "cloud" && (env.provisionerMode === "daytona" || env.provisionerMode === "kubernetes")) return CLOUD_INSTANCE_BACKEND
   return input.sandboxBackend ?? null
 }
 
