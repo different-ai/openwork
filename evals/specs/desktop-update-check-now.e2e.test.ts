@@ -15,10 +15,10 @@ const downloadLabel = `Download v${newer} (123 MB)`;
 for (const replaceStaged of [false, true]) {
   test(replaceStaged
     ? "Settings explicitly downloads B before replacing staged A; the titlebar still confirms restart"
-    : "Settings Check now discovers B without replacing A or changing its restart capsule", async ({ world, user, probe }) => {
+    : "Settings Check now discovers B without replacing A or changing its restart capsule", async ({ world, user, probe, evidence }) => {
     await world.openSettings();
     await user.click({ role: "combobox", label: "Release channel" });
-    await user.click({ role: "option", text: "Alpha" });
+    await user.click({ role: "option", label: "Alpha" });
     await probe.eventually(world.snapshot, { within: 10_000, label: "the renderer selects Alpha", until: (value) => value.channel === "alpha" && value.checks.at(-1)?.channel === "alpha" });
     await user.see({ text: "You're up to date" });
     await world.publishInitial();
@@ -70,11 +70,18 @@ for (const replaceStaged of [false, true]) {
     await user.click("Keep working");
     await user.notSee({ text: "Restart OpenWork?" });
     expect((await world.snapshot()).installs).toEqual([]);
+    evidence.recordAssertionEvidence(
+      "Manual Alpha discovery preserves A, offers explicit B, and leaves the titlebar panel and background checks unchanged",
+      JSON.stringify({ ready, discovered, unchangedPanel: panel }),
+      true,
+    );
 
     if (!replaceStaged) {
       await user.click({ role: "button", text: `Install v${staged} & restart` });
       await probe.eventually(world.snapshot, { within: 10_000, label: "Settings installs A, not the discovered B", until: (value) => value.installs.length === 1 });
-      expect(await world.snapshot()).toMatchObject({ checks: discovered.checks, downloads: [staged], installs: [staged] });
+      const installed = await world.snapshot();
+      expect(installed).toMatchObject({ checks: discovered.checks, downloads: [staged], installs: [staged] });
+      evidence.recordAssertionEvidence("Settings still installs staged A without downloading B (fake installer)", JSON.stringify(installed), true);
       return;
     }
 
@@ -102,6 +109,8 @@ for (const replaceStaged of [false, true]) {
     expect((await world.snapshot()).installs).toEqual([]);
     await user.click("Restart & update");
     await probe.eventually(world.snapshot, { within: 10_000, label: "the unchanged titlebar confirmation installs B", until: (value) => value.installs.length === 1 });
-    expect(await world.snapshot()).toMatchObject({ checks: discovered.checks, downloads: [staged, newer], installs: [newer] });
+    const installed = await world.snapshot();
+    expect(installed).toMatchObject({ checks: discovered.checks, downloads: [staged, newer], installs: [newer] });
+    evidence.recordAssertionEvidence("Explicit Download replaces A with B; unchanged titlebar confirmation installs B (fake installer)", JSON.stringify(installed), true);
   });
 }
