@@ -12,6 +12,7 @@ import type { InferenceContext } from "./middleware/inference-auth.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
 import type { PricingCatalog } from "./pricing.js"
+import type { GenerationTerminal } from "./generation-outcome.js"
 
 export type GatewayRequestLogRow = typeof GatewayRequestLogTable.$inferInsert
 
@@ -40,6 +41,7 @@ export type RequestLogStartInput = {
 }
 
 export type RequestLogUsageInput = {
+  generation?: GenerationTerminal
   usageSource: GatewayUsageSource
   upstreamModel?: string | null
   inputTokens?: number | null
@@ -238,6 +240,8 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         stream: started.stream,
         status: input.status,
         outcome: input.outcome === "ok" && usage?.streamError ? "upstream_error" : input.outcome,
+        generation_outcome: usage?.generation?.generationOutcome ?? "unknown",
+        provider_terminal_reason: usage?.generation?.providerTerminalReason ?? "unknown",
         error_code: input.errorCode ?? usage?.streamError ?? null,
         input_tokens: usage?.inputTokens ?? null,
         output_tokens: usage?.outputTokens ?? null,

@@ -220,9 +220,9 @@ test("both routes record semantic stream errors; Models sanitizes the provider e
   }
 })
 
-test("managed Chat forwards content_filter like stop/length in JSON and SSE without recording the raw finish reason", async () => {
+test("managed Chat JSON and SSE preserve bytes and independent generation outcomes",  async () => {
   for (const stream of [false, true]) {
-    for (const finishReason of ["stop", "length", "content_filter"]) {
+    for (const [finishReason, generationOutcome] of [["stop", "completed"], ["length", "length_limited"], ["tool_calls", "tool_calls"], ["content_filter", "content_filtered"]]) {
       const message = { role: "assistant", content: syntheticText }
       const responseBody = stream
         ? [
@@ -243,12 +243,12 @@ test("managed Chat forwards content_filter like stop/length in JSON and SSE with
       if (stream) expect(state.reports).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "completed" })]))
       const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
       expect(diagnostics).not.toContain(syntheticText)
-      expect(diagnostics).not.toMatch(/finish_reason|finishReason|"stop"|"length"|content_filter/)
+      expect(state.rows[0]).toMatchObject({ generation_outcome: generationOutcome, provider_terminal_reason: finishReason })
     }
   }
 })
 
-test("org-provider Anthropic forwards JSON and SSE refusal bytes with transport-ok bookkeeping, not refusal classification", async () => {
+test("org-provider Anthropic JSON and SSE refusal retains native bytes and transport-ok accounting",  async () => {
   for (const stream of [false, true]) {
     const message = { id: "msg_fixture", type: "message", role: "assistant", model: "claude", content: [{ type: "text", text: syntheticText }], stop_reason: "refusal", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }
     const responseBody = stream
@@ -274,7 +274,7 @@ test("org-provider Anthropic forwards JSON and SSE refusal bytes with transport-
     expect(state.rows[0]).toMatchObject({ status: 200, outcome: "ok", error_code: null })
     const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
     expect(diagnostics).not.toContain(syntheticText)
-    expect(diagnostics).not.toMatch(/stop_reason|stopReason|refusal|content_filter/)
+    expect(state.rows[0]).toMatchObject({ generation_outcome: "refused", provider_terminal_reason: "refusal", input_tokens: 1, output_tokens: 1, total_tokens: 2 })
   }
 })
 

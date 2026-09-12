@@ -234,6 +234,7 @@ function upstreamRequestId(headers: Headers) {
 
 function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "stream" | "json") {
   recorder.setUsage({
+    generation: usage.generation,
     usageSource: usage.found ? source : "missing",
     upstreamModel: usage.model,
     inputTokens: usage.inputTokens,

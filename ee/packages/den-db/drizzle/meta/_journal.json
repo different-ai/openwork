@@ -680,6 +680,13 @@
       "when": 1788895934602,
       "tag": "0097_gateway_access_matrix",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "5",
+      "when": 1789244057236,
+      "tag": "0098_gateway_generation_terminal",
+      "breakpoints": true
     }
   ]
 }
