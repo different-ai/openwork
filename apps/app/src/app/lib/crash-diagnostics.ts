@@ -1,7 +1,9 @@
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer";
 
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi;
-const SECRET_PAIR_PATTERN = /(token|grant|code|secret|key)=(?:"[^"]*"|'[^']*'|[^&\s"'<>()]+)/gi;
+// Quoted values also end at the work cutoff; an absent closing quote must fail closed.
+const SECRET_PAIR_PATTERN = /(token|grant|code|secret|key)=(?:"(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^&\s"'<>()]+)/gi;
+const SECRET_JSON_PAIR_PATTERN = /((["'])(?:token|grant|code|secret|key|password|authorization)\2\s*:\s*)(?:"(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^,\s"'{}\[\]]+)/gi;
 const FALLBACK_MESSAGE = "An unexpected error occurred.";
 
 /**
@@ -33,7 +35,9 @@ export function redactCrashText(text: string): string {
     return withoutUserinfo.slice(0, cut) + position;
   });
   // URLs first: masking a query pair first could eat its frame's :line:column.
-  return sanitizeDiagnosticString(urlsRemoved).replace(SECRET_PAIR_PATTERN, "$1=[redacted]");
+  return sanitizeDiagnosticString(urlsRemoved)
+    .replace(SECRET_JSON_PAIR_PATTERN, '$1"[redacted]"')
+    .replace(SECRET_PAIR_PATTERN, "$1=[redacted]");
 }
 
 /** Read each field defensively, without recursive inspection or string coercion. */
