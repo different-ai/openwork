@@ -7,6 +7,7 @@ import { test } from "@openwork/testkit"
 // No product-source imports, external providers, or database prerequisites.
 const root = fileURLToPath(new URL("../../", import.meta.url))
 const marker = "SECRET_MARKER_DO_NOT_LOG"
+const syntheticText = "Synthetic transport sample: café."
 const gatewayPath = "/api/v1/providers/ipr_fixture"
 const gatewayKey = `ow_gw_${"A".repeat(43)}`
 type FixtureState = {
@@ -16,7 +17,7 @@ type FixtureState = {
 }
 async function readState(url: string): Promise<FixtureState> {
   // Wire boundary for this spec's private, local fixture (not product data).
-  const state: FixtureState = await (await fetch(`${url}/__test/state`)).json()
+  const state: FixtureState = await (await fetch(`${url}/__test/state`, { signal: AbortSignal.timeout(5_000) })).json()
   expect(Array.isArray(state.requests) && Array.isArray(state.rows)).toBe(true)
   return state
 }
@@ -43,7 +44,7 @@ async function fixture(config: Record<string, unknown> = {}, timeoutMs = 30_000,
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
     if (!url) throw new Error(`Fixture did not start: ${output}`)
-    await fetch(`${url}/__test/config`, { method: "POST", body: JSON.stringify(config), headers: { "content-type": "application/json" } })
+    await fetch(`${url}/__test/config`, { method: "POST", body: JSON.stringify(config), headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(5_000) })
   } catch (error) { stop(); throw error }
   return {
     url,
@@ -216,6 +217,89 @@ test("both routes record semantic stream errors; Models sanitizes the provider e
     const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
     expect(state.rows[0]).toMatchObject({ status: 200, outcome: "upstream_error", error_code: route === "gateway" ? "upstream_stream_error" : "upstream_unavailable", upstream_request_id: "body-request-id",
       upstream_model: route === "gateway" ? "x" : "z-ai/glm-5.2" })
+  }
+})
+
+test("managed Chat forwards content_filter like stop/length in JSON and SSE without recording the raw finish reason", async () => {
+  for (const stream of [false, true]) {
+    for (const finishReason of ["stop", "length", "content_filter"]) {
+      const message = { role: "assistant", content: syntheticText }
+      const responseBody = stream
+        ? [
+          { choices: [{ index: 0, delta: message, finish_reason: null }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: finishReason }] },
+        ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("") + "data: [DONE]\n\n"
+        : JSON.stringify({ choices: [{ index: 0, message, finish_reason: finishReason }] })
+      await using f = await fixture({ mode: stream ? "synthetic-sse" : "synthetic-json", responseBody })
+      const response = await f.openwork({ body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], stream }) })
+      expect(response.status).toBe(200)
+      expect(response.headers.get("content-type")).toContain(stream ? "text/event-stream" : "application/json")
+      expect(await response.text()).toBe(responseBody)
+      const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+      expect(state.requests).toHaveLength(1)
+      expect(state.rows).toHaveLength(1)
+      expect(state.rows[0]).toMatchObject({ status: 200, outcome: "ok", error_code: null })
+      expect(state.reports).toEqual(expect.arrayContaining([expect.objectContaining({ payloadMode: "summary" })]))
+      if (stream) expect(state.reports).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "completed" })]))
+      const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
+      expect(diagnostics).not.toContain(syntheticText)
+      expect(diagnostics).not.toMatch(/finish_reason|finishReason|"stop"|"length"|content_filter/)
+    }
+  }
+})
+
+test("org-provider Anthropic forwards JSON and SSE refusal bytes with transport-ok bookkeeping, not refusal classification", async () => {
+  for (const stream of [false, true]) {
+    const message = { id: "msg_fixture", type: "message", role: "assistant", model: "claude", content: [{ type: "text", text: syntheticText }], stop_reason: "refusal", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }
+    const responseBody = stream
+      ? [
+        { type: "message_start", message: { ...message, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: syntheticText } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "refusal", stop_sequence: null }, usage: { output_tokens: 1 } },
+        { type: "message_stop" },
+      ].map((frame) => `event: ${frame.type}\r\ndata: ${JSON.stringify(frame)}\r\n\r\n`).join("")
+      : ` ${JSON.stringify(message)}\n`
+    await using f = await fixture({ provider: "anthropic", mode: stream ? "synthetic-sse" : "synthetic-json", responseBody })
+    const response = await f.request("/messages", { body: JSON.stringify({ model: "claude", messages: [], max_tokens: 8, stream }) })
+    expect(response.status).toBe(200)
+    expect(response.headers.get("content-type")).toContain(stream ? "text/event-stream" : "application/json")
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    expect(bytes).toEqual(new TextEncoder().encode(responseBody))
+    expect(new TextDecoder().decode(bytes)).toContain('"stop_reason":"refusal"')
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    expect(state.requests).toHaveLength(1)
+    expect(state.rows).toHaveLength(1)
+    expect(state.rows[0]).toMatchObject({ status: 200, outcome: "ok", error_code: null })
+    const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
+    expect(diagnostics).not.toContain(syntheticText)
+    expect(diagnostics).not.toMatch(/stop_reason|stopReason|refusal|content_filter/)
+  }
+})
+
+test("malformed and truncated managed SSE retain partial output and distinct protocol errors, never an invented content_filter", async () => {
+  const partial = { choices: [{ index: 0, delta: { role: "assistant", content: syntheticText }, finish_reason: null }] }
+  for (const { ending, code } of [
+    { ending: 'data: {"choices":\n\n', code: "upstream_malformed_stream" },
+    { ending: 'data: {"choices":', code: "upstream_incomplete" },
+  ]) {
+    await using f = await fixture({ mode: "synthetic-sse", responseBody: `data: ${JSON.stringify(partial)}\n\n${ending}` })
+    const response = await f.openwork({ body: '{"model":"z-ai/glm-5.2","messages":[],"stream":true}' })
+    expect(response.status).toBe(200)
+    expect(response.headers.get("content-type")).toContain("text/event-stream")
+    const text = await response.text()
+    const frames: unknown[] = text.trimEnd().split("\n\n").map((frame) => JSON.parse(frame.slice("data: ".length)))
+    expect(frames).toEqual([partial, { error: expect.objectContaining({ code, type: "api_error" }) }])
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    expect(state.requests).toHaveLength(1)
+    expect(state.rows).toHaveLength(1)
+    expect(state.rows[0]).toMatchObject({ status: 200, outcome: "upstream_error", error_code: code })
+    expect(state.reports).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "incomplete", code })]))
+    expect(state.reports).not.toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "completed" })]))
+    const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
+    expect(diagnostics).not.toContain(syntheticText)
+    expect(text + diagnostics).not.toMatch(/content_filter|refusal|\[DONE\]/)
   }
 })
 

@@ -1,0 +1,31 @@
+export type GenerationOutcome = "completed" | "content_filtered" | "refused" | "length_limited" | "tool_calls" | "unknown"
+export type ProviderTerminalReason = "stop" | "length" | "tool_calls" | "content_filter" | "end_turn" | "stop_sequence" | "max_tokens" | "tool_use" | "refusal" | "completed" | "incomplete" | "max_output_tokens" | "unknown"
+
+export type GenerationTerminal = {
+  generationOutcome: GenerationOutcome
+  providerTerminalReason: ProviderTerminalReason
+}
+
+export function providerTerminalReason(value: unknown): ProviderTerminalReason {
+  switch (value) {
+    case "stop": case "length": case "tool_calls": case "content_filter":
+    case "end_turn": case "stop_sequence": case "max_tokens": case "tool_use":
+    case "refusal": case "completed": case "incomplete": case "max_output_tokens":
+      return value
+    default: return "unknown"
+  }
+}
+
+export function generationTerminal(value: unknown): GenerationTerminal {
+  const reason = providerTerminalReason(value)
+  let generationOutcome: GenerationOutcome
+  switch (reason) {
+    case "stop": case "end_turn": case "stop_sequence": case "completed": generationOutcome = "completed"; break
+    case "content_filter": generationOutcome = "content_filtered"; break
+    case "refusal": generationOutcome = "refused"; break
+    case "length": case "max_tokens": case "max_output_tokens": generationOutcome = "length_limited"; break
+    case "tool_calls": case "tool_use": generationOutcome = "tool_calls"; break
+    default: generationOutcome = "unknown"
+  }
+  return { generationOutcome, providerTerminalReason: reason }
+}

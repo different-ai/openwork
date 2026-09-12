@@ -34,6 +34,11 @@ const upstream = createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(Buffer.from(chunk))
   requests.push({ url: request.url ?? "", headers: request.headers, bytes: [...Buffer.concat(chunks)] })
   response.on("close", () => { if (!response.writableEnded) cancelled++ })
+  if ((config.mode === "synthetic-json" || config.mode === "synthetic-sse") && typeof config.responseBody === "string") {
+    response.writeHead(200, { "content-type": config.mode === "synthetic-sse" ? "text/event-stream" : "application/json" })
+    response.end(config.responseBody)
+    return
+  }
   if (config.mode === "headers-hang") return
   if (config.mode === "redirect") {
     response.writeHead(307, { location: `${origin}/redirect-target` })
@@ -139,6 +144,7 @@ registerProxyRoutes(app, {
     return true
   },
   reporter: {
+    completion(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
     request(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
     handledError(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
   },
