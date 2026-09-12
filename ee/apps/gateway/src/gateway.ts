@@ -598,6 +598,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         method,
         requestedModel: state.requestedModel,
         upstreamModel: selection?.upstreamModel ?? null,
+        modelAlias: selection?.row.model?.id ?? null,
         stream: state.stream,
         gatewayProviderId: provider.id,
         gatewayProviderCredentialId: state.credentialId ?? null,

@@ -166,3 +166,25 @@ test("retention-consumed pending rows are not reinserted; body id and stream err
   assert.equal(snapshot()?.usage_source, "missing")
   assert.deepEqual(reports, ["request_log_not_finalized"])
 })
+
+test("one terminal receipt survives a throwing observer and repeated finishes without changing accounting", async () => {
+  const receipts: unknown[] = []
+  const rows: InferenceRequestLogRow[] = []
+  const recorder = createRequestLogRecorder({
+    insertRequestLog: async () => {},
+    updateRequestLog: async (row) => { rows.push(row); return true },
+    reporter: { request() {}, handledError() {}, terminal(receipt) { receipts.push(receipt); throw new Error("SECRET_MARKER_DO_NOT_LOG") } },
+  })
+  recorder.start({ ...startInput, modelAlias: "trusted-alias" })
+  recorder.setUsage({ usageSource: "stream", inputTokens: 2, outputTokens: 3, costUsd: 0.00001, generation: { generationOutcome: "refused", providerTerminalReason: "refusal" } })
+  await recorder.finish({ status: 200, outcome: "ok", responseBytes: 42 })
+  await recorder.finish({ status: 500, outcome: "upstream_error" })
+  assert.equal(receipts.length, 1)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]?.generation_outcome, "refused")
+  assert.equal(rows[0]?.outcome, "ok")
+  assert.equal(rows[0]?.cost_micro_usd, 10)
+  assert.equal(rows[0]?.total_tokens, 5)
+  assert.equal(rows[0]?.response_bytes, 42)
+  assert.ok(!JSON.stringify(receipts).includes("SECRET_MARKER_DO_NOT_LOG"))
+})

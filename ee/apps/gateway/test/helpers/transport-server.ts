@@ -144,6 +144,7 @@ registerProxyRoutes(app, {
     return true
   },
   reporter: {
+    terminal(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
     completion(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
     request(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
     handledError(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },

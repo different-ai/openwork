@@ -2,6 +2,27 @@ import * as Sentry from "@sentry/node"
 import { createMiddleware } from "hono/factory"
 import { shouldEmitSentryLog } from "./instrumentation.js"
 import type { ChatCompletionReport } from "./chat-response.js"
+import type { GenerationTerminal } from "./generation-outcome.js"
+import type { GatewayRequestOutcome, GatewayRequestProtocol, GatewayRequestRoute } from "@openwork/types/den/gateway"
+
+export type InferenceTerminalReceipt = GenerationTerminal & {
+  openworkRequestId: string
+  upstreamRequestId: string | null
+  organizationId: string
+  orgMembershipId: string
+  route: GatewayRequestRoute
+  protocol: GatewayRequestProtocol
+  upstreamProviderId: string
+  modelAlias: string | null
+  status: number | null
+  transportOutcome: GatewayRequestOutcome
+  startedAt: string
+  completedAt: string
+  durationMs: number
+  responseBytes: number | null
+  inputTokens: number | null
+  outputTokens: number | null
+}
 
 export type PayloadLogMode = "summary"
 
@@ -40,6 +61,7 @@ export type InferenceHandledErrorReport = {
 }
 
 export type InferenceReporter = {
+  terminal?(report: InferenceTerminalReceipt): void
   request(report: InferenceRequestReport): void
   handledError(report: InferenceHandledErrorReport): void
   completion?(report: ChatCompletionReport & { openworkRequestId: string; organizationId: string; orgMembershipId: string; modelAlias: string }): void
@@ -63,6 +85,9 @@ export const inferenceAccessLogger = createMiddleware(async (c, next) => {
 
 export function safeInferenceReporter(reporter: InferenceReporter): InferenceReporter {
   return {
+    terminal(report) {
+      try { reporter.terminal?.(report) } catch {}
+    },
     completion(report) {
       try { reporter.completion?.(report) } catch { /* Optional reporting. */ }
     },
@@ -111,6 +136,19 @@ function reportAttributes(report: InferenceRequestReport | InferenceHandledError
 }
 
 export const sentryInferenceReporter: InferenceReporter = {
+  terminal(report) {
+    try {
+      Sentry.metrics.count("gateway.generation.terminal", 1, { attributes: {
+        route: report.route, protocol: report.protocol,
+        transportOutcome: report.transportOutcome, generationOutcome: report.generationOutcome,
+      } })
+    } catch {}
+    const level = report.generationOutcome === "content_filtered" || report.generationOutcome === "refused" ? "warn" : "info"
+    if (shouldEmitSentryLog(level)) {
+      const options = Sentry.getClient()?.getOptions()
+      Sentry.logger[level]("OpenWork inference terminal", { ...report, release: options?.release ?? "unknown", environment: options?.environment ?? "unknown" })
+    }
+  },
   completion(report) {
     if (shouldEmitSentryLog(report.outcome === "completed" ? "info" : "error")) {
       if (report.outcome === "completed") Sentry.logger.info("OpenWork inference completion", report)

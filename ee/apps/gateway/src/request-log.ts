@@ -30,6 +30,7 @@ export type RequestLogStartInput = {
   method: string
   requestedModel: string | null
   upstreamModel: string | null
+  modelAlias?: string | null
   stream: boolean
   gatewayProviderId?: GatewayRequestLogRow["gateway_provider_id"]
   gatewayProviderCredentialId?: GatewayRequestLogRow["gateway_provider_credential_id"]
@@ -218,6 +219,9 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
       }
       const upstreamModel = usage?.upstreamModel ?? started.upstreamModel
         ?? (started.identity.kind === "models" && started.protocol !== "passthrough" ? started.requestedModel : null)
+      const completedAt = now()
+      const generationOutcome = usage?.generation?.generationOutcome ?? "unknown"
+      const providerTerminalReason = usage?.generation?.providerTerminalReason ?? "unknown"
       const row: GatewayRequestLogRow = {
         id: pending.id,
         organization_id: started.identity.organizationId,
@@ -240,8 +244,8 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         stream: started.stream,
         status: input.status,
         outcome: input.outcome === "ok" && usage?.streamError ? "upstream_error" : input.outcome,
-        generation_outcome: usage?.generation?.generationOutcome ?? "unknown",
-        provider_terminal_reason: usage?.generation?.providerTerminalReason ?? "unknown",
+        generation_outcome: generationOutcome,
+        provider_terminal_reason: providerTerminalReason,
         error_code: input.errorCode ?? usage?.streamError ?? null,
         input_tokens: usage?.inputTokens ?? null,
         output_tokens: usage?.outputTokens ?? null,
@@ -255,12 +259,29 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         openwork_request_id: started.openworkRequestId,
         started_at: startedAt,
         first_byte_at: firstByteAt,
-        completed_at: now(),
+        completed_at: completedAt,
         request_bytes: started.requestBytes ?? null,
         response_bytes: input.responseBytes ?? null,
         metadata: { cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
       }
       if (row.cost_micro_usd === null) row.metadata = { cost_source: "unknown" }
+      try {
+        dependencies.reporter.terminal?.({
+          openworkRequestId: started.openworkRequestId,
+          upstreamRequestId: row.upstream_request_id ?? null,
+          organizationId: started.identity.organizationId,
+          orgMembershipId: started.identity.orgMembershipId,
+          route: started.route, protocol: started.protocol,
+          upstreamProviderId: started.upstreamProviderId,
+          modelAlias: started.modelAlias ?? null,
+          status: input.status, transportOutcome: row.outcome,
+          generationOutcome, providerTerminalReason,
+          startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(),
+          durationMs: Math.max(0, completedAt.getTime() - startedAt.getTime()),
+          responseBytes: input.responseBytes ?? null,
+          inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
+        })
+      } catch {}
       finishWrite = (async () => {
         if (!await startWrite) return
         const saved = await persist(() => (dependencies.updateRequestLog ?? updateRequestLogInDb)(row), "request_log_update_failed")

@@ -240,7 +240,9 @@ test("managed Chat JSON and SSE preserve bytes and independent generation outcom
       expect(state.rows).toHaveLength(1)
       expect(state.rows[0]).toMatchObject({ status: 200, outcome: "ok", error_code: null })
       expect(state.reports).toEqual(expect.arrayContaining([expect.objectContaining({ payloadMode: "summary" })]))
-      if (stream) expect(state.reports).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "completed" })]))
+      expect(state.reports.filter((report) => typeof report === "object" && report !== null && "transportOutcome" in report)).toEqual([
+        expect.objectContaining({ transportOutcome: "ok", generationOutcome, providerTerminalReason: finishReason }),
+      ])
       const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
       expect(diagnostics).not.toContain(syntheticText)
       expect(state.rows[0]).toMatchObject({ generation_outcome: generationOutcome, provider_terminal_reason: finishReason })
@@ -295,8 +297,9 @@ test("malformed and truncated managed SSE retain partial output and distinct pro
     expect(state.requests).toHaveLength(1)
     expect(state.rows).toHaveLength(1)
     expect(state.rows[0]).toMatchObject({ status: 200, outcome: "upstream_error", error_code: code })
-    expect(state.reports).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "incomplete", code })]))
-    expect(state.reports).not.toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "completed" })]))
+    expect(state.reports.filter((report) => typeof report === "object" && report !== null && "transportOutcome" in report)).toEqual([
+      expect.objectContaining({ transportOutcome: "upstream_error", generationOutcome: "unknown", providerTerminalReason: "unknown" }),
+    ])
     const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
     expect(diagnostics).not.toContain(syntheticText)
     expect(text + diagnostics).not.toMatch(/content_filter|refusal|\[DONE\]/)
