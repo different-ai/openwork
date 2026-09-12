@@ -414,10 +414,10 @@ function upstreamOutcome(upstream: Response): GatewayRequestOutcome {
   return upstream.ok ? "ok" : "upstream_error"
 }
 
-function parseJsonUsage(protocol: GatewayRequestProtocol, body: unknown): ParsedUsage | null {
+function parseJsonUsage(protocol: GatewayRequestProtocol, body: unknown, expectedChoices?: number): ParsedUsage | null {
   switch (protocol) {
     case "openai_chat":
-      return parseOpenAiChatJsonUsage(body)
+      return parseOpenAiChatJsonUsage(body, expectedChoices)
     case "openai_responses":
       return parseOpenAiResponsesJsonUsage(body)
     case "anthropic_messages":
@@ -431,14 +431,14 @@ function parseJsonUsage(protocol: GatewayRequestProtocol, body: unknown): Parsed
   }
 }
 
-function createStreamUsageParser(protocol: GatewayRequestProtocol, contentType: string | null): UsageParser | null {
+function createStreamUsageParser(protocol: GatewayRequestProtocol, contentType: string | null, expectedChoices?: number): UsageParser | null {
   if (protocol === "bedrock_converse" && isAwsEventStreamContentType(contentType)) {
     return createBedrockConverseEventStreamUsageParser()
   }
   if (isEventStreamContentType(contentType)) {
     switch (protocol) {
       case "openai_chat":
-        return createOpenAiChatSseUsageParser()
+        return createOpenAiChatSseUsageParser({ expectedChoices })
       case "openai_responses":
         return createOpenAiResponsesSseUsageParser()
       case "anthropic_messages":
@@ -452,7 +452,7 @@ function createStreamUsageParser(protocol: GatewayRequestProtocol, contentType: 
   }
   if (isJsonContentType(contentType) && parseJsonUsage(protocol, null)) {
     // Streamed non-SSE JSON (Google's array form): parse once at the end.
-    return createJsonBodyUsageParser((body) => parseJsonUsage(protocol, body) ?? emptyUsage())
+    return createJsonBodyUsageParser((body) => parseJsonUsage(protocol, body, expectedChoices) ?? emptyUsage())
   }
   return null
 }
@@ -474,7 +474,7 @@ function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "
   })
 }
 
-function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtocol, headers: Headers, recorder: RequestLogRecorder, lifetime: ReturnType<typeof upstreamLifetime>) {
+function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtocol, headers: Headers, recorder: RequestLogRecorder, lifetime: ReturnType<typeof upstreamLifetime>, expectedChoices: number) {
   if (!upstream.body) {
     lifetime.dispose()
     void recorder.finish({
@@ -486,7 +486,7 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
     return new Response(null, { status: upstream.status, statusText: upstream.statusText, headers })
   }
 
-  const parser = createStreamUsageParser(protocol, upstream.headers.get("content-type"))
+  const parser = createStreamUsageParser(protocol, upstream.headers.get("content-type"), expectedChoices)
   const decoder = new TextDecoder()
   let responseBytes = 0
   const finish = (outcome: GatewayRequestOutcome) => {
@@ -801,7 +801,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     const responseHeaders = relayHeaders(upstream, openworkRequestId)
-    return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
+    const expectedChoices = typeof prepared.json?.n === "number" && Number.isSafeInteger(prepared.json.n) && prepared.json.n > 0 ? prepared.json.n : 1
+    return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime, expectedChoices)
   }
 
   api.all(`${gatewayPathPrefix}/:inferenceProviderId`, handleGatewayRequest)

@@ -30,7 +30,7 @@ type DependencyCalls = {
 type CapturedReports = {
   requests: InferenceRequestReport[]
   handledErrors: InferenceHandledErrorReport[]
-  completions: Parameters<NonNullable<InferenceReporter["completion"]>>[0][]
+  terminals: Parameters<NonNullable<InferenceReporter["terminal"]>>[0][]
 }
 
 type TestServerOptions = {
@@ -141,7 +141,7 @@ function inferenceRequest(input: { method: string; headers: Headers; body?: stri
 function createTestServer(options: TestServerOptions = {}) {
   const app = new Hono()
   const upstreamRequests: UpstreamRequest[] = []
-  const reports: CapturedReports = { requests: [], handledErrors: [], completions: [] }
+  const reports: CapturedReports = { requests: [], handledErrors: [], terminals: [] }
   const logRows: InferenceRequestLogRow[] = []
   const calls: DependencyCalls = {
     findActiveInferenceKey: 0,
@@ -168,8 +168,8 @@ function createTestServer(options: TestServerOptions = {}) {
     handledError(report) {
       reports.handledErrors.push(report)
     },
-    completion(report) {
-      reports.completions.push(report)
+    terminal(report) {
+      reports.terminals.push(report)
     },
   }
 
@@ -283,7 +283,7 @@ for (const policy of [
     assert.equal(calls.getOpenRouterProviderKey, 0)
     assert.equal(analyticsCalls, 0)
     assert.equal(upstreamRequests.length, 0)
-    assert.deepEqual(reports, { requests: [], handledErrors: [], completions: [] })
+    assert.deepEqual(reports, { requests: [], handledErrors: [], terminals: [] })
   })
 }
 
@@ -302,7 +302,7 @@ test("policy lookup failures fail closed without leaking the underlying error", 
     assert.equal(calls.ensureUsableBuckets, 0)
     assert.equal(calls.getOpenRouterProviderKey, 0)
     assert.equal(upstreamRequests.length, 0)
-    assert.deepEqual(reports, { requests: [], handledErrors: [], completions: [] })
+    assert.deepEqual(reports, { requests: [], handledErrors: [], terminals: [] })
   }
 })
 
@@ -400,7 +400,7 @@ test("invalid authentication never reads organization policy", async () => {
   assert.equal(await readErrorCode(response), "invalid_api_key")
   assert.deepEqual(calls.policyOrganizationIds, [])
   assert.equal(upstreamRequests.length, 0)
-   assert.deepEqual(reports, { requests: [], handledErrors: [], completions: [] })
+   assert.deepEqual(reports, { requests: [], handledErrors: [], terminals: [] })
 })
 
 test("first-output telemetry survives a later malformed frame in the same chunk", async () => {
@@ -412,9 +412,10 @@ test("first-output telemetry survives a later malformed frame in the same chunk"
   assert.match(body, /Partial/)
   assert.match(body, /upstream_malformed_stream/)
   assert.doesNotMatch(body, /\[DONE\]/)
-  assert.equal(reports.completions.length, 1)
-  assert.equal(reports.completions[0]?.outcome, "incomplete")
-  assert.equal(typeof reports.completions[0]?.firstOutputMs, "number")
+  assert.equal(reports.terminals.length, 1)
+  assert.equal(reports.terminals[0]?.transportOutcome, "upstream_error")
+  assert.equal(reports.terminals[0]?.generationOutcome, "unknown")
+  assert.equal(typeof reports.terminals[0]?.firstOutputMs, "number")
 })
 
 test("analytics storage failures preserve exact streamed bytes and upstream status", async () => {

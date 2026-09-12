@@ -1,3 +1,7 @@
+export function validatedUpstreamId(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) ? value : null
+}
+
 export type GenerationOutcome = "completed" | "content_filtered" | "refused" | "length_limited" | "tool_calls" | "unknown"
 export type ProviderTerminalReason = "stop" | "length" | "tool_calls" | "content_filter" | "end_turn" | "stop_sequence" | "max_tokens" | "tool_use" | "refusal" | "completed" | "incomplete" | "max_output_tokens" | "unknown"
 

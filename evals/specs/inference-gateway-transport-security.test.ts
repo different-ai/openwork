@@ -12,13 +12,31 @@ const gatewayPath = "/api/v1/providers/ipr_fixture"
 const gatewayKey = `ow_gw_${"A".repeat(43)}`
 type FixtureState = {
   requests: { url: string; bytes: number[]; headers: Record<string, string | string[]> }[]
-  rows: { completed_at?: string | null; first_byte_at?: string | null; outcome: string; status?: number | null; response_bytes?: number | null; usage_source: string; total_tokens?: number | null; error_code?: string | null; upstream_request_id?: string | null; upstream_model?: string | null }[]
+  rows: { openwork_request_id: string; organization_id: string; org_membership_id: string; generation_outcome: string; provider_terminal_reason: string; cost_micro_usd?: number | null; completed_at?: string | null; first_byte_at?: string | null; outcome: string; status?: number | null; response_bytes?: number | null; usage_source: string; total_tokens?: number | null; error_code?: string | null; upstream_request_id?: string | null; upstream_model?: string | null }[]
   reports: unknown[]; cancelled: number; lookups: number; buckets: number; upstreamReads: number; credentialReads: number; tokenCalls: number
+}
+function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
+function terminals(state: FixtureState) { return state.reports.filter(record).filter((report) => "transportOutcome" in report) }
+function assertTerminal(state: FixtureState, expected: Record<string, unknown>) {
+  expect(state.rows).toHaveLength(1)
+  expect(terminals(state)).toEqual([expect.objectContaining(expected)])
+  const receipt = terminals(state)[0]
+  expect(receipt.openworkRequestId).toBe(state.rows[0].openwork_request_id)
+  expect(receipt.upstreamRequestId).toBe(state.rows[0].upstream_request_id)
+  expect(receipt.transportOutcome).toBe(state.rows[0].outcome)
+  expect(receipt.generationOutcome).toBe(state.rows[0].generation_outcome)
+  expect(receipt.providerTerminalReason).toBe(state.rows[0].provider_terminal_reason)
+  expect(receipt.durationMs).toEqual(expect.any(Number))
 }
 async function readState(url: string): Promise<FixtureState> {
   // Wire boundary for this spec's private, local fixture (not product data).
   const state: FixtureState = await (await fetch(`${url}/__test/state`, { signal: AbortSignal.timeout(5_000) })).json()
   expect(Array.isArray(state.requests) && Array.isArray(state.rows)).toBe(true)
+  for (const row of state.rows.filter((row) => row.completed_at)) {
+    expect(terminals(state).filter((receipt) => receipt.openworkRequestId === row.openwork_request_id)).toEqual([expect.objectContaining({
+      transportOutcome: row.outcome, generationOutcome: row.generation_outcome, providerTerminalReason: row.provider_terminal_reason,
+    })])
+  }
   return state
 }
 
@@ -55,6 +73,8 @@ async function fixture(config: Record<string, unknown> = {}, timeoutMs = 30_000,
     async openwork(init: RequestInit = {}) {
       return fetch(`${url}/api/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer ow_inf_fixture", "content-type": "application/json" }, body: '{"model":"z-ai/glm-5.2","messages":[]}', signal: AbortSignal.timeout(10_000), ...init })
     },
+    async configure(next: Record<string, unknown>) { await fetch(`${url}/__test/config`, { method: "POST", body: JSON.stringify(next), signal: AbortSignal.timeout(5000) }) },
+    async telemetry() { const result: { envelopes: unknown[] } = await (await fetch(`${url}/__test/telemetry`, { signal: AbortSignal.timeout(5000) })).json(); return result.envelopes },
     async state() { return readState(url) },
     async waitFor(predicate: (state: FixtureState) => boolean) {
       for (let i = 0; i < 100; i++) {
@@ -220,7 +240,7 @@ test("both routes record semantic stream errors; Models sanitizes the provider e
   }
 })
 
-test("managed Chat JSON and SSE preserve bytes and independent generation outcomes",  async () => {
+test("managed Chat JSON and SSE preserve bytes and independent generation outcomes", async () => {
   for (const stream of [false, true]) {
     for (const [finishReason, generationOutcome] of [["stop", "completed"], ["length", "length_limited"], ["tool_calls", "tool_calls"], ["content_filter", "content_filtered"]]) {
       const message = { role: "assistant", content: syntheticText }
@@ -250,16 +270,16 @@ test("managed Chat JSON and SSE preserve bytes and independent generation outcom
   }
 })
 
-test("org-provider Anthropic JSON and SSE refusal retains native bytes and transport-ok accounting",  async () => {
-  for (const stream of [false, true]) {
-    const message = { id: "msg_fixture", type: "message", role: "assistant", model: "claude", content: [{ type: "text", text: syntheticText }], stop_reason: "refusal", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }
+test("org-provider Anthropic JSON and SSE terminals retain native bytes and transport-ok accounting", async () => {
+  for (const [reason, outcome] of [["refusal", "refused"], ["max_tokens", "length_limited"], ["end_turn", "completed"], ["tool_use", "tool_calls"]]) for (const stream of [false, true]) {
+    const message = { id: "msg_fixture", type: "message", role: "assistant", model: "claude", content: [{ type: "text", text: syntheticText }], stop_reason: reason, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }
     const responseBody = stream
       ? [
         { type: "message_start", message: { ...message, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } },
         { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
         { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: syntheticText } },
         { type: "content_block_stop", index: 0 },
-        { type: "message_delta", delta: { stop_reason: "refusal", stop_sequence: null }, usage: { output_tokens: 1 } },
+        { type: "message_delta", delta: { stop_reason: reason, stop_sequence: null }, usage: { output_tokens: 1 } },
         { type: "message_stop" },
       ].map((frame) => `event: ${frame.type}\r\ndata: ${JSON.stringify(frame)}\r\n\r\n`).join("")
       : ` ${JSON.stringify(message)}\n`
@@ -269,14 +289,15 @@ test("org-provider Anthropic JSON and SSE refusal retains native bytes and trans
     expect(response.headers.get("content-type")).toContain(stream ? "text/event-stream" : "application/json")
     const bytes = new Uint8Array(await response.arrayBuffer())
     expect(bytes).toEqual(new TextEncoder().encode(responseBody))
-    expect(new TextDecoder().decode(bytes)).toContain('"stop_reason":"refusal"')
+    expect(new TextDecoder().decode(bytes)).toContain(`"stop_reason":"${reason}"`)
     const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
     expect(state.requests).toHaveLength(1)
     expect(state.rows).toHaveLength(1)
     expect(state.rows[0]).toMatchObject({ status: 200, outcome: "ok", error_code: null })
     const diagnostics = f.output + JSON.stringify([state.rows, state.reports])
     expect(diagnostics).not.toContain(syntheticText)
-    expect(state.rows[0]).toMatchObject({ generation_outcome: "refused", provider_terminal_reason: "refusal", input_tokens: 1, output_tokens: 1, total_tokens: 2 })
+    expect(state.rows[0]).toMatchObject({ generation_outcome: outcome, provider_terminal_reason: reason, input_tokens: 1, output_tokens: 1, total_tokens: 2 })
+    assertTerminal(state, { generationOutcome: outcome, providerTerminalReason: reason, upstreamRequestId: "msg_fixture", responseBytes: bytes.byteLength })
   }
 })
 
@@ -569,6 +590,231 @@ test("OpenWork Models requires enabled metadata independently of bucket gating; 
     expect(orgProvider.status).toBe(200)
     await orgProvider.arrayBuffer()
   }
+})
+
+test("Responses JSON and SSE classify structured completion, limits and refusal without inspecting prose", async () => {
+  await using f = await fixture()
+  const cases = [
+    { body: { status: "completed", output: [] }, reason: "completed", outcome: "completed" },
+    { body: { status: "completed", output: [{ type: "message", content: [{ type: "refusal", refusal: marker }] }] }, reason: "refusal", outcome: "refused" },
+    { body: { status: "completed", output: [{ type: "function_call", name: marker, arguments: marker }] }, reason: "tool_calls", outcome: "tool_calls" },
+    { body: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }, reason: "max_output_tokens", outcome: "length_limited" },
+    { body: { status: "incomplete", incomplete_details: { reason: "content_filter" } }, reason: "content_filter", outcome: "content_filtered" },
+    { body: { status: "incomplete", incomplete_details: { reason: marker } }, reason: "unknown", outcome: "unknown" },
+    { body: { status: "in_progress", output: [] }, reason: "unknown", outcome: "unknown" },
+    { body: { status: "completed" }, reason: "unknown", outcome: "unknown" },
+    { body: { refusal: marker, output: [] }, reason: "unknown", outcome: "unknown" },
+  ]
+  for (const stream of [false, true]) for (const entry of cases) {
+    const body = { id: "resp_fixture", model: "x", usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 }, ...entry.body }
+    const responseBody = stream ? `event: response.${body.status ?? "created"}\r\ndata: ${JSON.stringify({ type: body.status === "incomplete" ? "response.incomplete" : "response.completed", response: body })}\r\n\r\n` : ` ${JSON.stringify(body)}\n`
+    await f.configure({ mode: stream ? "synthetic-sse" : "synthetic-json", responseBody })
+    const response = await f.request("/responses", { body: JSON.stringify({ model: "x", input: marker, stream }) })
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe(responseBody)
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    assertTerminal(state, { generationOutcome: entry.outcome, providerTerminalReason: entry.reason, upstreamRequestId: "resp_fixture", transportOutcome: "ok" })
+    expect(state.rows[0]).toMatchObject({ total_tokens: 7, response_bytes: new TextEncoder().encode(responseBody).length })
+    expect(f.output + JSON.stringify([state.rows, state.reports])).not.toContain(marker)
+  }
+  const responseBody = `data: ${JSON.stringify({ type: "response.refusal.done", refusal: marker })}\n\n`
+  await f.configure({ mode: "synthetic-sse", responseBody })
+  expect(await (await f.request()).text()).toBe(responseBody)
+  assertTerminal(await f.waitFor((s) => Boolean(s.rows[0]?.completed_at)), { generationOutcome: "refused", providerTerminalReason: "refusal" })
+})
+
+test("every Chat choice contributes with bounded precedence; repeated terminals and empty output emit once", async () => {
+  await using f = await fixture()
+  for (const route of ["gateway", "openwork"]) for (const stream of [false, true]) {
+    for (const [second, outcome] of [["stop", "completed"], ["length", "length_limited"], ["tool_calls", "tool_calls"], ["content_filter", "content_filtered"]]) {
+      const choices = ["stop", second].map((reason, index) => ({ index, [stream ? "delta" : "message"]: stream ? {} : { role: "assistant", content: "" }, finish_reason: reason }))
+      const body = { id: "chatcmpl_multi", choices, usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, cost: 0.004 } }
+      const frame = `data: ${JSON.stringify(body)}\n\n`
+      const responseBody = stream ? frame + frame + 'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7,"cost":0.004}}\n\ndata: [DONE]\n\n' : JSON.stringify(body)
+      await f.configure({ mode: stream ? "synthetic-sse" : "synthetic-json", responseBody, observerFailure: true })
+      const request = { body: JSON.stringify({ model: route === "gateway" ? "x" : "z-ai/glm-5.2", n: 2, messages: [], stream }) }
+      const response = await (route === "gateway" ? f.request("/chat/completions", request) : f.openwork(request))
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe(responseBody)
+      const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+      assertTerminal(state, { generationOutcome: outcome, providerTerminalReason: second, transportOutcome: "ok", responseBytes: new TextEncoder().encode(responseBody).length })
+      expect(state.rows[0]).toMatchObject({ total_tokens: 7, cost_micro_usd: 4000 })
+      expect(state.requests).toHaveLength(1)
+    }
+  }
+})
+
+test("unsupported, missing and overflowing native terminals remain unknown and IDs are validated", async () => {
+  await using f = await fixture()
+  const cases = [
+    { path: "/chat/completions", provider: "openai", body: { choices: [{ index: 0, finish_reason: marker }] } },
+    { path: "/messages", provider: "anthropic", body: { stop_reason: marker } },
+    { path: "/responses", provider: "openai", body: { status: "incomplete", incomplete_details: { reason: marker } } },
+    { path: "/chat/completions", provider: "openai", body: { choices: [{ index: 999999, finish_reason: "content_filter" }] } },
+    { path: "/chat/completions", provider: "openai", body: { choices: [{ index: 0, finish_reason: null }] } },
+  ]
+  for (const stream of [false, true]) for (const entry of cases) {
+    const body = { id: `invalid ${marker}`, ...entry.body }
+    const responseBody = stream ? `data: ${JSON.stringify(body)}\n\n` : JSON.stringify(body)
+    await f.configure({ provider: entry.provider, mode: stream ? "synthetic-sse" : "synthetic-json", responseBody, upstreamId: `invalid ${marker}` })
+    const response = await f.request(entry.path, { headers: { "api-key": gatewayKey, "content-type": "application/json", "x-sentinel": marker }, body: JSON.stringify({ model: entry.provider === "anthropic" ? "claude" : "x", messages: [{ role: "user", content: marker }], stream }) })
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe(responseBody)
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    assertTerminal(state, { generationOutcome: "unknown", providerTerminalReason: "unknown", upstreamRequestId: null, transportOutcome: "ok" })
+    expect(f.output + JSON.stringify([state.rows, state.reports])).not.toContain(marker)
+  }
+  for (const stream of [false, true]) {
+    const responseBody = stream ? `data: ${JSON.stringify({ padding: "x".repeat(1024 * 1024), choices: [{ index: 0, finish_reason: "content_filter" }] })}\n\n` : "not json"
+    await f.configure({ mode: stream ? "synthetic-sse" : "synthetic-json", responseBody, upstreamId: "request-valid" })
+    expect(await (await f.request("/chat/completions")).text()).toBe(responseBody)
+    assertTerminal(await f.waitFor((s) => Boolean(s.rows[0]?.completed_at)), { generationOutcome: "unknown", upstreamRequestId: "request-valid" })
+  }
+  await f.configure({ mode: "synthetic-json", responseBody: JSON.stringify({ choices: [{ index: 0, finish_reason: "stop" }] }) })
+  await (await f.request("/chat/completions", { body: '{"model":"x","n":2}' })).text()
+  assertTerminal(await f.waitFor((s) => Boolean(s.rows[0]?.completed_at)), { generationOutcome: "unknown" })
+})
+
+test("concurrent requests across both routes and identities retain their own gateway and upstream IDs", async () => {
+  await using f = await fixture({ mode: "concurrent" })
+  const responses = await Promise.all([false, true].flatMap((other) => [false, true].map(async (managed) => {
+    const identity = other ? "other" : "fixture"
+    const headers = { "content-type": "application/json", authorization: managed ? `Bearer ow_inf_${identity}` : `Bearer ${other ? `ow_gw_${"B".repeat(42)}A` : gatewayKey}` }
+    const response = await (managed ? f.openwork({ headers }) : f.request("/chat/completions", { headers }))
+    expect(response.status).toBe(200)
+    const body: { id: string; choices: { finish_reason: string }[] } = await response.json()
+    return { identity, id: response.headers.get("x-openwork-request-id"), body, route: managed ? "openwork_openrouter" : "org_provider" }
+  })))
+  const state = await f.waitFor((s) => s.rows.length === 4 && s.rows.every((row) => Boolean(row.completed_at)))
+  expect(state.requests).toHaveLength(4)
+  expect(terminals(state)).toHaveLength(4)
+  expect(new Set(responses.map((response) => response.id)).size).toBe(4)
+  for (const response of responses) {
+    const row = state.rows.find((row) => row.openwork_request_id === response.id)
+    expect(response.body.id).toBe(`chatcmpl_${response.id}`)
+    expect(row).toMatchObject({ upstream_request_id: "header-request", metadata: expect.objectContaining({ upstream_response_id: response.body.id }), organization_id: `org_${response.identity}`, org_membership_id: `om_${response.identity}`, provider_terminal_reason: response.body.choices[0].finish_reason })
+    expect(terminals(state).filter((receipt) => receipt.openworkRequestId === response.id)).toEqual([expect.objectContaining({ upstreamRequestId: "header-request", upstreamResponseId: response.body.id, organizationId: `org_${response.identity}`, orgMembershipId: `om_${response.identity}`, route: response.route })])
+  }
+  expect(JSON.stringify(state.reports)).not.toContain(marker)
+})
+
+test("partial-output timeout, disconnect and cancellation retain transport failures and exactly one unknown terminal", async () => {
+  for (const route of ["gateway", "openwork"]) for (const failure of ["timeout", "disconnect", "cancel"]) {
+    await using f = await fixture({ mode: "partial-sse", disconnect: true }, failure === "timeout" ? 1000 : 30_000, { GATEWAY_STREAM_IDLE_MS: "1000", INFERENCE_STREAM_IDLE_MS: "1000" })
+    const response = await (route === "gateway" ? f.request("/chat/completions", { body: '{"model":"x","stream":true}' }) : f.openwork({ body: '{"model":"z-ai/glm-5.2","messages":[],"stream":true}' }))
+    expect(response.status).toBe(200)
+    const reader = response.body!.getReader()
+    const first = await reader.read()
+    expect(new TextDecoder().decode(first.value)).toContain(marker)
+    expect((await f.state()).rows[0].completed_at).toBeNull()
+    if (failure === "cancel") await reader.cancel()
+    else {
+      if (failure === "disconnect") await f.release()
+      if (route === "gateway") await expect(reader.read()).rejects.toThrow()
+      else {
+        const last = await reader.read()
+        expect(new TextDecoder().decode(last.value)).toContain(failure === "timeout" ? "upstream_timeout" : "upstream_interrupted")
+        expect((await reader.read()).done).toBe(true)
+      }
+    }
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    expect(state.requests).toHaveLength(1)
+    assertTerminal(state, { generationOutcome: "unknown", providerTerminalReason: "unknown", transportOutcome: failure === "cancel" ? "client_aborted" : "upstream_error", upstreamRequestId: "chatcmpl_partial" })
+    expect(f.output + JSON.stringify(state.reports)).not.toContain(marker)
+  }
+})
+
+function sinkItems(envelopes: unknown[], type: string): Record<string, unknown>[] {
+  const result: Record<string, unknown>[] = []
+  for (const envelope of envelopes) {
+    if (!Array.isArray(envelope) || !Array.isArray(envelope[1])) continue
+    for (const item of envelope[1]) {
+      if (!Array.isArray(item) || !record(item[0]) || item[0].type !== type || !record(item[1])) continue
+      if (Array.isArray(item[1].items)) result.push(...item[1].items.filter(record))
+    }
+  }
+  return result
+}
+function sinkAttributes(item: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(record(item.attributes) ? item.attributes : {}).map(([key, value]) => [key, record(value) ? value.value : value]))
+}
+
+test("Sentry SDK local sink receives warning Logs and low-cardinality counters with trace sampling zero", async () => {
+  for (const [level, enabled, expectedLogs] of [["", true, 4], ["info", true, 6], ["error", true, 0], ["off", true, 0], ["warn", false, 0]]) {
+    await using f = await fixture({}, 30_000, { TERMINAL_SENTRY_FIXTURE: "1", SENTRY_DSN: enabled ? "http://public@127.0.0.1:1/1" : "", SENTRY_LOG_LEVEL: String(level), SENTRY_TRACES_SAMPLE_RATE: "0" })
+    const responses = [
+      { managed: true, provider: "openai", reason: "content_filter", body: { choices: [{ index: 0, message: { role: "assistant", content: marker, tool_calls: [{ function: { name: marker, arguments: marker } }] }, finish_reason: "content_filter" }] } },
+      { managed: false, provider: "anthropic", reason: "refusal", body: { id: "msg_sink", stop_reason: "refusal", content: [{ type: "text", text: marker }] } },
+      { managed: true, provider: "openai", reason: "stop", body: { choices: [{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "stop" }] } },
+    ]
+    const envelopes: unknown[] = []
+    for (const stream of [false, true]) for (const entry of responses) {
+      const terminal = entry.managed ? { id: "chatcmpl_sink", choices: [{ index: 0, delta: {}, finish_reason: entry.reason }] } : { type: "message_delta", delta: { stop_reason: entry.reason, refusal: marker } }
+      const responseBody = stream
+        ? `data: ${JSON.stringify(terminal)}\n\ndata: ${JSON.stringify(terminal)}\n\n${entry.managed ? "data: [DONE]\n\n" : "data: {\"type\":\"message_stop\"}\n\n"}`
+        : JSON.stringify(entry.body)
+      await f.configure({ provider: entry.provider, mode: stream ? "synthetic-sse" : "synthetic-json", responseBody })
+      const request = { body: JSON.stringify({ model: entry.managed ? "z-ai/glm-5.2" : "claude", stream, messages: [{ role: "user", content: marker }], tools: entry.managed ? [{ type: "function", function: { name: marker, parameters: { type: "object" } } }] : [{ name: marker, input_schema: { type: "object" } }] }), headers: { "content-type": "application/json", authorization: entry.managed ? "Bearer ow_inf_fixture" : `Bearer ${gatewayKey}`, "x-sentinel": marker } }
+      const response = await (entry.managed ? f.openwork(request) : f.request("/messages", request))
+      expect(await response.text()).toBe(responseBody)
+      const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+      assertTerminal(state, { providerTerminalReason: entry.reason })
+      expect(state.reports.filter(record).filter((report) => "reason" in report)).toHaveLength(0)
+      envelopes.push(...await f.telemetry())
+    }
+    const logs = sinkItems(envelopes, "log")
+    expect(logs).toHaveLength(Number(expectedLogs))
+    for (const log of logs) {
+      expect(log.body).toBe("OpenWork inference terminal")
+      const attributes = sinkAttributes(log)
+      expect(attributes).toMatchObject({ release: "fixture-release", environment: "fixture", transportOutcome: "ok", status: 200 })
+      expect(attributes.openworkRequestId).toMatch(/^[a-f0-9]{32}$/)
+      expect(log.level).toBe(attributes.generationOutcome === "completed" ? "info" : "warn")
+    }
+    const metrics = sinkItems(envelopes, "trace_metric")
+    expect(metrics).toHaveLength(enabled ? 6 : 0)
+    for (const metric of metrics) {
+      expect(metric.name).toBe("gateway.generation.terminal")
+      expect(metric.value).toBe(1)
+      const attributes = sinkAttributes(metric)
+      expect(attributes).toMatchObject({ transportOutcome: "ok" })
+      expect(Object.keys(attributes).filter((key) => !key.startsWith("sentry."))).toEqual(expect.arrayContaining(["route", "protocol", "generationOutcome", "transportOutcome"]))
+      expect(JSON.stringify(metric)).not.toMatch(/openworkRequestId|upstreamRequestId|orgMembershipId|organizationId|modelAlias/)
+    }
+    expect(JSON.stringify(envelopes)).not.toContain(marker)
+    expect(JSON.stringify(envelopes)).not.toMatch(/"type":"event"|"type":"transaction"|fingerprint/)
+  }
+})
+
+test("managed invalid JSON, missing terminals and unknown reasons never manufacture filtering", async () => {
+  await using f = await fixture()
+  for (const entry of [
+    { stream: false, body: "not json", code: "upstream_malformed_response" },
+    { stream: false, body: '{"choices":[]}', code: "upstream_incomplete" },
+    { stream: false, body: JSON.stringify({ choices: [{ index: 0, message: { content: marker }, finish_reason: marker }] }), code: "upstream_incomplete" },
+    { stream: true, body: 'data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}\n\ndata: [DONE]\n\n', code: "upstream_incomplete" },
+    { stream: true, body: `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: marker }] })}\n\n`, code: "upstream_malformed_stream" },
+  ]) {
+    await f.configure({ mode: entry.stream ? "synthetic-sse" : "synthetic-json", responseBody: entry.body })
+    const response = await f.openwork({ body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], stream: entry.stream }) })
+    expect(response.status).toBe(entry.stream ? 200 : 502)
+    const text = await response.text()
+    expect(text).toContain(entry.code)
+    expect(text).not.toContain(marker)
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    expect(state.rows[0].error_code).toBe(entry.code)
+    assertTerminal(state, { transportOutcome: "upstream_error", generationOutcome: "unknown", providerTerminalReason: "unknown" })
+  }
+  const completed = 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+  await f.configure({ mode: "synthetic-sse", responseBody: completed + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}\n\n' })
+  expect(await (await f.openwork({ body: '{"model":"z-ai/glm-5.2","messages":[],"stream":true}' })).text()).toBe(completed)
+  assertTerminal(await f.waitFor((s) => Boolean(s.rows[0]?.completed_at)), { generationOutcome: "completed", providerTerminalReason: "stop" })
+})
+
+test("terminal observation preserves backpressure, exact bytes and cancellation even when observers throw", async () => {
+  await using f = await fixture()
+  const result: unknown = await (await fetch(`${f.url}/__test/backpressure`, { signal: AbortSignal.timeout(5000) })).json()
+  expect(result).toEqual([false, true].map((managed) => ({ managed, beforeRead: 0, afterRead: 1, pulls: 1, cancellations: 1, finishes: 1, exactBytes: true, generation: { generationOutcome: "unknown", providerTerminalReason: "unknown" } })))
 })
 
 test("optional observers cannot alter ordinary inference bytes", async () => {

@@ -2,6 +2,7 @@
 // retain message content: only usage counters and the reported model.
 
 import type { GenerationTerminal } from "../generation-outcome.js"
+import { validatedUpstreamId } from "../generation-outcome.js"
 
 export type ParsedUsage = {
   generation?: GenerationTerminal
@@ -43,8 +44,13 @@ export function hasUsage(usage: ParsedUsage) {
 
 export function captureResponseIdentity(target: ParsedUsage, event: unknown) {
   if (!isRecord(event)) return
-  const id = event.id ?? event.responseId ?? event.requestId
-  if (typeof id === "string" && id.length <= 255) target.upstreamRequestId = id
+  const id = validatedUpstreamId(event.id ?? event.responseId ?? event.requestId)
+  if (id && !target.upstreamRequestId) target.upstreamRequestId = id
+  captureResponseError(target, event)
+}
+
+function captureResponseError(target: ParsedUsage, event: unknown) {
+  if (!isRecord(event)) return
   if (event.error != null || event.type === "error" || event.type === "response.failed" || event.status === "failed") {
     target.streamError = "upstream_stream_error"
   }
@@ -85,7 +91,7 @@ export function createSseUsageParser(
       if (eventType === "error") usage.streamError = "upstream_stream_error"
       try {
         const event: unknown = JSON.parse(data)
-        captureResponseIdentity(usage, event)
+        captureResponseError(usage, event)
         applyEvent(usage, event)
       } catch {
         // Malformed data and [DONE] are not usage.

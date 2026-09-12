@@ -1,12 +1,17 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { generationTerminal, providerTerminalReason } from "../src/generation-outcome.js"
+import { generationTerminal, providerTerminalReason, validatedUpstreamId } from "../src/generation-outcome.js"
 import { createChatGenerationObserver } from "../src/usage/generation.js"
 import { parseOpenAiChatJsonUsage, createOpenAiChatSseUsageParser } from "../src/usage/openai-chat.js"
 import { parseAnthropicMessagesJsonUsage, createAnthropicMessagesSseUsageParser } from "../src/usage/anthropic-messages.js"
 import { parseOpenAiResponsesJsonUsage, createOpenAiResponsesSseUsageParser } from "../src/usage/openai-responses.js"
 
 test("generation reasons are bounded independently of transport", () => {
+  for (const id of ["msg_fixture", "chatcmpl-abc", "a".repeat(128)]) assert.equal(validatedUpstreamId(id), id)
+  for (const id of ["a".repeat(129), "text with spaces", "url?query", "header\r\nvalue", "", 2, null]) assert.equal(validatedUpstreamId(id), null)
+  const malformedReason = { toString: "not callable" }
+  assert.equal(parseAnthropicMessagesJsonUsage({ stop_reason: malformedReason, usage: { output_tokens: 3 } }).outputTokens, 3)
+  assert.equal(parseOpenAiChatJsonUsage({ choices: [{ index: 0, finish_reason: malformedReason }], usage: { completion_tokens: 3 } }).outputTokens, 3)
   for (const value of [null, undefined, 200, {}, "SECRET_MARKER_DO_NOT_LOG", "error", "cancelled"]) {
     assert.equal(providerTerminalReason(value), "unknown")
     assert.deepEqual(generationTerminal(value), { generationOutcome: "unknown", providerTerminalReason: "unknown" })

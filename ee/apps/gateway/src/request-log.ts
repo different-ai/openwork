@@ -13,6 +13,7 @@ import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
 import type { PricingCatalog } from "./pricing.js"
 import type { GenerationTerminal } from "./generation-outcome.js"
+import { validatedUpstreamId } from "./generation-outcome.js"
 
 export type GatewayRequestLogRow = typeof GatewayRequestLogTable.$inferInsert
 
@@ -62,6 +63,7 @@ export type RequestLogFinishInput = {
   errorCode?: string | null
   upstreamRequestId?: string | null
   responseBytes?: number | null
+  firstOutputMs?: number | null
 }
 
 export type RequestLogRecorderDependencies = {
@@ -255,7 +257,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         reasoning_tokens: usage?.reasoningTokens ?? null,
         usage_source: usage && hasUsageTokens(usage) ? usage.usageSource : "missing",
         cost_micro_usd: estimateCost(started, usage, upstreamModel, pricing),
-        upstream_request_id: input.upstreamRequestId ?? usage?.upstreamRequestId ?? null,
+        upstream_request_id: validatedUpstreamId(input.upstreamRequestId) ?? validatedUpstreamId(usage?.upstreamRequestId),
         openwork_request_id: started.openworkRequestId,
         started_at: startedAt,
         first_byte_at: firstByteAt,
@@ -265,10 +267,13 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         metadata: { cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
       }
       if (row.cost_micro_usd === null) row.metadata = { cost_source: "unknown" }
+      const upstreamResponseId = validatedUpstreamId(usage?.upstreamRequestId)
+      if (upstreamResponseId) row.metadata = { ...row.metadata, upstream_response_id: upstreamResponseId }
       try {
         dependencies.reporter.terminal?.({
           openworkRequestId: started.openworkRequestId,
           upstreamRequestId: row.upstream_request_id ?? null,
+          upstreamResponseId, firstOutputMs: input.firstOutputMs ?? null,
           organizationId: started.identity.organizationId,
           orgMembershipId: started.identity.orgMembershipId,
           route: started.route, protocol: started.protocol,

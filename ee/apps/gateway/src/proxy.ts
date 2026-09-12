@@ -810,8 +810,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         onFinish(result) {
           c.req.raw.signal.removeEventListener("abort", cancel)
           finishAnalytics(result.outcome === "completed" ? "completed" : result.outcome === "cancelled" ? "cancelled" : "failed")
-          recordUsage(recorder, usageParser.result(), "stream")
-          void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, upstreamRequestId: upstreamRequestId(upstream.headers) })
+          recordUsage(recorder, { ...usageParser.result(), generation: result.generation }, "stream")
+          void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, firstOutputMs: result.firstOutputMs, upstreamRequestId: upstreamRequestId(upstream.headers) })
         },
       }), { headers })
     }

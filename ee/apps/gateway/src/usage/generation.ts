@@ -17,7 +17,7 @@ export function createChatGenerationObserver(expectedChoices?: number) {
           indices.add(choice.index)
           if (!choices.has(choice.index)) choices.set(choice.index, null)
           if (choice.finish_reason == null) continue
-          const reason = ["stop", "length", "tool_calls", "content_filter"].includes(String(choice.finish_reason)) ? choice.finish_reason : "unknown"
+          const reason = typeof choice.finish_reason === "string" && ["stop", "length", "tool_calls", "content_filter"].includes(choice.finish_reason) ? choice.finish_reason : "unknown"
           const next = generationTerminal(reason)
           const previous = choices.get(choice.index)
           choices.set(choice.index, previous && previous.providerTerminalReason !== next.providerTerminalReason ? generationTerminal("unknown") : next)
@@ -32,11 +32,11 @@ export function createChatGenerationObserver(expectedChoices?: number) {
 }
 
 export function anthropicGeneration(reason: unknown): GenerationTerminal {
-  return generationTerminal(["refusal", "max_tokens", "end_turn", "tool_use", "stop_sequence"].includes(String(reason)) ? reason : "unknown")
+  return generationTerminal(typeof reason === "string" && ["refusal", "max_tokens", "end_turn", "tool_use", "stop_sequence"].includes(reason) ? reason : "unknown")
 }
 
 export function responsesGeneration(response: unknown): GenerationTerminal {
-  if (!isRecord(response) || !["completed", "incomplete"].includes(String(response.status))) return generationTerminal("unknown")
+  if (!isRecord(response) || (response.status !== "completed" && response.status !== "incomplete")) return generationTerminal("unknown")
   if (response.status === "incomplete") {
     const reason = isRecord(response.incomplete_details) ? response.incomplete_details.reason : null
     return generationTerminal(reason === "content_filter" || reason === "max_output_tokens" ? reason : "unknown")

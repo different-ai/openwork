@@ -8,6 +8,8 @@ import type { GatewayRequestOutcome, GatewayRequestProtocol, GatewayRequestRoute
 export type InferenceTerminalReceipt = GenerationTerminal & {
   openworkRequestId: string
   upstreamRequestId: string | null
+  upstreamResponseId: string | null
+  firstOutputMs: number | null
   organizationId: string
   orgMembershipId: string
   route: GatewayRequestRoute
@@ -143,7 +145,7 @@ export const sentryInferenceReporter: InferenceReporter = {
         transportOutcome: report.transportOutcome, generationOutcome: report.generationOutcome,
       } })
     } catch {}
-    const level = report.generationOutcome === "content_filtered" || report.generationOutcome === "refused" ? "warn" : "info"
+    const level = report.generationOutcome === "content_filtered" || report.generationOutcome === "refused" ? "warn" : report.transportOutcome === "ok" ? "info" : "error"
     if (shouldEmitSentryLog(level)) {
       const options = Sentry.getClient()?.getOptions()
       Sentry.logger[level]("OpenWork inference terminal", { ...report, release: options?.release ?? "unknown", environment: options?.environment ?? "unknown" })
