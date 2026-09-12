@@ -149,6 +149,106 @@ test("HTTP transcript fixture preserves the prior reply and counts three session
   }
 });
 
+test("HTTP credential witness redacts unstructured secrets before tool caps and search", async ({ evidence }) => {
+  const original = { url: process.env.OPENWORK_SERVER_URL, token: process.env.OPENWORK_SERVER_TOKEN };
+  const session = { id: "ses_credentials", title: "Synthetic credential witness", directory: "/tmp/session-credential-witness", time: { created: 100, updated: 400 } };
+  const fixtures = [
+    { source: "AKIA" + "A".repeat(16), marker: "[redacted:aws-access-key]" },
+    { source: `-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(4)}\n-----END PRIVATE KEY-----`, marker: "[redacted:private-key]" },
+    { source: 'password: "synthetic \\"quoted\\" private value"', marker: "[redacted:credential-assignment]" },
+    { source: "ghp_" + "G".repeat(36), marker: "[redacted:github-token]" },
+    { source: "xoxb-" + "S".repeat(40), marker: "[redacted:slack-token]" },
+    { source: "sk-proj-" + "P".repeat(40) + "_" + "Q".repeat(40), marker: "[redacted:api-token]" },
+    { source: 'Authorization: Digest synthetic-private, nonce="private nonce"', marker: "[redacted:authorization]" },
+    { source: 'SERVICE_PASSWORD="synthetic \\"quoted\\" private value"', marker: "[redacted:env-secret]" },
+  ];
+  const prefix = `${"x".repeat(1958)}${"\n".repeat(10)} `;
+  const capSecret = "sk-" + "C".repeat(80);
+  const pem = `-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(200)}`;
+  const sha = "0123456789abcdef".repeat(2) + "01234567";
+  const uuid = ["12345678", "1234", "4123", "8123", "123456789012"].join("-");
+  const control = `commit ${sha} request ${uuid}`;
+  const completed = (callID: string, source: string) => ({ type: "tool", tool: "bash", callID, state: { status: "completed", input: { nested: [{ value: source }, JSON.stringify({ detail: source })] }, output: source, time: { start: 300, end: 301 } } });
+  const messages = [{ info: { id: "msg_credentials", role: "assistant", time: { created: 300 } }, parts: [
+    ...fixtures.flatMap(({ source }, index) => [completed(`call_${index}`, source), { type: "tool", tool: "bash", callID: `error_${index}`, state: { status: "error", input: {}, error: source, time: { start: 302, end: 303 } } }]),
+    completed("call_cap", prefix + capSecret + " after " + "z".repeat(100)),
+    completed("call_pem_cap", "x".repeat(1976) + " " + pem),
+    completed("call_control", control),
+  ] }];
+  const base = "/workspace/ws/opencode";
+  const requests: string[] = [];
+  const unexpected: string[] = [];
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    const json = (status: number, body: unknown) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(body)); };
+    requests.push(`${request.method} ${path}`);
+    if (request.headers.authorization !== "Bearer credential-witness-token") return json(401, { error: "Unauthorized" });
+    if (request.method !== "GET") return json(405, { error: "Read-only witness" });
+    if (path === "/workspaces") return json(200, { items: [{ id: "ws", name: "Witness", path: session.directory }] });
+    if (path === `${base}/session`) return json(200, [session]);
+    if (path === `${base}/session/${session.id}`) return json(200, session);
+    if (path === `${base}/session/${session.id}/message`) return json(200, messages);
+    if (path === `${base}/session/status`) return json(200, {});
+    if ([`${base}/session/${session.id}/children`, `${base}/permission`, `${base}/question`].includes(path)) return json(200, []);
+    unexpected.push(path);
+    return json(404, { error: "Unknown witness route" });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Credential witness did not bind a port");
+    process.env.OPENWORK_SERVER_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPENWORK_SERVER_TOKEN = "credential-witness-token";
+    const plugin = await OpenWorkExtensionsPreview();
+    const query = async (id: string, args: Record<string, unknown>) => {
+      const output = record(JSON.parse(await plugin.tool.openwork_query.execute({ id, args: { workspaceId: "ws", ...args } })));
+      expect(output).toMatchObject({ ok: true, id });
+      expect(record(output.result).ok).toBe(true);
+      return record(output.result);
+    };
+    const read = await query("session.read", { sessionId: session.id, parts: ["tool"] });
+    const tools = records(read.messages).flatMap((message) => records(message.tools));
+    const activity = await query("session.activity", { sessionId: session.id });
+    const errors = records(record(activity.errors).list);
+    expect(tools).toHaveLength(fixtures.length * 2 + 3);
+    expect(errors).toHaveLength(fixtures.length);
+    for (const [index, { source, marker }] of fixtures.entries()) {
+      expect(text(tools[index * 2]?.output), "raw credential must not survive production tool output").not.toContain(source);
+      expect(tools[index * 2]?.output).toBe(JSON.stringify(marker));
+      expect(tools[index * 2]?.input).toBe(JSON.stringify({ nested: [{ value: marker }, JSON.stringify({ detail: marker })] }));
+      expect(tools[index * 2 + 1]?.error).toBe(JSON.stringify(marker));
+      expect(errors[index]?.message).toBe(marker);
+      expect((await query("session.search", { query: source, in: ["tool"], match: "phrase" })).results).toEqual([]);
+      expect(records((await query("session.search", { query: marker, in: ["tool"], match: "phrase" })).results)).toHaveLength(1);
+    }
+    evidence.recordAssertionEvidence("Unstructured credential classes are redacted across production read, search and activity", "A test-owned read-only HTTP witness supplied eight independent synthetic credential classes. Exact typed markers replaced complete values in output, nested input, JSON-encoded nested strings and tool errors; activity retained only markers, secret searches returned nothing and marker searches found the witness session. No live credentials or inference were used.", true);
+    const capped = tools.find((tool) => tool.callId === "call_cap");
+    expect(JSON.stringify(prefix).length - 1).toBe(1980);
+    expect(JSON.stringify(prefix + capSecret).slice(0, 2000)).toContain(capSecret.slice(0, 20));
+    expect(capped?.output).toBe(JSON.stringify(prefix + "[redacted:api-token] after " + "z".repeat(100)).slice(0, 2000));
+    expect(text(capped?.output)).toContain("[redacted:api-token]");
+    expect(capped?.truncated).toBe(true);
+    expect(JSON.stringify(read)).not.toContain(capSecret.slice(0, 20));
+    const pemRead = text(tools.find((tool) => tool.callId === "call_pem_cap")?.output);
+    expect(pemRead).toBe(JSON.stringify("x".repeat(1976) + " [redacted:private-key]").slice(0, 2000));
+    expect(pemRead).toContain("[redacted:private-key]");
+    expect(pemRead).not.toContain("-----BEGIN");
+    expect(JSON.stringify(read)).not.toContain("synthetic-body");
+    expect(tools.find((tool) => tool.callId === "call_control")?.output).toBe(JSON.stringify(control));
+    for (const secret of [capSecret.slice(0, 20), "synthetic-body"]) expect((await query("session.search", { query: secret, in: ["tool"] })).results).toEqual([]);
+    for (const queryText of [sha, uuid]) expect(records((await query("session.search", { query: queryText, in: ["tool"], match: "phrase" })).results)).toHaveLength(1);
+    expect(unexpected).toEqual([]);
+    expect(requests.every((request) => request.startsWith("GET "))).toBe(true);
+    evidence.recordAssertionEvidence("Redaction precedes JSON encoding and caps, while SHA1 and UUID survive", "The raw synthetic API token straddled offset 1980 after JSON encoding: clipping first demonstrably retained its prefix, while production returned the typed marker and no fragment. An unterminated multiline PEM straddling the cap was removed through EOF. SHA1 and UUID controls remained byte-identical and searchable. Witness traffic was GET-only on declared routes.", true);
+  } finally {
+    if (original.url === undefined) delete process.env.OPENWORK_SERVER_URL;
+    else process.env.OPENWORK_SERVER_URL = original.url;
+    if (original.token === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
+    else process.env.OPENWORK_SERVER_TOKEN = original.token;
+    if (server.listening) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("session.read and session.activity expose a real isolated headless shell call without leaking tool data by default", { timeout: 300_000 }, async ({ place, evidence }) => {
   needs({ commands: ["bun"] });
   if (place.kind !== "local") throw new SkipError("local manifest proof; Daytona requires a remote runtime manifest adapter");
