@@ -92,9 +92,9 @@ describe("restricted desktop policy mode", () => {
 
 describe("allowManageExtensions Library gate", () => {
   test("removes only the local add flows and keeps organization-approved ones", () => {
-    const signedInRestricted = { cloudSignedIn: true, allowManageExtensions: false };
+    const signedInRestricted = { cloudSignedIn: true, allowManageExtensions: false, canManageCloudConnections: true };
     expect(libraryAddAction("workspace-mcp", signedInRestricted)).toBeNull();
-    expect(libraryAddAction("mcp", signedInRestricted)).toEqual({ type: "den-modal", kind: "mcp" });
+    expect(libraryAddAction("mcp", signedInRestricted)).toEqual({ type: "den-url", kind: "connection" });
     expect(libraryAddAction("skill", signedInRestricted)).toEqual({ type: "den-modal", kind: "skill" });
     expect(libraryAddAction("workspace-mcp", { cloudSignedIn: true, allowManageExtensions: true })).toEqual({ type: "workspace-mcp" });
   });

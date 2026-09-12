@@ -1,14 +1,26 @@
 import { spawn } from "node:child_process";
+import { appendFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const DEFAULT_TIMEOUT_MS = 4000;
+export const EXTERNAL_OPEN_CAPTURE_FILENAME = "openwork-eval-external-opens.jsonl";
+
+export function shouldCaptureExternalOpens(isPackaged, env) {
+  return isPackaged === false
+    && env.OPENWORK_DEV_MODE === "1"
+    && env.OPENWORK_EVAL_CAPTURE_EXTERNAL_OPENS === "1";
+}
 
 function describeError(error) {
   if (error instanceof Error && error.message.trim()) return error.message;
   return String(error ?? "unknown error");
 }
 
-async function defaultOpenExternal(url) {
-  const electron = await import("electron");
+async function defaultOpenExternal(url, electron, capture, appendCapture) {
+  if (capture) {
+    await appendCapture(join(electron.app.getPath("userData"), EXTERNAL_OPEN_CAPTURE_FILENAME), `${JSON.stringify(url)}\n`, { encoding: "utf8", mode: 0o600 });
+    return;
+  }
   if (typeof electron.shell?.openExternal !== "function") {
     throw new Error("Electron shell.openExternal is unavailable");
   }
@@ -25,10 +37,13 @@ export async function openExternalUrl(url, deps = {}) {
   }
 
   const timeoutMs = Number.isFinite(deps.timeoutMs) ? deps.timeoutMs : DEFAULT_TIMEOUT_MS;
-  const openExternal = deps.openExternal ?? defaultOpenExternal;
   let timeoutId = null;
+  let capture = false;
 
   try {
+    const electron = deps.openExternal ? null : await (deps.loadElectron ?? (() => import("electron")))();
+    capture = electron !== null && shouldCaptureExternalOpens(electron.app?.isPackaged, env);
+    const openExternal = deps.openExternal ?? ((value) => defaultOpenExternal(value, electron, capture, deps.appendCapture ?? appendFile));
     // why: shell.openExternal can hang forever on Windows machines with broken https URL associations; silence is the bug we're fixing.
     await Promise.race([
       Promise.resolve().then(() => openExternal(url)),
@@ -44,7 +59,7 @@ export async function openExternalUrl(url, deps = {}) {
     console.error("[shell] openExternal failed:", message);
 
     const platform = deps.platform ?? process.platform;
-    if (platform === "win32") {
+    if (platform === "win32" && !capture) {
       const spawnProcess = deps.spawnProcess ?? spawn;
       try {
         console.error("[shell] attempting rundll32 browser fallback");

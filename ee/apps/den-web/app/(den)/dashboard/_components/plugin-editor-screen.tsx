@@ -225,7 +225,9 @@ export function PluginEditorScreen() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [components, setComponents] = useState<DraftComponent[]>([]);
+  const [components, setComponents] = useState<DraftComponent[]>(() => searchParams.get("component") === "skill"
+    ? [{ key: 0, kind: "skill", name: "", description: "", content: "", connectionId: "" }]
+    : []);
   const [nextKey, setNextKey] = useState(1);
   const [marketplaceId, setMarketplaceId] = useState<string>("");
   const [marketplaceTouched, setMarketplaceTouched] = useState(false);

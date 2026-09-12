@@ -11,7 +11,7 @@
   "connect-readiness-preseeded.e2e.test.ts": 1,
   "connector-tool-call-branding.e2e.test.ts": 1,
   "cross-workspace-split-view.e2e.test.ts": 14,
-  "library-add-connector-discovery.e2e.test.ts": 13,
+  "library-add-connector-discovery.e2e.test.ts": 1,
   "library-signed-in-render-stability.e2e.test.ts": 3,
   "live-tool-visible-after-session-switch.e2e.test.ts": 7,
   "llm-provider-access-parity.e2e.test.ts": 8,

@@ -15,6 +15,7 @@ export type DenListRowProps = {
   tone?: DenListRowTone;
   /** Temporary emphasis, e.g. a row targeted by a deep link. */
   focused?: boolean;
+  layout?: "list" | "grid";
   dataAttributes?: Record<string, string | undefined>;
 };
 
@@ -42,20 +43,21 @@ export function DenListRow({
   ariaLabel,
   tone = "default",
   focused = false,
+  layout = "list",
   dataAttributes,
 }: DenListRowProps) {
-  const className = `flex items-center gap-3 px-6 py-4 transition ${tone === "warning" ? "bg-amber-50/40" : ""} ${href || onClick ? "cursor-pointer hover:bg-gray-50" : ""} ${focused ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`;
+  const className = `flex gap-3 px-6 py-4 transition ${layout === "grid" ? "h-full flex-wrap items-start rounded-2xl border border-gray-100 bg-white" : "items-center"} ${tone === "warning" ? "bg-amber-50/40" : ""} ${href || onClick ? "cursor-pointer hover:bg-gray-50" : ""} ${focused ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`;
   const content = (
     <>
       {leading}
-      <div className="min-w-0 flex-1">
+      <div className={layout === "grid" ? "order-2 w-full min-w-0" : "min-w-0 flex-1"}>
         <div className="flex flex-wrap items-center gap-2">
           <div className="truncate text-[14px] font-semibold text-gray-900">{title}</div>
           {chips}
         </div>
-        {meta ? <div className="truncate text-[12px] text-gray-500">{meta}</div> : null}
+        {meta ? <div className={`${layout === "grid" ? "mt-2 line-clamp-3 break-words" : "truncate"} text-[12px] text-gray-500`}>{meta}</div> : null}
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {action ? <div className={`shrink-0 ${layout === "grid" ? "ml-auto" : ""}`}>{action}</div> : null}
     </>
   );
 

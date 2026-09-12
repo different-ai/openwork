@@ -190,7 +190,7 @@ const LIBRARY_ITEM_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
   switch (filter) {
     case "all":
-      return ["skill", "command", "agent", "workspace-mcp", "connection"];
+      return ["mcp", "skill", "plugin"];
     case "skill":
       return ["skill"];
     case "command":
@@ -198,9 +198,9 @@ export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
     case "agent":
       return ["agent"];
     case "mcp":
-      return ["workspace-mcp"];
+      return ["mcp"];
     case "plugin":
-      return [];
+      return ["plugin"];
     case "connection":
       return ["connection"];
     default:
@@ -213,7 +213,7 @@ export function isLibraryAuthorableKind(kind: LibraryAddKind): kind is LibraryAu
 }
 
 export type LibraryAddAction =
-  | { type: "den-url"; kind: "connection" }
+  | { type: "den-url"; kind: "connection" | "mcp" }
   | { type: "den-modal"; kind: LibraryAuthorableKind }
   | { type: "workspace-mcp" };
 
@@ -223,13 +223,17 @@ export function libraryAddAction(
   options: {
     cloudSignedIn: boolean;
     allowManageExtensions: boolean;
+    canManageCloudConnections?: boolean;
   },
 ): LibraryAddAction | null {
   if (addKind === "workspace-mcp") {
     return options.allowManageExtensions ? { type: "workspace-mcp" } : null;
   }
   if (!options.cloudSignedIn) return null;
-  if (addKind === "connection") return { type: "den-url", kind: "connection" };
+  if (addKind === "connection" || addKind === "mcp") {
+    // Members browse their granted connections; only admins enter connector setup.
+    return { type: "den-url", kind: options.canManageCloudConnections === true ? "connection" : "mcp" };
+  }
   if (isLibraryAuthorableKind(addKind)) return { type: "den-modal", kind: addKind };
   return null;
 }
