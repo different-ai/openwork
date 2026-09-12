@@ -11,7 +11,6 @@ function group(id: string, sessions: SessionListItem[]): WorkspaceSessionGroup {
   return {
     workspace: { id, name: id, path: `/work/${id}`, preset: "starter", workspaceType: "local" },
     sessions,
-    sessionsLoaded: true,
     status: "ready",
   };
 }

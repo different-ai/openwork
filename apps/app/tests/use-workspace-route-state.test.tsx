@@ -187,7 +187,8 @@ for (const staleCompletesFirst of [true, false]) {
     await act(async () => {
       initial.find((request) => request.workspaceId === "ws_2")?.response.resolve([session("ws_2", "cached-v1")]);
     });
-    expect(route().loadedWorkspaceIds.has("ws_2")).toBe(true);
+    expect(route().sessionsByWorkspaceId.ws_2.map((item) => item.id)).toEqual(["cached-v1"]);
+    expect(route().retryingWorkspaceIds).not.toContain("ws_2");
     const stale = initial.filter((request) => request.workspaceId === "ws_1");
 
     localStatus = deferred();
@@ -207,9 +208,8 @@ for (const staleCompletesFirst of [true, false]) {
       await finishStale();
       expect(route().sessionsByWorkspaceId.ws_1).toEqual([]);
       expect(route().sessionsByWorkspaceId.ws_2.map((item) => item.id)).toEqual(["cached-v1"]);
-      expect(route().loadedWorkspaceIds.has("ws_1")).toBe(false);
-      expect(route().loadedWorkspaceIds.has("ws_2")).toBe(false);
       expect(route().retryingWorkspaceIds).toContain("ws_1");
+      expect(route().retryingWorkspaceIds).toContain("ws_2");
     }
     await act(async () => {
       for (const request of fresh) request.response.resolve([session(request.workspaceId, "fresh")]);
@@ -218,9 +218,55 @@ for (const staleCompletesFirst of [true, false]) {
     expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id)).toEqual(["fresh"]);
     expect(route().sessionsByWorkspaceId.ws_2.map((item) => item.id)).toEqual(["fresh"]);
     expect(route().retryingWorkspaceIds).not.toContain("ws_1");
-    expect(route().loadedWorkspaceIds.has("ws_2")).toBe(true);
+    expect(route().retryingWorkspaceIds).not.toContain("ws_2");
   });
 }
+
+test("offline recovery reloads cleared inventories even when the unselected remote scope is unchanged", async () => {
+  await mount();
+  await publishRouting(false);
+  const initial = [...requests];
+  expect(initial.map((request) => request.workspaceId).sort()).toEqual(["remote", "ws_1", "ws_2"]);
+  await act(async () => {
+    for (const request of initial) request.response.resolve([session(request.workspaceId, "cached")]);
+  });
+  for (const workspace of workspaces) {
+    expect(route().sessionsByWorkspaceId[workspace.id].map((item) => item.id)).toEqual(["cached"]);
+  }
+  // Healthy refreshes must not reload already-loaded, unselected inventories.
+  await act(async () => { await route().refreshRouteState({ supersede: true }); });
+  expect(requests).toHaveLength(3);
+
+  // Web disconnect clears inventory; transient desktop gaps retain it instead.
+  const onlineConnection = connection;
+  connection = { baseUrl: "", token: "" };
+  await act(async () => { await route().refreshRouteState({ supersede: true }); });
+  expect(route().sessionsByWorkspaceId).toEqual({});
+  expect(requests).toHaveLength(3);
+  expect(route().selectedWorkspaceId).toBe("ws_1");
+
+  connection = onlineConnection;
+  await act(async () => { await route().refreshRouteState({ supersede: true }); });
+  const recovered = requests.slice(initial.length);
+  expect(recovered.map((request) => request.workspaceId).sort()).toEqual(["remote", "ws_1", "ws_2"]);
+  const remoteBefore = initial.find((request) => request.workspaceId === "remote");
+  const remoteAfter = recovered.find((request) => request.workspaceId === "remote");
+  if (!remoteBefore || !remoteAfter) throw new Error("Expected remote inventory before and after recovery");
+  expect(remoteAfter.engine).toBe(remoteBefore.engine);
+  expect(remoteAfter.endpoint.baseUrl).toBe(remoteBefore.endpoint.baseUrl);
+  expect(remoteAfter.endpoint.token).toBe(remoteBefore.endpoint.token);
+  expect(remoteAfter.endpoint.workspaceId).toBe(remoteBefore.endpoint.workspaceId);
+  expect(route().sessionsByWorkspaceId.rem_remote).toEqual([]);
+  expect(route().retryingWorkspaceIds).toContain("rem_remote");
+  await act(async () => {
+    for (const request of recovered) request.response.resolve([session(request.workspaceId, "recovered")]);
+  });
+  for (const workspace of workspaces) {
+    expect(route().sessionsByWorkspaceId[workspace.id].map((item) => item.id)).toEqual(["recovered"]);
+    expect(route().retryingWorkspaceIds).not.toContain(workspace.id);
+  }
+  expect(requests).toHaveLength(6);
+});
 
 test("a rotated endpoint waits for its own routing and rejects the old endpoint's late inventory", async () => {
   await mount();

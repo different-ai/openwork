@@ -554,6 +554,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         setWorkspaces(orderedDesktopWorkspaces);
         sessionsByWorkspaceIdRef.current = {};
         setSessionsByWorkspaceId({});
+        loadedWorkspaceIdsRef.current = new Set();
         setErrorsByWorkspaceId({});
         setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "");
         return;
