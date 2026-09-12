@@ -200,6 +200,12 @@ test("opening a long conversation shows the latest and full history while ancill
   await step("the first message is reachable at the top of the transcript", async () => {
     await agent.run("session.scroll_top");
     await user.see({ text: longHistoryFirst }, { timeoutMs: 30_000 });
+    await probe.eventually(() => probe.dom(`${surface} [data-thread-history-status]`), {
+      within: 10_000, label: "earlier-history status disappears at the first message", until: value => value.elements.length === 0,
+    });
+    const first = (await probe.dom(`${surface} [data-message-role="user"]`)).elements[0];
+    expect(first?.text).toContain(longHistoryFirst);
+    evidence.recordAssertionEvidence("The first stored user message renders without an earlier-history status", JSON.stringify({ first: first?.text, status: (await probe.dom(`${surface} [data-thread-history-status]`)).elements.length }), true);
     await user.looks([
       `The conversation transcript visibly starts with a user message reading "${longHistoryFirst}"`,
       "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
@@ -208,6 +214,7 @@ test("opening a long conversation shows the latest and full history while ancill
 
   // Baseline branch coverage after full loading, not the delayed-preview race.
   await step("after full loading, branching at the first message excludes later history and leaves the source unchanged", async () => {
+    await user.hover({ text: longHistoryFirst });
     await user.click({ role: "button", label: "Branch in new chat", nth: 0 });
     // count limits returned messages; messageCount is the entire rendered transcript.
     await probe.eventually(async () => renderedCount(await agent.run("session.read_transcript", { count: 1 })), {
@@ -223,7 +230,7 @@ test("opening a long conversation shows the latest and full history while ancill
   });
 });
 
-warmTest("returning to a fully cached conversation refreshes its persisted tail before the uncapped read completes", async ({ user, agent, probe, step, world }) => {
+warmTest("returning to a fully cached conversation refreshes its persisted tail before the uncapped read completes", async ({ user, agent, probe, step, world, evidence }) => {
   const messagesPath = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode/session/${encodeURIComponent(world.session.sessionId)}/message`;
   const surface = `[data-session-surface-id="${world.session.sessionId}"]`;
   const historyDom = async () => {
@@ -352,5 +359,11 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     expect(messageTexts(stored.body)).toEqual(persisted);
     expect((await observeReturn()).rows.map((row) => row.text)).toEqual(refreshed);
     expect(maxAnchorDrift).toBeLessThanOrEqual(1);
+    evidence.recordAssertionEvidence(
+      "Warm history retains the refreshed tail, unchanged source, and manual anchor after full-read release",
+      JSON.stringify({ cachedMessages: cached.texts.length, refreshedMessages: refreshed.length, finalMessages: complete.rows.length,
+        persistedMessages: messageTexts(stored.body).length, historyChanged, maxAnchorDrift, state: complete.state }),
+      true,
+    );
   });
 });

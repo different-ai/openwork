@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -1304,7 +1304,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     const previous = snapshotOwnerRef.current;
     snapshotOwnerRef.current = { queryKey: snapshotQueryKey, owner: sessionOwner };
-    if (previous.queryKey !== snapshotQueryKey || previous.owner === sessionOwner) return;
+    if (hashKey(previous.queryKey) !== hashKey(snapshotQueryKey) || previous.owner === sessionOwner) return;
     const filters = { queryKey: snapshotQueryKey, exact: true };
     void queryClient.cancelQueries(filters).then(() => queryClient.invalidateQueries(filters));
   }, [queryClient, sessionOwner, snapshotQueryKey]);
@@ -3348,7 +3348,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : null}
           </div>
         </div>
-        <SessionHistoryStatus key={sessionOwner} complete={hasFullHistory} pending={pendingSessionLoad}
+        <SessionHistoryStatus key={`history:${sessionOwner}`} complete={hasFullHistory} pending={pendingSessionLoad}
           loading={snapshotQuery.isFetching && openingHistory.partial}
           failed={snapshotQuery.isError && !snapshotQuery.isFetching} onRetry={() => snapshotQuery.refetch()} />
         <SessionScrollOverlay

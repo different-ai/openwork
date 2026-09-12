@@ -11,7 +11,7 @@ import { openingHistoryWindow, openingSessionHistoryOptions, prefetchOpeningSess
 import { resolveWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 import { flushSessionScrollState, useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
-import { __applySessionSyncEventForTest, __createWorkspaceSessionSyncForTest, applySessionRevert, applySessionUnrevert, seedSessionState, snapshotKey, trackWorkspaceSessionSync, transcriptKey } from "../src/react-app/domains/session/sync/session-sync";
+import { __applySessionSyncEventForTest, __createWorkspaceSessionSyncForTest, applySessionRevert, applySessionUnrevert, seedSessionState, snapshotKey, statusKey, trackWorkspaceSessionSync, transcriptKey } from "../src/react-app/domains/session/sync/session-sync";
 import type { OpencodeEvent } from "../src/app/types";
 import { deriveRenderedSessionMessages, type LatestSessionHistory } from "../src/react-app/domains/session/surface/session-render-state";
 import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
@@ -56,6 +56,27 @@ function snapshot(id: string, title: string, ids: string[] = [], revert?: string
       parts: [{ id: `part-${messageId}`, sessionID: id, messageID: messageId, type: "text", text: messageId }],
     })),
   };
+}
+
+function longHistory(count = 440): OpenworkSessionHistory {
+  const history = snapshot("a", "Long active conversation");
+  history.messages = Array.from({ length: count }, (_, index) => {
+    const id = `message-${index}`;
+    return {
+      info: { id, sessionID: "a", role: "assistant", time: { created: index + 1 } },
+      parts: [
+        { id: `text-${index}`, sessionID: "a", messageID: id, type: "text", text: `Text ${index}` },
+        { id: `reasoning-${index}`, sessionID: "a", messageID: id, type: "reasoning", text: `Reasoning ${index}`, time: { start: 1 } },
+        {
+          id: `tool-${index}`, sessionID: "a", messageID: id, type: "tool", tool: "bash", callID: `call-${index}`,
+          state: index === count - 1
+            ? { status: "running", input: { command: "work" }, time: { start: 1 } }
+            : { status: "completed", input: { command: "work" }, output: `Result ${index}`, title: "Done", metadata: {}, time: { start: 1, end: 2 } },
+        },
+      ],
+    };
+  });
+  return history;
 }
 
 function sessionEvents() {
@@ -170,6 +191,128 @@ function fixture() {
 }
 
 describe("opening a thread", () => {
+  test("a 440-message mixed-part history completes while the conversation stays active", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    const full = longHistory();
+    expect(full.messages.reduce((count, message) => count + message.parts.length, 0)).toBe(1320);
+    await view.render();
+    await view.resolve(0, { session: full.session, messages: full.messages.slice(-24) });
+    await paint();
+    await paint();
+    await event({ type: "session.status", properties: { sessionID: "a", status: { type: "busy" } } });
+    expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(24);
+    await view.resolve(1, full);
+    expect(view.client.getQueryState(snapshotKey("workspace", "a"))).toMatchObject({ status: "success", fetchStatus: "idle" });
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(440);
+    expect(view.host.textContent).toContain("Text 0");
+    expect(view.host.textContent).toContain("input-streaming");
+    expect(view.client.getQueryData(statusKey("workspace", "a"))).toEqual({ type: "busy" });
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.latestReads).toHaveLength(0);
+  });
+
+  test("a 15 MB active history completes and structurally shares an equal full refresh", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    const full = longHistory(1467);
+    for (const [index, message] of full.messages.entries()) {
+      if (index < 214) message.parts.push({ id: `extra-${index}`, sessionID: "a", messageID: message.info.id, type: "text", text: "Additional persisted text" });
+      for (const part of message.parts) {
+        if (part.type === "tool" && part.state.status === "completed") part.state.output += "x".repeat(10_000);
+      }
+    }
+    const serialized = JSON.stringify(full);
+    expect(serialized.length).toBeGreaterThan(15_000_000);
+    expect(full.messages.reduce((count, message) => count + message.parts.length, 0)).toBe(4615);
+    await view.render();
+    await view.resolve(0, { session: full.session, messages: full.messages.slice(-24) });
+    await paint();
+    await paint();
+    await event({ type: "session.status", properties: { sessionID: "a", status: { type: "busy" } } });
+    await view.resolve(1, JSON.parse(serialized));
+    const key = snapshotKey("workspace", "a");
+    const cached = view.client.getQueryData<OpenworkSessionHistory>(key);
+    expect(cached?.messages).toHaveLength(1467);
+    expect(view.host.querySelectorAll("[data-message-id]").length).toBe(1467);
+    expect(view.host.querySelectorAll("[data-thread-history-status]").length).toBe(0);
+    await act(async () => { void view.client.refetchQueries({ queryKey: key, exact: true }); });
+    expect(view.reads).toHaveLength(3);
+    await view.resolve(2, JSON.parse(serialized));
+    expect(view.client.getQueryData(key) === cached).toBe(true);
+    expect(view.client.getQueryState(key)).toMatchObject({ status: "success", fetchStatus: "idle", dataUpdateCount: 2 });
+    expect(view.client.getQueryData(statusKey("workspace", "a"))).toEqual({ type: "busy" });
+    expect(view.host.querySelectorAll("[data-thread-history-status]").length).toBe(0);
+    expect(view.latestReads).toHaveLength(0);
+  });
+
+  test("a failed long history read retries without losing the active preview", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    const full = longHistory();
+    await view.render();
+    await view.resolve(0, { session: full.session, messages: full.messages.slice(-24) });
+    await paint();
+    await paint();
+    await event({ type: "session.status", properties: { sessionID: "a", status: { type: "busy" } } });
+    const composer = view.host.querySelector("input");
+    if (!composer) throw new Error("Missing composer");
+    composer.value = "Keep my unsent draft";
+    expect(view.reads).toHaveLength(2);
+    expect(view.reads[1].window).toBeUndefined();
+    expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
+    await act(async () => view.reads[1].reject(new Error("Full read failed")));
+    await settle();
+    expect(view.client.getQueryState(snapshotKey("workspace", "a"))).toMatchObject({ status: "error", fetchStatus: "idle" });
+    expect(view.host.querySelector('[role="alert"]')?.textContent).toContain("The rest of this conversation could not be loaded.");
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(24);
+    expect(view.host.querySelector('[role="status"]')).toBeNull();
+    await act(async () => view.host.querySelector("button")?.click());
+    expect(view.reads).toHaveLength(3);
+    expect(view.reads[2].window).toBeUndefined();
+    expect(view.reads[2].signal.aborted).toBe(false);
+    await act(async () => view.reads[2].reject(new Error("Retry failed")));
+    await settle();
+    expect(view.host.querySelector("button")?.textContent).toBe("Retry");
+    await act(async () => view.host.querySelector("button")?.click());
+    expect(view.reads).toHaveLength(4);
+    await view.resolve(3, full);
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(440);
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.host.querySelector("input")).toBe(composer);
+    expect(composer.value).toBe("Keep my unsent draft");
+  });
+
+  test("an engine switch abandons the old preview and completes the new engine's full history", async () => {
+    const view = fixture();
+    const identity = (opencodeBaseUrl: string) => sessionHistoryIdentity({
+      draftScope: "local", opencodeBaseUrl, runtimeWorkspaceId: "workspace", sessionId: "a",
+    });
+    const v1 = { ...view.input(), ...identity("http://localhost/opencode") };
+    const v2 = { ...view.input(), ...identity("http://localhost/opencode2") };
+    expect(v1.snapshotQueryKey).toEqual(v2.snapshotQueryKey);
+    expect(v1.owner).not.toBe(v2.owner);
+    await view.renderInput(v1);
+    await view.renderInput(v2);
+    expect(view.reads[0].signal.aborted).toBe(true);
+    await view.resolve(0, snapshot("a", "Old engine", ["obsolete"]));
+    expect(view.host.textContent).not.toContain("Old engine");
+    const full = longHistory();
+    await view.resolve(1, { session: full.session, messages: full.messages.slice(-24) });
+    await paint();
+    await paint();
+    expect(view.reads).toHaveLength(3);
+    expect(view.reads[2].window).toBeUndefined();
+    await view.resolve(2, full);
+    await act(async () => { jest.advanceTimersByTime(30_000); });
+    await settle();
+    expect(view.client.getQueryState(v2.snapshotQueryKey)).toMatchObject({ status: "success", fetchStatus: "idle" });
+    expect(view.host.querySelectorAll("[data-message-id]")).toHaveLength(440);
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.host.textContent).not.toContain("obsolete");
+  });
+
   test("preview and full history become readable without an activity snapshot", async () => {
     const view = fixture();
     await view.render();
