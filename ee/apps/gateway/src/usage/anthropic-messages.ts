@@ -3,6 +3,8 @@
 // the model; `message_delta.usage.output_tokens` carries the final output.
 import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "./shared.js"
 import type { ParsedUsage, UsageParser } from "./shared.js"
+import { anthropicGeneration } from "./generation.js"
+import { mergeGenerationTerminals } from "../generation-outcome.js"
 
 function applyUsage(target: ParsedUsage, usage: unknown, options: { partial: boolean }) {
   if (!isRecord(usage)) return
@@ -29,6 +31,10 @@ function applyEvent(target: ParsedUsage, event: unknown) {
     return
   }
   if (event.type === "message_delta") {
+    if (isRecord(event.delta) && event.delta.stop_reason != null) {
+      const terminal = anthropicGeneration(event.delta.stop_reason)
+      target.generation = target.generation ? mergeGenerationTerminals(target.generation, terminal) : terminal
+    }
     applyUsage(target, event.usage, { partial: true })
   }
 }
@@ -37,6 +43,7 @@ export function parseAnthropicMessagesJsonUsage(body: unknown): ParsedUsage {
   const usage = emptyUsage()
   if (!isRecord(body)) return usage
   captureResponseIdentity(usage, body)
+  usage.generation = anthropicGeneration(body.stop_reason)
   if (typeof body.model === "string") usage.model = body.model
   applyUsage(usage, body.usage, { partial: false })
   return usage

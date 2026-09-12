@@ -1,6 +1,7 @@
 // OpenAI-compatible prompt tokens include cache reads; output includes reasoning.
 import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "./shared.js"
 import type { ParsedUsage, UsageParser } from "./shared.js"
+import { createChatGenerationObserver } from "./generation.js"
 
 export type OpenAiChatUsage = ParsedUsage
 export type OpenAiChatSseUsageParser = UsageParser
@@ -22,12 +23,17 @@ function applyEvent(target: ParsedUsage, event: unknown) {
   target.found = hasUsage(target)
 }
 
-export function parseOpenAiChatJsonUsage(body: unknown): OpenAiChatUsage {
+export function parseOpenAiChatJsonUsage(body: unknown, expectedChoices?: number): OpenAiChatUsage {
   const usage = emptyUsage()
   applyEvent(usage, body)
+  usage.generation = createChatGenerationObserver(expectedChoices)(body)
   return usage
 }
 
-export function createOpenAiChatSseUsageParser(options: { maxBufferLength?: number } = {}): OpenAiChatSseUsageParser {
-  return createSseUsageParser(applyEvent, options)
+export function createOpenAiChatSseUsageParser(options: { maxBufferLength?: number; expectedChoices?: number } = {}): OpenAiChatSseUsageParser {
+  const observe = createChatGenerationObserver(options.expectedChoices)
+  return createSseUsageParser((usage, event) => {
+    applyEvent(usage, event)
+    usage.generation = observe(event)
+  }, options)
 }

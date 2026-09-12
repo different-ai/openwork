@@ -16,6 +16,13 @@ export function providerTerminalReason(value: unknown): ProviderTerminalReason {
   }
 }
 
+const priority: Record<GenerationOutcome, number> = { completed: 0, tool_calls: 1, length_limited: 2, unknown: 3, refused: 4, content_filtered: 5 }
+
+export function mergeGenerationTerminals(left: GenerationTerminal, right: GenerationTerminal): GenerationTerminal {
+  if (priority[left.generationOutcome] !== priority[right.generationOutcome]) return priority[left.generationOutcome] > priority[right.generationOutcome] ? left : right
+  return { generationOutcome: left.generationOutcome, providerTerminalReason: left.providerTerminalReason === right.providerTerminalReason ? left.providerTerminalReason : "unknown" }
+}
+
 export function generationTerminal(value: unknown): GenerationTerminal {
   const reason = providerTerminalReason(value)
   let generationOutcome: GenerationOutcome

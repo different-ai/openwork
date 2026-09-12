@@ -1,7 +1,10 @@
 // Shared shape + SSE plumbing for the protocol usage parsers. Parsers never
 // retain message content: only usage counters and the reported model.
 
+import type { GenerationTerminal } from "../generation-outcome.js"
+
 export type ParsedUsage = {
+  generation?: GenerationTerminal
   found: boolean
   model: string | null
   inputTokens: number | null

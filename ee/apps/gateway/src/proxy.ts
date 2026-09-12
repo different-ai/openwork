@@ -796,7 +796,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       }
       headers.set("content-type", "text/event-stream; charset=utf-8")
       headers.set("x-accel-buffering", "no")
-      const usageParser = createOpenAiChatSseUsageParser()
+      const usageParser = createOpenAiChatSseUsageParser({ expectedChoices: choiceCount })
       const usageDecoder = new TextDecoder()
       return new Response(relayChatStream({
         body: upstream.body, abort, startedAt: analyticsStartedAt, idleMs: env.streamIdleMs, choiceCount,
@@ -822,7 +822,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     try {
       const value = await readResponseJson(upstream.body, abort.signal)
       recorder.markFirstByte()
-      recordUsage(recorder, parseOpenAiChatJsonUsage(value), "json")
+      recordUsage(recorder, parseOpenAiChatJsonUsage(value, choiceCount), "json")
       if (analytics) observeChunk(new TextEncoder().encode(JSON.stringify(value)))
       if (!completeChatResponse(value, choiceCount)) {
         finishAnalytics("failed")
