@@ -152,22 +152,38 @@ test("HTTP transcript fixture preserves the prior reply and counts three session
 test("HTTP credential witness redacts unstructured secrets before tool caps and search", async ({ evidence }) => {
   const original = { url: process.env.OPENWORK_SERVER_URL, token: process.env.OPENWORK_SERVER_TOKEN };
   const session = { id: "ses_credentials", title: "Synthetic credential witness", directory: "/tmp/session-credential-witness", time: { created: 100, updated: 400 } };
+  const synthetic = (length: number) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789".repeat(8).slice(0, length);
+  const jwt = [
+    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+    Buffer.from(JSON.stringify({ sub: "synthetic-user", iat: 1234567890 })).toString("base64url"),
+    synthetic(43),
+  ].join(".");
   const fixtures = [
-    { source: "AKIA" + "A".repeat(16), marker: "[redacted:aws-access-key]" },
-    { source: `-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(4)}\n-----END PRIVATE KEY-----`, marker: "[redacted:private-key]" },
-    { source: 'password: "synthetic \\"quoted\\" private value"', marker: "[redacted:credential-assignment]" },
-    { source: "ghp_" + "G".repeat(36), marker: "[redacted:github-token]" },
-    { source: "xoxb-" + "S".repeat(40), marker: "[redacted:slack-token]" },
-    { source: "sk-proj-" + "P".repeat(40) + "_" + "Q".repeat(40), marker: "[redacted:api-token]" },
-    { source: 'Authorization: Digest synthetic-private, nonce="private nonce"', marker: "[redacted:authorization]" },
-    { source: 'SERVICE_PASSWORD="synthetic \\"quoted\\" private value"', marker: "[redacted:env-secret]" },
+    { source: "AKIA" + "BCDEFGHIJKLM2345", marker: "[redacted:aws-access-token]" },
+    { source: `-----BEGIN PRIVATE KEY-----\n${synthetic(128)}\n-----END PRIVATE KEY-----`, marker: "[redacted:private-key]" },
+    { source: "ghp_" + synthetic(36), marker: "[redacted:github-pat]" },
+    { source: "gho_" + synthetic(36), marker: "[redacted:github-oauth]" },
+    { source: "ghu_" + synthetic(36), marker: "[redacted:github-app-token]" },
+    { source: "github_pat_" + synthetic(82), marker: "[redacted:github-fine-grained-pat]" },
+    { source: "xoxb-123456789012-234567890123-" + synthetic(24), marker: "[redacted:slack-bot-token]" },
+    { source: "xoxp-123456789012-234567890123-345678901234-" + synthetic(32), marker: "[redacted:slack-user-token]" },
+    { source: "https://hooks.slack.com/services/" + synthetic(44), marker: "[redacted:slack-webhook-url]" },
+    { source: "sk_test_" + synthetic(32), marker: "[redacted:stripe-access-token]" },
+    { source: `sk-${synthetic(20)}T3BlbkFJ${synthetic(20)}`, marker: "[redacted:openai-api-key]" },
+    { source: `sk-ant-api03-${synthetic(93)}AA`, marker: "[redacted:anthropic-api-key]" },
+    { source: "AIza" + synthetic(35), marker: "[redacted:gcp-api-key]" },
+    { source: "npm_" + synthetic(36), marker: "[redacted:npm-access-token]" },
+    { source: "glpat-" + synthetic(20), marker: "[redacted:gitlab-pat]" },
+    { source: jwt, marker: "[redacted:jwt]" },
+    { source: `custom_api_key = "${synthetic(48)}"`, marker: 'custom_api_key = "[redacted:generic-api-key]"' },
   ];
-  const prefix = `${"x".repeat(1958)}${"\n".repeat(10)} `;
-  const capSecret = "sk-" + "C".repeat(80);
+  const prefix = `${"x".repeat(1953)}${"\n".repeat(10)} `;
+  const capSecret = `sk-proj-${synthetic(74)}T3BlbkFJ${synthetic(74)}`;
   const pem = `-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(200)}`;
   const sha = "0123456789abcdef".repeat(2) + "01234567";
   const uuid = ["12345678", "1234", "4123", "8123", "123456789012"].join("-");
-  const control = `commit ${sha} request ${uuid}`;
+  const image = "data:image/png;base64," + Buffer.from("synthetic-image-bytes".repeat(6)).toString("base64");
+  const control = `commit ${sha} request ${uuid} ${image}`;
   const completed = (callID: string, source: string) => ({ type: "tool", tool: "bash", callID, state: { status: "completed", input: { nested: [{ value: source }, JSON.stringify({ detail: source })] }, output: source, time: { start: 300, end: 301 } } });
   const messages = [{ info: { id: "msg_credentials", role: "assistant", time: { created: 300 } }, parts: [
     ...fixtures.flatMap(({ source }, index) => [completed(`call_${index}`, source), { type: "tool", tool: "bash", callID: `error_${index}`, state: { status: "error", input: {}, error: source, time: { start: 302, end: 303 } } }]),
@@ -218,15 +234,15 @@ test("HTTP credential witness redacts unstructured secrets before tool caps and 
       expect(tools[index * 2]?.input).toBe(JSON.stringify({ nested: [{ value: marker }, JSON.stringify({ detail: marker })] }));
       expect(tools[index * 2 + 1]?.error).toBe(JSON.stringify(marker));
       expect(errors[index]?.message).toBe(marker);
-      expect((await query("session.search", { query: source, in: ["tool"], match: "phrase" })).results).toEqual([]);
-      expect(records((await query("session.search", { query: marker, in: ["tool"], match: "phrase" })).results)).toHaveLength(1);
+      expect((await query("session.search", { query: JSON.stringify(source).slice(1, -1), in: ["tool"], match: "phrase" })).results).toEqual([]);
+      expect(records((await query("session.search", { query: JSON.stringify(marker).slice(1, -1), in: ["tool"], match: "phrase" })).results)).toHaveLength(1);
     }
-    evidence.recordAssertionEvidence("Unstructured credential classes are redacted across production read, search and activity", "A test-owned read-only HTTP witness supplied eight independent synthetic credential classes. Exact typed markers replaced complete values in output, nested input, JSON-encoded nested strings and tool errors; activity retained only markers, secret searches returned nothing and marker searches found the witness session. No live credentials or inference were used.", true);
+    evidence.recordAssertionEvidence("Pinned Gitleaks rules redact credentials across production read, search and activity", "A test-owned read-only HTTP witness supplied one synthetic positive for each of the 17 selected Gitleaks rule IDs at b58d3f102cf3a2c84cb7f923d05c25c9b1aed84b. Exact rule-ID markers replaced secrets in output, nested input, JSON-encoded nested strings and tool errors; generic-api-key preserved assignment context. Activity, negative secret searches and positive marker searches agreed. No live credentials or inference were used.", true);
     const capped = tools.find((tool) => tool.callId === "call_cap");
-    expect(JSON.stringify(prefix).length - 1).toBe(1980);
+    expect(JSON.stringify(prefix).length - 1).toBe(1975);
     expect(JSON.stringify(prefix + capSecret).slice(0, 2000)).toContain(capSecret.slice(0, 20));
-    expect(capped?.output).toBe(JSON.stringify(prefix + "[redacted:api-token] after " + "z".repeat(100)).slice(0, 2000));
-    expect(text(capped?.output)).toContain("[redacted:api-token]");
+    expect(capped?.output).toBe(JSON.stringify(prefix + "[redacted:openai-api-key] after " + "z".repeat(100)).slice(0, 2000));
+    expect(text(capped?.output)).toContain("[redacted:openai-api-key]");
     expect(capped?.truncated).toBe(true);
     expect(JSON.stringify(read)).not.toContain(capSecret.slice(0, 20));
     const pemRead = text(tools.find((tool) => tool.callId === "call_pem_cap")?.output);
@@ -236,10 +252,10 @@ test("HTTP credential witness redacts unstructured secrets before tool caps and 
     expect(JSON.stringify(read)).not.toContain("synthetic-body");
     expect(tools.find((tool) => tool.callId === "call_control")?.output).toBe(JSON.stringify(control));
     for (const secret of [capSecret.slice(0, 20), "synthetic-body"]) expect((await query("session.search", { query: secret, in: ["tool"] })).results).toEqual([]);
-    for (const queryText of [sha, uuid]) expect(records((await query("session.search", { query: queryText, in: ["tool"], match: "phrase" })).results)).toHaveLength(1);
+    for (const queryText of [sha, uuid, image]) expect(records((await query("session.search", { query: queryText, in: ["tool"], match: "phrase" })).results)).toHaveLength(1);
     expect(unexpected).toEqual([]);
     expect(requests.every((request) => request.startsWith("GET "))).toBe(true);
-    evidence.recordAssertionEvidence("Redaction precedes JSON encoding and caps, while SHA1 and UUID survive", "The raw synthetic API token straddled offset 1980 after JSON encoding: clipping first demonstrably retained its prefix, while production returned the typed marker and no fragment. An unterminated multiline PEM straddling the cap was removed through EOF. SHA1 and UUID controls remained byte-identical and searchable. Witness traffic was GET-only on declared routes.", true);
+    evidence.recordAssertionEvidence("Redaction precedes JSON encoding and caps, while SHA1, UUID and base64 images survive", "The raw synthetic OpenAI project token straddled offset 1975 after JSON encoding: clipping first demonstrably retained its prefix, while production returned the typed marker and no fragment. An unterminated multiline PEM straddling the cap was removed through EOF using the upstream header prefix. SHA1, UUIDv4 and base64 image controls remained byte-identical and searchable. Witness traffic was GET-only on declared routes.", true);
   } finally {
     if (original.url === undefined) delete process.env.OPENWORK_SERVER_URL;
     else process.env.OPENWORK_SERVER_URL = original.url;

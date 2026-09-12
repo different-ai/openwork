@@ -5,6 +5,7 @@ import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
+import { redactSecretPatterns } from "./secret-patterns.js";
 import { visualizationSchema } from "@openwork/types/visualization";
 import { openworkSessionModelSchema, type OpenworkAffordanceEffects, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
@@ -608,16 +609,9 @@ function redactSessionText(text: string): string {
     const parsed: unknown = JSON.parse(text);
     if (isRecord(parsed) || Array.isArray(parsed)) return JSON.stringify(redactSessionValue(parsed));
   } catch {}
-  // Provider families ported from agent-context-diagnostics-schema; AKIA/ASIA from workspace-export-safety. Typed markers identify full-value redactions.
-  return text
-    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[redacted:private-key]")
-    .replace(/\b(?:proxy-)?authorization[ \t]*:[ \t]*[^\r\n]+/gi, "[redacted:authorization]")
-    .replace(/\b[A-Z][A-Z0-9_]*_(?:KEY|TOKEN|SECRET|PASSWORD)[ \t]*=[ \t]*(?:"(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^&\s"'<>()]+)/g, "[redacted:env-secret]")
-    .replace(/\b(?:[A-Za-z0-9]+[_-])*(?:token|grant|code|secret|key|password)[ \t]*:[ \t]*(?:"(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^,;\s"'{}\[\]]+)/gi, "[redacted:credential-assignment]")
-    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, "[redacted:aws-access-key]")
-    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]+)\b/g, "[redacted:github-token]")
-    .replace(/\bxox[baprs]-[A-Za-z0-9-]+\b/g, "[redacted:slack-token]")
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{20,}|ow_mcp_at_[A-Za-z0-9_-]+)\b/g, "[redacted:api-token]")
+  // Supplementary legacy compatibility from 6707de554, not Gitleaks rules.
+  // Preserve complete typed markers when legacy assignments match them.
+  return redactSecretPatterns(text)
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi, (url) => {
       const start = url.indexOf("//") + 2;
       const end = url.slice(start).search(/[/?#]/);
@@ -631,7 +625,7 @@ function redactSessionText(text: string): string {
     .replace(/\bow[thc]_[A-Za-z0-9_-]+\b/g, "[redacted]")
     .replace(/((["'])(?:token|grant|code|secret|key|password|authorization)\2\s*:\s*)("(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^,\s"'{}\[\]]+)/gi,
       (assignment: string, prefix: string, _quote: string, value: string) => /^["']?\[redacted:[a-z-]+\]["']?$/.test(value) ? assignment : `${prefix}"[redacted]"`)
-    .replace(/(token|grant|code|secret|key|password)[ \t]*=[ \t]*("(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^&\s"'<>()]+)/gi,
+    .replace(/(token|grant|code|secret|key)=("(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^&\s"'<>()]+)/gi,
       (assignment: string, key: string, value: string) => /^["']?\[redacted:[a-z-]+\]["']?$/.test(value) ? assignment : `${key}=[redacted]`);
 }
 

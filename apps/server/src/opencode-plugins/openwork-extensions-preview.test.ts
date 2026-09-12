@@ -9,6 +9,7 @@ import { openworkSessionActivityInventorySchema } from "@openwork/types/openwork
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
 import { sessionActivityFrom } from "./session-activity.js";
+import { redactSecretPatterns, secretPatterns } from "./secret-patterns.js";
 import {
   OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
@@ -19,6 +20,32 @@ const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 const originalUiControlDiscovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY;
 const stops: Array<() => void> = [];
+
+const synthetic = (length: number) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789".repeat(8).slice(0, length);
+const syntheticJwt = [
+  Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+  Buffer.from(JSON.stringify({ sub: "synthetic-user", iat: 1234567890 })).toString("base64url"),
+  synthetic(43),
+].join(".");
+const secretRuleFixtures = [
+  ["aws-access-token", "AKIA" + "BCDEFGHIJKLM2345", "[redacted:aws-access-token]"],
+  ["private-key", `-----BEGIN PRIVATE KEY-----\n${synthetic(128)}\n-----END PRIVATE KEY-----`, "[redacted:private-key]"],
+  ["github-pat", "ghp_" + synthetic(36), "[redacted:github-pat]"],
+  ["github-oauth", "gho_" + synthetic(36), "[redacted:github-oauth]"],
+  ["github-app-token", "ghu_" + synthetic(36), "[redacted:github-app-token]"],
+  ["github-fine-grained-pat", "github_pat_" + synthetic(82), "[redacted:github-fine-grained-pat]"],
+  ["slack-bot-token", "xoxb-" + "123456789012-234567890123-" + synthetic(24), "[redacted:slack-bot-token]"],
+  ["slack-user-token", "xoxp-" + "123456789012-234567890123-345678901234-" + synthetic(32), "[redacted:slack-user-token]"],
+  ["slack-webhook-url", "https://hooks.slack.com/services/" + synthetic(44), "[redacted:slack-webhook-url]"],
+  ["stripe-access-token", "sk_test_" + synthetic(32), "[redacted:stripe-access-token]"],
+  ["openai-api-key", `sk-${synthetic(20)}T3BlbkFJ${synthetic(20)}`, "[redacted:openai-api-key]"],
+  ["anthropic-api-key", `sk-ant-api03-${synthetic(93)}AA`, "[redacted:anthropic-api-key]"],
+  ["gcp-api-key", "AIza" + synthetic(35), "[redacted:gcp-api-key]"],
+  ["npm-access-token", "npm_" + synthetic(36), "[redacted:npm-access-token]"],
+  ["gitlab-pat", "glpat-" + synthetic(20), "[redacted:gitlab-pat]"],
+  ["jwt", syntheticJwt, "[redacted:jwt]"],
+  ["generic-api-key", `custom_api_key = "${synthetic(48)}"`, 'custom_api_key = "[redacted:generic-api-key]"'],
+];
 
 const searchResultSchema = z.object({
   ok: z.literal(true),
@@ -571,32 +598,57 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(capped.result.messages[0].id).toBe("msg_reasoning");
   });
 
+  test("Gitleaks table has one fixture per pinned rule and labels only the generic rule heuristic", () => {
+    expect(secretPatterns.map((rule) => rule.id).sort()).toEqual(secretRuleFixtures.map(([id]) => id).sort());
+    expect(secretPatterns.filter((rule) => rule.precision === "heuristic").map((rule) => rule.id)).toEqual(["generic-api-key"]);
+    expect(secretPatterns.at(-1)?.id).toBe("generic-api-key");
+  });
+
+  test.each(secretRuleFixtures)("Gitleaks helper redacts %s without deleting surrounding text", (_id, source, redacted) => {
+    expect(redactSecretPatterns(source)).toBe(redacted);
+    expect(redactSecretPatterns(`before ${source} after`)).toBe(`before ${redacted} after`);
+    expect(redactSecretPatterns(redacted)).toBe(redacted);
+    expect(redactSecretPatterns(`${source}\n${source}`)).toBe(`${redacted}\n${redacted}`);
+  });
+
+  test("Gitleaks entropy gates captured secrets without legacy assignment overrides", () => {
+    const low = `custom_api_key = "${"A".repeat(48)}"`;
+    const high = `custom_api_key = "${synthetic(48)}"`;
+    const rule = secretPatterns.find((entry) => entry.id === "generic-api-key");
+    if (!rule) throw new Error("Missing generic-api-key rule");
+    expect(rule.entropy).toBe(3.5);
+    expect(low.match(rule.regex)).not.toBeNull();
+    expect(redactSecretPatterns(low)).toBe(low);
+    expect(redactSecretPatterns(high)).toBe('custom_api_key = "[redacted:generic-api-key]"');
+    expect(redactSecretPatterns("AKIA" + "A".repeat(16))).toBe("AKIA" + "A".repeat(16));
+    expect(redactSecretPatterns("ghp_" + "A".repeat(36))).toBe("ghp_" + "A".repeat(36));
+    expect(redactSecretPatterns(synthetic(120))).toBe(synthetic(120));
+    const highEntropyContext = `${synthetic(45)}_api_key = "${"A".repeat(10)}"`;
+    expect([...highEntropyContext.matchAll(rule.regex)][0]?.[1]).toBe("A".repeat(10));
+    expect(redactSecretPatterns(highEntropyContext)).toBe(highEntropyContext);
+    for (const source of [`sk-${synthetic(24)}`, `ghr_${synthetic(36)}`, `xoxa-${synthetic(32)}`, `ow_mcp_at_${synthetic(32)}`]) {
+      expect(redactSecretPatterns(source)).toBe(source);
+    }
+  });
+
   test.each([
-    ...["AKIA", "ASIA"].map((prefix) => [prefix, prefix + "A".repeat(16), "[redacted:aws-access-key]"]),
-    ...["", "RSA ", "EC ", "ENCRYPTED ", "OPENSSH "].map((kind) => [
-      `${kind}PEM`, `-----BEGIN ${kind}PRIVATE KEY-----\n${"synthetic-body".repeat(4)}\n-----END ${kind}PRIVATE KEY-----`, "[redacted:private-key]",
-    ]),
-    ["unterminated PEM", `-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(4)}\ntrailing private material`, "[redacted:private-key]"],
-    ...["token", "password", "secret", "key", "grant", "code", "api_key"].map((key) => [key, `${key}: 'synthetic private value'`, "[redacted:credential-assignment]"]),
-    ["escaped colon", 'password: "synthetic \\"quoted\\" private value"', "[redacted:credential-assignment]"],
-    ["plain colon", "token: synthetic-private-value", "[redacted:credential-assignment]"],
-    ...["p", "o", "u", "s", "r"].map((kind) => [`gh${kind}`, `gh${kind}_${"G".repeat(36)}`, "[redacted:github-token]"]),
-    ["github_pat", `github_pat_${"G".repeat(22)}_${"H".repeat(59)}`, "[redacted:github-token]"],
-    ...["b", "a", "p", "r", "s"].map((kind) => [`xox${kind}`, `xox${kind}-${"1".repeat(12)}-${"2".repeat(12)}-${"S".repeat(24)}`, "[redacted:slack-token]"]),
-    ["OpenAI", `sk-${"O".repeat(24)}`, "[redacted:api-token]"],
-    ["OpenAI project", `sk-proj-${"P".repeat(32)}_${"Q".repeat(32)}-${"R".repeat(32)}`, "[redacted:api-token]"],
-    ["OpenWork MCP", `ow_mcp_at_${"M".repeat(32)}`, "[redacted:api-token]"],
-    ...["Basic", "Digest", "Custom", "Bearer"].map((scheme) => [scheme, `Authorization: ${scheme} synthetic-private, nonce="private nonce"`, "[redacted:authorization]"]),
-    ...["KEY", "TOKEN", "SECRET", "PASSWORD"].map((suffix) => [suffix, `SERVICE_${suffix}="synthetic private value"`, "[redacted:env-secret]"]),
-    ["single quoted env", "SERVICE_TOKEN = 'synthetic private value'", "[redacted:env-secret]"],
-    ["escaped env", 'SERVICE_PASSWORD="synthetic \\"quoted\\" private value"', "[redacted:env-secret]"],
-    ["AWS credentials assignment", "aws_secret_access_key = synthetic-private-value", "aws_secret_access_key=[redacted]"],
-    ["lowercase assignment", "refresh_token=synthetic-private-value", "refresh_token=[redacted]"],
-    ["password assignment", "password=synthetic-private-value", "password=[redacted]"],
-    ["typed assignment", `token=${"AKIA" + "A".repeat(16)}`, "token=[redacted:aws-access-key]"],
-    ["typed quoted assignment", `log "token":"ghp_${"G".repeat(36)}"`, 'log "token":"[redacted:github-token]"'],
-    ["typed PEM assignment", `key="-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(4)}\n-----END PRIVATE KEY-----"`, 'key="[redacted:private-key]"'],
-    ["marker with residual value", 'token="[redacted:api-token] synthetic-private-value"', "token=[redacted]"],
+    ...["ASIA", "ABIA", "ACCA", "A3TA"].map((prefix) => [prefix + "BCDEFGHIJKLM2345", "[redacted:aws-access-token]"]),
+    ["ghs_" + synthetic(36), "[redacted:github-app-token]"],
+    ...["proj", "svcacct", "admin"].flatMap((kind) => [58, 74].map((length) => [`sk-${kind}-${synthetic(length)}T3BlbkFJ${synthetic(length)}`, "[redacted:openai-api-key]"])),
+    ["NPM_" + synthetic(36), "[redacted:npm-access-token]"],
+    ["xoxe-123456789012-234567890123-345678901234-" + synthetic(32), "[redacted:slack-user-token]"],
+    [`-----BEGIN RSA PRIVATE KEY-----\n${synthetic(128)}`, "[redacted:private-key]"],
+    [`-----BEGIN PRIVATE KEY BLOCK-----\n${synthetic(128)}\n-----END PRIVATE KEY BLOCK-----`, "[redacted:private-key]"],
+  ])("Gitleaks pinned alternates and PEM fail-closed behavior: %s", (source, redacted) => {
+    expect(redactSecretPatterns(source)).toBe(redacted);
+  });
+
+  test.each([
+    ...secretRuleFixtures,
+    ["typed assignment", "token=AKIA" + "BCDEFGHIJKLM2345", "token=[redacted:aws-access-token]"],
+    ["typed quoted assignment", `log "token":"ghp_${synthetic(36)}"`, 'log "token":"[redacted:github-pat]"'],
+    ["legacy assignment", 'token="synthetic \\"quoted\\" private value"', "token=[redacted]"],
+    ["marker with residual value", 'token="[redacted:openai-api-key] synthetic-private-value"', "token=[redacted]"],
   ])("session credentials redact %s across tool read, nested input, search and activity", async (_name, source, redacted) => {
     const input = { nested: [{ value: source }, JSON.stringify({ detail: source })] };
     startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant" }, parts: [
@@ -618,15 +670,17 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect((await search(JSON.stringify(redacted).slice(1, -1))).results.length).toBeGreaterThan(0);
   });
 
-  test("session credentials redact before JSON encoding and caps without hiding SHA1 or UUID", async () => {
-    const secret = `sk-${"C".repeat(80)}`;
+  test("session credentials redact before JSON encoding and caps without hiding SHA1, UUID or base64 images", async () => {
+    const secret = `sk-proj-${synthetic(74)}T3BlbkFJ${synthetic(74)}`;
     const pem = `-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(200)}`;
-    const prefix = `${"x".repeat(1958)}${"\n".repeat(10)} `;
+    const prefix = `${"x".repeat(1953)}${"\n".repeat(10)} `;
     const sha = "0123456789abcdef".repeat(2) + "01234567";
     const uuid = ["12345678", "1234", "4123", "8123", "123456789012"].join("-");
-    const neutral = `commit ${sha} request ${uuid}`;
-    expect(prefix.length).toBe(1969);
-    expect(JSON.stringify(prefix).length - 1).toBe(1980);
+    const image = "data:image/png;base64," + Buffer.from("synthetic-image-bytes".repeat(6)).toString("base64");
+    const neutral = `commit ${sha} request ${uuid} ${image}`;
+    expect(redactSecretPatterns(neutral)).toBe(neutral);
+    expect(prefix.length).toBe(1964);
+    expect(JSON.stringify(prefix).length - 1).toBe(1975);
     expect(JSON.stringify(prefix + secret).slice(0, 2000)).toContain(secret.slice(0, 20));
     startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant" }, parts: [
       completedTool("call_cap", {}, prefix + secret + " after " + "z".repeat(100)),
@@ -636,15 +690,15 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     const plugin = await OpenWorkExtensionsPreview();
     const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", parts: ["tool"] } });
     const tools = affordanceResultSchema("session.read", z.object({ messages: z.array(z.object({ tools: z.array(z.object({ output: z.string(), truncated: z.boolean().optional() })) })) })).parse(JSON.parse(raw)).result.messages[0].tools;
-    expect(tools[0].output).toBe(JSON.stringify(prefix + "[redacted:api-token] after " + "z".repeat(100)).slice(0, 2000));
-    expect(tools[0].output).toContain("[redacted:api-token]");
+    expect(tools[0].output).toBe(JSON.stringify(prefix + "[redacted:openai-api-key] after " + "z".repeat(100)).slice(0, 2000));
+    expect(tools[0].output).toContain("[redacted:openai-api-key]");
     expect(tools[0].truncated).toBe(true);
     expect(tools[1].output).toBe(JSON.stringify(prefix + "[redacted:private-key]").slice(0, 2000));
     expect(tools[1].output).not.toContain("-----BEGIN");
     expect(tools[2].output).toBe(JSON.stringify(neutral));
     expect(raw).not.toContain(secret.slice(0, 20));
     expect(raw).not.toContain("synthetic-body");
-    for (const query of [sha, uuid]) {
+    for (const query of [sha, uuid, image]) {
       const searched = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { workspaceId: "ws_1", query, in: ["tool"], match: "phrase" } }))).result;
       expect(searched.results.length).toBeGreaterThan(0);
     }
