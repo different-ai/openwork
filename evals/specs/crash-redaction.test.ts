@@ -22,14 +22,15 @@ for (const [claim, file] of cases) {
       env: { ...process.env, NO_COLOR: "1" },
     });
     const output = result.stdout + result.stderr;
-    evidence.recordAssertionEvidence(
-      `Crash redaction: ${claim}`,
-      `bun test ${file}\nExit: ${result.status}\n${output}`,
-    );
     expect(result.error).toBeUndefined();
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/[1-9]\d* pass/);
     expect(output).toMatch(/\b0 fail/);
     expect(output).not.toMatch(/\b[1-9]\d* (skip|todo)/);
+    evidence.recordAssertionEvidence(
+      `Crash redaction: ${claim}`,
+      `bun test ${file}\nExit: ${result.status}\n${output}`,
+      true,
+    );
   });
 }
