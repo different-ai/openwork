@@ -218,9 +218,11 @@ declare global {
           feedUrl: string;
           currentVersion: string;
         }>;
-        check?: (channel?: "stable" | "alpha", targetVersion?: string) => Promise<{
+        check?: (channel?: "stable" | "alpha", targetVersion?: string, options?: { preserveStaged?: boolean }) => Promise<{
           available: boolean;
           currentVersion?: string;
+          totalBytes?: number | null;
+          stagedVersion?: string | null;
           latestVersion?: string | null;
           releaseDate?: string | null;
           releaseNotes?: unknown;

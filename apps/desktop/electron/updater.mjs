@@ -318,6 +318,7 @@ export function registerUpdaterIpc({
   let checkedUpdateChannel = null;
   let updateDownloaded = false;
   let macStagedVersion = null;
+  let stagedUpdate = null;
   let recoveryReleases = [];
   const recoveryWitness = { installRequests: [], openedArtifactUrls: [], quitRequested: false };
   let updaterOperationQueue = Promise.resolve();
@@ -326,6 +327,24 @@ export function registerUpdaterIpc({
     const result = updaterOperationQueue.then(operation, operation);
     updaterOperationQueue = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  function updateTotalBytes(info, updater) {
+    let files = Array.isArray(info?.files)
+      ? info.files.filter((file) => typeof file?.url === "string")
+      : [];
+    if (platform === "darwin") {
+      const isArm64 = arch === "arm64" || app.runningUnderARM64Translation === true;
+      const useArm64 = isArm64 && files.some((file) => file.url.includes("arm64"));
+      files = files.filter((file) => file.url.includes("arm64") === useArm64);
+    }
+    const extension = platform === "darwin" ? "zip" : platform === "win32" ? "exe" : platform === "linux"
+      ? ({ DebUpdater: "deb", RpmUpdater: "rpm", PacmanUpdater: "pacman" }[updater.constructor.name] ?? "AppImage")
+      : null;
+    if (!extension) return null;
+    const candidates = files.filter((file) => file.url.split(/[?#]/, 1)[0].toLowerCase().endsWith(`.${extension.toLowerCase()}`));
+    const file = candidates.find((candidate) => candidate.url.includes(arch)) ?? candidates[0];
+    return Number.isFinite(file?.size) && file.size > 0 ? file.size : null;
   }
 
   function sendToRenderer(channel, data) {
@@ -676,14 +695,27 @@ export function registerUpdaterIpc({
     return updaterChannelState(app, channel, null, manifestChannel);
   }));
 
-  ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => queueUpdaterOperation(async () => {
+  ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion, options) => queueUpdaterOperation(async () => {
     assertActivation();
     // A check selects a feed for this operation only. The persisted preference
     // belongs exclusively to setChannel so a stale check cannot undo a choice.
     const channel = rawChannel === undefined
       ? await readElectronUpdaterChannel(app, manifestChannel)
       : normalizeElectronUpdaterChannel(rawChannel, manifestChannel);
+    const preserveStaged = options?.preserveStaged === true;
+    if (preserveStaged && updateDownloaded && stagedUpdate?.channel !== channel) {
+      return {
+        available: false,
+        reason: "Cannot check a different channel while preserving a staged update.",
+        totalBytes: null,
+        stagedVersion: stagedUpdate?.version ?? null,
+        ...updaterChannelState(app, channel, null, manifestChannel),
+      };
+    }
     const updater = await ensureAutoUpdater();
+    const stagedResponse = () => options?.preserveStaged === true
+      ? { stagedVersion: updateDownloaded ? (platform === "darwin" ? macStagedVersion : stagedUpdate?.version ?? null) : null }
+      : {};
     try {
       const targetVersion = rawTargetVersion === undefined
         ? null
@@ -694,7 +726,7 @@ export function registerUpdaterIpc({
       const channelState = updater
         ? await applyElectronUpdaterFeed(app, updater, targetVersion, manifestChannel, false, channel)
         : updaterChannelState(app, channel, targetVersion, manifestChannel);
-      if (!updater) return { available: false, reason: "unavailable", ...channelState };
+      if (!updater) return { available: false, reason: "unavailable", totalBytes: null, ...stagedResponse(), ...channelState };
 
       const result = await updater.checkForUpdates();
       const info = result?.updateInfo ?? null;
@@ -703,20 +735,22 @@ export function registerUpdaterIpc({
         throw new Error(`Target update manifest did not resolve to v${targetVersion}.`);
       }
       const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
-      if (platform === "darwin" && info?.version !== macStagedVersion) {
+      if (!preserveStaged && platform === "darwin" && info?.version !== macStagedVersion) {
         updateDownloaded = false;
         preventPendingUpdaterInstall(updater);
       }
       checkedUpdateVersion = available ? info.version : null;
       checkedUpdateTargetVersion = available ? targetVersion : null;
       checkedUpdateChannel = available ? channelState.channel : null;
-      if (!available) updateDownloaded = false;
+      if (!available && !preserveStaged) updateDownloaded = false;
       return {
         available,
         currentVersion,
         latestVersion: targetVersion ?? info?.version ?? null,
         releaseDate: info?.releaseDate ?? null,
         releaseNotes: info?.releaseNotes ?? null,
+        totalBytes: updateTotalBytes(info, updater),
+        ...stagedResponse(),
         ...channelState,
       };
     } catch (error) {
@@ -727,6 +761,8 @@ export function registerUpdaterIpc({
       return {
         available: false,
         reason: String(error?.message ?? error),
+        totalBytes: null,
+        ...stagedResponse(),
         ...updaterChannelState(
           app,
           channel,
@@ -742,7 +778,7 @@ export function registerUpdaterIpc({
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
-      await applyElectronUpdaterFeed(
+      const channelState = await applyElectronUpdaterFeed(
         app,
         updater,
         checkedUpdateTargetVersion,
@@ -774,6 +810,7 @@ export function registerUpdaterIpc({
       // download applies cleanly on quit.
       await cleanStaleUpdaterState(app, shipItDefaultsDomain);
       await downloadAndStageUpdate(updater, checkedUpdateVersion);
+      stagedUpdate = { version: checkedUpdateVersion, channel: channelState.channel };
       updateDownloaded = true;
       return { ok: true };
     } catch (error) {
