@@ -648,6 +648,7 @@ export async function modelPickerEffortWeb(seed: Seed) {
         [modelId]: { name: "Reasoning witness", reasoning: true, variants: {
           low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" },
           CustomExact: { reasoningEffort: "low" },
+          auto: { reasoningEffort: "low" },
           hidden: { disabled: true, reasoningEffort: "high" },
         } },
         standard: { name: "Standard witness", reasoning: false },

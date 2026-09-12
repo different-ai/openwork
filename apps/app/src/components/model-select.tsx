@@ -332,6 +332,7 @@ export function ModelSelect({
   const nextFavorite = nextFavoriteModel(favorites, value);
   const showBehavior = !hideValue
     && selectedThinkingOptions.length > 0
+    && (selectedOption ? selectedOption.behaviorValue != null : behaviorValue != null)
     && Boolean(effectiveBehaviorLabel);
 
   const applyModel = (option: ModelOption, behavior?: string | null) => {
