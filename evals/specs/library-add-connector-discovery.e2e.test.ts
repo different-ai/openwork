@@ -56,7 +56,7 @@ test(title, async ({ evidence, world, seed, user, probe, step }) => {
     const filters = await probe.dom('[aria-label="Library filters"] button[aria-pressed]:not([aria-label])');
     expect(filters.elements.map((element) => element.text)).toEqual(["MCPs", "Skills", "Plugins"]);
     expect((await probe.dom('[aria-label="Library filters"] button[aria-pressed="true"]:not([aria-label])')).elements.map((element) => element.text)).toEqual(["MCPs"]);
-    expect((await probe.dom('[role="tab"][aria-selected="true"]')).elements).toMatchObject([{ text: expect.stringMatching(/^Ready to use\b/) }]);
+    expect((await probe.dom('[role="tab"][aria-selected="true"]')).elements).toMatchObject([{ text: expect.stringMatching(/^Ready to use\s*0$/) }]);
     expect((await probe.dom('button[aria-label="Card view"][aria-pressed="true"]')).elements).toHaveLength(1);
     expect((await probe.dom('button[aria-label="List view"][aria-pressed="true"]')).elements).toHaveLength(0);
     expect((await probe.dom('button[aria-expanded="false"]')).elements).toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringMatching(/^Advanced\b/) })]));
