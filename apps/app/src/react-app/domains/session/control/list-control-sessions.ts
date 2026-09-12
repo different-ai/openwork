@@ -29,6 +29,7 @@ export type ControlSessionLike = {
   time?: {
     updated?: number;
     created?: number;
+    archived?: number;
   };
   model?: ControlSessionEngineModel | null;
 };
@@ -39,6 +40,7 @@ export type ListedControlSession = {
   workspace: string;
   updatedAt: number;
   pinned: boolean;
+  archived: boolean;
   /** Live activity, the same source as the sidebar indicator. */
   status: SessionActivityStatus;
   /** True while a turn, subtask, compaction, permission, or question is still open. */
@@ -103,6 +105,9 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
     for (const session of state.sessionsByWorkspaceId[workspace.id] ?? []) {
       const sessionId = session.id?.trim() ?? "";
       if (!sessionId) continue;
+      const archived = typeof session.time?.archived === "number" && session.time.archived > 0;
+      if (record.archived === "exclude" && archived) continue;
+      if (record.archived === "only" && !archived) continue;
       const status = state.statusFor(workspace.id, sessionId);
       out.push({
         sessionId,
@@ -110,6 +115,7 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         workspace: controlWorkspaceLabel(workspace),
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
+        archived,
         status,
         working: isWorkingStatus(status),
         model: controlSessionModel(session),

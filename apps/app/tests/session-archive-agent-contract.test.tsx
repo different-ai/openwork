@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
+import type { ListControlSessionsState } from "../src/react-app/domains/session/control/list-control-sessions";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
@@ -24,12 +25,14 @@ const [
   { createOpenworkServerClient },
   { toast },
   { isWorkingStatus, listControlSessions },
+  { useSessionControlActions },
   { useSessionArchive },
   { OpenworkControlProvider, useControlAction },
 ] = await Promise.all([
   import("../src/app/lib/openwork-server"),
   import("../src/components/ui/sonner"),
   import("../src/react-app/domains/session/control/list-control-sessions"),
+  import("../src/react-app/domains/session/control/session-control-actions"),
   import("../src/react-app/domains/session/sidebar/use-session-archive"),
   import("../src/react-app/shell/control/control-provider"),
 ]);
@@ -105,6 +108,90 @@ describe("session.list_sessions exposes live activity", () => {
   test("only finished or failed turns are safe to archive without Stop", () => {
     expect(["thinking", "responding", "waiting", "compacting"].map(isWorkingStatus)).toEqual([true, true, true, true]);
     expect(["idle", "error"].map(isWorkingStatus)).toEqual([false, false]);
+  });
+});
+
+describe("session.list_sessions archive inventory", () => {
+  const state: ListControlSessionsState = {
+    workspaces: [{ id: "ws", name: "Main" }],
+    sessionsByWorkspaceId: { ws: [
+      { id: "restored", time: { updated: 3, archived: 0 } },
+      { id: "archived", time: { updated: 4, archived: 1700000000000 } },
+      { id: "fresh", time: { updated: 5 } },
+      { id: "restored-pinned", time: { updated: 1, archived: 0 } },
+      { id: "archived-pinned", time: { updated: 2, archived: 1700000000000 } },
+    ] },
+    pinnedIds: ["restored-pinned", "archived-pinned"],
+    statusFor: () => "idle",
+  };
+  const allIds = ["archived-pinned", "restored-pinned", "fresh", "archived", "restored"];
+
+  test.each([
+    { archived: undefined, ids: allIds },
+    { archived: "include", ids: allIds },
+    { archived: "exclude", ids: ["restored-pinned", "fresh", "restored"] },
+    { archived: "only", ids: ["archived-pinned", "archived"] },
+  ])("archived=$archived preserves pinned/newest order and applies limit after filtering", ({ archived, ids }) => {
+    const args = archived === undefined ? {} : { archived };
+    const listed = listControlSessions(args, state);
+    expect(listed.map(({ sessionId, archived }) => ({ sessionId, archived }))).toEqual(
+      ids.map((sessionId) => ({ sessionId, archived: sessionId.startsWith("archived") })),
+    );
+    expect(listControlSessions({ ...args, limit: 2 }, state).map((session) => session.sessionId)).toEqual(ids.slice(0, 2));
+    expect(listControlSessions({ ...args, workspaceId: "main" }, state)).toEqual(listed);
+    expect(listControlSessions({ ...args, workspaceId: "missing" }, state)).toEqual([]);
+  });
+
+  test("a null payload defaults to including archived and restored sessions", () => {
+    expect(listControlSessions(null, state)).toEqual(listControlSessions({}, state));
+    expect(listControlSessions(null, state).map((session) => session.sessionId)).toEqual(allIds);
+  });
+
+  test("the app descriptor advertises every listing argument and archive mode without drift", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    function Register() {
+      useSessionControlActions({
+        workspaces: [{ id: "ws", name: "Main", path: "/tmp/list-contract", preset: "starter", workspaceType: "local", displayNameResolved: "Main" }],
+        sessionsByWorkspaceId: state.sessionsByWorkspaceId,
+        selectedWorkspaceId: "ws",
+        selectedWorkspaceRoot: "/tmp/list-contract",
+        selectedSessionId: null,
+        canCreateTask: false,
+        openworkClient: null,
+        opencodeClient: null,
+        endpointForWorkspace: () => null,
+        navigateToSession: () => undefined,
+        navigateToSessionRoot: () => undefined,
+        createTaskInWorkspace: () => null,
+        openModelPicker: () => undefined,
+        refreshRouteState: () => undefined,
+        archiveSession: async () => ({ kind: "cancelled" }),
+      });
+      return null;
+    }
+    cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
+    await act(async () => root.render(
+      <MemoryRouter><OpenworkControlProvider><Register /></OpenworkControlProvider></MemoryRouter>,
+    ));
+    const api = window.__openworkControl;
+    if (!api) throw new Error("control API was not published");
+    const descriptor = api.context().availableAffordances.find((entry) => entry.id === "session.list_sessions");
+    expect(descriptor?.arguments.map(({ name, type, required }) => ({ name, type, required }))).toEqual([
+      { name: "limit", type: "number", required: false },
+      { name: "workspaceId", type: "string", required: false },
+      { name: "archived", type: "string", required: false },
+    ]);
+    expect(descriptor?.description).toContain("`archived`");
+    const archiveDescription = descriptor?.arguments.find((argument) => argument.name === "archived")?.description;
+    for (const mode of ["include (default)", "exclude", "only"]) expect(archiveDescription).toContain(mode);
+    for (const archived of ["include", "exclude", "only"]) {
+      const args = { archived, workspaceId: "ws", limit: 2 };
+      expect(Object.keys(args).sort()).toEqual(descriptor?.arguments.map((argument) => argument.name).sort());
+      const result = await act(async () => api.query({ id: "session.list_sessions", args }));
+      expect(result).toMatchObject({ ok: true, result: listControlSessions(args, { ...state, pinnedIds: [] }) });
+    }
   });
 });
 

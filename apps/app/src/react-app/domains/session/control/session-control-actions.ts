@@ -102,13 +102,14 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (true while a turn, subtask, permission, or question is still open) and `model` ({ providerId, modelId, variant }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `archived` (true only when the archive timestamp is positive; restored sessions with timestamp 0 are false), `status` (idle, thinking, responding, waiting, compacting, error), `working` (true while a turn, subtask, permission, or question is still open) and `model` ({ providerId, modelId, variant }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
     args: [
       { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
+      { name: "archived", type: "string", required: false, description: "Archived sessions: include (default), exclude, or only. Restored sessions with archive timestamp 0 are not archived." },
     ],
     execute: (args) => {
       // Same roll-up as the sidebar: a delegated child's pending permission
