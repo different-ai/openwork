@@ -66,7 +66,7 @@ describe("command palette search", () => {
     const items = [
       item({
         id: "models",
-        title: "Switch model",
+        title: "Models",
         detail: "Choose the LLM that runs your next prompts",
         searchText: "model models llm provider openai anthropic claude gpt gemini switch pick select default",
       }),

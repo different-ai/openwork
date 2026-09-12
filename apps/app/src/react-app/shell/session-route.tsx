@@ -3871,7 +3871,6 @@ export function SessionRoute() {
       onSelectModel={(next, behavior) => {
         applySessionRouteModelSelection(next, selectedSessionId || null, { value: behavior });
       }}
-      selectedModelLabel={modelLabel}
       accessibleTargets={paletteAccessibleTargets}
       onOpenAccessibleTarget={(target) => {
         try {

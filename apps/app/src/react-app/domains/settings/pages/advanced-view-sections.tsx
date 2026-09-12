@@ -743,7 +743,6 @@ export function AdvancedOpencodeSection(props: AdvancedOpencodeSectionProps) {
 export function AdvancedWorkspaceRunModeSection() {
   const { workspaceRunModeEnabled, toggleWorkspaceRunMode } = useFeatureFlagsPreferences();
   const restricted = useDesktopRestriction("allowControlSettings");
-  if (!isDesktopRuntime()) return null;
   return (
     <LayoutSection id="advanced-workspace-run-mode">
       <LayoutSectionHeader>
@@ -757,7 +756,13 @@ export function AdvancedWorkspaceRunModeSection() {
             Choose when OpenWork asks before acting, using the icon beside attachments. Off by default. Available with the standard desktop engine.
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
-            <Switch data-testid="workspace-run-mode-flag" aria-label="Show workspace run mode" checked={workspaceRunModeEnabled} disabled={restricted} onCheckedChange={toggleWorkspaceRunMode} />
+            <Switch
+              data-testid="workspace-run-mode-flag"
+              aria-label="Show workspace run mode"
+              checked={workspaceRunModeEnabled}
+              disabled={restricted || !isDesktopRuntime()}
+              onCheckedChange={toggleWorkspaceRunMode}
+            />
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
         <LayoutSectionItemFootnote>
