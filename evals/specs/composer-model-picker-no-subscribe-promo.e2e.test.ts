@@ -174,6 +174,11 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.see("Run task", { timeoutMs: 60_000 });
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness$/ });
     await user.looks(["The closed composer model trigger shows Reasoning witness and its dropdown chevron, with no Default label and no middle-dot separator next to the model name."]);
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await probe.eventually(() => world.requests(), { within: 90_000, label: "Default reaches provider after reload", until: (requests) => requests.length === 5 });
+    expect((await world.requests())[4]).toMatchObject({ model: world.modelId, reasoningEffort: null });
+    await user.see("Run task", { timeoutMs: 30_000 });
     const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "default" } } });
     evidence.recordJsonArtifact("MODEL-01 Default after reload", native);
@@ -188,6 +193,11 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.see("Run task", { timeoutMs: 60_000 });
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness\s*· Auto$/ });
     await user.looks(["The closed composer model trigger shows Reasoning witness followed by a middle-dot separator and Auto, with a dropdown chevron."]);
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await probe.eventually(() => world.requests(), { within: 90_000, label: "explicit Auto reaches provider after reload", until: (requests) => requests.length === 6 });
+    expect((await world.requests())[5]).toMatchObject({ model: world.modelId, reasoningEffort: "low" });
+    await user.see("Run task", { timeoutMs: 30_000 });
     const explicit = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     expect(explicit.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "auto" } } });
     evidence.recordJsonArtifact("MODEL-01 explicit auto variant after reload", explicit);
