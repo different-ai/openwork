@@ -14,9 +14,15 @@ const test = spec.world(libraryMcpServersFromConfig, {
 // where the shape is `command: "python3", args: [...]`. OpenWork must list that
 // server beside its own `command: [...]` shape instead of blanking Settings.
 test("the Library lists MCP servers written by hand into opencode.json, whichever command shape they use", async ({ world, user, agent, probe, step, evidence }) => {
-  await step("the workspace fixture wrote three disabled servers and one enabled mock into opencode.json", async () => {
+  await step("opencode.json contains the enabled mock before the workspace is opened", async () => {
     expect(world.configWrite).toMatchObject({ ok: true });
-    expect(world.mockRegistration).toEqual({ status: 200 });
+    const config = await probe.desktopApi(`/workspace/${encodeURIComponent(world.workspace.workspaceId)}/mcp`);
+    expect(config).toMatchObject({
+      status: 200,
+      body: { items: expect.arrayContaining([
+        expect.objectContaining({ name: "ready-helper", config: expect.objectContaining({ url: world.readyMock.mcpUrl, enabled: true }) }),
+      ]) },
+    });
   });
 
   await step("the enabled mock completes a real MCP handshake and reaches connected", async () => {
@@ -45,7 +51,7 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     await user.notSee({ text: "remote-helper" });
     evidence.recordAssertionEvidence(
       "Library readiness follows a real MCP connection",
-      "ready-helper completed MCP initialize, the workspace engine reported connected, and Ready displayed it without any of the three disabled entries.",
+      "The fixture wrote ready-helper into opencode.json before opening the workspace, without an MCP registration API call. It completed MCP initialize, the workspace engine reported connected, and Ready displayed it without any of the three disabled entries.",
       true,
     );
   });

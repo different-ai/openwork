@@ -33,21 +33,8 @@ export async function libraryMcpServersFromConfig(seed: Seed) {
   const readyMock = den.mocks.ready;
   if (!readyMock) throw new Error("Missing Library readiness MCP witness");
   const handshakeSince = new Date().toISOString();
-  const world = await emptySession(seed);
-  const mockRegistration = await seed.evalIn(world.app, browserScript(async (workspaceId: string, url: string) => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) throw new Error("Library fixture requires the local OpenWork server");
-    const response = await fetch(`${info.baseUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/mcp`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${info.ownerToken ?? info.clientToken ?? ""}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ name: "ready-helper", config: { type: "remote", url, enabled: true, oauth: false } }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    return { status: response.status };
-  }, [world.workspace.workspaceId, readyMock.mcpUrl]), { timeoutMs: 35_000 });
+  const workspacePath = seed.tmpPath("library-mcp-config");
+  const app = await seed.desktop({ name: "library-mcp-config" });
   const config = {
     ...handWrittenConfig,
     mcp: {
@@ -55,9 +42,13 @@ export async function libraryMcpServersFromConfig(seed: Seed) {
       "ready-helper": { type: "remote", url: readyMock.mcpUrl, enabled: true, oauth: false },
     },
   };
-  const configWrite = await seed.evalIn(world.app, browserScript(async (workspacePath: string, content: string) => {
+  // The enabled server must be discovered from disk when the workspace opens.
+  // Do not register it through the MCP API: that would bypass config loading.
+  const configWrite = await seed.evalIn(app, browserScript(async (workspacePath: string, content: string) => {
     const result = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("writeOpencodeConfig", "project", workspacePath, content);
     return result ?? { ok: false, stderr: "desktop bridge unavailable" };
-  }, [world.workspacePath, `${JSON.stringify(config, null, 2)}\n`]));
-  return { ...world, configWrite, mockRegistration, readyMock, handshakeSince };
+  }, [workspacePath, `${JSON.stringify(config, null, 2)}\n`]));
+  const workspace = await seed.workspace(app, workspacePath, { create: true });
+  const session = await seed.session(app);
+  return { app, workspace, session, workspacePath, configWrite, readyMock, handshakeSince };
 }
