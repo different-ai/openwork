@@ -12,6 +12,8 @@ import type { InferenceContext } from "./middleware/inference-auth.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
 import type { PricingCatalog } from "./pricing.js"
+import type { GenerationTerminal } from "./generation-outcome.js"
+import { terminalErrorCode, validatedUpstreamId } from "./generation-outcome.js"
 
 export type GatewayRequestLogRow = typeof GatewayRequestLogTable.$inferInsert
 
@@ -29,6 +31,7 @@ export type RequestLogStartInput = {
   method: string
   requestedModel: string | null
   upstreamModel: string | null
+  modelAlias?: string | null
   stream: boolean
   gatewayProviderId?: GatewayRequestLogRow["gateway_provider_id"]
   gatewayProviderCredentialId?: GatewayRequestLogRow["gateway_provider_credential_id"]
@@ -40,6 +43,7 @@ export type RequestLogStartInput = {
 }
 
 export type RequestLogUsageInput = {
+  generation?: GenerationTerminal
   usageSource: GatewayUsageSource
   upstreamModel?: string | null
   inputTokens?: number | null
@@ -59,6 +63,7 @@ export type RequestLogFinishInput = {
   errorCode?: string | null
   upstreamRequestId?: string | null
   responseBytes?: number | null
+  firstOutputMs?: number | null
 }
 
 export type RequestLogRecorderDependencies = {
@@ -216,6 +221,9 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
       }
       const upstreamModel = usage?.upstreamModel ?? started.upstreamModel
         ?? (started.identity.kind === "models" && started.protocol !== "passthrough" ? started.requestedModel : null)
+      const completedAt = now()
+      const generationOutcome = usage?.generation?.generationOutcome ?? "unknown"
+      const providerTerminalReason = usage?.generation?.providerTerminalReason ?? "unknown"
       const row: GatewayRequestLogRow = {
         id: pending.id,
         organization_id: started.identity.organizationId,
@@ -238,6 +246,8 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         stream: started.stream,
         status: input.status,
         outcome: input.outcome === "ok" && usage?.streamError ? "upstream_error" : input.outcome,
+        generation_outcome: generationOutcome,
+        provider_terminal_reason: providerTerminalReason,
         error_code: input.errorCode ?? usage?.streamError ?? null,
         input_tokens: usage?.inputTokens ?? null,
         output_tokens: usage?.outputTokens ?? null,
@@ -247,16 +257,36 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         reasoning_tokens: usage?.reasoningTokens ?? null,
         usage_source: usage && hasUsageTokens(usage) ? usage.usageSource : "missing",
         cost_micro_usd: estimateCost(started, usage, upstreamModel, pricing),
-        upstream_request_id: input.upstreamRequestId ?? usage?.upstreamRequestId ?? null,
+        upstream_request_id: validatedUpstreamId(input.upstreamRequestId) ?? validatedUpstreamId(usage?.upstreamRequestId),
         openwork_request_id: started.openworkRequestId,
         started_at: startedAt,
         first_byte_at: firstByteAt,
-        completed_at: now(),
+        completed_at: completedAt,
         request_bytes: started.requestBytes ?? null,
         response_bytes: input.responseBytes ?? null,
         metadata: { cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
       }
       if (row.cost_micro_usd === null) row.metadata = { cost_source: "unknown" }
+      const upstreamResponseId = validatedUpstreamId(usage?.upstreamRequestId)
+      if (upstreamResponseId) row.metadata = { ...row.metadata, upstream_response_id: upstreamResponseId }
+      try {
+        dependencies.reporter.terminal?.({
+          openworkRequestId: started.openworkRequestId,
+          upstreamRequestId: row.upstream_request_id ?? null,
+          upstreamResponseId, firstOutputMs: input.firstOutputMs ?? null,
+          organizationId: started.identity.organizationId,
+          orgMembershipId: started.identity.orgMembershipId,
+          route: started.route, protocol: started.protocol,
+          upstreamProviderId: started.upstreamProviderId,
+          modelAlias: started.modelAlias ?? null,
+          status: input.status, transportOutcome: row.outcome, errorCode: terminalErrorCode(row.error_code),
+          generationOutcome, providerTerminalReason,
+          startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(),
+          durationMs: Math.max(0, completedAt.getTime() - startedAt.getTime()),
+          responseBytes: input.responseBytes ?? null,
+          inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
+        })
+      } catch {}
       finishWrite = (async () => {
         if (!await startWrite) return
         const saved = await persist(() => (dependencies.updateRequestLog ?? updateRequestLogInDb)(row), "request_log_update_failed")

@@ -5,7 +5,11 @@ import { serve } from "@hono/node-server"
 import { Hono } from "hono"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { createProviderCatalog } from "../../src/provider-catalog.js"
-import { inferenceAccessLogger } from "../../src/inference-reporting.js"
+import { inferenceAccessLogger, sentryInferenceReporter } from "../../src/inference-reporting.js"
+import * as Sentry from "@sentry/node"
+import { relayChatStream } from "../../src/chat-response.js"
+import { trackStream } from "../../src/relay.js"
+import { createOpenAiChatSseUsageParser } from "../../src/usage/openai-chat.js"
 import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../../src/request-log.js"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { matrixRow } from "../google-oauth-refresh-fixture.js"
@@ -13,6 +17,17 @@ import type { GatewayAccessRow } from "../../src/provider-access.js"
 
 const requests: { url: string; headers: Record<string, string | string[] | undefined>; bytes: number[] }[] = []
 const reports: unknown[] = []
+const envelopes: unknown[] = []
+const sentryOptions = Sentry.getClient()?.getOptions()
+if (process.env.TERMINAL_SENTRY_FIXTURE === "1" && sentryOptions) {
+  Sentry.init({
+    ...sentryOptions, integrations: [], release: "fixture-release", environment: "fixture",
+    transport: () => ({
+      async send(envelope) { envelopes.push(envelope); return { statusCode: 200 } },
+      async flush() { return true },
+    }),
+  })
+}
 const rows: InferenceRequestLogRow[] = []
 let cancelled = 0
 let lookups = 0
@@ -34,6 +49,25 @@ const upstream = createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(Buffer.from(chunk))
   requests.push({ url: request.url ?? "", headers: request.headers, bytes: [...Buffer.concat(chunks)] })
   response.on("close", () => { if (!response.writableEnded) cancelled++ })
+  if (config.mode === "concurrent") {
+    const id = `chatcmpl_${request.headers["x-openwork-request-id"]}`
+    const finishReason = requests.length % 2 ? "content_filter" : "length"
+    response.writeHead(200, { "content-type": "application/json", "x-request-id": "header-request" })
+    setTimeout(() => response.end(JSON.stringify({ id, choices: [{ index: 0, message: { role: "assistant", content: marker }, finish_reason: finishReason }] })), finishReason === "length" ? 10 : 80)
+    return
+  }
+  if (config.mode === "partial-sse") {
+    response.writeHead(200, { "content-type": "text/event-stream" })
+    response.write(`data: ${JSON.stringify({ id: "chatcmpl_partial", choices: [{ index: 0, delta: { content: marker }, finish_reason: config.finishReason ?? null }] })}\n\n`)
+    release = () => config.disconnect ? response.destroy() : response.end(typeof config.ending === "string" ? config.ending : "")
+    return
+  }
+  if (typeof config.upstreamId === "string") response.setHeader("x-request-id", config.upstreamId)
+  if ((config.mode === "synthetic-json" || config.mode === "synthetic-sse") && typeof config.responseBody === "string") {
+    response.writeHead(200, { "content-type": config.mode === "synthetic-sse" ? "text/event-stream" : "application/json" })
+    response.end(config.responseBody)
+    return
+  }
   if (config.mode === "headers-hang") return
   if (config.mode === "redirect") {
     response.writeHead(307, { location: `${origin}/redirect-target` })
@@ -97,9 +131,37 @@ app.post("/internal/rollups/run", (c) => gatewayApp.fetch(c.req.raw))
 app.post("/webhooks/openrouter", (c) => gatewayApp.fetch(c.req.raw))
 app.use("/api/*", inferenceAccessLogger)
 app.get("/__test/state", (c) => c.json({ requests, reports, rows, cancelled, lookups, buckets, upstreamReads, credentialReads, tokenCalls, gatewayKey }))
+app.get("/__test/telemetry", async (c) => { await Sentry.flush(2000); return c.json({ envelopes }) })
+app.get("/__test/backpressure", async (c) => {
+  const results = []
+  for (const managed of [false, true]) {
+    let pulls = 0
+    let cancellations = 0
+    let finishes = 0
+    const sourceBytes = new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"fixture"},"finish_reason":null}]}\n\n')
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) { pulls++; controller.enqueue(sourceBytes) },
+      cancel() { cancellations++ },
+    }, { highWaterMark: 0 })
+    const parser = createOpenAiChatSseUsageParser()
+    const observe = (bytes: Uint8Array) => { parser.push(new TextDecoder().decode(bytes)); throw new Error(marker) }
+    const finish = () => { finishes++; throw new Error(marker) }
+    const stream = managed ? relayChatStream({ body: source, abort: new AbortController(), startedAt: Date.now(), idleMs: 1000, onRawChunk: observe, onFinish: finish }) : trackStream(source, { chunk: observe, done: finish, fail: finish })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    const beforeRead = pulls
+    const reader = stream.getReader()
+    const first = await reader.read()
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    const afterRead = pulls
+    await reader.cancel()
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    results.push({ managed, beforeRead, afterRead, pulls, cancellations, finishes, exactBytes: first.value && Buffer.from(first.value).equals(Buffer.from(sourceBytes)), generation: parser.result().generation })
+  }
+  return c.json(results)
+})
 app.post("/__test/config", async (c) => {
   config = await c.req.json()
-  requests.length = reports.length = rows.length = 0
+  requests.length = reports.length = rows.length = envelopes.length = 0
   cancelled = lookups = buckets = upstreamReads = credentialReads = tokenCalls = 0
   process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS = config.allow === false ? "" : origin
   if (config.egressAlias === "canonical") {
@@ -114,9 +176,11 @@ app.post("/__test/release", (c) => { release?.(); release = undefined; return c.
 registerProxyRoutes(app, {
   async assertOrganizationManagedModelsAllowed() {},
   async findActiveGatewayKey(key) {
+    if (key.value === `ow_gw_${"B".repeat(42)}A`) return { id: "gky_other", organization_id: "org_other", org_membership_id: "om_other" }
     return key.value === gatewayKey ? { id: "gky_fixture", organization_id: "org_fixture", org_membership_id: "om_fixture" } : null
   },
   async findActiveInferenceKey(key) {
+    if (key.value === "ow_inf_other") return { id: "ink_other", organization_id: "org_other", org_membership_id: "om_other" }
     if (key.value !== "ow_inf_fixture") return null
     return { id: "ink_fixture", organization_id: "org_fixture", org_membership_id: "om_fixture" }
   },
@@ -139,6 +203,8 @@ registerProxyRoutes(app, {
     return true
   },
   reporter: {
+    terminal(report) { reports.push(report); if (process.env.TERMINAL_SENTRY_FIXTURE === "1") sentryInferenceReporter.terminal?.(report); if (config.observerFailure) throw new Error(marker) },
+    completion(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
     request(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
     handledError(report) { reports.push(report); if (config.observerFailure) throw new Error(marker) },
   },
@@ -166,7 +232,7 @@ registerProxyRoutes(app, {
     },
     async loadProviderCredential(input) {
       credentialReads++
-      if (input.scope.orgMembershipId !== "om_fixture" || input.scope.gatewayProviderId !== "ipr_fixture"
+      if (!["om_fixture", "om_other"].includes(input.scope.orgMembershipId) || input.scope.gatewayProviderId !== "ipr_fixture"
         || input.subject !== (config.retryReason ? "om_fixture" : "org")) return null
       if (config.retryReason) return { id: "ipc_fixture", kind: "oauth_google", secret: JSON.stringify({ accessToken: "EXPIRED_TOKEN_NEVER_FORWARD", refreshToken: "REFRESH_TOKEN_NEVER_FORWARD" }), expires_at: new Date(0), status: "active" }
       return { id: "ipc_fixture", kind: "api_key", secret: "UPSTREAM_ONLY_KEY", expires_at: null, status: "active" }

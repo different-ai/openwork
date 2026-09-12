@@ -1,7 +1,11 @@
 // Shared shape + SSE plumbing for the protocol usage parsers. Parsers never
 // retain message content: only usage counters and the reported model.
 
+import type { GenerationTerminal } from "../generation-outcome.js"
+import { validatedUpstreamId } from "../generation-outcome.js"
+
 export type ParsedUsage = {
+  generation?: GenerationTerminal
   found: boolean
   model: string | null
   inputTokens: number | null
@@ -40,8 +44,13 @@ export function hasUsage(usage: ParsedUsage) {
 
 export function captureResponseIdentity(target: ParsedUsage, event: unknown) {
   if (!isRecord(event)) return
-  const id = event.id ?? event.responseId ?? event.requestId
-  if (typeof id === "string" && id.length <= 255) target.upstreamRequestId = id
+  const id = validatedUpstreamId(event.id ?? event.responseId ?? event.requestId)
+  if (id && !target.upstreamRequestId) target.upstreamRequestId = id
+  captureResponseError(target, event)
+}
+
+function captureResponseError(target: ParsedUsage, event: unknown) {
+  if (!isRecord(event)) return
   if (event.error != null || event.type === "error" || event.type === "response.failed" || event.status === "failed") {
     target.streamError = "upstream_stream_error"
   }
@@ -66,7 +75,7 @@ export function emptyUsage(): ParsedUsage {
 // only; callers still relay their original bytes.
 export function createSseUsageParser(
   applyEvent: (target: ParsedUsage, event: unknown) => void,
-  options: { maxBufferLength?: number } = {},
+  options: { maxBufferLength?: number; onDone?(usage: ParsedUsage): void } = {},
 ): UsageParser {
   const maxBufferLength = options.maxBufferLength ?? defaultMaxBufferLength
   const usage = emptyUsage()
@@ -81,9 +90,12 @@ export function createSseUsageParser(
     if (!trimmed) {
       if (eventType === "error") usage.streamError = "upstream_stream_error"
       try {
-        const event: unknown = JSON.parse(data)
-        captureResponseIdentity(usage, event)
-        applyEvent(usage, event)
+        if (data === "[DONE]") options.onDone?.(usage)
+        else {
+          const event: unknown = JSON.parse(data)
+          captureResponseError(usage, event)
+          applyEvent(usage, event)
+        }
       } catch {
         // Malformed data and [DONE] are not usage.
       }
