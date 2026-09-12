@@ -13,7 +13,7 @@ import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
 import type { PricingCatalog } from "./pricing.js"
 import type { GenerationTerminal } from "./generation-outcome.js"
-import { validatedUpstreamId } from "./generation-outcome.js"
+import { terminalErrorCode, validatedUpstreamId } from "./generation-outcome.js"
 
 export type GatewayRequestLogRow = typeof GatewayRequestLogTable.$inferInsert
 
@@ -279,7 +279,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
           route: started.route, protocol: started.protocol,
           upstreamProviderId: started.upstreamProviderId,
           modelAlias: started.modelAlias ?? null,
-          status: input.status, transportOutcome: row.outcome,
+          status: input.status, transportOutcome: row.outcome, errorCode: terminalErrorCode(row.error_code),
           generationOutcome, providerTerminalReason,
           startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString(),
           durationMs: Math.max(0, completedAt.getTime() - startedAt.getTime()),

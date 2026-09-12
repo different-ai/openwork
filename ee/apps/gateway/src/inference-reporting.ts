@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/node"
 import { createMiddleware } from "hono/factory"
 import { shouldEmitSentryLog } from "./instrumentation.js"
 import type { ChatCompletionReport } from "./chat-response.js"
-import type { GenerationTerminal } from "./generation-outcome.js"
+import type { GenerationTerminal, terminalErrorCode } from "./generation-outcome.js"
 import type { GatewayRequestOutcome, GatewayRequestProtocol, GatewayRequestRoute } from "@openwork/types/den/gateway"
 
 export type InferenceTerminalReceipt = GenerationTerminal & {
@@ -18,6 +18,7 @@ export type InferenceTerminalReceipt = GenerationTerminal & {
   modelAlias: string | null
   status: number | null
   transportOutcome: GatewayRequestOutcome
+  errorCode: ReturnType<typeof terminalErrorCode>
   startedAt: string
   completedAt: string
   durationMs: number
@@ -145,7 +146,7 @@ export const sentryInferenceReporter: InferenceReporter = {
         transportOutcome: report.transportOutcome, generationOutcome: report.generationOutcome,
       } })
     } catch {}
-    const level = report.generationOutcome === "content_filtered" || report.generationOutcome === "refused" ? "warn" : report.transportOutcome === "ok" ? "info" : "error"
+    const level = report.transportOutcome !== "ok" ? "error" : report.generationOutcome === "content_filtered" || report.generationOutcome === "refused" ? "warn" : "info"
     if (shouldEmitSentryLog(level)) {
       const options = Sentry.getClient()?.getOptions()
       Sentry.logger[level]("OpenWork inference terminal", { ...report, release: options?.release ?? "unknown", environment: options?.environment ?? "unknown" })

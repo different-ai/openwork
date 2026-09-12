@@ -32,8 +32,17 @@ export function parseOpenAiChatJsonUsage(body: unknown, expectedChoices?: number
 
 export function createOpenAiChatSseUsageParser(options: { maxBufferLength?: number; expectedChoices?: number } = {}): OpenAiChatSseUsageParser {
   const observe = createChatGenerationObserver(options.expectedChoices)
-  return createSseUsageParser((usage, event) => {
+  let done = false
+  let terminal: ParsedUsage["generation"]
+  const parser = createSseUsageParser((usage, event) => {
     applyEvent(usage, event)
-    usage.generation = observe(event)
-  }, options)
+    if (!done) usage.generation = observe(event)
+  }, { ...options, onDone(usage) {
+    if (!done) terminal = usage.generation
+    done = true
+  } })
+  return { ...parser, result() {
+    const usage = parser.result()
+    return done ? { ...usage, generation: terminal } : usage
+  } }
 }

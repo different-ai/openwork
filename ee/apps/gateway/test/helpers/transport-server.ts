@@ -58,7 +58,7 @@ const upstream = createServer(async (request, response) => {
   }
   if (config.mode === "partial-sse") {
     response.writeHead(200, { "content-type": "text/event-stream" })
-    response.write(`data: ${JSON.stringify({ id: "chatcmpl_partial", choices: [{ index: 0, delta: { content: marker }, finish_reason: null }] })}\n\n`)
+    response.write(`data: ${JSON.stringify({ id: "chatcmpl_partial", choices: [{ index: 0, delta: { content: marker }, finish_reason: config.finishReason ?? null }] })}\n\n`)
     release = () => config.disconnect ? response.destroy() : response.end(typeof config.ending === "string" ? config.ending : "")
     return
   }

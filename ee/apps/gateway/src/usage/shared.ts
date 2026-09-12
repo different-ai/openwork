@@ -75,7 +75,7 @@ export function emptyUsage(): ParsedUsage {
 // only; callers still relay their original bytes.
 export function createSseUsageParser(
   applyEvent: (target: ParsedUsage, event: unknown) => void,
-  options: { maxBufferLength?: number } = {},
+  options: { maxBufferLength?: number; onDone?(usage: ParsedUsage): void } = {},
 ): UsageParser {
   const maxBufferLength = options.maxBufferLength ?? defaultMaxBufferLength
   const usage = emptyUsage()
@@ -90,9 +90,12 @@ export function createSseUsageParser(
     if (!trimmed) {
       if (eventType === "error") usage.streamError = "upstream_stream_error"
       try {
-        const event: unknown = JSON.parse(data)
-        captureResponseError(usage, event)
-        applyEvent(usage, event)
+        if (data === "[DONE]") options.onDone?.(usage)
+        else {
+          const event: unknown = JSON.parse(data)
+          captureResponseError(usage, event)
+          applyEvent(usage, event)
+        }
       } catch {
         // Malformed data and [DONE] are not usage.
       }

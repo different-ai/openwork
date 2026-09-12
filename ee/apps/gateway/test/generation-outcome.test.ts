@@ -46,6 +46,20 @@ test("Chat tracks every bounded choice and ignores repeated usage frames", () =>
   assert.equal(parser.result().generation, undefined)
 })
 
+test("native Chat freezes semantics at DONE while still accounting trailing usage", () => {
+  for (const split of [false, true]) {
+    const parser = createOpenAiChatSseUsageParser({ maxBufferLength: 200 })
+    const before = 'data: {"choices":[{"index":0,"finish_reason":"content_filter"}],"usage":{"total_tokens":3}}\n\ndata: [DONE]\n\n'
+    const after = 'data: {"choices":[{"index":0,"finish_reason":"stop"}],"usage":{"total_tokens":9}}\n\ndata: [DONE]\n\n'
+    for (const chunk of split ? [...before + after] : [before + after]) parser.push(chunk)
+    assert.deepEqual(parser.result().generation, generationTerminal("content_filter"))
+    assert.equal(parser.result().totalTokens, 9)
+    parser.push(`data: ${"x".repeat(201)}\n\n`)
+    assert.deepEqual(parser.result().generation, generationTerminal("content_filter"))
+    assert.equal(parser.result().found, false)
+  }
+})
+
 test("Anthropic reads only structured terminal fields", () => {
   for (const reason of ["refusal", "max_tokens", "end_turn", "tool_use", "stop_sequence", "SECRET_MARKER_DO_NOT_LOG"]) {
     const expected = generationTerminal(reason)

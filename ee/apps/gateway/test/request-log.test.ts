@@ -188,3 +188,21 @@ test("one terminal receipt survives a throwing observer and repeated finishes wi
   assert.equal(rows[0]?.response_bytes, 42)
   assert.ok(!JSON.stringify(receipts).includes("SECRET_MARKER_DO_NOT_LOG"))
 })
+
+test("terminal receipts allowlist row error codes without echoing arbitrary values", async () => {
+  for (const [errorCode, expected] of [[null, null], ["upstream_timeout", "upstream_timeout"], ["upstream_stream_error", "upstream_stream_error"], ["SECRET_MARKER_DO_NOT_LOG", "unknown"]]) {
+    const receipts: unknown[] = []
+    const codes: unknown[] = []
+    const rows: InferenceRequestLogRow[] = []
+    const recorder = createRequestLogRecorder({
+      insertRequestLog: async () => {},
+      updateRequestLog: async (row) => { rows.push(row); return true },
+      reporter: { request() {}, handledError() {}, terminal(receipt) { receipts.push(receipt); codes.push(receipt.errorCode) } },
+    })
+    recorder.start(startInput)
+    await recorder.finish({ status: 502, outcome: "upstream_error", errorCode })
+    assert.equal(rows[0]?.error_code, errorCode)
+    assert.deepEqual(codes, [expected])
+    assert.ok(!JSON.stringify(receipts).includes("SECRET_MARKER_DO_NOT_LOG"))
+  }
+})

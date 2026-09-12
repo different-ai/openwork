@@ -1,7 +1,44 @@
 import { spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { expect } from "vitest"
-import { test } from "@openwork/testkit"
+import { AsyncLocalStorage } from "node:async_hooks"
+import { expect as vitestExpect } from "vitest"
+import { test as testkitTest } from "@openwork/testkit"
+
+const assertionEvidence = new AsyncLocalStorage<(matcher: string, site: string, passed: boolean) => void>()
+function observedAssertion<T extends object>(assertion: T, chain = ""): T {
+  return new Proxy(assertion, { get(target, key) {
+    const member: unknown = Reflect.get(target, key, target)
+    if (typeof key !== "string") return member
+    if (["not", "resolves", "rejects"].includes(key) && typeof member === "object" && member !== null) return observedAssertion(member, `${chain}${key}.`)
+    if (!/^to[A-Z]/.test(key) || typeof member !== "function") return member
+    return (...args: unknown[]) => {
+      const capture = assertionEvidence.getStore()
+      if (!capture) throw new Error("Assertion evidence context is missing")
+      const site = new Error().stack?.split("\n").slice(2).join("\n").match(/specs\/inference-gateway-transport-security\.test\.ts:\d+:\d+/)?.[0] ?? "inference-gateway-transport-security.test.ts"
+      let result: unknown
+      try { result = Reflect.apply(member, target, args) }
+      catch (error) { capture(`${chain}${key}`, site, false); throw error }
+      if (result instanceof Promise) return result.then(
+        (value) => { capture(`${chain}${key}`, site, true); return value },
+        (error) => { capture(`${chain}${key}`, site, false); throw error },
+      )
+      capture(`${chain}${key}`, site, true)
+      return result
+    }
+  } })
+}
+const expect: typeof vitestExpect = new Proxy(vitestExpect, { apply(target, _receiver, args) {
+  return observedAssertion(target(args[0], typeof args[1] === "string" ? args[1] : undefined))
+} })
+function test(name: string, run: () => Promise<void>) {
+  testkitTest(name, async ({ evidence }) => {
+    let assertions = 0
+    await assertionEvidence.run((matcher, site, passed) => {
+      evidence.recordAssertionEvidence(`${name} — assertion ${++assertions}: ${matcher}`, `${site}: native Vitest matcher ${passed ? "succeeded" : "failed"}; payload values are not recorded.`, passed)
+    }, run)
+    if (!assertions) throw new Error("Test completed without assertion evidence")
+  })
+}
 
 // Launch a real HTTP gateway with in-memory persistence and a local upstream.
 // No product-source imports, external providers, or database prerequisites.
@@ -783,6 +820,76 @@ test("Sentry SDK local sink receives warning Logs and low-cardinality counters w
     }
     expect(JSON.stringify(envelopes)).not.toContain(marker)
     expect(JSON.stringify(envelopes)).not.toMatch(/"type":"event"|"type":"transaction"|fingerprint/)
+  }
+})
+
+test("Sentry terminal error codes distinguish malformed, missing, disconnected and timed-out managed streams", async () => {
+  const observedCodes = new Set<unknown>()
+  for (const entry of [
+    { config: { mode: "synthetic-sse", responseBody: 'data: {broken\n\n' }, code: "upstream_malformed_stream" },
+    { config: { mode: "synthetic-sse", responseBody: 'data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}\n\n' }, code: "upstream_incomplete" },
+    { config: { mode: "partial-sse", disconnect: true }, code: "upstream_interrupted" },
+    { config: { mode: "partial-sse" }, code: "upstream_timeout" },
+  ]) {
+    await using f = await fixture(entry.config, 30_000, { TERMINAL_SENTRY_FIXTURE: "1", SENTRY_DSN: "http://public@127.0.0.1:1/1", SENTRY_LOG_LEVEL: "error", SENTRY_TRACES_SAMPLE_RATE: "0", GATEWAY_STREAM_IDLE_MS: "1000" })
+    const response = await f.openwork({ body: '{"model":"z-ai/glm-5.2","messages":[],"stream":true}' })
+    const body = response.text()
+    if (entry.config.disconnect) await f.release()
+    expect(await body).toContain(entry.code)
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    assertTerminal(state, { errorCode: entry.code, transportOutcome: "upstream_error", generationOutcome: "unknown" })
+    expect(state.rows[0].error_code).toBe(entry.code)
+    const envelopes = await f.telemetry()
+    const logs = sinkItems(envelopes, "log")
+    expect(logs).toHaveLength(1)
+    expect(logs[0].level).toBe("error")
+    expect(sinkAttributes(logs[0]).errorCode).toBe(entry.code)
+    observedCodes.add(sinkAttributes(logs[0]).errorCode)
+    expect(JSON.stringify(envelopes)).not.toContain(marker)
+  }
+  expect(observedCodes.size).toBe(4)
+})
+
+test("transport failures after content_filter remain error-level Sentry Logs on both routes", async () => {
+  for (const managed of [false, true]) for (const failure of ["disconnect", "timeout"]) {
+    await using f = await fixture({ mode: "partial-sse", finishReason: "content_filter", disconnect: true }, failure === "timeout" ? 1000 : 30_000, { TERMINAL_SENTRY_FIXTURE: "1", SENTRY_DSN: "http://public@127.0.0.1:1/1", SENTRY_LOG_LEVEL: "error", SENTRY_TRACES_SAMPLE_RATE: "0", GATEWAY_STREAM_IDLE_MS: "1000" })
+    const response = await (managed ? f.openwork({ body: '{"model":"z-ai/glm-5.2","messages":[],"stream":true}' }) : f.request("/chat/completions", { body: '{"model":"x","stream":true}' }))
+    const reader = response.body!.getReader()
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain('"finish_reason":"content_filter"')
+    if (failure === "disconnect") await f.release()
+    if (!managed) await expect(reader.read()).rejects.toThrow()
+    else {
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain(failure === "disconnect" ? "upstream_interrupted" : "upstream_timeout")
+      expect((await reader.read()).done).toBe(true)
+    }
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    assertTerminal(state, { transportOutcome: "upstream_error", generationOutcome: "content_filtered", providerTerminalReason: "content_filter" })
+    expect(state.requests).toHaveLength(1)
+    const envelopes = await f.telemetry()
+    const logs = sinkItems(envelopes, "log")
+    expect(logs).toHaveLength(1)
+    expect(logs[0].level).toBe("error")
+    expect(sinkAttributes(logs[0])).toMatchObject({ transportOutcome: "upstream_error", generationOutcome: "content_filtered" })
+    expect(sinkItems(envelopes, "trace_metric")).toHaveLength(1)
+    expect(JSON.stringify(envelopes)).not.toMatch(/"type":"event"|fingerprint/)
+    expect(JSON.stringify(envelopes)).not.toContain(marker)
+  }
+})
+
+test("Chat DONE freezes semantic terminals on both routes without changing native bytes or trailing usage", async () => {
+  await using f = await fixture()
+  for (const managed of [false, true]) for (const reason of ["stop", "content_filter"]) {
+    const frame = (finishReason: string, total: number) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage: { prompt_tokens: 1, completion_tokens: total - 1, total_tokens: total, cost: total / 1000 } })}\n\n`
+    const before = frame(reason, 3) + "data: [DONE]\n\n"
+    const responseBody = before + frame(reason === "stop" ? "content_filter" : "stop", 9) + "data: [DONE]\n\n"
+    await f.configure({ mode: "synthetic-sse", responseBody })
+    const response = await (managed ? f.openwork({ body: '{"model":"z-ai/glm-5.2","messages":[],"stream":true}' }) : f.request("/chat/completions", { body: '{"model":"x","stream":true}' }))
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe(managed ? before : responseBody)
+    const state = await f.waitFor((s) => Boolean(s.rows[0]?.completed_at))
+    assertTerminal(state, { errorCode: null, transportOutcome: "ok", generationOutcome: reason === "stop" ? "completed" : "content_filtered", providerTerminalReason: reason })
+    if (!managed) expect(state.rows[0]).toMatchObject({ total_tokens: 9, cost_micro_usd: 9000, response_bytes: new TextEncoder().encode(responseBody).length })
+    expect(state.requests).toHaveLength(1)
   }
 })
 
