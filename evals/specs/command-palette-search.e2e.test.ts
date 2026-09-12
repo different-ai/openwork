@@ -216,6 +216,17 @@ test("command palette searches settings by alias, navigates, records recents, an
         label: `${section.title} is focused and in view`,
         until: (value) => value === true,
       })).toBe(true);
+      if (section.id === "workspace-run-mode") {
+        await user.see({ role: "switch", label: "Show workspace run mode" });
+        const readSwitch = () => probe.eval(browserScript(() => {
+          const control = document.querySelector<HTMLButtonElement>('[data-testid="workspace-run-mode-flag"]');
+          return control ? { disabled: control.disabled, checked: control.getAttribute("aria-checked") } : null;
+        }));
+        const before = await readSwitch();
+        expect(before?.disabled).toBe(true);
+        await expect(user.click({ role: "switch", label: "Show workspace run mode" })).rejects.toThrow("Refused to click disabled");
+        expect(await readSwitch()).toEqual(before);
+      }
       await user.notSee(paletteInput);
     });
   }
