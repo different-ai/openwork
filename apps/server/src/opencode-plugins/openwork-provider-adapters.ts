@@ -48,7 +48,7 @@ export const sessionModelArgSchema = openworkSessionModelSchema.extend({
 
 export const sessionCreateArgsSchema = z.object({
   sessions: z.array(z.object({
-    title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
+    title: z.string().trim().min(1).transform((title) => title.length > 120 ? `${title.slice(0, 119)}…` : title).describe("Short title shown in the OpenWork session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
     model: sessionModelArgSchema.optional().describe("Model and reasoning effort for this session. Overrides the top-level model."),
   })).min(1).describe("One entry per new session to create and start."),
@@ -181,9 +181,9 @@ function sessionContribution(): OpenworkFeatureContribution {
         description: "Create and start one or more sessions without navigating away. Pass `model` ({ providerId, modelId, variant }) to bind the sessions to a model and reasoning effort; it is applied at creation and to the first turn, and read back as `model` by session.read and session.list_sessions.",
         provider,
         arguments: [
-          argument("sessions", "array", true, "Session titles and self-contained prompts; an entry may carry its own `model`."),
+          argument("sessions", "array", true, "Array of { title (≤120 chars, longer is clipped), prompt (≤100000 chars), model? }. Each prompt is self-contained; model is { providerId, modelId, variant? (≤60 chars) }."),
           argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the requesting session's workspace."),
-          argument("model", "object", false, "Optional providerId, modelId and variant (reasoning effort) for every created session. Omit to use the engine default."),
+          argument("model", "object", false, "Optional providerId, modelId and variant (reasoning effort, ≤60 chars) for every created session. Omit to use the engine default."),
         ],
         effects: writeEffects,
       }),
@@ -195,7 +195,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id from session.search, session.read, or session.list_sessions."),
-          argument("text", "string", true, "Prompt text appended as a new user message."),
+          argument("text", "string", true, "Prompt text appended as a new user message (≤100000 chars)."),
           argument("workspaceId", "string", false, "Optional workspace id or name."),
           argument("reveal", "boolean", false, "true to also open that session in the person's focused pane after sending. Defaults to false."),
         ],

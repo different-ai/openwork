@@ -185,6 +185,7 @@ type CreatedOpenWorkSessionResult = {
   ok: true;
   sessionId: string;
   title: string;
+  titleTruncated: boolean;
   started: boolean;
   /** The model the engine bound to the session, read from its create response. */
   model: OpenworkSessionModel | null;
@@ -193,6 +194,7 @@ type CreatedOpenWorkSessionResult = {
 type FailedOpenWorkSessionResult = {
   ok: false;
   title: string;
+  titleTruncated: boolean;
   error: string;
 };
 
@@ -245,6 +247,7 @@ function affordanceResult(
       ok: false,
       id,
       error: typeof result.error === "string" ? result.error : `${id} failed`,
+      ...(Array.isArray(result.issues) ? { issues: result.issues } : {}),
       code: "failed",
     };
   }
@@ -744,7 +747,9 @@ async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (
 }
 
 async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
-  const args = sessionSearchArgsSchema.parse(rawArgs);
+  const parsed = sessionSearchArgsSchema.safeParse(rawArgs);
+  if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
+  const args = parsed.data;
   const resultLimit = args.limit ?? SESSION_SEARCH_DEFAULT_LIMIT;
   const scanLimit = args.scanLimit ?? SESSION_SEARCH_DEFAULT_SCAN_LIMIT;
   const messageLimit = args.messageLimit ?? SESSION_SEARCH_DEFAULT_MESSAGE_LIMIT;
@@ -827,7 +832,9 @@ function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
 }
 
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
-  const args = sessionReadArgsSchema.parse(rawArgs);
+  const parsed = sessionReadArgsSchema.safeParse(rawArgs);
+  if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
+  const args = parsed.data;
   const count = args.count ?? 30;
   const from = args.from ?? "end";
   const summary = args.summary ?? false;
@@ -933,7 +940,9 @@ type SendToOpenWorkSessionResult =
  * effort: the message is already sent if that fails).
  */
 async function sendToOpenWorkSession(rawArgs: unknown, context: OpenCodeContext): Promise<SendToOpenWorkSessionResult> {
-  const args = sessionSendArgsSchema.parse(rawArgs);
+  const parsed = sessionSendArgsSchema.safeParse(rawArgs);
+  if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
+  const args = parsed.data;
   const located = await locateOpenWorkSession(args.sessionId, args.workspaceId);
   if ("error" in located) return { ok: false, error: located.error };
   const { workspace, session } = located;
@@ -1047,11 +1056,34 @@ function enginePromptModel(model: SessionModelArg) {
   return { model: { providerID: model.providerId, modelID: model.modelId }, ...(model.variant ? { variant: model.variant } : {}) };
 }
 
+function argumentAtPath(value: unknown, path: PropertyKey[]): unknown {
+  for (const key of path) {
+    value = typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+  }
+  return value;
+}
+
+function sessionArgumentError(error: z.ZodError, rawArgs: unknown): { ok: false; error: string; issues: Array<{ path: string; message: string }> } {
+  const issues = error.issues.map((issue) => {
+    const path = issue.path.map((key, index) => typeof key === "number" ? `[${key}]` : `${index ? "." : ""}${String(key)}`).join("");
+    const value = argumentAtPath(rawArgs, issue.path);
+    const detail = issue.code === "too_big" && issue.origin === "string" && typeof value === "string"
+      ? `${value.trim().length.toLocaleString("en-US")} characters, max ${issue.maximum.toLocaleString("en-US")}`
+      : issue.message;
+    return { path, message: `${path}: ${detail}` };
+  });
+  return { ok: false, error: issues.map((issue) => issue.message).join("; "), issues };
+}
+
 async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
-  const args = sessionCreateArgsSchema.parse(rawArgs);
+  const parsed = sessionCreateArgsSchema.safeParse(rawArgs);
+  if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
+  const args = parsed.data;
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
   let createdOnEngine = false;
-  const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
+  const results = await Promise.all(args.sessions.map(async (session, index): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
+    const inputTitle = argumentAtPath(rawArgs, ["sessions", index, "title"]);
+    const titleTruncated = typeof inputTitle === "string" && inputTitle.trim().length > 120;
     const model = session.model ?? args.model;
     try {
       const payload = sessionInfoSchema.parse(await postJson(
@@ -1066,7 +1098,8 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
       return {
         ok: true,
         sessionId: payload.id,
-        title: payload.title?.trim() || session.title,
+        title: session.title,
+        titleTruncated,
         started: true,
         model: sessionModelOf(payload),
         route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.id)}`,
@@ -1075,6 +1108,7 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
       return {
         ok: false,
         title: session.title,
+        titleTruncated,
         error: unknownErrorMessage(error),
       };
     }

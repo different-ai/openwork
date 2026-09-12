@@ -54,6 +54,7 @@ const createResultSchema = z.object({
   created: z.array(z.object({
     sessionId: z.string(),
     title: z.string(),
+    titleTruncated: z.boolean(),
     started: z.boolean(),
     model: sessionModelSchema.nullable(),
     route: z.string(),
@@ -62,6 +63,12 @@ const createResultSchema = z.object({
     title: z.string(),
     error: z.string(),
   })),
+});
+
+const argumentErrorSchema = z.object({
+  ok: z.literal(false),
+  error: z.string(),
+  issues: z.array(z.object({ path: z.string(), message: z.string() })),
 });
 
 const sendResultSchema = z.object({
@@ -676,7 +683,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(await search({ query: "a", createdAfter: 20, createdBefore: 60 })).toEqual(["ses_beta"]);
     expect(await search({ query: "a", archived: "exclude" })).toEqual(["ses_alpha", "ses_beta"]);
     expect(await search({ query: "a", archived: "only" })).toEqual(["ses_archive"]);
-    await expect(plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "a", createdAfter: "yesterday-ish" } })).rejects.toThrow();
+    const invalid = argumentErrorSchema.parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "a", createdAfter: "yesterday-ish" } })));
+    expect(invalid.issues.map((issue) => issue.path)).toEqual(["createdAfter"]);
   });
 
   test("keeps search results when one workspace native mount is unavailable", async () => {
@@ -862,6 +870,57 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     ]));
   });
 
+  test.each([145, 120])("session.create accepts a %i-character title and echoes its final label", async (length) => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const title = "T".repeat(length);
+    const expected = length > 120 ? `${title.slice(0, 119)}…` : title;
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "session.create", args: { sessions: [{ title: `  ${title}  `, prompt: "Research dolphins." }] },
+    }, {});
+    const parsed = affordanceResultSchema("session.create", createResultSchema).parse(JSON.parse(output));
+    expect(parsed.result.created).toHaveLength(1);
+    expect(parsed.result.created[0]).toMatchObject({ title: expected, titleTruncated: length > 120 });
+    expect(parsed.result.created[0]?.title).toHaveLength(120);
+    expect(fake.requests.find((request) => request.method === "POST" && request.pathname.endsWith("/opencode/session"))?.body).toEqual({ title: expected });
+  });
+
+  test("session.create reports an empty title before creating anything", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const output = argumentErrorSchema.parse(JSON.parse(await plugin.tool.openwork_execute.execute({
+      id: "session.create", args: { sessions: [{ title: "  ", prompt: "Valid prompt" }] },
+    }, {})));
+    expect(output).toMatchObject({ ok: false, issues: [{ path: "sessions[0].title", message: expect.stringContaining("sessions[0].title:") }] });
+    expect(output.issues).toHaveLength(1);
+    expect(fake.requests).toEqual([]);
+  });
+
+  test("session.create reports every oversized prompt without partial creation", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const messages = ["sessions[1].prompt: 100,001 characters, max 100,000", "sessions[2].prompt: 100,412 characters, max 100,000"];
+    const output = argumentErrorSchema.parse(JSON.parse(await plugin.tool.openwork_execute.execute({
+      id: "session.create", args: { sessions: [
+        { title: "Valid", prompt: "Valid prompt" },
+        { title: "First invalid", prompt: "P".repeat(100_001) },
+        { title: "Second invalid", prompt: "P".repeat(100_412) },
+      ] },
+    }, {})));
+    expect(output).toMatchObject({ ok: false, error: messages.join("; "), issues: messages.map((message, index) => ({ path: `sessions[${index + 1}].prompt`, message })) });
+    expect(output.issues).toHaveLength(2);
+    expect(fake.requests).toEqual([]);
+  });
+
+  test.each(["session.search", "session.read", "session.send"])("%s returns structured argument issues without I/O", async (id) => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const tool = id === "session.send" ? plugin.tool.openwork_execute : plugin.tool.openwork_query;
+    const output = argumentErrorSchema.parse(JSON.parse(await tool.execute({ id, args: {} }, {})));
+    expect(output.issues.map((issue) => issue.path)).toEqual(id === "session.search" ? ["query"] : id === "session.read" ? ["sessionId"] : ["sessionId", "text"]);
+    expect(fake.requests).toEqual([]);
+  });
+
   test("session.create binds the requested model and reasoning effort at creation and on the first turn", async () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
@@ -921,10 +980,11 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
-    await expect(plugin.tool.openwork_execute.execute({
+    const output = argumentErrorSchema.parse(JSON.parse(await plugin.tool.openwork_execute.execute({
       id: "session.create",
       args: { model: { providerId: "lpr_test", variant: "high" }, sessions: [{ title: "Half a model", prompt: "Research nothing." }] },
-    }, { sessionID: "ses_origin" })).rejects.toThrow();
+    }, { sessionID: "ses_origin" })));
+    expect(output.issues.map((issue) => issue.path)).toEqual(["model.modelId"]);
     expect(fake.requests.filter((request) => request.method === "POST")).toEqual([]);
   });
 
