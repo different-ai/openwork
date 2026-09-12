@@ -538,7 +538,7 @@ test("archiving exits only the viewed conversation, and working sessions require
 });
 
 test("accepted commands require exact engine admission before archive and never replay after Undo", async ({ world, user, agent, probe, step }) => {
-  const { a2, b1 } = world;
+  const { a1, a2, b1 } = world;
   const { aborts, open, send, archive, archived } = await archiveActions({ world, user, agent, probe });
   expect(await world.requests()).toHaveLength(0);
   expect(await aborts()).toHaveLength(0);
@@ -552,6 +552,61 @@ test("accepted commands require exact engine admission before archive and never 
       status: 200,
       body: { model: "session-archive-mock/mock-agent-workload-model", small_model: "session-archive-mock/mock-agent-workload-model" },
     });
+  });
+
+  await step("an accepted response keeps Starting visible until native busy, then Working clears at completion without another send", async () => {
+    await open(a1);
+    await world.holdRun();
+    await world.networkFault("accepted_command", a1.sessionId);
+    await agent.run("composer.set_text", { text: "/archive-witness" });
+    await user.see("composer", { text: "/archive-witness" });
+    await agent.run("composer.send");
+    const loading = `[data-session-surface-id="${a1.sessionId}"] [data-loading-message]`;
+    const startingUntil = Date.now() + 200;
+    do {
+      const rows = (await probe.dom(loading)).elements;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].text).toBe("Starting…");
+      expect(rows[0].rect.width).toBeGreaterThan(0);
+      expect(rows[0].rect.height).toBeGreaterThan(0);
+    } while (Date.now() < startingUntil);
+    const accepted = await world.facts();
+    const sends = accepted.requests.filter(request => ["command", "prompt_async"].includes(request.action));
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toMatchObject({ sessionId: a1.sessionId, action: "command", result: "accepted, not dispatched" });
+    expect(accepted.sessions.find(session => session.sessionId === a1.sessionId)?.status).toBe("idle");
+    expect(await world.requests()).toHaveLength(0);
+    expect((await probe.dom(`${loading}[data-loading-message="starting"]`)).elements).toHaveLength(1);
+    await world.releaseAbort();
+    await world.networkFault("none", a1.sessionId);
+    await probe.eventually(() => world.facts(), {
+      within: 30_000, label: "the single accepted command reaches native busy",
+      until: facts => facts.sessions.some(session => session.sessionId === a1.sessionId && session.status === "busy"),
+    });
+    await user.see({ text: "Working" });
+    expect((await probe.dom(`${loading}[data-loading-message="working"]`)).elements).toHaveLength(1);
+    expect((await probe.dom(`${loading}[data-loading-message="starting"]`)).elements).toHaveLength(0);
+    await world.releaseRun();
+    await user.see({ text: "Archive fixture reply." }, { timeoutMs: 60_000 });
+    await probe.eventually(() => world.facts(), {
+      within: 30_000, label: "the accepted command completes in the owning engine",
+      until: facts => facts.sessions.find(session => session.sessionId === a1.sessionId)?.status === "idle",
+    });
+    await user.notSee({ text: "Working" });
+    expect((await probe.dom(loading)).elements).toHaveLength(0);
+    const transcript = await world.transcript(a1);
+    expect(transcript.filter(message => message.role === "user")).toEqual([
+      expect.objectContaining({ id: sends[0].messageID, sessionId: a1.sessionId }),
+    ]);
+    expect(transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ parentID: sends[0].messageID, role: "assistant", completed: expect.any(Number), pendingTools: false }),
+    ]));
+    const noReplayUntil = Date.now() + 1_500;
+    await probe.eventually(async () => {
+      expect((await world.facts()).requests.filter(request => ["command", "prompt_async"].includes(request.action))).toHaveLength(1);
+      expect(await world.requests()).toHaveLength(1);
+      return Date.now() >= noReplayUntil;
+    }, { within: 10_000, label: "completion never resubmits the accepted command" });
   });
 
   for (const queued of [false, true]) {

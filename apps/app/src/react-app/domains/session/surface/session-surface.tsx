@@ -1480,22 +1480,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const autoSending = (Boolean(autoSendPayload)
     || hasComposerAutoSend(props.sessionId))
     && !sessionModelUnavailable;
-  const status = useMemo((): ThreadStatus => {
-    if (evalThreadStatus) return evalThreadStatus;
-    if (liveStatus.type === "busy") {
-      return "streaming";
-    }
-
-    if (liveStatus.type === "retry") {
-      return "retrying";
-    }
-
-    if (sending || autoSending) {
-      return "submitted";
-    }
-
-    return "ready";
-  }, [autoSending, evalThreadStatus, liveStatus, sending]);
   const [evalMarkdownMessages, setEvalMarkdownMessages] = useState<UIMessage[]>(EMPTY_TRANSCRIPT);
   useEffect(() => {
     setEvalMarkdownMessages(EMPTY_TRANSCRIPT);
@@ -1909,6 +1893,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
     hasActivePermission: Boolean(props.activePermission),
     hasSessionError: error !== null,
   }), [error, liveStatus.type, props.activePermission, props.activeQuestion, renderedMessages, sending]);
+  const status = useMemo((): ThreadStatus => {
+    if (evalThreadStatus) return evalThreadStatus;
+    if (liveStatus.type === "busy") {
+      return "streaming";
+    }
+
+    if (liveStatus.type === "retry") {
+      return "retrying";
+    }
+
+    if (sending || autoSending || (
+      queuedDrainState.phase.kind === "awaiting_observation"
+      && admissionOutcome === "unresolved"
+      && !admissionOutcomeUnresolved
+    )) {
+      return "submitted";
+    }
+
+    return "ready";
+  }, [admissionOutcome, admissionOutcomeUnresolved, autoSending, evalThreadStatus, liveStatus, queuedDrainState.phase.kind, sending]);
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {

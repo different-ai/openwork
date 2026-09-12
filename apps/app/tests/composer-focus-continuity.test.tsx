@@ -10,7 +10,7 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import type { NativeContextMenuRequest } from "../src/app/lib/desktop-types";
-import type { ComposerAttachment, ComposerDraft } from "../src/app/types";
+import type { ComposerAttachment, ComposerDraft, PendingPermission, PendingQuestion } from "../src/app/types";
 import type { CloudMcpSubmissionResult } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
 import type {
   NewTaskComposerContext,
@@ -276,6 +276,8 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     return children(archived);
   }
 
+  let activePermission: PendingPermission | null = null;
+  let activeQuestion: PendingQuestion | null = null;
   const renderSurface = (opencodeBaseUrl = "http://127.0.0.1:1/opencode", activeSessionId = sessionId, isControlTarget = false) => root.render(
     <PlatformProvider value={platform}>
       <MemoryRouter>
@@ -286,6 +288,8 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
               <ArchiveOwner>{archived => (
               <SessionSurface
                 archived={archived}
+                activePermission={activePermission}
+                activeQuestion={activeQuestion}
                 client={client}
                 workspaceId={workspaceId}
                 workspaceRoot="/tmp/project-focus-continuity"
@@ -527,7 +531,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     const freshRead = Promise.withResolvers<OpenworkSessionSnapshot>();
     snapshotRead = freshRead.promise;
     fetchedSnapshot = createSnapshot({ type: "idle" }, 4);
-    await act(async () => { expect(await restoreShared()).toBe(true); });
+    await act(async () => { expect(await restoreShared()).toEqual({ kind: "done" }); });
     await waitFor(() => container.querySelector('[contenteditable="true"][data-lexical-editor="true"]') !== null, "shared Restore to enable the composer before refetch completes");
     expect(queryClient.getQueryState(key)?.fetchStatus).toBe("fetching");
     expect(container.querySelector('[data-testid="archived-session"]')).toBeNull();
@@ -849,14 +853,30 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
         role: "user",
         parts: [{ type: "text", text: "First message auto-send" }],
       }]);
-      submission.resolve({ outcome: "accepted" });
     });
+    await waitFor(() => Object.values(useComposerStateStore.getState().pendingMessages).flat()
+      .some((item) => item.serverMessageId === messageId), "the user message to be observed before acceptance returns");
+    expectStarting();
+    await act(async () => submission.resolve({ outcome: "accepted" }));
     expect(editor.textContent).toBe("");
     expect(container.textContent?.split("First message auto-send").length).toBe(2);
     expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(0);
 
-    const { PromptAdmissionUnknownError } = await import("../src/app/lib/opencode");
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("awaiting_observation");
+    expectStarting();
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "busy" }));
+    await waitFor(() => container.querySelector('[data-loading-message="working"]') !== null, "confirmed activity after accepted auto-send");
+    expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), {
+      type: "retry", attempt: 1, message: "Retrying accepted request", next: Date.now() + 10_000,
+    }));
+    await waitFor(() => container.textContent?.includes("Retrying accepted request") === true, "retry feedback after accepted auto-send");
     expectSettled();
+    await act(async () => queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "idle" }));
+    await waitFor(() => getQueuedDrainState(sessionId).phase.kind === "ready", "the accepted auto-send to finish");
+    expectSettled();
+
+    const { PromptAdmissionUnknownError } = await import("../src/app/lib/opencode");
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Uncertain send"));
     await act(async () => send());
@@ -869,6 +889,7 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     await act(async () => submission.reject(new PromptAdmissionUnknownError({ messageID: uncertainId })));
     expect(editor.textContent).toBe("Newer uncertain draft");
     expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "admission_unknown", messageID: uncertainId });
+    expectSettled();
     expect(Object.values(useComposerStateStore.getState().failedDrafts).flat()).toHaveLength(0);
     expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
     await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [{
@@ -1010,7 +1031,8 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     // Native v2 returns admission without an ID and normalizes user turns to text only.
     const { createClientV2, v2PromptText } = await import("../src/app/lib/opencode-v2-adapter");
     const { draftToParts } = await import("../src/react-app/domains/session/sync/draft-parts");
-    const { snapshotToUIMessages } = await import("../src/react-app/domains/session/sync/usechat-adapter");
+    const { snapshotToUIMessages, createSessionErrorUIMessage } = await import("../src/react-app/domains/session/sync/usechat-adapter");
+    const { presentOpencodeSessionError } = await import("../src/react-app/domains/session/sync/session-error");
     const nativeBaseUrl = "http://127.0.0.1:1/opencode2";
     const nativeClient = createClientV2(nativeBaseUrl, "/tmp/project-focus-continuity", {});
     const nativeOwner = composerAutoSendScopeKey({ draftScope: "local", opencodeBaseUrl: nativeBaseUrl, workspaceId, sessionId });
@@ -1282,6 +1304,63 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(queryClient.getQueryData<OpenworkSessionSnapshot>(snapshotKey(workspaceId, sessionId))?.status).toBeUndefined();
     expect(sentDrafts).toHaveLength(sendsBeforeProbe);
     expect(getQueuedDrainState(sessionId).lastResolution).toEqual({ itemId: "deferred-command-probe", resolution: "completed" });
+    expectSettled();
+
+    await act(async () => root.render(null));
+    await act(async () => {
+      fetchedSnapshot = createSnapshot({ type: "idle" }, 34);
+      queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(fetchedSnapshot));
+      renderSession();
+    });
+    for (const outcome of ["answered", "failed", "stopped", "question", "permission", "unresolved"]) {
+      await act(async () => {
+        queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(fetchedSnapshot));
+        dispatchQueuedDrain(sessionId, { type: "send_started", itemId: outcome });
+        dispatchQueuedDrain(sessionId, {
+          type: "send_result", itemId: outcome, outcome: "accepted", at: Date.now(),
+          deferredMessageID: "existing-user-message",
+        });
+      });
+      await waitFor(() => container.querySelector('[data-loading-message="starting"]') !== null, `${outcome} admission feedback`);
+      expectStarting();
+      if (outcome === "answered") {
+        await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [
+          ...snapshotToUIMessages(fetchedSnapshot),
+          { id: "completed-without-busy", role: "assistant", parts: [{ type: "text", text: "Completed without a busy event." }],
+            metadata: { opencode: { created: 35, completed: 36 } } },
+        ]));
+        await waitFor(() => container.textContent?.includes("Completed without a busy event.") === true, "the terminal reply without busy");
+      } else if (outcome === "failed") {
+        const presentation = presentOpencodeSessionError("Provider rejected the request.");
+        const failure = createSessionErrorUIMessage("failed-without-busy", presentation);
+        await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [
+          ...snapshotToUIMessages(fetchedSnapshot), failure,
+        ]));
+        await waitFor(() => container.textContent?.includes(presentation.title) === true, "the terminal error without busy");
+      } else if (outcome === "stopped") {
+        await act(async () => dispatchQueuedDrain(sessionId, { type: "stop_confirmed" }));
+      } else if (outcome === "question") {
+        activeQuestion = { id: "question-without-busy", sessionID: sessionId, receivedAt: Date.now(),
+          questions: [{ header: "Choice", question: "Pick one", options: [{ label: "Yes", description: "Proceed" }] }] };
+        await act(async () => renderSession());
+      } else if (outcome === "permission") {
+        activePermission = { id: "permission-without-busy", sessionID: sessionId, receivedAt: Date.now(),
+          protocol: "legacy", permission: "read", patterns: ["/tmp/project-focus-continuity"], metadata: {}, always: [] };
+        await act(async () => renderSession());
+      } else {
+        await waitFor(() => container.querySelector('[data-testid="admission-outcome-unknown"]') !== null, "bounded admission recovery");
+      }
+      expectSettled();
+      expect(getQueuedDrainState(sessionId).phase.kind).toBe(outcome === "stopped" ? "ready" : "awaiting_observation");
+      await act(async () => {
+        dispatchQueuedDrain(sessionId, { type: "stop_confirmed" });
+        activeQuestion = null;
+        activePermission = null;
+        renderSession();
+      });
+    }
+    expect(sentDrafts).toHaveLength(sendsBeforeProbe);
 
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
     let creation = Promise.withResolvers<void>();
@@ -1395,4 +1474,4 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     mock.restore();
     if (registeredDom) await GlobalRegistrator.unregister();
   }
-});
+}, 10_000);
