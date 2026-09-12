@@ -14,6 +14,12 @@ import {
   wakeWorkerOnDaytona,
   type StopWorkerOnDaytonaResult,
 } from "./daytona.js"
+import {
+  isKubernetesWorkerMissingError,
+  provisionWorkerOnKubernetes,
+  stopWorkerOnKubernetes,
+  wakeWorkerOnKubernetes,
+} from "./kubernetes.js"
 import { withProvisionDeadline } from "./provision-deadline.js"
 import { touchProvisioningWorker, withProvisioningHeartbeat } from "./provisioning-heartbeat.js"
 import {
@@ -27,9 +33,9 @@ type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerStatus = typeof WorkerTable.$inferSelect.status
 type CloudWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status" | "last_active_at" | "updated_at"> & Partial<Pick<typeof WorkerTable.$inferSelect, "org_id">>
 type WorkerToken = typeof WorkerTokenTable.$inferSelect
-type WakeWorkerOnDaytona = typeof wakeWorkerOnDaytona
-type ProvisionWorkerOnDaytona = typeof provisionWorkerOnDaytona
-type StopWorkerOnDaytona = typeof stopWorkerOnDaytona
+type WakeCloudWorker = typeof wakeWorkerOnDaytona
+type ProvisionCloudWorker = typeof provisionWorkerOnDaytona
+type StopCloudWorker = typeof stopWorkerOnDaytona
 
 type CloudLifecycleStore = {
   getWorker: (workerId: WorkerId) => Promise<CloudWorker | null>
@@ -49,8 +55,8 @@ type CloudLifecycleStore = {
 
 type WakeCloudWorkerOptions = {
   store?: CloudLifecycleStore
-  wakeWorker?: WakeWorkerOnDaytona
-  provisionWorker?: ProvisionWorkerOnDaytona
+  wakeWorker?: WakeCloudWorker
+  provisionWorker?: ProvisionCloudWorker
   materializeProviders?: typeof materializeCloudWorkerProviders
   deadlineMs?: number
   heartbeatIntervalMs?: number
@@ -58,7 +64,7 @@ type WakeCloudWorkerOptions = {
 
 type StopIdleCloudWorkersOptions = {
   store?: CloudLifecycleStore
-  stopWorker?: StopWorkerOnDaytona
+  stopWorker?: StopCloudWorker
   provisionerMode?: typeof env.provisionerMode
   idleMs?: number
   idleBefore?: Date
@@ -77,6 +83,18 @@ let cloudIdleStopPromise: Promise<void> | null = null
 
 function tokenByScope(tokens: WorkerToken[], scope: typeof WorkerTokenTable.$inferSelect.scope) {
   return tokens.find((entry) => entry.scope === scope)?.token ?? null
+}
+
+function defaultWakeWorker(): WakeCloudWorker {
+  return env.provisionerMode === "kubernetes" ? wakeWorkerOnKubernetes : wakeWorkerOnDaytona
+}
+
+function defaultProvisionWorker(): ProvisionCloudWorker {
+  return env.provisionerMode === "kubernetes" ? provisionWorkerOnKubernetes : provisionWorkerOnDaytona
+}
+
+function defaultStopWorker(): StopCloudWorker {
+  return env.provisionerMode === "kubernetes" ? stopWorkerOnKubernetes : stopWorkerOnDaytona
 }
 
 const databaseCloudLifecycleStore: CloudLifecycleStore = {
@@ -200,8 +218,8 @@ async function safelyMarkWorkerFailed(store: CloudLifecycleStore, workerId: Work
 
 async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCloudWorkerOptions) {
   const store = options.store ?? databaseCloudLifecycleStore
-  const wakeWorker = options.wakeWorker ?? wakeWorkerOnDaytona
-  const provisionWorker = options.provisionWorker ?? provisionWorkerOnDaytona
+  const wakeWorker = options.wakeWorker ?? defaultWakeWorker()
+  const provisionWorker = options.provisionWorker ?? defaultProvisionWorker()
   const materializeProviders = options.materializeProviders ?? materializeCloudWorkerProviders
   const deadlineMs = options.deadlineMs ?? env.cloudProvisionDeadlineMs
 
@@ -252,7 +270,7 @@ async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCl
             try {
               return await wakeWorker(wakeInput)
             } catch (error) {
-              if (!isDaytonaSandboxMissingError(error)) {
+              if (!isDaytonaSandboxMissingError(error) && !isKubernetesWorkerMissingError(error)) {
                 throw error
               }
 
@@ -347,12 +365,13 @@ function stopResultAllowsStoppedStatus(result: StopWorkerOnDaytonaResult) {
 }
 
 export async function stopIdleCloudWorkers(options: StopIdleCloudWorkersOptions = {}) {
-  if ((options.provisionerMode ?? env.provisionerMode) !== "daytona") {
+  const mode = options.provisionerMode ?? env.provisionerMode
+  if (mode !== "daytona" && mode !== "kubernetes") {
     return { checked: 0, stopped: 0 }
   }
 
   const store = options.store ?? databaseCloudLifecycleStore
-  const stopWorker = options.stopWorker ?? stopWorkerOnDaytona
+  const stopWorker = options.stopWorker ?? defaultStopWorker()
   const idleBefore = options.idleBefore ?? new Date(Date.now() - (options.idleMs ?? env.cloudIdleStopMs))
   const workers = await store.listIdleWorkers({
     idleBefore,
