@@ -1,8 +1,3 @@
-import { capturePosthogServerEvent } from "../../lib/posthog-server";
-
-// Force per-request execution so start-guide fetch counts stay accurate.
-export const dynamic = "force-dynamic";
-
 const startMarkdown = [
   "# OpenWork Start",
   "",
@@ -161,14 +156,7 @@ const startMarkdown = [
   "",
 ].join("\n");
 
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  await capturePosthogServerEvent("landing_start_md_fetched", {
-    variant: url.searchParams.get("v"),
-    user_agent: request.headers.get("user-agent"),
-    referer: request.headers.get("referer")
-  });
-
+export function GET() {
   return new Response(startMarkdown, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
