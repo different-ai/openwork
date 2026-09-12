@@ -1,0 +1,102 @@
+name: Review app deploy
+
+# Report links in PR comments point at vars.OPENWORK_REVIEW_URL. A Vercel
+# deployment URL is an immutable snapshot, so that variable must name a stable
+# alias. This workflow redeploys the review app from the default branch and
+# moves the alias to the new deployment, so existing report links always open
+# the current app.
+#
+# Required repository configuration:
+#   vars.OPENWORK_REVIEW_URL                 https://<stable-alias>.vercel.app
+#   vars.OPENWORK_REVIEW_VERCEL_ORG_ID       Vercel team id (team_...)
+#   vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID   Vercel project id (prj_...)
+#   secrets.VERCEL_TOKEN                     Vercel token with access to the project
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - apps/review/**
+      - packages/review/**
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/review-app-deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-app-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      vars.OPENWORK_REVIEW_URL != '' &&
+      vars.OPENWORK_REVIEW_VERCEL_ORG_ID != '' &&
+      vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID }}
+      OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve the stable review alias
+        id: alias
+        run: |
+          set -euo pipefail
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::Missing GitHub Actions secret VERCEL_TOKEN."
+            exit 1
+          fi
+          host="$(node -e 'const u = new URL(process.env.OPENWORK_REVIEW_URL); if (u.protocol !== "https:" || u.pathname !== "/" || u.search || u.hash) throw new Error("OPENWORK_REVIEW_URL must be an https origin"); console.log(u.hostname)')"
+          if [[ "$host" =~ -[a-z0-9]{9}-[a-z0-9-]+\.vercel\.app$ ]]; then
+            echo "::error::OPENWORK_REVIEW_URL ($host) looks like a single deployment URL. Point it at a stable alias so redeploys can replace it."
+            exit 1
+          fi
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+      - name: Deploy the review app to the protected preview environment
+        id: deploy
+        run: |
+          set -euo pipefail
+          url="$(npx --yes vercel@48 deploy --target preview --yes --token "$VERCEL_TOKEN" --meta githubCommitSha="$GITHUB_SHA")"
+          case "$url" in
+            https://*) ;;
+            *) echo "::error::Unexpected deployment output: $url"; exit 1 ;;
+          esac
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed $url"
+      - name: Point the stable alias at the new deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          ALIAS_HOST: ${{ steps.alias.outputs.host }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@48 alias set "$DEPLOYMENT_URL" "$ALIAS_HOST" --token "$VERCEL_TOKEN"
+      - name: Verify the alias still requires Vercel Authentication
+        env:
+          ALIAS_HOST: ${{ steps.alias.outputs.host }}
+        run: |
+          set -euo pipefail
+          headers="$(curl -sS -o /dev/null -D - --max-time 30 "https://$ALIAS_HOST/")"
+          status="$(printf '%s' "$headers" | head -n1 | awk '{print $2}')"
+          location="$(printf '%s' "$headers" | tr -d '\r' | awk 'tolower($1)=="location:" {print $2}')"
+          if [ "$status" != "302" ] && [ "$status" != "401" ]; then
+            echo "::error::Anonymous request to https://$ALIAS_HOST/ returned $status; Vercel Authentication must protect the review alias."
+            exit 1
+          fi
+          if [ "$status" = "302" ] && [[ "$location" != https://vercel.com/sso-api* ]]; then
+            echo "::error::Anonymous request was redirected to $location instead of Vercel Authentication."
+            exit 1
+          fi
+          echo "https://$ALIAS_HOST/ is protected and now serves the deployment from $GITHUB_SHA."
