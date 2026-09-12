@@ -4,7 +4,7 @@ import { invitationWitnesses, invitationsFor, membersFor, orgInvite, rows, text 
 
 const test = spec.world(orgInvite, { resources: { surfaces: ["web"], services: ["den"] }, timeout: 900_000 });
 
-test("OPE-82: cloud invitations retain identity and organization through authentication", async ({ world, user, probe, seed, step }) => {
+test("OPE-82: cloud invitations retain identity and organization through authentication", { timeout: 900_000 }, async ({ world, user, probe, seed, step }) => {
   const { witnesses, identity } = world;
   const orgId = text(world.organization.id);
   const otherId = text(world.otherOrg.id);
