@@ -200,6 +200,10 @@ test("opening a long conversation shows the latest and full history while ancill
   await step("the first message is reachable at the top of the transcript", async () => {
     await agent.run("session.scroll_top");
     await user.see({ text: longHistoryFirst }, { timeoutMs: 30_000 });
+    await probe.eventually(() => probe.dom(`${surface} [data-thread-history-status]`), {
+      within: 10_000, label: "earlier-history status disappears at the first message", until: value => value.elements.length === 0,
+    });
+    expect((await probe.dom(`${surface} [data-message-role="user"]`)).elements[0]?.text).toContain(longHistoryFirst);
     await user.looks([
       `The conversation transcript visibly starts with a user message reading "${longHistoryFirst}"`,
       "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
