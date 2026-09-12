@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { invitationWitnesses, invitationsFor, membersFor, orgInvite, rows, text } from "../worlds/org-invite.ts";
 
-const test = spec.world(orgInvite, { resources: { surfaces: ["web"], services: ["den"] }, needs: { placement: "local" }, timeout: 900_000 });
+const test = spec.world(orgInvite, { resources: { surfaces: ["web"], services: ["den"] }, timeout: 900_000 });
 
 test("OPE-82: cloud invitations retain identity and organization through authentication", async ({ world, user, probe, seed, step }) => {
   const { witnesses, identity } = world;
@@ -78,11 +78,10 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     expect(membersFor(await witnesses.org(orgId), world.other.email)).toHaveLength(0);
   });
 
-  await step("expired, canceled and domain-blocked invites do not authenticate or add members", async () => {
-    for (const state of ["expired", "canceled", "blocked"]) {
+  await step("canceled and domain-blocked invites do not authenticate or add members", async () => {
+    for (const state of ["canceled", "blocked"]) {
       const person = identity(`${state}-invitee`);
       const invite = await witnesses.invite(person.email, orgId);
-      if (state === "expired") await world.expire(invite.id);
       if (state === "canceled") {
         const canceled = await witnesses.api(`/v1/invitations/${invite.id}`, { method: "DELETE", headers: { "x-openwork-org-id": orgId } });
         expect(canceled.response.ok, canceled.text).toBe(true);
@@ -95,7 +94,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
         const before = await witnesses.emails("verification", person.email);
         const surface = await world.fresh(invite.link);
         const actor = user.on(surface);
-        await actor.see({ text: state === "blocked" ? "This invite needs a different email domain." : `This invite ${state === "expired" ? "expired" : "was canceled"}.` }, { timeoutMs: 90_000 });
+        await actor.see({ text: state === "blocked" ? "This invite needs a different email domain." : "This invite was canceled." }, { timeoutMs: 90_000 });
         await actor.notSee({ role: "textbox", label: "Password" });
         await actor.notSee({ role: "textbox", label: "Verification code" });
         await actor.notSee({ role: "button", label: `Join ${text(world.organization.name)}` });

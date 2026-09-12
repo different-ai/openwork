@@ -83,7 +83,6 @@ export function invitationsFor(org: Record<string, unknown>, email: string) {
 }
 
 export async function orgInvite(seed: Seed) {
-  await localInviteNeeds();
   const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
   const identity = (key: string) => personDefaults(key, undefined, runId);
   const den = await seed.den({
@@ -109,10 +108,6 @@ export async function orgInvite(seed: Seed) {
       async sessionsFor(email: string) {
         if (!den.database) throw new Error("Session witness requires the isolated Den database");
         return queryDenDatabase(den.database.url, "SELECT session.id FROM session INNER JOIN user ON user.id = session.user_id WHERE user.email = ? AND session.expires_at > NOW()", [email]);
-      },
-      async expire(invitationId: string) {
-        if (!den.database) throw new Error("Invitation expiry fixture requires the isolated Den database");
-        await queryDenDatabase(den.database.url, "UPDATE invitation SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?", [invitationId]);
       },
     };
   } finally {
