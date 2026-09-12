@@ -44,7 +44,7 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.screenshot();
   });
 
-  await step("Models stays readable beside long selected-model metadata and preserves composer state", async () => {
+  await step("Models stays readable without exposing internal model metadata and preserves composer state", async () => {
     await user.type(paletteInput, "models", { replace: true });
     await user.screenshot();
     await user.see({ role: "option", label: /^Models/ });
@@ -53,20 +53,19 @@ test("command palette searches settings by alias, navigates, records recents, an
     const metadata = await probe.dom('[data-command-palette-item="models"] > [data-slot="command-shortcut"]');
     expect(row.elements).toHaveLength(1);
     expect(label.elements).toHaveLength(1);
-    expect(metadata.elements).toHaveLength(1);
+    expect(metadata.elements).toHaveLength(0);
     expect(label.elements[0]!.text).toContain("Models");
     expect(label.elements[0]!.rect.width).toBeGreaterThan(80);
-    expect(metadata.elements[0]!.rect.height).toBeLessThanOrEqual(20);
-    expect(label.elements[0]!.rect.right).toBeLessThanOrEqual(metadata.elements[0]!.rect.left);
+    expect(row.elements[0]!.text.toLowerCase()).not.toContain(world.longModelId);
     evidence.recordJsonArtifact("Models row geometry", {
       row: row.elements[0],
       label: label.elements[0],
-      metadata: metadata.elements[0],
+      metadataCount: metadata.elements.length,
       longModelId: world.longModelId,
     });
     await user.looks([
       "The visible command palette row is clearly labeled Models.",
-      "The selected-model metadata is a single unobtrusive trailing line and does not overlap, replace, or garble the Models label.",
+      "No internal selected-model identifier or garbled model metadata is displayed in the Models row.",
     ]);
     await user.press("Enter");
     await user.see({ placeholder: "Search models..." });

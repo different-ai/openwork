@@ -2797,7 +2797,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           modelPicker.setRecentProviderIds(new Set());
           window.requestAnimationFrame(() => modelPicker.setOpen(true));
         }}
-        selectedModelLabel={defaultModelLabel}
         sessions={paletteSessionOptions}
         extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
       />
