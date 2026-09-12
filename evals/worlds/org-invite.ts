@@ -1,5 +1,5 @@
 import { denFetch, signIn, type DenSession } from "@openwork/behaviors";
-import { createAdmin, localMysqlIsRunning, localRedisIsRunning, needs, personDefaults, queryDenDatabase, SkipError, type Seed } from "@openwork/env";
+import { defaultReuseAdmin, localMysqlIsRunning, localRedisIsRunning, needs, personDefaults, queryDenDatabase, SkipError, type Seed } from "@openwork/env";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -82,35 +82,53 @@ export function invitationsFor(org: Record<string, unknown>, email: string) {
   return rows(org.invitations).filter((invitation) => invitation.email === email);
 }
 
-export async function orgInvite(seed: Seed) {
+export async function orgInvite(seed: Seed, { place }: { place: { kind: "local" | "daytona" } }) {
   const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
   const identity = (key: string) => personDefaults(key, undefined, runId);
   const den = await seed.den({
-    org: { name: `Invite workspace ${runId}`, admin: identity("invite-owner"), members: {} },
+    ...(place.kind === "daytona" ? { provision: false } : { seedProfile: "demo-org" }),
     env: {
       DEN_ORG_MODE: "multi_org", DEN_REQUIRE_EMAIL_VERIFICATION: "true",
       DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: "true", OPENWORK_DEV_MODE: "1",
       RESEND_API_KEY: "", SMTP_HOST: "", GOOGLE_CLIENT_ID: "invite-google-client", GOOGLE_CLIENT_SECRET: "invite-google-secret",
     },
   });
-  const owner = den.admin;
+  const owner = await signIn(den.ref, defaultReuseAdmin());
+  den.admin = owner;
   const witnesses = invitationWitnesses(owner);
-  const organization = record((await witnesses.org()).organization);
-  const other = await createAdmin(den, identity("other-owner"));
-  try {
-    const created = await seed.api(other, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Other workspace ${runId}` }) });
-    if (!created.response.ok) throw new Error(`Second organization: HTTP ${created.response.status}`);
-    const otherOrg = record(record(created.body).organization);
-    const web = await seed.web({ den, startPath: "/", headless: true });
-    return {
-      den, web, owner, other, organization, otherOrg, identity, witnesses,
-      fresh: (startPath = "/", signedInAs?: DenSession) => seed.web({ den, startPath, signedInAs, headless: true }),
-      async sessionsFor(email: string) {
-        if (!den.database) throw new Error("Session witness requires the isolated Den database");
-        return queryDenDatabase(den.database.url, "SELECT session.id FROM session INNER JOIN user ON user.id = session.user_id WHERE user.email = ? AND session.expires_at > NOW()", [email]);
-      },
-    };
-  } finally {
-    den.admin = owner;
+  const createdOrganization = await seed.api(owner, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Invite workspace ${runId}` }) });
+  if (!createdOrganization.response.ok) throw new Error(`Organization: HTTP ${createdOrganization.response.status}`);
+  const organization = record(record(createdOrganization.body).organization);
+  const otherPerson = identity("other-owner");
+  const signUp = await denFetch(den.ref, "/api/auth/sign-up/email", {
+    method: "POST", body: JSON.stringify(otherPerson), signal: AbortSignal.timeout(15_000),
+  });
+  if (!signUp.response.ok) throw new Error(`Other owner sign-up: HTTP ${signUp.response.status}`);
+  const deadline = Date.now() + 15_000;
+  let otp: string | null = null;
+  while (Date.now() < deadline && !otp) {
+    try {
+      otp = await witnesses.otp(otherPerson.email);
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
+  if (!otp) throw new Error("Other owner verification email did not arrive");
+  const verified = await denFetch(den.ref, "/api/auth/email-otp/verify-email", {
+    method: "POST", body: JSON.stringify({ email: otherPerson.email, otp }), signal: AbortSignal.timeout(15_000),
+  });
+  if (!verified.response.ok) throw new Error(`Other owner verification: HTTP ${verified.response.status}`);
+  const other = await signIn(den.ref, otherPerson);
+  const createdOther = await seed.api(other, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Other workspace ${runId}` }) });
+  if (!createdOther.response.ok) throw new Error(`Second organization: HTTP ${createdOther.response.status}`);
+  const otherOrg = record(record(createdOther.body).organization);
+  const web = await seed.web({ den, startPath: "/", headless: true });
+  return {
+    den, web, owner, other, organization, otherOrg, identity, witnesses,
+    fresh: (startPath = "/", signedInAs?: DenSession) => seed.web({ den, startPath, signedInAs, headless: true }),
+    async sessionsFor(email: string) {
+      if (!den.database) throw new Error("Session witness requires the isolated Den database");
+      return queryDenDatabase(den.database.url, "SELECT session.id FROM session INNER JOIN user ON user.id = session.user_id WHERE user.email = ? AND session.expires_at > NOW()", [email]);
+    },
+  };
 }
