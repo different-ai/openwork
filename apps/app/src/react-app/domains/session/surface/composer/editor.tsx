@@ -990,13 +990,23 @@ function SyncPlugin(props: {
       setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
       // $getRoot().selectEnd() doesn't work when the last node is a
       // token (chip) — Lexical can't position a cursor inside a token,
-      // so the selection collapses to position 0. Use element-level
-      // selection instead: place the cursor *after* the last child of
-      // the last paragraph.
+      // so the selection collapses to position 0. However, a bare
+      // element-level selection after a non-editable token breaks IME
+      // composition (e.g. Chinese/Japanese). Append a trailing space
+      // text node and place the cursor in it to ensure a valid TextNode exists.
       const lastParagraph = $getRoot().getLastChild();
       if ($isElementNode(lastParagraph)) {
-        const childCount = lastParagraph.getChildrenSize();
-        lastParagraph.select(childCount, childCount);
+        const lastChild = lastParagraph.getLastChild();
+        if (isComposerInlineTokenNode(lastChild)) {
+          const spaceNode = $createTextNode(" ");
+          lastParagraph.append(spaceNode);
+          spaceNode.select(1, 1);
+        } else if ($isTextNode(lastChild)) {
+          lastChild.select();
+        } else {
+          const childCount = lastParagraph.getChildrenSize();
+          lastParagraph.select(childCount, childCount);
+        }
       } else {
         $getRoot().selectEnd();
       }
