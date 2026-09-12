@@ -68,9 +68,9 @@ test("session.read and session.activity expose a real isolated headless shell ca
     if (!runtime || runtime.openworkUrl !== app.openworkUrl || runtime.workspace !== scratch) throw new Error("Could not identify the test-owned headless runtime");
     process.env.OPENWORK_SERVER_URL = runtime.openworkUrl;
     process.env.OPENWORK_SERVER_TOKEN = runtime.token;
-    const request = async (path: string, body?: unknown): Promise<unknown> => {
+    const request = async (path: string, body?: unknown, method = body === undefined ? "GET" : "POST"): Promise<unknown> => {
       const response = await fetch(`${runtime.openworkUrl}${path}`, {
-        method: body === undefined ? "GET" : "POST",
+        method,
         headers: { Authorization: `Bearer ${runtime.token}`, "Content-Type": "application/json" },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(30_000),
@@ -163,6 +163,45 @@ test("session.read and session.activity expose a real isolated headless shell ca
     expect(neighbor.toolCalls).toEqual({ total: 0, byTool: {}, byAffordanceId: {} });
     expect(neighbor.errors).toEqual({ total: 0, list: [] });
     evidence.recordAssertionEvidence("Activity counts the real call and its failed JSON outcome exactly once", "Activity changed from zero to one bash call and one completed ok:false outcome with the same call ID. Error text was redacted before its 300-character cap. Inclusive since preserved the call, future since returned honest zeros, and the neighbor retained zero tool calls/errors.", true);
+    const context = record(JSON.parse(await plugin.tool.openwork_context.execute()));
+    const listing = records(record(context.context).availableAffordances).find((entry) => entry.id === "session.list_sessions");
+    if (!listing) throw new Error("Isolated app did not advertise session.list_sessions");
+    const archiveArgument = records(listing.arguments).find((argument) => argument.name === "archived");
+    expect(archiveArgument).toMatchObject({ type: "string", required: false });
+    for (const mode of ["include (default)", "exclude", "only"]) expect(text(archiveArgument?.description)).toContain(mode);
+    expect(text(listing.description)).toContain("`archived`");
+    const listApp = async (archived?: string) => {
+      const output = record(JSON.parse(await plugin.tool.openwork_query.execute({
+        id: "session.list_sessions", args: { workspaceId, ...(archived === undefined ? {} : { archived }) },
+      })));
+      expect(output.ok).toBe(true);
+      return records(output.result);
+    };
+    const bothIds = [sessionId, neighborId].sort();
+    const initial = await eventually(() => listApp(), {
+      within: 15_000, intervalMs: 250, label: "both real sessions loaded by the isolated app inventory",
+      until: (entries) => bothIds.every((id) => entries.some((entry) => entry.sessionId === id && entry.archived === false)),
+    });
+    expect(initial.map((entry) => entry.sessionId).sort()).toEqual(bothIds);
+    for (const archived of [1700000000000, 0]) {
+      const updated = record(await request(`${base}/${neighborId}`, { time: { archived } }, "PATCH"));
+      expect(record(updated.time).archived).toBe(archived);
+      const isArchived = archived > 0;
+      const loaded = await eventually(() => listApp("include"), {
+        within: 15_000, intervalMs: 250, label: `app inventory observes archive timestamp ${archived}`,
+        until: (entries) => entries.some((entry) => entry.sessionId === neighborId && entry.archived === isArchived),
+      });
+      expect(loaded.map((entry) => entry.sessionId).sort()).toEqual(bothIds);
+      expect(loaded.find((entry) => entry.sessionId === sessionId)?.archived).toBe(false);
+      expect((await listApp()).map((entry) => ({ id: entry.sessionId, archived: entry.archived }))).toEqual(loaded.map((entry) => ({ id: entry.sessionId, archived: entry.archived })));
+      const excluded = await listApp("exclude");
+      expect(excluded.map((entry) => entry.sessionId).sort()).toEqual(isArchived ? [sessionId] : bothIds);
+      expect(excluded.every((entry) => entry.archived === false)).toBe(true);
+      const only = await listApp("only");
+      expect(only.map((entry) => entry.sessionId)).toEqual(isArchived ? [neighborId] : []);
+      expect(only.every((entry) => entry.archived === true)).toBe(true);
+    }
+    evidence.recordAssertionEvidence("The real app advertises and applies archive inventory filters, including restored timestamp zero", "Through the isolated plugin bridge, session.list_sessions advertised the archived argument and include/exclude/only modes. Native engine PATCH persisted 1700000000000 then 0; bounded polling observed archived=true then false in the app inventory. Default matched include, exclude removed only the archived neighbor, only returned that neighbor while archived and became empty after restore; the untouched session stayed unarchived.", true);
   } finally {
     if (original.url === undefined) delete process.env.OPENWORK_SERVER_URL;
     else process.env.OPENWORK_SERVER_URL = original.url;
