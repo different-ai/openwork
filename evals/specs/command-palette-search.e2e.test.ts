@@ -41,12 +41,14 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.see({ role: "option", label: /^Permissions/ });
     await user.notSee({ text: "Recent" });
     await user.notSee({ role: "option", label: /^Experimental engine/ });
-    await user.screenshot();
+    await user.looks([
+      "The command palette is visibly open with its search field, result groups, and keyboard footer intact.",
+      "The empty-query palette visibly offers actions and settings, including Permissions, without a Recent group.",
+    ]);
   });
 
   await step("Models stays readable without exposing internal model metadata and preserves composer state", async () => {
     await user.type(paletteInput, "models", { replace: true });
-    await user.screenshot();
     await user.see({ role: "option", label: /^Models/ });
     const row = await probe.dom('[data-command-palette-item="models"]');
     const label = await probe.dom('[data-command-palette-item="models"] > div:first-child');
@@ -85,7 +87,10 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.type(paletteInput, "folders", { replace: true });
     await user.see({ role: "option", label: /^Permissions/ });
     await user.notSee({ text: "Sessions" });
-    await user.screenshot();
+    await user.looks([
+      "After searching for folders, Permissions is the visible highlighted first result.",
+      "No Sessions result group is displayed for the folders query.",
+    ]);
     await user.press("Enter");
     const location = await probe.eventually(() => world.location(), {
       within: 15_000,
@@ -111,13 +116,19 @@ test("command palette searches settings by alias, navigates, records recents, an
     const storedRecents = stringArray(await probe.storage("openwork.react.command-palette.recents"));
     expect(storedRecents).toEqual(["settings:permissions", "models"]);
     expect(storedRecents).not.toContain("settings:appearance");
-    await user.screenshot();
+    await user.looks([
+      "The Recent group visibly contains both Permissions and Models.",
+      "Appearance is not shown in the Recent group.",
+    ]);
   });
 
   await step("dark mode ranks Appearance first and Enter navigates there", async () => {
     await user.type(paletteInput, "dark mode", { replace: true });
     await user.see({ role: "option", label: /^Appearance/ });
-    await user.screenshot();
+    await user.looks([
+      "After searching for dark mode, Appearance is the visible highlighted first result.",
+      "The Appearance result remains readable with its settings context and description.",
+    ]);
     await user.press("Enter");
     const location = await probe.eventually(() => world.location(), {
       within: 15_000,
@@ -145,7 +156,10 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.see({ role: "option", label: /^Toggle sidebar/ });
     await user.notSee({ role: "option", label: /^Appearance/ });
     await user.notSee({ role: "option", label: /^Permissions/ });
-    await user.screenshot();
+    await user.looks([
+      "With the greater-than action filter, Toggle sidebar is visibly available.",
+      "Settings entries such as Appearance and Permissions are not displayed in the filtered results.",
+    ]);
   });
 
   await step("Escape closes the palette without navigating", async () => {
@@ -174,7 +188,10 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.see({ role: "option", label: /^Experimental engine/ });
     await user.see({ role: "option", label: /^Workspace run mode/ });
     await user.see({ role: "option", label: /^Developer/ });
-    await user.screenshot();
+    await user.looks([
+      "With Developer Mode enabled, the command palette visibly lists the advanced settings destinations.",
+      "Organization server, Runtime, Agent access diagnostics, OpenCode config sources, Experimental engine, Workspace run mode, and Developer remain readable and distinct.",
+    ]);
     await user.type(paletteInput, "Disable Developer Mode", { replace: true });
     await user.click({ role: "option", label: /^Disable Developer Mode/ });
     await waitForPaletteClose();
