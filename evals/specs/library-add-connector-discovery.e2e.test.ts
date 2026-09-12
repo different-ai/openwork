@@ -42,10 +42,9 @@ test(title, async ({ evidence, world, user, probe, step }) => {
   });
 
   await step("Library defaults to MCPs, Ready to use, and cards with only three type filters", async () => {
-    // Leave Settings first: its sidebar has a different Library destination.
-    await user.click({ role: "button", label: "Close settings" });
-    if (!await probe.has("Library")) await user.click({ role: "button", label: "Toggle Sidebar" });
-    await user.click("Library");
+    // Open the main Library route, independent of responsive Settings navigation.
+    const currentUrl = await probe.eval(() => location.href);
+    await user.navigate(new URL(`#/workspace/${workspaceId}/extensions`, currentUrl).href);
     await user.see({ role: "button", label: "Add MCP", nth: 0 }, { timeoutMs: 90_000 });
     await probe.eventually(() => probe.dom('header button[aria-label="Add MCP"]:not(:disabled):not([aria-disabled="true"])'), {
       within: 90_000,
