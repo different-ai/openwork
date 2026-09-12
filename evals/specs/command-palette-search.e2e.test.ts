@@ -219,8 +219,11 @@ test("command palette searches settings by alias, navigates, records recents, an
       if (section.id === "workspace-run-mode") {
         await user.see({ role: "switch", label: "Show workspace run mode" });
         const readSwitch = () => probe.eval(browserScript(() => {
-          const control = document.querySelector<HTMLButtonElement>('[data-testid="workspace-run-mode-flag"]');
-          return control ? { disabled: control.disabled, checked: control.getAttribute("aria-checked") } : null;
+          const control = document.querySelector<HTMLElement>('[data-testid="workspace-run-mode-flag"]');
+          return control ? {
+            disabled: control.matches(":disabled") || control.getAttribute("aria-disabled") === "true",
+            checked: control.getAttribute("aria-checked"),
+          } : null;
         }, []));
         const before = await readSwitch();
         expect(before?.disabled).toBe(true);
