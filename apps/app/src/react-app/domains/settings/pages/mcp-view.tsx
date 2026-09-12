@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useId, useReducer, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -512,10 +513,24 @@ export function McpView(props: McpViewProps) {
     };
   }, [activeOrganizationId, cloudSession.client, libraryCloudSignedIn]);
   const connectorCues = libraryConnectorCues(connectorPresets);
+  // Persisted Cloud settings reconstruct the organization with a member role.
+  // Use the verified member's current role, not that restoration placeholder.
+  const identity = denAuth.verifiedIdentity;
+  const organizationRole = useQuery({
+    queryKey: ["library-organization-role", cloudSession.baseUrl, identity?.principalId, identity?.organizationId],
+    enabled: denAuth.isSignedIn && Boolean(identity) && identity?.organizationId === activeOrganizationId,
+    queryFn: async () => {
+      const result = await cloudSession.client.listOrgs();
+      return result.orgs.find((org) => org.id === identity?.organizationId)?.role ?? null;
+    },
+  });
+  const canManageCloudConnections = denAuth.isSignedIn
+    && identity?.organizationId === activeOrganizationId
+    && isConnectAdminRole(organizationRole.data);
   const libraryAddOptions = {
     cloudSignedIn: libraryCloudSignedIn && Boolean(activeOrganizationId) && denAuth.status !== "unavailable",
     allowManageExtensions: props.allowManageExtensions,
-    canManageCloudConnections: isConnectAdminRole(cloudSession.activeOrganization?.role),
+    canManageCloudConnections,
   };
   const libraryAddKinds = libraryAddKindsForFilter(filter).filter((kind) => (
     libraryAddAction(kind, libraryAddOptions) !== null
@@ -1546,7 +1561,7 @@ export function McpView(props: McpViewProps) {
         kind={addAuthorableKind}
         busy={props.busy}
         cloud={cloudSession.isSignedIn}
-        canConfigureMcpConnections={isConnectAdminRole(cloudSession.activeOrganization?.role)}
+        canConfigureMcpConnections={canManageCloudConnections}
         onClose={() => setAddAuthorableKind(null)}
         onCreate={handleCreateLibraryItem}
       />
