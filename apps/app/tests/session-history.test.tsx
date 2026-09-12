@@ -58,9 +58,9 @@ function snapshot(id: string, title: string, ids: string[] = [], revert?: string
   };
 }
 
-function longHistory(): OpenworkSessionHistory {
+function longHistory(count = 440): OpenworkSessionHistory {
   const history = snapshot("a", "Long active conversation");
-  history.messages = Array.from({ length: 440 }, (_, index) => {
+  history.messages = Array.from({ length: count }, (_, index) => {
     const id = `message-${index}`;
     return {
       info: { id, sessionID: "a", role: "assistant", time: { created: index + 1 } },
@@ -69,7 +69,7 @@ function longHistory(): OpenworkSessionHistory {
         { id: `reasoning-${index}`, sessionID: "a", messageID: id, type: "reasoning", text: `Reasoning ${index}`, time: { start: 1 } },
         {
           id: `tool-${index}`, sessionID: "a", messageID: id, type: "tool", tool: "bash", callID: `call-${index}`,
-          state: index === 439
+          state: index === count - 1
             ? { status: "running", input: { command: "work" }, time: { start: 1 } }
             : { status: "completed", input: { command: "work" }, output: `Result ${index}`, title: "Done", metadata: {}, time: { start: 1, end: 2 } },
         },
@@ -210,6 +210,40 @@ describe("opening a thread", () => {
     expect(view.host.textContent).toContain("input-streaming");
     expect(view.client.getQueryData(statusKey("workspace", "a"))).toEqual({ type: "busy" });
     expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.latestReads).toHaveLength(0);
+  });
+
+  test("a 15 MB active history completes and structurally shares an equal full refresh", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    const full = longHistory(1467);
+    for (const [index, message] of full.messages.entries()) {
+      if (index < 214) message.parts.push({ id: `extra-${index}`, sessionID: "a", messageID: message.info.id, type: "text", text: "Additional persisted text" });
+      for (const part of message.parts) {
+        if (part.type === "tool" && part.state.status === "completed") part.state.output += "x".repeat(10_000);
+      }
+    }
+    const serialized = JSON.stringify(full);
+    expect(serialized.length).toBeGreaterThan(15_000_000);
+    expect(full.messages.reduce((count, message) => count + message.parts.length, 0)).toBe(4615);
+    await view.render();
+    await view.resolve(0, { session: full.session, messages: full.messages.slice(-24) });
+    await paint();
+    await paint();
+    await event({ type: "session.status", properties: { sessionID: "a", status: { type: "busy" } } });
+    await view.resolve(1, JSON.parse(serialized));
+    const key = snapshotKey("workspace", "a");
+    const cached = view.client.getQueryData<OpenworkSessionHistory>(key);
+    expect(cached?.messages).toHaveLength(1467);
+    expect(view.host.querySelectorAll("[data-message-id]").length).toBe(1467);
+    expect(view.host.querySelectorAll("[data-thread-history-status]").length).toBe(0);
+    await act(async () => { void view.client.refetchQueries({ queryKey: key, exact: true }); });
+    expect(view.reads).toHaveLength(3);
+    await view.resolve(2, JSON.parse(serialized));
+    expect(view.client.getQueryData(key) === cached).toBe(true);
+    expect(view.client.getQueryState(key)).toMatchObject({ status: "success", fetchStatus: "idle", dataUpdateCount: 2 });
+    expect(view.client.getQueryData(statusKey("workspace", "a"))).toEqual({ type: "busy" });
+    expect(view.host.querySelectorAll("[data-thread-history-status]").length).toBe(0);
     expect(view.latestReads).toHaveLength(0);
   });
 
