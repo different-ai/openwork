@@ -4,6 +4,7 @@ import type { Seed } from "@openwork/env";
 import { waitFor } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { startMockIdpLab } from "@openwork/labs";
+import { localInviteNeeds } from "./org-invite.ts";
 
 function recordField(value: unknown, key: string): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -22,20 +23,24 @@ function booleanField(value: unknown, key: string): boolean {
   return Reflect.get(value, key) === true;
 }
 
-export async function ssoInvite(seed: Seed) {
+export async function ssoInvite(seed: Seed, options: { mismatchedEmail?: boolean; role?: string } = {}) {
+  await localInviteNeeds();
   if (!await localMysqlIsRunning()) throw new SkipError("MySQL on 127.0.0.1:3306");
 
   const stamp = Date.now();
   const domain = "sso-acme.test";
   const invitee = `sso-newcomer-${stamp}@${domain}`;
+  const mismatchedEmail = `sso-other-${stamp}@${domain}`;
   const idp = await startMockIdpLab({
     domain,
     defaultSubject: { email: invitee, name: "SSO Newcomer" },
+    knobs: { emailMismatch: options.mismatchedEmail ? mismatchedEmail : false },
   });
   try {
     const den = await seed.den({
       trustedOrigins: [new URL(idp.issuer).origin],
       org: { admin: { email: `sso-owner-${stamp}@${domain}` } },
+      env: { DEN_ORG_MODE: "multi_org", DEN_REQUIRE_EMAIL_VERIFICATION: "true", OPENWORK_DEV_MODE: "1", RESEND_API_KEY: "", SMTP_HOST: "" },
     });
     const organizationResult = await seed.api(den.admin, "/v1/org");
     const organizationId = stringField(recordField(organizationResult.body, "organization"), "id");
@@ -136,7 +141,7 @@ export async function ssoInvite(seed: Seed) {
 
     const invited = await seed.api(den.admin, "/v1/invitations", {
       method: "POST",
-      body: JSON.stringify({ email: invitee, role: "member" }),
+      body: JSON.stringify({ email: invitee, role: options.role ?? "member" }),
     });
     const inviteToken = stringField(invited.body, "inviteToken");
     if (!invited.response.ok || !inviteToken) throw new Error(`Could not invite the SSO member: HTTP ${invited.response.status}.`);
@@ -150,6 +155,10 @@ export async function ssoInvite(seed: Seed) {
     });
     return {
       web,
+      den,
+      organizationId,
+      inviteToken,
+      mismatchedEmail,
       invitee,
       joinUrl: `${webOrigin}/join-org?invite=${encodeURIComponent(inviteToken)}`,
       async [Symbol.asyncDispose]() {
