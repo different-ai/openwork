@@ -96,11 +96,12 @@ test("queued follow-ups come back as an unsent draft after a renderer restart in
 test("a queued follow-up already admitted to the engine is neither duplicated nor restored after a reload", async ({ world, user, probe, step }) => {
   const userMessages = () => probe.dom('[data-message-role="user"]');
   const storedDrafts = () => probe.storage(draftsKey, (value) => readDrafts(value, world.session.sessionId));
+  await user.type("composer", world.running.prompt, { verify: true });
+  await user.press(enter);
+  await user.see({ text: "Building the release." });
+  await using transport = await world.observeQueuedTransport(false);
 
   await step("queue one follow-up, then let the running task finish so the drain admits it", async () => {
-    await user.type("composer", world.running.prompt, { verify: true });
-    await user.press(enter);
-    await user.see({ text: "Building the release." });
     await user.type("composer", world.queued.prompt, { verify: true });
     await user.press(enter);
     await user.see({ text: /1 queued/ });
@@ -128,5 +129,47 @@ test("a queued follow-up already admitted to the engine is neither duplicated no
     await world.releaseQueuedReply();
     await user.see({ text: /Notes published\./ });
     expect((await userMessages()).elements).toHaveLength(2);
+    const engine = await world.engineMessageCounts();
+    assertObserved("CD09: accepted queued message exists exactly once in native engine history", engine, engine.queued === 1 && engine.users === 2);
+    assertObserved("CD09: reply-held reload makes exactly one raw queued POST", transport.read(), transport.read().requests === 1);
+  });
+});
+
+test("CD10: a queued follow-up survives a pre-acceptance transport hold and reload as an unsent draft without a second POST", async ({ world, user, probe, step }) => {
+  await user.type("composer", world.running.prompt, { verify: true });
+  await user.press(enter);
+  await user.see({ text: "Building the release." });
+  await using transport = await world.observeQueuedTransport(true);
+
+  await step("queue one item and hold its POST before it reaches the engine", async () => {
+    await user.type("composer", world.queued.prompt, { verify: true });
+    await user.press(enter);
+    await user.see({ text: /1 queued/ });
+    await world.releaseRunningReply();
+    await probe.eventually(() => transport.read(), {
+      within: 15_000, label: "queued POST held at transport request stage",
+      until: (state) => state.held === 1,
+    });
+    expect(transport.read()).toEqual({ requests: 1, held: 1 });
+    expect(await world.engineMessageCounts()).toEqual({ users: 1, queued: 0 });
+  });
+
+  await step("destroy the renderer with prompt_async unresolved; recover without sending", async () => {
+    await user.reload();
+    await user.see({ text: world.running.prompt });
+    // A bounded idle observation catches any automatic drain in the new renderer.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    const engine = await world.engineMessageCounts();
+    const composer = (await probe.composer()).draftText;
+    const stored = await probe.storage(draftsKey, (value) => readDrafts(value, world.session.sessionId));
+    const requests = transport.read();
+    // Keep the three required oracles independent: a deduplicated DOM row is
+    // not native admission, durable recovery, or an exactly-once request count.
+    assertObserved("CD10(a): held queued message is absent from the engine (zero admissions)", engine, engine.queued === 0 && engine.users === 1);
+    assertObserved("CD10(c): reload never sends a second raw queued POST", requests, requests.requests === 1);
+    assertObserved("CD10(b): unaccepted queued text survives reload as an unsent persisted draft",
+      { composer, stored }, composer === world.queued.prompt
+        && stored.length === 1 && stored[0]!.text === world.queued.prompt && stored[0]!.queued.length === 0);
+    await user.notSee({ text: /queued/ });
   });
 });

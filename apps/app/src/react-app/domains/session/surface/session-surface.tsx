@@ -1124,7 +1124,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const updateQueuedDraftInStore = useComposerStateStore((state) => state.updateQueuedDraft);
   const reorderQueuedDrafts = useComposerStateStore((state) => state.reorderQueuedDrafts);
   const clearQueuedDrafts = useComposerStateStore((state) => state.clearQueuedDrafts);
-  const prependQueuedDrafts = useComposerStateStore((state) => state.prependQueuedDrafts);
   // Per-conversation model controls: each pane resolves its own remembered
   // model (falling back to the global default) and owns its picker open
   // state, so split panes never control each other's model picker.
@@ -2094,7 +2093,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return result;
     } catch (nextError) {
       if (isPromptAdmissionUnknown(nextError)) {
-        if (options.consumeQueuedItem) removeQueuedDraftFromStore(props.sessionId, itemId);
+        // Keep queued text recoverable until acceptance can be observed.
         dispatchQueuedDrain(props.sessionId, { type: "send_unknown", itemId, messageID: messageId, at: Date.now(), deferred: Boolean(nextDraft.command) });
         if (activeSessionOwnerRef.current === sessionOwner) setAwaitingAssistantBaseline(null);
         // A server that answered with a failure has explained itself: show that
@@ -2293,7 +2292,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Promote a queued follow-up to an immediate send (steer-style), instead of
   // waiting for the idle drain. Guarded against the drain effect so the same
   // draft cannot be delivered twice.
-  const sendingQueuedId = queuedDrainState.phase.kind === "sending"
+  const sendingQueuedId = queuedDrainState.phase.kind === "sending" || queuedDrainState.phase.kind === "admission_unknown"
     ? queuedDrainState.phase.itemId
     : undefined;
   const sendingQueued = Boolean(sendingQueuedId);
@@ -2307,7 +2306,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const generation = getQueuedSendGeneration(props.sessionId);
     try {
       const result = await sendDraft(target, item.id, undefined, { consumeQueuedItem: true });
-      if (result.outcome === "blocked" || result.outcome === "cancelled") {
+      if (result.outcome === "blocked" || result.outcome === "cancelled" || result.outcome === "unknown") {
         return;
       }
       target.attachments.forEach(revokeAttachmentPreview);
@@ -2371,6 +2370,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     try {
       const admission = await readPromptAdmission(opencodeClient, props.sessionId, phase.messageID);
       if (admission === "accepted") {
+        getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)
+          .find((item) => item.id === phase.itemId)?.draft.attachments.forEach(revokeAttachmentPreview);
+        useComposerStateStore.getState().removeQueuedDraft(props.sessionId, phase.itemId);
         dispatchQueuedDrain(props.sessionId, {
           type: "admission_observed", itemId: phase.itemId, messageID: phase.messageID, at: Date.now(),
         });
@@ -2499,32 +2501,27 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!claimQueuedSend(props.sessionId, nextItem.id)) return;
     const generation = getQueuedSendGeneration(props.sessionId);
     drainingQueueRef.current = true;
-    removeQueuedDraftFromStore(props.sessionId, nextItem.id);
+    // Keep the durable queue mirror until acceptance, not merely the claim.
     void (async () => {
       try {
-        const result = await sendDraft(nextDraft, nextItem.id);
+        const result = await sendDraft(nextDraft, nextItem.id, undefined, { consumeQueuedItem: true });
         if (getQueuedSendGeneration(props.sessionId) !== generation) {
           nextDraft.attachments.forEach(revokeAttachmentPreview);
           return;
         }
         if (result.outcome === "blocked") {
           cloudQueueBlockedRef.current = true;
-          prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
-        } else if (result.outcome === "cancelled") {
-          prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
-        } else {
+        } else if (result.outcome !== "cancelled" && result.outcome !== "unknown") {
           nextDraft.attachments.forEach(revokeAttachmentPreview);
         }
       } catch {
-        if (getQueuedSendGeneration(props.sessionId) === generation) {
-          prependQueuedDrafts(props.sessionId, [{ id: nextItem.id, draft: nextDraft }]);
-        }
+        // sendDraft halts admission; the unaccepted row remains recoverable.
       } finally {
         if (getQueuedSendGeneration(props.sessionId) !== generation) nextDraft.attachments.forEach(revokeAttachmentPreview);
         drainingQueueRef.current = false;
       }
     })();
-  }, [archived, archiveStateKnown, chatStreaming, cloudQueueRetryVersion, liveStatus.type, prependQueuedDrafts, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, removeQueuedDraftFromStore, sendDraft, sendingQueued]);
+  }, [archived, archiveStateKnown, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, sendDraft, sendingQueued]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
