@@ -78,14 +78,12 @@ test("all 186 historical artifacts and journal entries through 0096 retain base 
     "c4e85b6219cefe3d0fb3630e69804bb09be6932e8101c9983a0a30ed94389985")
 })
 
-test("the journal ends at consolidated 0097 with no obsolete 0098/0099 artifacts", () => {
+test("the journal preserves consolidated 0097 with no superseded named migrations", () => {
   const journal = JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"))
-  assert.equal(journal.entries.length, 97)
-  assert.deepEqual(journal.entries.at(-1), {
+  assert.deepEqual(journal.entries[96], {
     idx: 97, version: "5", when: 1788895934602, tag: "0097_gateway_access_matrix", breakpoints: true,
   })
   for (const file of [
     "0098_gateway_provider_model_universe.sql", "0099_gateway_credential_set_creator.sql",
-    "meta/0098_snapshot.json", "meta/0099_snapshot.json",
   ]) assert.equal(existsSync(new URL(`../drizzle/${file}`, import.meta.url)), false)
 })
