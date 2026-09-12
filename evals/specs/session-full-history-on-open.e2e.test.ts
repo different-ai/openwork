@@ -203,7 +203,9 @@ test("opening a long conversation shows the latest and full history while ancill
     await probe.eventually(() => probe.dom(`${surface} [data-thread-history-status]`), {
       within: 10_000, label: "earlier-history status disappears at the first message", until: value => value.elements.length === 0,
     });
-    expect((await probe.dom(`${surface} [data-message-role="user"]`)).elements[0]?.text).toContain(longHistoryFirst);
+    const first = (await probe.dom(`${surface} [data-message-role="user"]`)).elements[0];
+    expect(first?.text).toContain(longHistoryFirst);
+    evidence.recordAssertionEvidence("The first stored user message renders without an earlier-history status", JSON.stringify({ first: first?.text, status: (await probe.dom(`${surface} [data-thread-history-status]`)).elements.length }), true);
     await user.looks([
       `The conversation transcript visibly starts with a user message reading "${longHistoryFirst}"`,
       "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
@@ -212,6 +214,7 @@ test("opening a long conversation shows the latest and full history while ancill
 
   // Baseline branch coverage after full loading, not the delayed-preview race.
   await step("after full loading, branching at the first message excludes later history and leaves the source unchanged", async () => {
+    await user.hover({ text: longHistoryFirst });
     await user.click({ role: "button", label: "Branch in new chat", nth: 0 });
     // count limits returned messages; messageCount is the entire rendered transcript.
     await probe.eventually(async () => renderedCount(await agent.run("session.read_transcript", { count: 1 })), {
