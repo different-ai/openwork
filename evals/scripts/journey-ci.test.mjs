@@ -175,6 +175,11 @@ test('registered case metadata names exact files, supported execution axes, and 
       id: 'APP-ISOLATION',
       engines: ['v1', 'v2'],
     },
+    {
+      spec: 'saved-app-creation.e2e.test.ts',
+      id: 'APP-DRAFT-ROUTING',
+      engines: ['v1', 'v2'],
+    },
     { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-ATTACH', engines: ['v1', 'v2'] },
     { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-MISSING', engines: ['v2'] },
     {
