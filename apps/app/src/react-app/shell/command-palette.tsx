@@ -276,7 +276,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(hasNestedModelPicker || props.onOpenModelPicker
       ? [{
           id: "models",
-          title: "Switch model",
+          title: "Models",
           detail: "Choose the LLM that runs your next prompts",
           meta: props.selectedModelLabel ?? t("session.default_model"),
           searchText: "model models llm provider openai anthropic claude gpt gemini switch pick select default",
@@ -686,7 +686,11 @@ export function CommandPalette(props: CommandPaletteProps) {
         ) : null}
       </div>
       {item.shortcut || item.meta ? (
-        <CommandShortcut>{item.shortcut ?? item.meta}</CommandShortcut>
+        <CommandShortcut
+          className={item.id === "models" && item.meta ? "max-w-[50%] shrink-0 truncate whitespace-nowrap tracking-normal" : undefined}
+        >
+          {item.shortcut ?? item.meta}
+        </CommandShortcut>
       ) : null}
     </CommandItem>
   );

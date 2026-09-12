@@ -6,6 +6,7 @@ import { resolveEvalEngine, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
 import { daytonaSandbox, defaultDaytonaExec, desktop as launchDesktop, execInSandbox, startMockOnSandbox } from "@openwork/hosts";
 import { startMockMcp } from "@openwork/labs";
+import { configureProvider } from "./chat.ts";
 
 const stormProviderId = "active-session-storm-mock";
 const stormModelId = "mock-agent-workload-model";
@@ -1411,7 +1412,38 @@ export async function pinnedSessions(seed: Seed) {
 }
 
 export async function commandPaletteSearch(seed: Seed) {
-  return oneWorkspace(seed, `command-palette-search-${Date.now()}`);
+  const name = `command-palette-search-${Date.now()}`;
+  const workspacePath = seed.tmpPath(name);
+  const longModelId = "gwm_01m292tscteantqy79spgyvbcs_01m292tsbxehmvrpjxfn7m4n86_01m292tsbgey6s6q4hbnvd6a8h";
+  const providerId = "palette-model-witness";
+  const app = await seed.appWeb({ name, workspacePath });
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, longModelId, {
+    model: `${providerId}/${longModelId}`,
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Palette model witness",
+        options: { baseURL: "http://127.0.0.1:9/v1", apiKey: "palette-model-fixture" },
+        models: { [longModelId]: { name: longModelId } },
+      },
+    },
+  });
+  await waitFor(app, () => Boolean(window.__openworkControl), {
+    timeoutMs: 60_000,
+    label: "reloaded app-web command palette is interactive",
+  });
+  return {
+    app,
+    workspace,
+    workspacePath,
+    longModelId,
+    location: () => seed.evalIn(app, () => window.location.pathname),
+    runtimeFacts: () => seed.evalIn(app, () => ({
+      browser: navigator.userAgent,
+      electronBridge: Boolean(window.__OPENWORK_ELECTRON__),
+    })),
+  };
 }
 
 type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "accepted_prompt" | "hold_archive";

@@ -3,7 +3,10 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { commandPaletteSearch } from "../worlds/session-shell.ts";
 
-const test = spec.world(commandPaletteSearch);
+const test = spec.world(commandPaletteSearch, {
+  timeout: 420_000,
+  resources: { surfaces: ["appWeb"], services: [] },
+});
 const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
 
 function stringArray(value: unknown): string[] {
@@ -12,8 +15,13 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-test("command palette searches settings by alias, navigates, records recents, and filters actions", async ({ world, user, probe, step }) => {
+test("command palette searches settings by alias, navigates, records recents, and filters actions", async ({ world, user, probe, step, evidence }) => {
   const workspaceId = world.workspace.workspaceId;
+  const draft = "Keep this draft while checking Models.";
+  const runtime = await world.runtimeFacts();
+  expect(runtime.browser).toContain("HeadlessChrome");
+  expect(runtime.electronBridge).toBe(false);
+  evidence.recordJsonArtifact("command palette web runtime", runtime);
   const macPlatform = await probe.eval(() => (/Mac|iPhone|iPad|iPod/.test(navigator.platform)));
   const paletteShortcut = macPlatform ? "Meta+K" : "Control+K";
   const waitForPaletteClose = () => probe.eventually(() => probe.has("Arrow keys to navigate"), {
@@ -22,8 +30,11 @@ test("command palette searches settings by alias, navigates, records recents, an
     until: (open) => !open,
   });
 
+  await user.type("composer", draft);
+  const initialComposer = await probe.composer();
+
   await step("the empty palette offers actions and settings without recents", async () => {
-    expect(await probe.hash()).toContain(workspaceId);
+    expect(await world.location()).toContain(workspaceId);
     await user.press(paletteShortcut);
     await user.see(paletteInput);
     await user.see({ text: "Actions" });
@@ -33,24 +44,62 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.screenshot();
   });
 
+  await step("Models stays readable beside long selected-model metadata and preserves composer state", async () => {
+    await user.type(paletteInput, "models", { replace: true });
+    await user.screenshot();
+    await user.see({ role: "option", label: /^Models/ });
+    const row = await probe.dom('[data-command-palette-item="models"]');
+    const label = await probe.dom('[data-command-palette-item="models"] > div:first-child');
+    const metadata = await probe.dom('[data-command-palette-item="models"] > [data-slot="command-shortcut"]');
+    expect(row.elements).toHaveLength(1);
+    expect(label.elements).toHaveLength(1);
+    expect(metadata.elements).toHaveLength(1);
+    expect(label.elements[0]!.text).toContain("Models");
+    expect(label.elements[0]!.rect.width).toBeGreaterThan(80);
+    expect(metadata.elements[0]!.rect.height).toBeLessThanOrEqual(20);
+    expect(label.elements[0]!.rect.right).toBeLessThanOrEqual(metadata.elements[0]!.rect.left);
+    evidence.recordJsonArtifact("Models row geometry", {
+      row: row.elements[0],
+      label: label.elements[0],
+      metadata: metadata.elements[0],
+      longModelId: world.longModelId,
+    });
+    await user.looks([
+      "The visible command palette row is clearly labeled Models.",
+      "The selected-model metadata is a single unobtrusive trailing line and does not overlap, replace, or garble the Models label.",
+    ]);
+    await user.press("Enter");
+    await user.see({ placeholder: "Search models..." });
+    await user.press("Escape");
+    await user.see(paletteInput);
+    await user.press("Escape");
+    await waitForPaletteClose();
+    await user.see("composer", { text: draft });
+    const currentComposer = await probe.composer();
+    expect(currentComposer.selectedModelLabel).toBe(initialComposer.selectedModelLabel);
+    expect(currentComposer.draftText).toBe(initialComposer.draftText);
+    await user.press(paletteShortcut);
+    await user.see(paletteInput);
+  });
+
   await step("folders ranks Permissions first and Enter navigates there", async () => {
     await user.type(paletteInput, "folders", { replace: true });
     await user.see({ role: "option", label: /^Permissions/ });
     await user.notSee({ text: "Sessions" });
     await user.screenshot();
     await user.press("Enter");
-    const hash = await probe.eventually(() => probe.hash(), {
+    const location = await probe.eventually(() => world.location(), {
       within: 15_000,
       label: "Permissions settings route",
       until: (value) => value.endsWith("/settings/permissions"),
     });
-    expect(hash).toContain(workspaceId);
-    expect(hash).toMatch(/\/settings\/permissions$/);
-    expect(hash).not.toMatch(/\/settings\/general$/);
-    expect(hash).not.toMatch(/\/settings\/preferences$/);
+    expect(location).toContain(workspaceId);
+    expect(location).toMatch(/\/settings\/permissions$/);
+    expect(location).not.toMatch(/\/settings\/general$/);
+    expect(location).not.toMatch(/\/settings\/preferences$/);
   });
 
-  await step("reopening the palette shows Permissions as the sole recent item", async () => {
+  await step("reopening the palette shows the chosen Models and Permissions recents", async () => {
     await user.see({ text: /Authorized folders/ });
     // Settings closes route-owned overlays just after its content appears; let that
     // transition settle so it does not immediately close the newly opened palette.
@@ -59,8 +108,9 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.see(paletteInput);
     await user.see({ text: "Recent" });
     await user.see({ role: "option", label: /^Permissions/ });
+    await user.see({ role: "option", label: /^Models/ });
     const storedRecents = stringArray(await probe.storage("openwork.react.command-palette.recents"));
-    expect(storedRecents).toEqual(["settings:permissions"]);
+    expect(storedRecents).toEqual(["settings:permissions", "models"]);
     expect(storedRecents).not.toContain("settings:appearance");
     await user.screenshot();
   });
@@ -70,14 +120,14 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.see({ role: "option", label: /^Appearance/ });
     await user.screenshot();
     await user.press("Enter");
-    const hash = await probe.eventually(() => probe.hash(), {
+    const location = await probe.eventually(() => world.location(), {
       within: 15_000,
       label: "Appearance settings route",
       until: (value) => value.endsWith("/settings/appearance"),
     });
-    expect(hash).toContain(workspaceId);
-    expect(hash).toMatch(/\/settings\/appearance$/);
-    expect(hash).not.toMatch(/\/settings\/permissions$/);
+    expect(location).toContain(workspaceId);
+    expect(location).toMatch(/\/settings\/appearance$/);
+    expect(location).not.toMatch(/\/settings\/permissions$/);
     await probe.eventually(() => probe.has("Arrow keys to navigate"), {
       within: 15_000,
       label: "command palette closes after choosing Appearance",
@@ -107,9 +157,9 @@ test("command palette searches settings by alias, navigates, records recents, an
       until: (open) => !open,
     });
     await user.notSee(paletteInput);
-    const hash = await probe.hash();
-    expect(hash).toContain(workspaceId);
-    expect(hash).toMatch(/\/settings\/appearance$/);
+    const location = await world.location();
+    expect(location).toContain(workspaceId);
+    expect(location).toMatch(/\/settings\/appearance$/);
   });
 
   await step("developer mode surfaces Advanced sections without a search", async () => {
@@ -149,12 +199,12 @@ test("command palette searches settings by alias, navigates, records recents, an
         label: section.id === "experimental-engine" ? /^Organization server/ : /^Experimental engine/,
       });
       await user.click({ role: "option", label: new RegExp(`^${section.title}`) });
-      const sectionHash = await probe.eventually(() => probe.hash(), {
+      const sectionLocation = await probe.eventually(() => world.location(), {
         within: 15_000,
         label: `${section.title} section route`,
         until: (value) => value.endsWith(`/settings/advanced/${section.id}`),
       });
-      expect(sectionHash).toBe(`#/workspace/${workspaceId}/settings/advanced/${section.id}`);
+      expect(sectionLocation).toBe(`/workspace/${workspaceId}/settings/advanced/${section.id}`);
       await waitForPaletteClose();
       expect(await probe.eventually(() => probe.eval(browserScript((id) => {
         const section = document.getElementById(id);
