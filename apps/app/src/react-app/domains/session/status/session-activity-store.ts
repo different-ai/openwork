@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { create } from "zustand";
-import type { UIMessage } from "ai";
+import { isToolUIPart, type UIMessage } from "ai";
+import { isTaskToolPart, taskChildSessionId } from "../../../../lib/build-in-tools";
 import { transcriptProgress } from "./session-progress";
 
 import { t } from "../../../../i18n";
@@ -40,6 +41,7 @@ type SessionActivityRecord = {
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
   messageRoles: Record<string, SessionMessageRole>;
+  childSessionIds: string[];
   updatedAt: number;
 };
 
@@ -106,6 +108,7 @@ const createRecord = (): SessionActivityRecord => ({
   waitingPermissionIds: [],
   waitingQuestionIds: [],
   messageRoles: {},
+  childSessionIds: [],
   updatedAt: 0,
 });
 
@@ -209,7 +212,8 @@ function sameActivityRecord(
     && current.compacting === next.compacting
     && sameStrings(current.waitingPermissionIds, next.waitingPermissionIds)
     && sameStrings(current.waitingQuestionIds, next.waitingQuestionIds)
-    && sameMessageRoles(current.messageRoles, next.messageRoles);
+    && sameMessageRoles(current.messageRoles, next.messageRoles)
+    && sameStrings(current.childSessionIds, next.childSessionIds);
 }
 
 type SessionActivityDerivedState = Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId" | "waitingByWorkspaceId">;
@@ -400,6 +404,15 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
   observeTranscript: (workspaceId, sessionId, messages, snapshot = false, options = {}) => {
     set((state) => updateRecord(state, workspaceId, sessionId, (record) => {
       const progress = transcriptProgress(messages, record.progressParts);
+      const childSessionIds = new Set(record.childSessionIds);
+      for (const message of messages) {
+        if (message.role !== "assistant") continue;
+        for (const part of message.parts) {
+          if (!isToolUIPart(part) || !isTaskToolPart(part)) continue;
+          const childId = taskChildSessionId(part);
+          if (childId) childSessionIds.add(childId);
+        }
+      }
       const snapshotStartedAt = options.snapshotStartedAt;
       const turnChanged = record.transcriptActivity !== null
         && record.transcriptActivity.latestUserId !== progress.latestUserId;
@@ -407,6 +420,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       const observedAt = snapshot ? snapshotStartedAt ?? 0 : turnChanged || progressChanged ? Date.now() : 0;
       const next = reconcileTranscriptActivity({
         ...record,
+        childSessionIds: childSessionIds.size === record.childSessionIds.length ? record.childSessionIds : [...childSessionIds],
         ...(turnChanged ? {
           assistantOutput: false,
           runStartedAt: record.runActive

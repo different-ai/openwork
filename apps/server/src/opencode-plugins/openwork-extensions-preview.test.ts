@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { openworkSessionActivityInventorySchema } from "@openwork/types/openwork-affordance";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
@@ -37,6 +38,8 @@ const sessionModelSchema = z.object({
 }).strict();
 
 const readResultSchema = z.object({
+  ...openworkSessionActivityInventorySchema.shape,
+  status: z.string(),
   ok: z.literal(true),
   workspaceId: z.string(),
   sessionId: z.string(),
@@ -123,7 +126,12 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExten
   return output.system.join("\n");
 }
 
-function startFakeOpenWorkServer(options: { failPromptText?: string; failSessionListWorkspaceId?: string } = {}) {
+function startFakeOpenWorkServer(options: {
+  failPromptText?: string;
+  failSessionListWorkspaceId?: string;
+  activityResponses?: Record<string, unknown>;
+  failedActivityPaths?: string[];
+} = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
   const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
   let createdCount = 0;
@@ -225,6 +233,12 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
           return Response.json({ message: "Remote worker unavailable" }, { status: 503 });
         }
         return Response.json([sessionArchive]);
+      }
+
+      const activityPath = url.pathname.replace("/workspace/ws_1/opencode", "");
+      if (options.failedActivityPaths?.includes(activityPath)) return Response.json({ message: "Unavailable" }, { status: 503 });
+      if (options.activityResponses && Object.hasOwn(options.activityResponses, activityPath)) {
+        return Response.json(options.activityResponses[activityPath]);
       }
 
       // Live activity: alpha is mid-turn, beta waits on a permission, archive is idle.
@@ -495,8 +509,107 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(await read("ses_gamma")).toMatchObject({ status: "waiting", working: true });
     // An unrelated busy root is untouched by another tree's request.
     expect(await read("ses_alpha")).toMatchObject({ status: "busy", working: true });
-    expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p", ["ses_c"])).toEqual({ status: "waiting", working: true });
-    expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p")).toEqual({ status: "busy", working: true });
+    expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p", ["ses_c"])).toMatchObject({ status: "waiting", working: true, descendantActivity: { busy: 0, waiting: 1, unknown: 0 }, inventoryComplete: true });
+    expect(sessionActivityFrom({ ses_p: { type: "busy" } }, [{ sessionID: "ses_c" }], [], "ses_p")).toMatchObject({ status: "busy", working: true, descendantActivity: { busy: 0, waiting: 0, unknown: 0 }, inventoryComplete: true });
+  });
+
+  async function readActivity(sessionId = "ses_alpha", summary = false) {
+    const plugin = await OpenWorkExtensionsPreview();
+    return affordanceResultSchema("session.read", openworkSessionActivityInventorySchema.extend({ status: z.string() }))
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId, count: 1, summary } }))).result;
+  }
+
+  test("session.read counts a busy child and grandchild once at every hop, including summary", async () => {
+    startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": { ses_gamma_grandchild: { type: "busy" } },
+      "/permission": [], "/question": [],
+      "/session/ses_alpha/children": [{ id: "ses_gamma" }, { id: "ses_gamma" }],
+    } });
+    expect(await readActivity()).toEqual({ status: "idle", working: true, descendantActivity: { busy: 1, waiting: 0, unknown: 0 }, inventoryComplete: true });
+    expect(await readActivity("ses_gamma", true)).toEqual({ status: "idle", working: true, descendantActivity: { busy: 1, waiting: 0, unknown: 0 }, inventoryComplete: true });
+  });
+
+  test("session.read counts direct busy/retrying/compacting descendants independently", async () => {
+    startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": { ses_busy: { type: "busy" }, ses_retry: { type: "retry" }, ses_compact: { type: "compacting" } },
+      "/session/ses_alpha/children": [{ id: "ses_busy" }, { id: "ses_retry" }, { id: "ses_compact" }],
+    } });
+    expect(await readActivity()).toEqual({ status: "idle", working: true, descendantActivity: { busy: 3, waiting: 0, unknown: 0 }, inventoryComplete: true });
+  });
+
+  test("session.read does not traverse or count archived branches", async () => {
+    const fake = startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": { ses_gamma: { type: "busy" } },
+      "/session/ses_alpha/children": [{ id: "ses_gamma", time: { archived: 1 } }],
+    } });
+    expect(await readActivity()).toEqual({ status: "idle", working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 0 }, inventoryComplete: true });
+    expect(fake.requests.some((request) => request.pathname.endsWith("/ses_gamma/children"))).toBe(false);
+  });
+
+  test("session.read failed root and child hops report unresolved branches without fabricated activity", async () => {
+    startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": {}, "/permission": [], "/question": [],
+    }, failedActivityPaths: ["/session/ses_alpha/children", "/session/ses_gamma_child/children"] });
+    expect(await readActivity()).toEqual({ status: "idle", working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 1 }, inventoryComplete: false });
+    expect(await readActivity("ses_gamma")).toEqual({ status: "idle", working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 1 }, inventoryComplete: false });
+  });
+
+  test("session.read malformed child inventory is unknown", async () => {
+    startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": {}, "/session/ses_alpha/children": [{ parentID: "ses_alpha" }],
+    } });
+    expect(await readActivity()).toMatchObject({ working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 1 }, inventoryComplete: false });
+  });
+
+  test("session.read unknown hops do not erase known busy or waiting work", async () => {
+    startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": { ses_gamma: { type: "busy" } },
+      "/session/ses_alpha/children": [{ id: "ses_gamma" }],
+    }, failedActivityPaths: ["/session/ses_gamma_grandchild/children"] });
+    expect(await readActivity()).toEqual({ status: "waiting", working: true, descendantActivity: { busy: 1, waiting: 1, unknown: 1 }, inventoryComplete: false });
+  });
+
+  test("session.read cyclic child responses cannot count the root or a child twice", async () => {
+    startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": { ses_gamma: { type: "busy" } },
+      "/session/ses_alpha/children": [{ id: "ses_gamma" }, { id: "ses_gamma" }, { id: "ses_alpha" }],
+      "/session/ses_gamma/children": [{ id: "ses_alpha" }],
+    } });
+    expect(await readActivity()).toEqual({ status: "idle", working: true, descendantActivity: { busy: 1, waiting: 0, unknown: 0 }, inventoryComplete: true });
+  });
+
+  test("session.read traversal cap reports omitted inventory instead of silently complete", async () => {
+    const fake = startFakeOpenWorkServer({ activityResponses: {
+      "/session/status": {},
+      "/session/ses_alpha/children": Array.from({ length: 260 }, (_, index) => ({ id: `ses_cap_${index}` })),
+    } });
+    expect(await readActivity()).toEqual({ status: "idle", working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 5 }, inventoryComplete: false });
+    expect(fake.requests.filter((request) => request.pathname.endsWith("/children"))).toHaveLength(256);
+  });
+
+  for (const own of ["error", "waiting", "compacting", "thinking", "responding", "busy", "retry", "idle"]) {
+    test(`session.read preserves own ${own} precedence against descendant waiting`, async () => {
+      startFakeOpenWorkServer({ activityResponses: {
+        "/session/status": { ses_alpha: { type: own }, ses_gamma: { type: "busy" } },
+        "/session/ses_alpha/children": [{ id: "ses_gamma" }],
+      } });
+      expect(await readActivity()).toEqual({ status: own === "error" ? "error" : "waiting", working: true, descendantActivity: { busy: 1, waiting: 1, unknown: 0 }, inventoryComplete: true });
+    });
+  }
+
+  for (const path of ["/session/status", "/permission", "/question"]) {
+    test(`session.read exposes unknown after ${path} failure without fabricating busy`, async () => {
+      startFakeOpenWorkServer({ activityResponses: {
+        "/session/status": {}, "/permission": [], "/question": [],
+        "/session/ses_alpha/children": [{ id: "ses_child" }],
+      }, failedActivityPaths: [path] });
+      expect(await readActivity()).toEqual({ status: "unknown", working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 1 }, inventoryComplete: false });
+    });
+  }
+
+  test("session.read retains observed busy work when another core probe fails", async () => {
+    startFakeOpenWorkServer({ failedActivityPaths: ["/permission"] });
+    expect(await readActivity()).toEqual({ status: "busy", working: true, descendantActivity: { busy: 0, waiting: 0, unknown: 0 }, inventoryComplete: false });
   });
 
   test("session.read exposes the session's bound model and reasoning effort from the engine record", async () => {
@@ -513,12 +626,12 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(await read("ses_archive")).toBeNull();
   });
 
-  test("an unreadable activity probe never reports a session as safe to archive", () => {
-    expect(sessionActivityFrom(null, [], [], "ses_x")).toEqual({ status: "busy", working: true });
-    expect(sessionActivityFrom({}, null, [], "ses_x")).toEqual({ status: "busy", working: true });
-    expect(sessionActivityFrom({ ses_x: { type: "retry" } }, [], [], "ses_x")).toEqual({ status: "retry", working: true });
-    expect(sessionActivityFrom({ ses_x: { type: "idle" } }, [], [{ sessionID: "ses_x" }], "ses_x")).toEqual({ status: "waiting", working: true });
-    expect(sessionActivityFrom({ ses_other: { type: "busy" } }, [{ sessionID: "ses_other" }], [], "ses_x")).toEqual({ status: "idle", working: false });
+  test("unreadable core probes report unknown instead of fabricated work", () => {
+    expect(sessionActivityFrom(null, [], [], "ses_x")).toEqual({ status: "unknown", working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 0 }, inventoryComplete: false });
+    expect(sessionActivityFrom({}, null, [], "ses_x")).toEqual({ status: "unknown", working: false, descendantActivity: { busy: 0, waiting: 0, unknown: 0 }, inventoryComplete: false });
+    expect(sessionActivityFrom({ ses_x: { type: "retry" } }, [], [], "ses_x")).toMatchObject({ status: "retry", working: true, inventoryComplete: true });
+    expect(sessionActivityFrom({ ses_x: { type: "idle" } }, [], [{ sessionID: "ses_x" }], "ses_x")).toMatchObject({ status: "waiting", working: true, inventoryComplete: true });
+    expect(sessionActivityFrom({ ses_other: { type: "busy" } }, [{ sessionID: "ses_other" }], [], "ses_x")).toMatchObject({ status: "idle", working: false, inventoryComplete: true });
   });
 
   test("session.read returns session metadata and per-message timestamps", async () => {
@@ -560,7 +673,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       lastAssistant: z.object({ id: z.string(), role: z.string(), text: z.string() }).passthrough().nullable(),
     }).strict().extend({
       workspaceId: z.string(), workspace: z.string(), title: z.string(), createdAt: z.number(), updatedAt: z.number(),
-      archived: z.boolean(), parentId: z.string().nullable(), status: z.string(), working: z.boolean(),
+      archived: z.boolean(), parentId: z.string().nullable(), status: z.string(),
+      ...openworkSessionActivityInventorySchema.shape,
       model: z.object({ providerId: z.string(), modelId: z.string(), variant: z.string().nullable() }).nullable(),
     })).parse(JSON.parse(output));
 

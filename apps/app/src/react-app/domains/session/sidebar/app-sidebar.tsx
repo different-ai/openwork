@@ -227,6 +227,7 @@ interface SessionStatusIndicatorProps {
   isUnread: boolean;
   /** Names the delegated child asking, e.g. "Needs permission: Audit four open PRs". */
   attentionLabel?: string;
+  attentionSource?: "child" | "descendant";
 }
 
 function ShowMoreSessionsButton({
@@ -251,7 +252,7 @@ function ShowMoreSessionsButton({
 }
 
 /** Activity and outcomes share the fixed glyph slot before the session title. */
-function SessionStatusIndicator({ status, isActiveWork, isUnread, attentionLabel }: SessionStatusIndicatorProps) {
+function SessionStatusIndicator({ status, isActiveWork, isUnread, attentionLabel, attentionSource }: SessionStatusIndicatorProps) {
   return (
     <SidebarGlyphSlot>
       {isActiveWork ? (
@@ -259,14 +260,14 @@ function SessionStatusIndicator({ status, isActiveWork, isUnread, attentionLabel
           ? getSessionActivityStatusLabel(status)
           : t("workspace_list.session_streaming")} />
       ) : (
-        <SessionOutcomeIndicator status={status} isUnread={isUnread} attentionLabel={attentionLabel} />
+        <SessionOutcomeIndicator status={status} isUnread={isUnread} attentionLabel={attentionLabel} attentionSource={attentionSource} />
       )}
     </SidebarGlyphSlot>
   );
 }
 
 /** Orange = needs you, green = unread result, none = read/idle. */
-function SessionOutcomeIndicator({ status, isUnread, attentionLabel }: { status?: string; isUnread: boolean; attentionLabel?: string }) {
+function SessionOutcomeIndicator({ status, isUnread, attentionLabel, attentionSource }: Omit<SessionStatusIndicatorProps, "isActiveWork">) {
   if (isNeedsAttentionSessionStatus(status)) {
     const title = attentionLabel
       ?? (isSessionActivityStatus(status)
@@ -275,7 +276,7 @@ function SessionOutcomeIndicator({ status, isUnread, attentionLabel }: { status?
     return (
       <span
         data-session-attention-indicator
-        data-session-attention-source={attentionLabel ? "child" : "self"}
+        data-session-attention-source={attentionSource ?? "self"}
         className="size-2 shrink-0 rounded-full"
         style={{ backgroundColor: OUTCOME_DOT_NEEDS_ACTION }}
         title={title}
@@ -762,7 +763,13 @@ function SessionSideChatControl({ workspaceId, sessionId, title }: {
       }}
     >
       {isActiveWork || isNeedsAttentionSessionStatus(status) || isUnread
-        ? <SessionStatusIndicator status={status} isActiveWork={isActiveWork} isUnread={isUnread} />
+        ? <SessionStatusIndicator
+            status={status}
+            isActiveWork={isActiveWork}
+            isUnread={isUnread}
+            attentionLabel={sideChat ? ctx.sessionAttentionLabelById?.[sideChat.sessionId] : undefined}
+            attentionSource={sideChat ? ctx.sessionAttentionSourceById?.[sideChat.sessionId] : undefined}
+          />
         : <Plus className="size-3" />}
       {sideChat ? <span>{t("session_management.split_view")}</span> : null}
     </button>
@@ -778,6 +785,7 @@ export type AppSidebarProps = {
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
   sessionAttentionLabelById?: Record<string, string>;
+  sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -892,6 +900,7 @@ export function AppSidebar(props: AppSidebarProps) {
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
     sessionAttentionLabelById: props.sessionAttentionLabelById,
+    sessionAttentionSourceById: props.sessionAttentionSourceById,
     newTaskDisabled: props.newTaskDisabled,
     connectingWorkspaceId: props.connectingWorkspaceId,
     workspaceConnectionStateById: props.workspaceConnectionStateById,
@@ -2173,6 +2182,7 @@ function SessionMenuItem({
       isActiveWork={resolvedActiveWork}
       isUnread={isUnread}
       attentionLabel={sessionAttentionLabel}
+      attentionSource={ctx.sessionAttentionSourceById?.[session.id]}
     />
   );
 

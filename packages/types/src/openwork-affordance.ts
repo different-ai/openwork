@@ -75,6 +75,17 @@ export const openworkSessionModelSchema = z.object({
 })
 export type OpenworkSessionModel = z.infer<typeof openworkSessionModelSchema>
 
+export const openworkSessionActivityInventorySchema = z.object({
+  working: z.boolean(),
+  descendantActivity: z.object({
+    busy: z.number().int().nonnegative(),
+    waiting: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative(),
+  }),
+  inventoryComplete: z.boolean(),
+})
+export type OpenworkSessionActivityInventory = z.infer<typeof openworkSessionActivityInventorySchema>
+
 /**
  * Where a request came from: the conversation (session) whose agent issued
  * it. Set by the OpenWork bridge, never by the agent, so UI commands such as

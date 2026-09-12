@@ -102,7 +102,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (true while a turn, subtask, permission, or question is still open) and `model` ({ providerId, modelId, variant }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
@@ -111,15 +111,14 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
     ],
     execute: (args) => {
-      // Same roll-up as the sidebar: a delegated child's pending permission
-      // or question makes its parent `waiting`, not `thinking`.
       const activity = useSessionActivityStore.getState();
       const attentionByWorkspaceId = new Map<string, ReturnType<typeof selectSessionAttention>>();
       return listControlSessions(args, {
         workspaces,
         sessionsByWorkspaceId,
         pinnedIds,
-        statusFor: (workspaceId, sessionId) => {
+        statusFor: activity.getStatus,
+        attentionFor: (workspaceId, sessionId) => {
           let attention = attentionByWorkspaceId.get(workspaceId);
           if (!attention) {
             const runtimeId = endpointForWorkspace(workspaces.find((workspace) => workspace.id === workspaceId))?.workspaceId;
@@ -128,10 +127,11 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
               (sessionsByWorkspaceId[workspaceId] ?? []).flatMap((session) => (session.id ? [{ ...session, id: session.id }] : [])),
               (id) => ids.map((wid) => activity.statusesByWorkspaceId[wid]?.[id]).find((status) => status !== undefined),
               (id) => ids.map((wid) => activity.waitingByWorkspaceId[wid]?.[id]).find((kind) => kind !== undefined),
+              (id) => ids.flatMap((wid) => activity.recordsByWorkspaceId[wid]?.[id]?.childSessionIds ?? []),
             );
             attentionByWorkspaceId.set(workspaceId, attention);
           }
-          return attention.get(sessionId)?.status ?? activity.getStatus(workspaceId, sessionId);
+          return attention.get(sessionId);
         },
       });
     },
