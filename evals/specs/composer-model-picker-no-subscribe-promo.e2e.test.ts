@@ -65,18 +65,26 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
   const catalog = await world.readNative(`${prefix}/model`);
   expect(catalog.status).toBe(200);
   expect(catalog.body).toMatchObject({ data: expect.arrayContaining([
-    expect.objectContaining({ id: world.modelId, providerID: world.providerId, variants: [{ id: "low" }, { id: "high" }, { id: "CustomExact" }] }),
+    expect.objectContaining({ id: world.modelId, providerID: world.providerId, variants: [{ id: "low" }, { id: "high" }, { id: "CustomExact" }, { id: "auto" }] }),
     expect.objectContaining({ id: "standard", providerID: world.providerId, variants: [] }),
   ]) });
   expect(JSON.stringify(catalog.body)).not.toMatch(/synthetic-effort-key|"settings":|"providerOptions":|"headers":/);
   evidence.recordJsonArtifact("MODEL-01 native catalog", catalog);
+  await step("Default leaves the closed trigger showing only the model", async () => {
+    await user.looks([
+      "The closed composer model trigger shows Reasoning witness with a dropdown chevron, without a Default label or a middle-dot separator next to the model name.",
+    ]);
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness$/ });
+  });
   await user.click({ role: "button", label: "Change model" });
   await step("only advertised effort choices are selectable", async () => {
     await user.click({ role: "button", label: /^Effort/ });
+    await user.see({ role: "button", label: "Default" });
     await user.see({ role: "button", label: "Low" });
     await user.notSee({ role: "button", label: /^Hidden/ });
     await user.click({ role: "button", label: "High" });
     await user.see({ role: "button", label: "Change model" }, { text: /High/ });
+    await user.looks(["The closed composer model trigger shows Reasoning witness followed by a middle-dot separator and High, with a dropdown chevron."]);
   });
   await user.press("Escape");
   await user.type("composer", world.prompt);
@@ -150,5 +158,38 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     expect(native.body).toMatchObject({ data: { model: { id: "standard", providerID: world.providerId, variant: "default" } } });
     evidence.recordJsonArtifact("MODEL-01 unsupported model request and native session", { requests, modelRequests, native });
     await user.see("Run task", { timeoutMs: 30_000 });
+  });
+  await step("returning to Default removes the suffix and persists after reload", async () => {
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Model\s+Standard witness/ });
+    await user.type({ placeholder: "Search models..." }, "Reasoning witness");
+    await user.click({ role: "option", label: /^Reasoning witness/ });
+    await user.click({ role: "button", label: "High" });
+    await user.see({ role: "button", label: "Change model" }, { text: /High/ });
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Effort/ });
+    await user.click({ role: "button", label: "Default" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness$/ });
+    await user.reload();
+    await user.see("Run task", { timeoutMs: 60_000 });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness$/ });
+    await user.looks(["The closed composer model trigger shows Reasoning witness and its dropdown chevron, with no Default label and no middle-dot separator next to the model name."]);
+    const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
+    expect(native.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "default" } } });
+    evidence.recordJsonArtifact("MODEL-01 Default after reload", native);
+    await user.click({ role: "button", label: "Change model" });
+    await user.see({ role: "button", label: /^Effort\s+Default/ });
+    await user.click({ role: "button", label: /^Effort/ });
+    await user.see({ role: "button", label: "Default" });
+    await user.looks(["The effort picker is open and retains a selectable Default choice alongside Low, High, Auto, and CustomExact."]);
+    await user.click({ role: "button", label: "Auto" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness\s*· Auto$/ });
+    await user.reload();
+    await user.see("Run task", { timeoutMs: 60_000 });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness\s*· Auto$/ });
+    await user.looks(["The closed composer model trigger shows Reasoning witness followed by a middle-dot separator and Auto, with a dropdown chevron."]);
+    const explicit = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
+    expect(explicit.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "auto" } } });
+    evidence.recordJsonArtifact("MODEL-01 explicit auto variant after reload", explicit);
   });
 });
