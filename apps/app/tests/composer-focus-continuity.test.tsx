@@ -1361,7 +1361,67 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
       });
     }
     expect(sentDrafts).toHaveLength(sendsBeforeProbe);
+  } finally {
+    await act(async () => root.unmount());
+    resetQueuedDrainForTests();
+    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, pendingMessages: {}, failedDrafts: {} });
+    queryClient.clear();
+    container.remove();
+    mock.restore();
+    if (registeredDom) await GlobalRegistrator.unregister();
+  }
+}, 10_000);
 
+test("new-task composer keeps stable presentation and preserves submission ownership and recovery", async () => {
+  const require = createRequire(import.meta.url);
+  for (const moduleId of [
+    "lexical",
+    "@lexical/react/LexicalComposer.js",
+    "@lexical/react/LexicalPlainTextPlugin.js",
+    "@lexical/react/LexicalContentEditable.js",
+    "@lexical/react/LexicalErrorBoundary.js",
+    "@lexical/react/LexicalOnChangePlugin.js",
+    "@lexical/react/LexicalHistoryPlugin.js",
+    "@lexical/react/LexicalComposerContext.js",
+  ]) {
+    const moduleExports = require(moduleId);
+    mock.module(moduleId, () => moduleExports);
+  }
+  const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
+  if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  document.open();
+  document.write("<!doctype html><html><body></body></html>");
+  document.close();
+  Object.defineProperty(document, "compatMode", { configurable: true, value: "CSS1Compat" });
+  mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
+  mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
+  const { LocalProvider } = await import("../src/react-app/kernel/local-provider");
+  const { ShellConfigProvider } = await import("../src/react-app/shell/shell-config");
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const revokePreview = spyOn(URL, "revokeObjectURL");
+  const attachment = { file: new File(["png"], "photo.png", { type: "image/png" }) };
+  const continuationFile = new File(["next"], "continuation.png", { type: "image/png" });
+  const send = () => {
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+    if (!button || button.disabled) throw new Error("Expected an enabled hero send button");
+    button.click();
+    button.click();
+  };
+  const expectStarting = () => {
+    const indicators = container.querySelectorAll('[data-loading-message="starting"]');
+    expect(indicators).toHaveLength(1);
+    expect(indicators[0]?.getAttribute("role")).toBe("status");
+    expect(indicators[0]?.textContent).toBe("Starting…");
+    expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
+  };
+  const expectSettled = () => {
+    expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
+    expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
+  };
+  try {
     const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
     let creation = Promise.withResolvers<void>();
     let creations = 0;
@@ -1380,14 +1440,34 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
       }} />;
     }
     await act(async () => root.render(<LocalProvider><ShellConfigProvider><Hero /></ShellConfigProvider></LocalProvider>));
+    const heroWrapper = container.firstElementChild;
+    const heroEditor = container.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]');
+    if (!heroEditor) throw new Error("Expected the hero editor");
+    expect(heroWrapper?.classList.contains("relative")).toBe(true);
+    const heroChildCount = container.childElementCount;
     await act(async () => send());
     expect(creations).toBe(1);
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
-    expect(container.querySelector('[data-message-role="user"]')?.textContent).toBe("First hero message");
+    expect(container.querySelector('[data-message-role="user"]')).toBeNull();
+    expect(container.firstElementChild).toBe(heroWrapper);
+    expect(container.childElementCount).toBe(heroChildCount);
+    expect(container.querySelector('[data-lexical-editor="true"]')).toBe(heroEditor);
+    expect(heroEditor.getAttribute("contenteditable")).toBe("true");
+    const heroStarting = container.querySelector('[data-loading-message="starting"]');
+    expect(heroStarting?.parentElement).toBe(heroWrapper);
+    expect(heroStarting?.classList.contains("absolute")).toBe(true);
+    expect(heroStarting?.classList.contains("bottom-full")).toBe(true);
+    expect(capturedHandoff?.submitted.draft).toBe("First hero message");
     expectStarting();
     expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     await act(async () => updateHeroDraft("Newer hero draft"));
+    expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
+    await act(async () => {
+      heroEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      heroEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(creations).toBe(1);
     expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
     await act(async () => creation.reject(new Error("Session creation failed")));
     expectSettled();
@@ -1413,13 +1493,18 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
-    expect(container.querySelector('[data-message-role="user"]')?.textContent).toContain("First hero message");
-    expect(container.querySelector('[data-message-role="user"] img[alt="photo.png"]')).not.toBeNull();
+    expect(container.querySelector('[data-message-role="user"]')).toBeNull();
+    expect(container.querySelector('img[alt="photo.png"]')).toBeNull();
     expectStarting();
     expect(container.querySelector("[data-attachment-id]")).toBeNull();
     expect(capturedHandoff?.getContinuation()).toEqual({ draft: "", attachments: [], mentions: {}, pasteParts: [], revertMessageId: null });
     expect(capturedHandoff?.submitted.attachments[0]?.file).toBe(attachment.file);
+    const submittedImage = capturedHandoff?.submitted.attachments[0];
+    expect(submittedImage?.previewUrl).toStartWith("blob:");
+    expect(capturedHandoff?.submitted.draft).toBe(`First hero message[attachment ${submittedImage?.id}]`);
+    expect(revokePreview).not.toHaveBeenCalledWith(submittedImage?.previewUrl);
     await act(async () => creation.reject(new Error("Image session creation failed")));
+    expectSettled();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
     expect(container.querySelector('[data-attachment-id]')).not.toBeNull();
 
@@ -1428,6 +1513,9 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     const attachmentHandoff = capturedHandoff;
     if (!attachmentHandoff) throw new Error("Expected the attachment handoff");
     const heroPreview = attachmentHandoff.submitted.attachments[0]?.previewUrl;
+    expect(attachmentHandoff.submitted.attachments[0]).toEqual(submittedImage);
+    expect(attachmentHandoff.submitted.attachments[0]?.file).toBe(attachment.file);
+    expect(revokePreview).not.toHaveBeenCalledWith(heroPreview);
     await act(async () => {
       const input = container.querySelector<HTMLInputElement>('input[type="file"][multiple]');
       if (!input) throw new Error("Expected the continuation attachment input");
@@ -1467,9 +1555,6 @@ test("composer focus, shared Restore, pending stops, and optimistic sends preser
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Foreign owner draft");
   } finally {
     await act(async () => root.unmount());
-    resetQueuedDrainForTests();
-    useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, pendingMessages: {}, failedDrafts: {} });
-    queryClient.clear();
     container.remove();
     mock.restore();
     if (registeredDom) await GlobalRegistrator.unregister();

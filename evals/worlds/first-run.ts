@@ -23,6 +23,7 @@ import {
 import { startEgressLab, startMockMcp } from "@openwork/labs";
 import { diagnoseEgressLabProduct } from "@openwork/behaviors";
 import { configureProvider } from "./chat.ts";
+import { sessionlessTransition } from "./sessionless-transition.ts";
 import { close, listen, readBody, sendJson, sendMockError } from "./openwork-server-cli.ts";
 import { matchVerdictExpectations } from "@openwork/matchers";
 import {
@@ -195,12 +196,15 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
   const nonce = `${Date.now().toString(36)}-${process.pid}`;
   const prompt = `Summarize this workspace in one sentence. FIRST-SEND-${nonce}`;
   const reply = `Workspace summary finished ${nonce}.`;
-  await using setup = new AsyncDisposableStack();
-  const mock = setup.use(await startMockMcp({
-    port: await allocateFreePort(),
+  const mockBoot = seed.mock({
+    isolatedProcessEnv: true,
     agentWorkloads: [{ promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] }],
-  }));
-  const { app, workspace, workspacePath } = await workspaceWorld(seed);
+  });
+  const workspacePath = seed.tmpPath("sessionless-first-send");
+  const app = await seed.appWeb({ name: "sessionless-first-send", workspacePath, headless: true, mocks: { agent: mockBoot } });
+  const mock = app.mocks.agent;
+  if (!mock) throw new Error("Missing first-send model witness");
+  const workspace = await seed.workspace(app, workspacePath);
   const documentStartedAt = await evalIn(app, () => performance.timeOrigin);
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: {
@@ -211,14 +215,11 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
         models: { [modelId]: { name: "First send model" } },
       },
     },
-  });
-  // configureProvider schedules a reload; its readiness probe can still run in
-  // the old document. Never type the test prompt into that departing composer.
+  }, engine);
   await waitForBehavior(app, browserScript((startedAt) => performance.timeOrigin !== startedAt
     && Boolean(window.__openworkControl), [documentStartedAt]), {
     timeoutMs: 60_000, label: "provider-configured replacement document mounted",
   });
-  const resources = setup.move();
   const mount = `/workspace/${encodeURIComponent(workspace.workspaceId)}`;
   return {
     app,
@@ -227,6 +228,25 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
     engine,
     prompt,
     reply,
+    transition: () => sessionlessTransition(seed, app, workspace.workspaceId, engine),
+    recovery: () => seed.evalIn(app, () => {
+      const restore = [...document.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Clear the current draft to restore the unsent message"));
+      return {
+        error: document.querySelector('[role="alert"]')?.textContent ?? "",
+        starting: Boolean(document.querySelector('[data-loading-message="starting"]')),
+        restoreVisible: Boolean(restore), restoreDisabled: restore?.disabled ?? false,
+      };
+    }),
+    requests: async () => (await mock.agentRequests({ promptMarker: prompt })).filter((request) => request.kind === "final"),
+    readNative: (path: string) => seed.evalIn(app, browserScript(async (path) => {
+      const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + path, {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body: unknown = await response.json();
+      return { status: response.status, body };
+    }, [path]), { awaitPromise: true, timeoutMs: 20_000 }),
     sessionlessRoute: `#/workspace/${workspace.workspaceId}/session`,
     /** Engine-native message list for one session, on the selected engine's mount. */
     messagesPath: (sessionId: string) => engine === "v2"
@@ -235,7 +255,6 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
     /** Engine-native session list on the selected engine's mount. */
     sessionsPath: engine === "v2" ? `${mount}/opencode2/api/session` : `${mount}/opencode/session?limit=100`,
     openNewTask: () => go(app, `/workspace/${workspace.workspaceId}/session`),
-    [Symbol.asyncDispose]: () => resources.disposeAsync(),
   };
 }
 
