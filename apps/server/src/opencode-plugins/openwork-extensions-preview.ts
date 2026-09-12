@@ -5,6 +5,7 @@ import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
+import { redactSecretPatterns } from "./secret-patterns.js";
 import { visualizationSchema } from "@openwork/types/visualization";
 import { openworkSessionModelSchema, type OpenworkAffordanceEffects, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
@@ -22,6 +23,7 @@ import {
 } from "./openwork-extensions-preview-steering.js";
 import {
   buildOpenworkProviderContributions,
+  sessionActivityArgsSchema,
   sessionCreateArgsSchema,
   sessionModelArgSchema,
   sessionReadArgsSchema,
@@ -119,6 +121,15 @@ const sessionPartSchema = z.object({
   text: z.string().optional(),
   synthetic: z.boolean().optional(),
   ignored: z.boolean().optional(),
+  tool: z.string().optional(),
+  callID: z.string().optional(),
+  state: z.object({
+    status: z.enum(["pending", "running", "completed", "error"]),
+    input: z.record(z.string(), z.unknown()),
+    output: z.string().optional(),
+    error: z.string().optional(),
+    time: z.object({ start: z.number(), end: z.number().optional() }).optional(),
+  }).optional(),
 }).passthrough();
 
 const sessionMessageSchema = z.object({
@@ -173,7 +184,10 @@ type SessionSearchResult = {
   updatedAt: number;
   archived: boolean;
   parentId: string | null;
-  kind: "title" | "message";
+  kind: "title" | "message" | "tool";
+  tool?: string;
+  callId?: string;
+  status?: string;
   /** The whole query text appeared contiguously (not just every term). */
   phrase: boolean;
   snippet: SessionSearchSnippet;
@@ -423,6 +437,13 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
       affordanceReadEffects,
     );
   }
+  if (request.id === "session.activity") {
+    return affordanceResult(
+      request.id,
+      await readOpenWorkSessionActivity(request.args ?? {}),
+      affordanceReadEffects,
+    );
+  }
   if (request.id === "extension.actions") {
     const args = listActionsArgsSchema.parse(request.args ?? {});
     const query = args.extensionId ? `?extensionId=${encodeURIComponent(args.extensionId)}` : "";
@@ -583,6 +604,58 @@ function messageText(message: SessionMessage): string {
   return parts.join("\n\n");
 }
 
+function redactSessionText(text: string): string {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (isRecord(parsed) || Array.isArray(parsed)) return JSON.stringify(redactSessionValue(parsed));
+  } catch {}
+  // Supplementary legacy compatibility from 6707de554, not Gitleaks rules.
+  // Preserve complete typed markers when legacy assignments match them.
+  return redactSecretPatterns(text)
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi, (url) => {
+      const start = url.indexOf("//") + 2;
+      const end = url.slice(start).search(/[/?#]/);
+      const authorityEnd = end === -1 ? url.length : start + end;
+      const safe = url.slice(0, start) + url.slice(start, authorityEnd).replace(/^.*(@|%40)/i, "") + url.slice(authorityEnd);
+      const cut = safe.search(/[?#]/);
+      return cut === -1 ? safe : safe.slice(0, cut) + (/(:\d+){1,2}$/.exec(safe)?.[0] ?? "");
+    })
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[redacted]")
+    .replace(/\bow[thc]_[A-Za-z0-9_-]+\b/g, "[redacted]")
+    .replace(/((["'])(?:token|grant|code|secret|key|password|authorization)\2\s*:\s*)("(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^,\s"'{}\[\]]+)/gi,
+      (assignment: string, prefix: string, _quote: string, value: string) => /^["']?\[redacted:[a-z-]+\]["']?$/.test(value) ? assignment : `${prefix}"[redacted]"`)
+    .replace(/(token|grant|code|secret|key)=("(?:\\[\s\S]?|[^"\\])*(?:"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^&\s"'<>()]+)/gi,
+      (assignment: string, key: string, value: string) => /^["']?\[redacted:[a-z-]+\]["']?$/.test(value) ? assignment : `${key}=[redacted]`);
+}
+
+function redactSessionValue(value: unknown): unknown {
+  if (typeof value === "string") return redactSessionText(value);
+  if (Array.isArray(value)) return value.map(redactSessionValue);
+  if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, nested]) => [
+    redactSessionText(key),
+    /(?:token|grant|code|secret|key|password|authorization|cookie)$/i.test(key.trim()) ? "[redacted]" : redactSessionValue(nested),
+  ]));
+  return value ?? null;
+}
+
+function sessionToolParts(message: SessionMessage) {
+  return message.parts.flatMap((part) => part.type === "tool" && part.tool && part.callID && part.state
+    ? [{ tool: part.tool, callId: part.callID, state: part.state }]
+    : []);
+}
+
+function sessionToolFields(state: NonNullable<z.infer<typeof sessionPartSchema>["state"]>): string[] {
+  return [state.input, state.output, state.error].map((value) => JSON.stringify(redactSessionValue(value)));
+}
+
+function isPreToolText(message: SessionMessage): boolean {
+  const textParts = message.parts.filter((part) => part.type === "text");
+  if (textParts.length !== 1) return false;
+  const index = message.parts.indexOf(textParts[0]);
+  return message.parts[index + 1]?.type === "tool";
+}
+
 type TextMatch = { index: number; length: number; phrase: boolean };
 
 function findTextMatch(text: string, queryLower: string, mode: SessionSearchMatchMode): TextMatch | null {
@@ -622,12 +695,31 @@ function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, q
   };
 }
 
-function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
+function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode, parts: SessionSearchArgs["in"]): SessionSearchResult | null {
   let fallback: SessionSearchResult | null = null;
   for (const [index, message] of messages.entries()) {
     const role = message.info.role;
     if (role !== "user" && role !== "assistant") continue;
-    const text = messageText(message);
+    if (parts.includes("tool")) {
+      for (const part of sessionToolParts(message)) {
+        const text = sessionToolFields(part.state).join("\n\n");
+        const match = findTextMatch(text, queryLower, mode);
+        if (!match || fallback) continue;
+        fallback = {
+          ...sessionMetadata(workspace, session),
+          kind: "tool",
+          tool: part.tool,
+          callId: part.callId,
+          status: part.state.status,
+          phrase: match.phrase,
+          role,
+          messageId: message.info.id,
+          messageIndex: index,
+          snippet: buildSessionSnippet(text, match.index, match.length),
+        };
+      }
+    }
+    const text = parts.includes("text") ? messageText(message) : "";
     if (!text) continue;
     const match = findTextMatch(text, queryLower, mode);
     if (!match) continue;
@@ -798,7 +890,7 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
 
   // Title phase: every filtered root session, one list call per workspace.
   for (const { workspace, session } of sessions.slice(scanLimit)) {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+    const titleMatch = args.in.includes("text") ? titleSearchResult(workspace, session, queryLower, mode) : null;
     if (!titleMatch) continue;
     titleMatched.add(session.id);
     matches.push(titleMatch);
@@ -807,11 +899,11 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   // Transcript phase: only the scanLimit newest sessions are read. A message
   // match wins the snippet, but the title match still owns the rank.
   await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session }) => {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+    const titleMatch = args.in.includes("text") ? titleSearchResult(workspace, session, queryLower, mode) : null;
     if (titleMatch) titleMatched.add(session.id);
     try {
       const messages = await readSessionMessages(workspace, session.id, messageLimit);
-      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode);
+      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode, args.in);
       if (messageMatch) matches.push(messageMatch);
       else if (titleMatch) matches.push(titleMatch);
     } catch {
@@ -837,18 +929,32 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   };
 }
 
-type ReadableMessage = { index: number; id: string; role: string; createdAt: number | null; text: string };
-
-function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
+function readableMessages(messages: SessionMessage[], parts: z.infer<typeof sessionReadArgsSchema>["parts"]) {
   return messages
     .map((message, index) => ({
       index,
       id: message.info.id,
       role: message.info.role,
       createdAt: message.info.time?.created ?? null,
-      text: messageText(message),
+      text: parts.includes("text") ? messageText(message) : "",
+      ...(parts.includes("tool") ? { tools: sessionToolParts(message).map((part) => {
+        const fields = sessionToolFields(part.state);
+        return {
+          type: "tool",
+          tool: part.tool,
+          callId: part.callId,
+          status: part.state.status,
+          input: fields[0].slice(0, 2000),
+          output: fields[1].slice(0, 2000),
+          error: fields[2].slice(0, 2000),
+          ...(fields.some((field) => field.length > 2000) ? { truncated: true } : {}),
+        };
+      }) } : {}),
+      ...(parts.includes("reasoning") ? { reasoning: message.parts
+        .filter((part) => part.type === "reasoning" && !part.synthetic && !part.ignored)
+        .map((part) => redactSessionText(part.text?.trim() ?? "")).filter(Boolean).join("\n\n") } : {}),
     }))
-    .filter((message) => message.text.trim().length > 0);
+    .filter((message) => message.text.trim().length > 0 || message.tools?.length || message.reasoning);
 }
 
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
@@ -872,7 +978,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
         readSessionMessages(workspace, args.sessionId, needsFullTranscript ? undefined : count),
         readSessionActivity(workspace, session),
       ]);
-      const readable = readableMessages(messages);
+      const readable = readableMessages(messages, args.parts);
       const metadata = {
         ...sessionMetadata(workspace, session),
         ...activity,
@@ -884,7 +990,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
           model: sessionModelOf(session),
           totalMessages: readable.length,
           firstUser: readable.find((message) => message.role === "user") ?? null,
-          lastAssistant: [...readable].reverse().find((message) => message.role === "assistant") ?? null,
+          lastAssistant: [...readable].reverse().find((message) => message.role === "assistant" && messageText(messages[message.index]) && !isPreToolText(messages[message.index])) ?? null,
         };
       }
       const window = from === "start" ? readable.slice(0, count) : readable.slice(-count);
@@ -926,6 +1032,84 @@ async function locateOpenWorkSession(
     }
   }
   return { error: `Session ${sessionId} was not found in matching OpenWork workspaces` };
+}
+
+function sessionToolFailure(state: NonNullable<z.infer<typeof sessionPartSchema>["state"]>): unknown {
+  if (state.status === "error") return state.error ?? "Tool failed";
+  if (state.status !== "completed" || state.output === undefined) return null;
+  try {
+    const output: unknown = JSON.parse(state.output);
+    if (!isRecord(output)) return null;
+    const failure = output.ok === false ? output : isRecord(output.result) && output.result.ok === false ? output.result : null;
+    if (failure) return failure.error ?? failure.message ?? failure;
+  } catch {}
+  return null;
+}
+
+async function readOpenWorkSessionActivity(rawArgs: unknown): Promise<object> {
+  const parsed = sessionActivityArgsSchema.safeParse(rawArgs);
+  if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
+  const args = parsed.data;
+  const located = await locateOpenWorkSession(args.sessionId, args.workspaceId);
+  if ("error" in located) return { ok: false, error: located.error };
+  const { workspace, session } = located;
+  let transcript: SessionMessage[];
+  try {
+    transcript = await readSessionMessages(workspace, args.sessionId);
+  } catch {
+    return { ok: false, error: `Session ${args.sessionId} was not found in matching OpenWork workspaces` };
+  }
+  const since = args.since === undefined ? undefined : sessionTimestampMs(args.since);
+  const included = (at: number | null) => since === undefined || (at !== null && at >= since);
+  const messages = { user: 0, assistant: 0 };
+  let firstAt: number | null = null;
+  let lastAt: number | null = null;
+  const recordTime = (at: number | null) => {
+    if (at === null || !included(at)) return;
+    firstAt = firstAt === null ? at : Math.min(firstAt, at);
+    lastAt = lastAt === null ? at : Math.max(lastAt, at);
+  };
+  const calls = new Map<string, { part: ReturnType<typeof sessionToolParts>[number]; createdAt: number | null }>();
+  for (const message of transcript) {
+    const at = message.info.time?.created ?? null;
+    const role = message.info.role;
+    if (included(at) && (role === "user" || role === "assistant")) {
+      messages[role] += 1;
+      recordTime(at);
+    }
+    for (const part of sessionToolParts(message)) calls.set(part.callId, { part, createdAt: at });
+  }
+  const byTool = new Map<string, number>();
+  const byAffordanceId = new Map<string, number>();
+  const errors: Array<{ callId: string; tool: string; affordanceId?: string; message: string; at: number | null }> = [];
+  let total = 0;
+  for (const { part, createdAt } of calls.values()) {
+    const at = part.state.time?.end ?? part.state.time?.start ?? createdAt;
+    if (!included(at)) continue;
+    total += 1;
+    recordTime(part.state.time?.start ?? createdAt);
+    recordTime(at);
+    byTool.set(part.tool, (byTool.get(part.tool) ?? 0) + 1);
+    const affordanceId = (part.tool === "openwork_execute" || part.tool === "openwork_query") && typeof part.state.input.id === "string" ? part.state.input.id : undefined;
+    if (affordanceId !== undefined) byAffordanceId.set(affordanceId, (byAffordanceId.get(affordanceId) ?? 0) + 1);
+    const failure = sessionToolFailure(part.state);
+    if (failure !== null) errors.push({
+      callId: part.callId,
+      tool: part.tool,
+      ...(affordanceId === undefined ? {} : { affordanceId }),
+      message: (typeof failure === "string" ? redactSessionText(failure) : JSON.stringify(redactSessionValue(failure))).slice(0, 300),
+      at,
+    });
+  }
+  return {
+    ok: true,
+    ...sessionMetadata(workspace, session),
+    toolCalls: { total, byTool: Object.fromEntries(byTool), byAffordanceId: Object.fromEntries(byAffordanceId) },
+    errors: { total: errors.length, list: errors },
+    firstAt,
+    lastAt,
+    messages,
+  };
 }
 
 let lastSendMessageStamp = 0;
