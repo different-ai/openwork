@@ -7,6 +7,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { devOpenworkProxy } from "./dev-openwork-proxy";
+import { devDenProxy } from "./dev-den-proxy";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -106,9 +107,8 @@ const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
 // pointed here via VITE_DEN_API_BASE_URL; sign-in still opens the real Den
 // web app. Inert unless the launcher sets the target env. No gateway marker:
 // that runtime implies a provisioned cloud instance, which local dev lacks.
-const headlessDenTarget = (process.env.OPENWORK_DEV_HEADLESS_DEN_TARGET ?? "").trim();
-
 export default defineConfig(({ command, isPreview }) => {
+  const denProxy = devDenProxy(command === "serve" && !isPreview ? process.env : {});
   const openworkProxy = devOpenworkProxy(command === "serve" && !isPreview ? process.env : {});
   const headlessBrowserHostSuffix = Object.keys(openworkProxy).length > 0
     ? process.env.OPENWORK_DEV_BROWSER_HOST_SUFFIX
@@ -152,7 +152,7 @@ export default defineConfig(({ command, isPreview }) => {
         ? { allowedHosts: [...allowedHosts, ...(headlessBrowserHostSuffix ? [headlessBrowserHostSuffix] : [])] }
         : {}),
       proxy: {
-        ...(headlessDenTarget ? { "/api/den": { target: headlessDenTarget, changeOrigin: true } } : {}),
+        ...denProxy,
         ...openworkProxy,
       },
     },
