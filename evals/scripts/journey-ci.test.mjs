@@ -146,6 +146,11 @@ test('registered case metadata names exact files, supported execution axes, and 
       engines: ['v2'],
     },
     {
+      spec: 'composer-model-picker-no-subscribe-promo.e2e.test.ts',
+      id: 'MODEL-02',
+      engines: ['v2'],
+    },
+    {
       spec: 'task-activity-shimmer.e2e.test.ts',
       id: 'ACT-01',
       engines: ['v1', 'v2'],

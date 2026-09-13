@@ -166,6 +166,20 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
   }
 }
 
+function catalogIdentity(
+  runtimeId: string,
+  value: Record<string, unknown>,
+  models: OpencodeV2ProviderSpec["models"],
+): { package: string; canonical?: string } | undefined {
+  const identity = typeof value.id === "string" && value.id.trim() ? value.id.trim() : undefined;
+  if (identity === undefined || typeof value.npm !== "string") return undefined;
+  if (models.some((model) => isRecord(model.config?.variants))) return undefined;
+  return {
+    package: `aisdk:${value.npm}`,
+    ...(identity === runtimeId ? {} : { canonical: identity }),
+  };
+}
+
 export function mapRuntimeProvidersToV2Specs(
   providerMap: Record<string, unknown>,
   storedCredentials: ReadonlyMap<string, string> = new Map(),
@@ -235,11 +249,16 @@ export function mapRuntimeProvidersToV2Specs(
         }))
         .sort((left, right) => left.id.localeCompare(right.id))
       : [];
+    // Only allowlisted AI SDK packages reach here, so the `aisdk:` identity
+    // never asks the sidecar to install a package.
+    const catalog = packageName ? catalogIdentity(id, value, models) : undefined;
     specs.push({
       id,
       name: typeof value.name === "string" ? value.name : id,
       ...(baseUrl ? { baseUrl } : {}),
-      ...(packageName ? { package: packageName } : {}),
+      ...(catalog
+        ? { package: catalog.package, ...(catalog.canonical ? { canonical: catalog.canonical } : {}) }
+        : packageName ? { package: packageName } : {}),
       ...(Object.keys(settings).length ? { settings } : {}),
       ...(isRecord(headers) ? { headers } : {}),
       apiKey: resolvedKey ?? UNSET_API_KEY,
