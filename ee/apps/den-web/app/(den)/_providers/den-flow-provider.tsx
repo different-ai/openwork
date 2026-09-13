@@ -88,6 +88,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+export function isEmailNotVerified(payload: unknown): boolean {
+  return isRecord(payload) && [payload.code, payload.error].some(
+    (value) => typeof value === "string" && value.toUpperCase() === "EMAIL_NOT_VERIFIED",
+  );
+}
+
 function isSignupPasswordFeedback(payload: unknown) {
   return isRecord(payload)
     && (payload.error === "password_too_short" || payload.error === "password_too_weak" || payload.error === "password_compromised");
@@ -146,6 +152,7 @@ type DenFlowContextValue = {
   submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   resendVerificationCode: () => Promise<void>;
   cancelVerification: () => void;
+  openVerificationStep: (targetEmail: string) => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
   signOut: () => Promise<void>;
   updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
@@ -448,6 +455,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }
 
   function openVerificationStep(targetEmail: string, message?: string) {
+    setEmail(targetEmail.trim().toLowerCase());
     setVerificationRequired(true);
     setVerificationCode("");
     setAuthInfo(message ?? `Enter the 6-digit code we sent to ${targetEmail}.`);
@@ -510,6 +518,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       });
 
       if (!signInResult.response.ok) {
+        if (isEmailNotVerified(signInResult.payload) && !isSingleOrgMode) {
+          openVerificationStep(trimmedEmail);
+        }
         setAuthError(getErrorMessage(signInResult.payload, `Authentication failed with ${signInResult.response.status}.`));
         trackPosthogEvent("den_auth_failed", {
           mode: nextMode,
@@ -1288,7 +1299,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        if (response.status === 403 && !isSingleOrgMode) {
+        if (isEmailNotVerified(payload) && !isSingleOrgMode) {
           openVerificationStep(trimmedEmail, `Enter the 6-digit code we sent to ${trimmedEmail} to finish verifying your email.`);
         }
         const message = getErrorMessage(payload, `Authentication failed with ${response.status}.`);
@@ -2402,6 +2413,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     submitVerificationCode,
     resendVerificationCode,
     cancelVerification,
+    openVerificationStep,
     beginSocialAuth,
     signOut,
     updateUserProfile,

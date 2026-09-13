@@ -61,7 +61,8 @@ test("cold cloud signup recovers from the verification email without an invitati
     const surface = await world.fresh(recoveryLink);
     const actor = user.on(surface);
     await actor.see({ role: "textbox", label: "Verification code" }, { timeoutMs: 90_000 });
-    await actor.see({ text: person.email });
+    await actor.see({ text: "Enter the six-digit code from your inbox." });
+    await actor.notSee({ text: person.email });
     await actor.notSee({ testId: "den-org-sidebar" });
     await actor.notSee({ text: "Make it yours." });
     await noAuthentication();

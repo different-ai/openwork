@@ -6,4 +6,5 @@ export default function VerificationPreview(props: VerificationEmailProps) {
 
 VerificationPreview.PreviewProps = {
   verificationCode: "123456",
+  recoveryUrl: "https://app.openworklabs.com/verify?email=member%40example.test",
 } satisfies VerificationEmailProps
