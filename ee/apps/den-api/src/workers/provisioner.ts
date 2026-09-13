@@ -6,6 +6,10 @@ import {
   provisionWorkerOnDaytona,
 } from "./daytona.js"
 import {
+  deprovisionWorkerOnKubernetes,
+  provisionWorkerOnKubernetes,
+} from "./kubernetes.js"
+import {
   customDomainForWorker,
   ensureVercelDnsRecord,
 } from "./vanity-domain.js"
@@ -360,6 +364,10 @@ export async function provisionWorker(
     return provisionWorkerOnDaytona(input)
   }
 
+  if (env.provisionerMode === "kubernetes") {
+    return provisionWorkerOnKubernetes(input)
+  }
+
   const template = env.workerUrlTemplate ?? "https://workers.local/{workerId}"
   const url = template.replace("{workerId}", input.workerId)
   return {
@@ -375,6 +383,11 @@ export async function deprovisionWorker(input: {
 }) {
   if (env.provisionerMode === "daytona") {
     await deprovisionWorkerOnDaytona(input.workerId)
+    return
+  }
+
+  if (env.provisionerMode === "kubernetes") {
+    await deprovisionWorkerOnKubernetes(input.workerId)
     return
   }
 
