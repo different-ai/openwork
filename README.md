@@ -143,6 +143,18 @@ Runtime-observable changes need test evidence on the PR. `AGENTS.md` and [`evals
 
 ## Local development
 
+For a local web or Daytona environment at a specific PR/ref, follow the
+[world skill](.opencode/skills/world/SKILL.md), including exact-SHA worktrees,
+reopening matching instances and private disposable-account login handoffs.
+
+The all-in-one **Den** launcher is `pnpm dev:web-local` (alias of `pnpm dev:den`,
+implemented in `scripts/dev-local.mjs`). It starts MySQL/Redis when needed,
+pushes the schema and runs Den API, inference and Den web. It uses the fixed
+`openwork-den-local` Docker project and may reuse reachable databases; it does
+not seed a login or isolate data per worktree. See the skill before pairing it
+with headless web or running it alongside another stack. Ctrl-C stops the
+foreground launcher and cleans up the Docker services it started.
+
 For one checkout, keep using `pnpm dev`; with no extra environment variables it reuses the existing shared dev profile.
 
 To run multiple git worktrees at once, use:
