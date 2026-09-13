@@ -106,6 +106,50 @@ config:
     createTimeoutSeconds: ""
     deleteTimeoutSeconds: ""
     healthcheckTimeoutMs: ""
+  # Kubernetes worker provisioner (config.provisioner.mode: kubernetes).
+  # Empty keys fall back to the den-api defaults documented in
+  # docs/kubernetes-workers.md. KUBERNETES_API_TOKEN belongs in the release
+  # secret (secret.kubernetesApiToken), never in this config map.
+  kubernetes:
+    apiUrl: ""
+    apiCaFile: ""
+    workerNamespace: ""
+    workerImage: ""
+    workerImagePullPolicy: ""
+    workerPort: ""
+    workerApprovalMode: ""
+    workerCpuRequest: ""
+    workerCpuLimit: ""
+    workerMemoryRequest: ""
+    workerMemoryLimit: ""
+    workerWorkspaceVolumeSize: ""
+    workerDataVolumeSize: ""
+    workerStorageClass: ""
+    healthcheckTimeoutMs: ""
+    pollIntervalMs: ""
+    workerRecordTtlSeconds: ""
+    # Worker pod scheduling, security, metadata, and networking overrides
+    # (all optional). When unset the provisioner builds its default pod shape.
+    # JSON-shaped values are parsed by den-api; imagePullSecrets is a string list.
+    workerImagePullSecrets: []
+    workerNodeSelector: {}
+    workerTolerations: []
+    workerAffinity: {}
+    workerTopologySpreadConstraints: []
+    workerPriorityClassName: ""
+    workerPodAnnotations: {}
+    workerPodLabels: {}
+    workerPodSecurityContext: {}
+    workerContainerSecurityContext: {}
+    workerExtraVolumes: []
+    workerExtraVolumeMounts: []
+    workerExtraEnv: []
+    workerDnsPolicy: ""
+    workerDnsConfig: {}
+    workerInitContainers: []
+    workerLifecycleHooks: {}
+    workerShareProcessNamespace: ""
+    workerHostNetwork: ""
   polar:
     featureGateEnabled: "false"
     apiBase: ""
@@ -176,6 +220,7 @@ secret:
     betterAuthSecret: BETTER_AUTH_SECRET
     denDbEncryptionKey: DEN_DB_ENCRYPTION_KEY
     daytonaApiKey: DAYTONA_API_KEY
+    kubernetesApiToken: KUBERNETES_API_TOKEN
     polarAccessToken: POLAR_ACCESS_TOKEN
     openRouterManagementApiKey: OPENROUTER_MANAGEMENT_API_KEY
     inferenceAdminToken: INFERENCE_ADMIN_TOKEN
@@ -200,6 +245,7 @@ secret:
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
     denDbEncryptionKey: CHANGE_ME_32_CHARS_MINIMUM_DB_ENCRYPTION
     daytonaApiKey: ""
+    kubernetesApiToken: ""
     polarAccessToken: ""
     openRouterManagementApiKey: ""
     inferenceAdminToken: ""
@@ -215,6 +261,22 @@ secret:
     githubConnectorAppWebhookSecret: ""
     connectLinkPrivateKey: ""
     initialAdminBootstrapCode: ""
+
+# Kubernetes worker-provisioner RBAC. Only used when
+# config.provisioner.mode is "kubernetes". The chart creates a dedicated
+# ServiceAccount for den-api and a namespaced Role in the worker namespace;
+# nothing cluster-scoped is ever rendered.
+workers:
+  kubernetes:
+    # Create the worker namespace (config.kubernetes.workerNamespace,
+    # default "openwork-workers") from the chart.
+    createNamespace: true
+    serviceAccount:
+      create: true
+      # Leave empty to use <release>-den-api.
+      name: ""
+    rbac:
+      create: true
 
 installerArtifacts:
   enabled: false

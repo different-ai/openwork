@@ -16,10 +16,14 @@ import {
   openWorkWebAccessRequiredPayload,
   type OpenWorkWebRuntimeAccessResolver,
 } from "../../openwork-web-runtime-access.js"
-import { currentDaytonaSandboxName, flushWorkerCheckpointOnDaytona, getDaytonaSandboxRecord, inspectDaytonaSandbox, refreshDaytonaSignedPreview, stopWorkerOnDaytona } from "../../workers/daytona.js"
+import { currentDaytonaSandboxName, flushWorkerCheckpointOnDaytona } from "../../workers/daytona.js"
+import { stopWorkerOnKubernetes } from "../../workers/kubernetes.js"
 import { CLOUD_INSTANCE_BACKEND, CLOUD_INSTANCE_NAME } from "../../workers/cloud-constants.js"
 import { recoverClaimedCloudWorker as defaultRecoverCloudWorker, wakeCloudWorker as defaultWakeCloudWorker } from "../../workers/cloud-lifecycle.js"
 import {
+  defaultGetSandboxRecord,
+  defaultInspectSandbox,
+  defaultRefreshSignedPreview,
   probeCloudRuntimeSignedPreview,
   resolveCloudRuntimeAccess,
   resolveCloudRuntimeState,
@@ -28,6 +32,7 @@ import {
   type CloudRuntimeState,
   type CloudRuntimeStore,
   type CloudRuntimeWorker,
+  type RefreshSignedPreview,
 } from "../../workers/worker-access.js"
 import { appLogger } from "../../observability/logger.js"
 import {
@@ -42,11 +47,11 @@ import { continueCloudProvisioning, token } from "../workers/shared.js"
 type CloudRouteOptions = {
   memberRoute?: MiddlewareHandler<{ Variables: OrgRouteVariables }>
   orgMode?: DenOrgMode
-  provisionerMode?: "stub" | "render" | "daytona"
+  provisionerMode?: "stub" | "render" | "daytona" | "kubernetes"
   daytonaApiKey?: string
   gatewayKey?: string
   continueProvisioning?: typeof continueCloudProvisioning
-  refreshSignedPreview?: typeof refreshDaytonaSignedPreview
+  refreshSignedPreview?: RefreshSignedPreview
   cloudWorkerStore?: CloudWorkerStore
   ensureCloudWorker?: EnsureCloudWorker
   getSandboxRecord?: GetSandboxRecord
@@ -349,8 +354,18 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
 }
 
 function hasDaytonaProvisioner(options: CloudRouteOptions) {
-  const apiKey = options.daytonaApiKey !== undefined ? options.daytonaApiKey : env.daytona.apiKey
-  return (options.provisionerMode ?? env.provisionerMode) === "daytona" && Boolean(apiKey?.trim())
+  const mode = options.provisionerMode ?? env.provisionerMode
+  if (mode === "daytona") {
+    const apiKey = options.daytonaApiKey !== undefined ? options.daytonaApiKey : env.daytona.apiKey
+    return Boolean(apiKey?.trim())
+  }
+  if (mode === "kubernetes") {
+    return Boolean(env.kubernetes.workerImage?.trim())
+  }
+  return false
+}
+function cloudWorkerImage() {
+  return env.provisionerMode === "kubernetes" ? env.kubernetes.workerImage ?? null : env.daytona.snapshot
 }
 
 // Deployment-level availability only. The single-org and no-provisioner 404s
@@ -503,7 +518,7 @@ export function ensureMemberCloudWorker(input: { orgId: OrgId; createdByUserId: 
 }
 
 function workerNeedsUserRequestedUpdate(worker: CloudWorker) {
-  const snapshot = env.daytona.snapshot
+  const snapshot = cloudWorkerImage()
   return Boolean(snapshot && (worker.image_version ?? null) !== snapshot)
 }
 
@@ -536,7 +551,7 @@ function memberCloudInstanceResponse(worker: CloudWorker, instance: CloudRuntime
     url: instance.url,
     imageVersion: worker.image_version ?? null,
     ...(instanceName ? { instanceName } : {}),
-    latestVersion: env.daytona.snapshot ?? null,
+    latestVersion: cloudWorkerImage() ?? null,
     ...(failure ? { failure: publicCloudStartupFailure(failure) } : {}),
   }
 }
@@ -545,7 +560,7 @@ async function resolveCloudInstanceForMember(input: {
   payload: NonNullable<OrgRouteVariables["organizationContext"]>
   user: CloudRouteUser
   continueProvisioning: typeof continueCloudProvisioning
-  refreshSignedPreview: typeof refreshDaytonaSignedPreview
+  refreshSignedPreview: RefreshSignedPreview
   store: CloudWorkerStore
   ensureWorker: EnsureCloudWorker
   getSandboxRecord: GetSandboxRecord
@@ -630,7 +645,7 @@ async function resolveCloudInstanceForGateway(input: {
   payload: NonNullable<OrgRouteVariables["organizationContext"]>
   user: CloudRouteUser
   continueProvisioning: typeof continueCloudProvisioning
-  refreshSignedPreview: typeof refreshDaytonaSignedPreview
+  refreshSignedPreview: RefreshSignedPreview
   store: CloudWorkerStore
   ensureWorker: EnsureCloudWorker
   getSandboxRecord: GetSandboxRecord
@@ -716,17 +731,17 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
   const getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
   const continueProvisioning: typeof continueCloudProvisioning = options.continueProvisioning
     ?? ((input, continueOptions = {}) => continueCloudProvisioning(input, { ...continueOptions, materializeProviders }))
-  const refreshSignedPreview = options.refreshSignedPreview ?? refreshDaytonaSignedPreview
+  const refreshSignedPreview = options.refreshSignedPreview ?? defaultRefreshSignedPreview()
   const store = options.cloudWorkerStore ?? databaseCloudWorkerStore
   const ensureWorker = options.ensureCloudWorker ?? ensureCloudWorker
-  const getSandboxRecord = options.getSandboxRecord ?? getDaytonaSandboxRecord
-  const inspectSandbox = options.inspectSandbox ?? inspectDaytonaSandbox
+  const getSandboxRecord = options.getSandboxRecord ?? defaultGetSandboxRecord()
+  const inspectSandbox = options.inspectSandbox ?? defaultInspectSandbox()
   const signedPreviewProbe = options.probeSignedPreview ?? probeCloudRuntimeSignedPreview
   const wakeCloudWorker = options.wakeCloudWorker ?? defaultWakeCloudWorker
   const recoverCloudWorker = options.recoverCloudWorker
     ?? (options.wakeCloudWorker ? options.wakeCloudWorker : defaultRecoverCloudWorker)
   const flushWorkerCheckpoint = options.flushWorkerCheckpoint ?? flushWorkerCheckpointOnDaytona
-  const stopCloudWorker = options.stopCloudWorker ?? stopWorkerOnDaytona
+  const stopCloudWorker = options.stopCloudWorker ?? stopWorkerOnKubernetes
   const now = options.now ?? Date.now
   const gatewayKey = options.gatewayKey !== undefined ? options.gatewayKey : env.gatewayKey
   const wakingWorkers = new Set<CloudWorker["id"]>()
