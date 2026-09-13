@@ -485,7 +485,13 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       const rel = normalizeResolvedRelativePath(relRaw);
 
       if (entry.isDirectory()) {
-        const info = await stat(absPath);
+        let info: Awaited<ReturnType<typeof stat>>;
+        try {
+          info = await stat(absPath);
+        } catch (e: any) {
+          if (e.code === "ENOENT") continue;
+          throw e;
+        }
         items.push({
           path: rel,
           kind: "dir",
@@ -498,7 +504,13 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       }
 
       if (!entry.isFile()) continue;
-      const info = await stat(absPath);
+      let info: Awaited<ReturnType<typeof stat>>;
+      try {
+        info = await stat(absPath);
+      } catch (e: any) {
+        if (e.code === "ENOENT") continue;
+        throw e;
+      }
       items.push({
         path: rel,
         kind: "file",
