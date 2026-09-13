@@ -234,6 +234,7 @@ function upstreamRequestId(headers: Headers) {
 
 function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "stream" | "json") {
   recorder.setUsage({
+    generation: usage.generation,
     usageSource: usage.found ? source : "missing",
     upstreamModel: usage.model,
     inputTokens: usage.inputTokens,
@@ -532,7 +533,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const upstreamPath = c.req.path.replace(/^\/api\/v1/, "")
     const upstreamUrl = new URL(`${env.openRouterUpstreamUrl}${upstreamPath}`)
     const recorder = createRequestLogRecorder({ insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter })
-    const startRecorder = (input: { incomingModel: string | null; upstreamModel: string | null; stream: boolean; requestBytes?: number }) => {
+    const startRecorder = (input: { incomingModel: string | null; upstreamModel: string | null; modelAlias?: string; stream: boolean; requestBytes?: number }) => {
       recorder.start({
         identity: c.get("inference"),
         openworkRequestId,
@@ -544,6 +545,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         method: c.req.method,
         requestedModel: input.incomingModel,
         upstreamModel: input.upstreamModel,
+        modelAlias: input.modelAlias ?? null,
         stream: input.stream,
         requestBytes: input.requestBytes,
         startedAt,
@@ -796,7 +798,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       }
       headers.set("content-type", "text/event-stream; charset=utf-8")
       headers.set("x-accel-buffering", "no")
-      const usageParser = createOpenAiChatSseUsageParser()
+      const usageParser = createOpenAiChatSseUsageParser({ expectedChoices: choiceCount })
       const usageDecoder = new TextDecoder()
       return new Response(relayChatStream({
         body: upstream.body, abort, startedAt: analyticsStartedAt, idleMs: env.streamIdleMs, choiceCount,
@@ -808,11 +810,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         onFinish(result) {
           c.req.raw.signal.removeEventListener("abort", cancel)
           finishAnalytics(result.outcome === "completed" ? "completed" : result.outcome === "cancelled" ? "cancelled" : "failed")
-          recordUsage(recorder, usageParser.result(), "stream")
-          void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, upstreamRequestId: upstreamRequestId(upstream.headers) })
-          try {
-            reporter.completion?.({ ...result, openworkRequestId, organizationId: inferenceKey.organization_id, orgMembershipId: inferenceKey.org_membership_id, modelAlias: prepared.modelAlias })
-          } catch { /* Completion reporting must not interrupt stream cleanup. */ }
+          recordUsage(recorder, { ...usageParser.result(), generation: result.generation }, "stream")
+          void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, firstOutputMs: result.firstOutputMs, upstreamRequestId: upstreamRequestId(upstream.headers) })
         },
       }), { headers })
     }
@@ -822,7 +821,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     try {
       const value = await readResponseJson(upstream.body, abort.signal)
       recorder.markFirstByte()
-      recordUsage(recorder, parseOpenAiChatJsonUsage(value), "json")
+      recordUsage(recorder, parseOpenAiChatJsonUsage(value, choiceCount), "json")
       if (analytics) observeChunk(new TextEncoder().encode(JSON.stringify(value)))
       if (!completeChatResponse(value, choiceCount)) {
         finishAnalytics("failed")

@@ -78,6 +78,7 @@ test("openai responses: response.completed carries usage", () => {
     reasoningTokens: 8,
     costUsd: null,
     upstreamRequestId: "resp_1",
+    generation: { generationOutcome: "unknown", providerTerminalReason: "unknown" },
   })
 })
 

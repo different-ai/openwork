@@ -1,3 +1,7 @@
+import { generationTerminal } from "./generation-outcome.js"
+import type { GenerationTerminal } from "./generation-outcome.js"
+import { createChatGenerationObserver } from "./usage/generation.js"
+
 type JsonRecord = Record<string, unknown>
 function record(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -6,6 +10,7 @@ function record(value: unknown): value is JsonRecord {
 export type ChatOutcome = "completed" | "incomplete" | "cancelled" | "upstream_error" | "timeout"
 export type ChatCompletionReport = {
   outcome: ChatOutcome
+  generation: GenerationTerminal
   durationMs: number
   firstOutputMs: number | null
   responseBytes: number
@@ -79,7 +84,12 @@ class ChatStream {
   failed: string | null = null
   output = false
 
-  constructor(private readonly choiceCount: number) {}
+  generation = generationTerminal("unknown")
+  private readonly observeGeneration: ReturnType<typeof createChatGenerationObserver>
+
+  constructor(private readonly choiceCount: number) {
+    this.observeGeneration = createChatGenerationObserver(choiceCount)
+  }
 
   feed(text: string): string[] {
     this.pending += text
@@ -140,6 +150,7 @@ class ChatStream {
         this.finished.add(choice.index)
       }
     }
+    this.generation = this.observeGeneration(value)
     return `data: ${data}\n\n`
   }
 }
@@ -166,7 +177,7 @@ export function relayChatStream(input: {
     if (settled) return
     settled = true
     input.abort.signal.removeEventListener("abort", onAbort)
-    try { input.onFinish({ outcome, code, durationMs: Date.now() - input.startedAt, firstOutputMs, responseBytes: bytes }) }
+    try { input.onFinish({ outcome, code, generation: parser.generation, durationMs: Date.now() - input.startedAt, firstOutputMs, responseBytes: bytes }) }
     catch { /* Diagnostics must not prevent stream cleanup. */ }
     input.abort.abort()
     void reader.cancel().catch(() => {})

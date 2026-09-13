@@ -20,6 +20,7 @@ test("parses usage from a single SSE chunk", () => {
     costUsd: 0.0042,
     cacheWriteTokens: null,
     upstreamRequestId: "gen-1",
+    generation: { generationOutcome: "unknown", providerTerminalReason: "unknown" },
   })
 })
 
