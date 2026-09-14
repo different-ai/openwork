@@ -7,6 +7,9 @@
     "company-inference": {
       "name": "Company inference",
       "source": "custom",
+      "credentialMode": "shared",
+      "allMembers": false,
+      "memberIds": [],
       "customConfig": {
         "id": "company-inference",
         "name": "Company inference",

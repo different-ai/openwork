@@ -190,6 +190,10 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
       const envelopes = new Map<string, string | null>([["teams", "team"], ["llm-providers", "llmProvider"], ["mcp-connections", null], ["desktop-policies", "desktopPolicy"], ["marketplaces", "item"]]);
       const envelope = envelopes.get(entry.path.split("/")[2]);
       if (envelope === undefined) throw new Error("Unknown resource response");
+      if (envelope !== null) {
+        expect(entry.body).not.toHaveProperty(envelope);
+        expect(previous.body).not.toHaveProperty(envelope);
+      }
       const current = envelope === null ? record(entry.response) : record(record(entry.response)[envelope]);
       const original = envelope === null ? record(previous.response) : record(record(previous.response)[envelope]);
       expect(text(current.id)).toBe(text(original.id));
@@ -224,12 +228,17 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
       }
       expect(http.body).not.toHaveProperty("oauthClient");
       expect(http.body).not.toHaveProperty("requestedScopes");
+      const providerPut = writes(application.requests).find((entry) => entry.path.startsWith("/v1/llm-providers/"));
+      if (!providerPut) throw new Error("Provider PUT missing");
+      expect(record(providerPut.body).apiKey === secret).toBe(true);
+      expect(providerPut.body).toMatchObject({
+        source: "custom", credentialMode: "shared", allMembers: false, memberIds: [], teamIds: [teamId],
+        customConfig: { api: environment.INFERENCE_URL, models: [{ id: "company-model" }] },
+      });
+      for (const field of ["llmProvider", "mode", "models", "access", "teams"]) expect(providerPut.body).not.toHaveProperty(field);
     }
-    const providerPut = first.requests.find((entry) => entry.method === "PUT" && entry.path.startsWith("/v1/llm-providers/"));
-    if (!providerPut) throw new Error("Provider PUT missing");
-    expect(record(providerPut.body).apiKey === secret).toBe(true);
     expect((await den.mocks.http.handshakes({ atLeast: 1, timeoutMs: 5_000 })).length).toBeGreaterThan(0);
-    evidence.recordAssertionEvidence("The complete shipped manifest converges with bare conditional MCP requests", "The shipped organization.json was applied twice: every first PUT returned 201, every second PUT returned 200, MCP IDs stayed unchanged, and each update used the exact timestamp read by ID after manageable external-key discovery. Bodies omitted expectedUpdatedAt and wrappers; responses were bare. Both applies sent OAuth client_secret_basic and tools:read. Requests and responses preserved per_member/team-only OAuth access versus shared/org-wide HTTP access, with exposeDirectly false on both. Synthetic environment credentials arrived exactly without CLI disclosure.", true);
+    evidence.recordAssertionEvidence("The complete shipped manifest converges with bare conditional MCP requests", "The shipped organization.json was applied twice: every first PUT returned 201, every second PUT returned 200, MCP IDs stayed unchanged, and each update used the exact timestamp read by ID after manageable external-key discovery. Bodies omitted expectedUpdatedAt and wrappers; responses were bare. Both applies sent OAuth client_secret_basic and tools:read. Requests and responses preserved per_member/team-only OAuth access versus shared/org-wide HTTP access, with exposeDirectly false on both. Custom provider writes used source/credentialMode/customConfig.models and top-level allMembers/memberIds/teamIds; none of the response envelopes were sent as write wrappers. Synthetic environment credentials arrived exactly without CLI disclosure.", true);
 
     const httpBody = record(httpPut.body);
     const scoped = { version: 1, teams: manifest.teams, mcpConnections: { [httpKey]: { ...httpBody, teams: [teamKey], access: { orgWide: false } } } };
