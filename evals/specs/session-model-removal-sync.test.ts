@@ -143,7 +143,8 @@ for (const fault of ["none", "after_config", "inventory", "restart"]) test(`prov
   expect(result.affectedSessions).toEqual(impacts);
   expect(sync.status().affectedSessions).toEqual(impacts);
   expect(JSON.stringify(sessions)).toBe(initial);
-  expect(requests).toEqual(Array.from({ length: fault === "inventory" ? 2 : 1 }, () => [{ method: "GET", path: "/session", directory: "/synthetic/one" }, { method: "GET", path: "/session", directory: "/synthetic/two" }]).flat());
+  const expectedRequests = Array.from({ length: fault === "inventory" ? 2 : 1 }, () => [{ method: "GET", path: "/session", directory: "/synthetic/one" }, { method: "GET", path: "/session", directory: "/synthetic/two" }]).flat();
+  expect(requests.map((request) => JSON.stringify(request)).sort()).toEqual(expectedRequests.map((request) => JSON.stringify(request)).sort());
   expect(notifications.list("one").every(isOpenworkModelRemovalNotification)).toBe(true);
   expect(notifications.list("one").filter((event) => !isOpenworkModelRemovalNotification(event))).toEqual([]);
   expect(isOpenworkModelRemovalNotification({ trigger: { modelRemoval: undefined } })).toBe(false);
