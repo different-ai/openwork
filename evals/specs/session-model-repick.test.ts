@@ -37,6 +37,7 @@ async function fixture() {
   } });
   useSessionModelStore.setState({ bySessionId: {} });
   const sessions = [session("session_this"), session("session_other"), session("session_archived", old.modelId, 1), session("session_restored", old.modelId, 0), session("session_other_model", replacement.modelId), session("session_other_workspace", old.modelId, 0, "/synthetic/two"), session("session_fresh", null)];
+  const directories = new Map(workspaces.map((workspace) => [workspace.id, workspace.path]));
   const catalog = [replacement, alternate];
   let hostFailure: "none" | "missing" | "wrong_workspace" | "wrong_session" = "none";
   let catalogFailure = false;
@@ -46,6 +47,11 @@ async function fixture() {
   const reads: Array<{ workspaceId: string; sessionId?: string }> = [];
   let beforeCatalog = async () => {};
   const actions = createSessionModelActions({ workspaces,
+    directory: async (workspace) => {
+      const owner = directories.get(workspace.id);
+      if (!owner) throw new Error("Fixture owner unavailable");
+      return owner;
+    },
     catalog: async () => { await beforeCatalog(); if (catalogFailure) throw new Error("Fixture catalog unavailable"); return catalog; },
     sessions: async (workspace) => { reads.push({ workspaceId: workspace.id }); if (offline.has(workspace.id)) throw new Error("Offline inventory"); return sessions; },
     session: async (workspace, sessionId) => { reads.push({ workspaceId: workspace.id, sessionId }); return sessions.find((session) => session.id === sessionId); },
@@ -92,7 +98,7 @@ async function fixture() {
   vi.stubEnv("OPENWORK_SERVER_TOKEN", "fixture-token");
   const plugin = await OpenWorkExtensionsPreview({ directory: "/synthetic/one" });
   const engineClient = createClient(`http://127.0.0.1:${address.port}/workspace/workspace_fixture_one/opencode`, "/synthetic/one", { mode: "openwork", token: "fixture-token" });
-  return { actions, storage, storageWrites, sessions, requests, catalog, offline, held, reads,
+  return { actions, storage, storageWrites, sessions, requests, catalog, offline, held, reads, directories,
     setBeforeCatalog: (hook: () => Promise<void>) => { beforeCatalog = hook; },
     command: (model: Parameters<typeof sessionCommandModelFields>[0], variant: string | null) => sendSessionCommand(`http://127.0.0.1:${address.port}/workspace/workspace_fixture_one/opencode`, engineClient, {
       sessionID: "session_this", messageID: "msg_fixture_command", command: "fixture", arguments: "synthetic", ...sessionCommandModelFields(model, variant),
@@ -254,6 +260,33 @@ test("effective picker selection and slash commands honor engine binding, local 
   expect(f.writes()[0]?.body).toMatchObject({ model: `${replacement.providerId}/${replacement.modelId}`, variant: "low", command: "fixture" });
   expect(effectiveSessionModelSelection(null, null, fallback)).toBe(fallback);
   expect(sessionCommandModelFields(selected.model, null)).toEqual({ model: `${replacement.providerId}/${replacement.modelId}`, variant: "default" });
+});
+
+test("canonical workspace aliases allow single and bulk repick but never admit neighboring directories", async ({ evidence }) => {
+  const f = await fixture();
+  const canonical = "/engine/canonical/workspace-one";
+  f.directories.set("workspace_fixture_one", canonical);
+  for (const item of f.sessions) {
+    if (item.directory === "/synthetic/one") item.directory = canonical;
+    if (item.id === "session_restored") item.time.archived = 1;
+  }
+  f.sessions.push(session("session_nested", old.modelId, 0, `${canonical}/nested`), session("session_neighbor", old.modelId, 0, `${canonical}-neighbor`));
+  const args = { workspaceId: "workspace_fixture_one", from: old, to: replacement };
+  const preview = await f.actions.rebindModel({ ...args, dryRun: true });
+  expect(preview.sessions.map((item) => item.sessionId)).toEqual(["session_this", "session_other"]);
+  expect(f.storageWrites).toEqual([]);
+  expect(await f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement })).toMatchObject({ savedLocally: true, count: 1 });
+  expect(await f.actions.rebindModel(args)).toMatchObject({ savedLocally: true, count: 1 });
+  const saved = useSessionModelStore.getState().bySessionId;
+  expect(Object.keys(saved).sort()).toEqual(["session_other", "session_this"]);
+  for (const id of ["session_nested", "session_neighbor", "session_other_workspace"]) {
+    await expect(f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: id, model: replacement })).rejects.toThrow("belong");
+    expect(useSessionModelStore.getState().bySessionId).toBe(saved);
+  }
+  f.directories.delete("workspace_fixture_one");
+  await expect(f.actions.rebindModel({ ...args, dryRun: true })).rejects.toThrow("owner unavailable");
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Repick ownership is exact against the engine's canonical workspace directory", "A different registered path produced a two-session preview and successful single/bulk local saves; archives, another workspace, nested paths and prefix neighbors were excluded. Missing canonical ownership failed closed.", true);
 });
 
 test("same-id effort changes and bulk selections publish model/variant atomically", async () => {

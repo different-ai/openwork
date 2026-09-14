@@ -55,7 +55,7 @@ function provider(id: string, modelIds: string[]) {
   };
 }
 
-for (const fault of ["none", "after_config", "inventory", "restart"]) test(`provider/model removal impact is local, informational and retryable: ${fault}`, async ({ evidence }) => {
+for (const fault of ["none", "after_config", "inventory", "restart", "canonical_alias", "path"]) test(`provider/model removal impact is local, informational and retryable: ${fault}`, async ({ evidence }) => {
   const first = "lpr_fixture_one";
   const retired = "lpr_fixture_retired";
   let providers = [provider(first, ["removed_model", "kept_model"]), provider(retired, ["retired_model"])];
@@ -66,12 +66,25 @@ for (const fault of ["none", "after_config", "inventory", "restart"]) test(`prov
     { id: "fixture_kept", directory: "/synthetic/one", model: { providerID: first, id: "kept_model" } },
     { id: "fixture_workspace_two", directory: "/synthetic/two", model: { providerID: first, id: "removed_model" } },
   ];
+  const directories = new Map(["one", "two"].map((id) => [`/synthetic/${id}`, fault === "canonical_alias" ? `/engine/canonical/${id}` : `/synthetic/${id}`]));
+  if (fault === "canonical_alias") {
+    for (const session of sessions) session.directory = directories.get(session.directory) ?? session.directory;
+    sessions.push(
+      { id: "fixture_nested", directory: "/engine/canonical/one/nested", model: { providerID: first, id: "removed_model" } },
+      { id: "fixture_neighbor", directory: "/engine/canonical/one-other", model: { providerID: first, id: "removed_model" } },
+    );
+  }
   const initial = JSON.stringify(sessions);
   const requests: Array<{ method: string; path: string; directory: string | null }> = [];
   let inventoryUnavailable = false;
   const engine = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push({ method: request.method ?? "GET", path: url.pathname, directory: url.searchParams.get("directory") });
+    if (url.pathname === "/path") {
+      response.writeHead(inventoryUnavailable && fault === "path" ? 503 : 200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ directory: directories.get(url.searchParams.get("directory") ?? "") }));
+      return;
+    }
     response.writeHead(inventoryUnavailable ? 503 : url.pathname === "/session" ? 200 : 404, { "content-type": "application/json" });
     response.end(JSON.stringify(sessions));
   });
@@ -116,14 +129,14 @@ for (const fault of ["none", "after_config", "inventory", "restart"]) test(`prov
   const initialReloads = reloads;
   providers = [provider(first, ["kept_model"])];
   memory.failAfterConfig = fault === "after_config" || fault === "restart";
-  inventoryUnavailable = fault === "inventory";
+  inventoryUnavailable = fault === "inventory" || fault === "path";
   let result = await sync.run("removed");
-  if (fault !== "none") {
+  if (fault !== "none" && fault !== "canonical_alias") {
     expect(impacts).toEqual([]);
     expect(sync.status().affectedSessions).toEqual([]);
     expect(sync.status().modelRemovalPending).toBe(true);
     expect(memory.workspace.get("__cloud_provider_ownership__")?.pendingModelRemovals).toMatchObject({ one: [{ modelId: "removed_model" }, { modelId: "retired_model" }] });
-    if (fault !== "inventory") expect(result.status).toBe("failed");
+    if (fault !== "inventory" && fault !== "path") expect(result.status).toBe("failed");
     inventoryUnavailable = false;
     if (fault === "restart") {
       sync.stop();
@@ -143,7 +156,9 @@ for (const fault of ["none", "after_config", "inventory", "restart"]) test(`prov
   expect(result.affectedSessions).toEqual(impacts);
   expect(sync.status().affectedSessions).toEqual(impacts);
   expect(JSON.stringify(sessions)).toBe(initial);
-  const expectedRequests = Array.from({ length: fault === "inventory" ? 2 : 1 }, () => [{ method: "GET", path: "/session", directory: "/synthetic/one" }, { method: "GET", path: "/session", directory: "/synthetic/two" }]).flat();
+  const expectedRequests = Array.from({ length: fault === "inventory" || fault === "path" ? 2 : 1 }, (_, attempt) => ["/synthetic/one", "/synthetic/two"].flatMap((directory) =>
+    (fault === "path" && attempt === 0 ? ["/path"] : ["/path", "/session"]).map((path) => ({ method: "GET", path, directory })),
+  )).flat();
   expect(requests.map((request) => JSON.stringify(request)).sort()).toEqual(expectedRequests.map((request) => JSON.stringify(request)).sort());
   expect(notifications.list("one").every(isOpenworkModelRemovalNotification)).toBe(true);
   expect(notifications.list("one").filter((event) => !isOpenworkModelRemovalNotification(event))).toEqual([]);

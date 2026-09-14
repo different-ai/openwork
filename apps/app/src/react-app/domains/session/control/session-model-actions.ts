@@ -21,15 +21,20 @@ export type SessionModelWorkspace = { id: string; path: string };
 export function createSessionModelActions<Workspace extends SessionModelWorkspace>(deps: {
   workspaces: Workspace[];
   catalog: (workspace: Workspace) => Promise<OpenworkCatalogModel[]>;
+  directory: (workspace: Workspace) => Promise<string>;
   sessions: (workspace: Workspace) => Promise<unknown>;
   session?: (workspace: Workspace, sessionId: string) => Promise<unknown>;
   held?: (workspace: Workspace, sessionId: string) => boolean;
 }) {
-  const inventory = async (workspace: Workspace) => z.array(openworkModelSessionSchema).parse(await deps.sessions(workspace))
-    .filter((session) => session.directory === workspace.path);
+  const ownerDirectory = async (workspace: Workspace) => z.string().min(1).parse(await deps.directory(workspace));
+  const inventory = async (workspace: Workspace) => {
+    const owner = await ownerDirectory(workspace);
+    return z.array(openworkModelSessionSchema).parse(await deps.sessions(workspace)).filter((session) => session.directory === owner);
+  };
   const readSession = async (workspace: Workspace, sessionId: string) => {
+    const owner = await ownerDirectory(workspace);
     const session = openworkModelSessionSchema.parse(deps.session ? await deps.session(workspace, sessionId) : (await inventory(workspace)).find((session) => session.id === sessionId));
-    if (session.id !== sessionId || session.directory !== workspace.path) throw new Error("Session does not belong to this workspace.");
+    if (session.id !== sessionId || session.directory !== owner) throw new Error("Session does not belong to this workspace.");
     return session;
   };
   const save = (workspaceId: string, sessions: Array<{ id: string; title?: string }>, model: OpenworkSessionModel, dryRun: boolean) => {

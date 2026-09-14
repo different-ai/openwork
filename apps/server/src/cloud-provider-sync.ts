@@ -1419,6 +1419,14 @@ export class CloudProviderSync {
           const connection = resolveWorkspaceOpencodeConnection(this.config, workspace);
           if (!connection.baseUrl) throw new Error("Engine unavailable");
           const directory = workspace.directory?.trim() || workspace.path;
+          const pathUrl = new URL("/path", connection.baseUrl);
+          pathUrl.searchParams.set("directory", directory);
+          const pathResponse = await loopbackFetch(pathUrl.toString(), {
+            headers: connection.authHeader ? { Authorization: connection.authHeader } : {},
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (!pathResponse.ok) throw new Error("Workspace directory unavailable");
+          const owner = z.object({ directory: z.string().min(1) }).parse(await pathResponse.json()).directory;
           const url = new URL("/session", connection.baseUrl);
           url.searchParams.set("directory", directory);
           url.searchParams.set("limit", "10000");
@@ -1429,7 +1437,7 @@ export class CloudProviderSync {
           if (!response.ok) throw new Error("Session inventory unavailable");
           const inventory = z.array(openworkModelSessionSchema).parse(await response.json());
           if (inventory.length >= 10_000) throw new Error("Session inventory is incomplete");
-          const sessions = inventory.filter((session) => session.directory === directory);
+          const sessions = inventory.filter((session) => session.directory === owner);
           const sessionIds = [...new Set(removedModels.flatMap((model) => matchingOpenworkModelSessions(sessions, model, () => null).map((session) => session.id)))];
           return { workspaceId: workspace.id, removedModels, sessionIds, inventoryComplete: true };
         } catch {

@@ -12,6 +12,7 @@ import { useDenAuth } from "../../cloud/den-auth-provider";
 import { filterEntitledModelOptions } from "../../connections/provider-auth/provider-policy";
 import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
 import { sessionWorkHeld } from "../../../../app/lib/opencode-interruption";
+import { engineDirectory } from "../../../../app/lib/session-ownership";
 import { createSessionModelActions } from "./session-model-actions";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
@@ -124,6 +125,12 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const modelActions = useMemo(() => createSessionModelActions({
     workspaces,
     catalog: availableWorkspaceModels,
+    directory: async (workspace) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) throw new Error("Workspace runtime is not connected");
+      const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+      return engineDirectory(client, workspace.path);
+    },
     held: (workspace, sessionId) => {
       const endpoint = endpointForWorkspace(workspace);
       return !endpoint || sessionWorkHeld(endpoint.opencodeBaseUrl, sessionId);
