@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { openworkCatalogModels, openworkProviderCatalogSchema, openworkSessionActivityInventorySchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
+import { openworkCatalogModels, openworkEngineModelCatalogSchema, openworkSessionActivityInventorySchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
@@ -191,7 +191,7 @@ function startFakeOpenWorkServer(options: {
           if (options.failProviderCatalog) return Response.json({ ok: false, id: "models.list", code: "unavailable", error: "Catalog unavailable" });
           const workspace = [workspaceOne, workspaceTwo].find((entry) => entry.id === query.data.input.args.workspaceId || entry.name === query.data.input.args.workspaceId);
           if (!workspace) return Response.json({ ok: false, id: "models.list", code: "invalid-args", error: "Workspace missing" });
-          const models = options.policyDenied ? [] : openworkCatalogModels(openworkProviderCatalogSchema.parse(providerCatalog(workspace.id)));
+          const models = options.policyDenied ? [] : openworkCatalogModels(openworkEngineModelCatalogSchema.parse(providerCatalog(workspace.id)));
           return Response.json({ ok: true, id: "models.list", effects: { data: "read", ui: "none", external: false },
             result: { ok: true, workspaceId: workspace.id, models: models.map((model) => ({ ...model, available: true })) } });
         }
@@ -201,7 +201,7 @@ function startFakeOpenWorkServer(options: {
           if (!args.model || options.failProviderCatalog) return Response.json({ ok: false, id: "session.model_preflight", code: "unavailable", error: "Model unavailable" });
           return Response.json({ ok: true, id: "session.model_preflight", effects: { data: "read", ui: "none", external: false }, result: {
             ok: true, sessionId: args.sessionId, workspaceId: args.workspaceId,
-            model: resolveOpenworkModel(args.model, openworkCatalogModels(openworkProviderCatalogSchema.parse(providerCatalog(args.workspaceId)))),
+            model: resolveOpenworkModel(args.model, openworkCatalogModels(openworkEngineModelCatalogSchema.parse(providerCatalog(args.workspaceId)))),
           } });
         }
         return Response.json({ ok: true });

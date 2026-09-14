@@ -170,7 +170,7 @@ export type OpenworkCatalogModel = Pick<OpenworkSessionModel, "providerId" | "mo
   providerName: string
 }
 
-export const openworkProviderCatalogSchema = z.object({
+export const openworkEngineModelCatalogSchema = z.object({
   connected: z.array(z.string()),
   all: z.array(z.object({
     id: z.string(),
@@ -179,7 +179,7 @@ export const openworkProviderCatalogSchema = z.object({
   })),
 })
 
-export function openworkCatalogModels(value: z.infer<typeof openworkProviderCatalogSchema>): OpenworkCatalogModel[] {
+export function openworkCatalogModels(value: z.infer<typeof openworkEngineModelCatalogSchema>): OpenworkCatalogModel[] {
   return value.all.filter((provider) => value.connected.includes(provider.id)).flatMap((provider) =>
     Object.entries(provider.models).map(([modelId, model]) => ({
       providerId: provider.id, modelId, displayName: model.name || modelId, providerName: provider.name,
