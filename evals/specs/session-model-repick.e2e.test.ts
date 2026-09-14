@@ -109,7 +109,6 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     sessions: initialFacts.map((fact) => ({ sessionId: fact.sessionId, directory: record(fact.session).directory })),
   }), true);
   const choose = async () => {
-    if (!(await probe.has("Choose a replacement model"))) await user.click({ role: "button", label: missing.modelID });
     await user.see({ text: "Choose a replacement model" });
     await user.click({ role: "combobox", label: "Models" });
     await user.click({ role: "option", label: `${string(available.title)} · ${string(available.providerName)}` });
@@ -127,6 +126,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
   await step("opening unavailable session and previewing scopes never changes selection or sends", async () => {
     await open(peer.sessionId);
     await open(target.sessionId);
+    await user.reload();
     await choose();
     await user.see(confirm(1));
     expect((await probe.dom('[role="dialog"] label:has([role="radio"][aria-checked="true"])')).elements.map((element) => element.text)).toEqual(["This session only"]);
@@ -141,6 +141,9 @@ test("unavailable composer repick defaults to this session, previews all, and sa
       evidence.recordAssertionEvidence("Bulk preview contains both matching unarchived sessions", JSON.stringify({ dialog, workspacePath: world.workspacePath, directories }), false);
       throw new Error(`Bulk preview must contain target and peer. ${JSON.stringify({ dialog, workspacePath: world.workspacePath, directories })}`, { cause });
     }
+    await user.screenshot();
+    await user.reload();
+    await choose();
     await user.click(all(2));
     await user.see(confirm(2));
     const preview = (await probe.dom('[role="dialog"] li')).elements.map((element) => element.text);
@@ -149,6 +152,8 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     expect(preview).not.toContain(unrelated.title);
     expect(preview).not.toContain(world.otherSession.title);
     expect(await probe.storage("openwork.sessionModels.v1")).toEqual(initialSelections);
+    await checkUnchanged();
+    await user.screenshot();
     await user.click({ text: "This session only" });
     await user.see(confirm(1));
   });
