@@ -1,0 +1,64 @@
+name: External contributor checks
+
+# Read-only, secret-free validation of the exact pull-request head. This
+# workflow has no credentialed consumer and does not approve external code.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-contributor-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  secret-free:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout the exact PR head without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact head and whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git diff --check "$BASE_SHA...$HEAD_SHA"
+          {
+            echo '## Secret-free PR validation'
+            echo
+            echo "PASS: exact-head checkout and \`git diff --check\` completed for \`$HEAD_SHA\`."
+            echo 'This is whitespace validation only; it is not security review or product test evidence.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  fork-review-incomplete:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Report unsupported fork review boundary
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Fork contributor review — INCOMPLETE'
+            echo
+            echo "**INCOMPLETE: exact head \`$HEAD_SHA\` was not reviewed and was not product-tested by this workflow.**"
+            echo
+            echo 'The secret-free whitespace job is not security analysis or product evidence.'
+            echo "Follow \`docs/contributor-security-review.md\` to create a manual exact-head review record and evidence in an isolated environment."
+            echo 'Unsupported credentialed execution of fork code remains blocked; administrators must choose and configure the required-check and approval policy.'
+            echo 'This failing status reports the boundary but does not claim that repository merge rules currently enforce it.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publishReviewPr } from "../packages/test-artifacts/src/publish-pr.ts";
@@ -54,9 +54,16 @@ if (current.stdout.trim() !== sha) {
     }
     await visit(directory);
     if (testRunDirs.length === 0) {
-      console.log(
-        "No test records for this PR head were uploaded by the source workflow.",
-      );
+      const message =
+        "INCOMPLETE: no test records for this PR head were uploaded by the source workflow; no passing evidence is claimed.";
+      console.error(message);
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        await appendFile(
+          process.env.GITHUB_STEP_SUMMARY,
+          `## Evidence review — incomplete\n\n${message}\n`,
+        );
+      }
+      process.exitCode = 1;
     } else {
       const result = await publishReviewPr({ pr, testRunDirs, preserveCurrentReport: true });
       console.log(result.posted ? result.urls.report : "A review already covers this commit; preserving the author's selection.");

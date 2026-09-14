@@ -77,6 +77,55 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
     true,
   );
 
+  const missingPublication = await world.runPublisher("missing");
+  expect(missingPublication.code).not.toBe(0);
+  expect(missingPublication.stderr).toContain(
+    "INCOMPLETE: no test records for this PR head",
+  );
+  expect(missingPublication.summary).toContain(
+    "## Evidence review — incomplete",
+  );
+  expect(missingPublication.summary).toContain(
+    "no passing evidence is claimed",
+  );
+  expect(missingPublication.commentWrites).toBe(0);
+  expect(missingPublication.uploadWrites).toBe(0);
+  expect(missingPublication.commandLog).not.toContain('"comment"');
+
+  const stalePublication = await world.runPublisher("stale-record");
+  expect(stalePublication.code).not.toBe(0);
+  expect(stalePublication.stderr).toContain(
+    "INCOMPLETE: no test records for this PR head",
+  );
+  expect(stalePublication.summary).toContain(
+    "no passing evidence is claimed",
+  );
+  expect(stalePublication.commentWrites).toBe(0);
+  expect(stalePublication.uploadWrites).toBe(0);
+
+  const supersededPublication = await world.runPublisher("stale-pr-head");
+  expect(supersededPublication.code).toBe(0);
+  expect(supersededPublication.stdout).toContain(
+    "Source run is no longer current; existing evidence is unchanged.",
+  );
+  expect(supersededPublication.commandLog).not.toContain(
+    '["run","download"',
+  );
+  expect(supersededPublication.commentWrites).toBe(0);
+  expect(supersededPublication.uploadWrites).toBe(0);
+
+  const currentPublication = await world.runPublisher("current");
+  expect(currentPublication.code).toBe(0);
+  expect(currentPublication.stdout).toContain("http://127.0.0.1:4173/r/");
+  expect(currentPublication.stderr).not.toContain("INCOMPLETE");
+  expect(currentPublication.commentWrites).toBe(1);
+  expect(currentPublication.uploadWrites).toBe(1);
+  evidence.recordAssertionEvidence(
+    "The CI publisher distinguishes missing, stale, superseded, and current evidence",
+    "The real publisher CLI exits nonzero with an Incomplete summary and no publication for empty or stale-only downloads; a superseded source run exits successfully before download and preserves existing evidence; a valid current-head record follows the supported local-storage and PR-comment path.",
+    true,
+  );
+
   await using production = await reviewWorld("production");
   for (const path of [
     "/",
