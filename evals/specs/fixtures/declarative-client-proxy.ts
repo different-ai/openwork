@@ -26,6 +26,7 @@ export interface ClientRequest {
 type Fault = number | "race" | "disconnect";
 
 export async function declarativeClientProxy(upstream: string, sentinel: string) {
+  const fixedBase = new URL(upstream);
   const requests: ClientRequest[] = [];
   const faults: Fault[] = [];
   const failures: string[] = [];
@@ -34,7 +35,20 @@ export async function declarativeClientProxy(upstream: string, sentinel: string)
   const server = createServer(async (request, response) => {
     try {
       const path = request.url ?? "/";
-      if (path === "/invalid-mcp") {
+      // Only origin-form API paths may reach the construction-time Den origin.
+      // Reject absolute/protocol-relative URLs before URL resolution or body reads.
+      if (!path.startsWith("/v1/") || path.includes("\\") || path.includes("#")) {
+        response.writeHead(400);
+        response.end("Expected a /v1/ path and query");
+        return;
+      }
+      const target = new URL(path, fixedBase);
+      if (target.origin !== fixedBase.origin || !target.pathname.startsWith("/v1/")) {
+        response.writeHead(400);
+        response.end("Expected a path within the fixed Den origin");
+        return;
+      }
+      if (path === "/v1/invalid-mcp") {
         invalidProbes++;
         response.writeHead(500, { "content-type": "text/plain" });
         response.end(sentinel);
@@ -57,7 +71,7 @@ export async function declarativeClientProxy(upstream: string, sentinel: string)
         entry.status = fault;
         entry.response = { error: "injected_failure", message: sentinel };
       } else {
-        const forward = (payload = body) => fetch(new URL(path, upstream), {
+        const forward = (payload = body) => fetch(target, {
           method, headers, ...(payload ? { body: payload } : {}), redirect: "error", signal: AbortSignal.timeout(30_000),
         });
         if (fault === "race") {

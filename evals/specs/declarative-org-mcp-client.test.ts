@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { request } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
@@ -45,6 +46,32 @@ function conditionalPuts(requests: ClientRequest[]) {
   }
   return puts;
 }
+
+test("the declarative proxy rejects non-API and authority-bearing request targets", async ({ evidence }) => {
+  await using proxy = await declarativeClientProxy("http://127.0.0.1:1", "unused diagnostic");
+  for (const path of [
+    "http://127.0.0.1:1/v1/org", "https://example.invalid/v1/org",
+    "//127.0.0.1:1/v1/org", "/health", "/invalid-mcp",
+    "/v1/../health", "/v1/%2e%2e/health", "/v1/\\\\example.invalid", "/v1/org#fragment",
+  ]) {
+    // Node's raw request path preserves absolute/protocol-relative targets;
+    // fetch would normalize them before the proxy could inspect them.
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const incoming = request(proxy.url, { path, signal: AbortSignal.timeout(5_000) }, (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode));
+        response.on("error", reject);
+      });
+      incoming.on("error", reject);
+      incoming.end();
+    });
+    expect(status, path).toBe(400);
+  }
+  expect(proxy.requests).toEqual([]);
+  expect(proxy.failures).toEqual([]);
+  expect(proxy.invalidProbes()).toBe(0);
+  evidence.recordAssertionEvidence("Proxy rejects unsafe URL targets before forwarding", "Raw absolute and protocol-relative targets, non-/v1/ paths, normalized traversal, backslashes, and fragments returned 400; no forwarding requests, upstream failures, or witness probes occurred.", true);
+});
 
 test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evidence }) => {
   needs({ commands: ["bun", "pnpm", "node"] });
@@ -244,7 +271,7 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
       else if (fault === "disconnect") expect(failed.stderr).toContain("outcome uncertain");
       else expect(failed.stderr).toContain(`HTTP ${fault}`);
     }
-    const invalid = await cli({ version: 1, mcpConnections: { "invalid-probe": { ...httpBody, name: "Invalid MCP witness", url: `${proxy.url}/invalid-mcp` } }, marketplaces: { "must-not-run": { name: "Must not run after MCP failure" } } });
+    const invalid = await cli({ version: 1, mcpConnections: { "invalid-probe": { ...httpBody, name: "Invalid MCP witness", url: `${proxy.url}/v1/invalid-mcp` } }, marketplaces: { "must-not-run": { name: "Must not run after MCP failure" } } });
     expect(invalid.status).not.toBe(0);
     expect(invalid.stderr).toContain("HTTP 502");
     expect(invalid.stderr).toContain("could not be validated");
