@@ -6,7 +6,6 @@ import { createDenClient, DenApiError, readDenSettings, type DenClient } from "@
 import { toast } from "@/components/ui/sonner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 import { dispatchAutomationsStateChanged } from "./automation-events"
 import { automationModelOptions, type AutomationProviderCatalog } from "./automation-model-options"
 
@@ -112,18 +111,21 @@ export function useAutomationActions(context: AutomationsDenContext) {
  */
 export function useAutomationModelChoices(context: AutomationsDenContext, providerCatalog?: AutomationProviderCatalog) {
   const zenModelRestricted = useDesktopRestriction("allowZenModel")
-  const freeStarterInRuntime = providerCatalog === undefined || Boolean(
-    providerCatalog[AUTOMATION_FREE_MODEL.providerId]?.[AUTOMATION_FREE_MODEL.modelId],
-  )
   const providersQuery = useQuery({
     queryKey: [...context.queryRoot, "models"],
     queryFn: () => context.client!.listOrgLlmProviders(context.organizationId!),
     enabled: context.ready,
   })
+  // The runtime catalog belongs to this desktop workspace, so only it narrows the desktop models; an
+  // Automation pinned to another workspace is checked by the runtime that executes it.
   const desktop = useMemo(
-    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted && freeStarterInRuntime }),
-    [freeStarterInRuntime, providersQuery.data, zenModelRestricted],
+    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted, catalog: providerCatalog }),
+    [providerCatalog, providersQuery.data, zenModelRestricted],
+  )
+  const desktopOtherWorkspace = useMemo(
+    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted }),
+    [providersQuery.data, zenModelRestricted],
   )
   const cloud = useMemo(() => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: false }), [providersQuery.data])
-  return { desktop, cloud, providersQuery }
+  return { desktop, desktopOtherWorkspace, cloud, providersQuery }
 }

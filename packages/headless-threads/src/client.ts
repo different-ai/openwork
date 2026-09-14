@@ -59,8 +59,27 @@ const DEFAULT_POLL_INTERVAL_MS = 500;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const errorBodySchema = z
-  .object({ code: z.string().optional(), _tag: z.string().optional(), message: z.string().optional() })
+  .object({
+    code: z.string().optional(),
+    _tag: z.string().optional(),
+    name: z.string().optional(),
+    message: z.string().optional(),
+    data: z.object({ message: z.string().optional() }).passthrough().optional(),
+  })
   .passthrough();
+
+const effectiveProvidersSchema = z.object({
+  providers: z.array(z.object({
+    id: z.string(),
+    models: z.record(z.string(), z.object({}).passthrough()),
+  })),
+});
+
+const v2ModelEntrySchema = z.object({ providerID: z.string(), id: z.string() }).passthrough();
+const v2ModelCatalogSchema = z.union([
+  z.array(v2ModelEntrySchema),
+  z.object({ data: z.array(v2ModelEntrySchema) }).passthrough(),
+]);
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -160,13 +179,12 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   function sdkSuccess<T>(result: SdkResult<T>, method: string, path: string): T | undefined {
     if (result.error === undefined) return result.data;
     const detail = errorBodySchema.safeParse(result.error);
+    const message = detail.success ? detail.data.message ?? detail.data.data?.message : undefined;
     throw new HeadlessThreadError({
-      code: detail.success && detail.data.code !== undefined ? detail.data.code : "request_failed",
-      message: detail.success && detail.data.message !== undefined
-        ? detail.data.message
-        : result.response
-          ? `OpenWork returned ${result.response.status} for ${method} ${path}`
-          : `OpenWork request failed for ${method} ${path}`,
+      code: detail.success ? detail.data.code ?? detail.data.name ?? "request_failed" : "request_failed",
+      message: message ?? (result.response
+        ? `OpenWork returned ${result.response.status} for ${method} ${path}`
+        : `OpenWork request failed for ${method} ${path}`),
       method,
       path,
       ...(result.response === undefined ? {} : { status: result.response.status }),
@@ -484,6 +502,42 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return (await transport(input?.signal)).snapshot(threadId, input);
   }
 
+  /** Whether the engine's effective catalog for this workspace lists the model. */
+  async function catalogHasModel(engine: HeadlessThreadEngine, model: HeadlessThreadModel, signal?: AbortSignal): Promise<{ path: string; available: boolean }> {
+    if (engine === "v2") {
+      const path = `${v2Path}/model`;
+      const catalog = await json(v2ModelCatalogSchema, "GET", path, { signal });
+      const entries = Array.isArray(catalog) ? catalog : catalog.data;
+      return { path, available: entries.some((entry) => entry.providerID === model.providerId && entry.id === model.modelId) };
+    }
+    const path = `${opencodePath}/config/providers`;
+    const catalog = sdkJson(
+      effectiveProvidersSchema,
+      await opencode.config.providers(undefined, { signal: requestSignal(signal) }),
+      "GET",
+      path,
+    );
+    const provider = catalog.providers.find((candidate) => candidate.id === model.providerId);
+    return { path, available: provider !== undefined && Object.hasOwn(provider.models, model.modelId) };
+  }
+
+  /** Opt-in preflight: refuse before creating or prompting anything when the model is not runnable here. */
+  async function requireAvailableModel(engine: Transport, model: HeadlessThreadModel | null, signal?: AbortSignal): Promise<void> {
+    if (!options.requireModelAvailability) return;
+    if (!model) {
+      throw new HeadlessThreadError({ code: "invalid_payload", message: "An explicit model is required.", method: "POST", path: engine.createPath });
+    }
+    const { path, available } = await catalogHasModel(engine.engine, model, signal);
+    if (!available) {
+      throw new HeadlessThreadError({
+        code: "model_access_lost",
+        message: `The selected model ${model.providerId}/${model.modelId} is not available in this workspace. Choose a supported model to resume this Automation.`,
+        method: "GET",
+        path,
+      });
+    }
+  }
+
   async function createThread(input: CreateThreadInput): Promise<HeadlessThread> {
     const prompt = initialPrompt(input.prompt);
     const title = createTitle(input.title);
@@ -495,8 +549,21 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     }
     // Refuse before creating anything, so no empty session is left behind.
     if (model === null && engine.engine === "v2") modelRequired("POST", engine.createPath);
+    await requireAvailableModel(engine, model, input.signal);
     const session = await engine.createSession(title, model, input.signal);
-    if (prompt !== undefined) await engine.submit(session.id, prompt, model, undefined, input.signal);
+    if (prompt !== undefined) {
+      try {
+        await engine.submit(session.id, prompt, model, undefined, input.signal);
+      } catch (error) {
+        // Keep the created thread's identity so a caller can link to and recover it.
+        const contextualError = error instanceof Error ? error : new Error(String(error));
+        Object.defineProperties(contextualError, {
+          sessionId: { value: session.id },
+          workspaceId: { value: workspaceId },
+        });
+        throw contextualError;
+      }
+    }
     return {
       ...toThread(session, workspaceId, prompt !== undefined),
       engine: engine.engine,
@@ -513,9 +580,11 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     }
     const model = input.model ?? options.defaultModel ?? await workspaceDefaultModel(input.signal);
     // A v2 session keeps the model it was given; reuse it rather than refuse.
-    if (model === null && engine.engine === "v2" && await engine.sessionModel(threadId, input.signal) === null) {
+    const sessionModel = model === null && engine.engine === "v2" ? await engine.sessionModel(threadId, input.signal) : null;
+    if (model === null && engine.engine === "v2" && sessionModel === null) {
       modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
     }
+    await requireAvailableModel(engine, model ?? sessionModel, input.signal);
     await engine.submit(threadId, input.prompt, model, input.messageId, input.signal);
     return {
       threadId,

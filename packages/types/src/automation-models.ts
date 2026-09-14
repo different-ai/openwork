@@ -1,4 +1,4 @@
-import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL } from "./automations"
+import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL, automationModelAllowedByProvider } from "./automations"
 import { INFERENCE_MODEL_ALIASES } from "./den/inference"
 
 /**
@@ -26,6 +26,8 @@ export type AutomationModelProvider = {
   providerId?: string
   name: string
   models: ReadonlyArray<{ id: string; name: string }>
+  /** The provider's stored config; its model allowlist/blocklist narrows what an Automation can use. */
+  providerConfig?: Record<string, unknown>
 }
 
 const freeStarterModel: AutomationModelOption = { ...AUTOMATION_FREE_MODEL, logoProviderId: "opencode", accessKind: "free" }
@@ -38,25 +40,29 @@ export function automationModelOptions(
   providers: readonly AutomationModelProvider[],
   options: { includeFreeStarter?: boolean; includeCloudDefault?: boolean } = {},
 ): AutomationModelOption[] {
-  const fromProviders = providers.flatMap((provider): AutomationModelOption[] => provider.source === "openwork"
-    ? Object.entries(INFERENCE_MODEL_ALIASES)
-        .filter(([, model]) => model.enabled)
-        .map(([modelId, model]) => ({
-          providerId: "openwork",
-          modelId,
+  const fromProviders = providers.flatMap((provider) => {
+    const models: AutomationModelOption[] = provider.source === "openwork"
+      ? Object.entries(INFERENCE_MODEL_ALIASES)
+          .filter(([, model]) => model.enabled)
+          .map(([modelId, model]) => ({
+            providerId: "openwork",
+            modelId,
+            providerName: provider.name,
+            modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
+            logoProviderId: "openwork",
+            accessKind: "openwork_managed",
+          }))
+      : provider.models.map((model) => ({
+          providerId: provider.id,
+          modelId: model.id,
           providerName: provider.name,
-          modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
-          logoProviderId: "openwork",
-          accessKind: "openwork_managed",
+          modelName: model.name,
+          logoProviderId: provider.providerId,
+          accessKind: "authorized_custom",
         }))
-    : provider.models.map((model) => ({
-        providerId: provider.id,
-        modelId: model.id,
-        providerName: provider.name,
-        modelName: model.name,
-        logoProviderId: provider.providerId,
-        accessKind: "authorized_custom",
-      })))
+    // The provider's own allowlist/blocklist wins; an explicit empty allowlist allows nothing.
+    return models.filter((model) => automationModelAllowedByProvider(provider.providerConfig ?? {}, model.modelId))
+  })
   return [
     ...(options.includeCloudDefault ? [cloudDefaultModelOption] : []),
     ...(options.includeFreeStarter === false ? [] : [freeStarterModel]),

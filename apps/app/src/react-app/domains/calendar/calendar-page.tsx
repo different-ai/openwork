@@ -163,7 +163,7 @@ export function CalendarPage(props: {
   const [layers, setLayers] = useState<Layers>(readLayers)
   const [creating, setCreating] = useState<CreateAnchor | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const editorSetup = useAutomationEditorSetup(denContext, props.providerCatalog)
+  const editorSetup = useAutomationEditorSetup(denContext, props.providerCatalog, props.workspaceId)
   const openProviderSettings = props.onOpenProviderSettings
     ?? (() => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai")))
   const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<CalendarProviderId>>(new Set())
@@ -455,7 +455,7 @@ export function CalendarPage(props: {
             runs={selectedRuns.data?.items}
             runsLoading={selectedRuns.isLoading}
             timeZone={timeZone}
-            modelOptions={editorSetup.modelsFor(selectedAutomation.revision.executionTarget ?? "desktop")}
+            modelOptions={editorSetup.modelsFor(selectedAutomation.revision.executionTarget ?? "desktop", selectedAutomation.revision.workspaceId)}
             onClose={() => setSelection(null)}
             actions={{
               onEdit: () => setEditingId(selectedAutomation.automation.id),

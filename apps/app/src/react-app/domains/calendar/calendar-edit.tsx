@@ -49,8 +49,8 @@ export function CalendarEditDialog(props: {
           initial={{ name: automation.name, instructions: revision.instructions, schedule: revision.schedule, model: revision.model }}
           initialKey={revision.id}
           busy={busyAction === "update"}
-          modelOptions={setup.modelsFor(current)}
-          modelOptionsByPlacement={setup.modelsByPlacement}
+          modelOptions={setup.modelsFor(current, revision.workspaceId)}
+          modelOptionsByPlacement={setup.modelsByPlacementFor(revision.workspaceId)}
           providerCatalog={props.providerCatalog}
           submitLabel="Save changes"
           onCancel={props.onClose}

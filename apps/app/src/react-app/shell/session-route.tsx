@@ -109,6 +109,7 @@ import { ActivityPage } from "@/react-app/domains/activity/activity-page";
 import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
+import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useCalendarFeature } from "@/react-app/domains/calendar/use-calendar-data";
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
@@ -934,6 +935,12 @@ export function SessionRoute() {
     baseUrl: opencodeBaseUrl,
     directory: selectedWorkspaceRoot || undefined,
   });
+  const automationCatalog = useMemo(
+    () => providerListQuery.data === undefined || providerListQuery.isError
+      ? undefined
+      : automationProviderCatalog(getConnectedProviderItems(filterProviderList(providerListQuery.data, disabledProviderIds))),
+    [providerListQuery.data, providerListQuery.isError, disabledProviderIds],
+  );
   const { providerCatalog, modelVariantLabel, modelBehaviorOptions, modelVariantValue } =
     useModelBehavior({
       providerList: providerListQuery.data,
@@ -3710,14 +3717,14 @@ export function SessionRoute() {
         </WorkspaceProvider>
       ) : automationsRouteActive ? (
         <AutomationsPage
-          providerCatalog={providerCatalog}
+          providerCatalog={automationCatalog}
           workspaceId={selectedWorkspaceId}
           headerActionsTarget={automationsHeaderActionsTarget}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}
         />
       ) : calendarRouteActive ? (
         <CalendarPage
-          providerCatalog={providerCatalog}
+          providerCatalog={automationCatalog}
           workspaceId={selectedWorkspaceId}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}
           onOpenConnections={() => handleOpenExtensions()}

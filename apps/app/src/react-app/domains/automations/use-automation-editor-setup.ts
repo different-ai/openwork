@@ -16,8 +16,13 @@ import { useAutomationModelChoices, type AutomationsDenContext } from "./use-aut
  * this member can run it, the cloud's options, the accounts a cloud run can use, and the models per place.
  * Shared by the Automations page and the Calendar so both edit with the same choices.
  */
-export function useAutomationEditorSetup(context: AutomationsDenContext, providerCatalog?: AutomationProviderCatalog) {
-  const { desktop: desktopModels, cloud: cloudModels } = useAutomationModelChoices(context, providerCatalog)
+export function useAutomationEditorSetup(
+  context: AutomationsDenContext,
+  providerCatalog?: AutomationProviderCatalog,
+  /** The workspace `providerCatalog` was read from. */
+  catalogWorkspaceId?: string | null,
+) {
+  const { desktop: desktopModels, desktopOtherWorkspace, cloud: cloudModels } = useAutomationModelChoices(context, providerCatalog)
   const targetsQuery = useQuery({
     queryKey: [...context.queryRoot, "execution-targets"],
     queryFn: () => context.client!.listAutomationRunners(context.organizationId!),
@@ -36,8 +41,15 @@ export function useAutomationEditorSetup(context: AutomationsDenContext, provide
     orgConnections: orgConnections.connections.filter(isOrgMcpConnectionReady),
   }).flatMap((identity) => identity.connectionId ? [{ id: identity.connectionId, name: identity.name, iconUrl: identity.iconUrl }] : []), [orgConnections.connections])
   const modelsByPlacement = useMemo(() => ({ desktop: desktopModels, cloud: cloudModels }), [cloudModels, desktopModels])
-  const modelsFor = (target: AutomationExecutionTarget) => modelsByPlacement[target]
-  return { targetsQuery, placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsFor }
+  const otherWorkspaceModelsByPlacement = useMemo(() => ({ desktop: desktopOtherWorkspace, cloud: cloudModels }), [cloudModels, desktopOtherWorkspace])
+  /** The models per place for an Automation pinned to `workspaceId`; this runtime's catalog applies only to its own workspace. */
+  const modelsByPlacementFor = (workspaceId?: string | null) => {
+    const pinned = workspaceId?.trim()
+    const current = catalogWorkspaceId?.trim()
+    return pinned && current && pinned !== current ? otherWorkspaceModelsByPlacement : modelsByPlacement
+  }
+  const modelsFor = (target: AutomationExecutionTarget, workspaceId?: string | null) => modelsByPlacementFor(workspaceId)[target]
+  return { targetsQuery, placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsByPlacementFor, modelsFor }
 }
 
 /** Where an Automation can be moved while editing: where it runs now is always a choice, so one whose place went away can still move. */
