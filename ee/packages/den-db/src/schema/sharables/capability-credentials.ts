@@ -4,6 +4,7 @@ import {
   index,
   mysqlEnum,
   mysqlTable,
+  text,
   timestamp,
   uniqueIndex,
   varchar,
@@ -230,7 +231,20 @@ export const ExternalMcpConnectionTable = mysqlTable(
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
-    scope: varchar("scope", { length: 1024 }),
+    /**
+     * Space-delimited scope string returned by the OAuth server. Kept
+     * unbounded (`text`, matching accessToken/refreshToken above) rather
+     * than a fixed varchar: a provider granting many fine-grained scopes
+     * routinely exceeds a few hundred characters — Google Workspace
+     * connections requesting the full calendar/gmail/drive/docs/sheets/
+     * slides/tasks/contacts/userinfo/openid scope set return a scope
+     * string over 1100 characters, which overflowed the previous
+     * `varchar(1024)` and made MySQL reject the row (`ER_DATA_TOO_LONG`,
+     * errno 1406) after a fully successful token exchange — surfacing to
+     * the org admin as the generic, misleading "authorization server
+     * rejected the code or token refresh exchange" error.
+     */
+    scope: text("scope"),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
     /**
      * Transient PKCE code verifier, present only between connect/start and
