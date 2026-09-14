@@ -48,6 +48,11 @@ export async function declarativeClientProxy(upstream: string, sentinel: string)
         response.end("Expected a path within the fixed Den origin");
         return;
       }
+      // Build the outbound authority solely from the trusted constructor input;
+      // request data can populate only pathname and search, never host/protocol.
+      const destination = new URL(fixedBase);
+      destination.pathname = target.pathname;
+      destination.search = target.search;
       if (path === "/v1/invalid-mcp") {
         invalidProbes++;
         response.writeHead(500, { "content-type": "text/plain" });
@@ -71,7 +76,7 @@ export async function declarativeClientProxy(upstream: string, sentinel: string)
         entry.status = fault;
         entry.response = { error: "injected_failure", message: sentinel };
       } else {
-        const forward = (payload = body) => fetch(target, {
+        const forward = (payload = body) => fetch(destination, {
           method, headers, ...(payload ? { body: payload } : {}), redirect: "error", signal: AbortSignal.timeout(30_000),
         });
         if (fault === "race") {
