@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "!v*-staging.*"
   workflow_dispatch:
     inputs:
       benchmark_only:
