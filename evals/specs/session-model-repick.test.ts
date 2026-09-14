@@ -168,7 +168,7 @@ test("headless stale sends write zero prompts; an explicit repick applies canoni
   evidence.recordAssertionEvidence("Stale headless send is rejected before prompt writes", "The real facade rejected missing model, host, catalog and mismatched identities with model_unavailable; only the two explicit sends after local repick wrote canonical model/effort payloads and returned accepted:true.", true);
 });
 
-test("invalid targets, changed previews and unavailable replacements cannot partially save", async () => {
+test("invalid targets, changed previews and unavailable replacements cannot partially save", async ({ evidence }) => {
   const f = await fixture();
   await expect(f.actions.setModel({ sessionId: "session_archived", model: replacement })).rejects.toThrow("Archived");
   await expect(f.actions.setModel({ sessionId: "session_this", model: old })).rejects.toThrow("Unavailable");
@@ -176,9 +176,10 @@ test("invalid targets, changed previews and unavailable replacements cannot part
   await expect(f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: replacement, expectedSessionIds: ["session_this"] })).rejects.toThrow("changed");
   expect(f.storageWrites).toEqual([]);
   expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Invalid repicks cannot partially save", "Archived targets, unavailable replacements, missing workspaces and changed preview sets all rejected; neither local storage nor engine writes occurred.", f.storageWrites.length === 0 && f.writes().length === 0);
 });
 
-test("healthy fresh sessions preserve model-free sending, never substituting defaults for stale bindings", async () => {
+test("healthy fresh sessions preserve model-free sending, never substituting defaults for stale bindings", async ({ evidence }) => {
   const f = await fixture();
   expect(await f.execute("session.send", { workspaceId: "workspace_fixture_one", sessionId: "session_fresh", text: "Fresh prompt" })).toMatchObject({ ok: true, result: { accepted: true } });
   expect(f.writes()).toHaveLength(1);
@@ -186,9 +187,10 @@ test("healthy fresh sessions preserve model-free sending, never substituting def
   expect(f.writes()[0]?.body).not.toHaveProperty("variant");
   expect(await f.execute("session.send", { workspaceId: "workspace_fixture_one", sessionId: "session_this", text: "Must not send" })).toMatchObject({ ok: false, code: "model_unavailable" });
   expect(f.writes()).toHaveLength(1);
+  evidence.recordAssertionEvidence("Fresh sessions retain model-free sending without rescuing stale bindings", "The fresh session received one accepted prompt with no model or variant fields; the stale bound session returned model_unavailable and added no prompt write.", f.writes().length === 1);
 });
 
-test("exact workspace repick bypasses unrelated offline inventories and rejects foreign targets", async () => {
+test("exact workspace repick bypasses unrelated offline inventories and rejects foreign targets", async ({ evidence }) => {
   const f = await fixture();
   f.offline.add("workspace_fixture_two");
   expect(await f.execute("session.set_model", { workspaceId: "workspace_fixture_one", sessionId: "session_this", alias: replacement.displayName })).toMatchObject({ ok: true, result: { savedLocally: true } });
@@ -196,9 +198,10 @@ test("exact workspace repick bypasses unrelated offline inventories and rejects 
   const before = f.storageWrites.length;
   await expect(f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_other_workspace", model: replacement })).rejects.toThrow("belong");
   expect(f.storageWrites).toHaveLength(before);
+  evidence.recordAssertionEvidence("Exact workspace repick isolates unavailable and foreign workspaces", "The scoped repick saved locally while the other inventory was offline and read only its target session; attempting a foreign target rejected without another storage write.", f.storageWrites.length === before);
 });
 
-test("catalog waits cannot race an archive, hold or newer local selection into a repick", async () => {
+test("catalog waits cannot race an archive, hold or newer local selection into a repick", async ({ evidence }) => {
   const f = await fixture();
   const target = f.sessions.find((session) => session.id === "session_this");
   if (!target) throw new Error("Fixture target missing");
@@ -222,9 +225,10 @@ test("catalog waits cannot race an archive, hold or newer local selection into a
   }
   expect(useSessionModelStore.getState().bySessionId.session_this).toEqual({ model: { providerID: alternate.providerId, modelID: alternate.modelId }, variant: "high" });
   expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Repick waits cannot overwrite archive state or a newer local choice", "Each suspended catalog lookup was raced with an archive, hold or newer repick; all rejected without an additional save, the newer high-effort choice survived, and no engine writes occurred.", f.writes().length === 0);
 });
 
-test("confirmed pending choices survive ordinary selections beyond the old 200-entry cap", async () => {
+test("confirmed pending choices survive ordinary selections beyond the old 200-entry cap", async ({ evidence }) => {
   const f = await fixture();
   await f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: { ...replacement, variant: "low" } });
   const before = useSessionModelStore.getState().bySessionId;
@@ -232,9 +236,10 @@ test("confirmed pending choices survive ordinary selections beyond the old 200-e
   for (const [id, choice] of Object.entries(before)) expect(useSessionModelStore.getState().bySessionId[id]).toBe(choice);
   expect(JSON.parse(f.storage.get("openwork.sessionModels.v1") ?? "{}")).toMatchObject(before);
   expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Pending choices survive ordinary selection churn", "After 250 additional selections, every confirmed choice retained its object identity and persisted model/variant; no engine writes occurred.", Object.entries(before).every(([id, choice]) => useSessionModelStore.getState().bySessionId[id] === choice) && f.writes().length === 0);
 });
 
-test("queue catalog checks use renderer identity, not a remote runtime's colliding workspace id", async () => {
+test("queue catalog checks use renderer identity, not a remote runtime's colliding workspace id", async ({ evidence }) => {
   const calls: unknown[] = [];
   const context = { workspaceId: "ws_remote_runtime", rendererWorkspaceId: "rem_fixture" };
   const query = async (request: { args?: Record<string, unknown> }) => {
@@ -246,9 +251,10 @@ test("queue catalog checks use renderer identity, not a remote runtime's collidi
   await expect(preflightQueuedSessionModel({}, "session_fixture", old, query)).rejects.toThrow("Renderer workspace");
   expect(calls).toHaveLength(1);
   await expect(preflightQueuedSessionModel(context, "session_fixture", old, async () => ({ ok: true, id: "session.model_preflight", effects: { data: "read", ui: "none", external: false }, result: { ok: true, workspaceId: "ws_remote_runtime", sessionId: "session_fixture", model: { ...replacement, variant: null } } }))).rejects.toThrow("identity mismatch");
+  evidence.recordAssertionEvidence("Queued model preflight uses renderer workspace identity", "The query used rem_fixture and returned the replacement; missing renderer identity made no query, and a response bearing the colliding runtime workspace id was rejected.", calls.length === 1);
 });
 
-test("effective picker selection and slash commands honor engine binding, local repick and effort", async () => {
+test("effective picker selection and slash commands honor engine binding, local repick and effort", async ({ evidence }) => {
   const f = await fixture();
   const engine = { model: { providerID: old.providerId, modelID: old.modelId }, variant: "high" };
   const fallback = { model: { providerID: alternate.providerId, modelID: alternate.modelId }, variant: null };
@@ -260,6 +266,7 @@ test("effective picker selection and slash commands honor engine binding, local 
   expect(f.writes()[0]?.body).toMatchObject({ model: `${replacement.providerId}/${replacement.modelId}`, variant: "low", command: "fixture" });
   expect(effectiveSessionModelSelection(null, null, fallback)).toBe(fallback);
   expect(sessionCommandModelFields(selected.model, null)).toEqual({ model: `${replacement.providerId}/${replacement.modelId}`, variant: "default" });
+  evidence.recordAssertionEvidence("Picker precedence and slash commands preserve selected model and effort", "Engine binding won over the default until local repick; the observed command HTTP payload carried replacement ids and low effort. Missing bindings used the fallback, and null effort produced explicit default rather than retaining old effort.", true);
 });
 
 test("canonical workspace aliases allow single and bulk repick but never admit neighboring directories", async ({ evidence }) => {
@@ -289,7 +296,7 @@ test("canonical workspace aliases allow single and bulk repick but never admit n
   evidence.recordAssertionEvidence("Repick ownership is exact against the engine's canonical workspace directory", "A different registered path produced a two-session preview and successful single/bulk local saves; archives, another workspace, nested paths and prefix neighbors were excluded. Missing canonical ownership failed closed.", true);
 });
 
-test("same-id effort changes and bulk selections publish model/variant atomically", async () => {
+test("same-id effort changes and bulk selections publish model/variant atomically", async ({ evidence }) => {
   const f = await fixture();
   const model = { providerID: replacement.providerId, modelID: replacement.modelId };
   const store = useSessionModelStore.getState();
@@ -311,14 +318,16 @@ test("same-id effort changes and bulk selections publish model/variant atomicall
       session_restored: { model: { providerID: alternate.providerId, modelID: alternate.modelId }, variant: "high" },
     });
     expect(f.writes()).toEqual([]);
+    evidence.recordAssertionEvidence("Same-id effort edits and bulk repicks publish atomically", "Explicit effort edits changed high to low and then null; an omitted effort preserved the same choice. Bulk repick emitted exactly one store update containing both target model/variant pairs and no engine writes.", observations.length === 1 && f.writes().length === 0);
   } finally { unsubscribe(); }
 });
 
-test("suggested replacements prefer the same provider family then available workspace default, never silently picking another model", async () => {
+test("suggested replacements prefer the same provider family then available workspace default, never silently picking another model", async ({ evidence }) => {
   expect(suggestOpenworkReplacement(old, [alternate, replacement], alternate)).toEqual(replacement);
   expect(suggestOpenworkReplacement({ ...old, providerId: "retired_provider" }, [alternate, replacement], alternate)).toEqual(replacement);
   expect(suggestOpenworkReplacement(old, [alternate], alternate)).toEqual(alternate);
   expect(suggestOpenworkReplacement(old, [alternate], old)).toBeNull();
   expect(suggestOpenworkReplacement(old, [], alternate)).toBeNull();
   expect(openworkSessionModelSchema.parse({ ...replacement, variant: null }).modelId).toBe(replacement.modelId);
+  evidence.recordAssertionEvidence("Replacement suggestions preserve provider preference and availability", "Same-provider and same-family candidates outranked the workspace default; an available default was used only without a family match. An unavailable default or empty catalog returned null rather than an unrelated model, and schema parsing preserved the replacement id.", true);
 });

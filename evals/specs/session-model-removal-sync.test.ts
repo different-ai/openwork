@@ -173,8 +173,9 @@ for (const fault of ["none", "after_config", "inventory", "restart", "canonical_
   evidence.recordAssertionEvidence("Cloud removal emits scoped unarchived affected sessions, not a migration", "A real sync pass removed one model and one provider against in-memory config witnesses; only engine GETs occurred, restored archive=0 was included, archived/other-model records were excluded, workspace sets were separate and no bindings changed.", true);
 });
 
-test("removal delta ignores additions, names and unrelated identities", async () => {
+test("removal delta ignores additions, names and unrelated identities", async ({ evidence }) => {
   const current = { provider: { name: "Family", models: { old: { name: "Previous" }, keep: { name: "Kept" } } } };
   expect(removedCloudModels(current, { provider: { models: { old: { name: "Renamed" }, keep: {}, new: {} } } })).toEqual([]);
   expect(removedCloudModels(current, { provider: { models: { keep: {} } } })).toEqual([{ providerId: "provider", modelId: "old", variant: null, displayName: "Previous", providerName: "Family" }]);
+  evidence.recordAssertionEvidence("Removal deltas distinguish retired identities from catalog edits", "Adding a model or renaming an existing model produced no removals. Removing old produced exactly its provider/model identity and original labels, excluding the retained keep model.", true);
 });
