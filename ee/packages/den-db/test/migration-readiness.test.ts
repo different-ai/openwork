@@ -111,7 +111,7 @@ describe("local startup migration safety (offline)", () => {
     assert.throws(() => historyPrefix(plan, [...receipts, receipts[95]]), /exact hash\/timestamp prefix/)
   })
 
-  test("only consolidated 0097 receipts retain the final prefix without restamping", () => {
+  test("only consolidated 0097 receipts retain their prefix without restamping later migrations", () => {
     const current = plan[96]
     assert.equal(current.tag, "0097_gateway_access_matrix")
     assert.equal(current.folderMillis, 1788895934602)
@@ -122,7 +122,9 @@ describe("local startup migration safety (offline)", () => {
       const before = structuredClone(recorded)
       assert.equal(historyPrefix(plan, recorded), 97)
       assert.deepEqual(recorded, before)
-      assert.deepEqual(plan.slice(historyPrefix(plan, recorded)), [])
+      const pending = plan.slice(historyPrefix(plan, recorded))
+      assert.equal(pending[0]?.tag, "0098_gateway_uncountable_usage")
+      assert.deepEqual(pending, plan.slice(97))
     }
   })
 
@@ -156,19 +158,39 @@ describe("local startup migration safety (offline)", () => {
     assert.throws(() => historyPrefix(plan, [...receipts, receipts[96]]), /prefix at receipt 98/)
   })
 
-  test("consolidated 0097 receipts require schema parity and do not rerun source guards", async () => {
-    const receipts = plan.map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+  test("consolidated 0097 and later receipts require schema parity and do not rerun source guards", async () => {
+    for (let applied = 97; applied <= plan.length; applied++) {
+      const receipts = plan.slice(0, applied).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+      const before = structuredClone(receipts)
+      const shape = shapeAt(plan[applied - 1].tag)
+      const healthy = fixture(shape, { receipts })
+      await migrateLocalDatabase(healthy.executor, plan, true)
+      assert.ok(healthy.queries.every((sql) => sql.startsWith("SELECT")))
+      assert.ok(matrixPreflightQueries(plan).every((guard) => !healthy.queries.includes(guard.sql)))
+      const drifted = new Map(shape)
+      drifted.delete("column:gateway_provider_access.model_group_id")
+      const invalid = fixture(drifted, { receipts })
+      await assert.rejects(migrateLocalDatabase(invalid.executor, plan, true), /Schema differs from its recorded migration/)
+      assert.ok(invalid.queries.every((sql) => sql.startsWith("SELECT")))
+      assert.deepEqual(receipts, before)
+    }
+  })
+
+  test("0097 receipts advance to pending 0098 without replay and DDL failure retains the marker", async () => {
+    const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
     const before = structuredClone(receipts)
-    const shape = shapeAt("0097_")
-    const healthy = fixture(shape, { receipts })
-    await migrateLocalDatabase(healthy.executor, plan, true)
-    assert.ok(healthy.queries.every((sql) => sql.startsWith("SELECT")))
-    assert.ok(matrixPreflightQueries(plan).every((guard) => !healthy.queries.includes(guard.sql)))
-    const drifted = new Map(shape)
-    drifted.delete("column:gateway_provider_access.model_group_id")
-    const invalid = fixture(drifted, { receipts })
-    await assert.rejects(migrateLocalDatabase(invalid.executor, plan, true), /Schema differs from its recorded migration/)
-    assert.ok(invalid.queries.every((sql) => sql.startsWith("SELECT")))
+    const pending = plan[97]
+    assert.equal(pending.tag, "0098_gateway_uncountable_usage")
+    const { executor, queries } = fixture(shapeAt("0097_"), { receipts, failOnSql: /ALTER TABLE `gateway_usage_rollups`/ })
+    await assert.rejects(migrateLocalDatabase(executor, plan), /synthetic DDL failure/)
+    const marker = queries.findIndex((sql) => sql.startsWith(`INSERT INTO \`${stateTable}\``))
+    const ddl = queries.indexOf(pending.sql[0])
+    assert.ok(marker >= 0 && ddl > marker)
+    assert.ok(plan.slice(0, 97).every((entry) => entry.sql.every((sql) => !queries.includes(sql))))
+    assert.ok(matrixPreflightQueries(plan).every((guard) => !queries.includes(guard.sql)))
+    assert.equal(queries.some((sql) => sql.startsWith(`INSERT INTO \`${journalTable}\``)), false)
+    assert.equal(queries.some((sql) => sql.startsWith(`DELETE FROM \`${stateTable}\``)), false)
+    assert.ok(queries.at(-1)?.includes("RELEASE_LOCK"))
     assert.deepEqual(receipts, before)
   })
 
