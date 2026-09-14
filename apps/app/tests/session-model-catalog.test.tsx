@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { z } from "zod";
+import { useSessionModelStore } from "../src/react-app/domains/session/surface/session-model-store";
 import { openworkSessionModelSchema } from "@openwork/types/openwork-affordance";
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 import type { OpenworkControlAPI } from "../src/react-app/shell/control/control-provider";
@@ -41,6 +42,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   policy = {};
   signedIn = true;
+  useSessionModelStore.setState({ bySessionId: {} });
 });
 afterAll(async () => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
@@ -51,11 +53,23 @@ async function mountCatalogActions(extraProviders: Array<{ id: string; name: str
   const requests: Array<{ path: string; method: string; directory: string | null }> = [];
   const unavailable = new Set<string>();
   const names: Record<string, string> = { one: "GPT-6 Luna", two: "Local Luna" };
+  const directories: Record<string, string> = { one: "/tmp/one", two: "/tmp/two" };
+  const extraSessions: Array<{ id: string; directory: string; model: { providerID: string; id: string } }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     fetch(request) {
       const url = new URL(request.url);
       requests.push({ path: url.pathname, method: request.method, directory: url.searchParams.get("directory") });
+      const pathWorkspace = /^\/workspace\/([^/]+)\/opencode\/path$/.exec(url.pathname)?.[1];
+      if (pathWorkspace) return NativeResponse.json({ directory: directories[pathWorkspace] });
+      const target = /^\/workspace\/([^/]+)\/opencode\/session\/(ses_[^/]+)$/.exec(url.pathname);
+      if (target) return NativeResponse.json(extraSessions.find((session) => session.id === target[2]) ?? { id: target[2], directory: directories[target[1] ?? ""], time: { archived: 0 }, model: { providerID: "provider", id: "removed", variant: "high" } });
+      const sessionWorkspace = /^\/workspace\/([^/]+)\/opencode\/session$/.exec(url.pathname)?.[1];
+      if (sessionWorkspace) return NativeResponse.json([
+        { id: `ses_${sessionWorkspace}`, title: "Synthetic session", directory: directories[sessionWorkspace], time: { archived: 0 }, model: { providerID: "provider", id: "removed", variant: "high" } },
+        { id: `ses_archived_${sessionWorkspace}`, directory: directories[sessionWorkspace], time: { archived: 1 }, model: { providerID: "provider", id: "removed", variant: "high" } },
+        ...extraSessions,
+      ]);
       const id = /^\/workspace\/([^/]+)\/opencode\/provider$/.exec(url.pathname)?.[1];
       if (!id || unavailable.has(id)) return NativeResponse.json({ message: "Unavailable" }, { status: 503 });
       return NativeResponse.json({ connected: ["provider", ...extraProviders.filter((provider) => provider.connected).map((provider) => provider.id)], default: {}, all: [
@@ -95,7 +109,7 @@ async function mountCatalogActions(extraProviders: Array<{ id: string; name: str
   cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
   const api = window.__openworkControl;
   if (!api) throw new Error("Control API unavailable");
-  return { api, requests, unavailable, names };
+  return { api, requests, unavailable, names, directories, extraSessions };
 }
 
 async function listedModels(api: OpenworkControlAPI, workspaceId?: string) {
@@ -159,6 +173,51 @@ test.each([
   const catalog = z.object({ workspaceId: z.literal("two"), models: z.array(z.object({ providerId: z.string(), available: z.literal(true) })) }).parse(result.result);
   expect(catalog.models.map((model) => model.providerId)).toEqual(scenario.expected);
   expect(requests).toEqual([{ path: "/workspace/two/opencode/provider", method: "GET", directory: "/tmp/two" }]);
+});
+
+test("renderer preflight uses locally repicked override and rejects catalog/sign-in policy denials", async () => {
+  const { api, requests } = await mountCatalogActions();
+  await act(async () => {
+    const args = { workspaceId: "one", sessionId: "ses_one", model: { providerId: "provider", modelId: "removed", variant: "high" } };
+    expect(await api.query({ id: "session.model_preflight", args })).toMatchObject({ ok: false });
+    expect(await api.command({ id: "session.set_model", args: { sessionId: "ses_one", alias: "GPT-6 Luna" } })).toMatchObject({ ok: true, result: { savedLocally: true, engineBindingUpdated: false } });
+    expect(await api.query({ id: "session.model_preflight", args })).toMatchObject({ ok: true, result: { model: { providerId: "provider", modelId: "opaque", variant: null } } });
+    policy = { allowCustomProviders: false };
+    expect(await api.query({ id: "session.model_preflight", args })).toMatchObject({ ok: false });
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+  });
+});
+
+test("renderer bulk repick advertises dry-run and excludes archives from persisted scope", async () => {
+  const { api, requests } = await mountCatalogActions();
+  await act(async () => {
+    const args = { workspaceId: "two", from: { providerId: "provider", modelId: "removed" }, to: { alias: "Local Luna", variant: "low" } };
+    expect(await api.command({ id: "session.rebind_model", args: { ...args, dryRun: true } })).toMatchObject({ ok: true, result: { count: 1, dryRun: true, sessions: [{ sessionId: "ses_two" }] } });
+    expect(useSessionModelStore.getState().bySessionId).toEqual({});
+    expect(await api.command({ id: "session.rebind_model", args })).toMatchObject({ ok: true, result: { count: 1, savedLocally: true, appliesOn: "next_send" } });
+    expect(useSessionModelStore.getState().bySessionId).toEqual({ ses_two: { model: { providerID: "provider", modelID: "opaque" }, variant: "low" } });
+    expect(requests.every((request) => request.method === "GET" && request.path.includes("/two/"))).toBe(true);
+  });
+});
+
+test("renderer resolves canonical ownership through engine path before single and bulk repick", async () => {
+  const { api, requests, directories, extraSessions } = await mountCatalogActions();
+  directories.one = "/engine/canonical/one";
+  extraSessions.push(
+    { id: "ses_sibling", directory: directories.one, model: { providerID: "provider", id: "removed" } },
+    { id: "ses_foreign", directory: `${directories.one}-other`, model: { providerID: "provider", id: "removed" } },
+    { id: "ses_nested", directory: `${directories.one}/nested`, model: { providerID: "provider", id: "removed" } },
+  );
+  await act(async () => {
+    const args = { workspaceId: "one", from: { providerId: "provider", modelId: "removed" }, to: { alias: "GPT-6 Luna" } };
+    expect(await api.command({ id: "session.rebind_model", args: { ...args, dryRun: true } })).toMatchObject({ ok: true, result: { count: 2, sessions: [{ sessionId: "ses_one" }, { sessionId: "ses_sibling" }] } });
+    expect(await api.command({ id: "session.set_model", args: { workspaceId: "one", sessionId: "ses_one", alias: "GPT-6 Luna" } })).toMatchObject({ ok: true, result: { savedLocally: true } });
+    expect(await api.command({ id: "session.rebind_model", args })).toMatchObject({ ok: true, result: { count: 1, savedLocally: true } });
+    expect(Object.keys(useSessionModelStore.getState().bySessionId).sort()).toEqual(["ses_one", "ses_sibling"]);
+    expect(await api.command({ id: "session.set_model", args: { workspaceId: "one", sessionId: "ses_foreign", alias: "GPT-6 Luna" } })).toMatchObject({ ok: false });
+  });
+  expect(requests.filter((request) => request.path.endsWith("/path"))).toHaveLength(4);
+  expect(requests.every((request) => request.method === "GET" && request.directory === "/tmp/one" && request.path.includes("/one/"))).toBe(true);
 });
 
 test("unknown or missing workspaces do not silently list selected workspace models", async () => {

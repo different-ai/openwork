@@ -587,6 +587,8 @@ export type SessionSurfaceProps = {
   modelLabel: string;
   onModelClick: (sessionId?: string) => void;
   modelPickerOpen: boolean;
+  rendererWorkspaceId?: string;
+  engineModelSelection?: (sessionId: string) => import("./session-model-store").SessionModelSelection | null;
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
   /**
@@ -1097,6 +1099,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (queuedItems.length === 0) return;
     setQueuedSendContext(props.sessionId, {
       workspaceId: props.workspaceId,
+      rendererWorkspaceId: props.rendererWorkspaceId,
       workspaceRoot: props.workspaceRoot,
       opencodeBaseUrl: props.opencodeBaseUrl,
       openworkToken: props.openworkToken,
@@ -1117,6 +1120,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.sessionId,
     props.workspaceId,
     props.workspaceRoot,
+    props.rendererWorkspaceId,
     queuedItems.length,
   ]);
   const appendQueuedDraft = useComposerStateStore((state) => state.appendQueuedDraft);
@@ -1129,6 +1133,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // state, so split panes never control each other's model picker.
   const sessionModel = useSessionModelSelection({
     sessionId: props.sessionId,
+    engineSelection: props.engineModelSelection?.(props.sessionId),
     fallbackModel: props.selectedModel,
     fallbackModelLabel: props.modelLabel,
     fallbackVariant: props.modelVariant,
@@ -1144,13 +1149,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.onModelPickerOpenChange(open);
   }, [props.onModelPickerOpenChange]);
   const handleModelChange = useCallback((nextModel: ModelRef, variant?: string | null) => {
+    if (props.resolveModelAvailability ? props.resolveModelAvailability(sessionModel.selectedModel).status === "unavailable" : props.modelUnavailable) {
+      props.onModelClick(props.sessionId);
+      setModelPickerOpen(false);
+      return;
+    }
     sessionModel.setModel(nextModel, variant);
-    props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
-  }, [props.onModelChange, sessionModel]);
+  }, [props.resolveModelAvailability, props.modelUnavailable, props.onModelClick, props.sessionId, sessionModel]);
   const handleModelVariantChange = useCallback((value: string | null) => {
     sessionModel.setVariant(value);
-    props.onModelVariantChange(value);
   }, [props.onModelVariantChange, sessionModel]);
   const handleOpenModelPicker = useCallback(() => {
     props.onModelClick(props.sessionId);

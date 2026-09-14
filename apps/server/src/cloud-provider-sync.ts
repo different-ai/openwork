@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
+import { z } from "zod";
+import { matchingOpenworkModelSessions, openworkModelSessionSchema, openworkSessionModelSchema, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
+import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
+import { loopbackFetch } from "./server-fetch.js";
 import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import { rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
@@ -34,9 +38,38 @@ export type CloudProviderDenSession = {
   orgId: string;
 };
 
+export type CloudModelRemovalImpact = {
+  workspaceId: string;
+  removedModels: OpenworkSessionModel[];
+  sessionIds: string[];
+  inventoryComplete: boolean;
+};
+
+export function managedModelImpactWorkspaces(config: ServerConfig) {
+  const primary = findManagedEngineWorkspace(config.workspaces);
+  if (!primary) return [];
+  const baseUrl = config.opencodeBaseUrl || resolveWorkspaceOpencodeConnection(config, primary).baseUrl;
+  return config.workspaces.filter((workspace) => workspace.workspaceType !== "remote" && workspace.path.trim() && baseUrl
+    && resolveWorkspaceOpencodeConnection(config, workspace).baseUrl === baseUrl);
+}
+
+export function removedCloudModels(current: JsonRecord, desired: JsonRecord): OpenworkSessionModel[] {
+  return Object.entries(current).flatMap(([providerId, provider]) => {
+    if (!isRecord(provider) || !isRecord(provider.models)) return [];
+    const next = desired[providerId];
+    const models = isRecord(next) && isRecord(next.models) ? next.models : {};
+    return Object.entries(provider.models).filter(([modelId]) => !(modelId in models)).map(([modelId, model]) => ({
+      providerId, modelId, variant: null,
+      displayName: isRecord(model) && typeof model.name === "string" ? model.name : modelId,
+      providerName: typeof provider.name === "string" ? provider.name : providerId,
+    }));
+  });
+}
+
 export type CloudProviderSyncRunResult = {
   status: "applied" | "noop" | "failed" | "no_session";
   message?: string;
+  affectedSessions?: CloudModelRemovalImpact[];
 };
 
 export type CloudProviderSyncStatusProvider = {
@@ -87,6 +120,8 @@ export type CloudProviderSyncRunDetail = {
 };
 
 export type CloudProviderSyncStatus = {
+  affectedSessions: CloudModelRemovalImpact[];
+  modelRemovalPending: boolean;
   hasSession: boolean;
   lastRun: {
     at: string;
@@ -213,6 +248,7 @@ export type CloudProviderSyncOptions = {
    * sessions are running"). Absent means "unknown" and never blocks.
    */
   engineBusy?: () => Promise<boolean>;
+  onModelsRemoved?: (impact: CloudModelRemovalImpact) => void;
   fetchImpl?: typeof globalThis.fetch;
   logger?: CloudProviderSyncLogger;
   intervalMs?: number;
@@ -806,6 +842,9 @@ function configuredReloadRetryMs(): number {
 }
 
 export class CloudProviderSync {
+  private affectedSessions: CloudModelRemovalImpact[] = [];
+  private pendingModelRemovals: Record<string, OpenworkSessionModel[]> = {};
+  private readonly onModelsRemoved?: (impact: CloudModelRemovalImpact) => void;
   private readonly config: ServerConfig;
   private readonly env: EnvService;
   private readonly reloadEngine: () => Promise<RolloverOutcome>;
@@ -836,6 +875,7 @@ export class CloudProviderSync {
 
   constructor(options: CloudProviderSyncOptions) {
     this.config = options.config;
+    this.onModelsRemoved = options.onModelsRemoved;
     this.env = options.env;
     this.reloadEngine = options.reloadEngine;
     this.engineBusy = options.engineBusy;
@@ -855,6 +895,7 @@ export class CloudProviderSync {
       || this.managedProviderIds.size > 0
       || this.ownedEnvKeys.size > 0;
     this.contextGeneration += 1;
+    this.affectedSessions = [];
     this.stopReloadRetry();
 
     if (!hasMaterializedContext && !this.suspended) {
@@ -906,6 +947,7 @@ export class CloudProviderSync {
     this.providerFetchController.abort();
     this.providerFetchController = new AbortController();
     this.contextGeneration += 1;
+    this.affectedSessions = [];
     this.pendingSession = null;
     this.session = null;
     this.stopInterval();
@@ -924,6 +966,7 @@ export class CloudProviderSync {
   async clearSession(): Promise<void> {
     this.suspended = false;
     this.contextGeneration += 1;
+    this.affectedSessions = [];
     this.pendingSession = null;
     this.session = null;
     this.stopInterval();
@@ -973,6 +1016,8 @@ export class CloudProviderSync {
 
   status(): CloudProviderSyncStatus {
     return {
+      affectedSessions: this.affectedSessions,
+      modelRemovalPending: Object.keys(this.pendingModelRemovals).length > 0,
       hasSession: this.session !== null,
       lastRun: this.lastRun ? { ...this.lastRun } : null,
       providers: this.providers.map((provider) => ({ ...provider, modelIds: [...provider.modelIds] })),
@@ -1206,7 +1251,7 @@ export class CloudProviderSync {
       }
       const status = changed ? "applied" : "noop";
       this.lastRun = { at: new Date().toISOString(), status, detail };
-      return { status };
+      return { status, affectedSessions: this.affectedSessions };
     } catch (error) {
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
       const message = error instanceof Error ? error.message : "cloud_provider_sync_failed";
@@ -1219,10 +1264,12 @@ export class CloudProviderSync {
   private async apply(
     prepared: PreparedMaterialization,
   ): Promise<{ changed: boolean; detail: CloudProviderSyncRunDetail; reloadError?: unknown }> {
+    const generation = this.contextGeneration;
     const desiredProviders = desiredProviderMap(prepared);
     const globalRuntime = await readGlobalRuntimeOpencodeConfig(this.config);
     const currentManagedProviders = managedProviderMap(runtimeProviderMap(globalRuntime), this.managedProviderIds);
     const retiredProviderIds = [...this.managedProviderIds].filter((id) => !(id in desiredProviders));
+    const removedModels = removedCloudModels(currentManagedProviders, desiredProviders);
     const providerStateChanged = stableJson(currentManagedProviders) !== stableJson(desiredProviders);
     const storedEnv = new Map((await this.env.list()).map((entry) => [entry.key, entry.value]));
     for (const { provider, envEntries } of prepared.providers) {
@@ -1241,7 +1288,15 @@ export class CloudProviderSync {
     }).map(([key]) => key);
     for (const providerId of Object.keys(desiredProviders)) this.managedProviderIds.add(providerId);
     for (const entry of prepared.envEntries) this.ownedEnvKeys.set(entry.key, hashString(entry.value));
-    // Keep retired rows until auth removal has been persisted by its owner.
+    const impactWorkspaces = managedModelImpactWorkspaces(this.config);
+    this.pendingModelRemovals = Object.fromEntries(impactWorkspaces.flatMap((workspace) => {
+      const models = [...new Map([...(this.pendingModelRemovals[workspace.id] ?? []), ...removedModels].map((model) => [JSON.stringify([model.providerId, model.modelId]), model])).values()]
+        .filter((model) => {
+          const provider = desiredProviders[model.providerId];
+          return !isRecord(provider) || !isRecord(provider.models) || !(model.modelId in provider.models);
+        });
+      return models.length ? [[workspace.id, models]] : [];
+    }));
     await this.persistOwnership();
 
     if (providerStateChanged) {
@@ -1254,6 +1309,7 @@ export class CloudProviderSync {
         ...current,
         provider: mergeRuntimeProviderUpdate(current.provider, patch),
       }));
+      this.reloadPending = true;
     }
     const envUpserts = prepared.envEntries.filter((entry) => storedEnv.get(entry.key) !== entry.value);
     if (envUpserts.length > 0) {
@@ -1355,6 +1411,49 @@ export class CloudProviderSync {
       || envDeletes.length > 0
       || workspaceCleanup.changed
       || runtimeFileChanged;
+    if (Object.keys(this.pendingModelRemovals).length) {
+      const impacts = await Promise.all(impactWorkspaces.map(async (workspace): Promise<CloudModelRemovalImpact | null> => {
+        const removedModels = this.pendingModelRemovals[workspace.id];
+        if (!removedModels?.length) return null;
+        try {
+          const connection = resolveWorkspaceOpencodeConnection(this.config, workspace);
+          if (!connection.baseUrl) throw new Error("Engine unavailable");
+          const directory = workspace.directory?.trim() || workspace.path;
+          const pathUrl = new URL("/path", connection.baseUrl);
+          pathUrl.searchParams.set("directory", directory);
+          const pathResponse = await loopbackFetch(pathUrl.toString(), {
+            headers: connection.authHeader ? { Authorization: connection.authHeader } : {},
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (!pathResponse.ok) throw new Error("Workspace directory unavailable");
+          const owner = z.object({ directory: z.string().min(1) }).parse(await pathResponse.json()).directory;
+          const url = new URL("/session", connection.baseUrl);
+          url.searchParams.set("directory", directory);
+          url.searchParams.set("limit", "10000");
+          const response = await loopbackFetch(url.toString(), {
+            headers: connection.authHeader ? { Authorization: connection.authHeader } : {},
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (!response.ok) throw new Error("Session inventory unavailable");
+          const inventory = z.array(openworkModelSessionSchema).parse(await response.json());
+          if (inventory.length >= 10_000) throw new Error("Session inventory is incomplete");
+          const sessions = inventory.filter((session) => session.directory === owner);
+          const sessionIds = [...new Set(removedModels.flatMap((model) => matchingOpenworkModelSessions(sessions, model, () => null).map((session) => session.id)))];
+          return { workspaceId: workspace.id, removedModels, sessionIds, inventoryComplete: true };
+        } catch {
+          return null;
+        }
+      }));
+      if (generation === this.contextGeneration) {
+        for (const impact of impacts) {
+          if (!impact) continue;
+          this.onModelsRemoved?.(impact);
+          this.affectedSessions = [...this.affectedSessions.filter((previous) => previous.workspaceId !== impact.workspaceId), impact];
+          delete this.pendingModelRemovals[impact.workspaceId];
+        }
+        await this.persistOwnership();
+      }
+    }
     return { changed, detail, reloadError };
   }
 
@@ -1446,6 +1545,7 @@ export class CloudProviderSync {
     });
     this.ownedEnvKeys.clear();
     this.managedProviderIds.clear();
+    this.pendingModelRemovals = {};
     await this.persistOwnership();
     this.reloadPending = this.reloadPending
       || authResult.delivered.length > 0
@@ -1471,11 +1571,14 @@ export class CloudProviderSync {
     await writeOpenworkWorkspaceConfig(this.config, "__cloud_provider_ownership__", () => ({
       envHashes: Object.fromEntries(this.ownedEnvKeys),
       providerIds: [...this.managedProviderIds],
+      pendingModelRemovals: this.pendingModelRemovals,
     }));
   }
 
   private async restoreOwnership(): Promise<void> {
     const saved = await readOpenworkWorkspaceConfig(this.config, "__cloud_provider_ownership__");
+    const pending = z.record(z.string(), openworkSessionModelSchema.array()).safeParse(saved.pendingModelRemovals);
+    if (pending.success) this.pendingModelRemovals = pending.data;
     if (isRecord(saved.envHashes)) {
       for (const [key, hash] of Object.entries(saved.envHashes)) {
         if (typeof hash === "string") this.ownedEnvKeys.set(key, hash);

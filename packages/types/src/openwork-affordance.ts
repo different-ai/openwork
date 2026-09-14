@@ -77,6 +77,17 @@ export const openworkSessionModelSchema = z.object({
 })
 export type OpenworkSessionModel = z.infer<typeof openworkSessionModelSchema>
 
+export const openworkModelRemovalImpactSchema = z.object({
+  workspaceId: z.string(),
+  removedModels: z.array(openworkSessionModelSchema),
+  sessionIds: z.array(z.string()),
+  inventoryComplete: z.boolean(),
+})
+
+export function isOpenworkModelRemovalNotification(event: { trigger?: { modelRemoval?: unknown } }) {
+  return openworkModelRemovalImpactSchema.safeParse(event.trigger?.modelRemoval).success
+}
+
 export const openworkModelSelectorSchema = z.object({
   providerId: openworkSessionModelSchema.shape.providerId.optional(),
   modelId: openworkSessionModelSchema.shape.modelId.optional(),
@@ -95,6 +106,61 @@ export const openworkModelSelectorSchema = z.object({
     context.addIssue({ code: "custom", path: ["providerId"], message: "providerId is required with modelId." })
   }
 })
+
+export const openworkSessionSetModelArgsSchema = z.object({
+  sessionId: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1).optional(),
+  model: openworkModelSelectorSchema.optional(),
+  alias: z.string().trim().min(1).optional(),
+  dryRun: z.boolean().optional(),
+}).refine((value) => Boolean(value.model) !== Boolean(value.alias), { message: "Provide model or alias, not both." })
+
+export const openworkSessionRebindModelArgsSchema = z.object({
+  workspaceId: z.string().trim().min(1),
+  from: openworkSessionModelSchema.pick({ providerId: true, modelId: true }),
+  to: openworkModelSelectorSchema,
+  expectedSessionIds: z.array(z.string()).optional(),
+  dryRun: z.boolean().optional(),
+})
+
+export const openworkSessionModelPreflightArgsSchema = z.object({
+  workspaceId: z.string().trim().min(1),
+  sessionId: z.string().trim().min(1),
+  model: openworkSessionModelSchema.nullable(),
+})
+
+export const openworkSessionModelPreflightResultSchema = z.object({
+  ok: z.literal(true),
+  workspaceId: z.string(),
+  sessionId: z.string(),
+  model: openworkSessionModelSchema.nullable(),
+})
+
+export const openworkModelSessionSchema = z.object({
+  id: z.string(),
+  title: z.string().optional(),
+  directory: z.string().optional(),
+  time: z.object({ archived: z.number().optional() }).optional(),
+  model: z.object({ providerID: z.string(), id: z.string(), variant: z.string().nullable().optional() }).nullable().optional(),
+})
+
+export function matchingOpenworkModelSessions(
+  sessions: readonly z.infer<typeof openworkModelSessionSchema>[],
+  from: Pick<OpenworkSessionModel, "providerId" | "modelId">,
+  local: (sessionId: string) => OpenworkSessionModel | null,
+) {
+  return sessions.filter((session) => {
+    if ((session.time?.archived ?? 0) > 0) return false
+    const model = local(session.id) ?? (session.model ? { providerId: session.model.providerID, modelId: session.model.id } : null)
+    return model?.providerId === from.providerId && model.modelId === from.modelId
+  })
+}
+
+export function suggestOpenworkReplacement(from: OpenworkSessionModel, catalog: readonly OpenworkCatalogModel[], workspaceDefault: Pick<OpenworkSessionModel, "providerId" | "modelId"> | null) {
+  return catalog.find((model) => model.providerId === from.providerId || (from.providerName && model.providerName === from.providerName))
+    ?? catalog.find((model) => model.providerId === workspaceDefault?.providerId && model.modelId === workspaceDefault.modelId)
+    ?? null
+}
 
 export const openworkModelsListArgsSchema = z.object({ workspaceId: z.string().trim().min(1) })
 export const openworkModelsListResultSchema = z.object({
@@ -197,6 +263,7 @@ const openworkAffordanceSuccessSchema = z.object({
  */
 export const openworkAffordanceFailureCodeSchema = z.enum([
   "unavailable",
+  "model_unavailable",
   "invalid-args",
   "conflict",
   "failed",
