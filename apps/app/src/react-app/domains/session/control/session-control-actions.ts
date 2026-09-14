@@ -2,7 +2,7 @@
 import { useCallback, useMemo } from "react";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
-import { openworkCatalogModels, openworkModelsListArgsSchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
+import { openworkCatalogModels, openworkModelsListArgsSchema, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
@@ -11,7 +11,7 @@ import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider"
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { filterEntitledModelOptions } from "../../connections/provider-auth/provider-policy";
 import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
-import { createSessionModelActions, localSessionModel } from "./session-model-actions";
+import { createSessionModelActions } from "./session-model-actions";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
@@ -143,7 +143,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     id: "session.rebind_model", label: "Repick matching sessions",
     description: "Save locally for next send on all unarchived sessions in this workspace whose effective binding matches from (local choice wins). dryRun previews the exact set. No engine binding or global default changes; repick to undo.",
     effects: { data: "write", ui: "none", external: false }, sideEffect: "mutation",
-    args: [{ name: "workspaceId", type: "string", required: true }, { name: "from", type: "object", required: true }, { name: "to", type: "object", required: true }, { name: "dryRun", type: "boolean" }],
+    args: [{ name: "workspaceId", type: "string", required: true }, { name: "from", type: "object", required: true }, { name: "to", type: "object", required: true }, { name: "expectedSessionIds", type: "array" }, { name: "dryRun", type: "boolean" }],
     execute: modelActions.rebindModel,
   }), [modelActions]));
   useControlAction(useMemo<OpenworkControlAction>(() => ({
@@ -151,16 +151,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     description: "Validate the local override, otherwise the supplied engine binding, against the effective workspace catalog. Does not send or change selection.",
     effects: { data: "read", ui: "none", external: false }, sideEffect: "none",
     args: [{ name: "workspaceId", type: "string", required: true }, { name: "sessionId", type: "string", required: true }, { name: "model", type: "object", required: true }],
-    execute: async (rawArgs) => {
-      const args = openworkSessionModelPreflightArgsSchema.parse(rawArgs);
-      const workspace = workspaces.find((entry) => entry.id === args.workspaceId);
-      if (!workspace) throw new Error("Workspace was not found.");
-      const catalog = await availableWorkspaceModels(workspace);
-      const selected = localSessionModel(args.sessionId) ?? args.model;
-      if (!selected) throw new Error("Select a model with session.set_model before sending.");
-      return { ok: true, workspaceId: workspace.id, sessionId: args.sessionId, model: resolveOpenworkModel(selected, catalog) };
-    },
-  }), [workspaces, availableWorkspaceModels]));
+    execute: modelActions.preflight,
+  }), [modelActions]));
   useControlAction(useMemo<OpenworkControlAction>(() => ({
     id: "models.list",
     label: "List workspace models",

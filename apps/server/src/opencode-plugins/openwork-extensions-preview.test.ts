@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { openworkCatalogModels, openworkProviderCatalogSchema, openworkSessionActivityInventorySchema } from "@openwork/types/openwork-affordance";
+import { openworkCatalogModels, openworkProviderCatalogSchema, openworkSessionActivityInventorySchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
@@ -195,6 +195,15 @@ function startFakeOpenWorkServer(options: {
           return Response.json({ ok: true, id: "models.list", effects: { data: "read", ui: "none", external: false },
             result: { ok: true, workspaceId: workspace.id, models: models.map((model) => ({ ...model, available: true })) } });
         }
+        const preflight = z.object({ kind: z.literal("query"), input: z.object({ id: z.literal("session.model_preflight"), args: openworkSessionModelPreflightArgsSchema }) }).safeParse(record.body);
+        if (preflight.success) {
+          const args = preflight.data.input.args;
+          if (!args.model || options.failProviderCatalog) return Response.json({ ok: false, id: "session.model_preflight", code: "unavailable", error: "Model unavailable" });
+          return Response.json({ ok: true, id: "session.model_preflight", effects: { data: "read", ui: "none", external: false }, result: {
+            ok: true, sessionId: args.sessionId, workspaceId: args.workspaceId,
+            model: resolveOpenworkModel(args.model, openworkCatalogModels(openworkProviderCatalogSchema.parse(providerCatalog(args.workspaceId)))),
+          } });
+        }
         return Response.json({ ok: true });
       }
 
@@ -339,6 +348,8 @@ function startFakeOpenWorkServer(options: {
       if (/^\/workspace\/ws_[12]\/opencode\/session\/ses_(alpha|beta|archive|foreign)\/prompt_async$/.test(url.pathname)) {
         z.object({
           messageID: z.string().regex(/^msg_[0-9a-f]{12}[0-9a-f]{14}$/),
+          model: z.object({ providerID: z.string(), modelID: z.string() }).strict(),
+          variant: z.string(),
           parts: z.array(z.object({ type: z.literal("text"), text: z.string() }).strict()).length(1),
         }).strict().parse(record.body);
         return new Response(null, { status: 204 });
@@ -1434,35 +1445,35 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
   test("session.send appends a prompt to an existing session by id without touching the UI", async () => {
     const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/main" });
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
-    // The target lives in a workspace other than the caller's: resolution is
-    // by id across workspaces, never by what the person has selected.
     const output = await plugin.tool.openwork_execute.execute({
       id: "session.send",
-      args: { sessionId: "ses_archive", text: "Status update: the importer shipped." },
-    }, { sessionID: "ses_origin", workspaceId: "ws_1" });
+      args: { sessionId: "ses_beta", text: "Status update: the importer shipped." },
+    }, { sessionID: "ses_origin", workspaceId: "ws_2" });
     const parsed = affordanceResultSchema("session.send", sendResultSchema).parse(JSON.parse(output));
 
     expect(parsed.effects).toEqual({ data: "write", ui: "none", external: false });
     expect(parsed.result).toMatchObject({
       ok: true,
       accepted: true,
-      sessionId: "ses_archive",
-      workspaceId: "ws_2",
-      workspace: "Archive",
-      title: "Archive decisions",
+      sessionId: "ses_beta",
+      workspaceId: "ws_1",
+      workspace: "Main",
+      title: "Neon backlog",
     });
     expect(parsed.result.revealed).toBeUndefined();
     const prompts = fake.requests.filter((request) => request.pathname.endsWith("/prompt_async") && request.method === "POST");
     expect(prompts).toHaveLength(1);
-    expect(prompts[0]?.pathname).toBe("/workspace/ws_2/opencode/session/ses_archive/prompt_async");
+    expect(prompts[0]?.pathname).toBe("/workspace/ws_1/opencode/session/ses_beta/prompt_async");
     expect(prompts[0]?.body).toEqual({
       messageID: parsed.result.messageId,
+      model: { providerID: "openai", modelID: "gpt-6-astra" }, variant: "default",
       parts: [{ type: "text", text: "Status update: the importer shipped." }],
     });
-    // Headless by default: no session.open, no composer, no reload.
-    expect(fake.uiControlRequests).toEqual([]);
+    expect(fake.uiControlRequests).toEqual([{ authorization: "Bearer test-token", body: { kind: "query", input: {
+      id: "session.model_preflight", args: { sessionId: "ses_beta", workspaceId: "ws_1", model: { providerId: "openai", modelId: "gpt-6-astra", variant: null } },
+    } } }]);
     // No new session is created; the existing one receives the message.
     expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST")).toEqual([]);
   });
@@ -1480,10 +1491,13 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(parsed.effects).toEqual({ data: "write", ui: "navigate", external: false });
     expect(parsed.result.revealed).toBe(true);
     const promptIndex = fake.requests.findIndex((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/prompt_async");
-    const openIndex = fake.requests.findIndex((request) => request.pathname === "/experimental/ui-control/request");
+    const openIndex = fake.requests.findIndex((request) => request.pathname === "/experimental/ui-control/request" && z.object({ kind: z.literal("command") }).safeParse(request.body).success);
     expect(promptIndex).toBeGreaterThanOrEqual(0);
     expect(openIndex).toBeGreaterThan(promptIndex);
     expect(fake.uiControlRequests).toEqual([
+      { authorization: "Bearer test-token", body: { kind: "query", input: { id: "session.model_preflight", args: {
+        workspaceId: "ws_1", sessionId: "ses_alpha", model: { providerId: "lpr_test", modelId: "claude-fable-5-1", variant: "high" },
+      } } } },
       {
         authorization: "Bearer test-token",
         body: {

@@ -79,14 +79,15 @@ type SessionModelStore = {
 
 export const useSessionModelStore = create<SessionModelStore>((set) => ({
   bySessionId: readStoredSelections(),
-  setModel: (sessionId, model, variant = null) => set((state) => {
+  setModel: (sessionId, model, variant) => set((state) => {
     const previous = state.bySessionId[sessionId];
     const sameModel = previous
       && previous.model.providerID === model.providerID
       && previous.model.modelID === model.modelID;
-    if (sameModel && previous.variant === variant) return state;
+    const nextVariant = variant === undefined && sameModel ? previous.variant : variant ?? null;
+    if (sameModel && previous.variant === nextVariant) return state;
     const { [sessionId]: _replaced, ...rest } = state.bySessionId;
-    const bySessionId = capSelections({ ...rest, [sessionId]: { model, variant } });
+    const bySessionId = capSelections({ ...rest, [sessionId]: { model, variant: nextVariant } });
     writeStoredSelections(bySessionId);
     return { bySessionId };
   }),

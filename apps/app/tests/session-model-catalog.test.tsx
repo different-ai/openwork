@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { z } from "zod";
+import { useSessionModelStore } from "../src/react-app/domains/session/surface/session-model-store";
 import { openworkSessionModelSchema } from "@openwork/types/openwork-affordance";
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 import type { OpenworkControlAPI } from "../src/react-app/shell/control/control-provider";
@@ -41,6 +42,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   policy = {};
   signedIn = true;
+  useSessionModelStore.setState({ bySessionId: {} });
 });
 afterAll(async () => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
@@ -56,6 +58,11 @@ async function mountCatalogActions(extraProviders: Array<{ id: string; name: str
     fetch(request) {
       const url = new URL(request.url);
       requests.push({ path: url.pathname, method: request.method, directory: url.searchParams.get("directory") });
+      const sessionWorkspace = /^\/workspace\/([^/]+)\/opencode\/session$/.exec(url.pathname)?.[1];
+      if (sessionWorkspace) return NativeResponse.json([
+        { id: `ses_${sessionWorkspace}`, title: "Synthetic session", directory: `/tmp/${sessionWorkspace}`, time: { archived: 0 }, model: { providerID: "provider", id: "removed", variant: "high" } },
+        { id: `ses_archived_${sessionWorkspace}`, directory: `/tmp/${sessionWorkspace}`, time: { archived: 1 }, model: { providerID: "provider", id: "removed", variant: "high" } },
+      ]);
       const id = /^\/workspace\/([^/]+)\/opencode\/provider$/.exec(url.pathname)?.[1];
       if (!id || unavailable.has(id)) return NativeResponse.json({ message: "Unavailable" }, { status: 503 });
       return NativeResponse.json({ connected: ["provider", ...extraProviders.filter((provider) => provider.connected).map((provider) => provider.id)], default: {}, all: [
@@ -159,6 +166,31 @@ test.each([
   const catalog = z.object({ workspaceId: z.literal("two"), models: z.array(z.object({ providerId: z.string(), available: z.literal(true) })) }).parse(result.result);
   expect(catalog.models.map((model) => model.providerId)).toEqual(scenario.expected);
   expect(requests).toEqual([{ path: "/workspace/two/opencode/provider", method: "GET", directory: "/tmp/two" }]);
+});
+
+test("renderer preflight uses locally repicked override and rejects catalog/sign-in policy denials", async () => {
+  const { api, requests } = await mountCatalogActions();
+  await act(async () => {
+    const args = { workspaceId: "one", sessionId: "ses_one", model: { providerId: "provider", modelId: "removed", variant: "high" } };
+    expect(await api.query({ id: "session.model_preflight", args })).toMatchObject({ ok: false });
+    expect(await api.command({ id: "session.set_model", args: { sessionId: "ses_one", alias: "GPT-6 Luna" } })).toMatchObject({ ok: true, result: { savedLocally: true, engineBindingUpdated: false } });
+    expect(await api.query({ id: "session.model_preflight", args })).toMatchObject({ ok: true, result: { model: { providerId: "provider", modelId: "opaque", variant: null } } });
+    policy = { allowCustomProviders: false };
+    expect(await api.query({ id: "session.model_preflight", args })).toMatchObject({ ok: false });
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+  });
+});
+
+test("renderer bulk repick advertises dry-run and excludes archives from persisted scope", async () => {
+  const { api, requests } = await mountCatalogActions();
+  await act(async () => {
+    const args = { workspaceId: "two", from: { providerId: "provider", modelId: "removed" }, to: { alias: "Local Luna", variant: "low" } };
+    expect(await api.command({ id: "session.rebind_model", args: { ...args, dryRun: true } })).toMatchObject({ ok: true, result: { count: 1, dryRun: true, sessions: [{ sessionId: "ses_two" }] } });
+    expect(useSessionModelStore.getState().bySessionId).toEqual({});
+    expect(await api.command({ id: "session.rebind_model", args })).toMatchObject({ ok: true, result: { count: 1, savedLocally: true, appliesOn: "next_send" } });
+    expect(useSessionModelStore.getState().bySessionId).toEqual({ ses_two: { model: { providerID: "provider", modelID: "opaque" }, variant: "low" } });
+    expect(requests.every((request) => request.method === "GET" && request.path.includes("/two/"))).toBe(true);
+  });
 });
 
 test("unknown or missing workspaces do not silently list selected workspace models", async () => {

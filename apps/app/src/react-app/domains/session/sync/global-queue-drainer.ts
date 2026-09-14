@@ -164,7 +164,7 @@ async function performQueuedDraftSend(
     parts,
     model: sendModel ?? undefined,
     agent: context.agent ?? undefined,
-    ...(sendVariant ? { variant: sendVariant } : {}),
+    variant: sendVariant ?? "default",
     system,
   });
   if (result.error) {

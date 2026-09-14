@@ -1590,7 +1590,7 @@ export function SessionRoute() {
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
-                  ...(sendVariant ? { variant: sendVariant } : {}),
+                  variant: sendVariant ?? "default",
                   system,
                 });
                 if (result.error) {
@@ -1934,7 +1934,7 @@ export function SessionRoute() {
                   parts,
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
-                  ...(sendVariant ? { variant: sendVariant } : {}),
+                  variant: sendVariant ?? "default",
                   system,
                 });
                 if (result.error) {

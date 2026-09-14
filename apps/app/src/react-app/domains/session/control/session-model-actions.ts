@@ -4,6 +4,7 @@ import {
   openworkModelSessionSchema,
   openworkSessionRebindModelArgsSchema,
   openworkSessionSetModelArgsSchema,
+  openworkSessionModelPreflightArgsSchema,
   resolveOpenworkModel,
   type OpenworkCatalogModel,
   type OpenworkSessionModel,
@@ -32,6 +33,15 @@ export function createSessionModelActions<Workspace extends SessionModelWorkspac
       count: sessions.length, dryRun, savedLocally: !dryRun, appliesOn: "next_send", engineBindingUpdated: false };
   };
   return {
+    async preflight(rawArgs: unknown) {
+      const args = openworkSessionModelPreflightArgsSchema.parse(rawArgs);
+      const workspace = deps.workspaces.find((entry) => entry.id === args.workspaceId);
+      if (!workspace) throw new Error("Workspace was not found.");
+      const catalog = await deps.catalog(workspace);
+      const selected = localSessionModel(args.sessionId) ?? args.model;
+      if (!selected) throw new Error("Select a model with session.set_model before sending.");
+      return { ok: true, workspaceId: workspace.id, sessionId: args.sessionId, model: resolveOpenworkModel(selected, catalog) };
+    },
     async setModel(rawArgs: unknown) {
       const args = openworkSessionSetModelArgsSchema.parse(rawArgs);
       const matches = (await Promise.all(deps.workspaces.map(async (workspace) => ({

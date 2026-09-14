@@ -81,7 +81,7 @@ export function UnavailableModelRepick(props: {
       </div>}
       <DialogFooter>
         <Button variant="outline" disabled={saving} onClick={props.onClose}>{t("models.done")}</Button>
-        {!saved && <Button disabled={saving || !choice || !preview.data || preview.isFetching || catalog.isFetching} onClick={() => void confirm()}>{t("models.repick_confirm", { count: all ? preview.data?.count ?? 0 : 1 })}</Button>}
+        {!saved && <Button disabled={saving || !choice || !preview.data || preview.isFetching || catalog.isFetching || removed.isFetching} onClick={() => void confirm()}>{t("models.repick_confirm", { count: all ? preview.data?.count ?? 0 : 1 })}</Button>}
       </DialogFooter>
     </DialogContent>
   </Dialog>;
