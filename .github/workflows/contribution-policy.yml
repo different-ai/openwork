@@ -1,0 +1,55 @@
+name: Contribution Policy
+
+# pull_request_target is deliberate: only the immutable event base revision is
+# checked out and executed. Pull-request code and text are never executed.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: contribution-policy-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Publish head-bound contribution status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout verifier from immutable event base
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Evaluate DCO and EE CLA scope
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          EVENT_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SERVER_URL: ${{ github.server_url }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { pathToFileURL } = require("node:url")
+            const verifierUrl = pathToFileURL(
+              `${process.env.GITHUB_WORKSPACE}/scripts/ci/check-contribution-policy.mjs`,
+            ).href
+            const { runContributionPolicy } = await import(verifierUrl)
+            await runContributionPolicy({
+              github,
+              context,
+              core,
+              eventSha: process.env.EVENT_SHA,
+              workflowSha: process.env.WORKFLOW_SHA,
+              runId: process.env.RUN_ID,
+              runAttempt: process.env.RUN_ATTEMPT,
+              serverUrl: process.env.SERVER_URL,
+            })
