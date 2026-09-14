@@ -1,14 +1,16 @@
 import { createServer } from "node:http";
 import { afterEach, expect, vi } from "vitest";
 import { test } from "@openwork/testkit";
-import { CloudProviderSync, removedCloudModels, type CloudModelRemovalImpact } from "../../apps/server/src/cloud-provider-sync";
+import { isOpenworkModelRemovalNotification } from "@openwork/types/openwork-affordance";
+import { ReloadEventStore } from "../../apps/server/src/events";
+import { CloudProviderSync, managedModelImpactWorkspaces, removedCloudModels, type CloudModelRemovalImpact, type CloudProviderSyncOptions } from "../../apps/server/src/cloud-provider-sync";
 import { EnvService } from "../../apps/server/src/env-file";
 import type { ServerConfig } from "../../apps/server/src/types";
 import type { RuntimeOpencodeConfig } from "../../apps/server/src/runtime-opencode-config-store";
 
 const memory = vi.hoisted(() => {
   const runtime: RuntimeOpencodeConfig = {};
-  return { runtime, workspace: new Map<string, Record<string, unknown>>() };
+  return { runtime, workspace: new Map<string, Record<string, unknown>>(), failAfterConfig: false };
 });
 vi.mock("../../apps/server/src/runtime-opencode-config-store", async (original) => ({
   ...await original<typeof import("../../apps/server/src/runtime-opencode-config-store")>(),
@@ -32,13 +34,17 @@ vi.mock("../../apps/server/src/openwork-workspace-config-store", () => ({
 vi.mock("../../apps/server/src/openwork-runtime-config", () => ({ writeOpenworkRuntimeConfigFile: async () => ({ path: "/synthetic/runtime", changed: false }) }));
 vi.mock("../../apps/server/src/managed-provider-auth", async (original) => ({
   ...await original<typeof import("../../apps/server/src/managed-provider-auth")>(),
-  syncManagedProviderAuth: async () => ({ delivered: [], rotated: [], unchanged: [], removed: [], skipped: [], failed: [] }),
+  syncManagedProviderAuth: async () => {
+    if (memory.failAfterConfig) { memory.failAfterConfig = false; throw new Error("Fixture failed after persisted config"); }
+    return { delivered: [], rotated: [], unchanged: [], removed: [], skipped: [], failed: [] };
+  },
 }));
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   vi.restoreAllMocks();
   memory.runtime = {};
+  memory.failAfterConfig = false;
   memory.workspace.clear();
 });
 
@@ -49,7 +55,7 @@ function provider(id: string, modelIds: string[]) {
   };
 }
 
-test("provider and model removals emit unarchived engine-bound sessions per workspace without rebinding", async ({ evidence }) => {
+for (const fault of ["none", "after_config", "inventory", "restart"]) test(`provider/model removal impact is local, informational and retryable: ${fault}`, async ({ evidence }) => {
   const first = "lpr_fixture_one";
   const retired = "lpr_fixture_retired";
   let providers = [provider(first, ["removed_model", "kept_model"]), provider(retired, ["retired_model"])];
@@ -62,10 +68,11 @@ test("provider and model removals emit unarchived engine-bound sessions per work
   ];
   const initial = JSON.stringify(sessions);
   const requests: Array<{ method: string; path: string; directory: string | null }> = [];
+  let inventoryUnavailable = false;
   const engine = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push({ method: request.method ?? "GET", path: url.pathname, directory: url.searchParams.get("directory") });
-    response.writeHead(url.pathname === "/session" ? 200 : 404, { "content-type": "application/json" });
+    response.writeHead(inventoryUnavailable ? 503 : url.pathname === "/session" ? 200 : 404, { "content-type": "application/json" });
     response.end(JSON.stringify(sessions));
   });
   await new Promise<void>((resolve) => engine.listen(0, "127.0.0.1", resolve));
@@ -77,14 +84,20 @@ test("provider and model removals emit unarchived engine-bound sessions per work
     host: "127.0.0.1", port: 0, token: "fixture-token", hostToken: "fixture-host", approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [], authorizedRoots: [], readOnly: false,
     startedAt: 0, tokenSource: "cli", hostTokenSource: "cli", logFormat: "pretty", logRequests: false,
     workspaces: ["one", "two"].map((id) => ({ id, name: id, path: `/synthetic/${id}`, preset: "starter", workspaceType: "local", baseUrl })),
+    opencodeBaseUrl: baseUrl,
   };
+  config.workspaces.push({ id: "remote_fixture", name: "Remote fixture", path: "/synthetic/one", preset: "remote", workspaceType: "remote", baseUrl });
+  config.workspaces.push({ id: "attached_fixture", name: "Attached fixture", path: "/synthetic/attached", preset: "starter", workspaceType: "local", baseUrl: "http://127.0.0.1:1" });
+  expect(managedModelImpactWorkspaces(config).map((workspace) => workspace.id)).toEqual(["one", "two"]);
   const env = new EnvService({ path: "/synthetic/unused-env" });
   vi.spyOn(env, "list").mockResolvedValue([]);
   vi.spyOn(env, "upsertMany").mockImplementation(async () => { throw new Error("Unexpected credential write"); });
   vi.spyOn(env, "delete").mockImplementation(async () => { throw new Error("Unexpected credential delete"); });
   const impacts: CloudModelRemovalImpact[] = [];
-  const sync = new CloudProviderSync({ config, env, intervalMs: 3_600_000, reloadEngine: async () => ({ action: "reloaded_in_place" }),
-    onModelsRemoved: (impact) => impacts.push(impact),
+  const notifications = new ReloadEventStore();
+  let reloads = 0;
+  const options: CloudProviderSyncOptions = { config, env, intervalMs: 3_600_000, reloadEngine: async () => { reloads++; return { action: "reloaded_in_place" }; },
+    onModelsRemoved: (impact) => { impacts.push(impact); notifications.record(impact.workspaceId, "config", { type: "config", modelRemoval: impact }); },
     fetchImpl: async (input) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: providers });
@@ -94,14 +107,32 @@ test("provider and model removals emit unarchived engine-bound sessions per work
       if (entry) return Response.json({ llmProvider: entry });
       throw new Error("Unexpected Den fixture route");
     },
-  });
+  };
+  let sync = new CloudProviderSync(options);
   cleanups.push(() => sync.stop());
   await sync.setSession({ baseUrl: "https://fixture.invalid", token: "fixture-den", orgId: "fixture-org" });
   expect((await sync.run("initial")).status).not.toBe("failed");
   expect(impacts).toEqual([]);
+  const initialReloads = reloads;
   providers = [provider(first, ["kept_model"])];
-  const result = await sync.run("removed");
-  expect(result.status).toBe("applied");
+  memory.failAfterConfig = fault === "after_config" || fault === "restart";
+  inventoryUnavailable = fault === "inventory";
+  let result = await sync.run("removed");
+  if (fault !== "none") {
+    expect(impacts).toEqual([]);
+    expect(sync.status().affectedSessions).toEqual([]);
+    expect(sync.status().modelRemovalPending).toBe(true);
+    expect(memory.workspace.get("__cloud_provider_ownership__")?.pendingModelRemovals).toMatchObject({ one: [{ modelId: "removed_model" }, { modelId: "retired_model" }] });
+    if (fault !== "inventory") expect(result.status).toBe("failed");
+    inventoryUnavailable = false;
+    if (fault === "restart") {
+      sync.stop();
+      sync = new CloudProviderSync(options);
+      await sync.setSession({ baseUrl: "https://fixture.invalid", token: "fixture-den", orgId: "fixture-org" });
+    }
+    result = await sync.run("retry");
+  }
+  expect(["applied", "noop"]).toContain(result.status);
   expect(impacts).toHaveLength(2);
   expect(impacts[0]).toMatchObject({ workspaceId: "one", sessionIds: ["fixture_affected", "fixture_provider_removed"], inventoryComplete: true });
   expect(impacts[1]).toMatchObject({ workspaceId: "two", sessionIds: ["fixture_workspace_two"], inventoryComplete: true });
@@ -112,7 +143,13 @@ test("provider and model removals emit unarchived engine-bound sessions per work
   expect(result.affectedSessions).toEqual(impacts);
   expect(sync.status().affectedSessions).toEqual(impacts);
   expect(JSON.stringify(sessions)).toBe(initial);
-  expect(requests).toEqual([{ method: "GET", path: "/session", directory: "/synthetic/one" }, { method: "GET", path: "/session", directory: "/synthetic/two" }]);
+  expect(requests).toEqual(Array.from({ length: fault === "inventory" ? 2 : 1 }, () => [{ method: "GET", path: "/session", directory: "/synthetic/one" }, { method: "GET", path: "/session", directory: "/synthetic/two" }]).flat());
+  expect(notifications.list("one").every(isOpenworkModelRemovalNotification)).toBe(true);
+  expect(notifications.list("one").filter((event) => !isOpenworkModelRemovalNotification(event))).toEqual([]);
+  expect(isOpenworkModelRemovalNotification({ trigger: { modelRemoval: undefined } })).toBe(false);
+  expect(sync.status().modelRemovalPending).toBe(false);
+  expect(memory.workspace.get("__cloud_provider_ownership__")?.pendingModelRemovals).toEqual({});
+  if (fault !== "restart") expect(reloads).toBe(initialReloads + 1);
   await sync.run("noop");
   expect(impacts).toHaveLength(2);
   await sync.suspend();

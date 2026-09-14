@@ -22,9 +22,16 @@ export function createSessionModelActions<Workspace extends SessionModelWorkspac
   workspaces: Workspace[];
   catalog: (workspace: Workspace) => Promise<OpenworkCatalogModel[]>;
   sessions: (workspace: Workspace) => Promise<unknown>;
+  session?: (workspace: Workspace, sessionId: string) => Promise<unknown>;
+  held?: (workspace: Workspace, sessionId: string) => boolean;
 }) {
   const inventory = async (workspace: Workspace) => z.array(openworkModelSessionSchema).parse(await deps.sessions(workspace))
     .filter((session) => session.directory === workspace.path);
+  const readSession = async (workspace: Workspace, sessionId: string) => {
+    const session = openworkModelSessionSchema.parse(deps.session ? await deps.session(workspace, sessionId) : (await inventory(workspace)).find((session) => session.id === sessionId));
+    if (session.id !== sessionId || session.directory !== workspace.path) throw new Error("Session does not belong to this workspace.");
+    return session;
+  };
   const save = (workspaceId: string, sessions: Array<{ id: string; title?: string }>, model: OpenworkSessionModel, dryRun: boolean) => {
     if (!dryRun) useSessionModelStore.getState().setModels(sessions.map((session) => session.id), {
       model: { providerID: model.providerId, modelID: model.modelId }, variant: model.variant,
@@ -39,27 +46,38 @@ export function createSessionModelActions<Workspace extends SessionModelWorkspac
       if (!workspace) throw new Error("Workspace was not found.");
       const catalog = await deps.catalog(workspace);
       const selected = localSessionModel(args.sessionId) ?? args.model;
-      if (!selected) throw new Error("Select a model with session.set_model before sending.");
-      return { ok: true, workspaceId: workspace.id, sessionId: args.sessionId, model: resolveOpenworkModel(selected, catalog) };
+      return { ok: true, workspaceId: workspace.id, sessionId: args.sessionId, model: selected ? resolveOpenworkModel(selected, catalog) : null };
     },
     async setModel(rawArgs: unknown) {
       const args = openworkSessionSetModelArgsSchema.parse(rawArgs);
-      const matches = (await Promise.all(deps.workspaces.map(async (workspace) => ({
-        workspace, sessions: (await inventory(workspace)).filter((session) => session.id === args.sessionId),
-      })))).filter((entry) => entry.sessions.length > 0);
-      const match = matches[0];
-      if (matches.length !== 1 || !match) throw new Error("Session is missing or ambiguous.");
-      if (match.sessions.some((session) => (session.time?.archived ?? 0) > 0)) throw new Error("Archived sessions cannot be repicked.");
-      const catalog = await deps.catalog(match.workspace);
+      const previous = getSessionModelSelection(args.sessionId);
+      let workspace = args.workspaceId ? deps.workspaces.find((entry) => entry.id === args.workspaceId) : undefined;
+      if (args.workspaceId && !workspace) throw new Error("Workspace was not found; use its exact id.");
+      if (!args.workspaceId) {
+        const matches = (await Promise.all(deps.workspaces.map(async (workspace) => ({
+          workspace, sessions: (await inventory(workspace)).filter((session) => session.id === args.sessionId),
+        }))).catch(() => { throw new Error("Session inventory unavailable; pass exact workspaceId to avoid unrelated workspace reads."); })).filter((entry) => entry.sessions.length > 0);
+        if (matches.length !== 1) throw new Error("Session is missing or ambiguous; pass workspaceId.");
+        workspace = matches[0]?.workspace;
+      }
+      if (!workspace) throw new Error("Session workspace unavailable; pass workspaceId.");
+      const catalog = await deps.catalog(workspace);
+      const session = await readSession(workspace, args.sessionId);
+      if ((session.time?.archived ?? 0) > 0 || deps.held?.(workspace, args.sessionId)) throw new Error("Archived or held sessions cannot be repicked.");
+      if (getSessionModelSelection(args.sessionId) !== previous) throw new Error("Local selection changed; preview again before confirming.");
       const selector = args.model ?? { alias: args.alias };
-      return save(match.workspace.id, match.sessions, resolveOpenworkModel(selector, catalog), args.dryRun === true);
+      return save(workspace.id, [session], resolveOpenworkModel(selector, catalog), args.dryRun === true);
     },
     async rebindModel(rawArgs: unknown) {
       const args = openworkSessionRebindModelArgsSchema.parse(rawArgs);
       const workspace = deps.workspaces.find((entry) => entry.id === args.workspaceId);
       if (!workspace) throw new Error("Workspace was not found; use its exact id.");
+      const previous = useSessionModelStore.getState().bySessionId;
       const model = resolveOpenworkModel(args.to, await deps.catalog(workspace));
       const sessions = matchingOpenworkModelSessions(await inventory(workspace), args.from, localSessionModel);
+      if (sessions.some((session) => deps.held?.(workspace, session.id) || getSessionModelSelection(session.id) !== (previous[session.id] ?? null))) {
+        throw new Error("Session selection or archive state changed; preview again before confirming.");
+      }
       if (args.expectedSessionIds && (args.expectedSessionIds.length !== sessions.length || sessions.some((session) => !args.expectedSessionIds?.includes(session.id)))) {
         throw new Error("Matching sessions changed. Preview again before confirming.");
       }

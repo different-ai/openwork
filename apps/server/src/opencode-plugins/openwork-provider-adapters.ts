@@ -202,7 +202,7 @@ function sessionContribution(): OpenworkFeatureContribution {
       affordance({
         id: "session.set_model", kind: "command", title: "Choose a session model", provider, effects: writeEffects,
         description: "Save locally for next send, not an engine binding update. Provide model (models.list ids or alias/displayName and variant) or alias. dryRun previews without writing. No global default mutation or automatic send; repick to undo. Requires a renderer host.",
-        arguments: [argument("sessionId", "string", true, "Session to repick."), argument("model", "object", false, "Available model selector and optional variant (≤60 chars)."), argument("alias", "string", false, "Exact model display name, instead of model."), argument("dryRun", "boolean", false, "Preview without saving.")],
+        arguments: [argument("sessionId", "string", true, "Session to repick."), argument("workspaceId", "string", false, "Exact workspace id; avoids unrelated workspace inventory reads."), argument("model", "object", false, "Available model selector and optional variant (≤60 chars)."), argument("alias", "string", false, "Exact model display name, instead of model."), argument("dryRun", "boolean", false, "Preview without saving.")],
       }),
       affordance({
         id: "session.rebind_model", kind: "command", title: "Repick matching sessions", provider, effects: writeEffects,

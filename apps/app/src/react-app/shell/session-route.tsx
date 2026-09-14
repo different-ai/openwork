@@ -136,7 +136,7 @@ import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorV
 import { computeModelAvailability, createUnavailableConfirmationGate, type ModelAvailability } from "@/react-app/domains/session/surface/model-availability";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
-import { sessionModelSelectionFromEngine, getSessionModelSelection, useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
+import { effectiveSessionModelSelection, sessionCommandModelFields, sessionModelSelectionFromEngine, getSessionModelSelection, useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
 import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
 import { resolveWorkbenchPaneEndpoint } from "@/react-app/domains/session/chat/pane-runtime";
 import {
@@ -1089,7 +1089,7 @@ export function SessionRoute() {
   // the picker edits the global default (e.g. opened from the new-providers
   // toast). Composer "All models" carries the session id on the open event.
   const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
-  const modelPickerSelection = useSessionModelStore((state) =>
+  const modelPickerLocalSelection = useSessionModelStore((state) =>
     modelPickerSessionId ? state.bySessionId[modelPickerSessionId] ?? null : null,
   );
   useEffect(() => {
@@ -1188,7 +1188,10 @@ export function SessionRoute() {
     Object.values(sessionsByWorkspaceId).flat().find((session) => session.id === sessionId),
   ), [sessionsByWorkspaceId]);
   const activeEngineSelection = selectedSessionId ? engineModelSelection(selectedSessionId) : null;
-  const activeComposerModel = selectedSessionModelSelection?.model ?? activeEngineSelection?.model ?? local.prefs.defaultModel ?? null;
+  const fallbackModelSelection = local.prefs.defaultModel ? { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null } : null;
+  const modelPickerSelection = effectiveSessionModelSelection(modelPickerLocalSelection, modelPickerSessionId ? engineModelSelection(modelPickerSessionId) : null, fallbackModelSelection);
+  const activeComposerSelection = effectiveSessionModelSelection(selectedSessionModelSelection, activeEngineSelection, fallbackModelSelection);
+  const activeComposerModel = activeComposerSelection?.model ?? null;
   const activeComposerAvailability = resolveModelAvailability(activeComposerModel);
   const activeComposerTargetsSession = Boolean((selectedSessionModelSelection || activeEngineSelection) && selectedSessionId);
   const selectedModelUnavailableKey = activeComposerAvailability.status === "unavailable" && activeComposerModel
@@ -1568,6 +1571,7 @@ export function SessionRoute() {
                     messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
+                    ...sessionCommandModelFields(sendModel, sendVariant),
                   });
                   if (result.error) {
                     throw new Error(serializeSDKError(result.error));
@@ -1915,6 +1919,7 @@ export function SessionRoute() {
                     messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
+                    ...sessionCommandModelFields(sendModel, sendVariant),
                   });
                   if (result.error) throw new Error(serializeSDKError(result.error));
                   return;
@@ -2861,9 +2866,7 @@ export function SessionRoute() {
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
   );
 
-  const paletteSessionModelSelection = selectedSessionId
-    ? getSessionModelSelection(selectedSessionId)
-    : null;
+  const paletteSessionModelSelection = activeComposerSelection;
   const paletteSelectedModel = paletteSessionModelSelection?.model
     ?? local.prefs.defaultModel
     ?? undefined;

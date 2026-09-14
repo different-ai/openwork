@@ -11,6 +11,7 @@ import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider"
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { filterEntitledModelOptions } from "../../connections/provider-auth/provider-policy";
 import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
+import { sessionWorkHeld } from "../../../../app/lib/opencode-interruption";
 import { createSessionModelActions } from "./session-model-actions";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
@@ -123,6 +124,16 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const modelActions = useMemo(() => createSessionModelActions({
     workspaces,
     catalog: availableWorkspaceModels,
+    held: (workspace, sessionId) => {
+      const endpoint = endpointForWorkspace(workspace);
+      return !endpoint || sessionWorkHeld(endpoint.opencodeBaseUrl, sessionId);
+    },
+    session: async (workspace, sessionId) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) throw new Error("Workspace runtime is not connected");
+      const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+      return unwrap(await client.session.get({ directory: workspace.path, sessionID: sessionId }));
+    },
     sessions: async (workspace) => {
       const endpoint = endpointForWorkspace(workspace);
       if (!endpoint) throw new Error("Workspace runtime is not connected");
@@ -136,7 +147,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     id: "session.set_model", label: "Choose a session model",
     description: "Save a local model and variant for next send. No engine binding or global default changes. dryRun previews without saving; repick to undo.",
     effects: { data: "write", ui: "none", external: false }, sideEffect: "mutation",
-    args: [{ name: "sessionId", type: "string", required: true }, { name: "model", type: "object" }, { name: "alias", type: "string" }, { name: "dryRun", type: "boolean" }],
+    args: [{ name: "sessionId", type: "string", required: true }, { name: "workspaceId", type: "string" }, { name: "model", type: "object" }, { name: "alias", type: "string" }, { name: "dryRun", type: "boolean" }],
     execute: modelActions.setModel,
   }), [modelActions]));
   useControlAction(useMemo<OpenworkControlAction>(() => ({

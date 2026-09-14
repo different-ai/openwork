@@ -4,7 +4,10 @@ import { test } from "@openwork/testkit";
 import { openworkModelSessionSchema, openworkSessionModelSchema, suggestOpenworkReplacement } from "@openwork/types/openwork-affordance";
 import { OpenWorkExtensionsPreview } from "../../apps/server/src/opencode-plugins/openwork-extensions-preview";
 import { createSessionModelActions } from "../../apps/app/src/react-app/domains/session/control/session-model-actions";
-import { useSessionModelStore } from "../../apps/app/src/react-app/domains/session/surface/session-model-store";
+import { preflightQueuedSessionModel } from "../../apps/app/src/react-app/domains/session/sync/queued-send-context";
+import { createClient } from "../../apps/app/src/app/lib/opencode";
+import { sendSessionCommand } from "../../apps/app/src/app/lib/opencode-interruption";
+import { effectiveSessionModelSelection, sessionCommandModelFields, useSessionModelStore } from "../../apps/app/src/react-app/domains/session/surface/session-model-store";
 
 const old = { providerId: "provider_fixture", modelId: "removed_fixture", variant: "high", displayName: "Fixture Previous", providerName: "Fixture Family" };
 const replacement = { providerId: "provider_fixture", modelId: "available_fixture", displayName: "Fixture Next", providerName: "Fixture Family" };
@@ -22,8 +25,8 @@ function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected fixture object");
   return Object.fromEntries(Object.entries(value));
 }
-function session(id: string, modelId = old.modelId, archived = 0, directory = "/synthetic/one") {
-  return { id, title: id, directory, time: { archived }, model: { providerID: old.providerId, id: modelId, variant: "high" } };
+function session(id: string, modelId: string | null = old.modelId, archived = 0, directory = "/synthetic/one") {
+  return { id, title: id, directory, time: { archived }, ...(modelId ? { model: { providerID: old.providerId, id: modelId, variant: "high" } } : {}) };
 }
 async function fixture() {
   const storage = new Map<string, string>();
@@ -33,14 +36,20 @@ async function fixture() {
     setItem: (key: string, value: string) => { storageWrites.push(key); storage.set(key, value); },
   } });
   useSessionModelStore.setState({ bySessionId: {} });
-  const sessions = [session("session_this"), session("session_other"), session("session_archived", old.modelId, 1), session("session_restored", old.modelId, 0), session("session_other_model", replacement.modelId), session("session_other_workspace", old.modelId, 0, "/synthetic/two")];
+  const sessions = [session("session_this"), session("session_other"), session("session_archived", old.modelId, 1), session("session_restored", old.modelId, 0), session("session_other_model", replacement.modelId), session("session_other_workspace", old.modelId, 0, "/synthetic/two"), session("session_fresh", null)];
   const catalog = [replacement, alternate];
   let hostFailure: "none" | "missing" | "wrong_workspace" | "wrong_session" = "none";
   let catalogFailure = false;
   const requests: Array<{ path: string; method: string; body: unknown }> = [];
+  const offline = new Set<string>();
+  const held = new Set<string>();
+  const reads: Array<{ workspaceId: string; sessionId?: string }> = [];
+  let beforeCatalog = async () => {};
   const actions = createSessionModelActions({ workspaces,
-    catalog: async () => { if (catalogFailure) throw new Error("Fixture catalog unavailable"); return catalog; },
-    sessions: async () => sessions,
+    catalog: async () => { await beforeCatalog(); if (catalogFailure) throw new Error("Fixture catalog unavailable"); return catalog; },
+    sessions: async (workspace) => { reads.push({ workspaceId: workspace.id }); if (offline.has(workspace.id)) throw new Error("Offline inventory"); return sessions; },
+    session: async (workspace, sessionId) => { reads.push({ workspaceId: workspace.id, sessionId }); return sessions.find((session) => session.id === sessionId); },
+    held: (_workspace, id) => held.has(id),
   });
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -68,7 +77,7 @@ async function fixture() {
         return json(200, { ok: false, id: input.id, code: "failed", error: "Fixture selection unavailable" });
       }
     }
-    const matched = /^\/workspace\/([^/]+)\/opencode\/session\/([^/]+)(\/prompt_async)?$/.exec(url.pathname);
+    const matched = /^\/workspace\/([^/]+)\/opencode\/session\/([^/]+)(\/(?:prompt_async|command))?$/.exec(url.pathname);
     const workspace = workspaces.find((entry) => entry.id === matched?.[1]);
     const selected = sessions.find((entry) => entry.id === matched?.[2] && entry.directory === workspace?.path);
     if (selected && method === "GET") return json(200, selected);
@@ -82,7 +91,12 @@ async function fixture() {
   vi.stubEnv("OPENWORK_SERVER_URL", `http://127.0.0.1:${address.port}`);
   vi.stubEnv("OPENWORK_SERVER_TOKEN", "fixture-token");
   const plugin = await OpenWorkExtensionsPreview({ directory: "/synthetic/one" });
-  return { actions, storage, storageWrites, sessions, requests, catalog,
+  const engineClient = createClient(`http://127.0.0.1:${address.port}/workspace/workspace_fixture_one/opencode`, "/synthetic/one", { mode: "openwork", token: "fixture-token" });
+  return { actions, storage, storageWrites, sessions, requests, catalog, offline, held, reads,
+    setBeforeCatalog: (hook: () => Promise<void>) => { beforeCatalog = hook; },
+    command: (model: Parameters<typeof sessionCommandModelFields>[0], variant: string | null) => sendSessionCommand(`http://127.0.0.1:${address.port}/workspace/workspace_fixture_one/opencode`, engineClient, {
+      sessionID: "session_this", messageID: "msg_fixture_command", command: "fixture", arguments: "synthetic", ...sessionCommandModelFields(model, variant),
+    }),
     setHostFailure: (value: typeof hostFailure) => { hostFailure = value; },
     setCatalogFailure: (value: boolean) => { catalogFailure = value; },
     writes: () => requests.filter((entry) => entry.method === "POST" && entry.path !== "/experimental/ui-control/request"),
@@ -148,19 +162,98 @@ test("headless stale sends write zero prompts; an explicit repick applies canoni
   evidence.recordAssertionEvidence("Stale headless send is rejected before prompt writes", "The real facade rejected missing model, host, catalog and mismatched identities with model_unavailable; only the two explicit sends after local repick wrote canonical model/effort payloads and returned accepted:true.", true);
 });
 
-test("invalid targets, changed previews, unavailable replacements and capacity errors cannot partially save", async () => {
+test("invalid targets, changed previews and unavailable replacements cannot partially save", async () => {
   const f = await fixture();
   await expect(f.actions.setModel({ sessionId: "session_archived", model: replacement })).rejects.toThrow("Archived");
   await expect(f.actions.setModel({ sessionId: "session_this", model: old })).rejects.toThrow("Unavailable");
   await expect(f.actions.rebindModel({ workspaceId: "missing", from: old, to: replacement })).rejects.toThrow("Workspace");
   await expect(f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: replacement, expectedSessionIds: ["session_this"] })).rejects.toThrow("changed");
   expect(f.storageWrites).toEqual([]);
-  const entries = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`fixture_remembered_${index}`, { model: { providerID: alternate.providerId, modelID: alternate.modelId }, variant: "high" }]));
-  useSessionModelStore.setState({ bySessionId: entries });
-  await expect(f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: replacement })).rejects.toThrow("full");
-  expect(useSessionModelStore.getState().bySessionId).toBe(entries);
-  expect(f.storageWrites).toEqual([]);
   expect(f.writes()).toEqual([]);
+});
+
+test("healthy fresh sessions preserve model-free sending, never substituting defaults for stale bindings", async () => {
+  const f = await fixture();
+  expect(await f.execute("session.send", { workspaceId: "workspace_fixture_one", sessionId: "session_fresh", text: "Fresh prompt" })).toMatchObject({ ok: true, result: { accepted: true } });
+  expect(f.writes()).toHaveLength(1);
+  expect(f.writes()[0]?.body).not.toHaveProperty("model");
+  expect(f.writes()[0]?.body).not.toHaveProperty("variant");
+  expect(await f.execute("session.send", { workspaceId: "workspace_fixture_one", sessionId: "session_this", text: "Must not send" })).toMatchObject({ ok: false, code: "model_unavailable" });
+  expect(f.writes()).toHaveLength(1);
+});
+
+test("exact workspace repick bypasses unrelated offline inventories and rejects foreign targets", async () => {
+  const f = await fixture();
+  f.offline.add("workspace_fixture_two");
+  expect(await f.execute("session.set_model", { workspaceId: "workspace_fixture_one", sessionId: "session_this", alias: replacement.displayName })).toMatchObject({ ok: true, result: { savedLocally: true } });
+  expect(f.reads).toEqual([{ workspaceId: "workspace_fixture_one", sessionId: "session_this" }]);
+  const before = f.storageWrites.length;
+  await expect(f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_other_workspace", model: replacement })).rejects.toThrow("belong");
+  expect(f.storageWrites).toHaveLength(before);
+});
+
+test("catalog waits cannot race an archive, hold or newer local selection into a repick", async () => {
+  const f = await fixture();
+  const target = f.sessions.find((session) => session.id === "session_this");
+  if (!target) throw new Error("Fixture target missing");
+  for (const race of ["archive", "hold", "repick"]) {
+    let release = () => {};
+    let entered = () => {};
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    f.setBeforeCatalog(async () => { entered(); await wait; });
+    const pending = f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement });
+    await started;
+    if (race === "archive") target.time.archived = 1;
+    if (race === "hold") f.held.add(target.id);
+    if (race === "repick") useSessionModelStore.getState().setModel(target.id, { providerID: alternate.providerId, modelID: alternate.modelId }, "high");
+    const before = f.storageWrites.length;
+    release();
+    await expect(pending).rejects.toThrow(race === "repick" ? "selection changed" : "Archived or held");
+    expect(f.storageWrites).toHaveLength(before);
+    target.time.archived = 0;
+    f.held.clear();
+  }
+  expect(useSessionModelStore.getState().bySessionId.session_this).toEqual({ model: { providerID: alternate.providerId, modelID: alternate.modelId }, variant: "high" });
+  expect(f.writes()).toEqual([]);
+});
+
+test("confirmed pending choices survive ordinary selections beyond the old 200-entry cap", async () => {
+  const f = await fixture();
+  await f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: { ...replacement, variant: "low" } });
+  const before = useSessionModelStore.getState().bySessionId;
+  for (let index = 0; index < 250; index++) useSessionModelStore.getState().setModel(`fixture_new_${index}`, { providerID: alternate.providerId, modelID: alternate.modelId });
+  for (const [id, choice] of Object.entries(before)) expect(useSessionModelStore.getState().bySessionId[id]).toBe(choice);
+  expect(JSON.parse(f.storage.get("openwork.sessionModels.v1") ?? "{}")).toMatchObject(before);
+  expect(f.writes()).toEqual([]);
+});
+
+test("queue catalog checks use renderer identity, not a remote runtime's colliding workspace id", async () => {
+  const calls: unknown[] = [];
+  const context = { workspaceId: "ws_remote_runtime", rendererWorkspaceId: "rem_fixture" };
+  const query = async (request: { args?: Record<string, unknown> }) => {
+    calls.push(request);
+    expect(request.args?.workspaceId).toBe("rem_fixture");
+    return { ok: true, id: "session.model_preflight", effects: { data: "read", ui: "none", external: false }, result: { ok: true, workspaceId: "rem_fixture", sessionId: "session_fixture", model: { ...replacement, variant: "low" } } };
+  };
+  expect(await preflightQueuedSessionModel(context, "session_fixture", old, query)).toMatchObject({ modelId: replacement.modelId });
+  await expect(preflightQueuedSessionModel({}, "session_fixture", old, query)).rejects.toThrow("Renderer workspace");
+  expect(calls).toHaveLength(1);
+  await expect(preflightQueuedSessionModel(context, "session_fixture", old, async () => ({ ok: true, id: "session.model_preflight", effects: { data: "read", ui: "none", external: false }, result: { ok: true, workspaceId: "ws_remote_runtime", sessionId: "session_fixture", model: { ...replacement, variant: null } } }))).rejects.toThrow("identity mismatch");
+});
+
+test("effective picker selection and slash commands honor engine binding, local repick and effort", async () => {
+  const f = await fixture();
+  const engine = { model: { providerID: old.providerId, modelID: old.modelId }, variant: "high" };
+  const fallback = { model: { providerID: alternate.providerId, modelID: alternate.modelId }, variant: null };
+  expect(effectiveSessionModelSelection(null, engine, fallback)).toBe(engine);
+  await f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: { ...replacement, variant: "low" } });
+  const selected = effectiveSessionModelSelection(useSessionModelStore.getState().bySessionId.session_this, engine, fallback);
+  if (!selected) throw new Error("Selection missing");
+  await f.command(selected.model, selected.variant);
+  expect(f.writes()[0]?.body).toMatchObject({ model: `${replacement.providerId}/${replacement.modelId}`, variant: "low", command: "fixture" });
+  expect(effectiveSessionModelSelection(null, null, fallback)).toBe(fallback);
+  expect(sessionCommandModelFields(selected.model, null)).toEqual({ model: `${replacement.providerId}/${replacement.modelId}`, variant: "default" });
 });
 
 test("same-id effort changes and bulk selections publish model/variant atomically", async () => {

@@ -58,6 +58,8 @@ async function mountCatalogActions(extraProviders: Array<{ id: string; name: str
     fetch(request) {
       const url = new URL(request.url);
       requests.push({ path: url.pathname, method: request.method, directory: url.searchParams.get("directory") });
+      const target = /^\/workspace\/([^/]+)\/opencode\/session\/(ses_[^/]+)$/.exec(url.pathname);
+      if (target) return NativeResponse.json({ id: target[2], directory: `/tmp/${target[1]}`, time: { archived: 0 }, model: { providerID: "provider", id: "removed", variant: "high" } });
       const sessionWorkspace = /^\/workspace\/([^/]+)\/opencode\/session$/.exec(url.pathname)?.[1];
       if (sessionWorkspace) return NativeResponse.json([
         { id: `ses_${sessionWorkspace}`, title: "Synthetic session", directory: `/tmp/${sessionWorkspace}`, time: { archived: 0 }, model: { providerID: "provider", id: "removed", variant: "high" } },

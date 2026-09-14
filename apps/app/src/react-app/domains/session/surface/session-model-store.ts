@@ -20,7 +20,6 @@ export type SessionModelSelection = {
 };
 
 const STORAGE_KEY = "openwork.sessionModels.v1";
-const MAX_REMEMBERED_SESSIONS = 200;
 
 function readStoredSelections(): Record<string, SessionModelSelection> {
   if (typeof window === "undefined") return {};
@@ -58,17 +57,6 @@ function writeStoredSelections(bySessionId: Record<string, SessionModelSelection
   }
 }
 
-/** Keep the newest entries (object insertion order) under the cap. */
-function capSelections(bySessionId: Record<string, SessionModelSelection>) {
-  const keys = Object.keys(bySessionId);
-  if (keys.length <= MAX_REMEMBERED_SESSIONS) return bySessionId;
-  const trimmed: Record<string, SessionModelSelection> = {};
-  for (const key of keys.slice(keys.length - MAX_REMEMBERED_SESSIONS)) {
-    trimmed[key] = bySessionId[key];
-  }
-  return trimmed;
-}
-
 type SessionModelStore = {
   bySessionId: Record<string, SessionModelSelection>;
   /** Remember a session's model. No-op when the model is unchanged. */
@@ -87,16 +75,13 @@ export const useSessionModelStore = create<SessionModelStore>((set) => ({
     const nextVariant = variant === undefined && sameModel ? previous.variant : variant ?? null;
     if (sameModel && previous.variant === nextVariant) return state;
     const { [sessionId]: _replaced, ...rest } = state.bySessionId;
-    const bySessionId = capSelections({ ...rest, [sessionId]: { model, variant: nextVariant } });
+    const bySessionId = { ...rest, [sessionId]: { model, variant: nextVariant } };
     writeStoredSelections(bySessionId);
     return { bySessionId };
   }),
   setModels: (sessionIds, selection) => set((state) => {
     const bySessionId = { ...state.bySessionId };
     for (const sessionId of sessionIds) bySessionId[sessionId] = selection;
-    if (Object.keys(bySessionId).length > MAX_REMEMBERED_SESSIONS) {
-      throw new Error("Local model memory is full; choose a smaller scope. No selections changed.");
-    }
     if (typeof window === "undefined") throw new Error("Local model storage is unavailable.");
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bySessionId));
     return { bySessionId };
@@ -112,6 +97,14 @@ export const useSessionModelStore = create<SessionModelStore>((set) => ({
 
 export function getSessionModelSelection(sessionId: string): SessionModelSelection | null {
   return useSessionModelStore.getState().bySessionId[sessionId] ?? null;
+}
+
+export function effectiveSessionModelSelection(local: SessionModelSelection | null | undefined, engine: SessionModelSelection | null | undefined, fallback: SessionModelSelection | null = null): SessionModelSelection | null {
+  return local ?? engine ?? fallback;
+}
+
+export function sessionCommandModelFields(model: ModelRef | null | undefined, variant: string | null | undefined) {
+  return model ? { model: `${model.providerID}/${model.modelID}`, variant: variant ?? "default" } : {};
 }
 
 export function sessionModelSelectionFromEngine(session: unknown): SessionModelSelection | null {
@@ -161,7 +154,7 @@ export function useSessionModelSelection(input: UseSessionModelSelectionInput): 
     onFallbackVariantChange,
   } = input;
   const localSelection = useSessionModelStore((state) => state.bySessionId[sessionId] ?? null);
-  const selection = localSelection ?? input.engineSelection;
+  const selection = effectiveSessionModelSelection(localSelection, input.engineSelection);
 
   return useMemo(() => {
     const setModel = (model: ModelRef, variant?: string | null) =>

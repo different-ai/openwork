@@ -84,6 +84,10 @@ export const openworkModelRemovalImpactSchema = z.object({
   inventoryComplete: z.boolean(),
 })
 
+export function isOpenworkModelRemovalNotification(event: { trigger?: { modelRemoval?: unknown } }) {
+  return openworkModelRemovalImpactSchema.safeParse(event.trigger?.modelRemoval).success
+}
+
 export const openworkModelSelectorSchema = z.object({
   providerId: openworkSessionModelSchema.shape.providerId.optional(),
   modelId: openworkSessionModelSchema.shape.modelId.optional(),
@@ -105,6 +109,7 @@ export const openworkModelSelectorSchema = z.object({
 
 export const openworkSessionSetModelArgsSchema = z.object({
   sessionId: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1).optional(),
   model: openworkModelSelectorSchema.optional(),
   alias: z.string().trim().min(1).optional(),
   dryRun: z.boolean().optional(),
@@ -128,7 +133,7 @@ export const openworkSessionModelPreflightResultSchema = z.object({
   ok: z.literal(true),
   workspaceId: z.string(),
   sessionId: z.string(),
-  model: openworkSessionModelSchema,
+  model: openworkSessionModelSchema.nullable(),
 })
 
 export const openworkModelSessionSchema = z.object({

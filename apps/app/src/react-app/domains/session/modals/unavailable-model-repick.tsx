@@ -45,7 +45,7 @@ export function UnavailableModelRepick(props: {
       if (all) {
         await props.modelActions.rebindModel({ workspaceId: props.workspaceId, from: props.from, to: { ...choice, variant: null }, expectedSessionIds: preview.data.sessions.map((session) => session.sessionId) });
       } else {
-        await props.modelActions.setModel({ sessionId: props.sessionId, model: { ...choice, variant: null } });
+        await props.modelActions.setModel({ sessionId: props.sessionId, workspaceId: props.workspaceId, model: { ...choice, variant: null } });
       }
       setSaved(true);
     } catch {
