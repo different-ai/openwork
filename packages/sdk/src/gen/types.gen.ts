@@ -12235,6 +12235,14 @@ export type GetV1InferenceProvidersUsageResponses = {
       to: string;
       timezone: "UTC";
       emptyReason?: "no_teams";
+      requestCount: number;
+      uncountableRequests: {
+        ok: number | null;
+        upstream_error: number | null;
+        upstream_unreachable: number | null;
+        client_aborted: number | null;
+        rejected: number | null;
+      };
       totalTokens: number;
       unreportedRequests: number | null;
       totalCostMicroUsd: number;
