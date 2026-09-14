@@ -767,6 +767,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const cloudProviderSync = new CloudProviderSync({
     config,
     env,
+    onModelsRemoved: (impact) => {
+      reloadEvents.record(impact.workspaceId, "config", { type: "config", action: "removed", name: "models", modelRemoval: impact });
+    },
     reloadEngine: () => reloadOpencodeEngine(
       config,
       resolveEngineRuntimeWorkspace(config),

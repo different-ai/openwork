@@ -2,7 +2,7 @@
 import { useCallback, useMemo } from "react";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
-import { openworkCatalogModels, openworkModelsListArgsSchema, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
+import { openworkCatalogModels, openworkModelsListArgsSchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
@@ -11,6 +11,7 @@ import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider"
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { filterEntitledModelOptions } from "../../connections/provider-auth/provider-policy";
 import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
+import { createSessionModelActions, localSessionModel } from "./session-model-actions";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
@@ -112,6 +113,52 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
     return openworkCatalogModels(unwrap(await client.provider.list({ directory: workspace.path })));
   }, [endpointForWorkspace]);
+  const availableWorkspaceModels = useCallback(async (workspace: SessionControlWorkspace) => {
+    const options = (await workspaceModels(workspace)).map((model) => ({ ...model, providerID: model.providerId }));
+    return filterEntitledModelOptions(filterCloudManagedModelOptions(options, isSignedIn), {
+      restrictToCloud: checkDesktopRestriction({ restriction: "allowCustomProviders" }),
+      checkRestriction: checkDesktopRestriction,
+    }).map(({ providerID, ...model }) => ({ ...model, available: true }));
+  }, [workspaceModels, isSignedIn, checkDesktopRestriction]);
+  const modelActions = useMemo(() => createSessionModelActions({
+    workspaces,
+    catalog: availableWorkspaceModels,
+    sessions: async (workspace) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) throw new Error("Workspace runtime is not connected");
+      const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+      return unwrap(await client.session.list({ directory: workspace.path }));
+    },
+  }), [workspaces, availableWorkspaceModels, endpointForWorkspace]);
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "session.set_model", label: "Choose a session model",
+    description: "Save a local model and variant for next send. No engine binding or global default changes. dryRun previews without saving; repick to undo.",
+    effects: { data: "write", ui: "none", external: false }, sideEffect: "mutation",
+    args: [{ name: "sessionId", type: "string", required: true }, { name: "model", type: "object" }, { name: "alias", type: "string" }, { name: "dryRun", type: "boolean" }],
+    execute: modelActions.setModel,
+  }), [modelActions]));
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "session.rebind_model", label: "Repick matching sessions",
+    description: "Save locally for next send on all unarchived sessions in this workspace whose effective binding matches from (local choice wins). dryRun previews the exact set. No engine binding or global default changes; repick to undo.",
+    effects: { data: "write", ui: "none", external: false }, sideEffect: "mutation",
+    args: [{ name: "workspaceId", type: "string", required: true }, { name: "from", type: "object", required: true }, { name: "to", type: "object", required: true }, { name: "dryRun", type: "boolean" }],
+    execute: modelActions.rebindModel,
+  }), [modelActions]));
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "session.model_preflight", label: "Check next-send model", kind: "query",
+    description: "Validate the local override, otherwise the supplied engine binding, against the effective workspace catalog. Does not send or change selection.",
+    effects: { data: "read", ui: "none", external: false }, sideEffect: "none",
+    args: [{ name: "workspaceId", type: "string", required: true }, { name: "sessionId", type: "string", required: true }, { name: "model", type: "object", required: true }],
+    execute: async (rawArgs) => {
+      const args = openworkSessionModelPreflightArgsSchema.parse(rawArgs);
+      const workspace = workspaces.find((entry) => entry.id === args.workspaceId);
+      if (!workspace) throw new Error("Workspace was not found.");
+      const catalog = await availableWorkspaceModels(workspace);
+      const selected = localSessionModel(args.sessionId) ?? args.model;
+      if (!selected) throw new Error("Select a model with session.set_model before sending.");
+      return { ok: true, workspaceId: workspace.id, sessionId: args.sessionId, model: resolveOpenworkModel(selected, catalog) };
+    },
+  }), [workspaces, availableWorkspaceModels]));
   useControlAction(useMemo<OpenworkControlAction>(() => ({
     id: "models.list",
     label: "List workspace models",
@@ -125,14 +172,10 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       const matches = workspaces.filter((workspace) => workspace.id === workspaceId || workspaceLabel(workspace).toLowerCase() === workspaceId.toLowerCase());
       const workspace = matches[0];
       if (matches.length !== 1 || !workspace) throw new Error("Workspace is missing or ambiguous; pass its exact id.");
-      const options = (await workspaceModels(workspace)).map((model) => ({ ...model, providerID: model.providerId }));
-      const models = filterEntitledModelOptions(filterCloudManagedModelOptions(options, isSignedIn), {
-        restrictToCloud: checkDesktopRestriction({ restriction: "allowCustomProviders" }),
-        checkRestriction: checkDesktopRestriction,
-      }).map(({ providerID, ...model }) => ({ ...model, available: true }));
+      const models = await availableWorkspaceModels(workspace);
       return { ok: true, workspaceId: workspace.id, models };
     },
-  }), [checkDesktopRestriction, isSignedIn, workspaceModels, workspaces]));
+  }), [availableWorkspaceModels, workspaces]));
 
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
@@ -459,4 +502,5 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     },
   }), [resolveWorkspaceId]);
   useControlAction(groupListControlAction);
+  return { modelActions, availableWorkspaceModels };
 }

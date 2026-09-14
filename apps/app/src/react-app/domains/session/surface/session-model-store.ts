@@ -72,6 +72,7 @@ type SessionModelStore = {
   bySessionId: Record<string, SessionModelSelection>;
   /** Remember a session's model. No-op when the model is unchanged. */
   setModel: (sessionId: string, model: ModelRef, variant?: string | null) => void;
+  setModels: (sessionIds: string[], selection: SessionModelSelection) => void;
   setVariant: (sessionId: string, variant: string | null) => void;
 };
 
@@ -82,10 +83,20 @@ export const useSessionModelStore = create<SessionModelStore>((set) => ({
     const sameModel = previous
       && previous.model.providerID === model.providerID
       && previous.model.modelID === model.modelID;
-    if (sameModel) return state;
+    if (sameModel && previous.variant === variant) return state;
     const { [sessionId]: _replaced, ...rest } = state.bySessionId;
     const bySessionId = capSelections({ ...rest, [sessionId]: { model, variant } });
     writeStoredSelections(bySessionId);
+    return { bySessionId };
+  }),
+  setModels: (sessionIds, selection) => set((state) => {
+    const bySessionId = { ...state.bySessionId };
+    for (const sessionId of sessionIds) bySessionId[sessionId] = selection;
+    if (Object.keys(bySessionId).length > MAX_REMEMBERED_SESSIONS) {
+      throw new Error("Local model memory is full; choose a smaller scope. No selections changed.");
+    }
+    if (typeof window === "undefined") throw new Error("Local model storage is unavailable.");
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bySessionId));
     return { bySessionId };
   }),
   setVariant: (sessionId, variant) => set((state) => {

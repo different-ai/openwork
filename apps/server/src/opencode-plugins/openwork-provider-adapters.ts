@@ -1,6 +1,8 @@
 import {
   openworkModelSelectorSchema,
   openworkModelsListArgsSchema,
+  openworkSessionSetModelArgsSchema,
+  openworkSessionRebindModelArgsSchema,
   type OpenworkAffordanceArgument,
   type OpenworkAffordanceDescriptor,
   type OpenworkAffordanceEffects,
@@ -68,6 +70,8 @@ export const sessionAffordanceArgsSchemas = {
   "session.read": sessionReadArgsSchema,
   "session.create": sessionCreateArgsSchema,
   "session.send": sessionSendArgsSchema,
+  "session.set_model": openworkSessionSetModelArgsSchema,
+  "session.rebind_model": openworkSessionRebindModelArgsSchema,
 };
 
 export type ConnectSkillDescriptor = {
@@ -194,6 +198,16 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("model", "object", false, "Optional providerId/modelId or alias/displayName (exact case-insensitive name, optional providerId qualifier) and variant (reasoning effort, ≤60 chars) for every created session. Omit to use the engine default."),
         ],
         effects: writeEffects,
+      }),
+      affordance({
+        id: "session.set_model", kind: "command", title: "Choose a session model", provider, effects: writeEffects,
+        description: "Save locally for next send, not an engine binding update. Provide model (models.list ids or alias/displayName and variant) or alias. dryRun previews without writing. No global default mutation or automatic send; repick to undo. Requires a renderer host.",
+        arguments: [argument("sessionId", "string", true, "Session to repick."), argument("model", "object", false, "Available model selector and optional variant."), argument("alias", "string", false, "Exact model display name, instead of model."), argument("dryRun", "boolean", false, "Preview without saving.")],
+      }),
+      affordance({
+        id: "session.rebind_model", kind: "command", title: "Repick matching sessions", provider, effects: writeEffects,
+        description: "Preview with dryRun:true, then explicitly save a local choice for next send on all unarchived sessions in one workspace using from. Matches effective bindings: local override wins over engine. Never changes other models, archives, workspaces, global default or engine bindings. Requires a renderer host; repick to undo.",
+        arguments: [argument("workspaceId", "string", true, "Exact workspace id."), argument("from", "object", true, "Exact providerId/modelId to replace."), argument("to", "object", true, "Available model selector and optional variant."), argument("dryRun", "boolean", false, "Preview exact session set without saving.")],
       }),
       affordance({
         id: "session.send",
