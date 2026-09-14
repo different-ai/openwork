@@ -1,3 +1,4 @@
+import { openworkSessionModelPreflightResultSchema } from "@openwork/types/openwork-affordance";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { markTaskRunStart } from "@/app/lib/analytics";
@@ -24,7 +25,7 @@ import {
   nextObservationProbeAt,
   subscribeQueuedDrain,
 } from "../surface/queued-drain-machine";
-import { getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
+import { sessionModelSelectionFromEngine, getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
 import { draftToParts } from "./draft-parts";
 import { buildOpenworkSessionSystemContext } from "./env-context";
 import {
@@ -105,8 +106,9 @@ async function performQueuedDraftSend(
   if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
 
   const sessionModelSelection = getSessionModelSelection(sessionId);
-  const sendModel = sessionModelSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
-  const sendVariant = sessionModelSelection ? sessionModelSelection.variant : context.variant;
+  const engineSelection = sessionModelSelectionFromEngine(session);
+  let sendModel = sessionModelSelection?.model ?? engineSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
+  let sendVariant = sessionModelSelection ? sessionModelSelection.variant : engineSelection ? engineSelection.variant : context.variant;
   const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
   const opencodeClient = createEngineClient(
     context.opencodeBaseUrl,
@@ -118,6 +120,20 @@ async function performQueuedDraftSend(
     await shellInSession(opencodeClient, sessionId, text, { messageID: draft.messageId });
     return "sent";
   }
+
+  const checked = await window.__openworkControl?.query({
+    id: "session.model_preflight", args: {
+      workspaceId: context.workspaceId, sessionId,
+      model: sendModel ? { providerId: sendModel.providerID, modelId: sendModel.modelID, variant: sendVariant ?? null } : null,
+    },
+  });
+  const preflight = checked?.ok ? openworkSessionModelPreflightResultSchema.safeParse(checked.result) : null;
+  if (!preflight?.success || preflight.data.workspaceId !== context.workspaceId || preflight.data.sessionId !== sessionId) {
+    throw new Error("Selected model is unavailable. Choose another model before sending.");
+  }
+  sendModel = { providerID: preflight.data.model.providerId, modelID: preflight.data.model.modelId };
+  sendVariant = preflight.data.model.variant;
+  assertQueuedSendCurrent(sessionId, generation);
 
   if (draft.command) {
     const result = await sendSessionCommand(context.opencodeBaseUrl, opencodeClient, {
@@ -156,7 +172,7 @@ async function performQueuedDraftSend(
     throw new Error(serializeSDKError(result.error));
   }
   assertQueuedSendCurrent(sessionId, generation);
-  if (sendModel) {
+  if (sendModel && getSessionModelSelection(sessionId) === sessionModelSelection) {
     useSessionModelStore.getState().setModel(sessionId, sendModel, sendVariant ?? null);
   }
   return "sent";

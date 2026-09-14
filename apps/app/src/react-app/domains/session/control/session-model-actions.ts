@@ -50,6 +50,9 @@ export function createSessionModelActions<Workspace extends SessionModelWorkspac
       if (!workspace) throw new Error("Workspace was not found; use its exact id.");
       const model = resolveOpenworkModel(args.to, await deps.catalog(workspace));
       const sessions = matchingOpenworkModelSessions(await inventory(workspace), args.from, localSessionModel);
+      if (args.expectedSessionIds && (args.expectedSessionIds.length !== sessions.length || sessions.some((session) => !args.expectedSessionIds?.includes(session.id)))) {
+        throw new Error("Matching sessions changed. Preview again before confirming.");
+      }
       return save(workspace.id, sessions, model, args.dryRun === true);
     },
   };

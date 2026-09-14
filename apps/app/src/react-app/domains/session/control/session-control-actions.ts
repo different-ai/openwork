@@ -127,7 +127,9 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       const endpoint = endpointForWorkspace(workspace);
       if (!endpoint) throw new Error("Workspace runtime is not connected");
       const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
-      return unwrap(await client.session.list({ directory: workspace.path }));
+      const sessions = unwrap(await client.session.list({ directory: workspace.path, limit: 10_000 }));
+      if (sessions.length >= 10_000) throw new Error("Session inventory is incomplete; no selections changed.");
+      return sessions;
     },
   }), [workspaces, availableWorkspaceModels, endpointForWorkspace]);
   useControlAction(useMemo<OpenworkControlAction>(() => ({

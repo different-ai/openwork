@@ -4,6 +4,7 @@
 // used. Sessions without a remembered choice fall back to the global
 // default model preference.
 import { useMemo } from "react";
+import { openworkModelSessionSchema } from "@openwork/types/openwork-affordance";
 import { create } from "zustand";
 
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
@@ -112,8 +113,15 @@ export function getSessionModelSelection(sessionId: string): SessionModelSelecti
   return useSessionModelStore.getState().bySessionId[sessionId] ?? null;
 }
 
+export function sessionModelSelectionFromEngine(session: unknown): SessionModelSelection | null {
+  const parsed = openworkModelSessionSchema.safeParse(session);
+  const model = parsed.success ? parsed.data.model : null;
+  return model ? { model: { providerID: model.providerID, modelID: model.id }, variant: model.variant && model.variant !== "default" ? model.variant : null } : null;
+}
+
 export type UseSessionModelSelectionInput = {
   sessionId: string;
+  engineSelection?: SessionModelSelection | null;
   /** Global default model (route prefs) used when the session has no memory. */
   fallbackModel: ModelRef;
   fallbackModelLabel: string;
@@ -151,7 +159,8 @@ export function useSessionModelSelection(input: UseSessionModelSelectionInput): 
     providerCatalog,
     onFallbackVariantChange,
   } = input;
-  const selection = useSessionModelStore((state) => state.bySessionId[sessionId] ?? null);
+  const localSelection = useSessionModelStore((state) => state.bySessionId[sessionId] ?? null);
+  const selection = localSelection ?? input.engineSelection;
 
   return useMemo(() => {
     const setModel = (model: ModelRef, variant?: string | null) =>
@@ -178,7 +187,7 @@ export function useSessionModelSelection(input: UseSessionModelSelectionInput): 
       modelBehaviorOptions: summary.options,
       hasSessionOverride: true,
       setModel,
-      setVariant: (value: string | null) => useSessionModelStore.getState().setVariant(sessionId, value),
+      setVariant: (value: string | null) => useSessionModelStore.getState().setModel(sessionId, selection.model, value),
     };
   }, [
     fallbackBehaviorOptions,

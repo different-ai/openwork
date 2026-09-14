@@ -77,6 +77,13 @@ export const openworkSessionModelSchema = z.object({
 })
 export type OpenworkSessionModel = z.infer<typeof openworkSessionModelSchema>
 
+export const openworkModelRemovalImpactSchema = z.object({
+  workspaceId: z.string(),
+  removedModels: z.array(openworkSessionModelSchema),
+  sessionIds: z.array(z.string()),
+  inventoryComplete: z.boolean(),
+})
+
 export const openworkModelSelectorSchema = z.object({
   providerId: openworkSessionModelSchema.shape.providerId.optional(),
   modelId: openworkSessionModelSchema.shape.modelId.optional(),
@@ -107,6 +114,7 @@ export const openworkSessionRebindModelArgsSchema = z.object({
   workspaceId: z.string().trim().min(1),
   from: openworkSessionModelSchema.pick({ providerId: true, modelId: true }),
   to: openworkModelSelectorSchema,
+  expectedSessionIds: z.array(z.string()).optional(),
   dryRun: z.boolean().optional(),
 })
 

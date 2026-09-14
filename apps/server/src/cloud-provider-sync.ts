@@ -885,6 +885,7 @@ export class CloudProviderSync {
       || this.managedProviderIds.size > 0
       || this.ownedEnvKeys.size > 0;
     this.contextGeneration += 1;
+    this.affectedSessions = [];
     this.stopReloadRetry();
 
     if (!hasMaterializedContext && !this.suspended) {
@@ -936,6 +937,7 @@ export class CloudProviderSync {
     this.providerFetchController.abort();
     this.providerFetchController = new AbortController();
     this.contextGeneration += 1;
+    this.affectedSessions = [];
     this.pendingSession = null;
     this.session = null;
     this.stopInterval();
@@ -954,6 +956,7 @@ export class CloudProviderSync {
   async clearSession(): Promise<void> {
     this.suspended = false;
     this.contextGeneration += 1;
+    this.affectedSessions = [];
     this.pendingSession = null;
     this.session = null;
     this.stopInterval();
@@ -1250,6 +1253,7 @@ export class CloudProviderSync {
   private async apply(
     prepared: PreparedMaterialization,
   ): Promise<{ changed: boolean; detail: CloudProviderSyncRunDetail; reloadError?: unknown }> {
+    const generation = this.contextGeneration;
     const desiredProviders = desiredProviderMap(prepared);
     const globalRuntime = await readGlobalRuntimeOpencodeConfig(this.config);
     const currentManagedProviders = managedProviderMap(runtimeProviderMap(globalRuntime), this.managedProviderIds);
@@ -1388,26 +1392,32 @@ export class CloudProviderSync {
       || workspaceCleanup.changed
       || runtimeFileChanged;
     if (removedModels.length) {
-      this.affectedSessions = await Promise.all(this.config.workspaces.map(async (workspace): Promise<CloudModelRemovalImpact> => {
+      const impacts = await Promise.all(this.config.workspaces.map(async (workspace): Promise<CloudModelRemovalImpact> => {
         try {
           const connection = resolveWorkspaceOpencodeConnection(this.config, workspace);
           if (!connection.baseUrl) throw new Error("Engine unavailable");
           const directory = workspace.directory?.trim() || workspace.path;
           const url = new URL("/session", connection.baseUrl);
           url.searchParams.set("directory", directory);
+          url.searchParams.set("limit", "10000");
           const response = await loopbackFetch(url.toString(), {
             headers: connection.authHeader ? { Authorization: connection.authHeader } : {},
             signal: AbortSignal.timeout(5_000),
           });
           if (!response.ok) throw new Error("Session inventory unavailable");
-          const sessions = z.array(openworkModelSessionSchema).parse(await response.json()).filter((session) => session.directory === directory);
+          const inventory = z.array(openworkModelSessionSchema).parse(await response.json());
+          if (inventory.length >= 10_000) throw new Error("Session inventory is incomplete");
+          const sessions = inventory.filter((session) => session.directory === directory);
           const sessionIds = [...new Set(removedModels.flatMap((model) => matchingOpenworkModelSessions(sessions, model, () => null).map((session) => session.id)))];
           return { workspaceId: workspace.id, removedModels, sessionIds, inventoryComplete: true };
         } catch {
           return { workspaceId: workspace.id, removedModels, sessionIds: [], inventoryComplete: false };
         }
       }));
-      for (const impact of this.affectedSessions) this.onModelsRemoved?.(impact);
+      if (generation === this.contextGeneration) {
+        this.affectedSessions = impacts;
+        for (const impact of impacts) this.onModelsRemoved?.(impact);
+      }
     }
     return { changed, detail, reloadError };
   }
