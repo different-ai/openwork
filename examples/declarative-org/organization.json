@@ -19,6 +19,32 @@
       "teams": ["platform"]
     }
   },
+  "mcpConnections": {
+    "engineering-docs": {
+      "name": "Engineering documentation",
+      "url": "${MCP_HTTP_URL}",
+      "authType": "none",
+      "credentialMode": "shared",
+      "exposeDirectly": false,
+      "access": { "orgWide": true, "memberIds": [], "teamIds": [] }
+    },
+    "internal-tools": {
+      "name": "Internal tools (member sign-in)",
+      "url": "${MCP_OAUTH_URL}",
+      "authType": "oauth",
+      "credentialMode": "per_member",
+      "exposeDirectly": false,
+      "oauthClient": {
+        "clientId": "${MCP_CLIENT_ID}",
+        "clientSecret": "${MCP_CLIENT_SECRET}",
+        "tokenEndpointAuthMethod": "client_secret_basic"
+      },
+      "authorizationServerIssuer": "${MCP_ISSUER}",
+      "requestedScopes": ["tools:read"],
+      "access": { "orgWide": false, "memberIds": [] },
+      "teams": ["platform"]
+    }
+  },
   "desktopPolicies": {
     "managed-desktop": { "policyName": "Managed desktop", "policy": { "allowZenModel": false }, "teams": ["platform"] }
   },
