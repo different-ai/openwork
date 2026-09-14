@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   preventPendingUpdaterInstall,
   registerUpdaterIpc,
+  staleUpdaterStateHome,
   staleUpdaterStatePaths,
   targetedStableUpdaterFeed,
 } from "./updater.mjs";
@@ -116,13 +117,35 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativ
 
 describe("staleUpdaterStatePaths", () => {
   it("targets the ShipIt cache on macOS", { skip: process.platform !== "darwin" }, () => {
-    assert.deepEqual(staleUpdaterStatePaths(fakeApp), [
+    assert.deepEqual(staleUpdaterStatePaths(fakeApp, undefined, {}), [
       "/Users/test/Library/Caches/com.differentai.openwork.ShipIt",
+    ]);
+  });
+
+  it("targets the isolated home when HOME is overridden", { skip: process.platform !== "darwin" }, () => {
+    assert.deepEqual(staleUpdaterStatePaths(fakeApp, undefined, { HOME: "/tmp/eval-home" }), [
+      "/tmp/eval-home/Library/Caches/com.differentai.openwork.ShipIt",
     ]);
   });
 
   it("is a no-op off macOS", { skip: process.platform === "darwin" }, () => {
     assert.deepEqual(staleUpdaterStatePaths(fakeApp), []);
+  });
+});
+
+describe("staleUpdaterStateHome", () => {
+  it("prefers an overridden HOME over the Electron account home", () => {
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "/tmp/eval-home" }), "/tmp/eval-home");
+  });
+
+  it("trims an overridden HOME", () => {
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "  /tmp/eval-home  " }), "/tmp/eval-home");
+  });
+
+  it("falls back to the Electron account home when HOME is absent or blank", () => {
+    assert.equal(staleUpdaterStateHome(fakeApp, {}), "/Users/test");
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "" }), "/Users/test");
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "   " }), "/Users/test");
   });
 });
 
