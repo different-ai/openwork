@@ -11,7 +11,7 @@ import {
   openworkSessionModelPreflightResultSchema,
   openworkAffordanceResultSchema,
   openworkModelsListResultSchema,
-  openworkEngineModelCatalogSchema,
+  openworkEngineProviderCatalogSchema,
   openworkCatalogModels,
   labelOpenworkSessionModel,
   resolveOpenworkModel,
@@ -882,7 +882,7 @@ function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
 }
 
 async function readWorkspaceModels(workspace: OpenWorkWorkspace): Promise<OpenworkCatalogModel[]> {
-  return openworkCatalogModels(openworkEngineModelCatalogSchema.parse(await serverGet(
+  return openworkCatalogModels(openworkEngineProviderCatalogSchema.parse(await serverGet(
     `/workspace/${encodeURIComponent(workspace.id)}/opencode/provider`,
   )));
 }
