@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 1,
+  "kind": "released-recipe-observed-headers-rerun",
+  "recordedAt": "2026-09-14T16:33:17.482906+00:00",
+  "originalTranscriptSha256": "c5f6ca7feb2abf0ec2229630cb78f981dec0b0fe5ee06e5998a21fd6d131f6bc",
+  "historicalHeadersBackfilled": false,
+  "containerImage": "ghcr.io/different-ai/openwork-den-api@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407",
+  "requests": [
+    {
+      "label": "tls-untrusted-control",
+      "at": "2026-09-14T16:33:16.506477+00:00",
+      "request": {
+        "method": "GET",
+        "url": "https://localhost:18443/health",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 0,
+        "headers": "",
+        "body": ""
+      },
+      "curlExit": 60,
+      "stderr": "curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)\nMore details here: https://curl.se/docs/sslcerts.html\n\ncurl failed to verify the legitimacy of the server and therefore could not\nestablish a secure connection to it. To learn more about this situation and\nhow to fix it, please visit the webpage mentioned above.\n"
+    },
+    {
+      "at": "2026-09-14T16:33:17.057754+00:00",
+      "request": {
+        "method": "PUT",
+        "headers": {
+          "Host": "localhost:18443",
+          "User-Agent": "curl/8.21.0",
+          "Accept": "*/*",
+          "x-api-key": "[REDACTED]",
+          "Content-Type": "application/json",
+          "Content-Length": "222"
+        },
+        "headersSource": "observed_proxy_incoming",
+        "body": {
+          "name": "Release exact recipe",
+          "url": "https://sand-chart-antivirus-rangers.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        },
+        "url": "https://localhost:18443/v1/mcp-connections/by-key/platform-tools"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "access-control-allow-credentials": "true",
+          "access-control-expose-headers": "Content-Length",
+          "content-type": "application/json",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "vary": "Origin",
+          "x-content-type-options": "nosniff",
+          "content-length": "1286",
+          "Date": "Mon, 14 Sep 2026 16:33:17 GMT",
+          "Connection": "keep-alive",
+          "Keep-Alive": "timeout=5"
+        },
+        "body": {
+          "id": "emc_01m2gc81vhee3brn1j6m9qs2s0",
+          "name": "Release exact recipe",
+          "externalKey": "platform-tools",
+          "url": "https://sand-chart-antivirus-rangers.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T16:33:17.088Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T16:33:17.089Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "links": {
+            "yourConnections": "http://localhost:13005/dashboard/your-connections?connectionId=emc_01m2gc81vhee3brn1j6m9qs2s0",
+            "oauthCallback": "http://127.0.0.1/unused-mcp-oauth-callback"
+          }
+        }
+      },
+      "label": "recipe-first",
+      "observedKeyMatchesConfigured": true,
+      "recipe": {
+        "source": "reports/rca-mcp-put-endpoint-2026-09-14.md:144-146",
+        "verbatim": true,
+        "lines": [
+          "set -euo pipefail",
+          "body=$(jq -cn --arg name \"$MCP_NAME\" --arg url \"$MCP_URL\" '{name:$name,url:$url,authType:\"none\",credentialMode:\"shared\",exposeDirectly:false,access:{orgWide:true,memberIds:[],teamIds:[]}}')",
+          "curl --proto '=https' --fail-with-body -sS -X PUT -H \"x-api-key: $DEN_API_KEY\" -H 'Content-Type: application/json' --data-binary \"$body\" \"$DEN_API_URL/v1/mcp-connections/by-key/platform-tools\" | jq '{id,externalKey,updatedAt,reconnectionRequired}'"
+        ],
+        "argv": [
+          "bash",
+          "evals/fixtures/mcp-put-release-recipe.sh"
+        ],
+        "startedAt": "2026-09-14T16:33:16.542916+00:00",
+        "endedAt": "2026-09-14T16:33:17.059658+00:00",
+        "scriptSha256": "e1481d2a832917df94b944eefc94172f5ff852a2251450cff267600829e704f7",
+        "exit": 0,
+        "stdout": "{\n  \"id\": \"emc_01m2gc81vhee3brn1j6m9qs2s0\",\n  \"externalKey\": \"platform-tools\",\n  \"updatedAt\": \"2026-09-14T16:33:17.089Z\",\n  \"reconnectionRequired\": null\n}\n",
+        "stderr": "",
+        "CURL_CA_BUNDLE": "private/ca.pem",
+        "tlsVerification": true
+      }
+    },
+    {
+      "at": "2026-09-14T16:33:17.227538+00:00",
+      "request": {
+        "method": "PUT",
+        "headers": {
+          "Host": "localhost:18443",
+          "User-Agent": "curl/8.21.0",
+          "Accept": "*/*",
+          "x-api-key": "[REDACTED]",
+          "Content-Type": "application/json",
+          "Content-Length": "222"
+        },
+        "headersSource": "observed_proxy_incoming",
+        "body": {
+          "name": "Release exact recipe",
+          "url": "https://sand-chart-antivirus-rangers.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        },
+        "url": "https://localhost:18443/v1/mcp-connections/by-key/platform-tools"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-credentials": "true",
+          "access-control-expose-headers": "Content-Length",
+          "content-type": "application/json",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "vary": "Origin",
+          "x-content-type-options": "nosniff",
+          "content-length": "1154",
+          "Date": "Mon, 14 Sep 2026 16:33:17 GMT",
+          "Connection": "keep-alive",
+          "Keep-Alive": "timeout=5"
+        },
+        "body": {
+          "id": "emc_01m2gc81vhee3brn1j6m9qs2s0",
+          "name": "Release exact recipe",
+          "externalKey": "platform-tools",
+          "url": "https://sand-chart-antivirus-rangers.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T16:33:17.088Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T16:33:17.089Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "identityChanged": false,
+          "reconnectionRequired": false
+        }
+      },
+      "label": "recipe-second",
+      "observedKeyMatchesConfigured": true,
+      "recipe": {
+        "source": "reports/rca-mcp-put-endpoint-2026-09-14.md:144-146",
+        "verbatim": true,
+        "lines": [
+          "set -euo pipefail",
+          "body=$(jq -cn --arg name \"$MCP_NAME\" --arg url \"$MCP_URL\" '{name:$name,url:$url,authType:\"none\",credentialMode:\"shared\",exposeDirectly:false,access:{orgWide:true,memberIds:[],teamIds:[]}}')",
+          "curl --proto '=https' --fail-with-body -sS -X PUT -H \"x-api-key: $DEN_API_KEY\" -H 'Content-Type: application/json' --data-binary \"$body\" \"$DEN_API_URL/v1/mcp-connections/by-key/platform-tools\" | jq '{id,externalKey,updatedAt,reconnectionRequired}'"
+        ],
+        "argv": [
+          "bash",
+          "evals/fixtures/mcp-put-release-recipe.sh"
+        ],
+        "startedAt": "2026-09-14T16:33:17.162378+00:00",
+        "endedAt": "2026-09-14T16:33:17.229913+00:00",
+        "scriptSha256": "e1481d2a832917df94b944eefc94172f5ff852a2251450cff267600829e704f7",
+        "exit": 0,
+        "stdout": "{\n  \"id\": \"emc_01m2gc81vhee3brn1j6m9qs2s0\",\n  \"externalKey\": \"platform-tools\",\n  \"updatedAt\": \"2026-09-14T16:33:17.089Z\",\n  \"reconnectionRequired\": false\n}\n",
+        "stderr": "",
+        "CURL_CA_BUNDLE": "private/ca.pem",
+        "tlsVerification": true
+      }
+    },
+    {
+      "label": "recipe-rerun-cleanup",
+      "at": "2026-09-14T16:33:17.360395+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/platform-tools",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 16:33:17 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "recipe-rerun-cleanup-list",
+      "at": "2026-09-14T16:33:17.405483+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 18\nDate: Mon, 14 Sep 2026 16:33:17 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    }
+  ]
+}

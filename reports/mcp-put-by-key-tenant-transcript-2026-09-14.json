@@ -1,0 +1,1796 @@
+{
+  "schemaVersion": 1,
+  "kind": "recorded-release-tenant-blackbox",
+  "originalTranscriptSha256": "c5f6ca7feb2abf0ec2229630cb78f981dec0b0fe5ee06e5998a21fd6d131f6bc",
+  "project": "mcp-put-proof-release-tenant",
+  "inspection": {
+    "repoDigests": [
+      "ghcr.io/different-ai/openwork-den-api@sha256:2d5a74dd8e7855ef542b4ed87096b18e1258a5f65579421321aa85967b396bb7",
+      "ghcr.io/different-ai/openwork-den-api@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407"
+    ],
+    "labels": {
+      "org.opencontainers.image.created": "2026-09-10T03:27:31.876Z",
+      "org.opencontainers.image.description": "The open-source alternative to Claude Cowork (powered by opencode)",
+      "org.opencontainers.image.licenses": "NOASSERTION",
+      "org.opencontainers.image.revision": "a0d6bd1de8debf4f09d22b8538e124b2ff45b339",
+      "org.opencontainers.image.source": "https://github.com/different-ai/openwork",
+      "org.opencontainers.image.title": "openwork-den-api",
+      "org.opencontainers.image.url": "https://github.com/different-ai/openwork",
+      "org.opencontainers.image.version": "0.18.46"
+    },
+    "architecture": "arm64",
+    "containerImage": "ghcr.io/different-ai/openwork-den-api@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407",
+    "imageId": "sha256:ab7f9107365c3f8befaf67e6f8f90d159a05fc066172af81ba581c9b7f5b6b11",
+    "selectedEnvironment": {
+      "DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP": "true",
+      "DEN_ORG_MODE": "multi_org"
+    },
+    "baseComposeSha256": "7b94efe1ac4be68d56b8ecb91206e9c005360b0f7954ba36c6f6ae7bd87a9430",
+    "overrideSha256": "6cb42856970a2e666f24449a9e1faa2865dc5c4a08c40107f76dd3278f5d87da"
+  },
+  "identities": {
+    "userA": "usr_01m2g882egehdryecgf0c1rvfs",
+    "userB": "usr_01m2g882zeerea5rzy3252z4wy",
+    "orgA": "org_01m2g882g2es58gqs94rfqmapw",
+    "orgB": "org_01m2g8830gecrs5797w3n2xe57",
+    "sourceId": "emc_01m2g88xjje328hsqa0x4v0rn6",
+    "ownId": "emc_01m2g88ye3e0fvmhbarjkz84gs"
+  },
+  "testkit": "deferred_to_orchestrator",
+  "requests": [
+    {
+      "label": "tenant-A-signup",
+      "at": "2026-09-14T15:23:22.377749+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18789/api/auth/sign-up/email",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-tenant-a@example.com",
+          "name": "Release Tenant A",
+          "password": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\nset-cookie: [REDACTED]\ncontent-length: 269\nDate: Mon, 14 Sep 2026 15:23:22 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "token": "[REDACTED]",
+          "user": {
+            "name": "Release Tenant A",
+            "email": "release-tenant-a@example.com",
+            "emailVerified": false,
+            "image": null,
+            "createdAt": "2026-09-14T15:23:22.959Z",
+            "updatedAt": "2026-09-14T15:23:22.959Z",
+            "id": "usr_01m2g882egehdryecgf0c1rvfs"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-A-create-org",
+      "at": "2026-09-14T15:23:22.952953+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18789/v1/org",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006"
+        },
+        "body": {
+          "name": "Release Tenant A"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 315\nDate: Mon, 14 Sep 2026 15:23:23 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "organization": {
+            "id": "org_01m2g882g2es58gqs94rfqmapw",
+            "name": "Release Tenant A",
+            "slug": "org_01m2g882g2es58gqs94rfqmapw",
+            "logo": null,
+            "allowedEmailDomains": null,
+            "desktopAppRestrictions": {},
+            "metadata": {
+              "limits": {
+                "members": 5,
+                "workers": 1
+              }
+            },
+            "createdAt": "2026-09-14T15:23:23.000Z",
+            "updatedAt": "2026-09-14T15:23:23.010Z"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-A-read-org",
+      "at": "2026-09-14T15:23:22.996843+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/org",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006",
+          "x-openwork-org-id": "org_01m2g882g2es58gqs94rfqmapw"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 2667\nDate: Mon, 14 Sep 2026 15:23:23 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "organization": {
+            "id": "org_01m2g882g2es58gqs94rfqmapw",
+            "name": "Release Tenant A",
+            "slug": "org_01m2g882g2es58gqs94rfqmapw",
+            "logo": null,
+            "allowedEmailDomains": null,
+            "metadata": "{\"limits\":{\"members\":5,\"workers\":1}}",
+            "createdAt": "2026-09-14T15:23:23.000Z",
+            "updatedAt": "2026-09-14T15:23:23.010Z",
+            "owner": {
+              "memberId": "om_01m2g882g4e0ktaff1dpqr8e00",
+              "userId": "usr_01m2g882egehdryecgf0c1rvfs",
+              "name": "Release Tenant A",
+              "email": "release-tenant-a@example.com",
+              "image": null
+            }
+          },
+          "currentMember": {
+            "id": "om_01m2g882g4e0ktaff1dpqr8e00",
+            "userId": "usr_01m2g882egehdryecgf0c1rvfs",
+            "role": "owner",
+            "directRole": "owner",
+            "adminTeams": [],
+            "createdAt": "2026-09-14T15:23:23.000Z",
+            "joinedAt": "2026-09-14T15:23:23.000Z",
+            "isOwner": true
+          },
+          "members": [
+            {
+              "id": "om_01m2g882g4e0ktaff1dpqr8e00",
+              "userId": "usr_01m2g882egehdryecgf0c1rvfs",
+              "inviteId": null,
+              "role": "owner",
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "joinedAt": "2026-09-14T15:23:23.000Z",
+              "isOwner": true,
+              "user": {
+                "id": "usr_01m2g882egehdryecgf0c1rvfs",
+                "email": "release-tenant-a@example.com",
+                "name": "Release Tenant A",
+                "image": null
+              },
+              "adminTeams": [],
+              "effectiveRole": "owner"
+            }
+          ],
+          "invitations": [],
+          "roles": [
+            {
+              "id": "builtin-owner",
+              "role": "owner",
+              "permission": {
+                "organization": [
+                  "update",
+                  "delete"
+                ],
+                "member": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "create",
+                  "read",
+                  "update",
+                  "delete"
+                ],
+                "security_configuration": [
+                  "manage"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": null,
+              "updatedAt": null
+            },
+            {
+              "id": "orl_01m2g882gaeqdv68nqc2p8pbs0",
+              "role": "admin",
+              "permission": {
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "member": [
+                  "delete"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "read"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "updatedAt": "2026-09-14T15:23:23.018Z"
+            },
+            {
+              "id": "orl_01m2g882gcencbe67sn48e2369",
+              "role": "member",
+              "permission": {
+                "ac": [
+                  "read"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "updatedAt": "2026-09-14T15:23:23.020Z"
+            },
+            {
+              "id": "orl_01m2g882g8eaftjbtb8mnfyf33",
+              "role": "super-admin",
+              "permission": {
+                "organization": [
+                  "update",
+                  "delete"
+                ],
+                "member": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "create",
+                  "read",
+                  "update",
+                  "delete"
+                ],
+                "security_configuration": [
+                  "manage"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "updatedAt": "2026-09-14T15:23:23.017Z"
+            }
+          ],
+          "teams": [],
+          "currentMemberTeams": [],
+          "plan": {
+            "tier": "free",
+            "source": "default"
+          },
+          "entitlements": {
+            "sso": true,
+            "desktopPolicies": true,
+            "orgControls": true,
+            "analytics": true
+          },
+          "capabilities": {
+            "orgManagedDashboards": true,
+            "mcpConnections": true,
+            "workflows": true,
+            "installLinks": true,
+            "openworkWeb": false
+          },
+          "authMethods": {
+            "sso": false,
+            "scim": false
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-A-issue-key",
+      "at": "2026-09-14T15:23:23.029098+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18789/v1/api-keys",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006",
+          "x-openwork-org-id": "org_01m2g882g2es58gqs94rfqmapw"
+        },
+        "body": {
+          "name": "Release Tenant A proof"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 395\nDate: Mon, 14 Sep 2026 15:23:23 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "apiKey": {
+            "id": "apk_01m2g882jjetm94yhbh6ka49s1",
+            "name": "Release Tenant A proof",
+            "start": "[REDACTED]",
+            "prefix": "den_",
+            "enabled": true,
+            "rateLimitEnabled": true,
+            "rateLimitMax": 600,
+            "rateLimitTimeWindow": 60000,
+            "expiresAt": "2026-12-13T15:23:23.089Z",
+            "createdAt": "2026-09-14T15:23:23.089Z",
+            "updatedAt": "2026-09-14T15:23:23.089Z"
+          },
+          "key": "[REDACTED]"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-signup",
+      "at": "2026-09-14T15:23:23.066855+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18789/api/auth/sign-up/email",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-tenant-b@example.com",
+          "name": "Release Tenant B",
+          "password": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\nset-cookie: [REDACTED]\ncontent-length: 269\nDate: Mon, 14 Sep 2026 15:23:23 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "token": "[REDACTED]",
+          "user": {
+            "name": "Release Tenant B",
+            "email": "release-tenant-b@example.com",
+            "emailVerified": false,
+            "image": null,
+            "createdAt": "2026-09-14T15:23:23.501Z",
+            "updatedAt": "2026-09-14T15:23:23.501Z",
+            "id": "usr_01m2g882zeerea5rzy3252z4wy"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-create-org",
+      "at": "2026-09-14T15:23:23.482977+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18789/v1/org",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006"
+        },
+        "body": {
+          "name": "Release Tenant B"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 315\nDate: Mon, 14 Sep 2026 15:23:23 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "organization": {
+            "id": "org_01m2g8830gecrs5797w3n2xe57",
+            "name": "Release Tenant B",
+            "slug": "org_01m2g8830gecrs5797w3n2xe57",
+            "logo": null,
+            "allowedEmailDomains": null,
+            "desktopAppRestrictions": {},
+            "metadata": {
+              "limits": {
+                "members": 5,
+                "workers": 1
+              }
+            },
+            "createdAt": "2026-09-14T15:23:23.000Z",
+            "updatedAt": "2026-09-14T15:23:23.536Z"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-read-org",
+      "at": "2026-09-14T15:23:23.516932+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/org",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006",
+          "x-openwork-org-id": "org_01m2g8830gecrs5797w3n2xe57"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 2667\nDate: Mon, 14 Sep 2026 15:23:23 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "organization": {
+            "id": "org_01m2g8830gecrs5797w3n2xe57",
+            "name": "Release Tenant B",
+            "slug": "org_01m2g8830gecrs5797w3n2xe57",
+            "logo": null,
+            "allowedEmailDomains": null,
+            "metadata": "{\"limits\":{\"members\":5,\"workers\":1}}",
+            "createdAt": "2026-09-14T15:23:23.000Z",
+            "updatedAt": "2026-09-14T15:23:23.536Z",
+            "owner": {
+              "memberId": "om_01m2g8830hezbbm52r9dpjkbmt",
+              "userId": "usr_01m2g882zeerea5rzy3252z4wy",
+              "name": "Release Tenant B",
+              "email": "release-tenant-b@example.com",
+              "image": null
+            }
+          },
+          "currentMember": {
+            "id": "om_01m2g8830hezbbm52r9dpjkbmt",
+            "userId": "usr_01m2g882zeerea5rzy3252z4wy",
+            "role": "owner",
+            "directRole": "owner",
+            "adminTeams": [],
+            "createdAt": "2026-09-14T15:23:23.000Z",
+            "joinedAt": "2026-09-14T15:23:23.000Z",
+            "isOwner": true
+          },
+          "members": [
+            {
+              "id": "om_01m2g8830hezbbm52r9dpjkbmt",
+              "userId": "usr_01m2g882zeerea5rzy3252z4wy",
+              "inviteId": null,
+              "role": "owner",
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "joinedAt": "2026-09-14T15:23:23.000Z",
+              "isOwner": true,
+              "user": {
+                "id": "usr_01m2g882zeerea5rzy3252z4wy",
+                "email": "release-tenant-b@example.com",
+                "name": "Release Tenant B",
+                "image": null
+              },
+              "adminTeams": [],
+              "effectiveRole": "owner"
+            }
+          ],
+          "invitations": [],
+          "roles": [
+            {
+              "id": "builtin-owner",
+              "role": "owner",
+              "permission": {
+                "organization": [
+                  "update",
+                  "delete"
+                ],
+                "member": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "create",
+                  "read",
+                  "update",
+                  "delete"
+                ],
+                "security_configuration": [
+                  "manage"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": null,
+              "updatedAt": null
+            },
+            {
+              "id": "orl_01m2g8830negftbrs5ntrqnr3x",
+              "role": "admin",
+              "permission": {
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "member": [
+                  "delete"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "read"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "updatedAt": "2026-09-14T15:23:23.541Z"
+            },
+            {
+              "id": "orl_01m2g8830pec48gyn4nvqs806m",
+              "role": "member",
+              "permission": {
+                "ac": [
+                  "read"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "updatedAt": "2026-09-14T15:23:23.543Z"
+            },
+            {
+              "id": "orl_01m2g8830menctsyjbe1rn9agp",
+              "role": "super-admin",
+              "permission": {
+                "organization": [
+                  "update",
+                  "delete"
+                ],
+                "member": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "create",
+                  "read",
+                  "update",
+                  "delete"
+                ],
+                "security_configuration": [
+                  "manage"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:23:23.000Z",
+              "updatedAt": "2026-09-14T15:23:23.540Z"
+            }
+          ],
+          "teams": [],
+          "currentMemberTeams": [],
+          "plan": {
+            "tier": "free",
+            "source": "default"
+          },
+          "entitlements": {
+            "sso": true,
+            "desktopPolicies": true,
+            "orgControls": true,
+            "analytics": true
+          },
+          "capabilities": {
+            "orgManagedDashboards": true,
+            "mcpConnections": true,
+            "workflows": true,
+            "installLinks": true,
+            "openworkWeb": false
+          },
+          "authMethods": {
+            "sso": false,
+            "scim": false
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-issue-key",
+      "at": "2026-09-14T15:23:23.545601+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18789/v1/api-keys",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006",
+          "x-openwork-org-id": "org_01m2g8830gecrs5797w3n2xe57"
+        },
+        "body": {
+          "name": "Release Tenant B proof"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 395\nDate: Mon, 14 Sep 2026 15:23:23 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "apiKey": {
+            "id": "apk_01m2g8832kekn8bjrv9nxnakzj",
+            "name": "Release Tenant B proof",
+            "start": "[REDACTED]",
+            "prefix": "den_",
+            "enabled": true,
+            "rateLimitEnabled": true,
+            "rateLimitMax": 600,
+            "rateLimitTimeWindow": 60000,
+            "expiresAt": "2026-12-13T15:23:23.603Z",
+            "createdAt": "2026-09-14T15:23:23.603Z",
+            "updatedAt": "2026-09-14T15:23:23.603Z"
+          },
+          "key": "[REDACTED]"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-source-create",
+      "at": "2026-09-14T15:23:50.631025+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18789/v1/mcp-connections/by-key/rs-proof-tenant",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Tenant A source",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1290\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g88xjje328hsqa0x4v0rn6",
+          "name": "Tenant A source",
+          "externalKey": "rs-proof-tenant",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:23:51.260Z",
+          "createdByName": "Release Tenant A",
+          "updatedAt": "2026-09-14T15:23:51.260Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "links": {
+            "yourConnections": "http://localhost:13006/dashboard/your-connections?connectionId=emc_01m2g88xjje328hsqa0x4v0rn6",
+            "oauthCallback": "http://127.0.0.1/unused-mcp-oauth-callback"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-foreign-get",
+      "at": "2026-09-14T15:23:51.238943+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-foreign-put",
+      "at": "2026-09-14T15:23:51.273193+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Foreign edit must not persist",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "expectedUpdatedAt": "2026-09-14T15:23:51.260Z"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-foreign-delete",
+      "at": "2026-09-14T15:23:51.307432+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-source-after-foreign",
+      "at": "2026-09-14T15:23:51.342601+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1105\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g88xjje328hsqa0x4v0rn6",
+          "name": "Tenant A source",
+          "externalKey": "rs-proof-tenant",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:23:51.260Z",
+          "createdByName": "Release Tenant A",
+          "updatedAt": "2026-09-14T15:23:51.260Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-spoofed-get",
+      "at": "2026-09-14T15:23:51.379259+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]",
+          "x-openwork-org-id": "org_01m2g882g2es58gqs94rfqmapw"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-spoofed-put",
+      "at": "2026-09-14T15:23:51.414360+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]",
+          "x-openwork-org-id": "org_01m2g882g2es58gqs94rfqmapw"
+        },
+        "body": {
+          "name": "Foreign edit must not persist",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "expectedUpdatedAt": "2026-09-14T15:23:51.260Z"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-spoofed-delete",
+      "at": "2026-09-14T15:23:51.448473+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]",
+          "x-openwork-org-id": "org_01m2g882g2es58gqs94rfqmapw"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-source-after-spoofed",
+      "at": "2026-09-14T15:23:51.479169+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1105\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g88xjje328hsqa0x4v0rn6",
+          "name": "Tenant A source",
+          "externalKey": "rs-proof-tenant",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:23:51.260Z",
+          "createdByName": "Release Tenant A",
+          "updatedAt": "2026-09-14T15:23:51.260Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-list-before-own-create",
+      "at": "2026-09-14T15:23:51.516494+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 18\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-own-same-key-create",
+      "at": "2026-09-14T15:23:51.552848+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18789/v1/mcp-connections/by-key/rs-proof-tenant",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Tenant B own",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1287\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g88ye3e0fvmhbarjkz84gs",
+          "name": "Tenant B own",
+          "externalKey": "rs-proof-tenant",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:23:51.839Z",
+          "createdByName": "Release Tenant B",
+          "updatedAt": "2026-09-14T15:23:51.840Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "links": {
+            "yourConnections": "http://localhost:13006/dashboard/your-connections?connectionId=emc_01m2g88ye3e0fvmhbarjkz84gs",
+            "oauthCallback": "http://127.0.0.1/unused-mcp-oauth-callback"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-A-list",
+      "at": "2026-09-14T15:23:51.813059+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1123\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": [
+            {
+              "id": "emc_01m2g88xjje328hsqa0x4v0rn6",
+              "name": "Tenant A source",
+              "externalKey": "rs-proof-tenant",
+              "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": "2026-09-14T15:23:51.260Z",
+              "createdByName": "Release Tenant A",
+              "updatedAt": "2026-09-14T15:23:51.260Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-list",
+      "at": "2026-09-14T15:23:51.848624+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1120\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": [
+            {
+              "id": "emc_01m2g88ye3e0fvmhbarjkz84gs",
+              "name": "Tenant B own",
+              "externalKey": "rs-proof-tenant",
+              "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": "2026-09-14T15:23:51.839Z",
+              "createdByName": "Release Tenant B",
+              "updatedAt": "2026-09-14T15:23:51.840Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-spoofed-list",
+      "at": "2026-09-14T15:23:51.889911+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]",
+          "x-openwork-org-id": "org_01m2g882g2es58gqs94rfqmapw"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1120\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": [
+            {
+              "id": "emc_01m2g88ye3e0fvmhbarjkz84gs",
+              "name": "Tenant B own",
+              "externalKey": "rs-proof-tenant",
+              "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": "2026-09-14T15:23:51.839Z",
+              "createdByName": "Release Tenant B",
+              "updatedAt": "2026-09-14T15:23:51.840Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-source-owner-cannot-read-B",
+      "at": "2026-09-14T15:23:51.925110+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88ye3e0fvmhbarjkz84gs",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:23:51 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-missing-key-get",
+      "at": "2026-09-14T15:23:51.956470+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:23:52 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-missing-key-put",
+      "at": "2026-09-14T15:23:51.978314+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18789/v1/mcp-connections/by-key/rs-proof-tenant-unauthorized",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "name": "Tenant A source",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:23:52 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-invalid-key-get",
+      "at": "2026-09-14T15:23:52.000816+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections/emc_01m2g88xjje328hsqa0x4v0rn6",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:23:52 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-invalid-key-put",
+      "at": "2026-09-14T15:23:52.030578+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18789/v1/mcp-connections/by-key/rs-proof-tenant-unauthorized",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Tenant A source",
+          "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:23:52 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-A-final-list",
+      "at": "2026-09-14T15:23:52.058693+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1123\nDate: Mon, 14 Sep 2026 15:23:52 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": [
+            {
+              "id": "emc_01m2g88xjje328hsqa0x4v0rn6",
+              "name": "Tenant A source",
+              "externalKey": "rs-proof-tenant",
+              "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": "2026-09-14T15:23:51.260Z",
+              "createdByName": "Release Tenant A",
+              "updatedAt": "2026-09-14T15:23:51.260Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-B-final-list",
+      "at": "2026-09-14T15:23:52.123265+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1120\nDate: Mon, 14 Sep 2026 15:23:52 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": [
+            {
+              "id": "emc_01m2g88ye3e0fvmhbarjkz84gs",
+              "name": "Tenant B own",
+              "externalKey": "rs-proof-tenant",
+              "url": "https://controlling-effective-founder-attractions.trycloudflare.com/public",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": "2026-09-14T15:23:51.839Z",
+              "createdByName": "Release Tenant B",
+              "updatedAt": "2026-09-14T15:23:51.840Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-A",
+      "at": "2026-09-14T15:24:04.077699+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18789/v1/mcp-connections/by-key/rs-proof-tenant",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-A-list",
+      "at": "2026-09-14T15:24:04.125954+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 18\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-B",
+      "at": "2026-09-14T15:24:04.158438+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18789/v1/mcp-connections/by-key/rs-proof-tenant",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-B-list",
+      "at": "2026-09-14T15:24:04.192855+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 18\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-A-revoke-key",
+      "at": "2026-09-14T15:24:04.224716+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18789/v1/api-keys/apk_01m2g882jjetm94yhbh6ka49s1",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006",
+          "x-openwork-org-id": "org_01m2g882g2es58gqs94rfqmapw"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 204,
+        "headers": "HTTP/1.1 204 No Content\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": ""
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-A-revoked-key-control",
+      "at": "2026-09-14T15:24:04.253578+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-B-revoke-key",
+      "at": "2026-09-14T15:24:04.280325+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18789/v1/api-keys/apk_01m2g8832kekn8bjrv9nxnakzj",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13006",
+          "x-openwork-org-id": "org_01m2g8830gecrs5797w3n2xe57"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 204,
+        "headers": "HTTP/1.1 204 No Content\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13006\naccess-control-expose-headers: Content-Length\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": ""
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tenant-cleanup-B-revoked-key-control",
+      "at": "2026-09-14T15:24:04.307889+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18789/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:24:04 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    }
+  ]
+}

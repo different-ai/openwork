@@ -1,0 +1,24 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: lane2-fixture-password
+    ports:
+      - "127.0.0.1:13316:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-plane2-fixture-password"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:16386:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

@@ -1,0 +1,7 @@
+services:
+  den:
+    environment:
+      DEN_ORG_MODE: multi_org
+  web:
+    environment:
+      DEN_ORG_MODE: multi_org

@@ -1,0 +1,2729 @@
+{
+  "schemaVersion": 1,
+  "kind": "recorded-release-blackbox",
+  "image": "ghcr.io/different-ai/openwork-den-api:0.18.46@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407",
+  "inspection": {
+    "repoDigests": [
+      "ghcr.io/different-ai/openwork-den-api@sha256:2d5a74dd8e7855ef542b4ed87096b18e1258a5f65579421321aa85967b396bb7",
+      "ghcr.io/different-ai/openwork-den-api@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407"
+    ],
+    "labels": {
+      "org.opencontainers.image.created": "2026-09-10T03:27:31.876Z",
+      "org.opencontainers.image.description": "The open-source alternative to Claude Cowork (powered by opencode)",
+      "org.opencontainers.image.licenses": "NOASSERTION",
+      "org.opencontainers.image.revision": "a0d6bd1de8debf4f09d22b8538e124b2ff45b339",
+      "org.opencontainers.image.source": "https://github.com/different-ai/openwork",
+      "org.opencontainers.image.title": "openwork-den-api",
+      "org.opencontainers.image.url": "https://github.com/different-ai/openwork",
+      "org.opencontainers.image.version": "0.18.46"
+    },
+    "architecture": "arm64",
+    "imageId": "sha256:ab7f9107365c3f8befaf67e6f8f90d159a05fc066172af81ba581c9b7f5b6b11",
+    "containerImage": "ghcr.io/different-ai/openwork-den-api@sha256:e254a3842e7ecb6d0c7128b5f17201e92ac4ee566ad82c70c468938a3faa6407",
+    "composeSha256": "7b94efe1ac4be68d56b8ecb91206e9c005360b0f7954ba36c6f6ae7bd87a9430",
+    "dockerServerVersion": "6.1.0"
+  },
+  "coverage": {
+    "foreignOrgId": "not_executed_single_org_bootstrap_409",
+    "testkit": "deferred_to_orchestrator"
+  },
+  "secretChecksBeforeRedaction": [
+    {
+      "label": "case6-secret-create",
+      "rawResponseContainsWitnessSecret": false,
+      "responseHasApiKeyField": false
+    },
+    {
+      "label": "case6-secret-read",
+      "rawResponseContainsWitnessSecret": false,
+      "responseHasApiKeyField": false
+    },
+    {
+      "label": "case6-omit-secret",
+      "rawResponseContainsWitnessSecret": false,
+      "responseHasApiKeyField": false
+    },
+    {
+      "label": "case6-secret-read-after",
+      "rawResponseContainsWitnessSecret": false,
+      "responseHasApiKeyField": false
+    }
+  ],
+  "witnessCalls": [
+    {
+      "at": "2026-09-14T15:09:24.385022+00:00",
+      "path": "/bearer",
+      "method": "tools/call",
+      "status": 401,
+      "authenticated": false,
+      "nonce": "unauthenticated-control",
+      "tokenId": null
+    },
+    {
+      "at": "2026-09-14T15:09:49.893063+00:00",
+      "path": "/bearer",
+      "method": "tools/call",
+      "status": 200,
+      "authenticated": true,
+      "nonce": "before-secret-omission",
+      "tokenId": "fbbb1d01634b769d"
+    },
+    {
+      "at": "2026-09-14T15:09:50.241719+00:00",
+      "path": "/bearer",
+      "method": "tools/call",
+      "status": 200,
+      "authenticated": true,
+      "nonce": "after-secret-omission",
+      "tokenId": "fbbb1d01634b769d"
+    }
+  ],
+  "requests": [
+    {
+      "label": "setup-status-before",
+      "at": "2026-09-14T15:07:33.767363+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/auth/bootstrap/status",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 22\nDate: Mon, 14 Sep 2026 15:07:33 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "status": "available"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-verify",
+      "at": "2026-09-14T15:07:33.822260+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/auth/bootstrap/verify",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-admin@example.com",
+          "code": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 192\nDate: Mon, 14 Sep 2026 15:07:33 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "grant": "[REDACTED]",
+          "expiresAt": "2026-09-14T15:17:33.882Z"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-signup",
+      "at": "2026-09-14T15:07:33.872139+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/api/auth/sign-up/email",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-admin@example.com",
+          "name": "Release Administrator",
+          "password": "[REDACTED]",
+          "bootstrapGrant": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": "HTTP/1.1 400 Bad Request\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 81\nDate: Mon, 14 Sep 2026 15:07:33 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "password_too_long",
+          "message": "Password must be at most 32 characters."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-status-before",
+      "at": "2026-09-14T15:08:16.010174+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/auth/bootstrap/status",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 22\nDate: Mon, 14 Sep 2026 15:08:16 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "status": "available"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-verify",
+      "at": "2026-09-14T15:08:16.034938+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/auth/bootstrap/verify",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-admin@example.com",
+          "code": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 192\nDate: Mon, 14 Sep 2026 15:08:16 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "grant": "[REDACTED]",
+          "expiresAt": "2026-09-14T15:18:16.079Z"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-signup",
+      "at": "2026-09-14T15:08:16.065384+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/api/auth/sign-up/email",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-admin@example.com",
+          "name": "Release Administrator",
+          "password": "[REDACTED]",
+          "bootstrapGrant": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": "HTTP/1.1 400 Bad Request\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 112\nDate: Mon, 14 Sep 2026 15:08:16 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "password_missing_special_character",
+          "message": "Password must include at least one special character."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-status-before",
+      "at": "2026-09-14T15:08:36.639981+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/auth/bootstrap/status",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 22\nDate: Mon, 14 Sep 2026 15:08:36 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "status": "available"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-verify",
+      "at": "2026-09-14T15:08:36.667905+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/auth/bootstrap/verify",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-admin@example.com",
+          "code": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 192\nDate: Mon, 14 Sep 2026 15:08:36 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "grant": "[REDACTED]",
+          "expiresAt": "2026-09-14T15:18:36.719Z"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-signup",
+      "at": "2026-09-14T15:08:36.706395+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/api/auth/sign-up/email",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "email": "release-admin@example.com",
+          "name": "Release Administrator",
+          "password": "[REDACTED]",
+          "bootstrapGrant": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\nset-cookie: [REDACTED]\ncontent-length: 271\nDate: Mon, 14 Sep 2026 15:08:37 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "token": "[REDACTED]",
+          "user": {
+            "name": "Release Administrator",
+            "email": "release-admin@example.com",
+            "emailVerified": false,
+            "image": null,
+            "createdAt": "2026-09-14T15:08:37.052Z",
+            "updatedAt": "2026-09-14T15:08:37.052Z",
+            "id": "usr_01m2g7d19wexp9jfmj389ewvwz"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-status-after",
+      "at": "2026-09-14T15:08:37.067436+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/auth/bootstrap/status",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 21\nDate: Mon, 14 Sep 2026 15:08:37 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "status": "complete"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-org",
+      "at": "2026-09-14T15:08:37.092809+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/org",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13005"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13005\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 2645\nDate: Mon, 14 Sep 2026 15:08:37 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "organization": {
+            "id": "org_01m2g7d1a4eags33bb31x56fx9",
+            "name": "Release Proof",
+            "slug": "default",
+            "logo": null,
+            "allowedEmailDomains": null,
+            "metadata": "{\"limits\":{\"members\":5,\"workers\":1}}",
+            "createdAt": "2026-09-14T15:08:37.000Z",
+            "updatedAt": "2026-09-14T15:08:37.060Z",
+            "owner": {
+              "memberId": "om_01m2g7d1a5e05r2ncgsa44pk6r",
+              "userId": "usr_01m2g7d19wexp9jfmj389ewvwz",
+              "name": "Release Administrator",
+              "email": "release-admin@example.com",
+              "image": null
+            }
+          },
+          "currentMember": {
+            "id": "om_01m2g7d1a5e05r2ncgsa44pk6r",
+            "userId": "usr_01m2g7d19wexp9jfmj389ewvwz",
+            "role": "owner",
+            "directRole": "owner",
+            "adminTeams": [],
+            "createdAt": "2026-09-14T15:08:37.000Z",
+            "joinedAt": "2026-09-14T15:08:37.000Z",
+            "isOwner": true
+          },
+          "members": [
+            {
+              "id": "om_01m2g7d1a5e05r2ncgsa44pk6r",
+              "userId": "usr_01m2g7d19wexp9jfmj389ewvwz",
+              "inviteId": null,
+              "role": "owner",
+              "createdAt": "2026-09-14T15:08:37.000Z",
+              "joinedAt": "2026-09-14T15:08:37.000Z",
+              "isOwner": true,
+              "user": {
+                "id": "usr_01m2g7d19wexp9jfmj389ewvwz",
+                "email": "release-admin@example.com",
+                "name": "Release Administrator",
+                "image": null
+              },
+              "adminTeams": [],
+              "effectiveRole": "owner"
+            }
+          ],
+          "invitations": [],
+          "roles": [
+            {
+              "id": "builtin-owner",
+              "role": "owner",
+              "permission": {
+                "organization": [
+                  "update",
+                  "delete"
+                ],
+                "member": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "create",
+                  "read",
+                  "update",
+                  "delete"
+                ],
+                "security_configuration": [
+                  "manage"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": null,
+              "updatedAt": null
+            },
+            {
+              "id": "orl_01m2g7d1a9e2nbw89ka60hwzgm",
+              "role": "admin",
+              "permission": {
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "member": [
+                  "delete"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "read"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:08:37.000Z",
+              "updatedAt": "2026-09-14T15:08:37.066Z"
+            },
+            {
+              "id": "orl_01m2g7d1aaeer994xqne0w5efy",
+              "role": "member",
+              "permission": {
+                "ac": [
+                  "read"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:08:37.000Z",
+              "updatedAt": "2026-09-14T15:08:37.066Z"
+            },
+            {
+              "id": "orl_01m2g7d1a8eap8f1efrh7tyx84",
+              "role": "super-admin",
+              "permission": {
+                "organization": [
+                  "update",
+                  "delete"
+                ],
+                "member": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "invitation": [
+                  "create",
+                  "cancel"
+                ],
+                "team": [
+                  "create",
+                  "update",
+                  "delete"
+                ],
+                "ac": [
+                  "create",
+                  "read",
+                  "update",
+                  "delete"
+                ],
+                "security_configuration": [
+                  "manage"
+                ]
+              },
+              "builtIn": true,
+              "protected": true,
+              "createdAt": "2026-09-14T15:08:37.000Z",
+              "updatedAt": "2026-09-14T15:08:37.064Z"
+            }
+          ],
+          "teams": [],
+          "currentMemberTeams": [],
+          "plan": {
+            "tier": "free",
+            "source": "default"
+          },
+          "entitlements": {
+            "sso": true,
+            "desktopPolicies": true,
+            "orgControls": true,
+            "analytics": true
+          },
+          "capabilities": {
+            "orgManagedDashboards": true,
+            "mcpConnections": true,
+            "workflows": true,
+            "installLinks": true,
+            "openworkWeb": false
+          },
+          "authMethods": {
+            "sso": false,
+            "scim": false
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-api-key",
+      "at": "2026-09-14T15:08:37.124332+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/api-keys",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13005",
+          "x-openwork-org-id": "org_01m2g7d1a4eags33bb31x56fx9"
+        },
+        "body": {
+          "name": "Release black-box proof"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13005\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 396\nDate: Mon, 14 Sep 2026 15:08:37 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "apiKey": {
+            "id": "apk_01m2g7d1dhenxvqjr3e0rp98kj",
+            "name": "Release black-box proof",
+            "start": "[REDACTED]",
+            "prefix": "den_",
+            "enabled": true,
+            "rateLimitEnabled": true,
+            "rateLimitMax": 600,
+            "rateLimitTimeWindow": 60000,
+            "expiresAt": "2026-12-13T15:08:37.169Z",
+            "createdAt": "2026-09-14T15:08:37.169Z",
+            "updatedAt": "2026-09-14T15:08:37.169Z"
+          },
+          "key": "[REDACTED]"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "setup-foreign-org-attempt",
+      "at": "2026-09-14T15:09:23.967953+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/org",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "[REDACTED]",
+          "Origin": "http://localhost:13005"
+        },
+        "body": {
+          "name": "Release Proof Foreign"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": "HTTP/1.1 409 Conflict\naccess-control-allow-credentials: true\naccess-control-allow-origin: http://localhost:13005\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 128\nDate: Mon, 14 Sep 2026 15:09:24 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "single_org_mode",
+          "message": "This deployment is configured for one organization. New organizations cannot be created."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "ssrf-http-witness-rejected",
+      "at": "2026-09-14T15:09:24.000148+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-local",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof public",
+          "url": "http://mcp-put-proof-release-witness:8080/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": "HTTP/1.1 400 Bad Request\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 123\nDate: Mon, 14 Sep 2026 15:09:24 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "invalid_request",
+          "details": [
+            {
+              "code": "[REDACTED]",
+              "message": "Hosted MCP connections must use HTTPS.",
+              "path": [
+                "url"
+              ]
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "witness-unauthenticated-control",
+      "at": "2026-09-14T15:09:24.062481+00:00",
+      "request": {
+        "method": "POST",
+        "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "tools/call",
+          "params": {
+            "name": "release_credential_witness",
+            "arguments": {
+              "nonce": "unauthenticated-control"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/2 401 \ndate: Mon, 14 Sep 2026 15:09:24 GMT\ncontent-type: application/json\ncontent-length: 0\ncf-ray: a3b050020cebf289-IAD\ncf-cache-status: DYNAMIC\nserver: cloudflare\n\n",
+        "body": ""
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "witness-public-preflight",
+      "at": "2026-09-14T15:09:24.382732+00:00",
+      "request": {
+        "method": "POST",
+        "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "initialize",
+          "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+              "name": "release-proof",
+              "version": "1"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/2 200 \ndate: Mon, 14 Sep 2026 15:09:24 GMT\ncontent-type: application/json\ncontent-length: 172\ncf-ray: a3b05003d909a124-IAD\ncf-cache-status: DYNAMIC\nserver: cloudflare\n\n",
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "Release proof witness",
+              "version": "1.0.0"
+            }
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case1-create",
+      "at": "2026-09-14T15:09:46.500613+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-1",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof public",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1282\nDate: Mon, 14 Sep 2026 15:09:48 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof public",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:48.774Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "links": {
+            "yourConnections": "http://localhost:13005/dashboard/your-connections?connectionId=emc_01m2g7f566efnvzdp35rq95cky",
+            "oauthCallback": "http://127.0.0.1/unused-mcp-oauth-callback"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case2-identical",
+      "at": "2026-09-14T15:09:48.769142+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-1",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof public",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1150\nDate: Mon, 14 Sep 2026 15:09:48 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof public",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:48.774Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "identityChanged": false,
+          "reconnectionRequired": false
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case2-list",
+      "at": "2026-09-14T15:09:48.818459+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1115\nDate: Mon, 14 Sep 2026 15:09:48 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": [
+            {
+              "id": "emc_01m2g7f566efnvzdp35rq95cky",
+              "name": "Release proof public",
+              "externalKey": "rs-proof-1",
+              "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": "2026-09-14T15:09:48.773Z",
+              "createdByName": "Release Administrator",
+              "updatedAt": "2026-09-14T15:09:48.774Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case3-create-team",
+      "at": "2026-09-14T15:09:48.853592+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/teams/by-key/rs-proof-team",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release Proof Team",
+          "memberIds": []
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 303\nDate: Mon, 14 Sep 2026 15:09:48 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "team": {
+            "id": "tem_01m2g7f7f9erfrznsbmce7j2pd",
+            "externalKey": "rs-proof-team",
+            "organizationId": "org_01m2g7d1a4eags33bb31x56fx9",
+            "name": "Release Proof Team",
+            "createdAt": "2026-09-14T15:09:48.905Z",
+            "updatedAt": "2026-09-14T15:09:48.905Z",
+            "memberIds": [],
+            "managedByScim": false,
+            "grantsOrganizationAdmin": false
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case3-rename-team-access",
+      "at": "2026-09-14T15:09:48.892014+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-1",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof team scoped",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": false,
+            "memberIds": [],
+            "teamIds": [
+              "tem_01m2g7f7f9erfrznsbmce7j2pd"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1188\nDate: Mon, 14 Sep 2026 15:09:48 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof team scoped",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:48.946Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": false,
+            "memberIds": [],
+            "teamIds": [
+              "tem_01m2g7f7f9erfrznsbmce7j2pd"
+            ]
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "identityChanged": false,
+          "reconnectionRequired": false
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case3-read-team-access",
+      "at": "2026-09-14T15:09:48.936969+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f566efnvzdp35rq95cky",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1135\nDate: Mon, 14 Sep 2026 15:09:48 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof team scoped",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:48.946Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": false,
+            "memberIds": [],
+            "teamIds": [
+              "tem_01m2g7f7f9erfrznsbmce7j2pd"
+            ]
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case3-omit-access",
+      "at": "2026-09-14T15:09:48.970116+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-1",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof omitted access",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1158\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof omitted access",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:49.025Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "identityChanged": false,
+          "reconnectionRequired": false
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case3-read-widened-access",
+      "at": "2026-09-14T15:09:49.015126+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f566efnvzdp35rq95cky",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1105\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof omitted access",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:49.025Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case4-duplicate-post",
+      "at": "2026-09-14T15:09:49.050569+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/mcp-connections",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof public",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "externalKey": "rs-proof-1"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": "HTTP/1.1 409 Conflict\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 197\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "external_key_exists",
+          "message": "A connection with externalKey \"rs-proof-1\" already exists (emc_01m2g7f566efnvzdp35rq95cky). Use PUT /v1/mcp-connections/by-key/rs-proof-1 to update it."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case5-get-id",
+      "at": "2026-09-14T15:09:49.086740+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f566efnvzdp35rq95cky",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1105\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof omitted access",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:49.025Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case5-update-id",
+      "at": "2026-09-14T15:09:49.124247+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f566efnvzdp35rq95cky",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "expectedUpdatedAt": "2026-09-14T15:09:49.025Z",
+          "name": "Release proof ID rename",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1153\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof ID rename",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:49.176Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "identityChanged": false,
+          "reconnectionRequired": false
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case5-stale-update-id",
+      "at": "2026-09-14T15:09:49.164548+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f566efnvzdp35rq95cky",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "expectedUpdatedAt": "2026-09-14T15:09:49.025Z",
+          "name": "Release proof stale rejected",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": "HTTP/1.1 409 Conflict\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 149\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_conflict",
+          "message": "This connection changed after you opened it. Close the dialog, review the latest settings, and try again."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case5-read-after-stale",
+      "at": "2026-09-14T15:09:49.201154+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f566efnvzdp35rq95cky",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1100\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f566efnvzdp35rq95cky",
+          "name": "Release proof ID rename",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:48.773Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:49.176Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case6-secret-create",
+      "at": "2026-09-14T15:09:49.237315+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-auth",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof bearer",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+          "authType": "apikey",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "apiKey": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1265\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f7v5e6avy9r0byk64epd",
+          "name": "Release proof bearer",
+          "externalKey": "rs-proof-auth",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+          "authType": "apikey",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": null,
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:49.286Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "links": {
+            "yourConnections": "http://localhost:13005/dashboard/your-connections?connectionId=emc_01m2g7f7v5e6avy9r0byk64epd",
+            "oauthCallback": "http://127.0.0.1/unused-mcp-oauth-callback"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case6-secret-read",
+      "at": "2026-09-14T15:09:49.582140+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f7v5e6avy9r0byk64epd",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1080\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f7v5e6avy9r0byk64epd",
+          "name": "Release proof bearer",
+          "externalKey": "rs-proof-auth",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+          "authType": "apikey",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": null,
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:49.286Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case6-call-before",
+      "at": "2026-09-14T15:09:49.626326+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f7v5e6avy9r0byk64epd/tools/call",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "toolName": "release_credential_witness",
+          "arguments": {
+            "nonce": "before-secret-omission"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1856\nDate: Mon, 14 Sep 2026 15:09:49 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "referenceId": "req_01m2g7f86zed7tgdnqm4p6xshr",
+          "durationMs": 276,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"authenticated\": true, \"nonce\": \"before-secret-omission\"}"
+              }
+            ],
+            "isError": false
+          },
+          "inspection": {
+            "request": {
+              "method": "POST",
+              "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+              "startedAt": "2026-09-14T15:09:49.838Z",
+              "headers": [
+                {
+                  "name": "accept",
+                  "value": "application/json, text/event-stream",
+                  "redacted": false
+                },
+                {
+                  "name": "authorization",
+                  "value": "Bearer [redacted]",
+                  "redacted": true
+                },
+                {
+                  "name": "content-type",
+                  "value": "application/json",
+                  "redacted": false
+                },
+                {
+                  "name": "mcp-protocol-version",
+                  "value": "2024-11-05",
+                  "redacted": false
+                }
+              ],
+              "body": {
+                "text": "{\"method\":\"tools/call\",\"params\":{\"name\":\"release_credential_witness\",\"arguments\":{\"nonce\":\"before-secret-omission\"},\"_meta\":{\"progressToken\":1}},\"jsonrpc\":\"2.0\",\"id\":1}",
+                "bytes": 168,
+                "truncated": false
+              }
+            },
+            "response": {
+              "status": 200,
+              "statusText": "OK",
+              "durationMs": 114,
+              "headers": [
+                {
+                  "name": "cf-cache-status",
+                  "value": "DYNAMIC",
+                  "redacted": false
+                },
+                {
+                  "name": "cf-ray",
+                  "value": "a3b050a2ae777b59-IAD",
+                  "redacted": false
+                },
+                {
+                  "name": "connection",
+                  "value": "keep-alive",
+                  "redacted": false
+                },
+                {
+                  "name": "content-encoding",
+                  "value": "gzip",
+                  "redacted": false
+                },
+                {
+                  "name": "content-type",
+                  "value": "application/json",
+                  "redacted": false
+                },
+                {
+                  "name": "date",
+                  "value": "Mon, 14 Sep 2026 15:09:49 GMT",
+                  "redacted": false
+                },
+                {
+                  "name": "server",
+                  "value": "cloudflare",
+                  "redacted": false
+                },
+                {
+                  "name": "transfer-encoding",
+                  "value": "chunked",
+                  "redacted": false
+                }
+              ],
+              "body": {
+                "text": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"{\\\"authenticated\\\": true, \\\"nonce\\\": \\\"before-secret-omission\\\"}\"}], \"isError\": false}}",
+                "bytes": 164,
+                "truncated": false
+              }
+            },
+            "diagnosis": {
+              "status": "succeeded",
+              "layer": "mcp_tool",
+              "summary": "The remote MCP received tools/call and returned a successful tool result."
+            }
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case6-omit-secret",
+      "at": "2026-09-14T15:09:49.941017+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-auth",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof bearer retained",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+          "authType": "apikey",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1142\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f7v5e6avy9r0byk64epd",
+          "name": "Release proof bearer retained",
+          "externalKey": "rs-proof-auth",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+          "authType": "apikey",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": null,
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:50.003Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "identityChanged": false,
+          "reconnectionRequired": false
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case6-secret-read-after",
+      "at": "2026-09-14T15:09:49.991234+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f7v5e6avy9r0byk64epd",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1089\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f7v5e6avy9r0byk64epd",
+          "name": "Release proof bearer retained",
+          "externalKey": "rs-proof-auth",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+          "authType": "apikey",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": null,
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:50.003Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case6-call-after",
+      "at": "2026-09-14T15:09:50.024357+00:00",
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f7v5e6avy9r0byk64epd/tools/call",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "toolName": "release_credential_witness",
+          "arguments": {
+            "nonce": "after-secret-omission"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1852\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "referenceId": "req_01m2g7f8kdeeqse049d3d05ayt",
+          "durationMs": 226,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"authenticated\": true, \"nonce\": \"after-secret-omission\"}"
+              }
+            ],
+            "isError": false
+          },
+          "inspection": {
+            "request": {
+              "method": "POST",
+              "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+              "startedAt": "2026-09-14T15:09:50.205Z",
+              "headers": [
+                {
+                  "name": "accept",
+                  "value": "application/json, text/event-stream",
+                  "redacted": false
+                },
+                {
+                  "name": "authorization",
+                  "value": "Bearer [redacted]",
+                  "redacted": true
+                },
+                {
+                  "name": "content-type",
+                  "value": "application/json",
+                  "redacted": false
+                },
+                {
+                  "name": "mcp-protocol-version",
+                  "value": "2024-11-05",
+                  "redacted": false
+                }
+              ],
+              "body": {
+                "text": "{\"method\":\"tools/call\",\"params\":{\"name\":\"release_credential_witness\",\"arguments\":{\"nonce\":\"after-secret-omission\"},\"_meta\":{\"progressToken\":1}},\"jsonrpc\":\"2.0\",\"id\":1}",
+                "bytes": 167,
+                "truncated": false
+              }
+            },
+            "response": {
+              "status": 200,
+              "statusText": "OK",
+              "durationMs": 91,
+              "headers": [
+                {
+                  "name": "cf-cache-status",
+                  "value": "DYNAMIC",
+                  "redacted": false
+                },
+                {
+                  "name": "cf-ray",
+                  "value": "a3b050a4eeb07b59-IAD",
+                  "redacted": false
+                },
+                {
+                  "name": "connection",
+                  "value": "keep-alive",
+                  "redacted": false
+                },
+                {
+                  "name": "content-encoding",
+                  "value": "gzip",
+                  "redacted": false
+                },
+                {
+                  "name": "content-type",
+                  "value": "application/json",
+                  "redacted": false
+                },
+                {
+                  "name": "date",
+                  "value": "Mon, 14 Sep 2026 15:09:50 GMT",
+                  "redacted": false
+                },
+                {
+                  "name": "server",
+                  "value": "cloudflare",
+                  "redacted": false
+                },
+                {
+                  "name": "transfer-encoding",
+                  "value": "chunked",
+                  "redacted": false
+                }
+              ],
+              "body": {
+                "text": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"{\\\"authenticated\\\": true, \\\"nonce\\\": \\\"after-secret-omission\\\"}\"}], \"isError\": false}}",
+                "bytes": 163,
+                "truncated": false
+              }
+            },
+            "diagnosis": {
+              "status": "succeeded",
+              "layer": "mcp_tool",
+              "summary": "The remote MCP received tools/call and returned a successful tool result."
+            }
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case7-delete-key",
+      "at": "2026-09-14T15:09:50.284849+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-1",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case7-deleted-get",
+      "at": "2026-09-14T15:09:50.337822+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f566efnvzdp35rq95cky",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": "HTTP/1.1 404 Not Found\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 64\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "connection_not_found",
+          "message": "Unknown connection."
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case7-recreate",
+      "at": "2026-09-14T15:09:50.371788+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-1",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": {
+          "name": "Release proof public",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": "HTTP/1.1 201 Created\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 1282\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "id": "emc_01m2g7f8ypedev7g18x76ns91h",
+          "name": "Release proof public",
+          "externalKey": "rs-proof-1",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:09:50.667Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:09:50.667Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "links": {
+            "yourConnections": "http://localhost:13005/dashboard/your-connections?connectionId=emc_01m2g7f8ypedev7g18x76ns91h",
+            "oauthCallback": "http://127.0.0.1/unused-mcp-oauth-callback"
+          }
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case8-no-key-put",
+      "at": "2026-09-14T15:09:50.662461+00:00",
+      "request": {
+        "method": "PUT",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-unauthorized",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "name": "Release proof public",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case8-no-key-get",
+      "at": "2026-09-14T15:09:50.687469+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections/emc_01m2g7f8ypedev7g18x76ns91h",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 401,
+        "headers": "HTTP/1.1 401 Unauthorized\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 24\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "error": "unauthorized"
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "case8-list-after-no-key",
+      "at": "2026-09-14T15:09:50.710588+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 2205\nDate: Mon, 14 Sep 2026 15:09:50 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": [
+            {
+              "id": "emc_01m2g7f7v5e6avy9r0byk64epd",
+              "name": "Release proof bearer retained",
+              "externalKey": "rs-proof-auth",
+              "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/bearer",
+              "authType": "apikey",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": null,
+              "createdByName": "Release Administrator",
+              "updatedAt": "2026-09-14T15:09:50.003Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            },
+            {
+              "id": "emc_01m2g7f8ypedev7g18x76ns91h",
+              "name": "Release proof public",
+              "externalKey": "rs-proof-1",
+              "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "nativeProviderKey": null,
+              "externalAccountId": null,
+              "connected": true,
+              "connectedAt": "2026-09-14T15:09:50.667Z",
+              "createdByName": "Release Administrator",
+              "updatedAt": "2026-09-14T15:09:50.667Z",
+              "connectedForMe": true,
+              "needsReconnect": false,
+              "credentialHealth": "unknown",
+              "credentialHealthReason": null,
+              "credentialHealthCheckedAt": null,
+              "issuerReviewRequired": false,
+              "reconnectActionOwner": null,
+              "requiredBy": [],
+              "identityManagedBy": [],
+              "requiredAuthType": null,
+              "authPolicyConfirmed": true,
+              "authTypeMismatch": false,
+              "oauthClientConfigured": false,
+              "oauthClientRequired": false,
+              "setupRequired": false,
+              "access": {
+                "orgWide": true,
+                "memberIds": [],
+                "teamIds": []
+              },
+              "oauthClientId": null,
+              "oauthCallbackUrl": null,
+              "oauthSharedCallbackUrl": null,
+              "oauthClientMetadataUrl": null,
+              "oauthCallbackMode": null,
+              "oauthRegistrationSource": null,
+              "authorizationServerIssuer": null,
+              "requestedScopes": [],
+              "grantedScopes": []
+            }
+          ]
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "tls-untrusted-control",
+      "at": "2026-09-14T15:10:55.842958+00:00",
+      "request": {
+        "method": "GET",
+        "url": "https://localhost:18443/health",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 0,
+        "headers": "",
+        "body": ""
+      },
+      "curlExit": 60,
+      "stderr": "curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)\nMore details here: https://curl.se/docs/sslcerts.html\n\ncurl failed to verify the legitimacy of the server and therefore could not\nestablish a secure connection to it. To learn more about this situation and\nhow to fix it, please visit the webpage mentioned above.\n"
+    },
+    {
+      "at": "2026-09-14T15:10:56.567818+00:00",
+      "request": {
+        "method": "PUT",
+        "body": {
+          "name": "Release exact recipe",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        },
+        "url": "https://localhost:18443/v1/mcp-connections/by-key/platform-tools",
+        "headers": {
+          "x-api-key": "[REDACTED]",
+          "Content-Type": "application/json"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "access-control-allow-credentials": "true",
+          "access-control-expose-headers": "Content-Length",
+          "content-type": "application/json",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "vary": "Origin",
+          "x-content-type-options": "nosniff",
+          "content-length": "1286",
+          "Date": "Mon, 14 Sep 2026 15:10:56 GMT",
+          "Connection": "keep-alive",
+          "Keep-Alive": "timeout=5"
+        },
+        "body": {
+          "id": "emc_01m2g7h91eemn8g9kye3bmn0s7",
+          "name": "Release exact recipe",
+          "externalKey": "platform-tools",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:10:56.572Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:10:56.573Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "links": {
+            "yourConnections": "http://localhost:13005/dashboard/your-connections?connectionId=emc_01m2g7h91eemn8g9kye3bmn0s7",
+            "oauthCallback": "http://127.0.0.1/unused-mcp-oauth-callback"
+          }
+        }
+      },
+      "label": "recipe-first",
+      "recipe": {
+        "source": "reports/rca-mcp-put-endpoint-2026-09-14.md:144-146",
+        "verbatim": true,
+        "lines": [
+          "set -euo pipefail",
+          "body=$(jq -cn --arg name \"$MCP_NAME\" --arg url \"$MCP_URL\" '{name:$name,url:$url,authType:\"none\",credentialMode:\"shared\",exposeDirectly:false,access:{orgWide:true,memberIds:[],teamIds:[]}}')",
+          "curl --proto '=https' --fail-with-body -sS -X PUT -H \"x-api-key: $DEN_API_KEY\" -H 'Content-Type: application/json' --data-binary \"$body\" \"$DEN_API_URL/v1/mcp-connections/by-key/platform-tools\" | jq '{id,externalKey,updatedAt,reconnectionRequired}'"
+        ],
+        "exit": 0,
+        "stdout": "{\n  \"id\": \"emc_01m2g7h91eemn8g9kye3bmn0s7\",\n  \"externalKey\": \"platform-tools\",\n  \"updatedAt\": \"2026-09-14T15:10:56.573Z\",\n  \"reconnectionRequired\": null\n}\n",
+        "stderr": "",
+        "CURL_CA_BUNDLE": "private/ca.pem",
+        "tlsVerification": true
+      }
+    },
+    {
+      "at": "2026-09-14T15:10:56.738617+00:00",
+      "request": {
+        "method": "PUT",
+        "body": {
+          "name": "Release exact recipe",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          }
+        },
+        "url": "https://localhost:18443/v1/mcp-connections/by-key/platform-tools",
+        "headers": {
+          "x-api-key": "[REDACTED]",
+          "Content-Type": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-credentials": "true",
+          "access-control-expose-headers": "Content-Length",
+          "content-type": "application/json",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "vary": "Origin",
+          "x-content-type-options": "nosniff",
+          "content-length": "1154",
+          "Date": "Mon, 14 Sep 2026 15:10:56 GMT",
+          "Connection": "keep-alive",
+          "Keep-Alive": "timeout=5"
+        },
+        "body": {
+          "id": "emc_01m2g7h91eemn8g9kye3bmn0s7",
+          "name": "Release exact recipe",
+          "externalKey": "platform-tools",
+          "url": "https://cook-passenger-jokes-wishing.trycloudflare.com/public",
+          "authType": "none",
+          "credentialMode": "shared",
+          "exposeDirectly": false,
+          "nativeProviderKey": null,
+          "externalAccountId": null,
+          "connected": true,
+          "connectedAt": "2026-09-14T15:10:56.572Z",
+          "createdByName": "Release Administrator",
+          "updatedAt": "2026-09-14T15:10:56.573Z",
+          "connectedForMe": true,
+          "needsReconnect": false,
+          "credentialHealth": "unknown",
+          "credentialHealthReason": null,
+          "credentialHealthCheckedAt": null,
+          "issuerReviewRequired": false,
+          "reconnectActionOwner": null,
+          "requiredBy": [],
+          "identityManagedBy": [],
+          "requiredAuthType": null,
+          "authPolicyConfirmed": true,
+          "authTypeMismatch": false,
+          "oauthClientConfigured": false,
+          "oauthClientRequired": false,
+          "setupRequired": false,
+          "access": {
+            "orgWide": true,
+            "memberIds": [],
+            "teamIds": []
+          },
+          "oauthClientId": null,
+          "oauthCallbackUrl": null,
+          "oauthSharedCallbackUrl": null,
+          "oauthClientMetadataUrl": null,
+          "oauthCallbackMode": null,
+          "oauthRegistrationSource": null,
+          "authorizationServerIssuer": null,
+          "requestedScopes": [],
+          "grantedScopes": [],
+          "identityChanged": false,
+          "reconnectionRequired": false
+        }
+      },
+      "label": "recipe-second",
+      "recipe": {
+        "source": "reports/rca-mcp-put-endpoint-2026-09-14.md:144-146",
+        "verbatim": true,
+        "lines": [
+          "set -euo pipefail",
+          "body=$(jq -cn --arg name \"$MCP_NAME\" --arg url \"$MCP_URL\" '{name:$name,url:$url,authType:\"none\",credentialMode:\"shared\",exposeDirectly:false,access:{orgWide:true,memberIds:[],teamIds:[]}}')",
+          "curl --proto '=https' --fail-with-body -sS -X PUT -H \"x-api-key: $DEN_API_KEY\" -H 'Content-Type: application/json' --data-binary \"$body\" \"$DEN_API_URL/v1/mcp-connections/by-key/platform-tools\" | jq '{id,externalKey,updatedAt,reconnectionRequired}'"
+        ],
+        "exit": 0,
+        "stdout": "{\n  \"id\": \"emc_01m2g7h91eemn8g9kye3bmn0s7\",\n  \"externalKey\": \"platform-tools\",\n  \"updatedAt\": \"2026-09-14T15:10:56.573Z\",\n  \"reconnectionRequired\": false\n}\n",
+        "stderr": "",
+        "CURL_CA_BUNDLE": "private/ca.pem",
+        "tlsVerification": true
+      }
+    },
+    {
+      "label": "cleanup-rs-proof-1",
+      "at": "2026-09-14T15:13:12.962736+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-1",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 15:13:13 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "cleanup-rs-proof-auth",
+      "at": "2026-09-14T15:13:13.028755+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-auth",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 15:13:13 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "cleanup-rs-proof-local",
+      "at": "2026-09-14T15:13:13.068496+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-local",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 27\nDate: Mon, 14 Sep 2026 15:13:13 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": false
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "cleanup-rs-proof-unauthorized",
+      "at": "2026-09-14T15:13:13.103374+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/rs-proof-unauthorized",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 27\nDate: Mon, 14 Sep 2026 15:13:13 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": false
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "cleanup-platform-tools",
+      "at": "2026-09-14T15:13:13.142818+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/mcp-connections/by-key/platform-tools",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 15:13:13 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "cleanup-team",
+      "at": "2026-09-14T15:13:13.186446+00:00",
+      "request": {
+        "method": "DELETE",
+        "url": "http://localhost:18788/v1/teams/by-key/rs-proof-team",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 26\nDate: Mon, 14 Sep 2026 15:13:13 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "ok": true,
+          "deleted": true
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    },
+    {
+      "label": "cleanup-list",
+      "at": "2026-09-14T15:13:13.228272+00:00",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:18788/v1/mcp-connections?scope=manageable",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-api-key": "[REDACTED]"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": "HTTP/1.1 200 OK\naccess-control-allow-credentials: true\naccess-control-expose-headers: Content-Length\ncontent-type: application/json\nstrict-transport-security: max-age=31536000; includeSubDomains\nvary: Origin\nx-content-type-options: nosniff\ncontent-length: 18\nDate: Mon, 14 Sep 2026 15:13:13 GMT\nConnection: keep-alive\nKeep-Alive: timeout=5\n\n",
+        "body": {
+          "connections": []
+        }
+      },
+      "curlExit": 0,
+      "stderr": ""
+    }
+  ]
+}
