@@ -311,6 +311,9 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         refuseWorking: helpers.bridged,
       });
       if (outcome.kind === "done") return { ok: true, sessionId, archived };
+      if (outcome.kind === "verification_failed" || outcome.kind === "archive_outcome_unknown") {
+        return { ok: false, code: outcome.kind, sessionId, error: outcome.message };
+      }
       if (outcome.kind === "target_working") {
         return { ok: false, code: outcome.kind, sessionId, title: outcome.title, error: `"${outcome.title}" is still working; it was not archived.`, hint: ARCHIVE_TARGET_WORKING_HINT };
       }

@@ -137,6 +137,74 @@ describe("OpenCode transport timeouts", () => {
     }
   }, 15_000);
 
+  test.each(["web URL", "web Request", "desktop Request"])("preserves caller cancellation on ordinary requests (%s)", async (transport) => {
+    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const controller = new AbortController();
+    const url = "http://127.0.0.1:8788/session/ses_archive";
+    const response = transport === "web URL"
+      ? fetchImpl(url, { signal: controller.signal })
+      : fetchImpl(new Request(url, { signal: controller.signal }));
+    const outcome = response.catch((error: unknown) => error);
+    const reason = new Error("Archive verification cancelled");
+    controller.abort(reason);
+    expect(observedSignal()?.aborted).toBe(true);
+    expect(await outcome).toBe(reason);
+  });
+
+  test.each(["web", "desktop"])("RequestInit.signal overrides Request.signal (%s)", async (transport) => {
+    installWindow(transport === "desktop" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const requestController = new AbortController();
+    const initController = new AbortController();
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/session/ses_archive", {
+      signal: requestController.signal,
+    }), { signal: initController.signal });
+    const outcome = response.catch((error: unknown) => error);
+    requestController.abort();
+    expect(observedSignal()?.aborted).toBe(false);
+    const reason = new Error("Cancelled through RequestInit");
+    initController.abort(reason);
+    expect(observedSignal()?.aborted).toBe(true);
+    expect(await outcome).toBe(reason);
+  });
+
+  test.each(["web", "desktop"])("RequestInit.signal=null disconnects the input Request signal (%s)", async (transport) => {
+    jest.useFakeTimers();
+    installWindow(transport === "desktop" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const controller = new AbortController();
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/session/ses_archive", {
+      signal: controller.signal,
+    }), { signal: null });
+    const outcome = response.catch((error: unknown) => error);
+    controller.abort();
+    expect(observedSignal()?.aborted).toBe(false);
+    jest.advanceTimersByTime(10_000);
+    expect(await outcome).toMatchObject({ message: "Request timed out." });
+    expect(observedSignal()?.aborted).toBe(true);
+  });
+
+  test.each(["web URL", "web Request", "desktop Request"])("transport deadline aborts requests even with a caller signal (%s)", async (transport) => {
+    jest.useFakeTimers();
+    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const controller = new AbortController();
+    const url = "http://127.0.0.1:8788/session/ses_archive";
+    const response = transport === "web URL"
+      ? fetchImpl(url, { signal: controller.signal })
+      : fetchImpl(new Request(url, { signal: controller.signal }));
+    const outcome = response.catch((error: unknown) => error);
+    jest.advanceTimersByTime(10_000);
+    expect(await outcome).toMatchObject({ message: "Request timed out." });
+    expect(observedSignal()?.aborted).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
+  });
+
   test.each(["web URL", "web Request", "desktop Request"])("bounds prompt_async acceptance at 30 seconds without resending (%s)", async (transport) => {
     jest.useFakeTimers();
     installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);

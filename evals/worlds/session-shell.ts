@@ -1477,7 +1477,7 @@ export async function commandPaletteSearch(seed: Seed) {
   };
 }
 
-type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "accepted_prompt" | "hold_archive";
+type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "accepted_prompt" | "hold_archive" | "hold_messages";
 type ArchiveRequest = {
   path: string; sessionId: string; action: string; messageID: string | null; result: string | number | null;
   command?: { name: string; arguments: string; model: string | null; agent: string | null };
@@ -1654,9 +1654,12 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
       const url = new URL(request.url);
       const match = url.pathname.match(/\/session\/([^/]+)\/(abort|prompt_async|command|shell)$/);
       const metadata = request.method === "PATCH" ? url.pathname.match(/\/session\/([^/]+)$/) : null;
+      const messages = request.method === "GET" && state.mode === "hold_messages"
+        ? url.pathname.match(/\/session\/([^/]+)\/message$/) : null;
       const record: ArchiveRequest | null = match && request.method === "POST"
         ? { path: url.pathname, sessionId: match[1], action: match[2], messageID: null, result: null }
-        : metadata ? { path: url.pathname, sessionId: metadata[1], action: "metadata", messageID: null, result: null } : null;
+        : metadata ? { path: url.pathname, sessionId: metadata[1], action: "metadata", messageID: null, result: null }
+        : messages ? { path: url.pathname, sessionId: messages[1], action: "messages", messageID: null, result: null } : null;
       if (record && ["prompt_async", "command"].includes(record.action)) {
         const body: unknown = await request.clone().json();
         if (body && typeof body === "object" && "messageID" in body && typeof body.messageID === "string") record.messageID = body.messageID;
@@ -1726,6 +1729,26 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
       }
       const response = await original(request);
       if (record) record.result = response.status;
+      if (record?.action === "messages" && target && state.mode === "hold_messages" && response.ok) {
+        const body = new Uint8Array(await response.arrayBuffer());
+        const previousRelease = state.release;
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            record.result = "held";
+            const finish = (expired: boolean) => {
+              if (record.result !== "held") return;
+              clearTimeout(timer);
+              record.result = expired ? "expired" : "released";
+              state.release = null;
+              controller.enqueue(body);
+              controller.close();
+            };
+            const timer = setTimeout(() => finish(true), 20_000);
+            state.release = async () => { await previousRelease?.(); finish(false); };
+          },
+        });
+        return new Response(stream, { status: response.status, headers: response.headers });
+      }
       // Merge only the owning endpoint's target. All unrelated statuses and
       // approvals remain authoritative, including concurrently running sessions.
       const { mode, sessionId, workspaceId } = state;

@@ -203,8 +203,9 @@ async function fetchWithTimeout(
   }
 
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const signal = controller?.signal;
-  const initWithSignal = signal && !init?.signal ? { ...(init ?? {}), signal } : init;
+  const callerSignal = init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal;
+  const signal = controller && callerSignal ? AbortSignal.any([controller.signal, callerSignal]) : controller?.signal;
+  const initWithSignal = signal ? { ...init, signal } : init;
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -230,8 +231,8 @@ async function fetchWithTimeout(
     if (SESSION_PROMPT_ASYNC_URL_RE.test(getRequestUrl(input))) {
       throw isPromptAdmissionUnknown(error) ? error : new PromptAdmissionUnknownError({ cause: error });
     }
-    const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
+    callerSignal?.throwIfAborted();
+    if (error && typeof error === "object" && "name" in error && error.name === "AbortError") {
       throw new Error("Request timed out.");
     }
     throw error;
@@ -302,9 +303,9 @@ export const createDesktopFetch = (auth?: OpencodeAuth) => {
     const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
 
     if (input instanceof Request) {
-      const headers = new Headers(input.headers);
+      const headers = new Headers(init?.headers ?? input.headers);
       addAuth(headers);
-      const request = new Request(input, { headers });
+      const request = new Request(input, { ...init, headers });
       return fetchWithTimeout(underlyingFetch, request, undefined, timeoutMs);
     }
 
