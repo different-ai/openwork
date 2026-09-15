@@ -341,6 +341,51 @@ export type DenOrgLlmProvider = {
   updatedAt: string | null;
 };
 
+export type DenLibraryAccessTargets = {
+  members: { id: string; userId: string; name: string }[];
+  teams: { id: string; name: string }[];
+};
+
+export type DenMcpConnectionAccess = {
+  orgWide: boolean;
+  memberIds: string[];
+  teamIds: string[];
+};
+
+export type DenMcpConnectionInput = {
+  name: string;
+  url: string;
+  authType: "oauth" | "apikey" | "none";
+  credentialMode: "shared" | "per_member";
+  exposeDirectly?: boolean;
+  apiKey?: string;
+  oauthClient?: {
+    clientId: string;
+    clientSecret?: string;
+    tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post";
+  };
+  authorizationServerIssuer?: string | null;
+  requestedScopes?: string[];
+  access: DenMcpConnectionAccess;
+};
+
+export type DenNativeProviderClient = {
+  providerId: string;
+  configured: boolean;
+  clientId: string | null;
+  features: string[];
+  scopes: string[];
+  redirectUri: string;
+  tenantId: string | null;
+};
+
+export type DenNativeProviderClientInput = {
+  clientId?: string;
+  clientSecret?: string;
+  features?: string[];
+  tenantId?: string;
+};
+
 export type DenExternalMcpConnection = {
   id: string;
   name: string;
@@ -362,6 +407,18 @@ export type DenExternalMcpConnection = {
   tenantId?: string | null;
   /** Which service a native connector fronts (e.g. "google-workspace"); null/absent for external MCP connections. */
   nativeProviderKey?: string | null;
+  updatedAt?: string;
+  access?: DenMcpConnectionAccess | null;
+  oauthClientId?: string | null;
+  oauthCallbackUrl?: string | null;
+  authorizationServerIssuer?: string | null;
+  requestedScopes?: string[];
+  identityManagedBy?: { pluginId: string; name: string }[];
+  setupRequired?: boolean;
+  oauthClientRequired?: boolean;
+  oauthClientConfigured?: boolean;
+  requiredAuthType?: "oauth" | "apikey" | "none" | null;
+  authTypeMismatch?: boolean;
 };
 
 export type DenExternalMcpPreset = {
@@ -370,6 +427,8 @@ export type DenExternalMcpPreset = {
   description: string;
   url: string;
   authType: "oauth" | "apikey" | "none";
+  requiresOAuthClient?: boolean;
+  supportedAuthTypes?: ("oauth" | "apikey" | "none")[];
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -2119,14 +2178,59 @@ function getDenOrgLlmProviders(payload: unknown): DenOrgLlmProvider[] {
   });
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isDenMcpAuthType(value: unknown): value is DenExternalMcpConnection["authType"] {
+  return value === "oauth" || value === "apikey" || value === "none";
+}
+
+function parseDenMcpConnectionAccess(value: unknown): DenMcpConnectionAccess | null {
+  if (!isRecord(value) || typeof value.orgWide !== "boolean" || !isStringArray(value.memberIds) || !isStringArray(value.teamIds)) {
+    return null;
+  }
+  return { orgWide: value.orgWide, memberIds: [...value.memberIds], teamIds: [...value.teamIds] };
+}
+
+function parseDenMcpIdentityOwners(value: unknown): { pluginId: string; name: string }[] | null {
+  if (!Array.isArray(value)) return null;
+  const owners: { pluginId: string; name: string }[] = [];
+  for (const owner of value) {
+    if (!isRecord(owner) || !isNonEmptyString(owner.pluginId) || !isNonEmptyString(owner.name)) return null;
+    owners.push({ pluginId: owner.pluginId, name: owner.name });
+  }
+  return owners;
+}
+
 function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection | null {
   if (
     !isRecord(value) ||
-    typeof value.id !== "string" ||
-    typeof value.name !== "string" ||
-    typeof value.url !== "string" ||
-    (value.authType !== "oauth" && value.authType !== "apikey" && value.authType !== "none") ||
+    !isNonEmptyString(value.id) ||
+    !isNonEmptyString(value.name) ||
+    !isNonEmptyString(value.url) ||
+    !isDenMcpAuthType(value.authType) ||
     (value.credentialMode !== "shared" && value.credentialMode !== "per_member")
+  ) {
+    return null;
+  }
+
+  const access = parseDenMcpConnectionAccess(value.access);
+  const identityManagedBy = parseDenMcpIdentityOwners(value.identityManagedBy);
+  if (
+    (value.access !== undefined && value.access !== null && !access) ||
+    (value.identityManagedBy !== undefined && !identityManagedBy) ||
+    (value.updatedAt !== undefined && !isNonEmptyString(value.updatedAt)) ||
+    (value.requestedScopes !== undefined && !isStringArray(value.requestedScopes)) ||
+    (value.requiredAuthType !== undefined && value.requiredAuthType !== null && !isDenMcpAuthType(value.requiredAuthType)) ||
+    ["oauthClientId", "oauthCallbackUrl", "authorizationServerIssuer"].some((key) =>
+      value[key] !== undefined && value[key] !== null && typeof value[key] !== "string") ||
+    ["setupRequired", "oauthClientRequired", "oauthClientConfigured", "authTypeMismatch"].some((key) =>
+      value[key] !== undefined && typeof value[key] !== "boolean")
   ) {
     return null;
   }
@@ -2151,7 +2255,63 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     ...(Array.isArray(value.grantedScopes) ? { grantedScopes: readStringArray(value.grantedScopes) } : {}),
     ...(typeof value.tenantId === "string" || value.tenantId === null ? { tenantId: value.tenantId } : {}),
     ...(typeof value.nativeProviderKey === "string" || value.nativeProviderKey === null ? { nativeProviderKey: value.nativeProviderKey } : {}),
+    ...(typeof value.updatedAt === "string" ? { updatedAt: value.updatedAt } : {}),
+    ...(value.access === null || access ? { access } : {}),
+    ...(typeof value.oauthClientId === "string" || value.oauthClientId === null ? { oauthClientId: value.oauthClientId } : {}),
+    ...(typeof value.oauthCallbackUrl === "string" || value.oauthCallbackUrl === null ? { oauthCallbackUrl: value.oauthCallbackUrl } : {}),
+    ...(typeof value.authorizationServerIssuer === "string" || value.authorizationServerIssuer === null
+      ? { authorizationServerIssuer: value.authorizationServerIssuer } : {}),
+    ...(isStringArray(value.requestedScopes) ? { requestedScopes: [...value.requestedScopes] } : {}),
+    ...(identityManagedBy ? { identityManagedBy } : {}),
+    ...(typeof value.setupRequired === "boolean" ? { setupRequired: value.setupRequired } : {}),
+    ...(typeof value.oauthClientRequired === "boolean" ? { oauthClientRequired: value.oauthClientRequired } : {}),
+    ...(typeof value.oauthClientConfigured === "boolean" ? { oauthClientConfigured: value.oauthClientConfigured } : {}),
+    ...(value.requiredAuthType === null || isDenMcpAuthType(value.requiredAuthType) ? { requiredAuthType: value.requiredAuthType } : {}),
+    ...(typeof value.authTypeMismatch === "boolean" ? { authTypeMismatch: value.authTypeMismatch } : {}),
   };
+}
+
+function requireDenMcpConnection(payload: unknown): DenExternalMcpConnection {
+  const connection = parseDenExternalMcpConnection(payload);
+  if (
+    !connection || !isRecord(payload) ||
+    typeof payload.connected !== "boolean" ||
+    typeof payload.connectedForMe !== "boolean" ||
+    (payload.connectedAt !== null && typeof payload.connectedAt !== "string")
+  ) {
+    throw new DenApiError(500, "invalid_mcp_connection_payload", "MCP connection response was incomplete.");
+  }
+  return connection;
+}
+
+function parseDenNativeProviderClient(payload: unknown): DenNativeProviderClient | null {
+  if (
+    !isRecord(payload) || !isNonEmptyString(payload.providerId) ||
+    typeof payload.configured !== "boolean" ||
+    (payload.configured && !isNonEmptyString(payload.clientId)) ||
+    (payload.clientId !== null && !isNonEmptyString(payload.clientId)) ||
+    !isStringArray(payload.features) || !isStringArray(payload.scopes) ||
+    !isNonEmptyString(payload.redirectUri) ||
+    (payload.tenantId !== null && typeof payload.tenantId !== "string")
+  ) {
+    return null;
+  }
+  return {
+    providerId: payload.providerId,
+    configured: payload.configured,
+    clientId: payload.clientId,
+    features: [...payload.features],
+    scopes: [...payload.scopes],
+    redirectUri: payload.redirectUri,
+    tenantId: payload.tenantId,
+  };
+}
+
+function requireDenConnectionOrganization(orgId: string): string {
+  if (!orgId.trim()) {
+    throw new DenApiError(400, "organization_required", "Select an organization before managing connections.");
+  }
+  return orgId.trim();
 }
 
 function getDenExternalMcpConnections(payload: unknown): DenExternalMcpConnection[] {
@@ -2172,7 +2332,9 @@ function parseDenExternalMcpPreset(value: unknown): DenExternalMcpPreset | null 
     typeof value.displayName !== "string" ||
     typeof value.description !== "string" ||
     typeof value.url !== "string" ||
-    (value.authType !== "oauth" && value.authType !== "apikey" && value.authType !== "none")
+    !isDenMcpAuthType(value.authType) ||
+    (value.requiresOAuthClient !== undefined && typeof value.requiresOAuthClient !== "boolean") ||
+    (value.supportedAuthTypes !== undefined && (!Array.isArray(value.supportedAuthTypes) || !value.supportedAuthTypes.every(isDenMcpAuthType)))
   ) {
     return null;
   }
@@ -2183,6 +2345,9 @@ function parseDenExternalMcpPreset(value: unknown): DenExternalMcpPreset | null 
     description: value.description,
     url: value.url,
     authType: value.authType,
+    ...(typeof value.requiresOAuthClient === "boolean" ? { requiresOAuthClient: value.requiresOAuthClient } : {}),
+    ...(Array.isArray(value.supportedAuthTypes) && value.supportedAuthTypes.every(isDenMcpAuthType)
+      ? { supportedAuthTypes: [...value.supportedAuthTypes] } : {}),
   };
 }
 
@@ -2574,6 +2739,11 @@ function parsePluginCloudReadinessConnection(value: unknown): DenPluginCloudRead
     ...(typeof value.serverName === "string" ? { serverName: value.serverName } : {}),
     ...(credentialMode ? { credentialMode } : {}),
     ...(typeof value.connectedForMe === "boolean" ? { connectedForMe: value.connectedForMe } : {}),
+    ...(isDenMcpAuthType(value.authType) ? { authType: value.authType } : {}),
+    ...(isDenMcpAuthType(value.requiredAuthType) ? { requiredAuthType: value.requiredAuthType } : {}),
+    ...(typeof value.authTypeMismatch === "boolean" ? { authTypeMismatch: value.authTypeMismatch } : {}),
+    ...(typeof value.oauthClientRequired === "boolean" ? { oauthClientRequired: value.oauthClientRequired } : {}),
+    ...(typeof value.oauthClientConfigured === "boolean" ? { oauthClientConfigured: value.oauthClientConfigured } : {}),
   };
 }
 
@@ -2581,14 +2751,13 @@ function parsePluginCloudReadiness(value: unknown): DenPluginCloudReadiness | nu
   if (!isRecord(value) || typeof value.hasInstructional !== "boolean" || !Array.isArray(value.connections)) return null;
   const state = parsePluginCloudReadinessState(value.state);
   if (!state) return null;
-  return {
-    state,
-    hasInstructional: value.hasInstructional,
-    connections: value.connections.flatMap((entry) => {
-      const connection = parsePluginCloudReadinessConnection(entry);
-      return connection ? [connection] : [];
-    }),
-  };
+  const connections: DenPluginCloudReadinessConnection[] = [];
+  for (const entry of value.connections) {
+    const connection = parsePluginCloudReadinessConnection(entry);
+    if (!connection) return null;
+    connections.push(connection);
+  }
+  return { state, hasInstructional: value.hasInstructional, connections };
 }
 
 function parseOrgPlugin(value: unknown): DenOrgPlugin | null {
@@ -3453,6 +3622,144 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return getDenExternalMcpConnections(payload);
     },
 
+    async getLibraryAccessTargets(orgId: string): Promise<DenLibraryAccessTargets> {
+      const organizationId = requireDenConnectionOrganization(orgId);
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId });
+      if (
+        !isRecord(payload) || !isRecord(payload.organization) || payload.organization.id !== organizationId ||
+        !Array.isArray(payload.members) || !Array.isArray(payload.teams)
+      ) {
+        throw new DenApiError(500, "invalid_library_access_targets_payload", "Organization access targets were incomplete.");
+      }
+      const members: DenLibraryAccessTargets["members"] = [];
+      for (const member of payload.members) {
+        if (isRecord(member) && member.userId === null) continue;
+        if (
+          !isRecord(member) || !isNonEmptyString(member.id) || !isNonEmptyString(member.userId) ||
+          !isRecord(member.user) || member.user.id !== member.userId || typeof member.user.name !== "string"
+        ) {
+          throw new DenApiError(500, "invalid_library_access_targets_payload", "Organization member identities were incomplete.");
+        }
+        members.push({ id: member.id, userId: member.userId, name: member.user.name });
+      }
+      const teams: DenLibraryAccessTargets["teams"] = [];
+      for (const team of payload.teams) {
+        if (!isRecord(team) || !isNonEmptyString(team.id) || typeof team.name !== "string") {
+          throw new DenApiError(500, "invalid_library_access_targets_payload", "Organization team identities were incomplete.");
+        }
+        teams.push({ id: team.id, name: team.name });
+      }
+      return { members, teams };
+    },
+
+    async getMcpConnection(orgId: string, id: string): Promise<DenExternalMcpConnection> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(id)}`,
+        { method: "GET", token, organizationId: requireDenConnectionOrganization(orgId) },
+      );
+      return requireDenMcpConnection(payload);
+    },
+
+    async createMcpConnection(orgId: string, input: DenMcpConnectionInput): Promise<DenExternalMcpConnection> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/mcp-connections",
+        { method: "POST", token, organizationId: requireDenConnectionOrganization(orgId), body: input, timeoutMs: 20_000 },
+      );
+      return requireDenMcpConnection(payload);
+    },
+
+    async updateMcpConnection(orgId: string, id: string, input: DenMcpConnectionInput & { expectedUpdatedAt: string }): Promise<DenExternalMcpConnection> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(id)}`,
+        { method: "PUT", token, organizationId: requireDenConnectionOrganization(orgId), body: input, timeoutMs: 30_000 },
+      );
+      return requireDenMcpConnection(payload);
+    },
+
+    async getNativeProviderClient(orgId: string, providerId: string): Promise<DenNativeProviderClient> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/oauth-providers/${encodeURIComponent(providerId)}/client`,
+        { method: "GET", token, organizationId: requireDenConnectionOrganization(orgId) },
+      );
+      const client = parseDenNativeProviderClient(payload);
+      if (!client || client.providerId !== providerId) {
+        throw new DenApiError(500, "invalid_native_provider_client_payload", "Native provider client response was incomplete.");
+      }
+      return client;
+    },
+
+    async saveNativeProviderClient(orgId: string, providerId: string, input: DenNativeProviderClientInput): Promise<void> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/oauth-providers/${encodeURIComponent(providerId)}/client`,
+        { method: "POST", token, organizationId: requireDenConnectionOrganization(orgId), body: input, timeoutMs: 20_000 },
+      );
+      if (
+        !isRecord(payload) || payload.ok !== true || payload.providerId !== providerId ||
+        !isNonEmptyString(payload.clientId) || !isStringArray(payload.features) ||
+        (payload.tenantId !== null && typeof payload.tenantId !== "string")
+      ) {
+        throw new DenApiError(500, "invalid_native_provider_client_payload", "Native provider client save response was incomplete.");
+      }
+    },
+
+    async createNativeProviderConnection(orgId: string, input: {
+      nativeProviderKey: string;
+      name: string;
+      oauthClient: { clientId: string; clientSecret?: string; features?: string[] };
+    }): Promise<DenExternalMcpConnection> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/mcp-connections",
+        {
+          method: "POST",
+          token,
+          organizationId: requireDenConnectionOrganization(orgId),
+          body: { kind: "native_provider", ...input },
+          timeoutMs: 20_000,
+        },
+      );
+      const connection = requireDenMcpConnection(payload);
+      if (!isNonEmptyString(connection.nativeProviderKey) || connection.nativeProviderKey !== input.nativeProviderKey) {
+        throw new DenApiError(500, "invalid_mcp_connection_payload", "Native connection response did not identify the requested provider.");
+      }
+      return connection;
+    },
+
+    async configurePluginMcpConnection(orgId: string, pluginId: string, input: {
+      configObjectId: string;
+      serverName: string;
+      authType: "oauth" | "apikey" | "none";
+      credentialMode: "shared" | "per_member";
+      apiKey?: string;
+      oauthClient?: { clientId: string; clientSecret?: string };
+    }): Promise<{ connectionId: string }> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/mcp-connections`,
+        { method: "POST", token, organizationId: requireDenConnectionOrganization(orgId), body: input, timeoutMs: 30_000 },
+      );
+      const item = isRecord(payload) && payload.ok === true && isRecord(payload.item) ? payload.item : null;
+      const binding = item && isRecord(item.binding) ? item.binding : null;
+      const connectionPayload = item && isRecord(item.connection) ? item.connection : null;
+      const connection = parseDenExternalMcpConnection(connectionPayload);
+      if (
+        !binding || !connection || !connectionPayload ||
+        typeof connectionPayload.connected !== "boolean" ||
+        (connectionPayload.connectedAt !== null && typeof connectionPayload.connectedAt !== "string") ||
+        !isNonEmptyString(binding.id) || !isNonEmptyString(binding.configObjectId) ||
+        !isNonEmptyString(binding.pluginId) || !isNonEmptyString(binding.serverName) ||
+        binding.externalMcpConnectionId !== connection.id
+      ) {
+        throw new DenApiError(500, "invalid_plugin_mcp_connection_payload", "Plugin MCP connection response was incomplete.");
+      }
+      return { connectionId: connection.id };
+    },
+
     async listMcpConnectionPresets(orgId: string): Promise<DenExternalMcpPreset[]> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -3529,6 +3836,24 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_marketplace_payload", "Marketplace response was missing plugin details.");
       }
       return resolved;
+    },
+
+    async getLibraryPlugin(orgId: string, pluginId: string): Promise<DenOrgPlugin> {
+      const organizationId = requireDenConnectionOrganization(orgId);
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}`,
+        { method: "GET", token, organizationId },
+      );
+      const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+      const plugin = parseOrgPlugin(item);
+      if (!item || !plugin || !isNonEmptyString(plugin.id) || plugin.id !== pluginId || !isNonEmptyString(plugin.name)) {
+        throw new DenApiError(500, "invalid_plugin_payload", "Plugin response was incomplete.");
+      }
+      if (item.cloudReadiness !== undefined && !plugin.cloudReadiness) {
+        throw new DenApiError(500, "invalid_plugin_payload", "Plugin readiness response was incomplete.");
+      }
+      return plugin;
     },
 
     async getOrgPluginResolved(orgId: string, plugin: DenOrgPlugin): Promise<DenOrgPluginResolved> {

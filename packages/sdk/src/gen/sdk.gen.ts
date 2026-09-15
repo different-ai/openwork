@@ -10028,7 +10028,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get plugin
    *
-   * Returns one plugin detail when the caller can view it.
+   * Returns one plugin detail when the caller can view it, with current member-scoped cloud readiness when Connect is enabled. Standalone plugins do not require marketplace membership.
    */
   public getV1PluginsByPluginId<ThrowOnError extends boolean = false>(
     parameters: {

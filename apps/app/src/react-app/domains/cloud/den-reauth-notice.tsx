@@ -7,11 +7,13 @@ import { useDenAuth } from "./den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
 
 /** Verification replaces only this account's session; it cannot enroll another account or workspace. */
-export function DenReauthNotice({ onVerified, onCancel }: {
+export function DenReauthNotice({ onVerified, onCancel, purpose = "sharing" }: {
+  purpose?: "sharing" | "library";
   onVerified: (client: ReturnType<typeof createDenClient>, commitSession: () => void) => Promise<void>;
   onCancel: () => void;
 }) {
   const auth = useDenAuth();
+  const library = purpose === "library";
   const [user] = useState(auth.user);
   const [settings] = useState(readDenSettings);
   const [nonce] = useState(() => crypto.randomUUID());
@@ -56,7 +58,7 @@ export function DenReauthNotice({ onVerified, onCancel }: {
     };
     const ensureCurrent = () => {
       if (!active.current || !isCurrentSession()) {
-        throw new Error("Your account or workspace changed. Cancel and start sharing again.");
+        throw new Error(library ? "Your account or workspace changed. Cancel and start setup again." : "Your account or workspace changed. Cancel and start sharing again.");
       }
     };
     try {
@@ -64,11 +66,11 @@ export function DenReauthNotice({ onVerified, onCancel }: {
       // Never send a grant to a destination supplied by a link.
       const exchange = await createDenClient(settings).exchangeDesktopHandoff(grant);
       if (!exchange.token || exchange.user?.id !== user.id) {
-        throw new Error(`Sign in as ${user.email} to confirm this share.`);
+        throw new Error(`Sign in as ${user.email} to confirm ${library ? "this setup" : "this share"}.`);
       }
       const client = createDenClient({ ...settings, token: exchange.token });
       const verifiedUser = await client.getSession();
-      if (verifiedUser.id !== user.id) throw new Error(`Sign in as ${user.email} to confirm this share.`);
+      if (verifiedUser.id !== user.id) throw new Error(`Sign in as ${user.email} to confirm ${library ? "this setup" : "this share"}.`);
       ensureCurrent();
       // The resumed mutation still enforces freshness and resource permissions on the server.
       // Commit when the share dialog closes: settings changes reload deployment
@@ -103,8 +105,8 @@ export function DenReauthNotice({ onVerified, onCancel }: {
   }, [nonce]);
 
   return <div className="space-y-3 rounded-lg border p-4">
-    <p className="text-sm font-medium">Confirm your identity to share apps</p>
-    <p className="text-sm text-muted-foreground">Verify in your browser, then return here. Your selected apps and teammate’s email will be kept.</p>
+    <p className="text-sm font-medium">{library ? "Confirm your identity to finish setup" : "Confirm your identity to share apps"}</p>
+    <p className="text-sm text-muted-foreground">{library ? "Verify in your browser, then return here. Your setup entries will be kept; no dashboard navigation is needed." : "Verify in your browser, then return here. Your selected apps and teammate’s email will be kept."}</p>
     <Button type="button" disabled={busy || !user} onClick={() => {
       setError(null);
       void tryOpenBrowserAuthUrl(url.toString()).then((opened) => {
@@ -122,7 +124,7 @@ export function DenReauthNotice({ onVerified, onCancel }: {
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
     <div className="flex justify-end gap-2">
       <Button type="button" variant="outline" disabled={busy} onClick={onCancel}>Cancel verification</Button>
-      <Button type="button" disabled={busy || !link.trim()} onClick={() => void finish(link)}>{busy ? "Confirming…" : "Confirm and share"}</Button>
+      <Button type="button" disabled={busy || !link.trim()} onClick={() => void finish(link)}>{busy ? "Confirming…" : library ? "Confirm and continue" : "Confirm and share"}</Button>
     </div>
   </div>;
 }
