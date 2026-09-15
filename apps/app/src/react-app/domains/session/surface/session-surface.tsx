@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { UIMessage } from "ai";
+import { isToolUIPart, type UIMessage } from "ai";
 import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, CirclePause, Minimize2 } from "lucide-react";
@@ -100,6 +100,7 @@ import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionFindBar } from "./find-bar";
 import { useSessionFindStore } from "./find-store";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
+import { STALLED_AFTER_WAKE_GRACE_MS, WAKE_TICK_MS, detectWake, shouldStopStalledRunAfterWake } from "@/react-app/domains/session/status/stalled-after-wake";
 import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
@@ -147,6 +148,7 @@ import {
 } from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
 import type { ThreadStatus } from "@/lib/messages";
+import { isToolPartInFlight } from "@/lib/tool-activity";
 import {
   EnvironmentVariableProvider,
   type ApplyEnvironmentChangesResult,
@@ -2395,6 +2397,63 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setPendingStopSessions([...pendingStopsRef.current]);
     }
   }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceRoot, queryClient, sessionOwner, snapshotQueryKey, setError]);
+
+  // A request streaming through sleep can wake with a dead socket while the
+  // local engine keeps honestly reporting busy, so neither the "Connection
+  // lost" path nor a terminal event ever fires and Working ticks forever.
+  // Detect the wake (a timer gap no throttling explains), then give the run a
+  // grace period to prove the socket survived. If nothing arrives, stop only
+  // that turn through the same Stop machinery; the engine's abort error renders
+  // the existing "Task interrupted · Resume" row. Queued follow-ups are kept
+  // and drain normally: this is recovery, not the person choosing to stop.
+  const wakeAtRef = useRef<number | null>(null);
+  const [wakeVersion, setWakeVersion] = useState(0);
+  useEffect(() => {
+    let lastTickAt = Date.now();
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      if (detectWake({ lastTickAt, now })) {
+        wakeAtRef.current = now;
+        setWakeVersion((version) => version + 1);
+      }
+      lastTickAt = now;
+    }, WAKE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+  const runBusy = liveStatus.type === "busy";
+  useEffect(() => {
+    const wakeAt = wakeAtRef.current;
+    if (wakeAt === null || !runBusy) return;
+    const timer = window.setTimeout(() => {
+      if (wakeAtRef.current !== wakeAt) return;
+      const record = useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId];
+      const toolInFlight = renderedMessagesRef.current.some((message) => message.role === "assistant"
+        && message.parts.some((part) => isToolUIPart(part) && isToolPartInFlight(part)));
+      const stalled = shouldStopStalledRunAfterWake({
+        wakeAt,
+        now: Date.now(),
+        runActive: record?.runActive ?? false,
+        waiting: record?.status === "waiting" || record?.status === "compacting",
+        retrying: record?.retrying ?? false,
+        disconnected: runSyncHealth.degraded,
+        toolInFlight,
+        lastProgressAt: Math.max(record?.runStartedAt ?? 0, record?.lastProgressAt ?? 0),
+      });
+      if (!stalled) return;
+      wakeAtRef.current = null;
+      captureAnalyticsEvent("task_run_stopped", { reason: "stalled_after_wake" });
+      const phase = getQueuedDrainState(props.sessionId).phase;
+      void interruptSessionTurn(props.opencodeBaseUrl, opencodeClient, props.sessionId,
+        props.workspaceRoot.trim() || undefined, {
+          admissionUnknown: phase.kind === "admission_unknown",
+          admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
+        }).catch(() => {
+          // The engine could not be reached after all; the sync layer's own
+          // revalidation owns that case and presents "Connection lost".
+        });
+    }, STALLED_AFTER_WAKE_GRACE_MS);
+    return () => window.clearTimeout(timer);
+  }, [opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot, runBusy, runSyncHealth.degraded, wakeVersion]);
 
   const checkUnknownAdmission = useCallback(async (notify = false) => {
     const phase = getQueuedDrainState(props.sessionId).phase;
