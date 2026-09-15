@@ -41,6 +41,7 @@ export type ListedControlSession = OpenworkSessionActivityInventory & {
   workspace: string;
   updatedAt: number;
   pinned: boolean;
+  archived: boolean;
   /** Live activity, the same source as the sidebar indicator. */
   status: SessionActivityStatus;
   /** Model and reasoning effort the session is bound to; null before any model is bound. */
@@ -110,6 +111,9 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
     for (const session of sessions) {
       const sessionId = session.id?.trim() ?? "";
       if (!sessionId) continue;
+      const archived = typeof session.time?.archived === "number" && session.time.archived > 0;
+      if (record.archived === "exclude" && archived) continue;
+      if (record.archived === "only" && !archived) continue;
       const activity = state.attentionFor?.(workspace.id, sessionId) ?? attention?.get(sessionId);
       if (!activity) continue;
       out.push({
@@ -118,6 +122,7 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         workspace: controlWorkspaceLabel(workspace),
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
+        archived,
         status: activity.status,
         working: activity.working,
         descendantActivity: activity.descendantActivity,
