@@ -8,7 +8,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-test("pinned idle sessions archive from the sidebar and mailbox without a focused session; held preflight fails promptly without a late PATCH and recovers", async ({ world, user, agent, probe, step }) => {
+test("pinned idle sessions archive from the sidebar and mailbox without a focused session; held preflight fails promptly without a late PATCH and recovers", async ({ world, user, agent, probe, step, evidence }) => {
   const { a1, a2, b1, child, faultCandidate, workspaceA } = world;
   const root = `#/workspace/${workspaceA.workspaceId}/session`;
   const session = async (id: string) => (await world.facts()).sessions.find(entry => entry.sessionId === id);
@@ -62,6 +62,7 @@ test("pinned idle sessions archive from the sidebar and mailbox without a focuse
     await archived(a2.sessionId, started);
     expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "idle" });
     expect(await session(faultCandidate.sessionId)).toMatchObject({ archived: false, status: "idle" });
+    evidence.recordAssertionEvidence("Pinned archive completes without a focused conversation", "Owning-engine archive persisted, sidebar row disappeared, unrelated sessions stayed idle/unarchived, no abort or dialog, route and surface list stayed sessionless.", true);
   });
 
   await step("a pinned idle session in another workspace archives through the real mailbox", async () => {
@@ -72,6 +73,7 @@ test("pinned idle sessions archive from the sidebar and mailbox without a focuse
     expect(result.elapsedMs).toBeLessThan(5_000);
     await archived(b1.sessionId);
     expect(await session(faultCandidate.sessionId)).toMatchObject({ archived: false, status: "idle" });
+    evidence.recordAssertionEvidence("Pinned cross-workspace archive completes through the real mailbox", `HTTP ${result.status}; elapsed ${result.elapsedMs} ms; persisted archive, no unrelated mutation, no navigation or dialog.`, true);
   });
 
   await step("unpin then archive also completes through the UI without opening a session", async () => {
@@ -80,6 +82,7 @@ test("pinned idle sessions archive from the sidebar and mailbox without a focuse
     const started = performance.now();
     await clickArchive(faultCandidate.sessionId);
     await archived(faultCandidate.sessionId, started);
+    evidence.recordAssertionEvidence("Unpin then archive also succeeds", "Candidate changed pinned:true to pinned:false, then archived through the UI with no focused conversation; unrelated sessions were preserved.", true);
   });
 
   await step("restore and pin the fault candidate without navigating", async () => {
@@ -107,6 +110,7 @@ test("pinned idle sessions archive from the sidebar and mailbox without a focuse
     await user.see({ testId: `sidebar-session-${faultCandidate.sessionId}` });
     expect(await listing(faultCandidate.sessionId)).toMatchObject({ pinned: true });
     await untouched();
+    evidence.recordAssertionEvidence("Held preflight fails through the requesting channel before five seconds", `HTTP ${result.status}; elapsed ${result.elapsedMs} ms; verification_failed; zero additional PATCHes or session mutations, pin retained.`, true);
   });
 
   await step("releasing the stalled read cannot send a late archive PATCH; a fresh mailbox request succeeds", async () => {
@@ -130,6 +134,6 @@ test("pinned idle sessions archive from the sidebar and mailbox without a focuse
     const patches = (await world.facts()).requests.filter(request => request.action === "metadata");
     expect(patches.slice(before.requests.filter(request => request.action === "metadata").length))
       .toEqual([expect.objectContaining({ sessionId: faultCandidate.sessionId, result: 200 })]);
-    await user.screenshot();
+    evidence.recordAssertionEvidence("No late PATCH and no restart needed for mailbox recovery", `Released preflight stayed inert for two seconds. A new request on the same app/mailbox completed in ${result.elapsedMs} ms with exactly one successful PATCH; unrelated sessions and route unchanged.`, true);
   });
 });
