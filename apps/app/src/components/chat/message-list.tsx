@@ -1572,6 +1572,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     const interval = window.setInterval(updateElapsed, 1000)
     return () => window.clearInterval(interval)
   }, [activityActive, runStartedAt, syncDegraded])
+  const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
@@ -1609,6 +1610,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
       <ProgressiveMessageList
         groups={items}
         groupKeyReplacements={messageIdReplacements}
+        priorityMessageId={latestUserMessageId}
         viewport={viewport}
         className="@container/message-list"
         getGroupKey={(item) => isMessageGroup(item) ? item.messages[0]?.message.id ?? "empty-assistant-group" : item.message.id}
