@@ -71,8 +71,8 @@ async function responseJson(response: Response): Promise<unknown[]> {
 export async function acquireHostedSandboxResources(configuration: string): Promise<HostedSandboxResource[]> {
   let endpoints: unknown;
   try { endpoints = JSON.parse(configuration); } catch { throw new Error("Demo endpoints must be a JSON array"); }
-  if (!Array.isArray(endpoints) || endpoints.length !== 3 || !endpoints.every((endpoint): endpoint is string => typeof endpoint === "string")) {
-    throw new Error("Hosted matrix requires exactly three explicitly authorized demo endpoints");
+  if (!Array.isArray(endpoints) || endpoints.length !== 2 || !endpoints.every((endpoint): endpoint is string => typeof endpoint === "string")) {
+    throw new Error("Hosted matrix requires exactly two explicitly authorized shared-mode demo endpoints");
   }
   const resources: HostedSandboxResource[] = [];
   for (const [index, endpoint] of endpoints.entries()) {

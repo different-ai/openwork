@@ -93,7 +93,7 @@ const hostedEndpoints = process.env.OPENWORK_SANDBOX_DEMO_ENDPOINTS;
 if (hostedEndpoints) {
   test("sandbox component integration: opt-in hosted demo matrix with anonymous readiness traces", async ({ evidence }) => {
     const resources = await acquireHostedSandboxResources(hostedEndpoints);
-    expect(resources.map((resource) => resource.label)).toEqual(["provider-1", "provider-2", "provider-3"]);
+    expect(resources.map((resource) => resource.label)).toEqual(["provider-1", "provider-2"]);
     await using fixture = await sandboxStartupFixture(resources);
     for (const tiles of [1, 6]) {
       const loads = [];
@@ -105,17 +105,21 @@ if (hostedEndpoints) {
         expect(load.statuses).toEqual([]);
         expect(load.initialized).toBe(tiles);
         expect(load.delivered).toBe(tiles);
+        expect(load.observer).toBeDefined();
+        expect(load.observer?.installFailures).toBe(0);
+        expect(load.observer?.installedFrames).toBe(load.observer?.attachedFrames);
         for (let index = 0; index < tiles; index += 1) {
           const kinds = load.events.filter((event) => event.tile === String(index)).map((event) => event.kind);
           expect(kinds.filter((kind) => kind === "ui/notifications/sandbox-resource-accepted")).toHaveLength(1);
           expect(kinds.filter((kind) => kind === "ui/notifications/initialized")).toHaveLength(1);
+          expect(kinds.filter((kind) => kind === "fixture/observer-ready")).toHaveLength(1);
           expect(kinds.filter((kind) => kind === "hosted-input-received")).toHaveLength(1);
           expect(kinds.filter((kind) => kind === "hosted-result-received")).toHaveLength(1);
           expect(kinds).not.toContain("hosted-delivery-mismatch");
         }
         expect(load.events.every((event) => event.detail === null)).toBe(true);
       }
-      evidence.recordAssertionEvidence(`Hosted read-only component matrix: 12 ${tiles}-tile loads`, JSON.stringify({ traces: fixture.resultsDir, providers: resources.map((resource) => resource.label), loads: loads.length, initialized: loads.reduce((sum, load) => sum + load.initialized, 0), delivered: loads.reduce((sum, load) => sum + load.delivered, 0) }), loads.every((load) => load.errors === 0 && load.delivered === tiles));
+      evidence.recordAssertionEvidence(`Hosted read-only component matrix: 12 ${tiles}-tile loads`, JSON.stringify({ traces: fixture.resultsDir, providers: resources.map((resource) => resource.label), tilesPerProvider: tiles === 6 ? 3 : 1, excluded: ["calendar: requires member OAuth"], loads: loads.length, initialized: loads.reduce((sum, load) => sum + load.initialized, 0), delivered: loads.reduce((sum, load) => sum + load.delivered, 0) }), loads.every((load) => load.errors === 0 && load.delivered === tiles));
     }
   });
 }

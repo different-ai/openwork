@@ -29,7 +29,7 @@ const count = Number(query.get("tiles") ?? "1");
 const hosted = query.get("hosted") === "true";
 document.documentElement.dataset.hosted = String(hosted);
 const payload: unknown = hosted ? await fetch("/fixture-hosted-resources", { signal: AbortSignal.timeout(10_000), cache: "no-store" }).then((response) => response.json()) : [];
-if (!Array.isArray(payload) || !payload.every(isHostedResource) || (hosted && payload.length !== 3)) throw new Error("Invalid hosted fixture payload");
+if (!Array.isArray(payload) || !payload.every(isHostedResource) || (hosted && payload.length !== 2)) throw new Error("Invalid hosted fixture payload");
 const hostedResources = payload;
 const providerOffset = Number(query.get("providerOffset") ?? "0");
 const hostedForTile = (tile: number) => hostedResources[(tile + providerOffset) % hostedResources.length];
@@ -39,7 +39,7 @@ trace.id = "sandbox-trace";
 document.body.append(trace);
 const events: Array<{ at: number; tile: string; kind: string; detail: unknown }> = [];
 function record(tile: string, kind: string, detail: unknown = null) {
-  const publicKinds = ["mount", "navigation-assigned", "view-error", "console.error", "runtime-error", "unhandled-rejection", "ui/initialize", "ui/notifications/initialized", "ui/notifications/sandbox-proxy-ready", "ui/notifications/sandbox-resource-accepted", "ui/notifications/sandbox-resource-loaded", "hosted-input-received", "hosted-result-received", "hosted-delivery-mismatch"];
+  const publicKinds = ["mount", "navigation-assigned", "view-error", "console.error", "runtime-error", "unhandled-rejection", "ui/initialize", "ui/notifications/initialized", "ui/notifications/sandbox-proxy-ready", "ui/notifications/sandbox-resource-accepted", "ui/notifications/sandbox-resource-loaded", "hosted-input-received", "hosted-result-received", "hosted-delivery-mismatch", "fixture/observer-ready"];
   events.push({ at: performance.timeOrigin + performance.now(), tile, kind: hosted && !publicKinds.includes(kind) ? "other-message" : kind, detail: hosted ? null : detail });
   trace.textContent = JSON.stringify(events);
 }

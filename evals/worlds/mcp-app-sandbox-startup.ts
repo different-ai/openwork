@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { chrome, createLocalHost } from "@openwork/hosts";
-import { addInitScript, callFunctionOnSurface, evaluateOnSurface, type Surface } from "@openwork/cdp";
+import { callFunctionOnSurface, evaluateOnSurface, type Surface } from "@openwork/cdp";
+import { installHostedReceiptObserver } from "./fixtures/mcp-app-sandbox-observer";
 import type { HostedSandboxResource } from "./fixtures/mcp-app-sandbox-hosted";
 export { acquireHostedSandboxResources } from "./fixtures/mcp-app-sandbox-hosted";
 import {
@@ -48,6 +49,7 @@ export type StartupLoad = {
   delivered: number;
   errors: number;
   retryTiles: string[];
+  observer?: { attachedFrames: number; installedFrames: number; installFailures: number };
 };
 
 async function listen(server: Server): Promise<string> {
@@ -166,17 +168,7 @@ export async function sandboxStartupFixture(hostedResources?: HostedSandboxResou
   await browser.client.send("Network.enable");
   await browser.client.send("Network.setCacheDisabled", { cacheDisabled: true });
   if (!hostedResources) await browser.client.send("Network.setBlockedURLs", { urls: ["https://*"] });
-  if (hostedResources) resources.use(await addInitScript(browser.client, () => {
-      if (location.href !== "about:srcdoc" || window.parent === window.top) return;
-      for (const method of ["log", "info", "warn", "error", "debug"]) Reflect.set(console, method, () => undefined);
-      window.addEventListener("message", (event) => {
-        if (event.source !== window.parent) return;
-        const data: unknown = event.data;
-        if (typeof data !== "object" || data === null || !("method" in data) || !("params" in data)) return;
-        if (data.method !== "ui/notifications/tool-input" && data.method !== "ui/notifications/tool-result") return;
-        window.parent.postMessage({ method: "fixture/hosted-received", params: { kind: data.method === "ui/notifications/tool-input" ? "input" : "result", payload: data.params } }, "*");
-      });
-  }));
+  const observer = hostedResources ? resources.use(await installHostedReceiptObserver(browser)) : undefined;
   console.log(`Sandbox component integration: host=${hostOrigin}, proxy=${proxyOrigin}, traces=${resultsDir}`);
   const loads: StartupLoad[] = [];
   resources.defer(async () => {
@@ -184,6 +176,7 @@ export async function sandboxStartupFixture(hostedResources?: HostedSandboxResou
       scope: hostedResources ? "Hosted read-only demo component integration, not full dashboard or installed Electron" : "Component integration, not a full dashboard or provider test",
       realModules: ["McpAppSandboxView", "AppBridge", "createOpenworkServerClient", "mcp-app-sandbox proxy exports"],
       excludedChatSurfaces: ["ConnectorCatalogCard", "ConnectionCard", "useMessageList", "AppChatArtifact", "chat result attribution"],
+      ...(hostedResources ? { receiptScope: "Capture-phase inbound MessageEvent in actual opaque srcdoc; exact input/result comparison, not host outbound. Browser/tab/page/OOPIF instrumentation can affect timing; provider HTML is unchanged." } : {}),
       loads,
     }, null, 2));
   });
@@ -202,12 +195,19 @@ export async function sandboxStartupFixture(hostedResources?: HostedSandboxResou
       await browser.client.send("Page.navigate", { url: `${hostOrigin}/?${new URLSearchParams({ proxy: proxyOrigin, tiles: String(options.tiles), ...(hostedResources ? { hosted: "true", providerOffset: String(options.providerOffset ?? 0) } : {}) })}` });
       let snapshot = await readStartup(browser);
       const deadline = Date.now() + 90_000;
+      let initializedAt: number | undefined;
       while (Date.now() < deadline) {
         snapshot = await readStartup(browser);
         if (snapshot.delivered + snapshot.errors >= options.tiles || snapshot.bootstrap || (snapshot.events.length === 0 && Date.now() - startedAt > 30_000)) break;
+        if (hostedResources && snapshot.initialized === options.tiles) {
+          initializedAt ??= Date.now();
+          if (Date.now() - initializedAt > 5_000) break;
+        }
         await delay(100);
       }
-      const load = { name: options.name, tiles: options.tiles, elapsedMs: Date.now() - startedAt, ...snapshot, requests: [...requests] };
+      // Finish observer setup before the next load tears down these documents.
+      await observer?.settle();
+      const load = { name: options.name, tiles: options.tiles, elapsedMs: Date.now() - startedAt, ...snapshot, requests: [...requests], ...(observer ? { observer: { ...observer.stats } } : {}) };
       loads.push(load);
       await writeFile(resolve(resultsDir, `${options.name}.json`), JSON.stringify(load, null, 2));
       console.log(JSON.stringify({ name: load.name, tiles: load.tiles, initialized: load.initialized, delivered: load.delivered, errors: load.errors, elapsedMs: load.elapsedMs }));
@@ -238,7 +238,9 @@ export async function sandboxStartupFixture(hostedResources?: HostedSandboxResou
       }
       await delay(2_000);
       snapshot = await readStartup(browser);
-      const load = { name: options.name, tiles: options.tiles, elapsedMs: Date.now() - startedAt, ...snapshot, requests: [...requests] };
+      // Finish observer setup before the next load tears down these documents.
+      await observer?.settle();
+      const load = { name: options.name, tiles: options.tiles, elapsedMs: Date.now() - startedAt, ...snapshot, requests: [...requests], ...(observer ? { observer: { ...observer.stats } } : {}) };
       loads.push(load);
       await writeFile(resolve(resultsDir, `${options.name}.json`), JSON.stringify(load, null, 2));
       return load;

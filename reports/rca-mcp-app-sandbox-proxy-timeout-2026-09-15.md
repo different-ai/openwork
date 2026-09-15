@@ -2,7 +2,9 @@
 
 ## Verdict and scope
 
-**Scoped fix: Passed. Incident attribution and requested hosted/dashboard matrix: Incomplete.**
+**Scoped fix and two-provider hosted matrix: Passed. Installed-Electron verification: Incomplete.**
+
+Audit scope: **root cause reproduced via injected CSS/JS delay; production trigger (slow asset fetch under concurrent tile boots) inferred, not captured**. Calendar is **excluded: requires member OAuth**; its HTTP 401 is by design, not a product defect or a request for an unauthenticated mode.
 
 A controlled browser experiment reproduces the exact reported timeout when either external proxy bootstrap dependency takes longer than the 10-second deadline. The stylesheet blocks the following classic script even when JavaScript has already downloaded. Inlining these small, trusted host constants removes those two requests. A delayed HTML document still times out with diagnostics and now has a working, tile-local Retry.
 
@@ -15,7 +17,8 @@ This is a demonstrated failure mechanism, **not proof that the installed app's i
 | 11-second CSS/script delay, one + six tiles each | 14/14 exact proxy timeouts, no ready/accept/init | Six tiles each with CSS, JS, or both delayed: 18/18 delivered, zero asset requests |
 | Only first HTML document delayed 11 seconds | Deadline behavior remains intentional | One and six-tile cases: one diagnostic each; Retry restores only failed tile; exact input/result once; siblings unchanged |
 | Revert inline bootstrap only | Regression spec fails: 0/6 delivered, 6 proxy errors (~30.25 seconds) | Restored fix passes the full deterministic spec |
-| Three hosted providers, >=10 loads | Acquisition attempted | Third advertised safe demo call returns HTTP 401; hosted browser matrix **not run** |
+| Two shared-mode hosted providers: twelve single + twelve six-tile boots (three tiles per provider) | Baseline renderer/proxy from `c67ba51ed`: 84/84 initialized and exact input/result receipts, zero proxy errors | Fixed renderer/proxy: 84/84 initialized and exact input/result receipts, zero proxy errors |
+| Calendar | HTTP 401 is intentional | **excluded: requires member OAuth**; no auth changes or further calls |
 | Real saved/local-cache and organization dashboards | Code traced | Full dashboard composition, cache/live swaps and Electron partitions **not live-tested** |
 
 ## Mechanism and handshake
@@ -63,7 +66,7 @@ The queue and listener-before-navigation fix already landed in #4996. Adding ano
 | Ready before listener | Current code already subscribes before navigation; synthetic unit signals cannot validate browser order | Real immediate-ready/control runs; no claim that an impossible initial browser ordering was reproduced |
 | CSS downloaded late, JS already downloaded | Server VM tests execute script directly; route test inspected headers/body | HTTP finish/abort traces show downloaded JS but absent ready under delayed preceding CSS |
 | Timeout followed by usable Retry | Shared error notice had no Retry callback | Real mouse click; exact input/result receipts once; unchanged sibling event sequences; late/aborted HTML response cannot duplicate initialization |
-| Live provider + actual dashboard composition | Tile tests mock shared renderer | Opt-in hosted acquisition hard-fails on 401; full dashboard/installed Electron still missing |
+| Live provider + actual dashboard composition | Tile tests mock shared renderer | Two authorized shared-mode providers now pass before/after; calendar excluded by audit; full dashboard/installed Electron still missing |
 
 ## Reproduction and evidence
 
@@ -81,7 +84,11 @@ pnpm --dir evals typecheck
 
 Deterministic browser verdict: 3 passed, 0 failed, 0 skipped. Supplementary server suite: 19 passed / 159 expectations; renderer suite: 60 passed / 1,073 expectations. The browser tests are component integration, not a signed-in dashboard E2E. Unrelated chat card imports are isolated from the fixture; the sandbox/bridge/client/proxy modules are real. The loopback fixture uses the production proxy exports and CSP with an HTTP delay injector; it does not exercise the full Bun server dispatch stack (covered separately by the server suite).
 
-Opt-in fourth test: supply `OPENWORK_SANDBOX_DEMO_ENDPOINTS` as a JSON array of three explicitly authorized static demo MCP endpoints, then run the same command. URLs and credentials are deliberately not committed. Read-only synthetic demo/input-only schema gates prevent live/private action calls. The configured attempt produced **3 passed, 1 failed, 0 skipped**, with `provider-3: tools/call failed (HTTP_401)`. No browser matrix is claimed from the two successful resource acquisitions.
+Opt-in fourth test: supply `OPENWORK_SANDBOX_DEMO_ENDPOINTS` as a JSON array of the **two** explicitly authorized shared-mode static demo MCP endpoints, then run the same command. URLs and credentials are deliberately not committed. Read-only synthetic demo/input-only schema gates prevent live/private action calls. The original three-provider attempt failed with `provider-3: tools/call failed (HTTP_401)`; audit confirmed member OAuth is required and excluded calendar. No further calendar calls or authentication changes were made.
+
+Before/after procedure: temporarily restore only `apps/app/src/components/chat/mcp-app-frame.tsx` and `apps/server/src/mcp-app-sandbox.ts` from `c67ba51ed`, run the corrected hosted spec with `-t 'opt-in hosted'`, then restore both files to fixed HEAD and run the complete spec. Before: exit 0, 1 passed / 3 filtered-skipped, 12 rotating single and 12 six-tile loads, 84/84 receipts. After: exit 0, **4 passed / 0 failed / 0 skipped**, including the same 84 hosted receipts. No naturally occurring timeout was observed in either hosted run; this does not establish the production trigger. Corrected before receipt: `evals/results/test-runs/2026-09-15T22-30-27-614Z-sandbox-component-integration-opt-in-hosted-demo-matrix-with-anonymous-readiness/test-run.json`. This historical receipt records the fixed branch SHA plus a deliberate baseline product-file override; it is not final-head proof. Final-head after receipts are published separately.
+
+Observer qualification: root-page init scripts do not automatically instrument opaque out-of-process iframes. The first hosted attempt therefore saw initialization but missed inbound receipts; it was a witness failure, not a proxy timeout. The corrected observer attaches to this fixture-owned browser's iframe sessions and installs a capture-phase listener immediately, without modifying provider HTML. Assertions require one observer-ready, one initialize and exact inbound input/result payloads per tile; public traces contain only anonymous counters. Installation is **not guaranteed before provider scripts** (frames reported complete at install); CDP attachment can affect timing. A subsequent baseline attempt caught a teardown race in an unnecessary resume command after successful installation; the observer now resumes only paused targets and waits for setup to settle before navigation. The baseline was rerun with the identical corrected observer used for the after run. Evals typecheck covers 456 files; browser callback check covers 960 callbacks.
 
 Revert-fails control: restore only the baseline external `<link>`/`<script src>` HTML constant, keep the regression tests and Retry, then run:
 
@@ -95,6 +102,6 @@ Private/local investigation traces are under `evals/results/mcp-app-sandbox-star
 
 ## Release / demo guidance
 
-Until the missing hosted and real-dashboard validation is completed, overall readiness remains **Incomplete**. Do not present a synthetic delay reproduction as definitive production RCA.
+Per the audit decision, the green two-shared-provider before/after matrix is sufficient to mark PR #5047 **ready for review**, not to merge or claim installed-release readiness. **Installed-Electron verification remains Incomplete**; real saved/organization dashboard composition is still not exercised. Do not present a synthetic delay reproduction as definitive production attribution.
 
 If the fix cannot ship: pre-open and verify each tile; avoid whole-board refresh immediately before presenting. If a tile fails on the installed build, use its existing tile refresh/reopen control where available, or reopen the conversation/view; avoid repeatedly refreshing healthy siblings. Single-tile control was reliable in the no-fault experiment but is not guaranteed under a genuine network stall. Prepare the already verified static captures as a clearly labeled non-interactive fallback. Validate the exact release/profile before the demo, including the calendar provider's authentication requirement.
