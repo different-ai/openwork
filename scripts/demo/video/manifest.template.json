@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "sanitized": false,
+  "progress": "partial",
+  "scenes": [
+    {
+      "variant": "D",
+      "member": "A",
+      "kind": "png",
+      "path": "REPLACE_WITH_ACTUAL_MEMBER_A_FRAME.png",
+      "actualCapture": false,
+      "durationSeconds": 10,
+      "startSeconds": 0,
+      "caption": "INCOMPLETE: real PNG not supplied",
+      "observed": "INCOMPLETE: supply only what is visible in the actual capture",
+      "hiddenApiSetup": true,
+      "release": {
+        "desktopVersion": "",
+        "desktopTag": "",
+        "denBuildIdentity": "",
+        "buildKind": "development",
+        "releaseSha": "",
+        "lane": "",
+        "evidencePath": ""
+      },
+      "assertion": { "state": "incomplete" }
+    },
+    {
+      "variant": "D",
+      "member": "B",
+      "kind": "png",
+      "path": "REPLACE_WITH_ACTUAL_MEMBER_B_FRAME.png",
+      "actualCapture": false,
+      "durationSeconds": 10,
+      "startSeconds": 0,
+      "caption": "INCOMPLETE: real PNG not supplied",
+      "observed": "INCOMPLETE: supply only what is visible in the actual capture",
+      "hiddenApiSetup": true,
+      "release": {
+        "desktopVersion": "",
+        "desktopTag": "",
+        "denBuildIdentity": "",
+        "buildKind": "development",
+        "releaseSha": "",
+        "lane": "",
+        "evidencePath": ""
+      },
+      "assertion": { "state": "incomplete" }
+    }
+  ]
+}

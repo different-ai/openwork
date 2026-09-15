@@ -1,0 +1,29 @@
+{
+  "name": "eng105-e-assembler",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.4.0",
+  "scripts": {
+    "assemble": "node assemble.ts",
+    "build": "node --input-type=module -e \"import {bundle} from '@remotion/bundler'; import {resolve} from 'node:path'; await bundle({entryPoint:resolve('video.tsx'),outDir:resolve('../../../reports/demo/eng-105-2026-09-15/bundle-check')});\"",
+    "test": "node --test manifest.test.ts completion.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint ."
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.524",
+    "@remotion/media": "4.0.524",
+    "@remotion/renderer": "4.0.524",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "remotion": "4.0.524",
+    "zod": "4.1.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.2.3",
+    "@types/node": "24.3.1",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "typescript": "5.9.2"
+  }
+}

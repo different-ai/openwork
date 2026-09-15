@@ -1,0 +1,8 @@
+node_modules/
+.pnpm-store/
+.pnpm-cache/
+.pnpm-state/
+.cache/
+*.mp4
+*.png
+manifest.actual.json

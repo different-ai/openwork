@@ -1,0 +1,6 @@
+packages:
+  - .
+
+# Use esbuild's platform package; do not execute its install hook.
+allowBuilds:
+  esbuild: false
