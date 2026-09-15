@@ -48,6 +48,7 @@ type WitnessSession = {
   id: string;
   title: string;
   prompts: string[];
+  messageIds: string[];
 };
 
 const witness = {
@@ -81,11 +82,11 @@ function json(response: ServerResponse, status: number, payload: unknown) {
 function snapshotWire(session: WitnessSession) {
   const messages = session.prompts.flatMap((prompt, index) => [
     {
-      info: { id: `msg_user_${index}`, role: "user", time: { created: index * 2 } },
+      info: { id: session.messageIds[index] ?? `msg_user_${index}`, role: "user", time: { created: index * 2 } },
       parts: [{ id: `part_user_${index}`, type: "text", text: prompt }],
     },
     {
-      info: { id: `msg_assistant_${index}`, role: "assistant", parentID: `msg_user_${index}`, time: { created: index * 2 + 1 } },
+      info: { id: `msg_assistant_${index}`, role: "assistant", parentID: session.messageIds[index] ?? `msg_user_${index}`, time: { created: index * 2 + 1 } },
       parts: [{ id: `part_assistant_${index}`, type: "text", text: `witness reply to: ${prompt}` }],
     },
   ]);
@@ -119,6 +120,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       id: `ses_witness_${witness.nextSessionId++}`,
       title,
       prompts: [],
+      messageIds: [],
     };
     witness.sessions.set(session.id, session);
     return json(response, 200, snapshotWire(session).session);
@@ -149,6 +151,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return json(response, 200, snapshotWire(session).todos);
   }
 
+  if (method === "POST" && path.endsWith("/abort")) return json(response, 200, true);
   const promptMatch = path.match(new RegExp(`^${prefix}/([^/]+)/prompt_async$`));
   if (method === "POST" && promptMatch) {
     const session = witness.sessions.get(decodeURIComponent(promptMatch[1] ?? ""));
@@ -157,6 +160,8 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     const text = Array.isArray(parts) && typeof parts[0] === "object" && parts[0] !== null
       ? String((parts[0] as Record<string, unknown>).text ?? "")
       : "";
+    const messageId = typeof body === "object" && body !== null && "messageID" in body && typeof body.messageID === "string" ? body.messageID : `msg_user_${session.prompts.length}`;
+    session.messageIds.push(messageId);
     session.prompts.push(text);
     return json(response, 200, {});
   }
@@ -204,7 +209,7 @@ afterAll(async () => {
 // DenTypeId<"organization"> is the template-literal type `org_${string}`.
 const ORGANIZATION_ID = "org_witness_fixture";
 
-function input(action: "create" | "send" | "read", body: unknown, hasWriteScope = true) {
+function input(action: "create" | "send" | "read" | "stop", body: unknown, hasWriteScope = true) {
   return { action, organizationId: ORGANIZATION_ID, userId: "user_witness", hasWriteScope, body };
 }
 
@@ -309,4 +314,26 @@ test("remote-session capability accepts a JSON-stringified body", async () => {
   expect(witness.requests.findLast(
     (request) => request.method === "POST" && request.path === `/workspace/${WORKSPACE_ID}/opencode/session`,
   )?.body).toMatchObject({ title: "Stringified handoff" });
+});
+
+test("stable turn IDs dedupe over the native wire and read only the invoking turn; stop requires write scope", async () => {
+  const created = payload(await executeRemoteSessionCapability(input("create", { title: "Slack isolation" }), deps));
+  const sessionId = String(created.sessionId);
+  await executeRemoteSessionCapability(input("send", { sessionId, messageId: "msg_slack1", prompt: "first request" }), deps);
+  await executeRemoteSessionCapability(input("send", { sessionId, messageId: "msg_slack1", prompt: "first request" }), deps);
+  await executeRemoteSessionCapability(input("send", { sessionId, messageId: "msg_slack2", prompt: "second request" }), deps);
+  expect(witness.sessions.get(sessionId)?.prompts).toEqual(["first request", "second request"]);
+  const turn = payload(await executeRemoteSessionCapability(input("read", { sessionId, messageId: "msg_slack2" }), deps));
+  expect(turn.finalAssistantText).toBe("witness reply to: second request");
+  expect(JSON.stringify(turn.messages)).not.toContain("first request");
+  const abortsBefore = witness.requests.filter(request => request.path.endsWith("/abort")).length;
+  const staleStop = payload(await executeRemoteSessionCapability(input("stop", { sessionId, messageId: "msg_slack1" }), deps));
+  expect(staleStop.reason).toBe("different_turn");
+  expect(witness.requests.filter(request => request.path.endsWith("/abort"))).toHaveLength(abortsBefore);
+  const before = witness.requests.length;
+  expect(payload(await executeRemoteSessionCapability(input("stop", { sessionId }, false), deps)).error).toBe("insufficient_mcp_scope");
+  expect(witness.requests).toHaveLength(before);
+  const stopped = await executeRemoteSessionCapability(input("stop", { sessionId }), deps);
+  expect(stopped.isError).toBeUndefined();
+  expect(witness.requests.at(-1)?.path).toBe(`/workspace/${WORKSPACE_ID}/opencode/session/${sessionId}/abort`);
 });

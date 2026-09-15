@@ -1175,8 +1175,10 @@ export const auth = betterAuth({
             throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
           }
           const capabilities = metadata.capabilities;
-          if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
-            throw new APIError("FORBIDDEN", { message: "capabilities.gatewayDashboard is reserved for internal platform administration." });
+          for (const key of ["gatewayDashboard", "slackAssistant"]) {
+            if (capabilities && typeof capabilities === "object" && key in capabilities) {
+              throw new APIError("FORBIDDEN", { message: `capabilities.${key} is reserved for internal platform administration.` });
+            }
           }
         },
         beforeUpdateOrganization: async ({ organization }) => {

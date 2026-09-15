@@ -1509,6 +1509,14 @@ async function handleExternalMcpOAuthCallback(input: {
       referenceId: diagnostic.referenceId,
     }), 400)
   }
+  if (member) {
+    const { bindSlackOAuthMember } = await import("../../slack-assistant/repository.js")
+    try {
+      await bindSlackOAuthMember(connection, member.orgMembershipId)
+    } catch {
+      return mcpOAuthCallbackHtml(connectCallbackPage({ ok: false, name: connection.name, message: "Slack connected, but the assistant identity could not be verified. Connect the Slack account for this workspace and try again." }), 400)
+    }
+  }
   return mcpOAuthCallbackHtml(connectCallbackPage({ ok: true, name: connection.name }))
 }
 

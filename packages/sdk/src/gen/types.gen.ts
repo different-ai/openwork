@@ -1211,7 +1211,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard" | "slackAssistant";
 };
 
 export type CreateInstallLinkRequest = {
@@ -23163,6 +23163,437 @@ export type PostV1TeamsResponses = {
 };
 
 export type PostV1TeamsResponse = PostV1TeamsResponses[keyof PostV1TeamsResponses];
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant";
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantError =
+  GetV1McpConnectionsByConnectionIdSlackAssistantErrors[keyof GetV1McpConnectionsByConnectionIdSlackAssistantErrors];
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
+  /**
+   * Slack assistant setup.
+   */
+  200: {
+    enabled: boolean;
+    installed: boolean;
+    teamId: string | null;
+    /**
+     * Whether the platform admin enabled Slack Assistant for this organization.
+     */
+    rolloutEnabled: boolean;
+    hasSigningSecret: boolean;
+    eligible: boolean;
+    webAccess: boolean;
+    channelIds: Array<string>;
+    shadowMode: boolean;
+    dailyLimit: number;
+    metrics: {
+      completed: number;
+      failed: number;
+      active: number;
+      awaitingConnection: number;
+      helpful: number;
+      needsWork: number;
+      firstTextMedianMs: number | null;
+      finalMedianMs: number | null;
+      sampledEvents: number;
+    };
+    /**
+     * Slack app manifest to import when configuring the bot.
+     */
+    manifest: {
+      [key: string]: unknown;
+    };
+  };
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantResponse =
+  GetV1McpConnectionsByConnectionIdSlackAssistantResponses[keyof GetV1McpConnectionsByConnectionIdSlackAssistantResponses];
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantData = {
+  body: {
+    enabled: boolean;
+    signingSecret?: string;
+    channelIds?: Array<string>;
+    shadowMode?: boolean;
+    dailyLimit?: number;
+  };
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant";
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+  /**
+   * Connection changed while saving.
+   */
+  409: {
+    error: "connection_changed";
+  };
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantError =
+  PutV1McpConnectionsByConnectionIdSlackAssistantErrors[keyof PutV1McpConnectionsByConnectionIdSlackAssistantErrors];
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantResponses = {
+  /**
+   * Slack assistant settings saved.
+   */
+  200: OkResponse;
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantResponse =
+  PutV1McpConnectionsByConnectionIdSlackAssistantResponses[keyof PutV1McpConnectionsByConnectionIdSlackAssistantResponses];
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant/install";
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallError =
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors[keyof PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors];
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses = {
+  /**
+   * Slack bot authorization URL.
+   */
+  200: {
+    url: string;
+  };
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponse =
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses[keyof PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses];
+
+export type GetV1IntegrationsSlackOauthCallbackData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/integrations/slack/oauth/callback";
+};
+
+export type GetV1IntegrationsSlackOauthCallbackErrors = {
+  /**
+   * Installation cancelled, expired, incomplete, or missing required permissions.
+   */
+  400: string;
+  /**
+   * The installing member no longer has admin access.
+   */
+  403: string;
+  /**
+   * Slack workspace conflicts with an existing installation.
+   */
+  409: string;
+};
+
+export type GetV1IntegrationsSlackOauthCallbackError =
+  GetV1IntegrationsSlackOauthCallbackErrors[keyof GetV1IntegrationsSlackOauthCallbackErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdEventsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/events";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsError =
+  PostV1IntegrationsSlackByConnectionIdEventsErrors[keyof PostV1IntegrationsSlackByConnectionIdEventsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdEventsResponses = {
+  /**
+   * Event acknowledged or URL verification challenge.
+   */
+  200:
+    | OkResponse
+    | {
+        challenge: string;
+      };
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsResponse =
+  PostV1IntegrationsSlackByConnectionIdEventsResponses[keyof PostV1IntegrationsSlackByConnectionIdEventsResponses];
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/commands";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsError =
+  PostV1IntegrationsSlackByConnectionIdCommandsErrors[keyof PostV1IntegrationsSlackByConnectionIdCommandsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsResponses = {
+  /**
+   * Private connection instructions.
+   */
+  200: {
+    response_type: "ephemeral";
+    text: string;
+  };
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsResponse =
+  PostV1IntegrationsSlackByConnectionIdCommandsResponses[keyof PostV1IntegrationsSlackByConnectionIdCommandsResponses];
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/interactions";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsError =
+  PostV1IntegrationsSlackByConnectionIdInteractionsErrors[keyof PostV1IntegrationsSlackByConnectionIdInteractionsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsResponses = {
+  /**
+   * Interaction acknowledged.
+   */
+  200: OkResponse;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsResponse =
+  PostV1IntegrationsSlackByConnectionIdInteractionsResponses[keyof PostV1IntegrationsSlackByConnectionIdInteractionsResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

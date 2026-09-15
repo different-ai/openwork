@@ -5,7 +5,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, gatewayDashboard: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, gatewayDashboard: false, slackAssistant: false }
 
 describe("normalizeOrganizationCapabilities", () => {
   test("defaults every capability to false when metadata is empty", () => {
@@ -109,4 +109,18 @@ describe("organizationHasCapability", () => {
     expect(organizationHasCapability(JSON.stringify({ capabilities: { installLinks: true } }), "installLinks")).toBe(true)
     expect(organizationHasCapability(JSON.stringify({ capabilities: { mcpConnections: true } }), "mcpConnections")).toBe(true)
   })
+})
+
+test("Slack Assistant is an explicit platform capability in object and JSON metadata", () => {
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    for (const input of [{ capabilities: { slackAssistant: value } }, JSON.stringify({ capabilities: { slackAssistant: value } })]) {
+      expect(organizationHasCapability(input, "slackAssistant")).toBe(false)
+      expect(readOrganizationCapabilityOverrides(input)).toEqual(value === false ? { slackAssistant: false } : {})
+    }
+  }
+  for (const input of [{ capabilities: { slackAssistant: true } }, '{"capabilities":{"slackAssistant":true}}']) {
+    expect(normalizeOrganizationCapabilities(input)).toEqual({ ...defaultCapabilities, slackAssistant: true })
+    expect(readOrganizationCapabilityOverrides(input)).toEqual({ slackAssistant: true })
+  }
+  expect(organizationHasCapability({ complimentaryAccess: { openworkWeb: true } }, "slackAssistant")).toBe(false)
 })

@@ -107,6 +107,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
     mcpConnections: z.boolean().nullable().optional(),
     modelsAnalytics: z.boolean().nullable().optional(),
     gatewayDashboard: z.boolean().nullable().optional(),
+    slackAssistant: z.boolean().nullable().optional(),
   }),
 })
 
@@ -280,6 +281,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
     gatewayDashboard: normalizeOrganizationCapabilities(metadata).gatewayDashboard,
+    slackAssistant: normalizeOrganizationCapabilities(metadata).slackAssistant,
   }
 }
 
@@ -318,7 +320,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "slackAssistant" && key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -2043,6 +2045,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const modelsAnalytics = body.data.capabilities.modelsAnalytics
         if (modelsAnalytics === null) delete capabilities.modelsAnalytics
         else if (modelsAnalytics !== undefined) capabilities.modelsAnalytics = modelsAnalytics
+
+        const slackAssistant = body.data.capabilities.slackAssistant
+        if (slackAssistant === null) delete capabilities.slackAssistant
+        else if (slackAssistant !== undefined) capabilities.slackAssistant = slackAssistant
 
         const gatewayDashboard = body.data.capabilities.gatewayDashboard
         if (gatewayDashboard === null) delete capabilities.gatewayDashboard

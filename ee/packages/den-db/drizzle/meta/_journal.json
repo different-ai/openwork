@@ -708,6 +708,13 @@
       "when": 1789424530208,
       "tag": "0101_artifact_view_data_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "5",
+      "when": 1789452006297,
+      "tag": "0102_slack_assistant",
+      "breakpoints": true
     }
   ]
 }

@@ -296,6 +296,7 @@ import type {
   GetV1InstallByPlatformResponses,
   GetV1InstallConfigErrors,
   GetV1InstallConfigResponses,
+  GetV1IntegrationsSlackOauthCallbackErrors,
   GetV1LlmProviderCatalogByProviderIdErrors,
   GetV1LlmProviderCatalogByProviderIdResponses,
   GetV1LlmProviderCatalogErrors,
@@ -330,6 +331,8 @@ import type {
   GetV1McpConnectionsByConnectionIdMcpAppsErrors,
   GetV1McpConnectionsByConnectionIdMcpAppsResponses,
   GetV1McpConnectionsByConnectionIdResponses,
+  GetV1McpConnectionsByConnectionIdSlackAssistantErrors,
+  GetV1McpConnectionsByConnectionIdSlackAssistantResponses,
   GetV1McpConnectionsByConnectionIdToolPolicyErrors,
   GetV1McpConnectionsByConnectionIdToolPolicyResponses,
   GetV1McpConnectionsByConnectionIdToolsErrors,
@@ -649,6 +652,12 @@ import type {
   PostV1InstallConnectPreviewResponses,
   PostV1InstallConnectStatusErrors,
   PostV1InstallConnectStatusResponses,
+  PostV1IntegrationsSlackByConnectionIdCommandsErrors,
+  PostV1IntegrationsSlackByConnectionIdCommandsResponses,
+  PostV1IntegrationsSlackByConnectionIdEventsErrors,
+  PostV1IntegrationsSlackByConnectionIdEventsResponses,
+  PostV1IntegrationsSlackByConnectionIdInteractionsErrors,
+  PostV1IntegrationsSlackByConnectionIdInteractionsResponses,
   PostV1InvitationsByInvitationIdCancelErrors,
   PostV1InvitationsByInvitationIdCancelResponses,
   PostV1InvitationsErrors,
@@ -677,6 +686,8 @@ import type {
   PostV1McpConnectionsByConnectionIdDisconnectResponses,
   PostV1McpConnectionsByConnectionIdOauthIssuerReviewErrors,
   PostV1McpConnectionsByConnectionIdOauthIssuerReviewResponses,
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors,
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses,
   PostV1McpConnectionsByConnectionIdToolsCallErrors,
   PostV1McpConnectionsByConnectionIdToolsCallResponses,
   PostV1McpConnectionsDiscoverErrors,
@@ -793,6 +804,8 @@ import type {
   PutV1McpConnectionsByConnectionIdAccessResponses,
   PutV1McpConnectionsByConnectionIdErrors,
   PutV1McpConnectionsByConnectionIdResponses,
+  PutV1McpConnectionsByConnectionIdSlackAssistantErrors,
+  PutV1McpConnectionsByConnectionIdSlackAssistantResponses,
   PutV1McpConnectionsByConnectionIdToolPolicyErrors,
   PutV1McpConnectionsByConnectionIdToolPolicyResponses,
   PutV1McpConnectionsByKeyByExternalKeyErrors,
@@ -12756,6 +12769,182 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Read Slack assistant setup
+   *
+   * Read connector configuration, organization eligibility, recent activity metrics, and the Slack app manifest. Only workspace admins can read setup; stored credentials are never returned.
+   */
+  public getV1McpConnectionsByConnectionIdSlackAssistant<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1McpConnectionsByConnectionIdSlackAssistantResponses,
+      GetV1McpConnectionsByConnectionIdSlackAssistantErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/slack-assistant",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Configure Slack assistant installation
+   *
+   * Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires a workspace admin browser session and recent verification.
+   */
+  public putV1McpConnectionsByConnectionIdSlackAssistant<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+      enabled: boolean;
+      signingSecret?: string;
+      channelIds?: Array<string>;
+      shadowMode?: boolean;
+      dailyLimit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "connectionId" },
+            { in: "body", key: "enabled" },
+            { in: "body", key: "signingSecret" },
+            { in: "body", key: "channelIds" },
+            { in: "body", key: "shadowMode" },
+            { in: "body", key: "dailyLimit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1McpConnectionsByConnectionIdSlackAssistantResponses,
+      PutV1McpConnectionsByConnectionIdSlackAssistantErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/slack-assistant",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Start Slack bot installation
+   *
+   * Create a short-lived, single-use OAuth state tied to the installing admin and return the Slack authorization URL. The connector must already have OAuth credentials and a signing secret configured.
+   */
+  public postV1McpConnectionsByConnectionIdSlackAssistantInstall<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses,
+      PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/slack-assistant/install",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Complete Slack bot installation
+   *
+   * Consume the single-use OAuth state, recheck the installing admin's access, and exchange the Slack authorization code for bot credentials. Redirect to connector settings after a successful installation.
+   */
+  public getV1IntegrationsSlackOauthCallback<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<unknown, GetV1IntegrationsSlackOauthCallbackErrors, ThrowOnError>({
+      url: "/v1/integrations/slack/oauth/callback",
+      ...options,
+    });
+  }
+
+  /**
+   * Receive signed Slack assistant events
+   *
+   * Verify the Slack signature and workspace, answer URL verification challenges, and durably enqueue supported events before acknowledging. Disabled or ineligible invocations are acknowledged without routing to a member runtime.
+   */
+  public postV1IntegrationsSlackByConnectionIdEvents<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1IntegrationsSlackByConnectionIdEventsResponses,
+      PostV1IntegrationsSlackByConnectionIdEventsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/integrations/slack/{connectionId}/events",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Receive Slack commands
+   *
+   * Verify the signed Slack slash command and return an ephemeral link for the member to connect their own account in OpenWork.
+   */
+  public postV1IntegrationsSlackByConnectionIdCommands<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1IntegrationsSlackByConnectionIdCommandsResponses,
+      PostV1IntegrationsSlackByConnectionIdCommandsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/integrations/slack/{connectionId}/commands",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Receive Slack interactions
+   *
+   * Verify the signed Slack interaction and record supported feedback only for the member who owns the referenced assistant event.
+   */
+  public postV1IntegrationsSlackByConnectionIdInteractions<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1IntegrationsSlackByConnectionIdInteractionsResponses,
+      PostV1IntegrationsSlackByConnectionIdInteractionsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/integrations/slack/{connectionId}/interactions",
+      ...options,
+      ...params,
     });
   }
 

@@ -54,6 +54,7 @@ import { McpCredentialInput } from "./mcp-credential-input";
 import { shouldShowMcpConnectionsStagingBanner } from "./mcp-connections-capability";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../_providers/den-flow-provider";
+import { SlackAssistantSetup } from "./slack-assistant-setup";
 import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
 import { marketplaceQueryKeys, useMarketplaces } from "./marketplace-data";
 import {
@@ -1201,6 +1202,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
             )}
           </section>
 
+          {detailConnection ? <SlackAssistantSetup connection={detailConnection} /> : null}
           {detailConnection ? (
             <section className="mt-10" data-testid="connector-detail-tools">
               <DetailSectionTitle>Tools</DetailSectionTitle>

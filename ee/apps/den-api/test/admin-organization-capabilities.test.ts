@@ -97,7 +97,7 @@ async function replaceOrganizationMetadata(metadata: Record<string, unknown>) {
     .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
 }
 
-async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; gatewayDashboard?: boolean | null }) {
+async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; gatewayDashboard?: boolean | null; slackAssistant?: boolean | null }) {
   return routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -427,4 +427,35 @@ test("gateway capability administration requires the platform allowlist, not org
     }
   }
   expect(await readOrganizationMetadata()).toEqual(before)
+})
+
+test("Slack Assistant can be enabled and disabled through platform admin without altering other org settings", async () => {
+  if (!shouldRunRouteDbCoverage()) return
+  if (routeTestUnavailable) throw new Error(`Slack Assistant admin coverage unavailable: ${routeTestUnavailable}`)
+  const metadata = { complimentaryAccess: { openworkWeb: true }, capabilities: { gatewayDashboard: true, otherCapability: "preserved" } }
+  await replaceOrganizationMetadata(metadata)
+  const url = `http://den.local/v1/admin/organizations/${organizationId}/capabilities`
+  await expect((await routeApp().request(url)).json()).resolves.toMatchObject({ capabilities: { slackAssistant: false } })
+  for (const enabled of [true, false]) {
+    const response = await putCapabilities({ slackAssistant: enabled })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ capabilities: { slackAssistant: enabled, gatewayDashboard: true } })
+    expect(await readOrganizationMetadata()).toEqual({ ...metadata, capabilities: { ...metadata.capabilities, slackAssistant: enabled } })
+    await expect((await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)).json()).resolves.toMatchObject({ organizations: [{ id: organizationId, capabilities: { slackAssistant: enabled } }] })
+  }
+  await putCapabilities({ slackAssistant: true })
+  await putCapabilities({ mcpConnections: false })
+  expect(readCapabilityMetadata(await readOrganizationMetadata())).toHaveProperty("slackAssistant", true)
+  const beforeDenied = await readOrganizationMetadata()
+  for (const caller of ["anonymous", "owner"]) {
+    const response = await routeApp().request(url, { method: "PUT", headers: { "content-type": "application/json", "x-test-caller": caller }, body: JSON.stringify({ capabilities: { slackAssistant: false } }) })
+    expect(response.status).toBe(caller === "anonymous" ? 401 : 403)
+  }
+  expect(await readOrganizationMetadata()).toEqual(beforeDenied)
+  const cleared = await putCapabilities({ slackAssistant: null })
+  expect(cleared.status).toBe(200)
+  await expect(cleared.json()).resolves.toMatchObject({ capabilities: { slackAssistant: false } })
+  expect(readCapabilityMetadata(await readOrganizationMetadata())).not.toHaveProperty("slackAssistant")
+  const invalid = await routeApp().request(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ capabilities: { slackAssistant: "true" } }) })
+  expect(invalid.status).toBe(400)
 })
