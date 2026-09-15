@@ -7,6 +7,9 @@
     "company-inference": {
       "name": "Company inference",
       "source": "custom",
+      "credentialMode": "shared",
+      "allMembers": false,
+      "memberIds": [],
       "customConfig": {
         "id": "company-inference",
         "name": "Company inference",
@@ -16,6 +19,32 @@
         "models": [{ "id": "company-model", "name": "Company model", "limit": { "context": 32000, "input": 32000, "output": 32000 } }]
       },
       "apiKey": "${COMPANY_INFERENCE_KEY}",
+      "teams": ["platform"]
+    }
+  },
+  "mcpConnections": {
+    "engineering-docs": {
+      "name": "Engineering documentation",
+      "url": "${MCP_HTTP_URL}",
+      "authType": "none",
+      "credentialMode": "shared",
+      "exposeDirectly": false,
+      "access": { "orgWide": true, "memberIds": [], "teamIds": [] }
+    },
+    "internal-tools": {
+      "name": "Internal tools (member sign-in)",
+      "url": "${MCP_OAUTH_URL}",
+      "authType": "oauth",
+      "credentialMode": "per_member",
+      "exposeDirectly": false,
+      "oauthClient": {
+        "clientId": "${MCP_CLIENT_ID}",
+        "clientSecret": "${MCP_CLIENT_SECRET}",
+        "tokenEndpointAuthMethod": "client_secret_basic"
+      },
+      "authorizationServerIssuer": "${MCP_ISSUER}",
+      "requestedScopes": ["tools:read"],
+      "access": { "orgWide": false, "memberIds": [] },
       "teams": ["platform"]
     }
   },
