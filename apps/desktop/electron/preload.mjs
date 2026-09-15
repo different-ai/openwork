@@ -190,8 +190,8 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     setChannel(channel) {
       return ipcRenderer.invoke("openwork:updater:setChannel", channel);
     },
-    check(channel, targetVersion) {
-      return ipcRenderer.invoke("openwork:updater:check", channel, targetVersion);
+    check(channel, targetVersion, options) {
+      return ipcRenderer.invoke("openwork:updater:check", channel, targetVersion, options);
     },
     download() {
       return ipcRenderer.invoke("openwork:updater:download");
