@@ -25,8 +25,19 @@ const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
 ];
 
+// Next.js inlines this PUBLIC project token at build time. Keep the previous
+// server variable as a build-time fallback, not a runtime client configuration.
+// An explicitly blank public token disables tracking instead of falling back.
+const posthogKey = (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.DEN_WEB_POSTHOG_KEY ?? "").trim();
+const posthogEnabled = process.env.NODE_ENV === "production"
+  && process.env.VERCEL_ENV === "production"
+  && (!process.env.OPENWORK_DEV_MODE || process.env.OPENWORK_DEV_MODE === "0");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: {
+    NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: posthogEnabled && /^phc_[A-Za-z0-9_-]{1,200}$/.test(posthogKey) ? posthogKey : "",
+  },
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
   poweredByHeader: false,
@@ -37,6 +48,22 @@ const nextConfig = {
   },
   async redirects() {
     return denApiRedirects(process.env);
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/ow/static/:path*",
+        destination: "https://us-assets.i.posthog.com/static/:path*",
+      },
+      {
+        source: "/ow/array/:path*",
+        destination: "https://us-assets.i.posthog.com/array/:path*",
+      },
+      {
+        source: "/ow/:path*",
+        destination: "https://us.i.posthog.com/:path*",
+      },
+    ];
   },
 };
 
