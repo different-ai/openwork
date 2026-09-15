@@ -1,0 +1,156 @@
+/* Mintlify-only presentation. Keep docs independent of the landing app. */
+/* Mintlify has no native arrow toggle for the primary navbar button. */
+#topbar-cta-button > a[href="https://openworklabs.com/download"] {
+  padding-right: 0.75rem;
+}
+
+#topbar-cta-button > a[href="https://openworklabs.com/download"] > div > svg[aria-hidden="true"] {
+  display: none;
+}
+
+/* These two introductions replace the generated visible header, not its SEO metadata. */
+body:has(.docs-intro) #header {
+  display: none;
+}
+
+#content-area h1,
+#content-area h2,
+#content-area h3,
+#content-area h4 {
+  color: #011627;
+  letter-spacing: -0.025em;
+}
+
+.docs-intro {
+  padding: 8px 0 32px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+#content-area .docs-eyebrow {
+  margin: 0 0 16px;
+  color: #4b5563;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+#content-area .docs-intro h1 {
+  margin: 0;
+  max-width: 680px;
+  font-size: clamp(2.25rem, 4vw, 3rem);
+  font-weight: 500;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+#content-area .docs-lead {
+  margin: 20px 0 24px;
+  color: #4b5563;
+  font-size: 18px;
+  line-height: 1.65;
+}
+
+#content-area .docs-section-title {
+  margin: 0 0 16px;
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-weight: 500;
+  line-height: 1.2;
+  scroll-margin-top: 150px;
+}
+
+.docs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+#content-area .docs-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  color: #011627;
+  background: #f0f4f9;
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+#content-area .docs-actions a:first-child {
+  color: #ffffff;
+  background: #011627;
+  border-color: #011627;
+}
+
+#content-area .docs-actions a:hover {
+  opacity: 0.85;
+}
+
+#content-area .card {
+  background: #f8fafc;
+  border-color: #e5e7eb;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid #011627;
+  outline-offset: 4px;
+}
+
+/* Keep Mintlify's heading links inside the narrow-screen gutter on keyboard focus. */
+@media (max-width: 1023px) {
+  #content-area a[aria-label="Navigate to header"] {
+    margin-left: -16px;
+    width: 16px;
+  }
+
+  #content-area a[aria-label="Navigate to header"] > div {
+    width: 16px;
+    height: 24px;
+  }
+}
+
+.dark #content-area :is(h1, h2, h3, h4),
+.dark #content-area :is(.docs-lead, .docs-eyebrow) {
+  color: #e2e8f0;
+}
+
+.dark .docs-intro {
+  border-color: #334155;
+}
+
+.dark #content-area .docs-actions a {
+  color: #e2e8f0;
+  background: #172b3b;
+  border-color: #475569;
+}
+
+.dark #content-area .docs-actions a:first-child {
+  color: #011627;
+  background: #e2e8f0;
+}
+
+.dark #content-area .card {
+  background-color: #0b1e30;
+  border-color: #334155;
+}
+
+.dark :is(a, button):focus-visible {
+  outline-color: #e2e8f0;
+}
+
+/* Keep the native attribution and wordmark legible in both themes. */
+a[href^="https://www.mintlify.com"][href*="utm_campaign=poweredBy"] {
+  color: #4b5563;
+}
+
+.dark a[href^="https://www.mintlify.com"][href*="utm_campaign=poweredBy"] {
+  color: #cbd5e1;
+}

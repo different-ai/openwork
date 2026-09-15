@@ -53,6 +53,7 @@ export function SiteFooter() {
             <span>Powered by</span>
             <a
               href="https://opencode.ai"
+              aria-label="OpenCode"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center text-gray-500 transition-colors hover:text-gray-800"

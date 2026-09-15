@@ -3,7 +3,7 @@ import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
 const pricingSchema = {
   "@context": "https://schema.org",
@@ -58,7 +58,7 @@ const pricingSchema = {
   ]
 };
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "OpenWork Pricing — Free up to 5 users, $10 Team, $40 Enterprise",
   description:
     "OpenWork is free for up to 5 users. Team is $10 per seat per month up to 100 users. Enterprise is $40 per user per month with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 100 users.",
@@ -69,7 +69,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/pricing"
   }
-};
+});
 
 export default async function PricingPage() {
   const github = await getGithubData();
