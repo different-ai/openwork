@@ -1,5 +1,6 @@
 import {
-  openworkSessionModelSchema,
+  openworkModelSelectorSchema,
+  openworkModelsListArgsSchema,
   type OpenworkAffordanceArgument,
   type OpenworkAffordanceDescriptor,
   type OpenworkAffordanceEffects,
@@ -41,10 +42,7 @@ export const sessionReadArgsSchema = z.object({
   summary: z.boolean().optional().describe("When true, return only the first user message and the last assistant message plus session metadata."),
 });
 
-// Same contract agents read back as `model`; `variant` may be omitted on input.
-export const sessionModelArgSchema = openworkSessionModelSchema.extend({
-  variant: openworkSessionModelSchema.shape.variant.optional().describe("Reasoning effort variant (e.g. low, medium, high). Omit or null for the provider default."),
-});
+export const sessionModelArgSchema = openworkModelSelectorSchema;
 
 export const sessionCreateArgsSchema = z.object({
   sessions: z.array(z.object({
@@ -65,6 +63,7 @@ export const sessionSendArgsSchema = z.object({
 
 /** Argument schemas by affordance id; sessionContribution must advertise exactly these keys. */
 export const sessionAffordanceArgsSchemas = {
+  "models.list": openworkModelsListArgsSchema,
   "session.search": sessionSearchArgsSchema,
   "session.read": sessionReadArgsSchema,
   "session.create": sessionCreateArgsSchema,
@@ -141,6 +140,15 @@ function sessionContribution(): OpenworkFeatureContribution {
     provider,
     affordances: [
       affordance({
+        id: "models.list",
+        kind: "query",
+        title: "List workspace models",
+        description: "Return effective available connected picker models with providerId/modelId, displayName, providerName and available:true. Requires an existing renderer host via the UI query bridge, including headless callers; never focuses or navigates. Assigned models not yet engine-connected are omitted.",
+        provider,
+        arguments: [argument("workspaceId", "string", true, "Workspace id or name whose available models to list.")],
+        effects: readEffects,
+      }),
+      affordance({
         id: "session.search",
         kind: "query",
         title: "Find sessions",
@@ -163,7 +171,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read messages from a session without opening it. The result also carries `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call.",
+        description: "Read messages from a session without opening it. The result also carries `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),
@@ -178,12 +186,12 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.create",
         kind: "command",
         title: "Create sessions",
-        description: "Create and start one or more sessions without navigating away. Pass `model` ({ providerId, modelId, variant }) to bind the sessions to a model and reasoning effort; it is applied at creation and to the first turn, and read back as `model` by session.read and session.list_sessions.",
+        description: "Create and start one or more sessions without navigating away. Pass `model` with providerId/modelId or alias/displayName (exact case-insensitive picker name, optional providerId qualifier), plus variant for reasoning effort. models.list discovers available models through an existing renderer host, required for model selection even from headless callers; no focus or navigation. All models resolve before creation; missing host, unavailable or ambiguous models are rejected. Returned bindings round-trip by ids; displayName/providerName are decorations when ids are present, but alias plus modelId is invalid. Results include model ids and optional displayName/providerName, also returned by session.read and session.list_sessions.",
         provider,
         arguments: [
-          argument("sessions", "array", true, "Array of { title (≤120 chars, longer is clipped), prompt (≤100000 chars), model? }. Each prompt is self-contained; model is { providerId, modelId, variant? (≤60 chars) }."),
+          argument("sessions", "array", true, "Array of { title (≤120 chars, longer is clipped), prompt (≤100000 chars), model? }. Each prompt is self-contained; model is { providerId, modelId, variant? (≤60 chars) } or { alias/displayName, providerId?, variant? (≤60 chars) }."),
           argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the requesting session's workspace."),
-          argument("model", "object", false, "Optional providerId, modelId and variant (reasoning effort, ≤60 chars) for every created session. Omit to use the engine default."),
+          argument("model", "object", false, "Optional providerId/modelId or alias/displayName (exact case-insensitive name, optional providerId qualifier) and variant (reasoning effort, ≤60 chars) for every created session. Omit to use the engine default."),
         ],
         effects: writeEffects,
       }),
