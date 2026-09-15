@@ -220,5 +220,8 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
 })();
 `;
 
-export const MCP_APP_SANDBOX_PROXY_HTML = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"stylesheet\" href=\"/mcp-apps/sandbox.css\"><title>MCP App sandbox</title></head><body><script src=\"/mcp-apps/sandbox.js\"></script></body></html>";
 export const MCP_APP_SANDBOX_PROXY_CSS = "html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}";
+// Readiness must not wait on extra network requests. In particular, a stylesheet
+// before a classic script blocks its execution even when the script is downloaded.
+// These are trusted host constants; provider HTML is delivered separately.
+export const MCP_APP_SANDBOX_PROXY_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${MCP_APP_SANDBOX_PROXY_CSS}</style><title>MCP App sandbox</title></head><body><script>${MCP_APP_SANDBOX_PROXY_SCRIPT}</script></body></html>`;

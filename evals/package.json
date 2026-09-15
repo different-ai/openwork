@@ -28,18 +28,19 @@
     "@openwork/hosts": "workspace:*",
     "@openwork/labs": "workspace:*",
     "@openwork/matchers": "workspace:*",
+    "@openwork/review": "link:../packages/review",
     "@openwork/sdk": "link:../packages/sdk",
     "@openwork/test-artifacts": "workspace:*",
     "@openwork/test-evidence": "workspace:*",
     "@openwork/testkit": "workspace:*",
     "@openwork/types": "link:../packages/types",
-    "@openwork/world": "link:../packages/world",
-    "@openwork/review": "link:../packages/review"
+    "@openwork/world": "link:../packages/world"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.11",
     "dependency-cruiser": "18.1.0",
     "typescript": "^5.9.3",
+    "vite": "^6.4.3",
     "vitest": "^4.1.11",
     "xml-crypto": "6.1.2"
   },

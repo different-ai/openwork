@@ -322,6 +322,7 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [height, setHeightState] = useState(initialHeight ?? DEFAULT_HEIGHT)
   const [error, setError] = useState<McpAppDiagnostic | null>(null)
+  const [retryAttempt, setRetryAttempt] = useState(0)
   const teardownRef = useRef(onRequestTeardown)
   teardownRef.current = onRequestTeardown
   const onHeightChangeRef = useRef(onHeightChange)
@@ -656,9 +657,12 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
       disposed = true
       stopSandbox?.()
     }
-  }, [app, inputArguments, openworkServerClient, result, toolName, workspaceId, readOnly, origin, presentation])
+  }, [app, inputArguments, openworkServerClient, result, toolName, workspaceId, readOnly, origin, presentation, retryAttempt])
 
-  if (error) return <McpAppDiagnosticNotice error={error} notice={unavailableNotice} />
+  if (error) return <McpAppDiagnosticNotice error={error} notice={unavailableNotice} onRetry={() => {
+    setError(null)
+    setRetryAttempt((attempt) => attempt + 1)
+  }} />
   return (
     <div
       className={cn(
