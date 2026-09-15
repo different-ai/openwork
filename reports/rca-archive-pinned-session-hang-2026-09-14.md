@@ -107,6 +107,14 @@ Revert-fails command: the identical E2E command after `git restore --source=76b1
 
 Focused native revert-fails, from `apps/app`: `pnpm --config.verify-deps-before-run=false exec bun test --isolate tests/session-archive-agent-contract.test.tsx --test-name-pattern "bounds a stalled preflight response body"`. Exit 1, 0 passed / 1 failed / 25 filtered: expected `verification_failed`, received undefined after 3,500 ms. All production files were restored from the signed fix immediately afterward.
 
+## CI follow-up: preserve explicit null overrides across runtime versions
+
+PR #5014's initial `openwork-tests-core` run failed at the **new ordinary-request test** `opencode-stream-timeout.test.ts:185`: explicit `RequestInit.signal=null` must disconnect the input Request signal. This is not a streaming test and its expectation remains unchanged. No oracle change, no archive-only narrowing, and no swallowing caller cancellation are justified.
+
+CI used Bun 1.3.14; the supplied local toolchain used Bun 1.4.0. A focused local run with Bun 1.3.14 reproduced the same failure (1 passed / 1 failed / 27 filtered). That runtime's `new Request(input, {signal:null})` retained the input signal. The desktop wrapper now forwards the explicit init signal into `fetchWithTimeout` as well as cloning the request, preserving null versus undefined through deadline composition. The non-streaming timeout branch is unchanged; event streams remain untimed.
+
+With that transport correction, `pnpm --filter @openwork/app test:core` on Bun 1.3.14 passed **292 tests / 0 failed**, 3,189 expectations, exit 0. The deadline testkit wrapper passed with all 110 native tests; app typecheck passed. The user-requested command `pnpm --filter @openwork/app test -- opencode-stream-timeout` does **not** scope this repo's test script: it expands to `bun test --isolate tests/ -- opencode-stream-timeout`, running 254 files. It returned 2,282 passed / 8 failed, exit 1, with failures in mention instructions, v2 provider options, composer continuity, palette settings and tool-error rendering, not the transport test. No clean control was run for these broader failures; their provenance remains unresolved rather than being labeled pre-existing. They are outside the workflow's 18-file core suite. Final-head core CI and regenerated testkit receipts are linked on the PR.
+
 ## User impact and tonight's guidance
 
 Slow archive safety reads can stall both human and agent routes regardless of pinning. The old five-second timeout is an **unknown action outcome**, not authorization to repeat the mutation. Pinning may correlate with older/longer or background-workspace conversations, but that has not been measured for this incident.

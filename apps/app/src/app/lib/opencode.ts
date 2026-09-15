@@ -306,7 +306,9 @@ export const createDesktopFetch = (auth?: OpencodeAuth) => {
       const headers = new Headers(init?.headers ?? input.headers);
       addAuth(headers);
       const request = new Request(input, { ...init, headers });
-      return fetchWithTimeout(underlyingFetch, request, undefined, timeoutMs);
+      // Keep an explicit null override even in runtimes whose Request clone
+      // retains the original signal when constructed with signal: null.
+      return fetchWithTimeout(underlyingFetch, request, { signal: init?.signal }, timeoutMs);
     }
 
     const headers = new Headers(init?.headers);
