@@ -51,7 +51,7 @@ export const sessionCreateArgsSchema = z.object({
     title: z.string().trim().min(1).transform((title) => title.length > 120 ? `${title.slice(0, 119)}…` : title).describe("Short title shown in the OpenWork session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
     model: sessionModelArgSchema.optional().describe("Model and reasoning effort for this session. Overrides the top-level model."),
-  })).min(1).describe("One entry per new session to create and start."),
+  })).min(1).describe("One entry per new session to create and submit an asynchronous prompt to."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
   model: sessionModelArgSchema.optional().describe("Model and reasoning effort for every created session unless an entry overrides it. Omit to use the engine default."),
 });
@@ -178,7 +178,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.create",
         kind: "command",
         title: "Create sessions",
-        description: "Create and start one or more sessions without navigating away. Pass `model` ({ providerId, modelId, variant }) to bind the sessions to a model and reasoning effort; it is applied at creation and to the first turn, and read back as `model` by session.read and session.list_sessions.",
+        description: "Create sessions and submit their first prompts without navigating away. Each `created` entry reports `accepted: true`: the engine accepted the asynchronous prompt request, not proof that inference started or succeeded. An unavailable model can fail afterward; check session.read and session.list_sessions before reporting progress. Pass `model` ({ providerId, modelId, variant }) at creation and on the first prompt; the bound model is not proof of availability. On request failure, `issues` contains indexed paths and any created sessionId; `result` preserves accepted entries and failures. Inspect those sessions before retrying to avoid duplicates.",
         provider,
         arguments: [
           argument("sessions", "array", true, "Array of { title (≤120 chars, longer is clipped), prompt (≤100000 chars), model? }. Each prompt is self-contained; model is { providerId, modelId, variant? (≤60 chars) }."),
