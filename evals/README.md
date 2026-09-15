@@ -65,8 +65,8 @@ pnpm evals:e2e app-smoke
 ```
 
 `pnpm --dir evals typecheck` (also `pnpm evals:typecheck`) type-checks every
-spec, world, driver, script, and package under `evals/` and must exit 0 (run it
-before pushing; the CI step lands separately). It compiles with the bundler resolution Vitest
+spec, world, driver, script, and package under `evals/` and must exit 0; CI runs
+it in the test-framework job. It compiles with the bundler resolution Vitest
 uses and reports only diagnostics that belong to `evals/` (or to files the
 config includes explicitly), because the `apps/` and `ee/` sources a spec pulls
 in are compiled by their own projects with their own flags. Nothing inside
