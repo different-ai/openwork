@@ -2631,11 +2631,25 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
   return pageItems(visible, input.cursor, input.limit)
 }
 
-export async function getPluginDetail(context: PluginArchActorContext, pluginId: PluginId) {
+export async function getPluginDetail(context: PluginArchActorContext, pluginId: PluginId, options: { includeCloudReadiness?: boolean } = {}) {
   const row = await ensureVisiblePlugin(context, pluginId)
   const memberships = await db.select({ id: PluginConfigObjectTable.id }).from(PluginConfigObjectTable).where(and(eq(PluginConfigObjectTable.pluginId, row.id), isNull(PluginConfigObjectTable.removedAt)))
   const marketplaceMembers = await collectPluginMarketplaces(context.organizationContext.organization.id, [row.id])
-  return serializePlugin(row, memberships.length, marketplaceMembers.get(row.id) ?? [])
+  const plugin = serializePlugin(row, memberships.length, marketplaceMembers.get(row.id) ?? [])
+  if (!options.includeCloudReadiness || !memberFacingMcpConnectionsEnabled(context.organizationContext.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })) {
+    return plugin
+  }
+  const readiness = await resolveMarketplacePluginCloudReadiness({
+    organizationId: context.organizationContext.organization.id,
+    member: {
+      orgMembershipId: context.organizationContext.currentMember.id,
+      teamIds: context.memberTeams.map((team) => team.id),
+    },
+    pluginIds: [row.id],
+    desktopManifestPluginIds: defaultOpenWorkManifestForPlugin(row) ? [row.id] : [],
+  })
+  const cloudReadiness = readiness.get(row.id)
+  return { ...plugin, ...(cloudReadiness ? { cloudReadiness } : {}) }
 }
 
 export async function createPlugin(input: {

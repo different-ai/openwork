@@ -213,7 +213,7 @@ export function isLibraryAuthorableKind(kind: LibraryAddKind): kind is LibraryAu
 }
 
 export type LibraryAddAction =
-  | { type: "den-url"; kind: "connection" | "mcp" }
+  | { type: "connection-setup" }
   | { type: "den-modal"; kind: LibraryAuthorableKind }
   | { type: "workspace-mcp" };
 
@@ -231,8 +231,8 @@ export function libraryAddAction(
   }
   if (!options.cloudSignedIn) return null;
   if (addKind === "connection" || addKind === "mcp") {
-    // Members browse their granted connections; only admins enter connector setup.
-    return { type: "den-url", kind: options.canManageCloudConnections === true ? "connection" : "mcp" };
+    // One Desktop entry point: members browse grants; administrators also configure.
+    return { type: "connection-setup" };
   }
   if (isLibraryAuthorableKind(addKind)) return { type: "den-modal", kind: addKind };
   return null;

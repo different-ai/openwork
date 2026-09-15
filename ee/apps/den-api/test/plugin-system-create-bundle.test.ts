@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -91,6 +91,7 @@ const recordedInserts: InsertRecord[] = []
 const recordedUpdates: UpdateRecord[] = []
 let insertCalls = 0
 let updateCalls = 0
+let includeStoredAccessGrants = false
 
 function tableName(table: unknown): TableName | null {
   if (table === ConfigObjectTable) return "config_object"
@@ -120,7 +121,7 @@ function resetDb(seed: Partial<Record<TableName, Row[]>> = {}) {
 
 function rowsFor(table: TableName | null) {
   if (!table) return []
-  if (table === "config_object_access_grant" || table === "plugin_access_grant") {
+  if (!includeStoredAccessGrants && (table === "config_object_access_grant" || table === "plugin_access_grant")) {
     return []
   }
   return rowsByTable[table]
@@ -285,6 +286,107 @@ function routeFailure(error: unknown) {
   if (!("message" in error) || typeof error.message !== "string") return null
   return { error: error.error, message: error.message }
 }
+
+test("standalone plugin detail uses the existing member-scoped readiness resolver after grant and policy checks", async () => {
+  resetDb()
+  includeStoredAccessGrants = true
+  const base = ownerContext()
+  const context: PluginArchActorContext = {
+    ...base,
+    organizationContext: {
+      ...base.organizationContext,
+      currentMember: {
+        ...base.organizationContext.currentMember,
+        userId: createDenTypeId("user"),
+        role: "member",
+        directRole: "member",
+        adminTeams: [],
+        isOwner: false,
+      },
+    },
+  }
+  const capabilities = await import("../src/mcp/marketplace-capabilities.js")
+  const resolve = spyOn(capabilities, "resolveMarketplacePluginCloudReadiness")
+  try {
+    const plugin = await storeModule.createPlugin({ context, name: "Private Library plugin" })
+    const privateGrant = recordedInserts.find((entry) => entry.table === "plugin_access_grant")
+    expect(privateGrant?.value.orgMembershipId).toBe(context.organizationContext.currentMember.id)
+    expect(privateGrant?.value.orgWide).toBe(false)
+    expect(rowsByTable.marketplace_plugin).toHaveLength(0)
+    const readiness: import("../src/mcp/marketplace-capabilities.js").MarketplacePluginCloudReadiness = {
+      state: "needs_signin",
+      hasInstructional: false,
+      connections: [{
+        id: createDenTypeId("externalMcpConnection"),
+        configObjectId: createDenTypeId("configObject"),
+        serverName: "private-server",
+        name: "Private server",
+        url: "https://private-server.example.test/mcp",
+        authType: "oauth",
+        requiredAuthType: "oauth",
+        authTypeMismatch: false,
+        credentialMode: "per_member",
+        connectedForMe: false,
+        oauthClientConfigured: true,
+        oauthClientRequired: true,
+      }],
+    }
+    resolve.mockImplementation(async () => new Map([[plugin.id, readiness]]))
+    const storedPlugin = rowsByTable.plugin[0]
+    if (!storedPlugin) throw new Error("Expected the created plugin")
+    storedPlugin.clientSecret = "test-secret-not-in-plugin-detail"
+    const detail = await storeModule.getPluginDetail(context, plugin.id, { includeCloudReadiness: true })
+    expect(detail).toMatchObject({ id: plugin.id, marketplaces: [], cloudReadiness: readiness })
+    expect(JSON.stringify(detail)).not.toContain("test-secret-not-in-plugin-detail")
+    expect(schemas.pluginDetailResponseSchema.parse({ item: detail }).item.cloudReadiness).toEqual(readiness)
+    expect(resolve).toHaveBeenCalledWith({
+      organizationId: context.organizationContext.organization.id,
+      member: { orgMembershipId: context.organizationContext.currentMember.id, teamIds: [] },
+      pluginIds: [plugin.id],
+      desktopManifestPluginIds: [],
+    })
+
+    const other: PluginArchActorContext = {
+      ...context,
+      organizationContext: {
+        ...context.organizationContext,
+        currentMember: { ...context.organizationContext.currentMember, id: createDenTypeId("member"), userId: createDenTypeId("user") },
+      },
+    }
+    expect(await storeModule.getPluginDetail(other, plugin.id, { includeCloudReadiness: true }).then(() => null, errorStatus)).toBe(403)
+    expect(resolve).toHaveBeenCalledTimes(1)
+
+    const now = new Date()
+    const teamId = createDenTypeId("team")
+    const teamContext: PluginArchActorContext = {
+      ...other,
+      memberTeams: [{ id: teamId, organizationId: context.organizationContext.organization.id, name: "Granted team", createdAt: now, updatedAt: now }],
+    }
+    rowsByTable.plugin_access_grant.push({ orgMembershipId: null, orgWide: false, teamId, role: "viewer", removedAt: null })
+    await storeModule.getPluginDetail(teamContext, plugin.id, { includeCloudReadiness: true })
+    expect(resolve).toHaveBeenLastCalledWith({
+      organizationId: context.organizationContext.organization.id,
+      member: { orgMembershipId: other.organizationContext.currentMember.id, teamIds: [teamId] },
+      pluginIds: [plugin.id],
+      desktopManifestPluginIds: [],
+    })
+
+    const disabled: PluginArchActorContext = {
+      ...context,
+      organizationContext: {
+        ...context.organizationContext,
+        organization: { ...context.organizationContext.organization, metadata: JSON.stringify({ capabilities: { mcpConnections: false } }) },
+      },
+    }
+    expect(await storeModule.getPluginDetail(disabled, plugin.id, { includeCloudReadiness: true })).not.toHaveProperty("cloudReadiness")
+    expect(await storeModule.getPluginDetail(context, plugin.id)).not.toHaveProperty("cloudReadiness")
+    expect(resolve).toHaveBeenCalledTimes(2)
+  } finally {
+    resolve.mockRestore()
+    includeStoredAccessGrants = false
+    resetDb()
+  }
+})
 
 test("pluginCreateSchema accepts legacy and bundle bodies while rejecting empty component input", () => {
   expect(schemas.pluginCreateSchema.safeParse({ name: "X" }).success).toBe(true)
