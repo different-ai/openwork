@@ -31,9 +31,28 @@ World outputs are authoritative for `releaseTag`, `releaseSha`, `lane`, `denWeb`
 | World Clocks | `https://world-clocks-demo.vercel.app/mcp` | `show_world_clocks {}` | none/shared |
 | Personal Calendar | `https://personal-calendar-demo-mcp-app.vercel.app/mcp` | `show_calendar {}` | OAuth/per-member; `calendar:read` |
 
-Home source: [yomgui/acme-home-demo](https://github.com/yomgui/acme-home-demo), verified deployment source `aa0f1b7aaa72fe4d41d9f0ee9408b83c80b53575`; UI resource `ui://acme-home/home.html`. Calendar source is the **private** [yomgui/personal-calendar-demo-mcp-app](https://github.com/yomgui/personal-calendar-demo-mcp-app) repository, verified deployment commit `9051e3ca73822581f44ff4d489404062f9f3af59`, resource `ui://personal-calendar/mcp-app.html`, issuer `https://personal-calendar-demo-mcp-app.vercel.app`, with public-client DCR (`token_endpoint_auth_method: none`). Metadata discovery is public; calendar/identity data calls still require a verified token. Direct deployed OAuth/tool tests succeeded for two different synthetic identities; that is not yet proof of isolation through the released OpenWork host.
+Home source: [yomgui/acme-home-demo](https://github.com/yomgui/acme-home-demo), original film's verified deployment source `aa0f1b7aaa72fe4d41d9f0ee9408b83c80b53575`; UI resource `ui://acme-home/home.html`. Calendar source is the **private** [yomgui/personal-calendar-demo-mcp-app](https://github.com/yomgui/personal-calendar-demo-mcp-app) repository, verified deployment commit `9051e3ca73822581f44ff4d489404062f9f3af59`, resource `ui://personal-calendar/mcp-app.html`, issuer `https://personal-calendar-demo-mcp-app.vercel.app`, with public-client DCR (`token_endpoint_auth_method: none`). Metadata discovery is public; calendar/identity data calls still require a verified token. Direct deployed OAuth/tool tests succeeded for two different synthetic identities; that is not yet proof of isolation through the released OpenWork host.
+
+Current Home deployment note (operator-reported, not reverified by this docs-only update): both production projects now use Acme `main` source `3b335ed` in two modes. The shared world/H endpoint remains **`https://acme-home-demo.vercel.app/mcp`**, anonymous/shared; the separate **`https://acme-home-demo-peruser.vercel.app/mcp`** uses `IDENTITY_MODE=openwork` and OAuth/per-member. Do not substitute the per-user endpoint into the shared world/H setup. See [current per-user protocol verification and setup](per-user-home-demo.md#current-protocol-verification). The original `aa0f1b7` film, historical receipts, and red runs remain unchanged and are not recertified against `3b335ed`.
 
 World Clocks uses the demo-only deployment of canonical source `0e0e70f32163687512c09e24ae68334a5a47dedd`: seven tools, with the launch and three app-only helpers bound to `ui://world-clocks/mcp-app.html`. Write annotations remain intact. Access to the original Vercel team was denied, so only this demo's configuration points to the new `world-clocks-demo` URL; the original `world-clocks-six` deployment and existing organization connector are unchanged. An authorized admin must separately migrate that connector or redeploy the fix to the original team.
+
+### Den Add app picker: exact cards to add
+
+The World Clocks connection currently shows **FOUR entries**: **World Clocks** (`show_world_clocks`), **Resolve locations** (`resolve_locations`), **Get my preferences** (`get_preferences`), and **Save my preferences** (`save_preferences`).
+
+Add ONLY the first card, "World Clocks" (Run automatically). The other three are internal helpers the tile calls itself; do not add them as tiles — "Save my preferences" would write on every refresh.
+
+The helpers' `ui://world-clocks/mcp-app.html` binding is required by the released host for calls from the tile. **Product finding:** `visibility: ["app"]` with `resourceUri` currently leaks app-only helpers into the picker; the picker should hide them while preserving that binding. This documentation does not fix the picker.
+
+The other connections' exact card titles, checked against their registration source (not a new live-host verification), are:
+
+| Connection | App cards | Add for this demo |
+|---|---|---|
+| Personal Calendar | **Personal Calendar (demo)** (`show_calendar`) | **Personal Calendar (demo)** with `{}`; enable **Run automatically / Auto-run**. `Who am I (synthetic demo)` (`whoami`) has no UI binding and is not an App card. |
+| Acme Home | **Today at a Glance** (`acme_today`), **Needs Your Attention** (`acme_attention`), **My Goals** (`acme_goals`), **Acme Home** (`acme_home`) | Only **Acme Home** with `{}`; enable **Run automatically / Auto-run**. The other three are valid standalone widgets, not app-only helpers, but are not the full Home shell. |
+
+Source backing: World Clocks `server/server.ts` registers the four UI-bound tools and `shared/types.ts` defines the launch title; Personal Calendar `server/server.ts` uses the title from `shared/contract.ts`; Acme Home `server/server.ts` registers all three widgets and Home via `server/register.ts`, with titles from `shared/contract.ts`. These are the respective app repositories, not OpenWork product files.
 
 ### Calendar's deliberately limited demo authorization
 
@@ -57,14 +76,14 @@ That world is stopped. CDP ports above are historical—never attach blindly. Th
 | 2 | In an isolated browser profile, open `denWeb` and sign in as Alex using private world outputs. | Alex is the organization owner; **Manage → Dashboards** is available. |
 | 3 | Open the organization's connections page and click **Configured** to inspect installed connections rather than the connector catalog. | Acme Home, World Clocks, and Personal Calendar are registered. Calendar is **Individual accounts / per-member**, OAuth—not a shared API key. Registration alone does not mean it is connected. |
 | 4 | Open **Manage → Dashboards → New dashboard**, name it **Acme Day**, and click **Create dashboard**. | An empty dashboard detail page with app/access controls opens. |
-| 5 | **Add app → MCP → Acme Home** connection; click **Add on the “Acme Home” App row**, then **Done** and enable **Auto-run**. | The full `acme_home` shell is saved—not an individual Today, Attention, or Goals widget. No chat-save step is used. |
-| 6 | Add World Clocks with default `{}` and enable **Auto-run**. | One clock App reference is saved. Do not supply `cities`: explicit launch cities override saved preferences. |
+| 5 | **Add app → MCP → Acme Home** connection; click **Add on the “Acme Home” App row**, then **Done** and enable **Auto-run**. | The full `acme_home` shell is saved—not the standalone **Today at a Glance**, **Needs Your Attention**, or **My Goals** cards. No chat-save step is used. |
+| 6 | In **Add app → World Clocks**, add only the first **World Clocks** card with default `{}` and enable **Run automatically / Auto-run**; ignore the three internal helper cards listed above. | One clock App reference is saved, never **Resolve locations**, **Get my preferences**, or **Save my preferences**. Do not supply `cities`: explicit launch cities override saved preferences. |
 | 7 | Under **Who sees this dashboard**, leave **Everyone in the organization** off. **Add person → Search people...**, select Alex and then Jordan by world email, and **Grant** each. | Exactly the named viewer grants exist; sharing stores App references, not another member's calendar data. |
 | 8 | Open **Dashboard** in Alex's isolated desktop. | **Acme Day**, Home, and live World Clocks render under **From your company**. Launch controls may say **Organization auto-run**. |
 | 9 | In a second isolated browser profile, sign in to `denWeb` as Jordan. | Jordan's account is visible; no Alex authentication cookie is reused. |
 | 10 | Open **Dashboard** in Jordan's isolated desktop. | The same shared dashboard, Home, and World Clocks render without Jordan creating a dashboard. |
 | 11 | As Alex in Den Web, open **My Library → MCPs → Personal Calendar → Your Connections → Connect**. | The demo OAuth redirect auto-approves and returns connected. No typing, identity picker, or shared credential is used. A failed return fails this step. |
-| 12 | As Alex, reopen Acme Day's Den Web detail and add the **Personal Calendar** App row with `{}`; enable **Auto-run**. | The third App is a real `ui://` reference. Launch arguments contain no identity, bearer token, or copied payload; named grants remain unchanged. |
+| 12 | As Alex, reopen Acme Day's Den Web detail and add the **Personal Calendar (demo)** App row with `{}`; enable **Auto-run**. | The third App is a real `ui://` reference. Launch arguments contain no identity, bearer token, or copied payload; named grants remain unchanged. |
 | 13 | As Jordan in the separate Den Web profile, open **Your Connections → Personal Calendar → Connect**. | Jordan's independent OAuth connection returns connected. No code/token from Alex's flow is reused. Attempt this independently even if Alex's connection failed. |
 | 14 | Reopen/reload the dashboard on both desktops to load Calendar. | Both render **Signed in as**, nonempty meetings, identity fingerprint, generation, instance ID, and generated time. Record each member's result separately. |
 | 15 | Record Alex's view as `A` and Jordan's as `J`; compare them. | `A.name != J.name`, `A.identity != J.identity`, and meeting sets differ. Identical calendars fail ENG-105; if a member cannot render, record the comparison as blocked—not passed. |
