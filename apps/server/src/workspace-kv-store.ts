@@ -1,5 +1,3 @@
-import { eq } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { importNodeSqlite, openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
@@ -124,6 +122,11 @@ async function runtimeDb(path: string): Promise<RuntimeSqliteDatabase> {
 async function openTableDb(path: string, config: WorkspaceKvTableConfig): Promise<WorkspaceKvDb> {
   const runtime = await runtimeDb(path);
   if (runtime.kind === "bun") {
+    // Electron/Node uses its built-in SQLite path and must not load Bun's ORM
+    // dependency graph merely to read or write the same key/value tables.
+    const [{ eq }, { integer, sqliteTable, text }] = await Promise.all([
+      import("drizzle-orm"), import("drizzle-orm/sqlite-core"),
+    ]);
     runtime.sqlite.run(config.createTableSql);
     const db = runtime.db;
     const schemaVersion = config.schemaVersion;

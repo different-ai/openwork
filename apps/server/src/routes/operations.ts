@@ -14,7 +14,8 @@ interface RegisterOperationRoutesOptions {
   readJsonBody: ReadJsonBody;
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
-  reloadOpencodeEngine: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
+  reloadOpencodeEngine: (config: ServerConfig, workspace: WorkspaceInfo, options?: { force?: boolean }) => Promise<void>;
+  readOptionalJsonBody: ReadJsonBody;
 }
 
 export function registerOperationRoutes(options: RegisterOperationRoutesOptions): void {
@@ -26,6 +27,7 @@ export function registerOperationRoutes(options: RegisterOperationRoutesOptions)
     requireClientScope,
     resolveWorkspace,
     reloadOpencodeEngine,
+    readOptionalJsonBody,
   } = options;
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
@@ -39,8 +41,15 @@ export function registerOperationRoutes(options: RegisterOperationRoutesOptions)
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     requireClientScope(ctx, "collaborator");
+    // `force` reloads even when nothing the engine reads from its config changed:
+    // a credential written to the engine's own store is invisible to the config
+    // fingerprint, yet only a rebuilt instance picks it up.
+    const body = await readOptionalJsonBody(ctx.request);
+    if (body.force !== undefined && typeof body.force !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "force must be a boolean");
+    }
 
-    await reloadOpencodeEngine(config, workspace);
+    await reloadOpencodeEngine(config, workspace, { force: body.force === true });
 
     await recordAudit(workspace.path, {
       id: shortId(),

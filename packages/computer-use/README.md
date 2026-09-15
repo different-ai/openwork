@@ -69,15 +69,52 @@ are omitted from the semantic tree and masked in the returned PNG.
 All action arguments are validated at the native boundary. Coordinates refer
 to the actual returned PNG dimensions and are mapped to the selected window's
 current bounds, including negative display origins. A visual action also
-requires a foreground-window check, a fresh matching image, and target hit
-testing. Input is posted to the pinned process; no global HID fallback exists.
+requires a foreground-window check, an observation that included an image, and
+live target hit testing. Input is posted to the pinned process; no global HID
+fallback exists.
 
-An observation is valid for 15 seconds and one action attempt. Before input,
-the runtime verifies the app, window, geometry, semantic content and exact
-element identity. It consumes the observation before dispatch and caches the
-receipt under `request_id`, including failures after dispatch begins. An
-identical retry returns the same receipt. Reusing the ID for different input
-is an error. The client must observe after every attempt.
+An observation is valid for 60 seconds and one `computer_act` call. Before
+input, the runtime verifies the app, window, geometry, structural content and
+exact element identity. Structural content means roles, labels, geometry,
+enablement, actions and editable values; a clock, counter or other read-only
+text that ticks over does not make the observation stale, and pixel equality
+is not required (a caret, spinner or animation costs no round trip). The
+runtime consumes the observation before dispatch and caches the receipt under
+`request_id`, including failures after dispatch begins. An identical retry
+returns the same receipt. Reusing the ID for different input is an error.
+
+### Working at coworker speed
+
+The vocabulary and loop follow what current computer-use references converge
+on (Anthropic's batch actions and modifier chords, OpenAI's ordered `actions`
+arrays, accessibility-first macOS tools that re-resolve each step live):
+
+- **Batches.** `computer_act` takes `action` or `actions` (1–8 steps). Steps
+  run in order; each is checked against the same session, generation and frame,
+  every pointer position is hit-tested live and every ref is re-verified by
+  exact element identity. The batch stops at the first failure and the receipt
+  lists `steps` as dispatched, failed or skipped. Once any step landed the
+  receipt is `status: "partial"` with `ok: true`, so the caller still receives
+  the settled view instead of an error.
+- **Shortcuts.** `key` accepts a base key plus `modifiers` (`command`, `shift`,
+  `option`, `control`). Chords that quit, close, hide or minimize the app,
+  switch apps, open Spotlight, capture the screen or toggle full screen are
+  refused with `blocked_shortcut`; `computer_discover` lists them. `command+v`
+  is accepted only after the same session dispatched `command+c` or
+  `command+x`; a person pause resets that, so the person's own pasteboard is
+  never pasted by the agent. Clicks accept the same modifiers; `triple_click`
+  selects a line or paragraph.
+- **Settle, then observe.** After each dispatched step the runtime waits until
+  two structural reads 70 ms apart agree (at most 500 ms), so the following
+  observation shows the reached state rather than a mid-transition frame.
+  `wait` (50–3000 ms) is for a known load inside a batch, not a substitute.
+- **Compact elements.** `computer_observe` returns interactive elements by
+  default (`ref`, `role` without the `AX` prefix, `label`, `value`, `x`/`y`/
+  `w`/`h` in image pixels, `press`/`settable`/`disabled` flags only when set).
+  `elements: "all"` adds static text for reading; `"none"` returns only the
+  image. `elements_total` reports how many records the walk collected.
+- **Typing.** Text is still one grapheme per event without the clipboard, but
+  the focus and session checks repeat every 50 ms instead of every character.
 
 `status: "dispatched"` means an OS operation was accepted or posted; it does
 **not** verify the intended outcome. Outcome verification belongs in the next
@@ -87,10 +124,10 @@ retry. Cancellation, sleep, takeover and Stop invalidate observations.
 
 | Tool | Purpose |
 | --- | --- |
-| `computer_discover` | App identities, permission status, modes, keys and limits; no window text |
+| `computer_discover` | App identities, permission status, modes, keys, modifiers, blocked shortcuts and limits; no window text |
 | `computer_open_session` | Launch if needed, then person approval of app/window/mode |
-| `computer_observe` | Semantic state plus optional window PNG |
-| `computer_act` | One validated action with session, observation and request IDs |
+| `computer_observe` | Interactive (or all) elements plus optional window PNG |
+| `computer_act` | One action or an ordered batch, validated per step, with session, observation and request IDs |
 | `computer_session_status` | State, scope, action count and expiry |
 | `computer_close_session` | Revoke the grant and release control |
 
@@ -153,16 +190,18 @@ is no background-activation or global-input fallback.
   This blocklist is defense in depth, not a claim that every executable or
   command-capable app can be identified. Custom widgets can mislabel or omit
   protected fields; never assume screenshots cannot contain sensitive data.
-- Exact visual freshness deliberately rejects animation, a changed caret or
-  any other changed pixels. Prefer accessible actions; observe again when a
-  visual target changes. There is no speculative click or stale-image retry.
+- Freshness is structural, not pixel-exact: a window whose roles, labels,
+  geometry or editable values changed is stale; changed pixels alone are not.
+  Later steps of a batch act on a window the earlier step just changed, so
+  batch only predictable sequences. There is no stale-observation retry.
 - Screenshot and AX calls are not an atomic OS transaction. Identity, bounds,
   content and per-event checks reduce races but cannot make a third-party
   application's behavior atomic. The native input path does not claim
   background mouse/keyboard operation, secure-desktop automation or locked use.
-- Focusable text fields, public AX actions and a limited key vocabulary are
-  supported. Context menus, arbitrary shortcuts, file dialogs outside the
-  approved window, and inaccessible windows may require person takeover.
+- Focusable text fields, public AX actions, plain keys and app shortcuts are
+  supported. Context menus (right click), file dialogs outside the approved
+  window, and inaccessible windows may require person takeover; menus, sheets
+  and popovers are not composited into the window capture.
 - Screenshots and typed text are not logged by the runtime, but returned tool
   content enters the calling host's conversation and its configured retention
   and provider policies. Runtime in-memory retention is not a promise about
@@ -205,8 +244,8 @@ When the window changes during observation, the runtime makes at most three
 read-only capture attempts, 75 ms apart. Every attempt checks the same session
 generation, window identity, geometry, and semantic state. Continuous changes
 still return `stale_observation`; a failed refresh invalidates the old token.
-This does not relax the exact-image checks for visual actions, retry any input,
-or recover during active person input.
+This does not relax the structural or hit-test checks for visual actions, retry
+any input, or recover during active person input.
 
 ## Build, migration and verification
 

@@ -7,6 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { stopTaskRecovery } from "./task-recovery.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import {
@@ -37,10 +38,17 @@ import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } fr
 import { migrateOpenworkCloudMcpRuntimeConfig } from "./cloud-mcp-health.js";
 import { migrateWorkspaceRuntimeConfigToEngineGlobal } from "./runtime-opencode-config-store.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
-import type { ServeResult } from "./serve-node.js";
-import type { LocalManagedMcpVaultKeyProvider, ServerConfig } from "./types.js";
+import { resolveOpencodeV2Version } from "./opencode-v2-binary.js";
+import type { NativeCleanupRequest } from "./engine-v2-preview.js";
+import type { EmbeddedOpencodeV2Options, LocalManagedMcpVaultKeyProvider, ServerConfig } from "./types.js";
 
 export type EmbeddedServerOptions = CliArgs & {
+  /** Select v2 exclusively. Omission preserves the existing v1/optional-preview behavior. */
+  engine?: "v1" | "v2";
+  /** Explicit v2 executable; mandatory v2 installs the selected verified pin when omitted. */
+  opencodeV2Bin?: string;
+  /** Host-only native options, including a known exact version; never read from frontend config. */
+  opencodeV2?: EmbeddedOpencodeV2Options;
   /** When true, spawn a managed OpenCode child process. */
   manageOpencode?: boolean;
   /** Path to the OpenCode binary. Falls back to OPENWORK_OPENCODE_BIN env. */
@@ -59,10 +67,15 @@ export type EmbeddedServerHandle = {
   url: string;
   /** The resolved server config (with OpenCode URLs populated). */
   config: ServerConfig;
+  /** Native-host-only managed-policy evaluation credential. Never expose to renderer state. */
+  policyToken: string;
   /** Redacted details for the managed OpenCode child process, when spawned. */
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
   /** Liveness for the managed OpenCode child process, when spawned. */
   managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
+  /** The single mandatory v2 process owned by startServer, not a second sidecar. */
+  managedOpencodeV2: { pid: number | null; isAlive: () => boolean } | null;
+  nativeCleanupRequest: (input: NativeCleanupRequest) => Promise<Response>;
   /** Current managed-engine generations for desktop diagnostics and acceptance checks. */
   managedOpencodePool: () => EnginePoolSnapshot | null;
   /** Stop the HTTP server and managed OpenCode (if any). */
@@ -70,9 +83,16 @@ export type EmbeddedServerHandle = {
 };
 
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
+  if (options.opencodeV2?.version !== undefined) resolveOpencodeV2Version(options.opencodeV2.version);
+  if (options.engine === "v2" && (options.manageOpencode === false || options.opencodeBin || options.opencodeBaseUrl)) {
+    throw new Error("Mandatory OpenCode v2 cannot attach to or configure an OpenCode v1 engine");
+  }
   const config = await resolveServerConfig(options);
+  config.engine = options.engine ?? "v1";
+  config.opencodeV2 = { ...options.opencodeV2, bin: options.opencodeV2Bin };
   config.localManagedMcpVaultKey = options.localManagedMcpVaultKey;
-  config.resumeInterruptedTasks = options.resumeInterruptedTasks === true && options.manageOpencode === true && !config.opencodeBaseUrl;
+  config.resumeInterruptedTasks = options.resumeInterruptedTasks === true
+    && (config.engine === "v2" || (options.manageOpencode === true && !config.opencodeBaseUrl));
   const logger = createServerLogger(config);
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
@@ -82,8 +102,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   let engineSpawnTemplate: EngineSpawnTemplate | null = null;
   let enginePool: EnginePool | null = null;
   let stopRuntimeConfigFileRefresh: (() => void) | null = null;
-  let server: ServeResult | null = null;
+  let server: Awaited<ReturnType<typeof startServer>> | null = null;
   let stopPromise: Promise<void> | null = null;
+  const nativeCleanupLifetime = new AbortController();
 
   const releaseResources = async (): Promise<void> => {
     const errors: unknown[] = [];
@@ -155,6 +176,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   };
 
   const stop = (): Promise<void> => {
+    nativeCleanupLifetime.abort(new Error("Native cleanup host stopped"));
     stopPromise ??= releaseResources();
     return stopPromise;
   };
@@ -191,7 +213,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   config.port = server.port;
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 
-  if (!config.opencodeBaseUrl && options.manageOpencode) {
+  if (config.engine !== "v2" && !config.opencodeBaseUrl && options.manageOpencode) {
     const workspace = findManagedEngineWorkspace(config.workspaces);
     if (workspace) {
       // Reap engines recorded by servers that died without cleanup. Best
@@ -309,11 +331,17 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   }
 
   const initialManagedOpencode = managedOpencode;
+  const initialServer = server;
   return {
     port: server.port,
     url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
     config,
     managedOpencodeExecution: managedOpencode?.execution ?? null,
+    managedOpencodeV2: server.managedOpencodeV2,
+    nativeCleanupRequest: (input) => initialServer.nativeCleanupRequest({ ...input,
+      signal: AbortSignal.any([nativeCleanupLifetime.signal, ...(input.signal ? [input.signal] : [])]),
+    }),
+    policyToken: managedDesktopPolicy(config).evaluationToken,
     managedOpencode: initialManagedOpencode
       ? {
           get pid() {

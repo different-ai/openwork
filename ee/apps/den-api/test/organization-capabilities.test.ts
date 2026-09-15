@@ -5,7 +5,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, gatewayDashboard: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, gatewayDashboard: false, coworkerTeams: false }
 
 describe("normalizeOrganizationCapabilities", () => {
   test("defaults every capability to false when metadata is empty", () => {
@@ -100,6 +100,10 @@ describe("organizationHasCapability", () => {
   })
 
   test("is false by default and true only with an explicit opt-in", () => {
+    expect(organizationHasCapability(null, "coworkerTeams")).toBe(false)
+    expect(organizationHasCapability({ capabilities: { coworkerTeams: "true" } }, "coworkerTeams")).toBe(false)
+    expect(organizationHasCapability({ capabilities: { coworkerTeams: true } }, "coworkerTeams")).toBe(true)
+    expect(readOrganizationCapabilityOverrides({ capabilities: { coworkerTeams: false } })).toEqual({ coworkerTeams: false })
     expect(organizationHasCapability(null, "installLinks")).toBe(false)
     expect(organizationHasCapability(null, "mcpConnections")).toBe(false)
     expect(organizationHasCapability({ capabilities: {} }, "installLinks")).toBe(false)

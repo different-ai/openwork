@@ -55,7 +55,7 @@ export function safeAccessUrl(input: string) {
 
 export const inferenceAccessLogger = createMiddleware(async (c, next) => {
   const startedAt = Date.now()
-  const route = ["/api/v1/models", "/api/v1/chat/completions", "/webhooks/openrouter"].includes(c.req.path) ? c.req.path : "other"
+  const route = ["/api/v1/models", "/api/v1/chat/completions", "/api/v1/voice", "/api/v1/audio/transcriptions", "/api/v1/audio/speech", "/webhooks/openrouter"].includes(c.req.path) ? c.req.path : "other"
   try { await next() } finally {
     console.log("[gateway-http]", { method: c.req.method, route, status: c.res.status, durationMs: Date.now() - startedAt })
   }

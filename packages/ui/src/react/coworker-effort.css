@@ -1,0 +1,172 @@
+/* Fill and native thumb share a 32px diameter; higher effort adds light, not layout movement. */
+.effort-slider {
+  position: relative;
+  height: 40px;
+  --effort-light: 0;
+  --effort-particles: 0;
+  --effort-glow: transparent;
+}
+.effort-slider[data-stop="steady"] { --effort-light: 0.18; }
+.effort-slider[data-stop="balanced"] {
+  --effort-light: 0.4;
+  --effort-particles: 0.4;
+  --effort-glow: rgb(91 141 255 / 12%);
+}
+.effort-slider[data-stop="thorough"] {
+  --effort-light: 0.7;
+  --effort-particles: 0.7;
+  --effort-glow: rgb(91 141 255 / 23%);
+}
+.effort-slider[data-stop="all-in"] {
+  --effort-light: 1;
+  --effort-particles: 1;
+  --effort-glow: rgb(62 213 166 / 25%);
+}
+.effort-slider-track {
+  position: absolute;
+  inset: 4px 0 auto;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  pointer-events: none;
+  box-shadow: 0 0 16px var(--effort-glow), inset 0 0 0 1px rgb(255 255 255 / 5%);
+  transition: box-shadow 240ms ease;
+}
+.effort-slider-fill {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(100deg, #365cae, var(--color-spark, #5b8dff));
+}
+.effort-slider-aurora {
+  position: absolute;
+  inset: -100% -25%;
+  background: radial-gradient(ellipse at 28% 40%, #b7a8ed 0%, transparent 45%), radial-gradient(ellipse at 74% 60%, var(--color-mint, #3ed5a6) 0%, transparent 50%);
+  opacity: var(--effort-light);
+  transform: translateX(-8%);
+  transition: opacity 240ms ease;
+}
+.effort-slider-particle {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: var(--color-snow, #f5f7fb);
+  box-shadow: 0 0 4px rgb(245 247 251 / 65%);
+  opacity: var(--effort-particles);
+  transition: opacity 240ms ease;
+}
+.effort-slider-full-effects {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+.effort-slider[data-stop="all-in"] .effort-slider-full-effects { opacity: 1; }
+.effort-slider-star {
+  position: absolute;
+  aspect-ratio: 1;
+  fill: var(--color-snow, #f5f7fb);
+  opacity: 0.6;
+  transform: scale(0.8) rotate(-8deg);
+}
+.effort-slider-sweep {
+  position: absolute;
+  inset: 0 auto 0 -55%;
+  width: 55%;
+  background: linear-gradient(110deg, transparent 15%, rgb(245 247 251 / 18%) 50%, transparent 85%);
+}
+.effort-slider[data-stop="all-in"] .effort-slider-star {
+  animation: effort-star-glint 4.8s ease-in-out infinite alternate;
+}
+.effort-slider[data-stop="all-in"] .effort-slider-sweep {
+  animation: effort-light-sweep 8s ease-in-out infinite;
+}
+.effort-slider[data-stop="thorough"] .effort-slider-aurora,
+.effort-slider[data-stop="all-in"] .effort-slider-aurora {
+  animation: effort-aurora 7s ease-in-out infinite alternate;
+}
+.effort-slider[data-stop="thorough"] .effort-slider-particle,
+.effort-slider[data-stop="all-in"] .effort-slider-particle {
+  animation: effort-light-drift 3.8s ease-in-out infinite alternate;
+}
+@keyframes effort-aurora {
+  to { transform: translateX(8%); }
+}
+@keyframes effort-light-drift {
+  to { transform: translate(3px, -3px); }
+}
+@keyframes effort-star-glint {
+  to { opacity: 0.95; transform: translate(2px, -1px) scale(1.15) rotate(8deg); }
+}
+@keyframes effort-light-sweep {
+  to { transform: translateX(300%); }
+}
+.effort-dial-name { transition: color 240ms ease; }
+[data-testid="effort-dial-panel"][data-stop="thorough"] .effort-dial-name { color: #bbcaff; }
+[data-testid="effort-dial-panel"][data-stop="all-in"] .effort-dial-name { color: var(--color-mint, #3ed5a6); }
+.effort-dial-range {
+  position: relative;
+  z-index: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+.effort-dial-range:focus-visible {
+  outline: 2px solid var(--color-spark, #5b8dff);
+  outline-offset: 3px;
+}
+.effort-dial-range::-webkit-slider-runnable-track {
+  height: 32px;
+  background: transparent;
+}
+.effort-dial-range::-moz-range-track {
+  height: 32px;
+  background: transparent;
+}
+.effort-dial-range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  border: 1px solid rgb(255 255 255 / 65%);
+  border-radius: 50%;
+  background: var(--color-snow, #f5f7fb) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='10 32 100 50' fill='none' stroke='%2311151d' stroke-width='6' stroke-linecap='round'%3E%3Ccircle cx='37.5' cy='57' r='17.5'/%3E%3Ccircle cx='82.5' cy='57' r='17.5'/%3E%3Cpath d='M57.5 57c1.25-4 3.75-4 5 0M15 57h4.5M100.5 57h4.5'/%3E%3C/svg%3E") center / 20px 10px no-repeat;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+}
+.effort-dial-range::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgb(255 255 255 / 65%);
+  border-radius: 50%;
+  background: var(--color-snow, #f5f7fb) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='10 32 100 50' fill='none' stroke='%2311151d' stroke-width='6' stroke-linecap='round'%3E%3Ccircle cx='37.5' cy='57' r='17.5'/%3E%3Ccircle cx='82.5' cy='57' r='17.5'/%3E%3Cpath d='M57.5 57c1.25-4 3.75-4 5 0M15 57h4.5M100.5 57h4.5'/%3E%3C/svg%3E") center / 20px 10px no-repeat;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .effort-slider-track,
+  .effort-slider-aurora,
+  .effort-slider-particle,
+  .effort-slider-full-effects,
+  .effort-slider-star,
+  .effort-slider-sweep,
+  .effort-dial-name {
+    animation: none !important;
+    transition: none;
+  }
+}
+
+.effort-slider-stops { position: absolute; inset: 0 16px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
+.effort-slider-stops span { width: 4px; height: 4px; border-radius: 50%; background: rgb(245 247 251 / 35%); }

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResultSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   CONNECT_MCP_APP_HOST_CAPABILITY,
@@ -26,11 +26,12 @@ import {
 import { diagnoseMcpToolDenies, listMcpFromRuntimeSnapshot } from "./mcp.js";
 import { readEffectiveRuntimeOpencodeConfig, readRuntimeMcpConfigRevisions } from "./runtime-opencode-config-store.js";
 import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
 async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string) {
   // Account-scoped gateways live in the engine-global runtime layer. Resolve
   // Apps against the same effective configuration that produced the tool call.
-  return listMcpFromRuntimeSnapshot(workspaceRoot, await readEffectiveRuntimeOpencodeConfig(serverConfig, workspaceId));
+  return listMcpFromRuntimeSnapshot(workspaceRoot, await readEffectiveRuntimeOpencodeConfig(serverConfig, workspaceId), serverConfig.engine);
 }
 
 const MCP_APP_EXTENSION = "io.modelcontextprotocol/ui";
@@ -288,6 +289,7 @@ function connectionFailure(error: unknown): string {
 async function withRemoteClient<T>(
   config: Record<string, unknown>,
   run: (client: Client) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const url = remoteUrl(config);
   if (!url) throw new McpAppHostError("unsupported_transport", "MCP Apps currently require a configured remote HTTP MCP server.");
@@ -312,7 +314,7 @@ async function withRemoteClient<T>(
     const client = new Client({ name: "openwork-mcp-app-host", version: "1.0.0" }, clientOptions());
     let connected = false;
     try {
-      await client.connect(createTransport());
+      await client.connect(createTransport(), signal ? { signal, timeout: 10_000 } : undefined);
       connected = true;
       return await run(client);
     } catch (error) {
@@ -334,11 +336,11 @@ async function withRemoteClient<T>(
   );
 }
 
-async function listTools(client: Client): Promise<Tool[]> {
+async function listTools(client: Client, signal?: AbortSignal): Promise<Tool[]> {
   const tools: Tool[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {
-    const listed = await client.listTools(cursor ? { cursor } : undefined);
+    const listed = await client.listTools(cursor ? { cursor } : undefined, signal ? { signal, timeout: 10_000 } : undefined);
     tools.push(...listed.tools);
     if (tools.length > MAX_TOOLS) {
       throw new McpAppHostError("tool_catalog_too_large", "The MCP tool catalog exceeds the host limit.");
@@ -487,6 +489,14 @@ export type McpAppCatalogServer = {
   apps: McpAppCatalogApp[];
 };
 
+export type McpServerToolSummary = {
+  name: string;
+  title: string | null;
+  description: string | null;
+  /** Present when the tool advertises a standard MCP App view. */
+  resourceUri: string | null;
+};
+
 function toolRequiresInput(tool: Tool): boolean {
   const schema: unknown = tool.inputSchema;
   if (!isRecord(schema)) return false;
@@ -520,6 +530,7 @@ async function withCatalogProbeTimeout<T>(work: Promise<T>): Promise<T> {
 }
 
 async function catalogAppsFromClient(client: Client, options: {
+  serverConfig: ServerConfig;
   serverName: string;
   workspaceRoot: string;
   connectionId?: string;
@@ -538,7 +549,7 @@ async function catalogAppsFromClient(client: Client, options: {
     }
     if (!resourceUri) continue;
     const projectedToolName = projectedMcpToolName(options.serverName, tool.name);
-    if ((await diagnoseMcpToolDenies(options.workspaceRoot, options.serverName, [projectedToolName])).length > 0) continue;
+    if ((await diagnoseMcpToolDenies(options.workspaceRoot, options.serverName, [projectedToolName], options.serverConfig)).length > 0) continue;
     catalog.push({
       serverName: options.serverName,
       ...(options.connectionId ? { connectionId: options.connectionId } : {}),
@@ -600,6 +611,7 @@ export async function listMcpAppCatalog(input: {
           // audience) and execute through the app-mediated call path, so a
           // listed app must stay visible to both.
           catalogAppsFromClient(client, {
+            serverConfig: input.serverConfig,
             serverName: item.name,
             workspaceRoot: input.workspaceRoot,
             requireModelVisibility: true,
@@ -647,6 +659,7 @@ export async function listMcpAppCatalog(input: {
     try {
       const apps = await withCatalogProbeTimeout(withRemoteClient(config, (client) =>
         catalogAppsFromClient(client, {
+          serverConfig: input.serverConfig,
           serverName: hostName,
           workspaceRoot: input.workspaceRoot,
           connectionId: descriptor.connectionId,
@@ -696,7 +709,7 @@ export async function resolveMcpAppResource(input: {
       if (!toolVisibility(tool, "model")) return null;
       const resourceUri = toolUiResourceUri(tool);
       if (!resourceUri) return null;
-      if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [input.projectedToolName])).length > 0) {
+      if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [input.projectedToolName], input.serverConfig)).length > 0) {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
       }
       const read = await client.readResource({ uri: resourceUri }).catch(() => {
@@ -777,7 +790,7 @@ export async function resolveConnectMcpAppResource(input: {
       throw new McpAppHostError("tool_resource_mismatch", "The originating MCP App tool now advertises a different resource.");
     }
     const projectedName = projectedMcpToolName(serverName, tool.name);
-    if ((await diagnoseMcpToolDenies(input.workspaceRoot, serverName, [projectedName])).length > 0) {
+    if ((await diagnoseMcpToolDenies(input.workspaceRoot, serverName, [projectedName], input.serverConfig)).length > 0) {
       throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
     }
     const read = await client.readResource({ uri: resourceUri }).catch(() => {
@@ -844,7 +857,7 @@ export async function resolveSameServerMcpAppResource(input: {
         throw new McpAppHostError("tool_resource_mismatch", "The same-server MCP App tool now advertises a different resource.");
       }
       const projectedLaunchName = projectedMcpToolName(item.name, launchTool.name);
-      if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [projectedLaunchName])).length > 0) {
+      if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [projectedLaunchName], input.serverConfig)).length > 0) {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
       }
       const read = await client.readResource({ uri: resourceUri }).catch(() => {
@@ -866,6 +879,106 @@ export async function resolveSameServerMcpAppResource(input: {
   }
   if (!matches[0]) throw new McpAppHostError("server_unavailable", "The MCP server that produced this App launch is unavailable.");
   return bindLaunch(input, matches[0].app, matches[0].fingerprint);
+}
+
+/**
+ * Every tool one configured remote MCP server advertises, as a person browsing
+ * the workspace's tools would see it: names, titles, and descriptions only,
+ * with the App binding noted. Denied tools are left out. Local command servers
+ * are the engine's alone and cannot be listed here.
+ */
+export async function listMcpServerTools(input: {
+  serverConfig: ServerConfig;
+  workspaceId: string;
+  workspaceRoot: string;
+  serverName: string;
+}): Promise<McpServerToolSummary[]> {
+  const configured = await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
+  const item = configured.find((candidate) => candidate.name === input.serverName);
+  if (!item || item.config.enabled === false) {
+    throw new McpAppHostError("server_unavailable", "The requested MCP server is not available to this workspace.");
+  }
+  return await withCatalogProbeTimeout(withRemoteClient(item.config, async (client) => {
+    const tools = await listTools(client);
+    const denies = await diagnoseMcpToolDenies(
+      input.workspaceRoot,
+      input.serverName,
+      tools.map((tool) => projectedMcpToolName(input.serverName, tool.name)),
+      input.serverConfig,
+    );
+    const denied = new Set(denies.map((deny) => deny.matched));
+    return tools
+      .filter((tool) => !denied.has(projectedMcpToolName(input.serverName, tool.name)))
+      .map((tool): McpServerToolSummary => {
+        let resourceUri: string | null = null;
+        try {
+          resourceUri = toolUiResourceUri(tool);
+        } catch {
+          resourceUri = null;
+        }
+        return {
+          name: tool.name,
+          title: toolDisplayTitle(tool),
+          description: typeof tool.description === "string" && tool.description.trim() ? tool.description : null,
+          resourceUri,
+        };
+      });
+  }));
+}
+
+/** Host-owned discovery only; this is not an arbitrary tool execution endpoint. */
+export async function searchWorkspaceCapabilities(input: {
+  serverConfig: ServerConfig;
+  workspaceId: string;
+  workspaceRoot: string;
+  query: string;
+  signal?: AbortSignal;
+}): Promise<CallToolResult> {
+  const serverName = "openwork-cloud";
+  const name = "search_capabilities";
+  const signal = AbortSignal.any([AbortSignal.timeout(15_000), ...(input.signal ? [input.signal] : [])]);
+  const current = async () => {
+    let config: Record<string, unknown>;
+    if (input.serverConfig.engine === "v2") {
+      await managedDesktopPolicy(input.serverConfig).assert("sync");
+      const runtime = (await readEffectiveRuntimeOpencodeConfig(input.serverConfig, input.workspaceId)).mcp?.[serverName];
+      const url = runtime ? remoteUrl(runtime) : null;
+      if (!runtime || !url || runtime.disabled === true || !url.pathname.replace(/\/+$/, "").endsWith("/mcp/agent")) {
+        throw new McpAppHostError("server_unavailable", "OpenWork Connect is not configured for this workspace.");
+      }
+      config = runtime;
+    } else {
+      const configured = await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
+      const item = configured.find((candidate) => candidate.name === serverName && candidate.config.enabled !== false);
+      if (!item) throw new McpAppHostError("server_unavailable", "OpenWork Connect is unavailable to this workspace.");
+      config = item.config;
+    }
+    if ((await diagnoseMcpToolDenies(input.workspaceRoot, serverName, [projectedMcpToolName(serverName, name)], input.serverConfig)).length > 0) {
+      throw new McpAppHostError("tool_denied", "Capability discovery is denied by the workspace tool policy.");
+    }
+    signal.throwIfAborted();
+    return { config, fingerprint: await launchFingerprint(input, serverName, config) };
+  };
+  const initial = await current();
+  return withRemoteClient(initial.config, async (client) => {
+    const tool = (await listTools(client, signal)).find((candidate) => candidate.name === name);
+    if (!tool || !toolVisibility(tool, "model") || toolRequiresApproval(tool)) {
+      throw new McpAppHostError("tool_not_visible", "OpenWork Connect does not advertise read-only capability discovery.");
+    }
+    if ((await current()).fingerprint !== initial.fingerprint) {
+      throw new McpAppHostError("gateway_changed", "OpenWork Connect changed during discovery. Search again.");
+    }
+    const result = await client.callTool({ name, arguments: { query: input.query, limit: 20, intent: "discover" } }, CallToolResultSchema,
+      { signal, timeout: 10_000 }).catch(() => {
+      throw new McpAppHostError("tool_call_failed", "OpenWork Connect capability discovery failed.");
+    });
+    if (Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_RESULT_BYTES) {
+      throw new McpAppHostError("result_too_large", "The capability discovery result exceeds the 1 MiB host limit.");
+    }
+    const parsed = CallToolResultSchema.safeParse(result);
+    if (!parsed.success) throw new McpAppHostError("invalid_tool_result", "Gateway search did not return an MCP tool result.");
+    return parsed.data;
+  }, signal);
 }
 
 export async function callMcpAppTool(input: {
@@ -923,7 +1036,7 @@ export async function callMcpAppTool(input: {
     findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
       throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
     }));
-    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedMcpToolName(input.serverName, original.name)])).length > 0) {
+    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedMcpToolName(input.serverName, original.name)], input.serverConfig)).length > 0) {
       throw new McpAppHostError("tool_denied", "The originating App tool is denied. Reopen it after reviewing the workspace tool policy.");
     }
     const tool = tools.find((candidate) => candidate.name === input.name);
@@ -939,7 +1052,7 @@ export async function callMcpAppTool(input: {
       );
     }
     const projectedName = projectedMcpToolName(input.serverName, tool.name);
-    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedName])).length > 0) {
+    if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedName], input.serverConfig)).length > 0) {
       throw new McpAppHostError("tool_denied", "This same-server MCP tool is denied by the workspace tool policy.");
     }
     if (launch.sessionId !== null && !input.assertSessionActive) {

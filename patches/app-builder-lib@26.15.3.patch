@@ -1,0 +1,12 @@
+diff --git a/out/node-module-collector/pnpmNodeModulesCollector.js b/out/node-module-collector/pnpmNodeModulesCollector.js
+--- a/out/node-module-collector/pnpmNodeModulesCollector.js
++++ b/out/node-module-collector/pnpmNodeModulesCollector.js
+@@ -49,7 +49,7 @@ class PnpmNodeModulesCollector extends nodeModulesCollector_1.NodeModulesCollector {
+         return this._allWorkspacePackages.slice(0, 1);
+     }
+     getArgs() {
+-        return ["list", "--prod", "--json", "--depth", "Infinity", "--silent", "--loglevel=error"];
++        return ["list", "--recursive=false", "--prod", "--json", "--depth", "Infinity", "--silent", "--loglevel=error"];
+     }
+     /**
+      * Locate a package version, preferring the dep's own reported path before falling back to rootDir.

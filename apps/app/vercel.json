@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": { "deploymentEnabled": { "feature/open-coworker": false, "coworker-pre": false } },
   "framework": "vite",
   "ignoreCommand": "turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages @openwork/app --exit-code || exit 1",
   "buildCommand": "pnpm run build:web",

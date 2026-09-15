@@ -12,6 +12,7 @@ import { inferenceAccessLogger, sentryInferenceReporter } from "./inference-repo
 import { registerProxyRoutes } from "./proxy.js";
 import { registerRollupRoutes, runRollups } from "./rollups.js";
 import { registerWebhookRoutes } from "./webhooks.js";
+import { registerVoiceRoutes } from "./voice.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
 const modelsApiJsonPath = path.resolve(srcDir, "..", "models-site", "models", "api.json");
@@ -79,6 +80,7 @@ if (shouldServeLocalModelCatalog) {
   });
 }
 
+registerVoiceRoutes(app);
 registerProxyRoutes(app);
 registerWebhookRoutes(app);
 registerRollupRoutes(app, { adminToken: env.adminToken, runRollups });

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addMcp, listMcp, setMcpEnabled } from "./mcp.js";
+import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
 import { readOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
@@ -143,6 +143,60 @@ describe("runtime OpenCode config store", () => {
       const items = await listMcp(config, WORKSPACE_ID, root);
       expect(items.map((item) => `${item.name}:${item.source}`)).toContain("project:config.project");
       expect(items.map((item) => `${item.name}:${item.source}`)).toContain("runtime:config.remote");
+    });
+  });
+
+  test("native MCP inventory reads nested servers and keeps runtime management flat", async () => {
+    await withWorkspace(async ({ root, config }) => {
+      config.engine = "v2";
+      const notes = { type: "remote", url: "https://notes.example/mcp" };
+      const project = JSON.stringify({
+        mcp: { timeout: { catalog: 5000 }, servers: { notes, paused: { ...notes, disabled: true }, "openwork-cloud": notes } },
+        permissions: [{ action: "openwork-cloud_*", resource: "*", effect: "deny" }],
+      });
+      const path = join(root, "opencode.json");
+      await writeFile(path, project);
+      const inventory = await listMcp(config, WORKSPACE_ID, root);
+      expect(inventory.map((item) => item.name)).toEqual(["notes", "paused", "openwork-cloud"]);
+      expect(inventory[0]).toMatchObject({ source: "config.project", config: notes });
+      expect(inventory[1]?.config.enabled).toBe(false);
+      expect(inventory[0]?.disabledByTools).toBeUndefined();
+      expect(inventory[2]).toMatchObject({ name: "openwork-cloud", source: "config.project", disabledByTools: true });
+
+      await addMcp(config, WORKSPACE_ID, "runtime", { ...notes, disabled: true });
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.runtime).toEqual({ ...notes, enabled: false });
+      await addMcp(config, WORKSPACE_ID, "runtime", { ...notes, enabled: false, disabled: false });
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.runtime).toEqual({ ...notes, enabled: false });
+      await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({ mcp: { runtime: { ...notes, disabled: true } } }));
+      expect((await listMcp(config, WORKSPACE_ID, root)).find((item) => item.name === "runtime")?.config.enabled).toBe(false);
+      await setMcpEnabled(config, WORKSPACE_ID, "runtime", true);
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.runtime).toEqual({ ...notes, enabled: true });
+      await setMcpEnabled(config, WORKSPACE_ID, "runtime", false);
+      expect((await listMcp(config, WORKSPACE_ID, root)).find((item) => item.name === "runtime")?.config.enabled).toBe(false);
+      expect(await removeMcp(config, WORKSPACE_ID, "runtime")).toBe(true);
+      expect(await setMcpEnabled(config, WORKSPACE_ID, "notes", false)).toBe(false);
+      expect(await removeMcp(config, WORKSPACE_ID, "notes")).toBe(false);
+      expect((await listMcp(config, WORKSPACE_ID, root)).map((item) => item.name)).toEqual(["notes", "paused", "openwork-cloud"]);
+      expect(await readFile(path, "utf8")).toBe(project);
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp).toEqual({});
+    });
+  });
+
+  test("default and optional-preview MCP inventory keep a literal servers registration", async () => {
+    await withWorkspace(async ({ root, config }) => {
+      const servers = { type: "remote", url: "https://servers.example/mcp", disabled: true };
+      await writeFile(join(root, "opencode.json"), JSON.stringify({
+        mcp: { servers }, permissions: [{ action: "servers", resource: "*", effect: "deny" }],
+      }));
+      for (const preview of [false, true]) {
+        if (preview) {
+          config.engine = "v1";
+          config.opencodeV2 = {};
+        }
+        expect(await listMcp(config, WORKSPACE_ID, root)).toEqual([
+          { name: "servers", source: "config.project", config: servers, disabledByTools: undefined },
+        ]);
+      }
     });
   });
 

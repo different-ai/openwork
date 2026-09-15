@@ -200,3 +200,153 @@ test("paid usage keeps its admitted windows through retries, reset, repricing an
     evidence.recordAssertionEvidence("Late usage settles original windows without re-enabling revoked or DPA-blocked access", "The real provider-key SQL lookup crossed a window boundary; the server trace kept its earlier admission timestamp. After rollover, revocation and DPA marking, all three old buckets settled, current windows/limits stayed identical, replay used durable time and new generation made no upstream call.", true);
   });
 });
+
+test("voice reservations admit concurrent members without turning unknown cost into usage", async ({ world, evidence, probe, step }) => {
+  const fixture = async (action = "state", body: Record<string, unknown> = {}) => {
+    const response = await fetch(`${world.witnessUrl}/fixture/usage/${action}`, { method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
+    expect(response.status).toBe(200);
+    return record(await response.json());
+  };
+  const configure = async (body: Record<string, unknown>) => {
+    expect((await fetch(`${world.witnessUrl}/fixture/voice`, { method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) })).status).toBe(200);
+  };
+  const calls = async () => rows(record(await fetch(`${world.witnessUrl}/fixture/requests`).then((r) => r.json())).calls);
+  const voice = async (memberId = world.memberId, status = false) => {
+    const response = await fetch(`${world.inferenceUrl}/api/v1/${status ? "voice" : "audio/speech"}`, {
+      method: status ? "GET" : "POST", headers: { authorization: `Bearer ${world.fixtureKey(memberId)}`, "content-type": "application/json" },
+      body: status ? undefined : JSON.stringify({ input: "One bounded voice packet" }), signal: AbortSignal.timeout(30_000),
+    });
+    const body = await response.text();
+    return { status: response.status, body };
+  };
+  const api = (path: string) => denFetch(world.den.admin, path, { headers: { authorization: `Bearer ${world.den.admin.token}`, "x-openwork-org-id": world.orgId } });
+  const context = record((await api("/v1/org")).body);
+  const reset = () => denFetch(world.den.admin, `/v1/admin/users/${text(record(context.currentMember).userId)}/inference-usage/reset`, {
+    method: "POST", headers: { authorization: `Bearer ${world.den.admin.token}` }, signal: AbortSignal.timeout(30_000),
+  });
+  const teammate = text(rows((await fixture()).keys).find((key) => key.org_membership_id !== world.memberId)!.org_membership_id);
+  const usage = async (call: Record<string, unknown>, cost: number, override: Record<string, unknown> = {}) => {
+    const trace = record(call.trace);
+    const attrs = { ...Object.fromEntries(Object.entries(trace).map(([key, value]) => [`trace.${key}`, value])),
+      "gen_ai.response.model": call.model, "gen_ai.usage.input_cost": cost, "gen_ai.usage.output_cost": 0,
+      "gen_ai.response.id": call.generationId, event_id: `delivery-${call.generationId}`, ...override };
+    const response = await fetch(`${world.inferenceUrl}/webhooks/openrouter`, {
+      method: "POST", headers: { authorization: "Bearer paid-usage-fixture-secret", "content-type": "application/json" },
+      body: JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: [{ spanId: "voice-receipt", attributes: Object.entries(attrs).map(([key, value]) => ({ key, value: { stringValue: String(value) } })) }] }] }] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    expect(response.status).toBe(200);
+    return record(await response.json());
+  };
+  const entryFor = (state: Record<string, unknown>, call: Record<string, unknown>) => rows(state.ledger).find((entry) => entry.external_job_id === record(call.trace).openwork_request_id)!;
+  const reservation = (entry: Record<string, unknown>) => record(record(entry.provider_usage).reservation);
+  const chargesFor = (state: Record<string, unknown>, entry: Record<string, unknown>) => rows(state.charges).filter((charge) => charge.ledger_entry_id === entry.id);
+
+  await step("two members dispatch concurrently and shared headroom admits only two durable holds", async () => {
+    expect((await voice(world.memberId, true)).status).toBe(200);
+    const before = await fixture("headroom", { amount: 16_000_000 });
+    await configure({ hold: true, cost: null });
+    const pending = [voice(), voice(teammate)];
+    try {
+      await probe.eventually(calls, { within: 10_000, until: (entries) => entries.length === 2, label: "both members reached upstream before either completed" });
+      const held = await fixture();
+      expect(held.buckets).toEqual(before.buckets);
+      expect(held.charges).toEqual([]);
+      expect(rows(held.ledger)).toHaveLength(2);
+      expect(new Set(rows(held.ledger).map((entry) => entry.org_membership_id)).size).toBe(2);
+      for (const entry of rows(held.ledger)) {
+        expect(record(entry.provider_usage)).toMatchObject({ status: "unpriced", inputCost: null, outputCost: null });
+        expect(reservation(entry)).toMatchObject({ amount: 8_000_000, bucketIds: expect.arrayContaining(rows(held.buckets).map((b) => b.id)) });
+      }
+      expect((await Promise.all([voice(), voice(teammate), voice(), voice(teammate)])).map((r) => r.status)).toEqual([429, 429, 429, 429]);
+      expect(await fixture()).toEqual(held);
+      expect(await calls()).toHaveLength(2);
+    } finally { await configure({ hold: false, cost: 0.001 }); }
+    const seen = await calls();
+    await Promise.all(seen.flatMap((call) => [usage(call, 0.001), usage(call, 0.001)]));
+    expect((await Promise.all(pending)).map((r) => r.status)).toEqual([200, 200]);
+    const settled = await fixture();
+    expect(rows(settled.charges)).toHaveLength(6);
+    expect(rows(settled.charges).every((charge) => charge.amount === 100_000)).toBe(true);
+    for (const bucket of rows(settled.buckets)) {
+      expect(bucket.used_amount).toBe(Number(rows(before.buckets).find((b) => b.id === bucket.id)!.used_amount) + 200_000);
+    }
+    await Promise.all(seen.map((call) => usage(call, 0.5, { event_id: "changed-delivery" })));
+    expect(await fixture()).toEqual(settled);
+    expect(await calls()).toHaveLength(2);
+    evidence.recordAssertionEvidence("Concurrent members share atomic reservation headroom, not an org-wide pending lock", "Both HTTP requests reached the witness before either finished. Four contenders were denied without rows or provider calls. Racing response/webhook receipts replaced two holds with exactly six actual charges, not estimates; replay left state identical.", true);
+  });
+
+  await step("unrecoverable receipts bound member debt across short rollover and reset forgives only its current buckets", async () => {
+    await fixture("headroom", { amount: 200_000_000 });
+    await configure({ receipt: false, cost: null });
+    expect((await Promise.all(Array.from({ length: 4 }, () => voice()))).map((r) => r.status)).toEqual([200, 200, 200, 200]);
+    const unknown = await fixture();
+    const lost = (await calls()).slice(2);
+    for (const call of lost) {
+      expect(entryFor(unknown, call).external_event_id).toBeNull();
+      expect(record(entryFor(unknown, call).provider_usage).status).toBe("unpriced");
+      expect(chargesFor(unknown, entryFor(unknown, call))).toEqual([]);
+    }
+    expect((await voice()).status).toBe(429);
+    expect(JSON.parse((await voice(world.memberId, true)).body)).toEqual({ access: "ready" });
+    expect(await fixture()).toEqual(unknown);
+    expect(await calls()).toHaveLength(6);
+    expect((await voice(teammate)).status).toBe(200);
+    const control = (await calls()).at(-1)!;
+    await fixture("boundary", { at: new Date().toISOString(), window: "five_hour" });
+    expect((await voice()).status).toBe(429); // Monthly hold debt survives a short-window rollover.
+    expect(await calls()).toHaveLength(7);
+    const beforeReset = await fixture();
+    const controlEntry = entryFor(beforeReset, control);
+    const [firstReset, secondReset] = await Promise.all([reset(), reset(), usage(lost[0]!, 0.2)]);
+    expect([firstReset.response.status, secondReset.response.status]).toEqual([200, 200]);
+    const forgiven = await fixture();
+    expect(entryFor(forgiven, control)).toEqual(controlEntry);
+    expect(chargesFor(forgiven, controlEntry)).toEqual([]);
+    expect(entryFor(forgiven, lost[0]!).cost_amount).toBe(20_000_000); // Actual cost may exceed the $0.08 estimate.
+    for (const call of lost) {
+      const entry = entryFor(forgiven, call);
+      const currentCharges = chargesFor(forgiven, entry).filter((charge) => rows(forgiven.buckets).some((b) => b.id === charge.bucket_id && b.current_bucket_id === b.id));
+      expect(currentCharges).toHaveLength(2);
+      expect(currentCharges.every((charge) => charge.amount === 0)).toBe(true);
+      if (call !== lost[0]) expect(record(entry.provider_usage).status).toBe("unpriced");
+    }
+    expect((await usage(lost[0]!, 0.2)).ingested).toBe(1);
+    expect(await fixture()).toEqual(forgiven);
+    await configure({ reject: true });
+    expect((await voice()).status).toBe(503);
+    const rejected = entryFor(await fixture(), (await calls()).at(-1)!);
+    expect(rejected.cost_amount).toBe(0);
+    expect(record(rejected.provider_usage).status).toBe("priced");
+    expect(chargesFor(await fixture(), rejected).map((c) => c.amount)).toEqual([0, 0, 0]);
+    evidence.recordAssertionEvidence("Lost receipts reserve finite member capacity without becoming free usage or blocking other members", "Four lost receipts remained unpriced and uncharged; a fifth never dispatched, including after five-hour rollover. Another member succeeded. Concurrent reset and late settlement retained the actual above-estimate cost, preserved the other member, and kept current-window forgiveness through replay. A known provider rejection settled zero.", true);
+  });
+
+  await step("original hold windows expire automatically while late actual settlement remains deduplicated", async () => {
+    await configure({ reject: false });
+    expect((await voice()).status).toBe(200);
+    const oldCall = (await calls()).at(-1)!;
+    const original = entryFor(await fixture(), oldCall);
+    const originalBucketIds = reservation(original).bucketIds;
+    if (!Array.isArray(originalBucketIds)) throw new Error("Missing original reservation buckets");
+    await fixture("boundary", { at: new Date().toISOString() });
+    expect(JSON.parse((await voice(world.memberId, true)).body)).toEqual({ access: "ready" });
+    expect((await voice()).status).toBe(200);
+    const before = await fixture();
+    const count = (await calls()).length;
+    expect(entryFor(before, oldCall)).toEqual(original);
+    expect(chargesFor(before, original)).toEqual([]);
+    expect((await usage(oldCall, 0.005)).ingested).toBe(1);
+    const late = await fixture();
+    for (const bucket of rows(late.buckets)) {
+      const prior = rows(before.buckets).find((b) => b.id === bucket.id)!;
+      expect(bucket).toEqual({ ...prior, used_amount: Number(prior.used_amount) + (originalBucketIds.includes(bucket.id) ? 500_000 : 0) });
+    }
+    expect((await usage(oldCall, 10, { event_id: "redelivery", "trace.usage_started_at": "2030-01-01T00:00:00Z" })).ingested).toBe(1);
+    expect((await usage(oldCall, 10, { "trace.org_membership_id": teammate })).skipped).toBe(1);
+    expect(await fixture()).toEqual(late);
+    expect(await calls()).toHaveLength(count);
+    evidence.recordAssertionEvidence("Rollover recovers admission without clearing unknown facts or regenerating old audio", "Expired original bucket IDs no longer consumed new allowance. The old receipt remained unpriced until a late webhook charged exactly its three original buckets; current windows, replay, and a cross-member collision stayed unchanged, with no extra generation.", true);
+  });
+});

@@ -9,6 +9,12 @@
       "bun": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./v2": {
+      "types": "./dist/v2.d.ts",
+      "bun": "./src/v2.ts",
+      "development": "./src/v2.ts",
+      "default": "./dist/v2.js"
     }
   },
   "files": [
@@ -17,9 +23,12 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean --external zod --target es2022",
+    "build": "tsup src/index.ts src/v2.ts --format esm --dts --clean --external zod --target es2022",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test src"
+    "test": "bun test src",
+    "test:v2": "node --test src/v2-client.test.ts src/v2-execution.test.ts",
+    "test:v2:smoke": "node --test src/v2-smoke.test.ts",
+    "test:v2:renderer": "node --test src/v2-renderer.test.mjs"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.18.15",

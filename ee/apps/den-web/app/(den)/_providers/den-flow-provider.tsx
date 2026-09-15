@@ -1994,7 +1994,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     const stored = parseSetupContinuation(window.sessionStorage.getItem(SETUP_CONTINUATION_KEY));
     persistContinuation(params.get("desktopAuth") === "1"
       ? { userId: stored?.userId ?? null, setup: stored?.setup ?? null, at: Date.now(),
-          desktopScheme: "openwork" }
+          desktopScheme: params.get("desktopScheme") === "opencoworker" ? "opencoworker" : "openwork" }
       : stored);
     setWebAuthRequested(params.get("webAuth") === "1");
     const requestedWebReturnUrl = params.get("webAuthReturn")?.trim() ?? "";

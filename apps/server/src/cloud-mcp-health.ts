@@ -2,6 +2,7 @@ import { createHash, webcrypto } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { createOpencodeClient, McpStatus, ToolIds, ToolList } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "./errors.js";
+import { engineV2ByConfig } from "./engine-v2-preview.js";
 import type { ConnectMcpCatalogDiagnostic } from "./connect-mcp-server-catalog.js";
 import { diagnoseMcpToolDenies, type McpToolDeny } from "./mcp.js";
 import { openworkPluginPath } from "./openwork-extensions-plugin-path.js";
@@ -1713,7 +1714,7 @@ function toolListIds(list: ToolList): string[] {
   return list.map((tool) => tool.id).filter((id) => typeof id === "string");
 }
 
-function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
+function statusFailure(status: McpStatus | { status: "pending" } | undefined): CloudMcpFailure {
   if (!status) {
     return failure({
       code: "cloud_mcp_missing",
@@ -2132,6 +2133,7 @@ function usableByModel(providerProjection: ProviderProjectionSnapshot, firstFail
 }
 
 function baseUrlConfigured(config: ServerConfig, workspace: WorkspaceInfo): boolean {
+  if (config.engine === "v2") return engineV2ByConfig.get(config)?.connection() !== undefined;
   return Boolean(workspace.baseUrl?.trim() || config.opencodeBaseUrl?.trim());
 }
 
@@ -2148,6 +2150,7 @@ async function pluginFileHashes(): Promise<CloudMcpCompatibilitySnapshot["plugin
 }
 
 async function compatibilitySnapshot(input: {
+  engine?: "v1" | "v2";
   serverMetadata?: CloudMcpServerMetadata;
   appMetadata?: Record<string, string | number | boolean | null>;
   directory: string | null;
@@ -2163,11 +2166,11 @@ async function compatibilitySnapshot(input: {
       app: input.appMetadata ?? null,
     },
     opencode,
-    pluginFileHashes: await pluginFileHashes(),
+    pluginFileHashes: input.engine === "v2" ? [] : await pluginFileHashes(),
     supportedFeatures: {
       dynamicMcp: true,
       directoryScoping: input.directory !== null,
-      toolIds: !input.inspection.failures.some((item) => item.code === "opencode_tool_ids_unsupported" || item.code === "opencode_tool_ids_unavailable"),
+      toolIds: input.engine !== "v2" && !input.inspection.failures.some((item) => item.code === "opencode_tool_ids_unsupported" || item.code === "opencode_tool_ids_unavailable"),
       providerToolProjection: input.inspection.providerProjection.checked && !input.inspection.failures.some((item) => item.stage === "provider_projection" && item.code !== "provider_tool_projection_missing"),
       pluginCanaries: input.inspection.pluginCanaries.expected.length > 0,
     },
@@ -2192,6 +2195,82 @@ type DirectProbeReuse = {
   value: CloudMcpHealth["tools"]["direct"];
 };
 
+async function inspectNativeCloud(input: ReadOpenworkCloudMcpHealthInput & {
+  desiredConfig: Record<string, unknown>; desiredRevision: string; directProbeReuse?: DirectProbeReuse;
+}): Promise<Inspection> {
+  const inspection: Inspection = {
+    engine: { status: "not_checked" }, engineInspection: engineInspectionNotChecked(),
+    tools: splitPresentMissing([], expectedTools()), directTools: directToolsNotChecked(),
+    providerProjection: providerProjectionNotChecked(input.providerModel),
+    pluginCanaries: splitPresentMissing([], []), experimentalToolIds: experimentalToolIdsNotChecked(),
+    experimentalProviderTools: experimentalProviderToolsFromProjection(providerProjectionNotChecked(input.providerModel)),
+    opencodeVersion: { actualVersion: null, expectedVersion: input.serverMetadata?.expectedOpencodeVersion ?? null, probe: "not_checked" },
+    failures: [],
+  };
+  const native = engineV2ByConfig.get(input.config);
+  const directory = input.directory;
+  if (!native || !directory) return inspection;
+  try {
+    await native.ensureWorkspaceReady(directory);
+    const [health, response] = await Promise.all([
+      native.request(directory, "/api/health"), native.request(directory, "/api/mcp"),
+    ]);
+    const data = isRecord(response.json) ? response.json.data : undefined;
+    if (health.status !== 200 || response.status !== 200 || !Array.isArray(data)) throw new Error("Native MCP status is unavailable");
+    inspection.opencodeVersion = { ...inspection.opencodeVersion, actualVersion: readVersionFromHealthPayload(health.json), probe: "ok" };
+    const servers: CloudMcpEngineServerStatus[] = [];
+    for (const entry of data) {
+      if (!isRecord(entry) || typeof entry.name !== "string" || !isRecord(entry.status)
+        || typeof entry.status.status !== "string" || !["connected", "disabled", "pending", "failed", "needs_auth"].includes(entry.status.status)) {
+        throw new Error("Native MCP status is invalid");
+      }
+      servers.push({ name: entry.name, status: entry.status.status,
+        ...(typeof entry.status.error === "string" ? { error: sanitizeDiagnosticString(entry.status.error) } : {}) });
+    }
+    const cloud = servers.find((entry) => entry.name === OPENWORK_CLOUD_MCP_NAME);
+    inspection.engineInspection = { checked: true, cloudPresent: Boolean(cloud), serverCount: servers.length, servers: servers.slice(0, 50) };
+    if (!cloud) {
+      inspection.engine = { status: "missing" };
+      inspection.failures.push(statusFailure(undefined));
+    } else if (cloud.status === "connected") inspection.engine = { status: "connected" };
+    else if (cloud.status === "needs_auth" || cloud.status === "disabled") {
+      inspection.engine = { status: cloud.status };
+      inspection.failures.push(statusFailure({ status: cloud.status }));
+    } else {
+      inspection.engine = { status: cloud.status === "failed" ? "failed" : "unknown", error: cloud.error };
+      inspection.failures.push(cloud.status === "failed" ? statusFailure({ status: "failed", error: cloud.error ?? "MCP connection failed" }) : statusFailure({ status: "pending" }));
+    }
+    if (inspection.failures.length) return inspection;
+    // The native API exposes connection status but not its tool catalog. Read
+    // the authenticated gateway catalog instead of claiming guessed tool IDs.
+    inspection.directTools = input.directProbeReuse?.desiredRevision === input.desiredRevision
+      && successfulDirectCloudToolsProbe(input.directProbeReuse.value) ? input.directProbeReuse.value
+      : await readDirectCloudToolsSingleFlight({ serverConfig: input.config, workspace: input.workspace, directory,
+        desiredConfig: input.desiredConfig, desiredRevision: input.desiredRevision });
+    inspection.tools = toolsFromDirectCloudTools(inspection.directTools);
+    if (inspection.directTools.failure) inspection.failures.push(inspection.directTools.failure);
+    if (input.providerModel) {
+      const response = await native.request(directory, "/api/model");
+      const models = isRecord(response.json) ? response.json.data : undefined;
+      if (response.status !== 200 || !Array.isArray(models)) throw new Error("Native model catalog is unavailable");
+      const model = models.find((entry) => isRecord(entry) && entry.providerID === input.providerModel?.provider && entry.id === input.providerModel?.model);
+      const tools = isRecord(model) && isRecord(model.capabilities) ? model.capabilities.tools : undefined;
+      inspection.providerProjection = { checked: true, ...input.providerModel, source: "provider_capability",
+        modelExists: Boolean(model), toolCalling: typeof tools === "boolean" ? tools : null, present: [], missing: [],
+        limitation: "Native model capability is not an enumeration of the tools available to a particular agent." };
+      if (!model || tools !== true) inspection.failures.push(failure({ code: "provider_projection_unavailable", stage: "provider_projection",
+        retryable: true, recommendedAction: "Choose an available model with tool support", message: "Native model tool support could not be confirmed." }));
+      inspection.experimentalProviderTools = experimentalProviderToolsFromProjection(inspection.providerProjection);
+    }
+  } catch (error) {
+    inspection.engine = { status: "unreachable" };
+    inspection.failures.push(failure({ code: "opencode_engine_unreachable", stage: "engine_delivery", retryable: true,
+      recommendedAction: "Restart the native OpenCode v2 runtime", message: "Native engine readiness could not be inspected.",
+      details: sanitizeDiagnosticValue(error instanceof Error ? error.message : String(error)) }));
+  }
+  return inspection;
+}
+
 async function readOpenworkCloudMcpHealthInternal(
   input: ReadOpenworkCloudMcpHealthInput & { directProbeReuse?: DirectProbeReuse },
 ): Promise<CloudMcpHealth> {
@@ -2209,7 +2288,7 @@ async function readOpenworkCloudMcpHealthInternal(
   }
   let delivery = cloudMcpDeliveryState.snapshot(input.workspace, input.directory, desired.revision);
   const toolDenies = desired.present
-    ? await diagnoseMcpToolDenies(input.workspace.path, OPENWORK_CLOUD_MCP_NAME, expectedTools())
+    ? await diagnoseMcpToolDenies(input.workspace.path, OPENWORK_CLOUD_MCP_NAME, expectedTools(), input.config)
     : [];
   const failures: CloudMcpFailure[] = [];
 
@@ -2260,7 +2339,9 @@ async function readOpenworkCloudMcpHealthInternal(
     failures: [],
   };
   if (desired.present && desired.config && desired.revision && !desired.validationProblem && input.directory && baseUrlConfigured(input.config, input.workspace)) {
-    inspection = await inspectOpenworkCloud({
+    inspection = input.config.engine === "v2"
+      ? await inspectNativeCloud({ ...input, desiredConfig: desired.config, desiredRevision: desired.revision })
+      : await inspectOpenworkCloud({
       opencode: input.createWorkspaceOpencodeClient(input.config, input.workspace),
       config: input.config,
       workspace: input.workspace,
@@ -2288,6 +2369,7 @@ async function readOpenworkCloudMcpHealthInternal(
 
   const firstFailure = chooseFirstFailure(failures);
   const compatibility = await compatibilitySnapshot({
+    engine: input.config.engine,
     serverMetadata: input.serverMetadata,
     appMetadata: desired.metadata.app,
     directory: input.directory,
@@ -2490,10 +2572,12 @@ export async function reconcileOpenworkCloudMcp(input: {
       .map(async (workspace) => {
         const directory = workspace.workspaceType === "local" ? workspace.path : workspace.directory ?? null;
         if (!directory) return;
-        await input.createWorkspaceOpencodeClient(input.config, workspace).mcp.disconnect({
-          name: OPENWORK_CLOUD_MCP_NAME,
-          ...locationParams(directory),
-        }).catch(() => undefined);
+        if (input.config.engine !== "v2") {
+          await input.createWorkspaceOpencodeClient(input.config, workspace).mcp.disconnect({
+            name: OPENWORK_CLOUD_MCP_NAME,
+            ...locationParams(directory),
+          }).catch(() => undefined);
+        }
         await input.registerRuntimeMcp(input.config, workspace, [OPENWORK_CLOUD_MCP_NAME], { throwOnFailure: false })
           .catch(() => undefined);
       }));
@@ -2538,8 +2622,8 @@ export async function reconcileOpenworkCloudMcp(input: {
   }));
   connectCatalogDiagnostic = connectServers.diagnostic;
 
-  const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
-  for (const name of connectServers.removedNames) {
+  const opencode = input.config.engine === "v2" ? undefined : input.createWorkspaceOpencodeClient(input.config, input.workspace);
+  if (opencode) for (const name of connectServers.removedNames) {
     await opencode.mcp.disconnect({ name, ...locationParams(input.directory) }).catch(() => undefined);
   }
 
@@ -2557,14 +2641,14 @@ export async function reconcileOpenworkCloudMcp(input: {
       .catch(() => undefined);
   }
 
-  const connectedFailure = await pollConnected({
+  const connectedFailure = opencode ? await pollConnected({
     opencode,
     config: input.config,
     workspace: input.workspace,
     directory: input.directory,
     desiredConfig,
     refreshRegistrationFromLiveStatus: input.refreshRegistrationFromLiveStatus,
-  });
+  }) : null;
   if (connectedFailure) {
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, connectedFailure);
     return healthWithFailure(await readHealth(), connectedFailure);
@@ -2672,19 +2756,26 @@ export async function refreshOpenworkCloudMcpEngine(input: {
 
   const disconnectStarted = Date.now();
   try {
-    const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
-    const result = await withEngineProbeTimeout(() => opencode.mcp.disconnect({
-      name: OPENWORK_CLOUD_MCP_NAME,
-      ...locationParams(input.directory),
-    }));
-    steps.push({
-      step: "engine_disconnect",
-      ok: result.error === undefined,
-      latencyMs: Date.now() - disconnectStarted,
-      ...(result.error !== undefined
-        ? { detail: sanitizeDiagnosticValue({ status: result.response?.status, error: result.error }) }
-        : {}),
-    });
+    if (input.config.engine === "v2") {
+      const native = engineV2ByConfig.get(input.config);
+      if (!native || !input.directory) throw new Error("Native runtime unavailable");
+      await native.syncWorkspaceMcp(input.workspace.id, input.directory, [OPENWORK_CLOUD_MCP_NAME]);
+      steps.push({ step: "engine_disconnect", ok: true, latencyMs: Date.now() - disconnectStarted });
+    } else {
+      const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
+      const result = await withEngineProbeTimeout(() => opencode.mcp.disconnect({
+        name: OPENWORK_CLOUD_MCP_NAME,
+        ...locationParams(input.directory),
+      }));
+      steps.push({
+        step: "engine_disconnect",
+        ok: result.error === undefined,
+        latencyMs: Date.now() - disconnectStarted,
+        ...(result.error !== undefined
+          ? { detail: sanitizeDiagnosticValue({ status: result.response?.status, error: result.error }) }
+          : {}),
+      });
+    }
   } catch (error) {
     // A dynamically-registered entry can be gone after an engine state
     // rebuild, and the engine itself can be down; the reapply below is the

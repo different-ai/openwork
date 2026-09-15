@@ -3,12 +3,14 @@ import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { McpItem, ServerConfig } from "./types.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import { readJsoncFile } from "./jsonc.js";
+import { join } from "node:path";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { validateMcpConfig, validateMcpName, validateUserMcpName } from "./validators.js";
 import {
   readRuntimeOpencodeConfig,
   runtimeMcpMap,
   writeRuntimeOpencodeConfig,
+  runtimeStorageDir,
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 
@@ -49,12 +51,20 @@ export function resolveGlobalOpenCodeConfigPath(input?: {
   });
 }
 
-function getMcpConfig(config: Record<string, unknown>): Record<string, Record<string, unknown>> {
+function normalizeMcpEntry(config: Record<string, unknown>, engine?: "v1" | "v2"): Record<string, unknown> {
+  if (engine !== "v2" || typeof config.disabled !== "boolean") return config;
+  const { disabled, ...entry } = config;
+  return { ...entry, enabled: entry.enabled !== false && !disabled };
+}
+
+function getMcpConfig(config: Record<string, unknown>, engine?: "v1" | "v2"): Record<string, Record<string, unknown>> {
   const mcp = config.mcp;
   if (!isRecord(mcp)) return {};
+  const entries = engine === "v2" ? mcp.servers : mcp;
+  if (!isRecord(entries)) return {};
   const output: Record<string, Record<string, unknown>> = {};
-  for (const [name, value] of Object.entries(mcp)) {
-    if (isRecord(value)) output[name] = value;
+  for (const [name, value] of Object.entries(entries)) {
+    if (isRecord(value)) output[name] = normalizeMcpEntry(value, engine);
   }
   return output;
 }
@@ -164,11 +174,20 @@ function collectPermissionRulesetDenies(
   name: string,
   toolIds: string[],
   mode: "deny" | "allow",
+  engine: "v1" | "v2",
 ): McpToolDeny[] {
   if (!Array.isArray(value)) return [];
   const denies: McpToolDeny[] = [];
   for (const entry of value) {
     if (!isRecord(entry)) continue;
+    // Native v2 rules use action/resource/effect, not the legacy action/pattern form.
+    if (engine === "v2" && typeof entry.effect === "string" && typeof entry.action === "string" && typeof entry.resource === "string") {
+      if (entry.effect !== mode || entry.resource !== "*") continue;
+      for (const toolId of toolIds) {
+        if (matchesToolPattern(name, toolId, entry.action)) pushDeny(denies, source, style, entry.action, toolId);
+      }
+      continue;
+    }
     const action = typeof entry.action === "string" ? entry.action : typeof entry.effect === "string" ? entry.effect : "";
     if (action !== mode) continue;
     const pattern = typeof entry.pattern === "string"
@@ -252,16 +271,17 @@ function collectMcpToolMatchesFromConfig(
   name: string,
   toolIds: string[],
   mode: "deny" | "allow",
+  engine: "v1" | "v2",
 ): McpToolDeny[] {
   const diagnosticToolIds = getToolIdsForDiagnostics(name, toolIds);
   return uniqueDenies([
     ...(mode === "deny" ? collectToolsDenyArray(config, source, name, diagnosticToolIds) : []),
     ...collectToolsRecordDenies(config, source, name, diagnosticToolIds, mode),
     ...collectPermissionScalarDeny(config.permission, source, "permission", diagnosticToolIds, mode),
-    ...collectPermissionRulesetDenies(config.permission, source, "permission", name, diagnosticToolIds, mode),
+    ...collectPermissionRulesetDenies(config.permission, source, "permission", name, diagnosticToolIds, mode, engine),
     ...collectPermissionObjectDenies(config.permission, source, "permission", name, diagnosticToolIds, mode),
     ...collectPermissionScalarDeny(config.permissions, source, "permissions", diagnosticToolIds, mode),
-    ...collectPermissionRulesetDenies(config.permissions, source, "permissions", name, diagnosticToolIds, mode),
+    ...collectPermissionRulesetDenies(config.permissions, source, "permissions", name, diagnosticToolIds, mode, engine),
     ...collectPermissionObjectDenies(config.permissions, source, "permissions", name, diagnosticToolIds, mode),
   ]);
 }
@@ -271,16 +291,18 @@ function diagnoseMcpToolDeniesFromConfig(
   source: McpToolDenySource,
   name: string,
   toolIds: string[],
+  engine: "v1" | "v2",
 ): McpToolDeny[] {
-  return collectMcpToolMatchesFromConfig(config, source, name, toolIds, "deny");
+  return collectMcpToolMatchesFromConfig(config, source, name, toolIds, "deny", engine);
 }
 
 function collectProjectAllows(
   config: Record<string, unknown>,
   name: string,
   toolIds: string[],
+  engine: "v1" | "v2",
 ): McpToolAllow[] {
-  return collectMcpToolMatchesFromConfig(config, "config.project", name, toolIds, "allow");
+  return collectMcpToolMatchesFromConfig(config, "config.project", name, toolIds, "allow", engine);
 }
 
 function projectAllowOverridesGlobalDeny(allow: McpToolAllow, deny: McpToolDeny): boolean {
@@ -296,11 +318,14 @@ export function diagnoseMcpToolDeniesFromConfigs(input: {
   globalConfig: Record<string, unknown>;
   name: string;
   toolIds?: string[];
+  /** Native rule semantics are opt-in; Desktop's default remains unchanged. */
+  engine?: "v1" | "v2";
 }): McpToolDeny[] {
   const toolIds = input.toolIds ?? diagnosticToolIdsForMcp(input.name);
-  const projectAllows = collectProjectAllows(input.projectConfig, input.name, toolIds);
-  const projectDenies = diagnoseMcpToolDeniesFromConfig(input.projectConfig, "config.project", input.name, toolIds);
-  const globalDenies = diagnoseMcpToolDeniesFromConfig(input.globalConfig, "config.global", input.name, toolIds);
+  const engine = input.engine ?? "v1";
+  const projectAllows = collectProjectAllows(input.projectConfig, input.name, toolIds, engine);
+  const projectDenies = diagnoseMcpToolDeniesFromConfig(input.projectConfig, "config.project", input.name, toolIds, engine);
+  const globalDenies = diagnoseMcpToolDeniesFromConfig(input.globalConfig, "config.global", input.name, toolIds, engine);
   return uniqueDenies([
     ...projectDenies,
     ...filterGlobalDeniesOverriddenByProjectAllows(globalDenies, projectAllows),
@@ -311,10 +336,22 @@ export async function diagnoseMcpToolDenies(
   workspaceRoot: string,
   name: string,
   toolIds?: string[],
+  serverConfig?: ServerConfig,
 ): Promise<McpToolDeny[]> {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>, { allowInvalid: true });
   const { data: globalConfig } = await readJsoncFile(resolveGlobalOpenCodeConfigPath(), {} as Record<string, unknown>, { allowInvalid: true });
-  return diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name, toolIds });
+  const denies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name, toolIds, engine: serverConfig?.engine });
+  if (serverConfig?.engine !== "v2") return denies;
+  const nativePaths = [
+    join(workspaceRoot, ".opencode", "opencode.json"),
+    join(serverConfig.opencodeV2?.rootDir ?? join(runtimeStorageDir(serverConfig), "opencode-v2", "state"), "config", "opencode.json"),
+    serverConfig.opencodeV2?.env?.OPENCODE_CONFIG,
+  ].filter((path): path is string => Boolean(path));
+  for (const path of nativePaths) {
+    const native = await readJsoncFile(path, {} as Record<string, unknown>, { maxBytes: DIAGNOSTIC_STATIC_CONFIG_MAX_BYTES });
+    denies.push(...diagnoseMcpToolDeniesFromConfigs({ projectConfig: native.data, globalConfig: {}, name, toolIds, engine: "v2" }));
+  }
+  return uniqueDenies(denies);
 }
 
 function hasInvalidMcpConfig(config: Record<string, unknown>): boolean {
@@ -475,7 +512,7 @@ function isMcpDisabledByTools(config: Record<string, unknown>, name: string): bo
 }
 
 export async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string): Promise<McpItem[]> {
-  return listMcpFromRuntimeSnapshot(workspaceRoot, await readRuntimeOpencodeConfig(serverConfig, workspaceId));
+  return listMcpFromRuntimeSnapshot(workspaceRoot, await readRuntimeOpencodeConfig(serverConfig, workspaceId), serverConfig.engine);
 }
 
 export type McpConfigCollision = {
@@ -531,12 +568,13 @@ async function inspectMcpConfigLayer(
 export async function listMcpFromRuntimeSnapshot(
   workspaceRoot: string,
   runtimeConfig: RuntimeOpencodeConfig,
+  engine?: "v1" | "v2",
 ): Promise<McpItem[]> {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>, { allowInvalid: true });
   const { data: globalConfig } = await readJsoncFile(resolveGlobalOpenCodeConfigPath(), {} as Record<string, unknown>, { allowInvalid: true });
 
-  const projectMcpMap = getMcpConfig(config);
-  const globalMcpMap = getMcpConfig(globalConfig);
+  const projectMcpMap = getMcpConfig(config, engine);
+  const globalMcpMap = getMcpConfig(globalConfig, engine);
   const runtimeMap = runtimeMcpMap(runtimeConfig);
 
   const items: McpItem[] = [];
@@ -545,7 +583,7 @@ export async function listMcpFromRuntimeSnapshot(
   // OpenCode and can supersede static project/global entries after startup.
   for (const [name, entry] of Object.entries(globalMcpMap)) {
     if (Object.prototype.hasOwnProperty.call(projectMcpMap, name)) continue;
-    const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name });
+    const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name, engine });
     items.push({
       name,
       config: entry,
@@ -557,7 +595,7 @@ export async function listMcpFromRuntimeSnapshot(
 
   for (const [name, entry] of Object.entries(projectMcpMap)) {
     if (Object.prototype.hasOwnProperty.call(runtimeMap, name)) continue;
-    const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name });
+    const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name, engine });
     items.push({
       name,
       config: entry,
@@ -568,10 +606,10 @@ export async function listMcpFromRuntimeSnapshot(
   }
 
   for (const [name, entry] of Object.entries(runtimeMap)) {
-    const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name });
+    const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name, engine });
     items.push({
       name,
-      config: entry,
+      config: normalizeMcpEntry(entry, engine),
       source: "config.remote",
       disabledByTools: toolDenies.length > 0 || undefined,
       ...(toolDenies.length ? { toolDenies } : {}),
@@ -666,11 +704,12 @@ export async function addMcp(
   config: Record<string, unknown>,
 ): Promise<{ action: "added" | "updated" }> {
   validateUserMcpName(name);
-  validateMcpConfig(config);
+  const entry = normalizeMcpEntry(config, serverConfig.engine);
+  validateMcpConfig(entry);
   const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
   const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
   const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
-  mcpMap[name] = config;
+  mcpMap[name] = entry;
   await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, mcp: mcpMap }));
   return { action: existed ? "updated" : "added" };
 }
@@ -703,12 +742,13 @@ export async function setMcpEnabled(
   if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
   const current = mcpMap[name];
   if (!current || typeof current !== "object" || Array.isArray(current)) return false;
+  const entry = { ...normalizeMcpEntry(current, serverConfig.engine), enabled };
   try {
-    validateMcpConfig({ ...(current as Record<string, unknown>), enabled });
+    validateMcpConfig(entry);
   } catch {
     return false;
   }
-  mcpMap[name] = { ...(current as Record<string, unknown>), enabled };
+  mcpMap[name] = entry;
   await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (currentConfig) => ({ ...currentConfig, mcp: mcpMap }));
   return true;
 }

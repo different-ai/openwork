@@ -527,6 +527,18 @@ describe("cloud MCP health foundation", () => {
     });
   });
 
+  test("native rule interpretation requires an explicit native host", () => {
+    const input = {
+      name: "openwork-cloud",
+      toolIds: [...OPENWORK_CLOUD_EXPECTED_TOOLS],
+      projectConfig: { permissions: [{ action: "openwork-cloud_search_capabilities", resource: "*", effect: "deny" }] },
+      globalConfig: {},
+    };
+    expect(diagnoseMcpToolDeniesFromConfigs(input)).toEqual([]);
+    expect(diagnoseMcpToolDeniesFromConfigs({ ...input, engine: "v1" })).toEqual([]);
+    expect(diagnoseMcpToolDeniesFromConfigs({ ...input, engine: "v2" }).map((deny) => deny.matched)).toEqual(["openwork-cloud_search_capabilities"]);
+  });
+
   test("plugin canary denies are not reported as Cloud tool denies", () => {
     const denies = diagnoseMcpToolDeniesFromConfigs({
       name: "openwork-cloud",

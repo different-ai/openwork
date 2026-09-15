@@ -7,6 +7,7 @@ import { rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
 import { ApiError } from "./errors.js";
 import { selectPrimaryCredentialEnvName, syncManagedProviderAuth } from "./managed-provider-auth.js";
+import { nativeCatalogIdentity } from "./managed-opencode-v2.js";
 import { writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import {
   hasOpenworkWorkspaceConfig,
@@ -619,12 +620,13 @@ function providerEnvEntries(provider: DenProviderConnection): EnvEntry[] {
   return entries;
 }
 
-function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRecord {
+function buildModelConfig(model: DenProviderModel, providerNpm: unknown, nativeCatalogMetadata: boolean): JsonRecord {
   // Older Den responses included routing labels in the display name. Keep the
   // wire ID and selection metadata, but don't expose those labels in the picker.
   const selection = model.modelGroupName && model.credentialSetName ? ` (${model.modelGroupName} / ${model.credentialSetName})` : "";
   const next: JsonRecord = {
     id: model.id,
+    ...(nativeCatalogMetadata ? nativeCatalogIdentity(model) : {}),
     name: selection && model.name.endsWith(selection) ? model.name.slice(0, -selection.length) : model.name,
   };
   for (const key of modelConfigPassthroughKeys) {
@@ -636,10 +638,10 @@ function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRe
   return next;
 }
 
-function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
+function buildProviderConfig(provider: DenProviderConnection, nativeCatalogMetadata: boolean): JsonRecord {
   const models: JsonRecord = {};
   for (const model of [...provider.models].sort((left, right) => left.id.localeCompare(right.id))) {
-    models[model.id] = buildModelConfig(model, provider.providerConfig.npm);
+    models[model.id] = buildModelConfig(model, provider.providerConfig.npm, nativeCatalogMetadata);
   }
   const config: JsonRecord = {
     id: provider.providerId,
@@ -663,6 +665,7 @@ function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
 function prepareMaterialization(
   providers: DenProviderConnection[],
   localEnvNames: Iterable<string>,
+  nativeCatalogMetadata: boolean,
 ): PreparedMaterialization {
   const materialized: MaterializedProvider[] = [];
   const skipped: CloudProviderSyncSkippedProvider[] = [];
@@ -717,7 +720,7 @@ function prepareMaterialization(
     materialized.push({
       provider,
       runtimeProviderId: runtimeProviderId(provider),
-      config: buildProviderConfig(provider),
+      config: buildProviderConfig(provider, nativeCatalogMetadata),
       envEntries,
     });
   }
@@ -1185,7 +1188,7 @@ export class CloudProviderSync {
       const localEnvNames = storedEnv
         .filter((entry) => entry.value.trim().length > 0 && !this.ownedEnvKeys.has(entry.key))
         .map((entry) => entry.key);
-      const prepared = prepareMaterialization(providers, localEnvNames);
+      const prepared = prepareMaterialization(providers, localEnvNames, this.config.engine === "v2");
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
       // Ownership follows the apply that can write, not a pending session.
       // Retain it through suspension, including a partially completed apply.
@@ -1258,19 +1261,21 @@ export class CloudProviderSync {
     const envUpserts = prepared.envEntries.filter((entry) => storedEnv.get(entry.key) !== entry.value);
     if (envUpserts.length > 0) {
       await this.env.upsertMany(envUpserts);
+      if (this.config.engine === "v2") this.reloadPending = true;
     }
     // Migrate earlier bare catalog slots only on an exact credential match.
     for (const entry of prepared.supersededEntries) {
       if (storedEnv.get(entry.key) === entry.value && !envDeletes.includes(entry.key)) envDeletes.push(entry.key);
     }
     for (const key of envDeletes) {
-      await this.env.delete(key);
+      const deleted = await this.env.delete(key);
+      if (deleted && this.config.engine === "v2") this.reloadPending = true;
       this.ownedEnvKeys.delete(key);
     }
 
     const workspaceCleanup = await this.cleanupWorkspaceTakeovers();
     const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
-    const runtimeFileChanged = engineWorkspace
+    const runtimeFileChanged = engineWorkspace && this.config.engine !== "v2"
       ? (await writeOpenworkRuntimeConfigFile(this.config)).changed
       : false;
     // Deliver credentials before disposing the current provider instances.
@@ -1434,7 +1439,7 @@ export class CloudProviderSync {
 
     const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
     if (engineWorkspace) {
-      const fileResult = await writeOpenworkRuntimeConfigFile(this.config);
+      const fileResult = this.config.engine === "v2" ? { changed: false } : await writeOpenworkRuntimeConfigFile(this.config);
       this.reloadPending = this.reloadPending || providerChanged || fileResult.changed;
     }
     const authResult = await syncManagedProviderAuth({

@@ -24,10 +24,11 @@ test("classifySpec detects filesystem and child-process imports", () => {
 });
 
 test("classifySpec recognizes only boundary calls", () => {
-  for (const call of ["app()", "chrome()", "server()", "inviteMember()", "faultProxy()", "spec.world()"]) {
+  for (const call of ["app()", "coworker()", "chrome()", "server()", "inviteMember()", "faultProxy()", "spec.world()"]) {
     assert.equal(classifySpec(call).crossesBoundary, true);
   }
   assert.equal(classifySpec("helper.app(); const app = true;").crossesBoundary, false);
+  assert.equal(classifySpec("helper.coworker(); const coworker = true;").crossesBoundary, false);
 });
 
 test("classifySpec recognizes world imports as boundaries", () => {
@@ -42,7 +43,7 @@ test("violations returns human-readable reasons", () => {
     "bad.test.ts: imports product source (../../apps/...) — unit tests belong next to the module they test, not in evals/specs",
     "bad.test.ts: reads the filesystem (node:fs) — a spec observes the product, not the repository",
     "bad.test.ts: spawns processes (node:child_process) — wrapping another test runner is not evidence",
-    "bad.test.ts: never crosses a product boundary (app()/chrome()/server()/spec.world()) — see write-a-spec",
+    "bad.test.ts: never crosses a product boundary (app()/coworker()/chrome()/server()/spec.world()) — see write-a-spec",
   ]);
 });
 
@@ -50,7 +51,7 @@ test("violations permits filesystem use only when a boundary is crossed", () => 
   assert.deepEqual(violations("e2e.test.ts", classifySpec('import "node:fs/promises"; app();')), []);
   assert.deepEqual(violations("unit.test.ts", classifySpec('import "node:fs/promises";')), [
     "unit.test.ts: reads the filesystem (node:fs) — a spec observes the product, not the repository",
-    "unit.test.ts: never crosses a product boundary (app()/chrome()/server()/spec.world()) — see write-a-spec",
+    "unit.test.ts: never crosses a product boundary (app()/coworker()/chrome()/server()/spec.world()) — see write-a-spec",
   ]);
 });
 
@@ -63,7 +64,7 @@ test("compareBaseline rejects new product imports and missing boundaries", () =>
     "import.test.ts: imports product source (../../apps/...) — unit tests belong next to the module they test, not in evals/specs",
   ]);
   assert.deepEqual(compareBaseline({ "unit.test.ts": classifySpec("test();") }, []).errors, [
-    "unit.test.ts: never crosses a product boundary (app()/chrome()/server()/spec.world()) — see write-a-spec",
+    "unit.test.ts: never crosses a product boundary (app()/coworker()/chrome()/server()/spec.world()) — see write-a-spec",
   ]);
 });
 

@@ -24,6 +24,8 @@ import { ENGINE_GLOBAL_RUNTIME_CONFIG_ID, readRuntimeOpencodeConfig, runtimeMcpM
 import {
   callMcpAppTool,
   listMcpAppCatalog,
+  listMcpServerTools,
+  searchWorkspaceCapabilities,
   McpAppHostError,
   projectedMcpToolName,
   resolveConnectMcpAppResource,
@@ -89,6 +91,11 @@ async function startFixtureMcp(
   );
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      {
+        name: "search_capabilities",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      },
       {
         name: "render_fixture",
         description: "Render the fixture",
@@ -329,6 +336,8 @@ async function configuredFixture(
       "Bearer app-host-token",
       fixture.catalogUrl,
     );
+  } else if (mcpName === "openwork-cloud") {
+    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({ ...current, mcp: { ...runtimeMcpMap(current), [mcpName]: mcpConfig } }));
   } else {
     await addMcp(config, WORKSPACE_ID, mcpName, mcpConfig);
   }
@@ -343,13 +352,13 @@ async function configuredFixture(
   };
 }
 
-async function fixtureLaunch(config: ServerConfig, root: string) {
+async function fixtureLaunch(config: ServerConfig, root: string, engine?: "v1" | "v2") {
   const app = await resolveMcpAppResource({
     serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
-    projectedToolName: "fixture_render_fixture", context: { sessionId: "session-a", readOnly: false },
+    projectedToolName: "fixture_render_fixture", context: { sessionId: "session-a", readOnly: false, engine },
   });
   if (!app?.launchId) throw new Error("Fixture launch missing");
-  return { launchId: app.launchId, sessionId: "session-a", resourceUri: app.resourceUri, assertSessionActive: async () => {} };
+  return { launchId: app.launchId, sessionId: "session-a", engine, resourceUri: app.resourceUri, assertSessionActive: async () => {} };
 }
 
 describe("MCP Apps host transport", () => {
@@ -378,8 +387,16 @@ describe("MCP Apps host transport", () => {
 
   });
 
-  test("lists cold-launchable MCP Apps with their input requirements", async () => {
+  test.each([false, true])("lists cold-launchable MCP Apps with their input requirements (native project: %s)", async (native) => {
     const { config, root } = await configuredFixture("openwork-mcp-app-catalog-");
+    if (native) {
+      config.engine = "v2";
+      const fixture = (await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.fixture;
+      if (!fixture) throw new Error("Missing fixture MCP configuration");
+      const { enabled: _enabled, ...entry } = fixture;
+      await Bun.write(join(root, "opencode.json"), JSON.stringify({ mcp: { servers: { fixture: entry, paused: { ...entry, disabled: true } } } }));
+      await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({}));
+    }
 
     const servers = await listMcpAppCatalog({
       serverConfig: config,
@@ -408,6 +425,60 @@ describe("MCP Apps host transport", () => {
     const renderEditor = fixture?.apps.find((app) => app.toolName === "render_editor");
     expect(renderEditor?.requiresInput).toBe(false);
     expect(renderEditor?.requiresApproval).toBe(true);
+  });
+
+  test.each([false, true])("capability discovery uses a fixed non-App tool and honors disabled and denied configuration (native: %s)", async (native) => {
+    const { config, root, calls } = await configuredFixture("openwork-capability-discovery-", undefined, "openwork-cloud");
+    if (native) {
+      config.engine = "v2";
+      await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => {
+        const gateway = current.mcp?.["openwork-cloud"];
+        if (typeof gateway?.url !== "string") throw new Error("Missing fixture gateway");
+        return { ...current, mcp: { ...current.mcp, "openwork-cloud": { ...gateway, url: new URL("/mcp/agent", gateway.url).href } } };
+      });
+    }
+    const input = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, query: "calendar" };
+    await searchWorkspaceCapabilities(input);
+    expect(calls).toEqual([{ name: "search_capabilities", arguments: { query: "calendar", limit: 20, intent: "discover" } }]);
+    if (native) {
+      await mkdir(join(root, ".opencode"), { recursive: true });
+      await Bun.write(join(root, ".opencode", "opencode.json"), JSON.stringify({ permissions: [{ action: "openwork-cloud_search_capabilities", resource: "*", effect: "deny" }] }));
+    } else {
+      await Bun.write(join(root, "opencode.json"), JSON.stringify({ tools: { "openwork-cloud_search_capabilities": false } }));
+    }
+    await expect(searchWorkspaceCapabilities(input)).rejects.toMatchObject({ code: "tool_denied" });
+    expect(calls).toHaveLength(1);
+    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({ ...current, mcp: { ...runtimeMcpMap(current), "openwork-cloud": { type: "remote", url: "http://127.0.0.1:1/mcp", enabled: false } } }));
+    await expect(searchWorkspaceCapabilities(input)).rejects.toMatchObject({ code: "server_unavailable" });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("lists everything one server offers, with its App binding noted and denied tools left out", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-server-tools-");
+
+    const tools = await listMcpServerTools({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      serverName: "fixture",
+    });
+    const names = tools.map((tool) => tool.name);
+    // Every advertised tool, not only the Apps: plain tools and app-only tools included.
+    expect(names).toContain("render_fixture");
+    expect(names).toContain("save_artifact_view");
+    expect(names).toContain("read_detail");
+    expect(names).toContain("model_only_fixture");
+    const renderFixture = tools.find((tool) => tool.name === "render_fixture");
+    expect(renderFixture?.description).toBe("Render the fixture");
+    expect(renderFixture?.resourceUri).toBe(RESOURCE_URI);
+    expect(tools.find((tool) => tool.name === "save_artifact_view")?.resourceUri).toBeNull();
+
+    await expect(listMcpServerTools({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      serverName: "missing",
+    })).rejects.toMatchObject({ code: "server_unavailable" });
   });
 
   test("lists Connect app-host apps with their connection references", async () => {
@@ -706,11 +777,12 @@ describe("MCP Apps host transport", () => {
     })).rejects.toMatchObject({ code: "mcp_unreachable" });
   });
 
-  test("mediates explicitly read-only same-server tool calls", async () => {
+  test.each([false, true])("mediates explicitly read-only same-server tool calls (native: %s)", async (native) => {
     const { config, root } = await configuredFixture("openwork-mcp-app-call-");
+    if (native) config.engine = "v2";
 
     const result = await callMcpAppTool({
-      ...await fixtureLaunch(config, root),
+      ...await fixtureLaunch(config, root, config.engine),
       serverConfig: config,
       workspaceId: WORKSPACE_ID,
       workspaceRoot: root,
@@ -842,12 +914,15 @@ describe("MCP Apps host transport", () => {
     })).rejects.toMatchObject({ code: "unsafe_server_url" });
   });
 
-  test("rejects missing, cross-workspace, cross-session, cross-host and released launch contexts without dispatch", async () => {
+  test.each([false, true])("rejects missing, cross-workspace, cross-session, cross-engine, cross-host and released launch contexts without dispatch (native: %s)", async (native) => {
     const { config, root, calls } = await configuredFixture("openwork-app-origin-");
-    const launch = await fixtureLaunch(config, root);
+    const engine = native ? "v2" : "v1";
+    const otherEngine: "v1" | "v2" = native ? "v1" : "v2";
+    if (native) config.engine = "v2";
+    const launch = await fixtureLaunch(config, root, engine);
     const request = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, serverName: "fixture", name: "read_detail", ...launch };
     await expect(callMcpAppTool({ ...request, launchId: undefined })).rejects.toMatchObject({ code: "missing_launch_context" });
-    for (const override of [{ workspaceId: "workspace-b" }, { sessionId: "session-b" }, { engine: "v2" as const }, { serverConfig: { ...config } }, { serverName: "other" }]) {
+    for (const override of [{ workspaceId: "workspace-b" }, { sessionId: "session-b" }, { engine: otherEngine }, { serverConfig: { ...config } }, { serverName: "other" }]) {
       await expect(callMcpAppTool({ ...request, ...override })).rejects.toMatchObject({ code: "stale_launch_context" });
     }
     expect(releaseMcpAppLaunch(config, "workspace-b", launch.launchId)).toBe(false);

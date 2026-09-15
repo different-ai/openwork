@@ -712,6 +712,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         capabilities: {
           // Dashboard exposure only; inference and provider synchronization are unaffected.
           gatewayDashboard: organizationHasCapability(payload.organization.metadata, "gatewayDashboard"),
+          coworkerTeams: organizationHasCapability(payload.organization.metadata, "coworkerTeams"),
           // Protocol capability: clients must see this explicit signal before
           // calling the dashboard routes. Older Den versions omit the field,
           // allowing newer Desktop builds to fail closed during a staggered

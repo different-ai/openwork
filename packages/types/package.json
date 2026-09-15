@@ -11,6 +11,11 @@
       "browser": "./src/cloud-model-fast.ts",
       "default": "./dist/cloud-model-fast.js"
     },
+    "./coworker-template": {
+      "types": "./src/coworker-template.ts",
+      "development": "./src/coworker-template.ts",
+      "default": "./src/coworker-template.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",

@@ -1,0 +1,37 @@
+{
+  "version": "0.0.0-beta-19271",
+  "platforms": {
+    "linux-x64-baseline": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-x64-baseline/-/cli-linux-x64-baseline-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-o0rfUrWksGpmUw7lsN208wT79jb9oBeiMVVtYPNKqhCRvkPuSYOiDv8aYjX7OPW2xtcxUpz8eS78mjvGDjKw0g=="
+    },
+    "linux-arm64": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-arm64/-/cli-linux-arm64-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-0WIzqvdgTUwUaQK5cXibZauGbRW7NZcuXGrA8dMsRWmAyONKDCnI9LbSXigGwc1RkGeRJrLtP/Xwmc8UCeXoJA=="
+    },
+    "linux-x64-baseline-musl": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-x64-baseline-musl/-/cli-linux-x64-baseline-musl-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-l81mUfb7SgEr/EylzuBVPfM0GAXc8+FdSZteYTLDoqc1ha7QFY1YpjdPAklxDyDI4lXejaFP8TIP+A+PuEeN7A=="
+    },
+    "linux-arm64-musl": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-arm64-musl/-/cli-linux-arm64-musl-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-YntKMzxo9lAQXdMZ+faChBWIV5D2fIfSdw7nXvMI78/7JHgQE4aOpFhY+Vbc0hluJpy81VhtRsYAjlUA2d6B3Q=="
+    },
+    "darwin-x64-baseline": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-darwin-x64-baseline/-/cli-darwin-x64-baseline-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-lhxjdTMnly2zb88/yOQHJwaDgvKH8kyCrmHIBnOiYexYW394EGwmxHjHkQRWfrgXXRk9vqzKHw8ldx0ust0Msw=="
+    },
+    "darwin-arm64": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-darwin-arm64/-/cli-darwin-arm64-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-CHfMY/7pPq4Andvrif34tC/N9mFppSujjscVISVOSMc/twAvkIGGfDUZgU65qHDsifSnt6+IJr3NZ2AbPzWOfA=="
+    },
+    "windows-x64-baseline": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-windows-x64-baseline/-/cli-windows-x64-baseline-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-8g0h69T2SvaLljSCZmIRzb5GK+3xv9I9a2vYjVfZK2lQmWs9QaXNqkOwsO1msogQNKlLII4omtSaEUt3DnX7gA=="
+    },
+    "windows-arm64": {
+      "url": "https://registry.npmjs.org/@opencode-ai/cli-windows-arm64/-/cli-windows-arm64-0.0.0-beta-19271.tgz",
+      "integrity": "sha512-F6QdhjWxORYAjK0vFeYAYgiiSedCxdsxUrqfiUPGxE59odc1IVBamcQ+/yJUsqy9wf11CSB/YnOT8FPIy8Nxww=="
+    }
+  }
+}

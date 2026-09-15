@@ -261,6 +261,9 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
     skipped: [],
     failed: [],
   };
+  // Native v2 credentials are delivered by its watched config mirror, never
+  // by the v1 auth API (including calls from CloudProviderSync and /env).
+  if (input.config.engine === "v2") return result;
 
   const runtimeConfig = await readGlobalRuntimeOpencodeConfig(input.config);
   const providers = runtimeProviderMap(runtimeConfig);

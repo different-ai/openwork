@@ -7,15 +7,29 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./index.mjs"
-    }
+    },
+    "./electron": "./electron.mjs",
+    "./tools": {
+      "types": "./tools.d.ts",
+      "default": "./tools.mjs"
+    },
+    "./preload": "./browser-content-preload.cjs"
   },
   "files": [
     "index.d.ts",
-    "index.mjs"
+    "index.mjs",
+    "electron.mjs",
+    "tools.d.ts",
+    "tools.mjs",
+    "THIRD-PARTY-NOTICES",
+    "browser-content-preload.cjs"
   ],
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "ws": "8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

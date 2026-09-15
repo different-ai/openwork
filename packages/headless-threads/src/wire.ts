@@ -20,13 +20,22 @@ const timeSchema = z
   .object({
     created: z.number().optional(),
     updated: z.number().optional(),
+    completed: z.number().optional(),
   })
   .passthrough();
 
 export const threadStatusSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("idle") }),
   z.object({ type: z.literal("busy") }),
-  z.object({ type: z.literal("retry"), attempt: z.number(), message: z.string(), next: z.number() }),
+  z.object({
+    type: z.literal("retry"),
+    attempt: z.number(),
+    message: z.string(),
+    next: z.number(),
+    // The engine names the cause of some retries (a free-tier or account limit) and attaches its own
+    // remedy copy; only the reason is carried, the copy is the engine's to show, not a client's.
+    action: z.object({ reason: z.string() }).passthrough().optional(),
+  }),
 ]);
 
 export const sessionSchema = z
@@ -45,7 +54,17 @@ const partSchema = z
     text: z.string().optional(),
     tool: z.string().optional(),
     callID: z.string().optional(),
-    state: z.object({ status: z.string().optional() }).passthrough().optional(),
+    state: z
+      .object({
+        status: z.string().optional(),
+        input: z.record(z.string(), z.unknown()).optional(),
+        output: z.unknown().optional(),
+        error: z.string().optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
+        time: z.object({ start: z.number().nonnegative().optional(), end: z.number().nonnegative().optional() }).passthrough().optional(),
+      })
+      .passthrough()
+      .optional(),
     synthetic: z.boolean().optional(),
     ignored: z.boolean().optional(),
   })
@@ -58,6 +77,8 @@ const messageSchema = z
         id: z.string(),
         role: z.string(),
         parentID: z.string().optional(),
+        providerID: z.string().optional(),
+        modelID: z.string().optional(),
         time: timeSchema.optional(),
         error: z.unknown().optional(),
         cost: z.number().nonnegative().optional(),
@@ -93,9 +114,9 @@ export const threadSnapshotSchema = z.object({
   session: sessionSchema,
   messages: threadMessagesSchema,
   todos: threadTodosSchema,
-  status: threadStatusSchema,
 });
 
+type StatusWire = z.infer<typeof threadStatusSchema>;
 type SessionWire = z.infer<typeof sessionSchema>;
 type MessageWire = z.infer<typeof messageSchema>;
 type PartWire = z.infer<typeof partSchema>;
@@ -105,6 +126,11 @@ function optionalString(value: string | null | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
 
+export function toStatus(status: StatusWire): HeadlessThreadStatus {
+  if (status.type !== "retry") return { type: status.type };
+  return { type: "retry", attempt: status.attempt, message: status.message, next: status.next, reason: status.action?.reason ?? null };
+}
+
 function toPart(part: PartWire): HeadlessThreadMessagePart {
   const mapped: HeadlessThreadMessagePart = { id: part.id };
   if (part.type !== undefined) mapped.type = part.type;
@@ -112,6 +138,12 @@ function toPart(part: PartWire): HeadlessThreadMessagePart {
   if (part.tool !== undefined) mapped.tool = part.tool;
   if (part.callID !== undefined) mapped.callId = part.callID;
   if (part.state?.status !== undefined) mapped.toolStatus = part.state.status;
+  if (part.state?.input !== undefined) mapped.toolInput = part.state.input;
+  if (part.state?.output !== undefined) mapped.toolOutput = part.state.output;
+  if (part.state?.error !== undefined) mapped.toolError = part.state.error;
+  if (part.state?.metadata !== undefined) mapped.toolMetadata = part.state.metadata;
+  if (part.state?.time?.start !== undefined) mapped.toolStartedAt = part.state.time.start;
+  if (part.state?.time?.end !== undefined) mapped.toolCompletedAt = part.state.time.end;
   if (part.synthetic !== undefined) mapped.synthetic = part.synthetic;
   if (part.ignored !== undefined) mapped.ignored = part.ignored;
   return mapped;
@@ -132,6 +164,33 @@ function stringField(records: Array<Record<string, unknown> | null>, keys: strin
   return null;
 }
 
+function booleanField(records: Array<Record<string, unknown> | null>, keys: string[]): boolean | null {
+  for (const item of records) {
+    if (!item) continue;
+    for (const key of keys) {
+      const value = item[key];
+      if (typeof value === "boolean") return value;
+    }
+  }
+  return null;
+}
+
+/**
+ * The provider's own error type from the response body the engine relayed:
+ * `{"error":{"type":"FreeUsageLimitError",…}}` (Anthropic-style, also the free
+ * model's) or `{"error":{"code":"insufficient_quota",…}}` (OpenAI-style). Null
+ * when the body is missing, not JSON, or names no type.
+ */
+function providerErrorOf(responseBody: unknown): string | null {
+  if (typeof responseBody !== "string" || !responseBody.trim()) return null;
+  try {
+    const error = record(record(JSON.parse(responseBody))?.error);
+    return stringField([error], ["type", "code"]);
+  } catch {
+    return null;
+  }
+}
+
 function toMessageError(value: unknown): HeadlessThreadMessage["error"] {
   const outer = record(value);
   if (!outer) return null;
@@ -140,10 +199,17 @@ function toMessageError(value: unknown): HeadlessThreadMessage["error"] {
   return {
     name: stringField([outer, data, cause], ["name", "code", "type"]) ?? "ExecutionError",
     message: stringField([outer, data, cause], ["message", "error", "detail"]) ?? "The agent turn failed.",
-    retryable: typeof outer.retryable === "boolean"
-      ? outer.retryable
-      : typeof data?.retryable === "boolean" ? data.retryable : null,
+    // The engine's `APIError` says `isRetryable`; other shapes say `retryable`.
+    retryable: booleanField([outer, data], ["retryable", "isRetryable"]),
+    providerError: providerErrorOf(data?.responseBody),
   };
+}
+
+function toMessageModel(message: MessageWire): HeadlessThreadMessage["model"] {
+  const providerId = message.info.providerID?.trim() ?? "";
+  const modelId = message.info.modelID?.trim() ?? "";
+  if (message.info.role !== "assistant" || !providerId || !modelId) return null;
+  return { providerId, modelId };
 }
 
 export function toThreadMessage(message: MessageWire): HeadlessThreadMessage {
@@ -152,7 +218,9 @@ export function toThreadMessage(message: MessageWire): HeadlessThreadMessage {
     role: message.info.role,
     parentId: message.info.parentID ?? null,
     createdAt: message.info.time?.created ?? null,
+    completedAt: message.info.time?.completed ?? null,
     error: toMessageError(message.info.error),
+    model: toMessageModel(message),
     usage: message.info.role === "assistant" && message.info.tokens ? {
       inputTokens: message.info.tokens?.input ?? 0,
       outputTokens: message.info.tokens?.output ?? 0,
@@ -180,12 +248,12 @@ export function toThread(session: SessionWire, workspaceId: string, started: boo
   };
 }
 
-export function toSnapshot(item: z.infer<typeof threadSnapshotSchema>): HeadlessThreadSnapshot {
+export function toSnapshot(item: z.infer<typeof threadSnapshotSchema>, status: HeadlessThreadStatus): HeadlessThreadSnapshot {
   return {
     threadId: item.session.id,
     title: optionalString(item.session.title),
     directory: optionalString(item.session.directory),
-    status: item.status,
+    status,
     messages: item.messages.map(toThreadMessage),
     todos: item.todos.map(toTodo),
   };

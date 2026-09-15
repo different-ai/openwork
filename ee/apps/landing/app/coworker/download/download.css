@@ -1,0 +1,123 @@
+.cw-download {
+  color-scheme: dark;
+  --cwd-bg: #090c12;
+  --cwd-surface: #121822;
+  --cwd-raised: #1a2230;
+  --cwd-text: #f5f7fb;
+  --cwd-secondary: #bdc5d1;
+  --cwd-muted: #9ba7b9;
+  --cwd-border: rgb(255 255 255 / 0.1);
+  --cwd-accent: #5b8dff;
+  min-height: 100vh;
+  background: radial-gradient(ellipse 600px 400px at 50% 110px, rgb(91 141 255 / 0.07), transparent), var(--cwd-bg);
+  color: var(--cwd-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.cw-download ::selection { background: #344b73; color: var(--cwd-text); }
+.cw-download :focus-visible { outline: 2px solid #a9c2ff; outline-offset: 5px; border-radius: 5px; }
+.cw-download a { -webkit-tap-highlight-color: transparent; }
+.cw-download a > svg { flex-shrink: 0; }
+.cw-download-skip { position: absolute; z-index: 50; left: 20px; top: -100px; padding: 12px 18px; border-radius: 8px; background: var(--cwd-text); color: var(--cwd-bg); }
+.cw-download-skip:focus { top: 12px; }
+
+.cw-download-nav { border-bottom: 1px solid var(--cwd-border); }
+.cw-download-nav-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1080px; min-height: 76px; margin: 0 auto; padding: 12px 28px; }
+.cw-download-brand { display: inline-flex; align-items: center; gap: 11px; min-height: 44px; font-size: 15px; font-weight: 600; letter-spacing: -0.025em; }
+.cw-download-nav nav a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--cwd-secondary); font-size: 13px; }
+.cw-download-nav nav a:hover { color: var(--cwd-text); }
+.cw-download-main { max-width: 876px; margin: 0 auto; padding: 0 28px; }
+
+.cw-download-hero { padding: 48px 0 34px; text-align: center; }
+.cw-download-icon { display: flex; justify-content: center; margin-bottom: 22px; }
+.cw-download-icon > svg { filter: drop-shadow(0 12px 26px rgb(0 0 0 / 0.3)); }
+.cw-download-eyebrow { color: var(--cwd-muted); font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; }
+.cw-download-hero h1 { margin: 12px 0 16px; font-size: clamp(34px, 5.5vw, 54px); font-weight: 550; letter-spacing: -0.055em; line-height: 1.1; text-wrap: balance; }
+.cw-download-lead { max-width: 520px; margin: 0 auto; color: var(--cwd-secondary); font-size: 16px; line-height: 1.75; text-wrap: pretty; }
+
+.cw-download-card { padding: 28px; border: 1px solid rgb(255 255 255 / 0.14); border-radius: 22px; background: var(--cwd-surface); box-shadow: 0 18px 60px -30px rgb(0 0 0 / 0.65), inset 0 1px 0 rgb(255 255 255 / 0.025); }
+.cw-download-card-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.cw-download-platform-title { display: flex; align-items: center; gap: 14px; }
+.cw-download-platform-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border: 1px solid var(--cwd-border); border-radius: 12px; background: var(--cwd-raised); color: #cbd7eb; }
+.cw-download-platform-title h2 { font-size: 21px; font-weight: 600; letter-spacing: -0.035em; line-height: 1.25; }
+.cw-download-platform-title p { margin-top: 4px; color: var(--cwd-muted); font-size: 13px; }
+.cw-download-badge { padding: 4px 10px; border: 1px solid rgb(91 141 255 / 0.3); border-radius: 6px; background: rgb(91 141 255 / 0.08); color: #b2caff; font-size: 11px; font-weight: 500; }
+.cw-download-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 24px; margin-top: 26px; }
+.cw-download-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 48px; padding: 12px 24px; border: 1px solid rgb(255 255 255 / 0.12); border-radius: 10px; background: var(--cwd-accent); color: #090c12; font-size: 14px; font-weight: 650; box-shadow: 0 3px 8px rgb(0 0 0 / 0.15); transition: background-color 150ms ease; }
+.cw-download-button:hover { background: #7ba3ff; }
+.cw-download-text-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--cwd-secondary); font-size: 13px; text-decoration: underline; text-decoration-color: #526078; text-underline-offset: 4px; }
+.cw-download-text-link:hover { color: var(--cwd-text); text-decoration-color: currentColor; }
+.cw-download-release-details { display: flex; flex-wrap: wrap; gap: 16px 30px; margin-top: 22px; font-size: 11px; }
+.cw-download-release-details dt { color: var(--cwd-muted); }
+.cw-download-release-details dd { margin-top: 3px; color: var(--cwd-secondary); overflow-wrap: anywhere; }
+.cw-download-warning { display: flex; align-items: flex-start; gap: 10px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--cwd-border); color: var(--cwd-muted); font-size: 12px; line-height: 1.75; }
+.cw-download-warning > svg { flex-shrink: 0; margin-top: 2px; color: #b4c5df; }
+.cw-download-warning strong { color: var(--cwd-secondary); font-weight: 500; }
+
+.cw-download-platforms { padding: 24px 28px 0; }
+.cw-download-platforms h2 { margin-bottom: 14px; color: var(--cwd-secondary); font-size: 12px; font-weight: 500; }
+.cw-download-platforms dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.cw-download-platforms dl > div + div { padding-left: 22px; border-left: 1px solid var(--cwd-border); }
+.cw-download-platforms dt { font-size: 13px; }
+.cw-download-platforms dd { margin-top: 3px; color: var(--cwd-muted); font-size: 12px; }
+.cw-download-platforms > p { margin-top: 18px; color: var(--cwd-muted); font-size: 11px; }
+
+.cw-download-start { display: grid; grid-template-columns: 0.9fr 1.3fr; gap: 48px; margin-top: 56px; padding-top: 40px; border-top: 1px solid var(--cwd-border); }
+.cw-download-start-intro h2 { margin-top: 14px; font-size: 31px; font-weight: 500; letter-spacing: -0.045em; line-height: 1.2; }
+.cw-download-start-intro > p:not(.cw-download-eyebrow) { margin-top: 16px; color: var(--cwd-muted); font-size: 14px; line-height: 1.8; }
+.cw-download-companions { display: flex; align-items: center; gap: 4px; margin-top: 26px; }
+.cw-download-companions > svg { transform: rotate(-5deg); }
+.cw-download-start-intro > a { margin-top: 10px; }
+.cw-download-steps { display: flex; flex-direction: column; gap: 24px; margin: 0; padding: 0; list-style: none; }
+.cw-download-steps li { display: flex; align-items: flex-start; gap: 14px; }
+.cw-download-step-number { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 26px; height: 26px; border: 1px solid #3a4a62; border-radius: 8px; background: var(--cwd-surface); color: #b2caff; font-size: 11px; font-variant-numeric: tabular-nums; }
+.cw-download-steps h3 { font-size: 14px; font-weight: 550; line-height: 26px; letter-spacing: -0.01em; }
+.cw-download-steps p { margin-top: 5px; color: var(--cwd-muted); font-size: 13px; line-height: 1.8; }
+
+.cw-download-scope { display: grid; gap: 10px; margin-top: 36px; padding: 18px 20px; border: 1px solid var(--cwd-border); border-radius: 12px; background: rgb(18 24 34 / 0.6); color: var(--cwd-muted); font-size: 12px; line-height: 1.8; }
+.cw-download-scope strong { color: var(--cwd-secondary); font-weight: 500; }
+.cw-download-more { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; margin-top: 40px; padding: 30px 0 40px; border-top: 1px solid var(--cwd-border); }
+.cw-download-more h2 { font-size: 14px; font-weight: 550; }
+.cw-download-more p { margin-top: 7px; color: var(--cwd-muted); font-size: 12px; }
+.cw-download-more-links { display: flex; align-items: center; flex-wrap: wrap; gap: 0 20px; }
+.cw-download-more .cw-download-email-note { margin-top: 0; font-size: 11px; overflow-wrap: anywhere; }
+.cw-download-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 24px; max-width: 820px; margin: 0 auto; padding: 18px 0 28px; border-top: 1px solid var(--cwd-border); color: var(--cwd-muted); font-size: 12px; }
+.cw-download-footer a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+.cw-download-footer a:hover { color: var(--cwd-text); }
+
+@media (max-width: 875px) {
+  .cw-download-footer { margin-inline: 28px; }
+}
+
+@media (max-width: 639px) {
+  .cw-download-nav-inner { min-height: 68px; padding-inline: 20px; gap: 14px; }
+  .cw-download-brand { gap: 8px; font-size: 13px; }
+  .cw-download-nav nav a { gap: 4px; font-size: 12px; }
+  .cw-download-main { padding-inline: 20px; }
+  .cw-download-hero { padding: 36px 0 28px; }
+  .cw-download-lead { font-size: 14px; }
+  .cw-download-card { padding: 22px; border-radius: 18px; }
+  .cw-download-actions { gap: 6px; }
+  .cw-download-button { width: 100%; padding-inline: 12px; }
+  .cw-download-actions > .cw-download-text-link { justify-content: center; width: 100%; }
+  .cw-download-release-details { gap: 14px 22px; margin-top: 14px; }
+  .cw-download-release-details > div:first-child { width: 100%; }
+  .cw-download-platforms { padding: 22px 4px 0; }
+  .cw-download-platforms dl { gap: 12px; }
+  .cw-download-platforms dl > div + div { padding-left: 12px; }
+  .cw-download-platforms dt { font-size: 12px; }
+  .cw-download-platforms dd { font-size: 11px; }
+  .cw-download-start { grid-template-columns: 1fr; gap: 26px; margin-top: 36px; padding-top: 30px; }
+  .cw-download-start-intro h2 { font-size: 30px; }
+  .cw-download-companions { margin-top: 20px; }
+  .cw-download-steps { gap: 22px; }
+  .cw-download-more { grid-template-columns: 1fr; gap: 24px; margin-top: 30px; padding-bottom: 28px; }
+  .cw-download-footer { margin-inline: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-download * { transition: none; }
+}

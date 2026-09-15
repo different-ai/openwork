@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 setbuf(stdout, nil)
@@ -15,6 +16,29 @@ MainActor.assumeIsolated {
 switch command {
 case "--check":
     printJSON(SessionRuntime.permissions())
+case "permissions":
+    guard CommandLine.arguments.count == 3,
+          ["accessibility", "screenRecording"].contains(CommandLine.arguments[2]) else { exit(1) }
+    // Host apps own the explainer; only the signed helper requests its OS access.
+    NSApplication.shared.setActivationPolicy(.accessory)
+    let accessibility = CommandLine.arguments[2] == "accessibility"
+    if accessibility {
+        AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+    } else {
+        CGRequestScreenCaptureAccess()
+    }
+    let pane = accessibility ? "Privacy_Accessibility" : "Privacy_ScreenCapture"
+    let opened = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!)
+    // Opening settings is not evidence that the person granted permission.
+    printJSON(["opened": opened])
+    if !opened { exit(1) }
+case "permissions-coworker":
+    guard CommandLine.arguments.count == 3,
+          let permission = CoworkerPermission(rawValue: CommandLine.arguments[2]) else { exit(1) }
+    NSApplication.shared.setActivationPolicy(.accessory)
+    let coach = PermissionCoach(permission: permission)
+    NSApplication.shared.delegate = coach
+    withExtendedLifetime(coach) { NSApplication.shared.run() }
 case "--list-apps":
     let apps = NSWorkspace.shared.runningApplications
         .filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) }
@@ -23,8 +47,12 @@ case "--list-apps":
 case "relay":
     guard CommandLine.arguments.count == 3 else { exit(1) }
     runDesktopRelay(CommandLine.arguments[2])
-case "mcp", "mcp-hosted":
-    SessionControls.hosted = command == "mcp-hosted"
+case "mcp", "mcp-hosted", "mcp-coworker", "mcp-coworker-hosted":
+    SessionControls.embeddedCoworker = command == "mcp-coworker-hosted"
+    SessionControls.hosted = command == "mcp-hosted" || SessionControls.embeddedCoworker
+    // Presentation is independent of hosted approval and recovery policy.
+    SessionControls.coworkerPresentation = command == "mcp-coworker"
+    if SessionControls.embeddedCoworker { MCPOutput.shared.enableNonblocking() }
     NSApplication.shared.setActivationPolicy(.accessory)
     let server = MCPServer()
     signal(SIGTERM, SIG_IGN); signal(SIGINT, SIG_IGN)
@@ -73,7 +101,7 @@ case "setup":
     reopen.resume()
     withExtendedLifetime((delegate, reopen)) { NSApplication.shared.run() }
 default:
-    fputs("Usage: ComputerUse [mcp|--check|--list-apps|setup]\n", stderr)
+    fputs("Usage: ComputerUse [mcp|mcp-hosted|mcp-coworker|mcp-coworker-hosted|--check|--list-apps|setup|permissions accessibility|permissions screenRecording|permissions-coworker accessibility|permissions-coworker screenRecording]\n", stderr)
     exit(1)
 }
 }

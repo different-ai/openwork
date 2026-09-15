@@ -1,0 +1,316 @@
+export type CoworkerManagedMcpConnection = {
+  name: string;
+  serverUrl: string;
+  enabled: boolean;
+  status: "needs_auth" | "connecting" | "connected" | "reconnect_required";
+  lastError: string | null;
+  hasCredential: boolean;
+  updatedAt: number;
+};
+
+export type CoworkerMcpItem = {
+  name: string;
+  config: Record<string, unknown>;
+  source: "config.project" | "config.global" | "config.remote";
+  disabledByTools?: boolean;
+  managedOAuth?: CoworkerManagedMcpConnection | null;
+};
+
+export type CoworkerMcpAppContext = {
+  sessionId: string | null;
+  engine: "v1" | "v2";
+  readOnly: boolean;
+};
+
+export type CoworkerMcpAppResource = {
+  launchId?: string;
+  /** Captured by the host at resolution, never accepted from provider HTML. */
+  context: CoworkerMcpAppContext;
+  serverName: string;
+  toolName: string;
+  resourceUri: string;
+  html: string;
+  csp: {
+    connectDomains: string[];
+    resourceDomains: string[];
+    frameDomains: string[];
+    baseUriDomains: string[];
+  };
+  prefersBorder: boolean;
+};
+
+export type CoworkerMcpAppLaunchReference = {
+  connectionId?: string;
+  toolName: string;
+  resourceUri: string;
+  arguments: Record<string, unknown>;
+};
+
+export type CoworkerMcpAppCatalogApp = {
+  serverName: string;
+  connectionId?: string;
+  toolName: string;
+  projectedToolName: string;
+  resourceUri: string;
+  title: string | null;
+  description: string | null;
+  requiresInput: boolean;
+  requiresApproval: boolean;
+};
+
+export type CoworkerMcpAppCatalogServer = {
+  serverName: string;
+  displayName?: string;
+  connectionId?: string;
+  reachable: boolean;
+  error?: string;
+  apps: CoworkerMcpAppCatalogApp[];
+};
+
+export type CoworkerMcpServerTool = {
+  name: string;
+  title: string | null;
+  description: string | null;
+  resourceUri: string | null;
+};
+
+export type PreservedMcpAppResult = {
+  content: Array<Record<string, unknown>>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+};
+
+export class CoworkerMcpError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly details?: unknown;
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    details?: unknown,
+  ) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+    this.name = "CoworkerMcpError";
+  }
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function preservedResult(value: unknown): PreservedMcpAppResult | null {
+  if (!isRecord(value) || !Array.isArray(value.content) || !value.content.every(isRecord)) return null;
+  return {
+    content: value.content,
+    ...(isRecord(value.structuredContent) ? { structuredContent: value.structuredContent } : {}),
+    ...(typeof value.isError === "boolean" ? { isError: value.isError } : {}),
+    ...(isRecord(value._meta) ? { _meta: value._meta } : {}),
+  };
+}
+
+export function preservedMcpAppResult(input: {
+  output: unknown;
+  metadata: Record<string, unknown>;
+}): PreservedMcpAppResult | null {
+  return preservedResult(input.metadata.openworkMcpResult)
+    ?? preservedResult(input.metadata.openworkMcpApp)
+    ?? preservedResult(input.output);
+}
+
+export function mcpFailureMessage(result: PreservedMcpAppResult, fallback = "This App could not start with the supplied input."): string {
+  const messages = new Set<string>();
+  if (typeof result.structuredContent?.message === "string" && result.structuredContent.message.trim()) messages.add(result.structuredContent.message);
+  for (const item of result.content) {
+    if (item.type !== "text" || typeof item.text !== "string" || !item.text.trim()) continue;
+    try {
+      const parsed: unknown = JSON.parse(item.text);
+      if (isRecord(parsed) && typeof parsed.message === "string" && parsed.message.trim()) {
+        messages.add(parsed.message);
+        continue;
+      }
+    } catch {
+      // Plain-text provider errors remain visible alongside structured failures.
+    }
+    messages.add(item.text);
+  }
+  return [...messages].join("\n") || fallback;
+}
+
+export function gatewayMcpAppLaunch(meta: unknown): CoworkerMcpAppLaunchReference | null {
+  if (!isRecord(meta) || !isRecord(meta["openwork/mcpApp"])) return null;
+  const launch = meta["openwork/mcpApp"];
+  if ((launch.connectionId !== undefined && typeof launch.connectionId !== "string")
+    || typeof launch.toolName !== "string"
+    || typeof launch.resourceUri !== "string"
+    || !isRecord(launch.arguments)) return null;
+  return {
+    ...(typeof launch.connectionId === "string" ? { connectionId: launch.connectionId } : {}),
+    toolName: launch.toolName,
+    resourceUri: launch.resourceUri,
+    arguments: launch.arguments,
+  };
+}
+
+export function createCoworkerMcpClient(input: {
+  serverUrl: string;
+  workspaceId: string;
+  token: string;
+}) {
+  const baseUrl = input.serverUrl.replace(/\/$/, "");
+  const workspace = encodeURIComponent(input.workspaceId);
+
+  async function request<T>(path: string, options?: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T> {
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => controller.abort(), options?.timeoutMs ?? 15_000);
+    try {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: options?.method ?? "GET",
+        headers: {
+          Authorization: `Bearer ${input.token}`,
+          "Content-Type": "application/json",
+        },
+        body: options?.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: controller.signal,
+        redirect: "error",
+      });
+      const text = await response.text();
+      const payload: unknown = text ? JSON.parse(text) : null;
+      if (!response.ok) {
+        const error = isRecord(payload) ? payload : {};
+        throw new CoworkerMcpError(
+          response.status,
+          typeof error.code === "string" ? error.code : "request_failed",
+          typeof error.message === "string" ? error.message : response.statusText,
+          error.details,
+        );
+      }
+      return payload as T;
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") {
+        throw new CoworkerMcpError(408, "request_timeout", "OpenWork did not respond in time.");
+      }
+      throw cause;
+    } finally {
+      globalThis.clearTimeout(timeout);
+    }
+  }
+
+  return {
+    listInventory: () => request<{ items: CoworkerMcpItem[] }>(`/workspace/${workspace}/mcp`),
+    /** How the coworker's AI service sees each configured server right now, by name. */
+    engineStatus: () => request<unknown>(`/workspace/${workspace}/opencode2/api/mcp`)
+      .then((value): Record<string, unknown> => {
+        if (!isRecord(value) || !Array.isArray(value.data)) throw new Error("Native MCP status could not be read.");
+        return Object.fromEntries(value.data.flatMap((item) => isRecord(item) && typeof item.name === "string" ? [[item.name, item.status]] : []));
+      }),
+    /** What one configured remote server offers, as it describes itself. */
+    listServerTools: (serverName: string) => request<unknown>(`/workspace/${workspace}/mcp/${encodeURIComponent(serverName)}/tools`, { timeoutMs: 20_000 })
+      .then((payload): CoworkerMcpServerTool[] => {
+        if (!isRecord(payload) || !Array.isArray(payload.tools)) throw new Error("Tool inventory could not be read.");
+        const tools = payload.tools;
+        return tools.flatMap((tool): CoworkerMcpServerTool[] => {
+          if (!isRecord(tool) || typeof tool.name !== "string") throw new Error("Tool inventory could not be read.");
+          return [{
+            name: tool.name,
+            title: typeof tool.title === "string" ? tool.title : null,
+            description: typeof tool.description === "string" ? tool.description : null,
+            resourceUri: typeof tool.resourceUri === "string" ? tool.resourceUri : null,
+          }];
+        });
+      }),
+    listApps: () => request<{ servers: CoworkerMcpAppCatalogServer[] }>(
+      `/workspace/${workspace}/mcp-apps/list`,
+      { timeoutMs: 30_000 },
+    ),
+    searchCapabilities: (query: string) => request<PreservedMcpAppResult>(`/workspace/${workspace}/mcp/openwork-cloud/search`, {
+      method: "POST",
+      body: { query },
+    }),
+    resolveApp: async (projectedToolName: string, context: CoworkerMcpAppContext, launch?: CoworkerMcpAppLaunchReference) => {
+      const captured = { ...context };
+      const resolved = await request<{ app: Omit<CoworkerMcpAppResource, "context"> | null }>(`/workspace/${workspace}/mcp-apps/resolve`, {
+        method: "POST",
+        body: { projectedToolName, context: captured, ...(launch ? { launch } : {}) },
+      });
+      return { app: resolved.app ? { ...resolved.app, context: captured } : null };
+    },
+    releaseApp: (launchId: string) => request<{ released: boolean }>(`/workspace/${workspace}/mcp-apps/release`, {
+      method: "POST",
+      body: { launchId },
+    }),
+    callAppTool: (payload: {
+      launchId: string;
+      sessionId: string | null;
+      engine: "v1" | "v2";
+      serverName: string;
+      name: string;
+      resourceUri: string;
+      arguments?: Record<string, unknown>;
+      approved?: boolean;
+    }) => request<PreservedMcpAppResult>(`/workspace/${workspace}/mcp-apps/call`, {
+      method: "POST",
+      body: payload,
+    }),
+    sandboxFor: (app: CoworkerMcpAppResource, hostOrigin: string) => {
+      const messageOrigin = hostOrigin === "file://" ? "null" : hostOrigin;
+      const url = new URL(`${baseUrl}/mcp-apps/sandbox.html`);
+      if (url.origin === hostOrigin && url.hostname === "localhost") url.hostname = "127.0.0.1";
+      else if (url.origin === hostOrigin && url.hostname === "127.0.0.1") url.hostname = "localhost";
+      url.searchParams.set("csp", JSON.stringify(app.csp));
+      url.searchParams.set("hostOrigin", messageOrigin);
+      return { url: url.toString(), expectedOrigin: url.origin };
+    },
+  };
+}
+
+export type CoworkerMcpClient = ReturnType<typeof createCoworkerMcpClient>;
+
+/** One bridge lifetime. The resolving surface owns release of its server lease. */
+export function createCoworkerMcpAppActions(
+  client: Pick<CoworkerMcpClient, "callAppTool">,
+  app: CoworkerMcpAppResource,
+  confirm: (message: string) => boolean | Promise<boolean>,
+) {
+  let active = true;
+  const assertActive = () => {
+    if (!active) throw new Error("This App view has closed or changed. Reopen it before using its actions.");
+    if (app.context.readOnly) throw new Error("This view is read-only and cannot perform App actions.");
+    if (!app.launchId) throw new Error("This App has no live launch context. Reopen it before using its actions.");
+    return app.launchId;
+  };
+  return {
+    dispose: () => { active = false; },
+    assertActive,
+    callTool: async (name: string, args?: Record<string, unknown>, approved = false) => {
+      const request = {
+        launchId: assertActive(),
+        sessionId: app.context.sessionId,
+        engine: app.context.engine,
+        serverName: app.serverName,
+        resourceUri: app.resourceUri,
+        name,
+        arguments: args,
+        ...(approved ? { approved: true } : {}),
+      };
+      try {
+        const result = await client.callAppTool(request);
+        assertActive();
+        return result;
+      } catch (cause) {
+        assertActive();
+        if (approved || !(cause instanceof CoworkerMcpError) || cause.code !== "tool_requires_approval") throw cause;
+        const allowed = await confirm(`Allow this App to use ${name} on ${app.serverName} once?`);
+        assertActive();
+        if (!allowed) throw new Error("You declined this App tool call.");
+        const result = await client.callAppTool({ ...request, approved: true });
+        assertActive();
+        return result;
+      }
+    },
+  };
+}

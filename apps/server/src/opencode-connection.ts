@@ -10,9 +10,10 @@ function trim(value: string | undefined): string {
 }
 
 export function resolveWorkspaceOpencodeConnection(
-  config: Pick<ServerConfig, "opencodeBaseUrl" | "opencodeUsername" | "opencodePassword">,
+  config: Pick<ServerConfig, "engine" | "opencodeBaseUrl" | "opencodeUsername" | "opencodePassword">,
   workspace: WorkspaceInfo,
 ): OpencodeConnection {
+  if (config.engine === "v2") return {};
   const baseUrl = trim(workspace.baseUrl) || trim(config.opencodeBaseUrl) || undefined;
   const username = trim(workspace.opencodeUsername) || trim(config.opencodeUsername);
   const password = trim(workspace.opencodePassword) || trim(config.opencodePassword);

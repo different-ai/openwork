@@ -1,4 +1,5 @@
 export * from "./browser.ts";
+export * from "./coworker.ts";
 export * from "./daytona.ts";
 export * from "./den-stack.ts";
 export * from "./desktop.ts";

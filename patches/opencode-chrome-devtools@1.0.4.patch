@@ -1,0 +1,487 @@
+diff --git a/dist/plugin.js b/dist/plugin.js
+index c20192367..84a9246d4 100644
+--- a/dist/plugin.js
++++ b/dist/plugin.js
+@@ -12344,16 +12344,27 @@ class CDPClient {
+   id = 0;
+   pending = new Map;
+   eventHandlers = new Map;
+-  constructor(endpoint) {
++  closed = false;
++  abortListener;
++  constructor(endpoint, signal) {
+     this.endpoint = endpoint;
++    this.signal = signal;
++  }
++  assertActive() {
++    this.signal?.throwIfAborted();
++    if (this.closed) throw new Error("CDP connection closed");
+   }
+   async connect() {
++    this.assertActive();
+     if (this.ws?.readyState === WebSocket.OPEN)
+       return;
+     return await new Promise((resolve, reject) => {
++      const fail = (error) => { reject(error); this.close(error); };
+       this.ws = new WebSocket(this.endpoint);
+-      this.ws.once("open", () => resolve());
+-      this.ws.once("error", (err) => reject(err));
++      this.ws.once("open", () => {
++        try { this.assertActive(); resolve(); } catch (error) { fail(error); }
++      });
++      this.ws.on("error", fail);
+       this.ws.on("message", (data) => {
+         const msg = JSON.parse(data.toString());
+         if (msg.id !== undefined && this.pending.has(msg.id)) {
+@@ -12368,11 +12379,15 @@ class CDPClient {
+         }
+       });
+       this.ws.on("close", () => {
+-        this.ws = null;
++        fail(new Error("CDP connection closed"));
+       });
++      this.abortListener = () => fail(this.signal.reason ?? new Error("Browser tool cancelled"));
++      this.signal?.addEventListener("abort", this.abortListener, { once: true });
++      if (this.signal?.aborted) this.abortListener();
+     });
+   }
+   async send(method, params = {}) {
++    this.assertActive();
+     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+       throw new Error("CDP not connected");
+     }
+@@ -12395,7 +12410,16 @@ class CDPClient {
+           reject(err);
+         }
+       });
+-      this.ws.send(JSON.stringify({ id, method, params }));
++      try {
++        const payload = JSON.stringify({ id, method, params });
++        // Check at the actual dispatch boundary, including each fill key event.
++        this.assertActive();
++        this.ws.send(payload);
++      } catch (error) {
++        this.pending.delete(id);
++        clearTimeout(timeout);
++        reject(error);
++      }
+     });
+   }
+   on(event, handler) {
+@@ -12403,17 +12427,26 @@ class CDPClient {
+       this.eventHandlers.set(event, []);
+     this.eventHandlers.get(event).push(handler);
+   }
+-  close() {
+-    this.ws?.close();
++  close(reason = new Error("CDP connection closed")) {
++    if (this.closed) return;
++    this.closed = true;
++    this.signal?.removeEventListener("abort", this.abortListener);
++    for (const pending of this.pending.values()) pending.reject(reason);
++    this.pending.clear();
++    this.eventHandlers.clear();
++    const socket = this.ws;
+     this.ws = null;
++    socket?.terminate();
+   }
+ }
+-async function listTargets(browserUrl) {
++async function listTargets(browserUrl, signal) {
++  signal?.throwIfAborted();
+   const url2 = browserUrl.replace(/\/$/, "");
+-  const res = await fetch(`${url2}/json/list`);
++  const res = await fetch(`${url2}/json/list`, { signal });
+   if (!res.ok)
+     throw new Error(`Failed to list targets: ${res.status}`);
+   const targets = await res.json();
++  signal?.throwIfAborted();
+   const parsed = new URL(url2);
+   const isProxy = !["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname);
+   if (isProxy) {
+@@ -12427,16 +12460,16 @@ async function listTargets(browserUrl) {
+   }
+   return targets;
+ }
+-async function connectTarget(wsUrl) {
+-  const client = new CDPClient(wsUrl);
++async function connectTarget(wsUrl, signal) {
++  const client = new CDPClient(wsUrl, signal);
+   await client.connect();
+   return client;
+ }
+-async function connectFirstPage(browserUrl) {
+-  const targets = await listTargets(browserUrl);
++async function connectFirstPage(browserUrl, signal) {
++  const targets = await listTargets(browserUrl, signal);
+   const page = targets.find((t) => t.type === "page");
+   if (!page)
+     throw new Error("No page target found");
+-  const client = await connectTarget(page.webSocketDebuggerUrl);
++  const client = await connectTarget(page.webSocketDebuggerUrl, signal);
+   return { client, target: { id: page.id, title: page.title, url: page.url } };
+ }
+@@ -12449,21 +12482,19 @@ function walkAXTree(axNode, allNodes, byUid) {
+   const value = axNode.value?.value;
+   const backendNodeId = axNode.backendDOMNodeId ?? 0;
+   const ignored = axNode.ignored;
+-  if (ignored && !name)
+-    return null;
+-  const uid = nextUid++;
++  const uid = ignored ? null : nextUid++;
+   const children = [];
+   const childIds = axNode.childIds ?? [];
+   for (const childId of childIds) {
+     const childAx = allNodes[childId];
+     if (!childAx)
+       continue;
+-    const childNode = walkAXTree(childAx, allNodes, byUid);
+-    if (childNode)
+-      children.push(childNode);
++    children.push(...walkAXTree(childAx, allNodes, byUid));
+   }
+-  if (!name && !value && (role === "generic" || role === "none") && children.length <= 1) {
+-    return children[0] ?? null;
++  // Ignored ancestors still own accessible descendants. Promote those nodes
++  // without assigning the omitted wrapper a UID or losing sibling controls.
++  if (ignored || (!name && !value && (role === "generic" || role === "none") && children.length <= 1)) {
++    return children;
+   }
+   const node = {
+     uid,
+@@ -12474,7 +12505,7 @@ function walkAXTree(axNode, allNodes, byUid) {
+     ...children.length > 0 ? { children } : {}
+   };
+   byUid.set(uid, node);
+-  return node;
++  return [node];
+ }
+ function renderTree(nodes, indent = 0) {
+   const lines = [];
+@@ -12504,10 +12535,7 @@ async function takeSnapshot(client) {
+     indexed[node.nodeId] = node;
+   }
+   const byUid = new Map;
+-  const roots = [];
+-  const rootNode = walkAXTree(axNodes[0], indexed, byUid);
+-  if (rootNode)
+-    roots.push(rootNode);
++  const roots = walkAXTree(axNodes[0], indexed, byUid);
+   return { nodes: roots, byUid, text: renderTree(roots) };
+ }
+ function resolveUid(snapshot, uid) {
+@@ -12524,15 +12552,15 @@ function packageInfo() {
+ function cacheKey(browserUrl, targetId) {
+   return `${browserUrl}::${targetId ?? "default"}`;
+ }
+-async function getClient(browserUrl, targetId) {
++async function getClient(browserUrl, targetId, signal) {
+   if (targetId) {
+-    const targets = await listTargets(browserUrl);
++    const targets = await listTargets(browserUrl, signal);
+     const target = targets.find((t) => t.id === targetId);
+     if (!target)
+       throw new Error(`Target ${targetId} not found`);
+-    return { client: await connectTarget(target.webSocketDebuggerUrl), target };
++    return { client: await connectTarget(target.webSocketDebuggerUrl, signal), target };
+   }
+-  return connectFirstPage(browserUrl);
++  return connectFirstPage(browserUrl, signal);
+ }
+ var plugin = async () => {
+   return {
+@@ -12550,8 +12578,8 @@ var plugin = async () => {
+         args: {
+           browser_url: tool.schema.string().describe('CDP HTTP endpoint, e.g. "http://127.0.0.1:9222"')
+         },
+-        async execute(args) {
+-          const targets = await listTargets(args.browser_url);
++        async execute(args, context) {
++          const targets = await listTargets(args.browser_url, context?.abort);
+           const pages = targets.filter((t) => t.type === "page");
+           if (pages.length === 0)
+             return "No page targets found.";
+@@ -12568,17 +12596,22 @@ var plugin = async () => {
+           target_id: tool.schema.string().optional().describe("Target ID. Omit for the first page target."),
+           url: tool.schema.string().describe("URL to navigate to")
+         },
+-        async execute(args) {
+-          const { client } = await getClient(args.browser_url, args.target_id);
++        async execute(args, context) {
++          const { client } = await getClient(args.browser_url, args.target_id, context?.abort);
+           try {
+             await client.send("Page.enable");
+             await client.send("Page.navigate", { url: args.url });
+-            await new Promise((resolve) => {
+-              const timeout = setTimeout(resolve, 1e4);
+-              client.on("Page.loadEventFired", () => {
++            await new Promise((resolve, reject) => {
++              const done = (error) => {
+                 clearTimeout(timeout);
+-                resolve();
+-              });
++                context?.abort?.removeEventListener("abort", abort);
++                if (error) reject(error); else resolve();
++              };
++              const abort = () => done(context.abort.reason ?? new Error("Browser tool cancelled"));
++              const timeout = setTimeout(() => done(), 1e4);
++              client.on("Page.loadEventFired", () => done());
++              context?.abort?.addEventListener("abort", abort, { once: true });
++              if (context?.abort?.aborted) abort();
+             });
+             const result = await client.send("Runtime.evaluate", {
+               expression: "document.title",
+@@ -12598,11 +12631,12 @@ Title: ${title}`;
+           browser_url: tool.schema.string().describe("CDP HTTP endpoint"),
+           target_id: tool.schema.string().optional().describe("Target ID. Omit for the first page target.")
+         },
+-        async execute(args) {
+-          const { client } = await getClient(args.browser_url, args.target_id);
++        async execute(args, context) {
++          const { client } = await getClient(args.browser_url, args.target_id, context?.abort);
+           try {
+             await client.send("Accessibility.enable");
+             const snap = await takeSnapshot(client);
++            client.assertActive();
+             snapshotCache.set(cacheKey(args.browser_url, args.target_id), snap);
+             if (!snap.text || snap.text === "(empty page)") {
+               const result = await client.send("Runtime.evaluate", {
+@@ -12625,14 +12659,15 @@ ${result.result?.value ?? "(empty)"}`;
+           target_id: tool.schema.string().optional().describe("Target ID"),
+           uid: tool.schema.number().describe("Element UID from browser_snapshot")
+         },
+-        async execute(args) {
++        async execute(args, context) {
++          context?.abort?.throwIfAborted();
+           const snap = snapshotCache.get(cacheKey(args.browser_url, args.target_id));
+           if (!snap)
+             return "No snapshot cached. Call browser_snapshot first.";
+           const node = resolveUid(snap, args.uid);
+           if (!node)
+             return `UID ${args.uid} not found in snapshot.`;
+-          const { client } = await getClient(args.browser_url, args.target_id);
++          const { client } = await getClient(args.browser_url, args.target_id, context?.abort);
+           try {
+             const resolved = await client.send("DOM.resolveNode", { backendNodeId: node.backendNodeId });
+             const objectId = resolved.object?.objectId;
+@@ -12678,14 +12713,15 @@ ${result.result?.value ?? "(empty)"}`;
+           uid: tool.schema.number().describe("Element UID from browser_snapshot"),
+           value: tool.schema.string().describe("Text to fill")
+         },
+-        async execute(args) {
++        async execute(args, context) {
++          context?.abort?.throwIfAborted();
+           const snap = snapshotCache.get(cacheKey(args.browser_url, args.target_id));
+           if (!snap)
+             return "No snapshot cached. Call browser_snapshot first.";
+           const node = resolveUid(snap, args.uid);
+           if (!node)
+             return `UID ${args.uid} not found in snapshot.`;
+-          const { client } = await getClient(args.browser_url, args.target_id);
++          const { client } = await getClient(args.browser_url, args.target_id, context?.abort);
+           try {
+             const resolved = await client.send("DOM.resolveNode", { backendNodeId: node.backendNodeId });
+             const objectId = resolved.object?.objectId;
+@@ -12716,8 +12752,8 @@ ${result.result?.value ?? "(empty)"}`;
+           target_id: tool.schema.string().optional().describe("Target ID"),
+           expression: tool.schema.string().describe("JavaScript expression to evaluate")
+         },
+-        async execute(args) {
+-          const { client } = await getClient(args.browser_url, args.target_id);
++        async execute(args, context) {
++          const { client } = await getClient(args.browser_url, args.target_id, context?.abort);
+           try {
+             const result = await client.send("Runtime.evaluate", {
+               expression: args.expression,
+@@ -12743,10 +12779,11 @@ ${result.result?.value ?? "(empty)"}`;
+           browser_url: tool.schema.string().describe("CDP HTTP endpoint"),
+           target_id: tool.schema.string().optional().describe("Target ID")
+         },
+-        async execute(args) {
+-          const { client } = await getClient(args.browser_url, args.target_id);
++        async execute(args, context) {
++          const { client } = await getClient(args.browser_url, args.target_id, context?.abort);
+           try {
+             const result = await client.send("Page.captureScreenshot", { format: "png" });
++            client.assertActive();
+             const data = result.data;
+             if (!data)
+               return "Failed to capture screenshot.";
+diff --git a/test/cancellation.test.mjs b/test/cancellation.test.mjs
+new file mode 100644
+index 000000000..cee36c289
+--- /dev/null
++++ b/test/cancellation.test.mjs
+@@ -0,0 +1,172 @@
++import assert from "node:assert/strict";
++import { EventEmitter } from "node:events";
++import { readFile } from "node:fs/promises";
++import test from "node:test";
++import vm from "node:vm";
++
++// Exercise the published provider, replacing transport only. No browser,
++// socket listener, HTTP service, or automation implementation is created.
++async function witness(options = {}) {
++  const packets = [];
++  const sockets = [];
++  const timers = new Set();
++  const writes = [];
++  let discoveries = 0;
++  class Socket extends EventEmitter {
++    static OPEN = 1;
++    readyState = 0;
++    constructor() {
++      super(); sockets.push(this);
++      queueMicrotask(() => {
++        options.connect?.();
++        if (this.readyState === 3 || options.holdConnect) return;
++        this.readyState = Socket.OPEN; this.emit("open");
++      });
++    }
++    send(payload) {
++      assert.equal(this.readyState, Socket.OPEN);
++      const packet = JSON.parse(payload);
++      packets.push(packet);
++      options.dispatch?.(packet, this);
++      let result = {};
++      if (packet.method === "Accessibility.getFullAXTree") result = { nodes: options.nodes ?? [
++        { nodeId: "root", role: { value: "RootWebArea" }, childIds: ["field"] },
++        { nodeId: "field", role: { value: "textbox" }, name: { value: "Field" }, backendDOMNodeId: 42 },
++      ] };
++      if (packet.method === "DOM.resolveNode") result = { object: { objectId: "field-object" } };
++      if (packet.method === "DOM.getBoxModel") result = { model: { content: [0, 0, 20, 0, 20, 20, 0, 20] } };
++      if (packet.method === "Page.captureScreenshot") result = { data: "UE5H" };
++      if (packet.method === "Runtime.evaluate") result = { result: { value: "Page" } };
++      queueMicrotask(() => {
++        if (this.readyState !== Socket.OPEN || options.holdResponse === packet.method) return;
++        this.emit("message", Buffer.from(JSON.stringify({ id: packet.id, result })));
++      });
++    }
++    terminate() { this.readyState = 3; this.emit("close"); }
++    close() { this.terminate(); }
++  }
++  const context = vm.createContext({
++    URL, Buffer, AbortController, AbortSignal, console,
++    setTimeout: (fn, ms) => { const timer = setTimeout(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); return timer; },
++    clearTimeout: (timer) => { timers.delete(timer); clearTimeout(timer); },
++    fetch: async (_url, init) => {
++      discoveries++; options.discover?.(init);
++      init?.signal?.throwIfAborted();
++      return { ok: true, json: async () => [{ id: "page", type: "page", title: "Page", url: "https://example.test/", webSocketDebuggerUrl: "ws://127.0.0.1:9222/page" }] };
++    },
++  });
++  const url = new URL("../dist/plugin.js", import.meta.url);
++  const module = new vm.SourceTextModule(await readFile(url, "utf8"), { context, initializeImportMeta: (meta) => { meta.url = url.href; } });
++  await module.link(async (name) => {
++    const exports = name === "ws" ? { default: Socket } : name === "fs" ? { readFileSync: () => '{"name":"opencode-chrome-devtools","version":"1.0.4"}', writeFileSync: (...args) => writes.push(args) } : await import(`node:${name}`);
++    return new vm.SyntheticModule(Object.keys(exports), function () { for (const [key, value] of Object.entries(exports)) this.setExport(key, value); }, { context });
++  });
++  await module.evaluate();
++  const { tool } = await module.namespace.server();
++  const handle = { browser_url: "http://127.0.0.1:9222", target_id: "page" };
++  const call = (name, args = {}, abort = new AbortController().signal) => tool[name].execute({ ...handle, ...args }, { sessionID: "native-session", messageID: "native-message", callID: name, directory: "/workspace", abort });
++  return { call, packets, sockets, timers, writes, get discoveries() { return discoveries; } };
++}
++
++test("cancelled fill closes its socket and sends no remaining key events", async () => {
++  const controller = new AbortController();
++  const f = await witness({ dispatch: (packet) => {
++    if (packet.method === "Input.dispatchKeyEvent") controller.abort(new Error("cancelled fill"));
++  } });
++  assert.match(await f.call("browser_snapshot"), /\[2\] textbox/);
++  await assert.rejects(f.call("browser_fill", { uid: 2, value: "abcdef" }, controller.signal), /cancelled fill/);
++  await new Promise(setImmediate);
++  assert.deepEqual(f.packets.filter((packet) => packet.method === "Input.dispatchKeyEvent").map((packet) => packet.params), [{ type: "keyDown", text: "a" }]);
++  assert.ok(f.sockets.every((socket) => socket.readyState === 3));
++  assert.equal(f.timers.size, 0);
++});
++
++test("cancellation before each click dispatch prevents later mouse or fallback input", async () => {
++  for (const boundary of ["DOM.resolveNode", "DOM.getBoxModel", "Input.dispatchMouseEvent"]) {
++    const controller = new AbortController();
++    const f = await witness({ dispatch: (packet) => { if (packet.method === boundary) controller.abort(new Error("cancelled click")); } });
++    await f.call("browser_snapshot");
++    await assert.rejects(f.call("browser_click", { uid: 2 }, controller.signal), /cancelled click/);
++    const input = f.packets.filter((packet) => packet.method.startsWith("Input.") || packet.method === "Runtime.callFunctionOn");
++    assert.deepEqual(input.map((packet) => packet.params.type), boundary === "Input.dispatchMouseEvent" ? ["mousePressed"] : []);
++    assert.ok(f.sockets.every((socket) => socket.readyState === 3));
++    assert.equal(f.timers.size, 0);
++  }
++});
++
++test("pre-aborted tools do not discover targets or dispatch CDP", async () => {
++  const f = await witness();
++  const signal = AbortSignal.abort(new Error("cancelled before start"));
++  for (const name of ["browser_list", "browser_snapshot", "browser_click", "browser_fill", "browser_eval", "browser_navigate", "browser_screenshot"]) {
++    await assert.rejects(f.call(name, { uid: 2, value: "text", expression: "document.title", url: "https://example.test/" }, signal), /cancelled before start/);
++  }
++  assert.equal(f.discoveries, 0);
++  assert.equal(f.sockets.length, 0);
++  assert.equal(f.packets.length, 0);
++  assert.equal(f.writes.length, 0);
++});
++
++test("cancellation interrupts connection setup and outstanding capture without waiting for timeouts", async () => {
++  for (const holdConnect of [true, false]) {
++    const controller = new AbortController();
++    const f = await witness({ holdConnect, holdResponse: "Page.captureScreenshot" });
++    const operation = assert.rejects(f.call("browser_screenshot", {}, controller.signal), /cancelled capture/);
++    await new Promise(setImmediate);
++    controller.abort(new Error("cancelled capture"));
++    await operation;
++    assert.ok(f.sockets.every((socket) => socket.readyState === 3));
++    assert.equal(f.writes.length, 0);
++    assert.equal(f.timers.size, 0);
++  }
++});
++
++test("cancellation ends the navigation wait and prevents the follow-up evaluation", async () => {
++  const controller = new AbortController();
++  const f = await witness();
++  const operation = assert.rejects(f.call("browser_navigate", { url: "https://example.test/next" }, controller.signal), /cancelled navigation/);
++  await new Promise(setImmediate);
++  controller.abort(new Error("cancelled navigation"));
++  await operation;
++  assert.deepEqual(f.packets.map((packet) => packet.method), ["Page.enable", "Page.navigate"]);
++  assert.equal(f.timers.size, 0);
++});
++
++test("normal fill retains the provider's own key sequence and cleanup", async () => {
++  const f = await witness();
++  await f.call("browser_snapshot");
++  assert.match(await f.call("browser_fill", { uid: 2, value: "ab" }), /Filled/);
++  assert.deepEqual(f.packets.filter((packet) => packet.method === "Input.dispatchKeyEvent").map((packet) => packet.params), [
++    { type: "keyDown", text: "a" }, { type: "keyUp", text: "a" }, { type: "keyDown", text: "b" }, { type: "keyUp", text: "b" },
++  ]);
++  assert.ok(f.sockets.every((socket) => socket.readyState === 3));
++  assert.equal(f.timers.size, 0);
++});
++
++test("ignored roots and wrappers promote all child controls with their original backend identities", async () => {
++  for (const ignoredRoot of [false, true]) {
++    const f = await witness({ nodes: [
++      { nodeId: "root", ignored: ignoredRoot, name: { value: "Review root" }, role: { value: "RootWebArea" }, childIds: ["wrapper", "last"] },
++      { nodeId: "wrapper", ignored: true, role: { value: "none" }, childIds: ["nested", "increment", "hidden"] },
++      { nodeId: "nested", ignored: true, name: { value: "Ignored named wrapper" }, childIds: ["draft"] },
++      { nodeId: "draft", role: { value: "textbox" }, name: { value: "Draft text" }, backendDOMNodeId: 42 },
++      { nodeId: "increment", role: { value: "button" }, name: { value: "Increment" }, backendDOMNodeId: 77 },
++      { nodeId: "hidden", ignored: true, name: { value: "Hidden control" }, backendDOMNodeId: 99 },
++      { nodeId: "last", role: { value: "button" }, name: { value: "Finish" }, backendDOMNodeId: 88 },
++    ] });
++    const snapshot = await f.call("browser_snapshot");
++    assert.doesNotMatch(snapshot, /Ignored named wrapper|Hidden control/);
++    if (ignoredRoot) assert.doesNotMatch(snapshot, /Review root/);
++    else assert.match(snapshot, /\[1\] RootWebArea "Review root"/);
++    const draft = Number(snapshot.match(/\[(\d+)\] textbox "Draft text"/)?.[1]);
++    const increment = Number(snapshot.match(/\[(\d+)\] button "Increment"/)?.[1]);
++    const finish = Number(snapshot.match(/\[(\d+)\] button "Finish"/)?.[1]);
++    assert.ok(draft > 0 && increment > draft && finish > increment);
++    const uids = [...snapshot.matchAll(/\[(\d+)\]/g)].map((match) => match[1]);
++    assert.equal(new Set(uids).size, uids.length);
++    await f.call("browser_fill", { uid: draft, value: "Edited" });
++    await f.call("browser_click", { uid: increment });
++    await f.call("browser_click", { uid: finish });
++    assert.deepEqual(f.packets.filter((packet) => packet.method === "DOM.resolveNode").map((packet) => packet.params.backendNodeId), [42, 77, 88]);
++    assert.equal(f.timers.size, 0);
++  }
++});

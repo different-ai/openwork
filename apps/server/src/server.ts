@@ -4,7 +4,7 @@ import { managedPolicyActionSchema } from "./managed-policy-rules.js";
 import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
@@ -36,11 +36,13 @@ import { buildEngineAuthProbeHeader } from "./engine-registry.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
-import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
-import { CLOUD_NATIVE_SKILL_ID_PREFIX, CloudNativeSkillSyncError } from "./cloud-native-skills.js";
+import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, waitForNativeOpenWorkV2Skills, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
+import { CLOUD_NATIVE_SKILL_ID_PREFIX, CLOUD_NATIVE_SKILLS_SCOPE_HEADER, CloudNativeSkillSyncError } from "./cloud-native-skills.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
+  listMcpServerTools,
+  searchWorkspaceCapabilities,
   McpAppHostError,
   resolveConnectMcpAppResource,
   resolveMcpAppResource,
@@ -156,7 +158,8 @@ import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeO
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
-import { createEngineV2Preview, type EngineV2Preview } from "./engine-v2-preview.js";
+import { createEngineV2Preview, engineV2ByConfig, type EngineV2Preview, type NativeCleanupRequest } from "./engine-v2-preview.js";
+import { resolveOpencodeV2Version } from "./opencode-v2-binary.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -725,7 +728,35 @@ function isPromptAsyncProxyRequest(method: string, proxyPath: string) {
   return method === "POST" && /^\/session\/[^/]+\/prompt_async$/.test(normalizeOpencodeProxyPath(proxyPath));
 }
 
-export async function startServer(config: ServerConfig): Promise<ServeResult> {
+// Only legacy hosts load the v1 SDK. Keep route clients synchronous once the
+// server is ready, and retain a static import() for standalone Bun compilation.
+const legacyClientFactories = new WeakMap<ServerConfig, typeof createOpencodeClient>();
+
+export async function startServer(config: ServerConfig): Promise<ServeResult & {
+  managedOpencodeV2: { pid: number | null; isAlive(): boolean } | null;
+  nativeCleanupRequest: (input: NativeCleanupRequest) => Promise<Response>;
+}> {
+  if (config.engine !== "v2") {
+    legacyClientFactories.set(config, (await import("@opencode-ai/sdk/v2/client")).createOpencodeClient);
+  }
+  if (config.engine === "v2") {
+    if (config.workspaces.some((workspace) => workspace.workspaceType === "remote")) {
+      throw new Error("Mandatory OpenCode v2 requires local workspaces");
+    }
+    // Never give a v1 client or background auth synchronizer an endpoint, even
+    // if an old profile or the launching shell still specifies one.
+    config.opencodeBaseUrl = undefined;
+    config.opencodeUsername = undefined;
+    config.opencodePassword = undefined;
+    config.opencodeDirectory = undefined;
+    for (const workspace of config.workspaces) {
+      workspace.baseUrl = undefined;
+      workspace.opencodeUsername = undefined;
+      workspace.opencodePassword = undefined;
+      workspace.opencode = undefined;
+      workspace.directory = workspace.path;
+    }
+  }
   let taskRecovery: Awaited<ReturnType<typeof createTaskRecovery>> | undefined;
   const approvals = new ApprovalService(config.approval);
   const uiControl = new UiControlMailbox();
@@ -774,6 +805,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       { forceStandby: true, reason: "cloud_provider_sync" },
     ),
     engineBusy: () => {
+      if (config.engine === "v2") return Promise.resolve(false);
       const pool = enginePoolForConfig(config);
       return pool
         ? Promise.resolve(pool.hasDrainingGeneration())
@@ -787,6 +819,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     if (config.workspaces.length > 0) cloudProviderSync.markReloadPending();
   };
   const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true });
+  engineV2ByConfig.set(config, engineV2Preview);
   const routes = createRoutes(
     config,
     approvals,
@@ -878,7 +911,13 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
       const proxyWorkspaceOpencodeV2Mount = async (mount: { workspaceId: string; restPath: string }) => {
         authMode = "client";
+        const nativeAdmission = config.engine === "v2" && request.method === "POST"
+          && /^\/opencode2\/api\/session\/[^/]+\/(?:prompt|command|generate)$/.test(mount.restPath);
+        // Capture the caller's expectation before auth, policy, MCP or skill
+        // queues can await. Never derive this expectation from later state.
+        const expectedNativeSkillsScope = nativeAdmission ? request.headers.get(CLOUD_NATIVE_SKILLS_SCOPE_HEADER) : null;
         try {
+          if (nativeAdmission) await engineV2Preview.assertNativeSkillsScope(expectedNativeSkillsScope);
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
@@ -889,18 +928,24 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
-          // Only exact native history reads may skip execution readiness. Keep
-          // IDs literal (no encoded separators or route-prefix matches), and
-          // still verify session ownership in proxyOpencodeV2Request below.
-          const isSessionHistoryRead = request.method === "GET"
-            && /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?$/.test(mount.restPath);
-          if (!isSessionHistoryRead) {
+          const isObservation = request.method === "GET" && (
+            /^\/opencode2\/api\/(?:event|session(?:\/active)?)$/.test(mount.restPath)
+            || /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?|\/inbox|\/permission(?:\/per[A-Za-z0-9_-]+)?|\/form(?:\/frm_[A-Za-z0-9_-]+)?)?$/.test(mount.restPath)
+          );
+          const isStop = request.method === "POST" && (
+            /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+\/wait$/.test(mount.restPath)
+            || (/^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+\/interrupt$/.test(mount.restPath)
+              && url.searchParams.getAll("continue").length === 1 && url.searchParams.get("continue") === "false")
+          );
+          const isInboxCancellation = request.method === "DELETE"
+            && /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+\/inbox\/msg_[A-Za-z0-9_-]+$/.test(mount.restPath);
+          if (!isObservation && !isStop && !isInboxCancellation) {
             await engineV2Preview.ensureWorkspaceReady(workspace.path);
             // Reconcile through v2's runtime MCP API before execution admission.
             // The ordinary connection routes remain authoritative.
             await engineV2Preview.syncWorkspaceMcp(workspace.id, workspace.path);
           }
-          const send = () => proxyOpencodeV2Request({
+          const forward = (nativeSkillCatalog?: Awaited<ReturnType<typeof waitForNativeOpenWorkV2Skills>>, assertSkillsCurrent?: () => Promise<void>) => proxyOpencodeV2Request({
             config,
             request,
             url,
@@ -909,11 +954,28 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
             connection,
             syncCloudSkills: engineV2Preview.syncCloudSkills,
             actor,
+            nativeSkillCatalog,
+            assertSkillsCurrent,
+            expectedNativeSkillsScope,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
           });
+          const preparesSkills = config.engine === "v2" && ((request.method === "GET" && mount.restPath === "/opencode2/api/skill") || nativeAdmission);
+          const send = async () => {
+            if (!preparesSkills) return forward();
+            try { return await engineV2Preview.withNativeSkills(workspace.path, forward, expectedNativeSkillsScope); }
+            catch (error) {
+              if (error instanceof ApiError) throw error;
+              throw new ApiError(error instanceof CloudNativeSkillSyncError && ["cloud_skill_sync_stale", "cloud_skill_scope_mismatch"].includes(error.code) ? 400 : 502,
+                error instanceof CloudNativeSkillSyncError ? error.code : "engine_skill_sync_failed",
+                "Native skills could not be prepared for this request");
+            }
+          };
           const response = taskRecovery ? await taskRecovery.forward(workspace, "v2", mount.restPath, request, send) : await send();
           return finalize(response);
         } catch (error) {
+          if (error instanceof CloudNativeSkillSyncError) {
+            error = new ApiError(400, error.code, "Native skill authorization does not match this request");
+          }
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
             captureServerException(error, { method: request.method, route: "/workspace/:id/opencode2/*", requestSignal: request.signal });
@@ -930,6 +992,11 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
       if (request.method === "OPTIONS") {
         return finalize(new Response(null, { status: 204 }));
+      }
+
+      if (config.engine === "v2" && (/(?:^|\/)opencode(?:\/|$)/.test(url.pathname)
+        || url.pathname === "/workspaces/remote" || /\/runtime\/upgrade$/.test(url.pathname))) {
+        return finalize(jsonResponse({ code: "engine_v1_disabled", message: "This host exclusively uses OpenCode v2" }, 409));
       }
 
       const canonicalOpencodeMount = parseWorkspaceOpencodeMount(url.pathname);
@@ -1073,12 +1140,18 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     await taskRecovery?.stop().catch(() => undefined);
     captureServerException(error, { method: "START", route: "startServer" });
     cloudProviderSync.stop();
-    await engineV2Preview.stop().catch(() => undefined);
+    let cleanupError: unknown;
+    try { await engineV2Preview.stop(); } catch (error) { cleanupError = error; }
+    engineV2ByConfig.delete(config);
     engineInstanceReaper.close();
     clearEngineInstanceReaperForConfig(config);
     invalidateEngineMcpServerState(config, engineMcpServerState);
     watcherHandle.close();
     reloadBaselineRefreshers.delete(config);
+    envServicesByConfig.delete(config);
+    if (config.engine === "v2" && cleanupError) {
+      throw new AggregateError([error, cleanupError], "OpenWork server startup failed and cleanup was incomplete");
+    }
     throw error;
   }
 
@@ -1094,7 +1167,36 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   }
   // Policy hooks must receive the listener that actually bound, including
   // ephemeral ports and retries after a port collision.
-  engineV2Preview.start();
+  const errors: unknown[] = [];
+  const nativeCleanupLifetime = new AbortController();
+  let stopPromise: Promise<void> | undefined;
+  const stop = () => stopPromise ??= (async () => {
+    nativeCleanupLifetime.abort(new Error("Native cleanup host stopped"));
+    try { await taskRecovery?.stop(); } catch (error) { errors.push(error); }
+    managedDesktopPolicy(config).onChange = undefined;
+    cloudProviderSync.stop();
+    try { await engineV2Preview.stop(); } catch (error) {
+      if (config.engine === "v2") errors.push(error);
+    }
+    engineV2ByConfig.delete(config);
+    engineInstanceReaper.close();
+    clearEngineInstanceReaperForConfig(config);
+    invalidateEngineMcpServerState(config, engineMcpServerState);
+    watcherHandle.close();
+    reloadBaselineRefreshers.delete(config);
+    envServicesByConfig.delete(config);
+    try { await server.stop(); } catch (error) { errors.push(error); }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "OpenWork server cleanup was incomplete");
+  })();
+  try {
+    await engineV2Preview.start();
+  } catch (error) {
+    try { await stop(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "OpenWork server startup failed and cleanup was incomplete");
+    }
+    throw error;
+  }
 
   // Deliver server-managed provider credentials to the engine on startup. The
   // engine process receives a fixed env allowlist, so credentials materialized
@@ -1102,33 +1204,27 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   // credential also invalidates any SDK client the engine cached before auth
   // arrived; the sync coordinator lands that reload without interrupting a
   // live session.
-  resetManagedProviderAuthCache();
-  void syncManagedProviderAuth({ config, env, logger: toManagedProviderAuthLogger(logger) })
-    .then((result) => {
-      if (result.delivered.length > 0 || result.removed.length > 0) {
-        cloudProviderSync.markReloadPending();
-      }
-    })
-    .catch(() => undefined);
+  if (config.engine !== "v2") {
+    resetManagedProviderAuthCache();
+    void syncManagedProviderAuth({ config, env, logger: toManagedProviderAuthLogger(logger) })
+      .then((result) => {
+        if (result.delivered.length > 0 || result.removed.length > 0) {
+          cloudProviderSync.markReloadPending();
+        }
+      })
+      .catch(() => undefined);
 
-  engineInstanceReaper.start();
+    engineInstanceReaper.start();
+  }
 
   return {
     ...server,
-    stop: async () => {
-      let recoveryError: unknown;
-      try { await taskRecovery?.stop(); } catch (error) { recoveryError = error; }
-      managedDesktopPolicy(config).onChange = undefined;
-      cloudProviderSync.stop();
-      await engineV2Preview.stop().catch(() => undefined);
-      engineInstanceReaper.close();
-      clearEngineInstanceReaperForConfig(config);
-      invalidateEngineMcpServerState(config, engineMcpServerState);
-      watcherHandle.close();
-      reloadBaselineRefreshers.delete(config);
-      await server.stop();
-      if (recoveryError) throw recoveryError;
-    },
+    managedOpencodeV2: config.engine === "v2" ? engineV2Preview.process() : null,
+    nativeCleanupRequest: engineV2Preview.createNativeCleanupRequest(
+      () => !stopPromise && engineV2ByConfig.get(config) === engineV2Preview,
+      nativeCleanupLifetime.signal,
+    ),
+    stop,
   };
 }
 
@@ -1149,9 +1245,13 @@ export async function proxyOpencodeV2Request(input: {
   proxyPath: string;
   connection: { url: string; username: string; password: string };
   syncCloudSkills: EngineV2Preview["syncCloudSkills"];
+  nativeSkillCatalog?: Awaited<ReturnType<typeof waitForNativeOpenWorkV2Skills>>;
+  assertSkillsCurrent?: () => Promise<void>;
+  expectedNativeSkillsScope?: string | null;
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
+  const mandatory = input.config.engine === "v2";
   if (method !== "GET" && method !== "HEAD") ensureWritable(input.config);
 
   const withoutPrefix = input.proxyPath.slice("/opencode2".length);
@@ -1175,6 +1275,7 @@ export async function proxyOpencodeV2Request(input: {
   }
 
   const headers = new Headers(input.request.headers);
+  headers.delete(CLOUD_NATIVE_SKILLS_SCOPE_HEADER);
   headers.delete("authorization");
   headers.delete("x-openwork-host-token");
   headers.delete("x-openwork-client-id");
@@ -1219,7 +1320,52 @@ export async function proxyOpencodeV2Request(input: {
     throw new ApiError(403, "engine_instructions_managed", "OpenWork instructions are managed by the server");
   }
 
+  if (mandatory && method === "GET" && forwardedPath === "/api/skill") {
+    if (!input.nativeSkillCatalog) throw new ApiError(502, "engine_skill_sync_failed", "Native skill catalog is unavailable");
+    await input.assertSkillsCurrent?.();
+    // Return the exact catalog that crossed the readiness barrier, including
+    // stable native IDs, file locations and Cloud source URIs. No second fetch.
+    return jsonResponse({ data: input.nativeSkillCatalog.data.map((skill) => {
+      if (input.actor.scope === "owner" || typeof skill.id !== "string" || !skill.id.startsWith(CLOUD_NATIVE_SKILL_ID_PREFIX)) return skill;
+      return Object.fromEntries(Object.entries(skill).filter(([key]) => ["id", "name", "description", "slash"].includes(key)));
+    }) });
+  }
+
+  const requestBody = method === "GET" || method === "HEAD"
+    ? undefined
+    : await input.request.arrayBuffer().then((buffer) => buffer.byteLength > 0 ? buffer : undefined);
+  let body: string | ArrayBuffer | undefined = requestBody;
+  const selectedSkillIds: string[] = [];
   if (method === "POST" && sessionId && /^\/api\/session\/[^/]+\/(?:prompt|command|generate)$/.test(forwardedPath)) {
+    if (mandatory) {
+      if (!input.nativeSkillCatalog) throw new ApiError(502, "engine_skill_sync_failed", "Native skill catalog is unavailable");
+      let selection: unknown;
+      try { selection = requestBody ? JSON.parse(new TextDecoder().decode(requestBody)) : {}; }
+      catch { throw new ApiError(400, "invalid_body", "Expected a JSON object"); }
+      if (!isRecord(selection)) throw new ApiError(400, "invalid_body", "Expected a JSON object");
+      if (selection.skills !== undefined) {
+        if (!Array.isArray(selection.skills)) throw new ApiError(400, "invalid_body", "Expected native skill selections");
+        const catalog = input.nativeSkillCatalog.data;
+        const skills = selection.skills.map((selected: unknown) => {
+          if (!isRecord(selected) || typeof selected.id !== "string") throw new ApiError(400, "invalid_body", "Expected a native skill ID");
+          const cloudSelected = selected.id.startsWith(CLOUD_NATIVE_SKILL_ID_PREFIX);
+          if (cloudSelected && !input.expectedNativeSkillsScope) {
+            throw new ApiError(400, "cloud_skill_scope_required", "Select Cloud skills from the current native catalog before sending");
+          }
+          const skill = catalog.find((entry) => entry.id === selected.id);
+          if (!skill) throw new ApiError(400, "skill_unavailable", "A selected skill is no longer available. Refresh the skill selection before sending.");
+          if (cloudSelected && (!isRecord(skill.source) || skill.source.type !== "openwork-cloud" || skill.source.scope !== input.expectedNativeSkillsScope)) {
+            throw new ApiError(400, "cloud_skill_scope_mismatch", "The selected Cloud skills belong to a different authorization scope");
+          }
+          selectedSkillIds.push(selected.id);
+          const { text: _text, ...reference } = selected;
+          return { ...reference, name: skill.name };
+        });
+        body = JSON.stringify({ ...selection, skills });
+        headers.delete("content-length");
+        headers.set("content-type", "application/json");
+      }
+    }
     // Session ownership was verified above. Replace one native instruction
     // entry immediately before admission; never append to conversation text.
     const mcpUrl = new URL(target);
@@ -1229,29 +1375,26 @@ export async function proxyOpencodeV2Request(input: {
     const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
     const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
-    // Authorized organization skills are materialized fresh as native skills
-    // on every admission. Skills fail closed, the conversation does not: any
-    // Cloud auth/transport failure has already cleared and unregistered the
-    // materialized root, so the prompt is admitted without Cloud skills and the
-    // waiter below confirms none remain in the native registry.
-    let cloudSkills: Awaited<ReturnType<EngineV2Preview["syncCloudSkills"]>>;
-    try {
-      cloudSkills = await input.syncCloudSkills();
-    } catch (error) {
-      if (error instanceof CloudNativeSkillSyncError) throw new ApiError(502, error.code, error.message);
-      throw new ApiError(502, "cloud_skill_sync_failed", "OpenWork Cloud skills could not be synchronized");
+    if (!mandatory) {
+      let cloudSkills: Awaited<ReturnType<EngineV2Preview["syncCloudSkills"]>>;
+      try {
+        cloudSkills = await input.syncCloudSkills();
+      } catch (error) {
+        if (error instanceof CloudNativeSkillSyncError) throw new ApiError(502, error.code, error.message);
+        throw new ApiError(502, "cloud_skill_sync_failed", "OpenWork Cloud skills could not be synchronized");
+      }
+      if (cloudSkills.failure) {
+        console.warn(`[openwork-server] Cloud skills unavailable for this turn (${cloudSkills.failure}); admitting without Cloud skills`);
+      }
+      const skillUrl = new URL(target);
+      skillUrl.pathname = "/api/skill";
+      await waitForOpenWorkV2Skills(input.workspace.path, async () => {
+        const response = await loopbackFetch(skillUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(5_000) });
+        if (!response.ok) throw new ApiError(502, "engine_skill_sync_failed", "Native skills are unavailable");
+        return response.json();
+      }, cloudSkills);
     }
-    if (cloudSkills.failure) {
-      console.warn(`[openwork-server] Cloud skills unavailable for this turn (${cloudSkills.failure}); admitting without Cloud skills`);
-    }
-    const skillUrl = new URL(target);
-    skillUrl.pathname = "/api/skill";
-    await waitForOpenWorkV2Skills(input.workspace.path, async () => {
-      const response = await loopbackFetch(skillUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(5_000) });
-      if (!response.ok) throw new ApiError(502, "engine_skill_sync_failed", "Native skills are unavailable");
-      return response.json();
-    }, cloudSkills);
-    const value = buildOpenWorkV2Instructions(connectReady);
+    const value = buildOpenWorkV2Instructions(connectReady, mandatory ? "native" : "preview");
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
     const synced = await loopbackFetch(instructionUrl.toString(), {
@@ -1260,10 +1403,6 @@ export async function proxyOpencodeV2Request(input: {
     if (!synced.ok) throw new ApiError(502, "engine_instruction_sync_failed", "OpenWork instructions could not be updated");
   }
 
-  const requestBody = method === "GET" || method === "HEAD"
-    ? undefined
-    : await input.request.arrayBuffer().then((buffer) => buffer.byteLength > 0 ? buffer : undefined);
-  let body: string | ArrayBuffer | undefined = requestBody;
   if (method === "POST" && forwardedPath === "/api/session") {
     let sessionInput: unknown = {};
     if (requestBody) {
@@ -1278,6 +1417,51 @@ export async function proxyOpencodeV2Request(input: {
     body = JSON.stringify({ ...sessionInput, location: { directory: input.workspace.path } });
     headers.delete("content-length");
     headers.set("content-type", "application/json");
+  }
+  await input.assertSkillsCurrent?.();
+  if (mandatory && sessionId && selectedSkillIds.length) {
+    const internalHeaders = new Headers({ authorization: headers.get("authorization") ?? "", "content-type": "application/json" });
+    const nativeData = async (suffix: string, value?: Record<string, unknown>): Promise<unknown> => {
+      const url = new URL(target);
+      url.pathname = `/api/session/${encodeURIComponent(sessionId)}${suffix}`;
+      const response = await loopbackFetch(url.toString(), {
+        method: value === undefined ? "GET" : "POST", headers: internalHeaders,
+        body: value === undefined ? undefined : JSON.stringify(value), signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new ApiError(502, "skill_permission_unavailable", "Native skill permission could not be checked. Nothing was submitted.");
+      const payload: unknown = await response.json();
+      if (!isRecord(payload) || !("data" in payload)) throw new ApiError(502, "invalid_engine_response", "Invalid native skill permission response");
+      return payload.data;
+    };
+    const current = await nativeData("");
+    if (!isRecord(current) || current.id !== sessionId || typeof current.agent !== "string" || !current.agent) {
+      throw new ApiError(502, "binding_unconfirmed", "The native agent could not be confirmed for selected skills");
+    }
+    const pending = await nativeData("/permission");
+    if (!Array.isArray(pending)) throw new ApiError(502, "invalid_engine_response", "Invalid native skill permission requests");
+    for (const permission of pending) {
+      if (!isRecord(permission) || permission.sessionID !== sessionId || typeof permission.action !== "string"
+        || !Array.isArray(permission.resources) || permission.resources.some((resource) => typeof resource !== "string")) {
+        throw new ApiError(502, "invalid_engine_response", "Invalid native skill permission request scope");
+      }
+      if (permission.action === "skill" && permission.resources.some((resource) => selectedSkillIds.includes(resource))) {
+        throw new ApiError(403, "skill_permission_required", "Selected skills have a pending native permission request. Nothing was submitted.");
+      }
+    }
+    const resources = [...new Set(selectedSkillIds)];
+    const permission = await nativeData("/permission", { action: "skill", resources, save: resources, agent: current.agent });
+    if (!isRecord(permission) || typeof permission.id !== "string" || !permission.id.startsWith("per")
+      || typeof permission.effect !== "string" || !["allow", "ask", "deny"].includes(permission.effect)) {
+      throw new ApiError(502, "invalid_engine_response", "Invalid native skill permission decision");
+    }
+    if (permission.effect !== "allow") {
+      throw new ApiError(403, permission.effect === "ask" ? "skill_permission_required" : "skill_denied", "Selected skills were not allowed by native session permission. Nothing was submitted.");
+    }
+    const confirmed = await nativeData("");
+    if (!isRecord(confirmed) || confirmed.id !== sessionId || confirmed.agent !== current.agent) {
+      throw new ApiError(409, "binding_unconfirmed", "The native agent changed during selected-skill permission evaluation");
+    }
+    await input.assertSkillsCurrent?.();
   }
   const response = await loopbackFetch(target.toString(), { method, headers, body, signal: input.recoverySignal });
   if (method === "GET" && /^\/api\/skill(?:\/|$)/.test(decodeURIComponent(forwardedPath))
@@ -1306,7 +1490,28 @@ export async function proxyOpencodeV2Request(input: {
       if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
         throw new ApiError(502, "invalid_engine_response", "Invalid provider metadata");
       }
-      return { id: value.id, name: value.name };
+      if (!mandatory) return { id: value.id, name: value.name };
+      if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string"
+        || typeof value.package !== "string"
+        || (value.activation !== "auto" && value.activation !== "enabled" && value.activation !== "disabled")
+        || (value.integrationID !== undefined && typeof value.integrationID !== "string")) {
+        throw new ApiError(502, "invalid_engine_response", "Invalid provider metadata");
+      }
+      // The native client uses activation/integrationID for connected eligibility
+      // and baseURL's origin to classify local providers. Never forward raw settings,
+      // credential scopes, URL userinfo, paths, query parameters or fragments.
+      let origin: string | undefined;
+      if (isRecord(value.settings) && typeof value.settings.baseURL === "string") {
+        try {
+          const endpoint = new URL(value.settings.baseURL);
+          if (endpoint.protocol === "http:" || endpoint.protocol === "https:") origin = endpoint.origin;
+        } catch { /* Invalid endpoints provide no public origin evidence. */ }
+      }
+      return {
+        id: value.id, name: value.name, activation: value.activation, package: value.package,
+        ...(value.integrationID !== undefined ? { integrationID: value.integrationID } : {}),
+        ...(origin ? { settings: { baseURL: origin } } : {}),
+      };
     };
     const data = Array.isArray(raw) ? raw.map(publicProvider) : publicProvider(raw);
     return jsonResponse({ data });
@@ -1328,7 +1533,9 @@ export async function proxyOpencodeV2Request(input: {
       // The picker needs opaque variant IDs, never their provider settings.
       const variants = (Array.isArray(value.variants) ? value.variants : []).flatMap((variant) =>
         isRecord(variant) && typeof variant.id === "string" ? [{ id: variant.id }] : []);
-      return { ...metadata, variants };
+      return { ...metadata, variants,
+        ...(mandatory ? engineV2ByConfig.get(input.config)?.modelMetadata?.(value.providerID, value.id) : {}),
+      };
     };
     return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicModel) : publicModel(raw) });
   }
@@ -1466,6 +1673,9 @@ export function createWorkspaceOpencodeClient(
   workspace: WorkspaceInfo,
   options?: { boundedDiagnosticsReads?: boolean; sessionId?: string },
 ) {
+  if (config.engine === "v2") throw new ApiError(409, "engine_v1_disabled", "This operation requires OpenCode v1");
+  const createOpencodeClient = legacyClientFactories.get(config);
+  if (!createOpencodeClient) throw new ApiError(503, "engine_client_unavailable", "The OpenCode client is not initialized for this server");
   const poolRoute = workspace.workspaceType === "remote" || !options?.sessionId
     ? null
     : enginePoolForConfig(config)?.routeRequest("GET", `/session/${encodeURIComponent(options.sessionId)}`) ?? null;
@@ -2065,7 +2275,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   return {
     schemaVersion,
     serverVersion: SERVER_VERSION,
-    opencodeVersion: OPENCODE_VERSION,
+    opencodeVersion: config.engine === "v2" ? resolveOpencodeV2Version(config.opencodeV2?.version) : OPENCODE_VERSION,
     providerSync: true,
     skills: { read: true, write: writeEnabled, source: "openwork" },
     plugins: { read: true, write: writeEnabled },
@@ -2324,6 +2534,10 @@ function createRoutes(
   // the generation that owns live sessions. Legacy/external engines keep
   // the established busy deferral.
   const applyManagedProviderReload = async (workspace: WorkspaceInfo): Promise<"reloaded" | "deferred"> => {
+    if (config.engine === "v2") {
+      await engineV2Preview.refresh();
+      return "reloaded";
+    }
     const reloadDeferred = await shouldDeferInPlaceEngineReload(config, workspace, engineHasActiveSessions);
     if (reloadDeferred) {
       cloudProviderSync.markReloadPending();
@@ -2351,7 +2565,7 @@ function createRoutes(
     env,
     managedProviderAuthLogger: toManagedProviderAuthLogger(logger),
     serverVersion: SERVER_VERSION,
-    opencodeVersion: OPENCODE_VERSION,
+    opencodeVersion: config.engine === "v2" ? resolveOpencodeV2Version(config.opencodeV2?.version) : OPENCODE_VERSION,
     jsonResponse,
     readJsonBody,
     readOptionalJsonBody,
@@ -2420,7 +2634,7 @@ function createRoutes(
         options,
         engineMcpServerState,
       ),
-    serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+    serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: config.engine === "v2" ? resolveOpencodeV2Version(config.opencodeV2?.version) : OPENCODE_VERSION },
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
@@ -3045,6 +3259,9 @@ function createRoutes(
     if (body.chatRouting !== undefined && typeof body.chatRouting !== "boolean") {
       throw new ApiError(400, "invalid_payload", "chatRouting must be a boolean");
     }
+    if (config.engine === "v2" && (body.enabled === false || body.chatRouting === false)) {
+      throw new ApiError(409, "engine_v2_required", "OpenCode v2 cannot be disabled for this host");
+    }
     let status = engineV2Preview.status();
     if (typeof body.enabled === "boolean") status = await engineV2Preview.setEnabled(body.enabled);
     if (typeof body.chatRouting === "boolean") status = await engineV2Preview.setChatRouting(body.chatRouting);
@@ -3060,6 +3277,12 @@ function createRoutes(
       ...current,
       provider: mergeRuntimeProviderUpdate(current.provider, providerPatch),
     }));
+
+    if (config.engine === "v2") {
+      await engineV2Preview.refresh();
+      return jsonResponse({ ok: true, changed: result.changed, provider: runtimeProviderMap(result.config),
+        reload: result.changed ? "reloaded" : "skipped" });
+    }
 
     const fileResult = await writeOpenworkRuntimeConfigFile(config);
     // Auth must land before the reload so the replacement provider instance is
@@ -3309,9 +3532,10 @@ function createRoutes(
     readJsonBody,
     requireClientScope,
     resolveWorkspace,
-    reloadOpencodeEngine: async (routeConfig, workspace) => {
-      await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route" });
+    reloadOpencodeEngine: async (routeConfig, workspace, options) => {
+      await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route", manual: options?.force === true });
     },
+    readOptionalJsonBody,
   });
 
   registerUiControlRoutes({ routes, jsonResponse, readJsonBody, requireClientScope });
@@ -3533,6 +3757,44 @@ function createRoutes(
         workspaceRoot: workspace.path,
       });
       return jsonResponse({ servers });
+    } catch (error) {
+      rethrowMcpAppHostError(error);
+    }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/search", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || typeof body.query !== "string" || !body.query.trim() || body.query.length > 2_000 || Object.keys(body).some((key) => key !== "query")) {
+      throw new ApiError(400, "invalid_payload", "Capability discovery accepts only a query of 1 to 2000 characters.");
+    }
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    if (config.engine === "v2" && (workspace.id !== ctx.params.id || workspace.workspaceType !== "local")) {
+      throw new ApiError(404, "workspace_not_found", "Local workspace not found");
+    }
+    try {
+      return jsonResponse(await searchWorkspaceCapabilities({
+        serverConfig: config, workspaceId: workspace.id, workspaceRoot: workspace.path,
+        query: body.query, signal: ctx.request.signal,
+      }));
+    } catch (error) {
+      rethrowMcpAppHostError(error);
+    }
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/mcp/:name/tools", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) throw new ApiError(400, "invalid_payload", "name is required");
+    try {
+      const tools = await listMcpServerTools({
+        serverConfig: config,
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.path,
+        serverName: name,
+      });
+      return jsonResponse({ tools });
     } catch (error) {
       rethrowMcpAppHostError(error);
     }
@@ -4641,8 +4903,15 @@ async function reloadOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
-  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason },
+  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason; manual?: boolean },
 ): Promise<RolloverOutcome> {
+  if (config.engine === "v2") {
+    const engine = engineV2ByConfig.get(config);
+    if (!engine) throw new ApiError(503, "engine_v2_unavailable", "OpenCode v2 is not running");
+    await engine.refresh();
+    await engine.syncWorkspaceMcp(workspace.id, workspace.path);
+    return { action: "reloaded_in_place" };
+  }
   const pool = enginePoolForConfig(config);
   if (pool) {
     // The outcome is the caller's proof: only an applied action means the
@@ -4650,6 +4919,7 @@ async function reloadOpencodeEngine(
     return pool.requestRollover({
       reason: options?.reason ?? "engine_reload",
       workspace,
+      manual: options?.manual,
       awaitPostRefreshSync: options?.awaitPostRefreshSync,
       forceStandby: options?.forceStandby,
     });
@@ -4792,7 +5062,7 @@ async function runWorkspaceMcpRefreshSync(input: WorkspaceMcpRefreshRequest): Pr
       config,
       workspace,
       directory,
-      serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+      serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: config.engine === "v2" ? resolveOpencodeV2Version(config.opencodeV2?.version) : OPENCODE_VERSION },
       createWorkspaceOpencodeClient,
       refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
       registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
@@ -4814,7 +5084,7 @@ async function runWorkspaceMcpRefreshSync(input: WorkspaceMcpRefreshRequest): Pr
   // against post-reload state instead of racing the async fresh-keeper and
   // reporting a phantom "changed" (which would schedule yet another reload).
   try {
-    if (trigger === "engine_reload") {
+    if (trigger === "engine_reload" && config.engine !== "v2") {
       await writeOpenworkRuntimeConfigFile(config);
     }
   } catch {
@@ -4834,6 +5104,12 @@ async function syncRuntimeMcpToOpencodeEngine(
   options?: { throwOnFailure?: boolean; deferred?: boolean },
   serverState?: EngineMcpServerState | null,
 ): Promise<EngineMcpSyncResult> {
+  if (config.engine === "v2") {
+    const engine = engineV2ByConfig.get(config);
+    if (!engine) throw new ApiError(503, "engine_v2_unavailable", "OpenCode v2 is not running");
+    await engine.syncWorkspaceMcp(workspace.id, workspace.path);
+    return { status: "ok", syncedNames: Object.keys(runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspace.id))), failures: [] };
+  }
   const activeState = activeEngineMcpServerState(config, serverState);
   const coordinationState = activeEngineMcpServerState(config);
   if (!coordinationState) {
@@ -5987,6 +6263,12 @@ async function disconnectMcpFromOpencodeEngine(
   workspace: WorkspaceInfo,
   name: string,
 ): Promise<void> {
+  if (config.engine === "v2") {
+    const engine = engineV2ByConfig.get(config);
+    if (!engine) throw new ApiError(503, "engine_v2_unavailable", "OpenCode v2 is not running");
+    await engine.syncWorkspaceMcp(workspace.id, workspace.path);
+    return;
+  }
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) return;

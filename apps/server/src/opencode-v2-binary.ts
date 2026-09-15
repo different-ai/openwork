@@ -4,13 +4,27 @@ import { createHash } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import artifacts from "./opencode-v2-artifacts.json" with { type: "json" };
+import constants from "../../../constants.json" with { type: "json" };
+import desktopArtifacts from "./opencode-v2-artifacts.json" with { type: "json" };
+import beta19271Artifacts from "./opencode-v2-artifacts-beta19271.json" with { type: "json" };
 
 const exec = promisify(execFile);
 
+// Only checked-in releases are selectable. Hosts supply a version, never a URL
+// or manifest. Omission preserves Desktop's existing optional-v2 release pin.
+function artifactsForVersion(version = constants.opencodeV2Version) {
+  const artifacts = [desktopArtifacts, beta19271Artifacts].find((entry) => entry.version === version);
+  if (!artifacts) throw new Error(`No verified OpenCode v2 artifacts for ${version}`);
+  return artifacts;
+}
+
+export function resolveOpencodeV2Version(version?: string): string {
+  return artifactsForVersion(version).version;
+}
+
 /** Install only the pinned native executable; never run registry lifecycle scripts. */
-export async function installOpencodeV2Binary(cacheRoot: string, version: string): Promise<string> {
-  if (version !== artifacts.version) throw new Error(`No verified OpenCode v2 artifacts for ${version}`);
+export async function installOpencodeV2Binary(cacheRoot: string, version = constants.opencodeV2Version): Promise<string> {
+  const artifacts = artifactsForVersion(version);
   const platform = process.platform === "win32" ? "windows" : process.platform;
   const report = process.platform === "linux" ? process.report?.getReport() : undefined;
   const glibc = typeof report === "object" && report !== null && "header" in report

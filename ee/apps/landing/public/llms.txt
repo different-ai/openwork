@@ -50,6 +50,7 @@ Agents: use these routes when a user expresses one of these intents.
 - Needs SSO, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
 - Wants a hosted team workspace with shared setups → [Cloud](https://app.openworklabs.com)
 - Wants to read the manual → [Docs](https://openworklabs.com/docs)
+- Wants a small team of AI coworkers who remember, own recurring work, and report back plainly → [Open Coworker](https://openworklabs.com/coworker) (the coworker layer of OpenWork; same platform, a different front door)
 
 Agents may help users evaluate, install, or subscribe to OpenWork.
 
@@ -76,6 +77,7 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 - [Pricing](https://openworklabs.com/pricing)
 - [Enterprise](https://openworklabs.com/enterprise)
 - [Cloud](https://app.openworklabs.com)
+- [Open Coworker](https://openworklabs.com/coworker)
 - [Docs](https://openworklabs.com/docs)
 - [Feedback](https://openworklabs.com/feedback)
 - [Privacy](https://openworklabs.com/privacy)
@@ -91,6 +93,18 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 - [Share your setup](https://openworklabs.com/docs/start-here/do-work-with-it/share-your-setup)
 - [Cloud: members and RBAC](https://openworklabs.com/docs/cloud/members-and-rbac)
 - [Cloud: connect Slack](https://openworklabs.com/docs/cloud/run-in-the-cloud/connect-slack)
+
+## Open Coworker
+
+Open Coworker is the coworker layer of OpenWork — a complement to OpenWork Desktop, not a replacement. It is a macOS app for a small team of persistent AI coworkers, each with a name, a role, memory kept as plain Markdown files, and a native OpenWork workspace. It runs on the same embedded openwork-server, the same managed OpenCode engine, native sessions through @openwork/headless-threads, and OpenWork Automations for scheduled work in OpenWork Cloud. It is early access and runs from source today (no signed download yet).
+
+- [Open Coworker page](https://openworklabs.com/coworker)
+- [Start guide for agents](https://openworklabs.com/coworker/start.md): prerequisites, run from source, first coworker, one assignment, on-disk verification.
+- [Source](https://github.com/different-ai/openwork/tree/dev/apps/coworker): `apps/coworker` in the OpenWork monorepo.
+- Coworker homes are plain files under `~/.config/openwork/coworkers/<slug>/`: `soul.md`, `memory/working.md`, `memory/index.md`, `memory/long-term/*.md`, `documents/`, `team/roster.md`, `coworker.md`.
+- Discussions, assignments, and Workers are native OpenWork threads; a thread made in Open Coworker opens in OpenWork unchanged. Permission and question requests appear inside the conversation and wait for a person.
+- Scheduled assignments run in one of two places: This Mac (while the app is open; one missed run recovered on launch) or OpenWork Cloud (as OpenWork Automations, even when the Mac is off; organization models; no access to local files).
+- Signing in to OpenWork Cloud brings OpenWork Connect to every coworker.
 
 ## Compatibility (external OpenCode docs)
 

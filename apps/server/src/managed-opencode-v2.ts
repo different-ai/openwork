@@ -1,7 +1,6 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
-// Parallel v2 lane prototype: provider injection is a watched-config write. This module
-// deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
+// Provider injection uses v2's watched config, without disposing live sessions.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
@@ -11,6 +10,60 @@ import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-
 export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
 
 import { loopbackFetch } from "./server-fetch.js";
+
+export function nativeCatalogIdentity(value: Record<string, unknown>) {
+  const id = (value: unknown) => typeof value === "string" && value.length <= 256 && /^[A-Za-z0-9._:@+/-]+$/.test(value) ? value : undefined;
+  return {
+    ...(id(value.upstreamModelId) ? { upstreamModelId: id(value.upstreamModelId) } : {}),
+    ...(id(value.modelGroupId) ? { modelGroupId: id(value.modelGroupId) } : {}),
+    ...(id(value.credentialSetId) ? { credentialSetId: id(value.credentialSetId) } : {}),
+  };
+}
+
+export function nativeCatalogModelMetadata(config: Record<string, unknown>) {
+  const released = typeof config.release_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(config.release_date)
+    ? Date.parse(`${config.release_date}T00:00:00.000Z`) : NaN;
+  return {
+    ...nativeCatalogIdentity(config),
+    ...(Number.isFinite(released) && new Date(released).toISOString().slice(0, 10) === config.release_date ? { time: { released } } : {}),
+  };
+}
+
+type NativeModelCost = {
+  input: number;
+  output: number;
+  cache?: { read?: number; write?: number };
+  tier?: { type: "context"; size: number };
+};
+
+function nativeModelCosts(value: unknown): NativeModelCost[] {
+  const rate = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const cost = (value: unknown) => {
+    if (!isRecord(value) || !rate(value.input) || !rate(value.output)) return undefined;
+    return { input: value.input, output: value.output,
+      ...(rate(value.cache_read) || rate(value.cache_write) ? { cache: {
+        ...(rate(value.cache_read) ? { read: value.cache_read } : {}),
+        ...(rate(value.cache_write) ? { write: value.cache_write } : {}),
+      } } : {}),
+    };
+  };
+  const base = cost(value);
+  const costs: NativeModelCost[] = base ? [base] : [];
+  if (!isRecord(value)) return costs;
+  if (Array.isArray(value.tiers)) {
+    for (const entry of value.tiers) {
+      const price = cost(entry);
+      const tier = isRecord(entry) && isRecord(entry.tier) ? entry.tier : undefined;
+      if (price && tier?.type === "context" && typeof tier.size === "number" && Number.isSafeInteger(tier.size) && tier.size >= 0) {
+        costs.push({ ...price, tier: { type: "context", size: tier.size } });
+      }
+    }
+  } else {
+    const price = cost(value.context_over_200k);
+    if (price) costs.push({ ...price, tier: { type: "context", size: 200_000 } });
+  }
+  return costs;
+}
 
 export interface OpencodeV2ModelSpec {
   id: string;
@@ -32,10 +85,16 @@ export interface OpencodeV2ProviderSpec {
 export interface ManagedOpencodeV2ServerOptions {
   bin: string;
   rootDir: string;
+  /** Mandatory native hosts opt into skill-directory config; previews do not. */
+  nativeSkills?: boolean;
+  nativeCatalogMetadata?: boolean;
+  cwd?: string;
   hostname?: string;
   port?: number;
   env?: Record<string, string>;
+  config?: Record<string, unknown>;
   bootTimeoutMs?: number;
+  expectedVersion?: string;
   permissions?: () => Promise<EnginePermissionRule[]>;
 }
 
@@ -53,6 +112,7 @@ export interface ManagedOpencodeV2Server {
   readonly exitCode: number | null;
   readonly stdout: string;
   readonly stderr: string;
+  isAlive(): boolean;
   health(): Promise<OpencodeV2Health>;
   fetchJson(path: string, init?: { method?: string; body?: unknown; directory?: string; timeoutMs?: number }): Promise<{ status: number; json: unknown }>;
   injectProvider(spec: OpencodeV2ProviderSpec): Promise<void>;
@@ -82,6 +142,7 @@ export function renderOpencodeV2Config(input: {
   providers: OpencodeV2ProviderSpec[];
   permissions?: EnginePermissionRule[];
   skills: string[];
+  nativeCatalogMetadata?: boolean;
 }): Record<string, unknown> {
   const providerConfig: Record<string, unknown> = {};
   for (const provider of input.providers) {
@@ -101,6 +162,7 @@ export function renderOpencodeV2Config(input: {
         },
         limit: config.limit ?? { context: 128_000, output: 8_192 },
         ...(typeof config.family === "string" ? { family: config.family } : {}),
+        ...(input.nativeCatalogMetadata ? { cost: nativeModelCosts(config.cost) } : {}),
         ...(isRecord(config.options) ? { settings: config.options } : {}),
         ...(isRecord(config.variants) ? {
           variants: nativeModelVariants(config.variants, provider.package),
@@ -157,10 +219,6 @@ export async function createManagedOpencodeV2Server(
     const value = options.env?.[key] ?? process.env[key];
     if (value !== undefined) inherited[key] = value;
   }
-  // A caller may deliberately provide a config file; never inherit the server's
-  // OPENCODE_CONFIG or OPENCODE_PURE settings implicitly.
-  if (options.env?.OPENCODE_CONFIG) inherited.OPENCODE_CONFIG = options.env.OPENCODE_CONFIG;
-
   await mkdir(options.rootDir, { recursive: true, mode: 0o700 });
   await chmod(options.rootDir, 0o700);
   await mkdir(configDir, { recursive: true, mode: 0o700 });
@@ -172,8 +230,12 @@ export async function createManagedOpencodeV2Server(
   // visible until a fresh cloud skill sync succeeds.
   await writeConfig();
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
+    cwd: options.cwd,
     env: {
       ...inherited,
+      // Only the embedding host can opt additional keys into this child. Engine
+      // identity and state paths below cannot be replaced by that environment.
+      ...options.env,
       OPENCODE_PASSWORD: password,
       OPENCODE_DB: join(options.rootDir, "opencode.db"),
       OPENCODE_CONFIG_DIR: configDir,
@@ -192,6 +254,7 @@ export async function createManagedOpencodeV2Server(
   });
   // A close event, unlike exit, includes the final bytes from both pipes.
   let closed = false;
+  const closedPromise = new Promise<void>((resolve) => child.once("close", () => resolve()));
   child.once("close", () => {
     closed = true;
     lines.stop();
@@ -262,27 +325,44 @@ export async function createManagedOpencodeV2Server(
   async function writeConfigNow(): Promise<void> {
     const target = join(configDir, "opencode.json");
     const temporary = `${target}.tmp-${randomBytes(8).toString("hex")}`;
-    await writeFile(temporary, `${JSON.stringify(renderOpencodeV2Config({
+    const { skills: configuredSkills, ...hostConfig } = options.config ?? {};
+    const generated = renderOpencodeV2Config({
       providers: [...providers.values()],
+      nativeCatalogMetadata: options.nativeCatalogMetadata,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       skills,
-    }), null, 2)}\n`, { mode: 0o600 });
+    });
+    await writeFile(temporary, `${JSON.stringify({
+      ...hostConfig,
+      ...generated,
+      ...((Array.isArray(configuredSkills) && configuredSkills.length) || skills.length
+        ? { skills: [...(Array.isArray(configuredSkills) ? configuredSkills : []), ...skills] } : {}),
+      providers: { ...(isRecord(hostConfig.providers) ? hostConfig.providers : {}), ...(isRecord(generated.providers) ? generated.providers : {}) },
+      ...(options.permissions ? { permissions: [
+        ...(Array.isArray(hostConfig.permissions) ? hostConfig.permissions : []),
+        ...(Array.isArray(generated.permissions) ? generated.permissions : []),
+      ] } : {}),
+    }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }
 
   async function close(): Promise<void> {
     lines.stop();
     if (child.connected) child.disconnect();
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    const exit = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    child.kill("SIGTERM");
-    const exited = await Promise.race([
-      exit.then(() => true),
-      sleep(2_000).then(() => false),
-    ]);
-    if (!exited && child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-      await exit;
+    if (closed) return;
+    const waitForClose = async (timeoutMs: number) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          closedPromise.then(() => true),
+          new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+        ]);
+      } finally { clearTimeout(timer); }
+    };
+    if (child.pid && child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    if (!await waitForClose(2_000)) {
+      if (child.pid && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (!await waitForClose(2_000)) throw new Error("OpenCode v2 shutdown did not complete");
     }
   }
 
@@ -300,6 +380,7 @@ export async function createManagedOpencodeV2Server(
     get stderr() {
       return stderr;
     },
+    isAlive: () => !closed && !spawnError && child.pid !== undefined && child.exitCode === null && child.signalCode === null,
     health,
     fetchJson,
     async injectProvider(spec) {
@@ -348,12 +429,17 @@ export async function createManagedOpencodeV2Server(
         throw error;
       }
     }
+    let state: OpencodeV2Health | undefined;
     try {
-      const state = await health();
-      if (state.healthy) return managed;
+      state = await health();
     } catch {
       // The engine can return 503 or refuse connections while booting.
     }
+    if (state && options.expectedVersion && state.version !== options.expectedVersion) {
+      await close();
+      throw new Error(`OpenCode v2 version mismatch: expected ${options.expectedVersion}, received ${state.version}`);
+    }
+    if (state?.healthy) return managed;
     await sleep(250);
   }
 

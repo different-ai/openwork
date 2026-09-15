@@ -1,4 +1,5 @@
 import type { z } from "zod"
+import { coworkerTemplateListSchema } from "@openwork/types/coworker-template"
 import {
   accessGrantListResponseSchema,
   accessGrantMutationResponseSchema,
@@ -173,6 +174,7 @@ export const pluginArchRoutePaths = {
   pluginAccess: `${orgBasePath}/plugins/:pluginId/access`,
   pluginAccessGrant: `${orgBasePath}/plugins/:pluginId/access/:grantId`,
   meLibrary: `${orgBasePath}/me/library`,
+  meCoworkers: `${orgBasePath}/me/coworkers`,
   mePluginAccess: `${orgBasePath}/me/plugin-access`,
   teamPluginAccess: `${orgBasePath}/teams/:teamId/plugin-access`,
   pluginGithubMcpImportPreview: `${orgBasePath}/plugins/import-mcps-from-github-url/preview`,
@@ -223,6 +225,15 @@ export const pluginArchRoutePaths = {
 } as const
 
 export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
+  listMeCoworkers: {
+    audience: "member",
+    description: "List visible coworker templates and distinguish explicit assignments from catalog access.",
+    method: "GET",
+    path: pluginArchRoutePaths.meCoworkers,
+    request: { query: configObjectVersionListQuerySchema },
+    response: { description: "Reusable coworker templates available to the current member.", schema: coworkerTemplateListSchema, status: 200 },
+    tag: "Config Objects",
+  },
   listConfigObjects: {
     audience: "admin",
     description: "List current config object projections with search and connector filters.",

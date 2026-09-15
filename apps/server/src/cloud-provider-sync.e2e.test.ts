@@ -685,6 +685,7 @@ describe("cloud provider sync gateway", () => {
   });
 
   test("re-seeding an unchanged credential to a replaced engine generation does not reload again", async () => {
+    process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS = "50";
     // Regression: after every rollover the next sync pass found a new
     // generation scope, re-delivered the same key, counted it as a credential
     // change and forced another standby — a loop bounded only by the sync
@@ -705,6 +706,7 @@ describe("cloud provider sync gateway", () => {
     setEnginePoolForConfig(config, pool);
     stops.push(() => clearEnginePoolForConfig(config));
     let reloads = 0;
+    let nativeRefresh: (() => Promise<RolloverOutcome>) | undefined;
     const authPuts: string[] = [];
     const fetchImpl = Object.assign(async (
       input: Parameters<typeof globalThis.fetch>[0],
@@ -729,6 +731,7 @@ describe("cloud provider sync gateway", () => {
       engineBusy: async () => false,
       reloadEngine: async () => {
         reloads += 1;
+        if (nativeRefresh) return nativeRefresh();
         // A reload flips the pool onto a fresh generation.
         generationId = `generation-${reloads + 1}`;
         return { action: "rolled_over", generationId, drainingSessions: 0 };
@@ -757,6 +760,50 @@ describe("cloud provider sync gateway", () => {
     expect((await sync.run("interval")).status).toBe("applied");
     expect(reloads).toBe(2);
     expect(authPuts).toEqual(["generation-one", "generation-2", "generation-2"]);
+
+    config.engine = "v2";
+    const before = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    const reached = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const retryReached = Promise.withResolvers<void>();
+    const retryRelease = Promise.withResolvers<void>();
+    nativeRefresh = async () => {
+      reached.resolve();
+      await release.promise;
+      throw new Error("fixture_native_mirror_failed");
+    };
+    provider.apiKey = "sk-test-native-rotation";
+    let settled = false;
+    const rotation = sync.run("native-key-only").then((result) => { settled = true; return result; });
+    try {
+      expect(await Promise.race([reached.promise.then(() => "refresh"), rotation.then(() => "reported")])).toBe("refresh");
+      expect(settled).toBe(false);
+      expect(sync.status().reloadPending).toBe(true);
+      expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(before);
+      release.resolve();
+      expect(await rotation).toEqual({ status: "failed", message: "fixture_native_mirror_failed" });
+      expect(sync.status().lastRun?.detail).toMatchObject({ providerStateChanged: false, envUpserts: 1 });
+      expect(sync.status().reloadPending).toBe(true);
+      expect(JSON.stringify(sync.status())).not.toContain(provider.apiKey);
+      nativeRefresh = async () => {
+        retryReached.resolve();
+        await retryRelease.promise;
+        return reloadedInPlace();
+      };
+      await retryReached.promise;
+      expect(sync.status().reloadPending).toBe(true);
+      expect(sync.status().lastRun?.status).toBe("failed");
+      retryRelease.resolve();
+      expect((await sync.run("native-unchanged-after-retry")).status).toBe("noop");
+      expect(sync.status().reloadPending).toBe(false);
+      expect(sync.status().lastRun?.detail).toMatchObject({ providerStateChanged: false, envUpserts: 0, envDeletes: 0 });
+      expect(reloads).toBe(4);
+      expect(authPuts).toEqual(["generation-one", "generation-2", "generation-2"]);
+    } finally {
+      release.resolve();
+      retryRelease.resolve();
+      await rotation;
+    }
   });
 
   test("defers a reload while a generation drains and retries it once", async () => {
@@ -1000,7 +1047,7 @@ describe("cloud provider sync gateway", () => {
         options: { baseURL: gatewayBaseUrl },
       },
       models: [{
-        id: modelId, name: "Claude Sonnet", config: { id: modelId, name: "Claude Sonnet", headers: { "x-openwork-gateway-request-model": modelId } },
+        id: modelId, name: "Claude Sonnet", config: { id: modelId, name: "Claude Sonnet", upstreamModelId: "untrusted-config-identity", headers: { "x-openwork-gateway-request-model": modelId } },
         upstreamModelId: "claude-sonnet",
         modelGroupId: `gmg_${groupSuffix}`, modelGroupName: "Team models",
         credentialSetId: `gcs_${setSuffix}`, credentialSetName: "Organization key",
@@ -1096,6 +1143,19 @@ describe("cloud provider sync gateway", () => {
     expect(gatewayRuntime.models).toEqual({ [modelId]: { id: modelId, name: "Claude Sonnet", headers: { "x-openwork-gateway-request-model": modelId } } });
     expect(expectRecord(gatewayRuntime.options, "gateway options").baseURL).toBe(gatewayBaseUrl);
     expect(JSON.stringify(gatewayRuntime)).not.toContain(gatewayKey);
+    config.engine = "v2";
+    expect((await sync.run("native-metadata")).status).toBe("applied");
+    const nativeGateway = expectRecord(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).ipr_ready, "native gateway");
+    expect(nativeGateway.models).toEqual({ [modelId]: {
+      id: modelId, name: "Claude Sonnet", headers: { "x-openwork-gateway-request-model": modelId },
+      upstreamModelId: "claude-sonnet", modelGroupId: `gmg_${groupSuffix}`, credentialSetId: `gcs_${setSuffix}`,
+    } });
+    expect(JSON.stringify(nativeGateway)).not.toContain(gatewayKey);
+    expect(JSON.stringify(nativeGateway)).not.toContain("Organization key");
+    expect(JSON.stringify(nativeGateway)).not.toContain("Team models");
+    config.engine = undefined;
+    expect((await sync.run("legacy-metadata-boundary")).status).toBe("applied");
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(runtimeProviders);
     const storedEnv = await env.list();
     expect(storedEnv.find((entry) => entry.key === "IPR_READY_ANTHROPIC_API_KEY")?.value).toBe(gatewayKey);
     expect(storedEnv.find((entry) => entry.key === "TEST_PROVIDER_API_KEY")?.value).toBe("sk-test-provider");

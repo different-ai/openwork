@@ -83,6 +83,18 @@ export interface ApprovalConfig {
 
 export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 
+export interface EmbeddedOpencodeV2Options {
+  /** Known exact release selected by the embedding host; omission preserves Desktop's v2 pin. */
+  version?: string;
+  /** Owned engine state directory; defaults beside the server runtime database. */
+  rootDir?: string;
+  /** Native v2 global config, retained across managed provider updates. */
+  config?: Record<string, unknown>;
+  /** Explicit child-only environment, including native plugin bridge settings. */
+  env?: Record<string, string>;
+  bootTimeoutMs?: number;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -107,6 +119,9 @@ export interface ServerConfig {
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
   /** Desktop-owned managed engines only; never enabled by remote clients. */
   resumeInterruptedTasks?: boolean;
+  /** Embedding-host selection, never loaded from user configuration or environment. */
+  engine?: "v1" | "v2";
+  opencodeV2?: EmbeddedOpencodeV2Options & { bin?: string };
 }
 
 export interface Capabilities {

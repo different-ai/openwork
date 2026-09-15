@@ -107,6 +107,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
     mcpConnections: z.boolean().nullable().optional(),
     modelsAnalytics: z.boolean().nullable().optional(),
     gatewayDashboard: z.boolean().nullable().optional(),
+    coworkerTeams: z.boolean().nullable().optional(),
   }),
 })
 
@@ -280,6 +281,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
     gatewayDashboard: normalizeOrganizationCapabilities(metadata).gatewayDashboard,
+    coworkerTeams: normalizeOrganizationCapabilities(metadata).coworkerTeams,
   }
 }
 
@@ -318,7 +320,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "installLinks" && key !== "mcpConnections" && key !== "coworkerTeams" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -1504,6 +1506,29 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.select({ id: InferenceOrgLimitPolicyTable.id }).from(InferenceOrgLimitPolicyTable)
           .where(inArray(InferenceOrgLimitPolicyTable.organization_id, memberships.map((member) => member.organizationId)))
           .orderBy(asc(InferenceOrgLimitPolicyTable.organization_id), asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
+        // Reset also forgives outstanding voice holds in these current windows.
+        // Retain zero charge identities, not a fabricated zero provider cost:
+        // eventual actual receipts still update the ledger but cannot recharge.
+        const reservations = await tx.select({
+          entryId: InferenceUsageLedgerEntryTable.id,
+          bucketId: InferenceOrgLimitPolicyTable.current_bucket_id,
+        }).from(InferenceUsageLedgerEntryTable)
+          .innerJoin(MemberTable, and(
+            eq(InferenceUsageLedgerEntryTable.org_membership_id, MemberTable.id),
+            eq(InferenceUsageLedgerEntryTable.organization_id, MemberTable.organizationId),
+          ))
+          .innerJoin(InferenceOrgLimitPolicyTable, and(
+            eq(InferenceUsageLedgerEntryTable.organization_id, InferenceOrgLimitPolicyTable.organization_id),
+            sql`json_contains(${InferenceUsageLedgerEntryTable.provider_usage}, json_quote(${InferenceOrgLimitPolicyTable.current_bucket_id}), '$.reservation.bucketIds')`,
+          ))
+          .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt))).for("update")
+        for (const reservation of reservations) {
+          if (!reservation.bucketId) continue
+          await tx.insert(InferenceUsageLedgerBucketChargeTable).values({
+            id: createDenTypeId("inferenceUsageLedgerBucketCharge"), ledger_entry_id: reservation.entryId,
+            bucket_id: reservation.bucketId, amount: 0,
+          }).onDuplicateKeyUpdate({ set: { id: sql`${InferenceUsageLedgerBucketChargeTable.id}` } })
+        }
         const charges = await tx
           .select({
             id: InferenceUsageLedgerBucketChargeTable.id,
@@ -2043,6 +2068,14 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const modelsAnalytics = body.data.capabilities.modelsAnalytics
         if (modelsAnalytics === null) delete capabilities.modelsAnalytics
         else if (modelsAnalytics !== undefined) capabilities.modelsAnalytics = modelsAnalytics
+        const coworkerTeams = body.data.capabilities.coworkerTeams
+        if (coworkerTeams !== undefined) {
+          if (coworkerTeams === null) {
+            delete capabilities.coworkerTeams
+          } else {
+            capabilities.coworkerTeams = coworkerTeams
+          }
+        }
 
         const gatewayDashboard = body.data.capabilities.gatewayDashboard
         if (gatewayDashboard === null) delete capabilities.gatewayDashboard

@@ -1,4 +1,25 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import type { DesktopHandoffGrantTable } from "@openwork-ee/den-db/schema"
+import { Hono } from "hono"
+import type { AuthContextVariables } from "../src/session.js"
+
+const insertGrant = mock(async (_grant: typeof DesktopHandoffGrantTable.$inferInsert) => [])
+// Sessions are supplied below; do not initialize Better Auth's database-backed OAuth resources.
+mock.module("../src/auth.js", () => ({
+  auth: {},
+  DEN_MCP_FIRST_PARTY_CLIENT_ID: "test-client",
+  DEN_MCP_FIRST_PARTY_RESOURCES: [],
+  DEN_MCP_GRANT_ID_CLAIM: "test-grant-id",
+  DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "test-access-",
+  DEN_MCP_ORG_ID_CLAIM: "test-org-id",
+  DEN_MCP_OAUTH_RESOURCE: "https://public.example.test/mcp",
+  DEN_MCP_RESOURCE: "https://public.example.test/mcp",
+  DEN_MCP_RESOURCE_CLAIM: "test-resource",
+  DEN_MCP_TOKEN_USE_CLAIM: "test-token-use",
+}))
+mock.module("../src/db.js", () => ({ db: { insert: () => ({ values: insertGrant }) } }))
+afterAll(() => mock.restore())
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -21,6 +42,53 @@ async function configureDesktopHandoffEnv(input: {
 }
 
 describe("desktop handoff public URL", () => {
+  test("issues links only for registered desktop schemes and defaults to OpenWork", async () => {
+    const { registerDesktopAuthRoutes } = await loadDesktopHandoffRoutes()
+    const app = new Hono<{ Variables: AuthContextVariables }>()
+    const userId = createDenTypeId("user")
+    const sessionId = createDenTypeId("session")
+    const now = new Date()
+    app.use("*", async (c, next) => {
+      c.set("user", { id: userId, name: "Member", email: "member@example.test", emailVerified: true, image: null, createdAt: now, updatedAt: now })
+      c.set("session", { id: sessionId, token: "test-session-token", userId, activeOrganizationId: null, activeTeamId: null, expiresAt: new Date(now.getTime() + 60_000), createdAt: now, updatedAt: now, ipAddress: null, userAgent: null })
+      c.set("apiKey", null)
+      await next()
+    })
+    registerDesktopAuthRoutes(app)
+    const request = (desktopScheme: string | undefined) => app.request("https://app.example.test/v1/auth/desktop-handoff", {
+      method: "POST", headers: { "content-type": "application/json", origin: "https://app.example.test" }, body: JSON.stringify({ desktopScheme }),
+    })
+    for (const desktopScheme of [undefined, "openwork", "opencoworker"]) {
+      insertGrant.mockClear()
+      const response = await request(desktopScheme)
+      expect(response.status).toBe(200)
+      const payload = await response.json()
+      const link = new URL(payload.openworkUrl)
+      expect(link.protocol).toBe(`${desktopScheme ?? "openwork"}:`)
+      expect(link.hostname).toBe("den-auth")
+      expect(link.searchParams.get("grant")).toBe(payload.grant)
+      expect(link.searchParams.get("denBaseUrl")).toBe("https://app.example.test/api/den")
+      expect(insertGrant).toHaveBeenCalledTimes(1)
+      expect(insertGrant.mock.calls[0][0]).toMatchObject({ id: payload.grant, user_id: userId, session_token: "test-session-token", consumed_at: null })
+      expect(payload).not.toHaveProperty("token")
+    }
+    for (const desktopScheme of ["untrusted-app", "https", "openwork-untrusted", "opencoworker-untrusted", "opencoworker://", "OpenCoworker", ""]) {
+      insertGrant.mockClear()
+      const response = await request(desktopScheme)
+      expect(response.status).toBe(400)
+      const payload = await response.json()
+      expect(payload).not.toHaveProperty("grant")
+      expect(payload).not.toHaveProperty("openworkUrl")
+      expect(insertGrant).not.toHaveBeenCalled()
+    }
+    const signedOut = new Hono<{ Variables: AuthContextVariables }>()
+    registerDesktopAuthRoutes(signedOut)
+    expect((await signedOut.request("https://app.example.test/v1/auth/desktop-handoff", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ desktopScheme: "opencoworker" }),
+    })).status).toBe(401)
+    expect(insertGrant).not.toHaveBeenCalled()
+  })
+
   test("does not send 0.0.0.0 to desktop clients", async () => {
     seedRequiredEnv()
     process.env.BETTER_AUTH_URL = "https://public.example.test"
