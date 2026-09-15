@@ -206,6 +206,7 @@ export interface HeadlessThreadClientOptions {
   hostToken?: string;
   /** Model used when a call does not name one. */
   defaultModel?: HeadlessThreadModel;
+  requireModelAvailability?: boolean;
   /** Default `waitForThread` poll interval. Defaults to 500ms. */
   pollIntervalMs?: number;
   /** Bounds every individual HTTP request. Defaults to 15 seconds; use 0 to disable. */

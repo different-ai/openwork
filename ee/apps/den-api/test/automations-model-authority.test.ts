@@ -27,11 +27,13 @@ const openWorkProvider: AutomationAuthorityProvider = {
   id: createDenTypeId("llmProvider"),
   source: "openwork",
   name: "OpenWork Models",
+  providerConfig: {},
 }
 const customProvider: AutomationAuthorityProvider = {
   id: createDenTypeId("llmProvider"),
   source: "custom",
   name: "Team Provider",
+  providerConfig: {},
 }
 const customModel: AutomationAuthorityModel = {
   modelId: "team-model",
@@ -158,6 +160,42 @@ describe("Automation normalized model authority", () => {
       ok: false,
       code: "model_access_lost",
     })
+  })
+
+  test("stored model rows do not override a provider's current allowlist or blocklist", async () => {
+    for (const providerConfig of [
+      { whitelist: [] },
+      { whitelist: [], blacklist: [] },
+      { whitelist: ["another-model"] },
+      { blacklist: [customModel.modelId] },
+      { whitelist: [customModel.modelId], blacklist: [customModel.modelId] },
+    ]) {
+      expect(await resolveAutomationModelAccessWithStore({
+        ...base, providerId: customProvider.id, modelId: customModel.modelId,
+      }, authorityStore({ async findProvider() { return { ...customProvider, providerConfig } } })))
+        .toMatchObject({ ok: false, code: "model_access_lost" })
+    }
+    expect(await resolveAutomationModelAccessWithStore({
+      ...base, providerId: "openwork", modelId: "z-ai/glm-5.2",
+    }, authorityStore({ async findOpenWorkProvider() {
+      return { ...openWorkProvider, providerConfig: { blacklist: ["z-ai/glm-5.2"] } }
+    } }))).toMatchObject({ ok: false, code: "model_access_lost" })
+  })
+
+  test("an omitted allowlist and an empty blocklist do not remove model access", async () => {
+    for (const providerConfig of [{}, { blacklist: [] }, { whitelist: [customModel.modelId], blacklist: [] }]) {
+      expect(await resolveAutomationModelAccessWithStore({
+        ...base, providerId: customProvider.id, modelId: customModel.modelId,
+      }, authorityStore({ async findProvider() { return { ...customProvider, providerConfig } } })))
+        .toMatchObject({ ok: true })
+    }
+  })
+
+  test("authority storage failures are not evidence that model access was revoked", async () => {
+    await expect(resolveAutomationModelAccessWithStore({
+      ...base, providerId: customProvider.id, modelId: customModel.modelId,
+    }, authorityStore({ async findModel() { throw new Error("Temporary catalog failure") } })))
+      .rejects.toThrow("Temporary catalog failure")
   })
 
   test("never lets a removed membership inherit model access", async () => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { createHeadlessThreadClient, type HeadlessThreadTranscript } from "@openwork/headless-threads"
+import { createHeadlessThreadClient, isHeadlessModelAccessError, type HeadlessThreadTranscript } from "@openwork/headless-threads"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -315,7 +315,7 @@ export type CloudConnectDeps = {
   now: () => number
 }
 
-type CloudConnectResult = { ok: true } | { ok: false; code: "connect_access_unavailable" | "model_access_lost"; message: string }
+type CloudConnectResult = { ok: true } | { ok: false; code: "connect_access_unavailable" | "model_access_lost" | "execution_failed"; message: string }
 
 function engineWarmingUp(health: Record<string, unknown> | null): boolean {
   const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
@@ -403,10 +403,17 @@ export async function connectHealth(input: {
     health = isRecord(refreshed?.health) ? refreshed.health : null
   }
   if (health?.usable === true && health.usableByCurrentModel === true) return { ok: true }
-  if (health?.usable === true && health.usableByCurrentModel !== true) {
-    return { ok: false, code: "model_access_lost", message: "The selected model cannot use the current OpenWork Connect capabilities." }
-  }
   const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
+  if (failure?.code === "provider_tool_projection_missing") {
+    return { ok: false, code: "model_access_lost", message: "The selected model cannot use the current OpenWork Connect capabilities. Choose a supported model to resume this Automation." }
+  }
+  if (failure?.stage === "provider_projection" || health?.usable === true) {
+    return {
+      ok: false,
+      code: "execution_failed",
+      message: "The selected model's availability could not be checked. Retry the run when the runtime catalog is available.",
+    }
+  }
   return {
     ok: false,
     code: "connect_access_unavailable",
@@ -457,7 +464,7 @@ function terminalFailure(input: {
   usage: AutomationUsage
 }): CloudAgentExecution {
   const { error, transcript, usage } = input
-  const modelAccess = error.name === "ProviderAuthError"
+  const modelAccess = isHeadlessModelAccessError(error)
   return {
     ok: false,
     status: "failed",
@@ -516,16 +523,29 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
   }
 }
 
-export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise<CloudAgentExecution> {
+export type CloudAgentExecutorDeps = {
+  authority: typeof currentAgentAuthority
+  runtime: typeof resolveCloudAgentReadyWorker
+  connect: typeof connectHealth
+  fetchImpl: FetchLike
+}
+
+export async function executeCloudAgent(
+  input: CloudAgentExecutorInput,
+  options: Partial<CloudAgentExecutorDeps> = {},
+): Promise<CloudAgentExecution> {
+  const authority = options.authority ?? currentAgentAuthority
+  const runtimeForRun = options.runtime ?? resolveCloudAgentReadyWorker
+  const connectForRun = options.connect ?? connectHealth
   const deadlineController = new AbortController()
   const deadlineTimer = setTimeout(() => deadlineController.abort(new Error("automation_deadline_exceeded")), input.maximumRuntimeMs)
   const signal = AbortSignal.any([input.signal, deadlineController.signal])
   let client: ReturnType<typeof createHeadlessThreadClient> | null = null
   let nativeThreadId: string | null = null
   try {
-    const initialAuthorityFailure = await currentAgentAuthority(input)
+    const initialAuthorityFailure = await authority(input)
     if (initialAuthorityFailure) return initialAuthorityFailure
-    const runtime = await resolveCloudAgentReadyWorker(input, signal)
+    const runtime = await runtimeForRun(input, signal)
     if (!runtime.ok) {
       return cloudAgentRuntimeUnavailableResult({
         reason: runtime.reason,
@@ -546,7 +566,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     // Recovery keeps the receipt's workspace (the turn may already be running
     // there); otherwise the revision pin wins over the worker's active workspace.
     const workspaceId = previousReceipt?.workspaceId ?? input.workspaceId ?? runtime.workspaceId
-    const connect = await connectHealth({
+    const connect = await connectForRun({
       organizationId: input.organizationId,
       workerId: runtime.workerId,
       baseUrl: runtime.baseUrl,
@@ -556,7 +576,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       signal,
     })
     if (!connect.ok) {
-      return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: true }
+      return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: connect.code !== "execution_failed" }
     }
 
     client = createHeadlessThreadClient({
@@ -565,7 +585,8 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       token: runtime.access.clientToken,
       hostToken: runtime.access.hostToken,
       requestTimeoutMs: WORKER_REQUEST_TIMEOUT_MS,
-      fetch: (url, init = {}) => fetchPreviewNoRedirect(previewFetch(), url, init),
+      requireModelAvailability: true,
+      fetch: (url, init = {}) => fetchPreviewNoRedirect(options.fetchImpl ?? previewFetch(), url, init),
       defaultModel: {
         providerId: input.action.model.providerId,
         modelId: input.action.model.modelId,
@@ -580,7 +601,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       // Wake-up and Connect repair can take minutes. Re-check live authority at
       // the native-thread boundary so queued recovery cannot use credentials
       // materialized before the owner or model grant was revoked.
-      const authorityFailure = await currentAgentAuthority(input)
+      const authorityFailure = await authority(input)
       if (authorityFailure) return authorityFailure
       const thread = await client.createThread({ title: `Automation: ${input.automationName}`, signal })
       nativeThreadId = thread.id
@@ -591,7 +612,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
 
     // Thread creation and receipt persistence are also asynchronous. Make the
     // final authorization decision immediately before submitting the turn.
-    const authorityFailure = await currentAgentAuthority(input)
+    const authorityFailure = await authority(input)
     if (authorityFailure) {
       // A recovered receipt may refer to a turn admitted by a previous Den
       // process. Do not terminalize the run until that thread is observably
@@ -683,10 +704,12 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
         }
       }
     }
+    const modelAccess = !cancelled && !timedOut && isHeadlessModelAccessError(error)
     return {
       ok: false,
       status: cancelled ? "cancelled" : "failed",
-      code: cancelled ? "cancelled" : timedOut ? "execution_timed_out" : "execution_failed",
+      code: cancelled ? "cancelled" : timedOut ? "execution_timed_out" : modelAccess ? "model_access_lost" : "execution_failed",
+      needsAttention: modelAccess,
       message: cancelled ? "The Automation run was cancelled."
         : timedOut ? "The Automation run exceeded its maximum runtime." : error instanceof Error ? error.message : "Cloud agent execution failed.",
       // A thrown transport or executor error may happen after OpenCode accepted

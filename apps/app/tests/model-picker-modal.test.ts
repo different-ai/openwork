@@ -320,6 +320,39 @@ test("Automation preserves same-model settings, recovers Default and saves only 
   }
 });
 
+test("a new Automation keeps its selected model when the catalog refreshes or removes it", async () => {
+  const { AutomationEditor } = await import("../src/react-app/domains/automations/automation-editor");
+  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+  const first: AutomationModelOption = { providerId: "lpr_fixture", modelId: "first", providerName: "Fixture", modelName: "First", accessKind: "authorized_custom" };
+  const second: AutomationModelOption = { ...first, modelId: "second", modelName: "Second" };
+  let modelOptions: AutomationModelOption[] = [];
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const saved: CreateAutomation[] = [];
+  const render = () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
+    createElement(AutomationEditor, { placement: "desktop", modelOptions, busy: false, submitLabel: "Save automation",
+      onCancel: () => undefined, onSave: (input) => { saved.push(input); } }) }));
+  try {
+    await act(async () => render());
+    modelOptions = [first, second];
+    await act(async () => render());
+    expect(host.querySelector("#automation-model")?.textContent).toContain("First");
+    modelOptions = [second];
+    await act(async () => render());
+    expect(host.querySelector("#automation-model")?.textContent).toContain("Current model is no longer available");
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    modelOptions = [second, first];
+    await act(async () => render());
+    expect(host.querySelector("#automation-model")?.textContent).toContain("First");
+    expect(saved).toEqual([]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    authSpy.mockRestore();
+  }
+});
+
 test("long picker labels retain full hover text and select the complete model ID", async () => {
   const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
   const den = await import("../src/app/lib/den");

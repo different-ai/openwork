@@ -636,7 +636,7 @@ function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRe
   return next;
 }
 
-function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
+export function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   const models: JsonRecord = {};
   for (const model of [...provider.models].sort((left, right) => left.id.localeCompare(right.id))) {
     models[model.id] = buildModelConfig(model, provider.providerConfig.npm);
@@ -654,7 +654,7 @@ function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   if (api) config.api = api;
   if (isRecord(provider.providerConfig.options)) config.options = provider.providerConfig.options;
   const whitelist = readStringList(provider.providerConfig.whitelist);
-  if (whitelist.length > 0) config.whitelist = whitelist;
+  if (Array.isArray(provider.providerConfig.whitelist)) config.whitelist = whitelist;
   const blacklist = readStringList(provider.providerConfig.blacklist);
   if (blacklist.length > 0) config.blacklist = blacklist;
   return config;

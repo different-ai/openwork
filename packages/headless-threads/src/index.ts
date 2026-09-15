@@ -1,5 +1,5 @@
 export { createHeadlessThreadClient } from "./client.js";
-export { HeadlessThreadError } from "./errors.js";
+export { HeadlessThreadError, isHeadlessModelAccessError } from "./errors.js";
 export { hasAssistantReplySince, toTranscript, toTranscriptMessage } from "./transcript.js";
 export { isRunning } from "./wire.js";
 export type {

@@ -18,6 +18,7 @@ import type {
   HeadlessThread,
   HeadlessThreadClient,
   HeadlessThreadClientOptions,
+  HeadlessThreadModel,
   HeadlessThreadSnapshot,
   HeadlessThreadTranscript,
   HeadlessThreadTurnInput,
@@ -41,8 +42,20 @@ const DEFAULT_POLL_INTERVAL_MS = 500;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const errorBodySchema = z
-  .object({ code: z.string().optional(), message: z.string().optional() })
+  .object({
+    code: z.string().optional(),
+    name: z.string().optional(),
+    message: z.string().optional(),
+    data: z.object({ message: z.string().optional() }).passthrough().optional(),
+  })
   .passthrough();
+
+const effectiveProvidersSchema = z.object({
+  providers: z.array(z.object({
+    id: z.string(),
+    models: z.record(z.string(), z.object({}).passthrough()),
+  })),
+});
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -140,13 +153,12 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   function sdkSuccess<T>(result: SdkResult<T>, method: string, path: string): T | undefined {
     if (result.error === undefined) return result.data;
     const detail = errorBodySchema.safeParse(result.error);
+    const message = detail.success ? detail.data.message ?? detail.data.data?.message : undefined;
     throw new HeadlessThreadError({
-      code: detail.success && detail.data.code !== undefined ? detail.data.code : "request_failed",
-      message: detail.success && detail.data.message !== undefined
-        ? detail.data.message
-        : result.response
-          ? `OpenWork returned ${result.response.status} for ${method} ${path}`
-          : `OpenWork request failed for ${method} ${path}`,
+      code: detail.success ? detail.data.code ?? detail.data.name ?? "request_failed" : "request_failed",
+      message: message ?? (result.response
+        ? `OpenWork returned ${result.response.status} for ${method} ${path}`
+        : `OpenWork request failed for ${method} ${path}`),
       method,
       path,
       ...(result.response === undefined ? {} : { status: result.response.status }),
@@ -201,25 +213,59 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     }));
   }
 
+  async function requireAvailableModel(model: HeadlessThreadModel | undefined, signal?: AbortSignal): Promise<void> {
+    if (!options.requireModelAvailability) return;
+    const path = `${opencodePath}/config/providers`;
+    if (!model) {
+      throw new HeadlessThreadError({ code: "invalid_payload", message: "An explicit model is required.", method: "GET", path });
+    }
+    const catalog = sdkJson(
+      effectiveProvidersSchema,
+      await opencode.config.providers(undefined, { signal: requestSignal(signal) }),
+      "GET",
+      path,
+    );
+    const provider = catalog.providers.find((candidate) => candidate.id === model.providerId);
+    if (!provider || !Object.hasOwn(provider.models, model.modelId)) {
+      throw new HeadlessThreadError({
+        code: "model_access_lost",
+        message: `The selected model ${model.providerId}/${model.modelId} is not available in this workspace. Choose a supported model to resume this Automation.`,
+        method: "GET",
+        path,
+      });
+    }
+  }
+
   async function createThread(input: CreateThreadInput): Promise<HeadlessThread> {
     const model = input.model ?? options.defaultModel;
     const createPath = `${opencodePath}/session`;
     const prompt = initialPrompt(input.prompt);
+    const title = createTitle(input.title);
+    await requireAvailableModel(model, input.signal);
     const session = sdkJson(
       sessionSchema,
-      await opencode.session.create({ title: createTitle(input.title) }, { signal: requestSignal(input.signal) }),
+      await opencode.session.create({ title }, { signal: requestSignal(input.signal) }),
       "POST",
       createPath,
     );
     if (prompt !== undefined) {
       const promptPath = `${opencodePath}/session/${encodeURIComponent(session.id)}/prompt_async`;
-      const result = await opencode.session.promptAsync({
-        sessionID: session.id,
-        parts: [{ type: "text", text: prompt }],
-        ...(model === undefined ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
-        ...(model?.variant === undefined ? {} : { variant: model.variant }),
-      }, { signal: requestSignal(input.signal) });
-      sdkSuccess(result, "POST", promptPath);
+      try {
+        const result = await opencode.session.promptAsync({
+          sessionID: session.id,
+          parts: [{ type: "text", text: prompt }],
+          ...(model === undefined ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
+          ...(model?.variant === undefined ? {} : { variant: model.variant }),
+        }, { signal: requestSignal(input.signal) });
+        sdkSuccess(result, "POST", promptPath);
+      } catch (error) {
+        const contextualError = error instanceof Error ? error : new Error(String(error));
+        Object.defineProperties(contextualError, {
+          sessionId: { value: session.id },
+          workspaceId: { value: workspaceId },
+        });
+        throw contextualError;
+      }
     }
     return toThread(session, workspaceId, prompt !== undefined);
   }
@@ -231,6 +277,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
       return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
     }
+    await requireAvailableModel(model, input.signal);
     const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/prompt_async`;
     const result = await opencode.session.promptAsync({
       sessionID: threadId,

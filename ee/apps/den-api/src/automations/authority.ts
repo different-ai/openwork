@@ -7,7 +7,7 @@ import {
   TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, automationModelAllowedByProvider } from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { organizationAllowsManagedModels } from "../inference.js"
@@ -24,6 +24,7 @@ export type AutomationAuthorityProvider = {
   id: ProviderId
   source: "models_dev" | "custom" | "openwork"
   name: string
+  providerConfig: Record<string, unknown>
 }
 
 export type AutomationAuthorityModel = {
@@ -194,6 +195,9 @@ export async function resolveAutomationModelAccessWithStore(
     if (!provider) {
       return { ok: false, code: "provider_unavailable", message: "OpenWork Models are not available for the Automation owner." }
     }
+    if (!automationModelAllowedByProvider(provider.providerConfig, input.modelId)) {
+      return { ok: false, code: "model_access_lost", message: "The selected model is disabled by its provider configuration." }
+    }
     if (!await store.canAccessProvider({ member, providerRecordId: provider.id })) {
       return { ok: false, code: "model_access_lost", message: "The Automation owner no longer has access to OpenWork Models." }
     }
@@ -215,7 +219,7 @@ export async function resolveAutomationModelAccessWithStore(
     return { ok: false, code: "provider_unavailable", message: "The selected model provider is no longer available." }
   }
   const model = await store.findModel({ providerRecordId: provider.id, modelId: input.modelId })
-  if (!model) {
+  if (!model || !automationModelAllowedByProvider(provider.providerConfig, input.modelId)) {
     return { ok: false, code: "model_access_lost", message: "The selected model is no longer available from this provider." }
   }
   if (!await store.canAccessProvider({ member, providerRecordId: provider.id })) {
