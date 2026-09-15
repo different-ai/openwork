@@ -25,6 +25,7 @@ import { useControlAction, type OpenworkControlAction } from "./control/control-
 import { openNotificationCenterEvent } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
+import { workspaceSessionRoute } from "./workspace-routes";
 
 const SEVERITY_ICONS: Record<NotificationSeverity, LucideIcon> = {
   info: Info,
@@ -123,6 +124,8 @@ export function NotificationBell({ variant = "icon" }: { variant?: "icon" | "sid
         navigate("/extensions");
       } else if (action.type === "install-marketplace-plugin") {
         navigate("/extensions");
+      } else if (action.type === "open-session") {
+        navigate(workspaceSessionRoute(action.workspaceId, action.sessionId));
       }
     },
     [markAllRead, navigate, reloadCoordinator],
