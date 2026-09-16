@@ -1,9 +1,11 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, jest, test } from "bun:test";
+import { desktopFetchViaMain } from "../src/app/lib/desktop";
 import { createClient, createDesktopFetch } from "../src/app/lib/opencode";
 
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
 afterEach(() => {
+  jest.useRealTimers();
   Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });
 });
@@ -48,4 +50,43 @@ test("archive opts finite loopback GET/PATCH into IPC with credentials and scope
   await createDesktopFetch(auth, finite)(`${base}/event`, { headers: { Accept: "text/event-stream" } });
   expect(renderer).toHaveLength(2);
   expect(ipc).toHaveLength(2);
+});
+
+test("Stop's transport timeout cancels the native IPC request, without giving prompt or command POSTs read cancellation", async () => {
+  jest.useFakeTimers();
+  const calls: string[] = [];
+  let transferId: string | undefined;
+  let rejectFetch: ((error: Error) => void) | undefined;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { __OPENWORK_ELECTRON__: {
+    invokeDesktop: (command: string, value: string, init?: { transferId?: string }) => {
+      calls.push(command);
+      if (command === "__cancelTransfer") {
+        expect(value).toBe(transferId);
+        rejectFetch?.(new Error("IPC request aborted"));
+        return Promise.resolve(true);
+      }
+      transferId = init?.transferId;
+      return new Promise((_resolve, reject) => { rejectFetch = reject; });
+    },
+  } } });
+  const finite = createDesktopFetch(undefined, desktopFetchViaMain);
+  const abort = finite("http://127.0.0.1:8788/workspace/ws_fixture/opencode/session/ses_fixture/abort?directory=/fixture/a", { method: "POST" })
+    .catch((error: unknown) => error);
+  expect(transferId).toBeString();
+  jest.advanceTimersByTime(10_000);
+  expect(await abort).toMatchObject({ message: "Request timed out." });
+  expect(calls).toEqual(["__fetch", "__cancelTransfer"]);
+  for (const path of ["prompt_async", "command"]) {
+    calls.length = 0;
+    const request = finite(`http://127.0.0.1:8788/session/ses_fixture/${path}`, { method: "POST", body: "{}" })
+      .catch((error: unknown) => error);
+    expect(transferId).toBeUndefined();
+    jest.advanceTimersByTime(10_000);
+    expect(calls).toEqual(["__fetch"]);
+    // Commands intentionally have no transport deadline, and prompt admission
+    // has a longer one. Settle the mock explicitly rather than await either.
+    rejectFetch?.(new Error("test cleanup"));
+    await request;
+    expect(calls).toEqual(["__fetch"]);
+  }
 });
