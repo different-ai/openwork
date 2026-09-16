@@ -95,8 +95,11 @@ the IDs go into `access.teamIds`; do not also supply `access.teamIds` when using
 symbolic references, resolve actual organization-specific member/team IDs from
 `GET /v1/org` and use the resource's write fields above. That is the member/team
 inventory endpoint; do not infer collection GET routes from the keyed PUT paths.
-Review membership: the sample Platform team starts empty. Marketplace access and plugin attachments use
-separate endpoints.
+Review membership: the sample Platform team starts empty. Populate
+`teams.platform.memberIds` with the intended organization member IDs before applying;
+otherwise ordinary members receive no access through that team. Marketplace access
+and plugin attachments use separate endpoints. Provider creator access remains even
+when the creator is not in Platform.
 
 Both MCP examples explicitly set `authType`, `credentialMode`, `exposeDirectly`,
 and `access`. The no-auth documentation connection intentionally grants org-wide
@@ -113,14 +116,18 @@ A successful provider PUT proves configuration persistence, not usable credentia
 After applying the custom provider, the deployment Job must perform this separate
 check; `apply.mjs` does not run it automatically:
 
-1. Read `GET /v1/llm-providers/{id}/connect` using the authorized caller. Unlike
-   ordinary provider reads, its `llmProvider` response can contain the stored
-   credential. Keep this payload in memory; never print it or save it to Job logs.
-2. Use that returned endpoint and credential in the **bare** body of
-   `POST /v1/llm-providers/test-connection`: `{api, apiKey, modelIds}`. Select the
-   configured model IDs to verify (at most eight per request). Do not wrap this
-   probe in `{llmProvider: ...}` or merely reuse the manifest's input secret:
-   the gate must exercise what Den actually stored and supplies to this caller.
+1. Resolve `llmProvider.id` with `GET /v1/llm-providers/by-key/{key}`, then read
+   `GET /v1/llm-providers/{id}/connect` using the authorized caller. Unlike ordinary
+   provider reads, its `llmProvider` response can contain the stored credential.
+   Keep this payload in memory; never print it or save it to Job logs.
+2. For the example's scalar-key, OpenAI-compatible custom provider, map
+   `llmProvider.providerConfig.api` to `api`, `llmProvider.apiKey` to `apiKey`, and
+   `llmProvider.models[].id` to `modelIds` in the **bare** body of
+   `POST /v1/llm-providers/test-connection`: `{api, apiKey, modelIds}`. Stop if the
+   endpoint or required stored credential is missing. Verify all configured models
+   in batches of at most eight. Do not wrap this probe in `{llmProvider: ...}` or
+   merely reuse the manifest's input secret: the gate must exercise what Den
+   actually stored and supplies to this caller.
 3. Check both HTTP success and **`result.ok === true`** in the response JSON.
    When requesting model verification, also check the returned `verifications`
    cover those model IDs without `status:"failed"`; review any `adjusted` results.
@@ -143,7 +150,11 @@ into this protection: it finds the key in
 its `updatedAt` as `If-Match` on the keyed PUT. MCP has no GET-by-key endpoint.
 On `409`, the client re-reads and retries the desired configuration **once**;
 a second conflict stops the apply. Serialize writers: this bounded retry does not
-merge concurrent edits, and marketplace-owned identity conflicts need review.
+merge concurrent edits. After a connection is bound to a marketplace plugin,
+resending `authorizationServerIssuer` or `requestedScopes` can return `409` even
+when their values have not changed. This includes the example's OAuth manifest.
+Review marketplace-owned identity conflicts rather than repeatedly applying; for
+name/direct-access changes only, use the same-ID recipe below without those fields.
 
 A `502` means the proposed connection could not be validated. The client stops
 with that message, rather than retrying or reporting success. Check upstream
@@ -153,9 +164,15 @@ missing or malformed MCP `access` locally, before any manifest write (deletion
 needs only keys). This guard is essential: the server itself accepts omitted
 `access` and defaults it to org-wide.
 
-Run the same command twice. The second run should update the existing resources.
-Rename a display label and remove an assignment, then run again: the ID stays the
-same and the assignment is removed. Resources absent from the file are untouched.
+Run the same command twice. The second run sends PUTs again and should update the
+existing resources, not create duplicates: this is stable-identity reconciliation,
+**not zero writes**, and timestamps or assignment-row IDs may change.
+Rename a display label and remove a direct assignment, then run again: the resource
+ID stays the same. For MCP team access, keep `access.orgWide:false` and change
+`teams:["platform"]` to `teams:[]`; reapply that edited manifest twice. The team
+grant is removed without changing identity or widening direct access. Removing a
+direct assignment does not revoke access from other sources, such as provider
+creator access or marketplace grants. Resources absent from the file are untouched.
 This is resource-level convergence, not a transaction across the entire manifest.
 If a later resource fails, earlier writes remain; correct the request and rerun.
 
@@ -166,10 +183,10 @@ including credential mode and access, rather than relying on these defaults.
 
 | Resource | Write fields and omission behavior on keyed apply |
 | --- | --- |
-| Legacy providers | Use `source:"custom"`, explicit `credentialMode`, `customConfig.models`, and top-level `allMembers/memberIds/teamIds`. Write-only `apiKey`/`apiKeys` are preserved where supported; models and audience assignments are replaced, not merged (creator access remains). Omitted `credentialMode` becomes `shared`; omitted `allMembers/memberIds/teamIds` become `false`/empty lists. |
-| MCP connections | Omitted `access` becomes org-wide: **confirmed live on 0.18.46**, including replacement of team-only grants. Omitted `credentialMode` becomes `shared` and `exposeDirectly` becomes `false`. Omitted `oauthClient.clientSecret` is preserved when connection identity and client ID are unchanged; reads do not export it. |
-| Teams | Bare `name`/`memberIds` write; omitted `memberIds` becomes an empty list. |
-| Desktop policies | Use `policyName`, `policy`, and top-level `roles/memberIds/teamIds`. Omitted `policy.access` and `policy.execution` are retained; `priority`/`isEnabled` reset to zero/true and assignment lists become empty. |
+| Legacy providers | Custom providers use `source:"custom"`, explicit `credentialMode`, `customConfig.models`, and top-level `allMembers/memberIds/teamIds`; catalog providers use `source:"models_dev"`, `providerId`, and `modelIds`. Omitted credentials are retained; `apiKeys` merges individual entries and empty values clear them. Models and audience assignments are replaced, not merged (creator access remains). Omitted `credentialMode` becomes `shared`; changing from `per_member` deletes stored member credentials. Omitted `allMembers/memberIds/teamIds` become `false`/empty lists. |
+| MCP connections | Omitted `access` becomes org-wide: **confirmed live on 0.18.46**, including replacement of team-only grants. By contrast, `access:{}` means no direct grants. Omitted `credentialMode` becomes `shared` and `exposeDirectly` becomes `false`; changing credential mode invalidates existing accounts/client registration. Omitted `oauthClient.clientSecret` is preserved when connection identity and client ID are unchanged; reads do not export it. |
+| Teams | Bare `name`/`memberIds` write; omitted `memberIds` becomes an empty list. Omitted `grantsOrganizationAdmin` preserves an existing team's designation (false on creation); send explicit `false` to revoke it, using owner/super-admin permissions. |
+| Desktop policies | Use `policyName`, `policy`, and top-level `roles/memberIds/teamIds`. Omitted `policy.access` and `policy.execution` are retained; omitted onboarding prompts/descriptions are not retained on keyed replacement. `priority`/`isEnabled` reset to zero/true and assignment lists become empty. |
 | Marketplaces | Bare `name`/`description`/`logoUrl` write; omitted `description`/`logoUrl` become null. Plugin attachments and access grants are not replaced. |
 
 OAuth client-secret retention on omission was confirmed on released 0.18.46 by a
@@ -248,6 +265,20 @@ references and key syntax before writing, bounds retries, and stops on a failure
 It is a small provisioning client, not a general infrastructure state manager.
 
 ## Scope and compatibility
+
+The five keyed APIs are available in **v0.18.43+**. The behavioral release checks
+cited above used **v0.18.46**, not every earlier version; for example, failed MCP
+creation cleanup changed after v0.18.43. Inspect your deployed API schema rather
+than assuming a moving `dev` example matches an older deployment:
+
+```sh
+curl --fail-with-body -sS "${DEN_API_URL%/}/openapi.json" | jq '.paths | with_entries(select(.key | contains("/by-key/")))'
+```
+
+Check for PUT entries for `teams`, `llm-providers`, `mcp-connections`,
+`desktop-policies`, and `marketplaces`, and inspect their request schemas. Schema
+presence establishes route availability, not upstream connectivity or equivalent
+runtime behavior across releases.
 
 Keep SSO outside the repeated apply: saving organization OIDC configuration again
 resets it to disabled/untested; configure, verify, test, and enable it deliberately.

@@ -48,6 +48,9 @@ for (const [section] of resources) {
     if (value.externalKey !== undefined) throw new Error(`Put the identity in the object key, not ${section}.${key}.externalKey`);
     if (mode === '--delete') continue;
     if (section === 'mcpConnections') {
+      for (const field of ['teamIds', 'memberIds', 'allMembers', 'orgWide']) {
+        if (Object.hasOwn(value, field)) throw new Error(`Misplaced MCP audience field ${section}.${key}.${field}; put audience under access (orgWide/memberIds/teamIds), or use teams for manifest team references.`);
+      }
       const access = value.access;
       if (!access || typeof access !== 'object' || Array.isArray(access)
         || Object.keys(access).some((field) => !['orgWide', 'memberIds', 'teamIds'].includes(field))

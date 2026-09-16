@@ -149,6 +149,15 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
       expect(rejected.stdout).toBe("");
       expect(rejected.requests).toEqual([]);
     }
+    for (const [field, value] of Object.entries({ teamIds: [], memberIds: [], allMembers: false, orgWide: false })) {
+      const rejected = await cli({ ...manifest, mcpConnections: { ...connections, [httpKey]: { ...record(httpEntry[1]), [field]: value } } });
+      expect(rejected.status, field).not.toBe(0);
+      expect(rejected.stderr).toContain(`Misplaced MCP audience field mcpConnections.${httpKey}.${field}`);
+      expect(rejected.stderr).toContain("put audience under access");
+      expect(rejected.stderr).toContain("use teams");
+      expect(rejected.stdout).toBe("");
+      expect(rejected.requests, field).toEqual([]);
+    }
     const conflict = await cli({ ...manifest, mcpConnections: { ...connections, [httpKey]: { ...record(httpEntry[1]), teams: [Object.keys(record(manifest.teams))[0]], access: { orgWide: false, teamIds: [] } } } });
     expect(conflict.status).not.toBe(0);
     expect(conflict.stderr).toContain("Use teams or access.teamIds, not both");
@@ -158,7 +167,7 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
     expect(missing.stderr).toContain("Missing environment variable");
     expect(missing.requests).toEqual([]);
     expect(await snapshot()).toEqual([]);
-    evidence.recordAssertionEvidence("MCP access and environment preflight happen before any organization writes", "Missing and malformed access, conflicting team references, and absent environment substitutions all exited nonzero with zero HTTP requests, no progress output, and no MCP identities.", true);
+    evidence.recordAssertionEvidence("MCP access and environment preflight happen before any organization writes", "Missing and malformed access, each misplaced top-level MCP audience field (teamIds/memberIds/allMembers/orgWide), conflicting team references, and absent environment substitutions all exited nonzero with zero HTTP requests, no progress output, and no MCP identities.", true);
 
     const first = await cli();
     expect(first.status, first.stderr).toBe(0);
@@ -253,6 +262,26 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
     expect(record(record(conditionalPuts(emptyTeams.requests)[0].response).access).teamIds).toEqual([]);
     evidence.recordAssertionEvidence("Top-level MCP teams resolve into access.teamIds, including removal", "The CLI sent the created team ID only under MCP access.teamIds, the bare server response confirmed the grant, an empty teams array removed it, and the MCP ID stayed stable.", true);
 
+    const withoutAccess = Object.fromEntries(Object.entries(httpBody).filter(([field]) => field !== "access"));
+    const httpId = text(record(httpPut.response).id);
+    for (const body of [withoutAccess, { ...withoutAccess, access: {} }]) {
+      const before = await request(`/v1/mcp-connections/${httpId}`);
+      expect(before.response.status).toBe(200);
+      const replaced = await denFetch(den.admin, `/v1/mcp-connections/by-key/${httpKey}`, {
+        method: "PUT", headers: { "x-api-key": apiKey, "If-Match": text(record(before.body).updatedAt) },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
+      });
+      expect(replaced.response.status).toBe(200);
+      const persisted = await request(`/v1/mcp-connections/${httpId}`);
+      expect(persisted.response.status).toBe(200);
+      for (const result of [replaced.body, persisted.body]) {
+        expect(record(result).id).toBe(httpId);
+        expect(record(result).externalKey).toBe(httpKey);
+        expect(record(result).access).toEqual({ orgWide: !Object.hasOwn(body, "access"), memberIds: [], teamIds: [] });
+      }
+    }
+    evidence.recordAssertionEvidence("Direct Den omission differs from explicit empty MCP access", "Conditional keyed replacements bypassed the CLI: omitted access persisted orgWide true with empty member/team arrays; access:{} persisted orgWide false with empty arrays. Independent GETs confirmed both audiences and unchanged ID/externalKey.", true);
+
     const single = { version: 1, mcpConnections: { [httpKey]: httpBody } };
     proxy.faults.push("race");
     const raced = await cli(single);
@@ -271,13 +300,25 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
 
     const faults: Array<number | "disconnect"> = [429, 500, 502, 503, "disconnect"];
     for (const fault of faults) {
+      const changedName = "Persisted despite lost MCP response";
+      if (fault === "disconnect") {
+        const before = await request(`/v1/mcp-connections/${httpId}`);
+        expect(before.response.status).toBe(200);
+        expect(record(before.body).name).not.toBe(changedName);
+      }
       proxy.faults.push(fault);
-      const failed = await cli(single);
+      const failed = await cli(fault === "disconnect" ? { version: 1, mcpConnections: { [httpKey]: { ...httpBody, name: changedName } } } : single);
       expect(failed.status).not.toBe(0);
       expect(writes(failed.requests)).toHaveLength(1);
       expect(failed.stdout).toBe("");
       if (fault === 502) expect(failed.stderr).toContain("could not be validated");
-      else if (fault === "disconnect") expect(failed.stderr).toContain("outcome uncertain");
+      else if (fault === "disconnect") {
+        expect(failed.stderr).toContain("outcome uncertain");
+        expect(writes(failed.requests)[0]).toMatchObject({ method: "PUT", status: 200, body: { name: changedName } });
+        const persisted = await request(`/v1/mcp-connections/${httpId}`);
+        expect(persisted.response.status).toBe(200);
+        expect(persisted.body).toMatchObject({ id: httpId, externalKey: httpKey, name: changedName });
+      }
       else expect(failed.stderr).toContain(`HTTP ${fault}`);
     }
     const invalid = await cli({ version: 1, mcpConnections: { "invalid-probe": { ...httpBody, name: "Invalid MCP witness", url: `${proxy.url}/v1/invalid-mcp` } }, marketplaces: { "must-not-run": { name: "Must not run after MCP failure" } } });
@@ -291,7 +332,7 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
     const afterFailures = await request("/v1/mcp-connections?scope=manageable");
     expect(rows(record(afterFailures.body).connections).some((row) => row.externalKey === "invalid-probe")).toBe(false);
     expect((await snapshot()).map((row) => row.id)).toEqual(secondConnections.map((row) => row.id));
-    evidence.recordAssertionEvidence("MCP network and server failures never trigger blind retries or expose raw errors", "429/500/502/503 and a response lost after persistence each caused exactly one PUT and a nonzero exit. Both injected and real validation 502s said could not be validated without the synthetic secret diagnostic. Real failed creation reserved no key and the later marketplace was not written; existing MCP IDs survived.", true);
+    evidence.recordAssertionEvidence("MCP network and server failures never trigger blind retries or expose raw errors", "429/500/502/503 and a response lost after persistence each caused exactly one PUT and a nonzero exit. The disconnected attempt sent a changed name, and an independent direct Den GET confirmed that mutation persisted under the same ID. Both injected and real validation 502s said could not be validated without the synthetic secret diagnostic. Real failed creation reserved no key and the later marketplace was not written; existing MCP IDs survived.", true);
 
     const deleteWithoutAccess = { ...manifest, mcpConnections: Object.fromEntries(Object.keys(connections).map((key) => [key, {}])) };
     const removed = await cli(deleteWithoutAccess, true, true);
