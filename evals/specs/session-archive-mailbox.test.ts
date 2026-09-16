@@ -12,11 +12,14 @@ test("mailbox registration expires after a poll gap, independently of pin or eng
   try {
     await mailbox.pending({ wait: false, signal });
     expect(mailbox.connected()).toBe(true);
+    const createdAt = Date.now();
     const inFlight = mailbox.request("command", { id: "session.archive", args: { sessionId: "fixture-idle" } });
     const delivered = await mailbox.pending({ wait: false, signal });
     expect(delivered).toHaveLength(1);
+    expect(delivered[0].createdAt).toBe(createdAt);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(await inFlight).toMatchObject({ ok: false, error: expect.stringContaining("within 5 seconds") });
+    expect(delivered[0].createdAt).toBe(createdAt);
     expect(mailbox.reply(delivered[0].id, { ok: true })).toBe(false);
     // Processing an already-delivered command can stop the serial renderer
     // mailbox loop from polling; receipt timeout does not renew registration.

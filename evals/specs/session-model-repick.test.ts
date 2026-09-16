@@ -15,6 +15,7 @@ const alternate = { providerId: "alternate_fixture", modelId: "alternate_model",
 const workspaces = [{ id: "workspace_fixture_one", path: "/synthetic/one", name: "One" }, { id: "workspace_fixture_two", path: "/synthetic/two", name: "Two" }];
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  vi.useRealTimers();
   for (const cleanup of cleanups.splice(0)) await cleanup();
   useSessionModelStore.setState({ bySessionId: {} });
   vi.unstubAllGlobals();
@@ -28,7 +29,7 @@ function record(value: unknown): Record<string, unknown> {
 function session(id: string, modelId: string | null = old.modelId, archived = 0, directory = "/synthetic/one") {
   return { id, title: id, directory, time: { archived }, ...(modelId ? { model: { providerID: old.providerId, id: modelId, variant: "high" } } : {}) };
 }
-async function fixture() {
+async function fixture(now?: () => number) {
   const storage = new Map<string, string>();
   const storageWrites: string[] = [];
   vi.stubGlobal("window", { localStorage: {
@@ -44,18 +45,26 @@ async function fixture() {
   const requests: Array<{ path: string; method: string; body: unknown }> = [];
   const offline = new Set<string>();
   const held = new Set<string>();
+  const working = new Set<string>();
+  const engineStatuses: Record<string, unknown> = {};
+  let statusResult: { data?: unknown; error?: unknown; response?: { status: number } } = { data: engineStatuses, response: { status: 200 } };
+  const statusReads: string[] = [];
   const reads: Array<{ workspaceId: string; sessionId?: string }> = [];
   let beforeCatalog = async () => {};
-  const actions = createSessionModelActions({ workspaces,
+  let beforeRead = async (_kind: string) => {};
+  const actions = createSessionModelActions({ workspaces, now,
     directory: async (workspace) => {
+      await beforeRead("directory");
       const owner = directories.get(workspace.id);
       if (!owner) throw new Error("Fixture owner unavailable");
       return owner;
     },
-    catalog: async () => { await beforeCatalog(); if (catalogFailure) throw new Error("Fixture catalog unavailable"); return catalog; },
-    sessions: async (workspace) => { reads.push({ workspaceId: workspace.id }); if (offline.has(workspace.id)) throw new Error("Offline inventory"); return sessions; },
-    session: async (workspace, sessionId) => { reads.push({ workspaceId: workspace.id, sessionId }); return sessions.find((session) => session.id === sessionId); },
+    catalog: async () => { await beforeRead("catalog"); await beforeCatalog(); if (catalogFailure) throw new Error("Fixture catalog unavailable"); return catalog; },
+    sessions: async (workspace) => { reads.push({ workspaceId: workspace.id }); await beforeRead("sessions"); if (offline.has(workspace.id)) throw new Error("Offline inventory"); return sessions; },
+    session: async (workspace, sessionId) => { reads.push({ workspaceId: workspace.id, sessionId }); await beforeRead("session"); return sessions.find((session) => session.id === sessionId); },
+    statuses: async (workspace) => { statusReads.push(workspace.id); await beforeRead("statuses"); return statusResult; },
     held: (_workspace, id) => held.has(id),
+    working: (_workspace, id) => working.has(id),
   });
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -98,7 +107,9 @@ async function fixture() {
   vi.stubEnv("OPENWORK_SERVER_TOKEN", "fixture-token");
   const plugin = await OpenWorkExtensionsPreview({ directory: "/synthetic/one" });
   const engineClient = createClient(`http://127.0.0.1:${address.port}/workspace/workspace_fixture_one/opencode`, "/synthetic/one", { mode: "openwork", token: "fixture-token" });
-  return { actions, storage, storageWrites, sessions, requests, catalog, offline, held, reads, directories,
+  return { actions, storage, storageWrites, sessions, requests, catalog, offline, held, working, reads, directories, engineStatuses, statusReads,
+    setStatusResult: (value: typeof statusResult) => { statusResult = value; },
+    setBeforeRead: (hook: (kind: string) => Promise<void>) => { beforeRead = hook; },
     setBeforeCatalog: (hook: () => Promise<void>) => { beforeCatalog = hook; },
     command: (model: Parameters<typeof sessionCommandModelFields>[0], variant: string | null) => sendSessionCommand(`http://127.0.0.1:${address.port}/workspace/workspace_fixture_one/opencode`, engineClient, {
       sessionID: "session_this", messageID: "msg_fixture_command", command: "fixture", arguments: "synthetic", ...sessionCommandModelFields(model, variant),
@@ -172,11 +183,63 @@ test("invalid targets, changed previews and unavailable replacements cannot part
   const f = await fixture();
   await expect(f.actions.setModel({ sessionId: "session_archived", model: replacement })).rejects.toThrow("Archived");
   await expect(f.actions.setModel({ sessionId: "session_this", model: old })).rejects.toThrow("Unavailable");
-  await expect(f.actions.rebindModel({ workspaceId: "missing", from: old, to: replacement })).rejects.toThrow("Workspace");
+  await expect(f.actions.rebindModel({ workspaceId: "missing", from: old, to: replacement, expectedSessionIds: [] })).rejects.toThrow("Workspace");
   await expect(f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: replacement, expectedSessionIds: ["session_this"] })).rejects.toThrow("changed");
   expect(f.storageWrites).toEqual([]);
   expect(f.writes()).toEqual([]);
   evidence.recordAssertionEvidence("Invalid repicks cannot partially save", "Archived targets, unavailable replacements, missing workspaces and changed preview sets all rejected; neither local storage nor engine writes occurred.", f.storageWrites.length === 0 && f.writes().length === 0);
+});
+
+test("bulk mutations fail closed without confirmation while dry-runs remain read-only", async ({ evidence }) => {
+  const f = await fixture();
+  const args = { workspaceId: "workspace_fixture_one", from: old, to: replacement };
+  const before = JSON.stringify(f.sessions);
+  const preview = await f.actions.rebindModel({ ...args, dryRun: true });
+  expect(preview.sessions.map((entry) => entry.sessionId)).toEqual(["session_this", "session_other", "session_restored"]);
+  for (const dryRun of [undefined, false]) {
+    await expect(f.actions.rebindModel({ ...args, dryRun })).rejects.toThrow("expectedSessionIds is required");
+    expect(await f.execute("session.rebind_model", { ...args, dryRun })).toMatchObject({ ok: false });
+  }
+  for (const expectedSessionIds of [[], ["session_this", "session_other", "session_other"], ["session_this", "session_other", "session_restored", "session_archived"]]) {
+    await expect(f.actions.rebindModel({ ...args, expectedSessionIds })).rejects.toThrow("Matching sessions changed");
+  }
+  expect(f.storageWrites).toEqual([]);
+  expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  expect(JSON.stringify(f.sessions)).toBe(before);
+  expect(f.writes()).toEqual([]);
+  expect(await f.execute("session.rebind_model", { ...args, expectedSessionIds: preview.sessions.map((entry) => entry.sessionId).reverse() })).toMatchObject({ ok: true, result: { count: 3, savedLocally: true } });
+  evidence.recordAssertionEvidence("Bulk writes require the exact confirmed preview set", "Missing confirmation rejected in both the action and facade; empty, duplicate and extra ids rejected without persistence. Dry-run required no confirmation, and the confirmed set saved regardless of order.", true);
+});
+
+test("bulk repick rejects a source restored to the current catalog after preview", async ({ evidence }) => {
+  const f = await fixture();
+  const args = { workspaceId: "workspace_fixture_one", from: old, to: replacement };
+  const preview = await f.actions.rebindModel({ ...args, dryRun: true });
+  f.catalog.push({ ...old, displayName: "Renamed restored model" });
+  for (const dryRun of [true, false]) {
+    const request = { ...args, dryRun, expectedSessionIds: preview.sessions.map((entry) => entry.sessionId) };
+    await expect(f.actions.rebindModel(request)).rejects.toThrow("Source model is still available");
+    expect(await f.execute("session.rebind_model", request)).toMatchObject({ ok: false });
+  }
+  expect(f.storageWrites).toEqual([]);
+  expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Bulk repick is limited to an unavailable exact source model", "Restoring the source's provider/model ids under a different label after preview blocked both fresh preview and confirmed mutation; no local or engine writes occurred.", true);
+});
+
+test("bulk matching uses exact provider and model ids, not labels", async ({ evidence }) => {
+  const f = await fixture();
+  f.catalog.push({ ...old, providerId: "different_provider" });
+  f.sessions.push({ ...session("session_same_model_other_provider"), model: { providerID: "different_provider", id: old.modelId, variant: "high" } });
+  const before = JSON.stringify(f.sessions);
+  const args = { workspaceId: "workspace_fixture_one", from: old, to: replacement };
+  const preview = await f.actions.rebindModel({ ...args, dryRun: true });
+  expect(preview.sessions.map((entry) => entry.sessionId)).toEqual(["session_this", "session_other", "session_restored"]);
+  expect(await f.actions.rebindModel({ ...args, expectedSessionIds: preview.sessions.map((entry) => entry.sessionId) })).toMatchObject({ count: 3, savedLocally: true });
+  expect(Object.keys(useSessionModelStore.getState().bySessionId).sort()).toEqual(["session_other", "session_restored", "session_this"]);
+  expect(JSON.stringify(f.sessions)).toBe(before);
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Other providers' matching model ids do not widen or block the confirmed scope", "An available model with the same id and label but another provider did not block replacement of the removed source; its session and all engine records stayed untouched.", true);
 });
 
 test("healthy fresh sessions preserve model-free sending, never substituting defaults for stale bindings", async ({ evidence }) => {
@@ -228,9 +291,277 @@ test("catalog waits cannot race an archive, hold or newer local selection into a
   evidence.recordAssertionEvidence("Repick waits cannot overwrite archive state or a newer local choice", "Each suspended catalog lookup was raced with an archive, hold or newer repick; all rejected without an additional save, the newer high-effort choice survived, and no engine writes occurred.", f.writes().length === 0);
 });
 
+test("exhausted queued repicks reject before reads even when args claim a fresh timestamp", async ({ evidence }) => {
+  const f = await fixture();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  const reads: string[] = [];
+  f.setBeforeRead(async (kind) => { reads.push(kind); });
+  const before = JSON.stringify(f.sessions);
+  for (const age of [4_000, 5_001, 20_000]) {
+    for (const bulk of [false, true]) {
+      const helpers = { requestCreatedAt: Date.now() - age };
+      const spoofed = { createdAt: Date.now(), requestCreatedAt: Date.now() };
+      const pending = bulk
+        ? f.actions.rebindModel({ ...spoofed, workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] }, helpers)
+        : f.actions.setModel({ ...spoofed, workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement }, helpers);
+      await expect(pending).rejects.toThrow("timed out");
+    }
+  }
+  expect(reads).toEqual([]);
+  expect(f.storageWrites).toEqual([]);
+  expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  expect(JSON.stringify(f.sessions)).toBe(before);
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Queued request age is charged before model handlers read or mutate", "At exactly 4s, after mailbox expiry and after a long queue, single and bulk repicks rejected before all reads. Fresh timestamps in user args could not reset the deadline; local and engine state remained unchanged.", true);
+});
+
+test("invalid and future internal timestamps fail closed for single and bulk repicks", async ({ evidence }) => {
+  const f = await fixture();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  const reads: string[] = [];
+  f.setBeforeRead(async (kind) => { reads.push(kind); });
+  for (const requestCreatedAt of [NaN, Infinity, -Infinity, -1, 0, Date.now() - 0.5, Date.now() + 1, Date.now() + 60_000]) {
+    await expect(f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement }, { requestCreatedAt })).rejects.toThrow("timed out");
+    await expect(f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] }, { requestCreatedAt })).rejects.toThrow("timed out");
+  }
+  expect(reads).toEqual([]);
+  expect(f.storageWrites).toEqual([]);
+  expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Invalid timestamps never grant a fresh model mutation budget", "Non-finite, non-positive, fractional and future timestamps rejected before reads in both handlers with zero local or engine writes.", true);
+});
+
+test("near-expiry queued repicks time out on the remaining budget and late reads cannot save", async ({ evidence }) => {
+  const f = await fixture();
+  vi.useFakeTimers();
+  const before = JSON.stringify(f.sessions);
+  for (const bulk of [false, true]) {
+    for (const delayed of ["catalog", "directory", bulk ? "sessions" : "session", "statuses"]) {
+      let release = () => {};
+      let entered = () => {};
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const wait = new Promise<void>((resolve) => { release = resolve; });
+      f.setBeforeRead(async (kind) => { if (kind === delayed) { entered(); await wait; } });
+      const helpers = { requestCreatedAt: Date.now() - 3_900 };
+      const pending = bulk
+        ? f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] }, helpers)
+        : f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement }, helpers);
+      let settled = false;
+      const rejected = expect(pending.finally(() => { settled = true; })).rejects.toThrow("timed out");
+      await started;
+      await vi.advanceTimersByTimeAsync(99);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(f.storageWrites).toEqual([]);
+      release();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(useSessionModelStore.getState().bySessionId).toEqual({});
+      expect(f.storageWrites).toEqual([]);
+    }
+  }
+  expect(JSON.stringify(f.sessions)).toBe(before);
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Near-expiry queued repicks have only their remaining 100ms", "All single/bulk catalog, directory, target and authoritative status reads stayed pending at 99ms and rejected at 100ms. Releasing abandoned reads after the mailbox deadline caused no local persistence or engine writes.", true);
+});
+
+test("queued repicks keep a monotonic remaining budget across wall-clock rollback", async ({ evidence }) => {
+  let now = 0;
+  const f = await fixture(() => now);
+  vi.useFakeTimers();
+  const wallNow = new Date("2026-01-01T00:00:00Z").getTime();
+  for (const bulk of [false, true]) {
+    for (const elapsed of [100, 99]) {
+      now = 0;
+      vi.setSystemTime(wallNow);
+      useSessionModelStore.setState({ bySessionId: {} });
+      f.setBeforeRead(async (kind) => {
+        if (kind === "statuses") {
+          now = elapsed;
+          vi.setSystemTime(wallNow - 60_000);
+        }
+      });
+      const before = f.storageWrites.length;
+      const helpers = { requestCreatedAt: wallNow - 3_900 };
+      const pending = bulk
+        ? f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] }, helpers)
+        : f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement }, helpers);
+      if (elapsed === 100) {
+        await expect(pending).rejects.toThrow("timed out");
+        expect(f.storageWrites).toHaveLength(before);
+        expect(useSessionModelStore.getState().bySessionId).toEqual({});
+      } else {
+        expect(await pending).toMatchObject({ savedLocally: true, count: bulk ? 3 : 1 });
+        expect(f.storageWrites).toHaveLength(before + 1);
+      }
+    }
+  }
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Queued remaining time stays monotonic after handler entry", "With 100ms remaining and timers unfired, the final read at 100ms rejected despite a one-minute wall-clock rollback; the 99ms control saved successfully for both handlers. No engine writes occurred.", true);
+});
+
+test("direct repick handlers retain their four-second bound and abandoned reads never save later", async ({ evidence }) => {
+  const f = await fixture();
+  vi.useFakeTimers();
+  const before = JSON.stringify(f.sessions);
+  for (const bulk of [false, true]) {
+    for (const delayed of ["catalog", "directory", bulk ? "sessions" : "session", "statuses"]) {
+      let release = () => {};
+      let entered = () => {};
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const wait = new Promise<void>((resolve) => { release = resolve; });
+      f.setBeforeRead(async (kind) => { if (kind === delayed) { entered(); await wait; } });
+      const pending = bulk
+        ? f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] })
+        : f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement });
+      const rejected = expect(pending).rejects.toThrow("timed out");
+      await started;
+      await vi.advanceTimersByTimeAsync(4_000);
+      await rejected;
+      expect(f.storageWrites).toEqual([]);
+      release();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(useSessionModelStore.getState().bySessionId).toEqual({});
+      expect(f.storageWrites).toEqual([]);
+    }
+  }
+  expect(JSON.stringify(f.sessions)).toBe(before);
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Repick deadlines prevent post-timeout local mutations", "Single and bulk catalog, directory, target and authoritative status reads all rejected at four seconds before the five-second mailbox; releasing every abandoned read afterward produced no local or engine writes.", true);
+});
+
+test("repick uses one absolute budget and checks elapsed time even before timers run", async ({ evidence }) => {
+  let now = 0;
+  const f = await fixture(() => now);
+  for (const bulk of [false, true]) {
+    now = 0;
+    f.setBeforeRead(async () => { now += 1_500; });
+    const pending = bulk
+      ? f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] })
+      : f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement });
+    await expect(pending).rejects.toThrow("timed out");
+    expect(f.storageWrites).toEqual([]);
+  }
+  expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Repick checks the absolute deadline after awaited reads", "Three individually short reads consumed 4.5 seconds of the injected monotonic clock without firing a timer; both single and bulk repicks rejected with no persistence or engine writes.", true);
+});
+
+test("activity starting during the final read prevents single and atomic bulk repicks", async ({ evidence }) => {
+  const f = await fixture();
+  for (const bulk of [false, true]) {
+    f.working.clear();
+    f.setBeforeRead(async (kind) => { if (kind === "statuses") f.working.add("session_this"); });
+    const pending = bulk
+      ? f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] })
+      : f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement });
+    await expect(pending).rejects.toThrow("Working sessions");
+    expect(f.storageWrites).toEqual([]);
+    expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  }
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Final-read activity prevents any repick persistence", "Local activity began inside the final authoritative status read. Single and bulk repicks both refused; idle bulk peers, local storage and engine state remained untouched.", true);
+});
+
+test("authoritative busy and retry states reject repicks even when local activity is empty", async ({ evidence }) => {
+  const f = await fixture();
+  const before = JSON.stringify(f.sessions);
+  for (const status of [{ type: "busy" }, { type: "retry", attempt: 1, message: "Retrying", next: 123 }]) {
+    f.engineStatuses.session_this = status;
+    for (const dryRun of [true, false]) {
+      await expect(f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement, dryRun })).rejects.toThrow("Working sessions");
+      await expect(f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"], dryRun })).rejects.toThrow("Working sessions");
+      expect(f.working.size).toBe(0);
+      expect(f.storageWrites).toEqual([]);
+      expect(useSessionModelStore.getState().bySessionId).toEqual({});
+    }
+  }
+  expect(f.statusReads).toEqual(Array(8).fill("workspace_fixture_one"));
+  expect(JSON.stringify(f.sessions)).toBe(before);
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Authoritative engine activity vetoes stale-cache repicks", "Busy and retry engine responses rejected single/bulk previews and confirmations with empty local activity. Idle peers, local persistence and engine records were untouched; only the target workspace's status was read.", true);
+});
+
+test("unreadable and malformed authoritative statuses cannot authorize any local model save", async ({ evidence }) => {
+  const f = await fixture();
+  const attempt = async () => {
+    await expect(f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement })).rejects.toThrow();
+    await expect(f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] })).rejects.toThrow();
+    expect(f.storageWrites).toEqual([]);
+    expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  };
+  f.setBeforeRead(async (kind) => { if (kind === "statuses") throw new Error("Status transport unavailable"); });
+  await attempt();
+  f.setBeforeRead(async () => {});
+  for (const result of [
+    {}, { data: {} }, { data: {}, response: { status: 206 } }, { data: {}, error: "unavailable", response: { status: 200 } },
+    ...[undefined, null, [], "idle", { session_this: null }, { session_this: {} }, { session_this: { type: "unknown" } }, { unrelated: { type: "retry" } }].map((data) => ({ data, response: { status: 200 } })),
+  ]) {
+    f.setStatusResult(result);
+    await attempt();
+  }
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Status verification fails closed", "Transport rejection, missing response/data, partial HTTP success, errors, and malformed maps (including unrelated entries) all prevented single and atomic bulk saves without engine mutations.", true);
+});
+
+test("authoritative idle and omitted-idle maps permit local-only single and bulk repicks", async ({ evidence }) => {
+  const f = await fixture();
+  const before = JSON.stringify(f.sessions);
+  for (const statuses of [{}, { session_this: { type: "idle" }, unrelated: { type: "busy" } }]) {
+    f.setStatusResult({ data: statuses, response: { status: 200 } });
+    for (const bulk of [false, true]) {
+      useSessionModelStore.setState({ bySessionId: {} });
+      const reads: string[] = [];
+      f.setBeforeRead(async (kind) => { reads.push(kind); });
+      const writes = f.storageWrites.length;
+      const result = bulk
+        ? await f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] })
+        : await f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement });
+      expect(result).toMatchObject({ savedLocally: true, count: bulk ? 3 : 1, engineBindingUpdated: false });
+      expect(f.storageWrites).toHaveLength(writes + 1);
+      expect(reads).toEqual(["catalog", "directory", bulk ? "sessions" : "session", "statuses"]);
+    }
+  }
+  expect(JSON.stringify(f.sessions)).toBe(before);
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Exact 200 valid idle maps allow local-only persistence", "Explicit idle and omitted-idle maps allowed both handlers with one atomic local write each; unrelated engine activity did not veto the target. Status was the final awaited read, and no engine record changed.", true);
+});
+
+test("status waits recheck local holds and selections before single and bulk persistence", async ({ evidence }) => {
+  const f = await fixture();
+  for (const bulk of [false, true]) {
+    for (const race of ["hold", "selection", "scope"]) {
+      useSessionModelStore.setState({ bySessionId: {} });
+      f.held.clear();
+      let release = () => {};
+      let entered = () => {};
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const wait = new Promise<void>((resolve) => { release = resolve; });
+      f.setBeforeRead(async (kind) => { if (kind === "statuses") { entered(); await wait; } });
+      const pending = bulk
+        ? f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: replacement, expectedSessionIds: ["session_this", "session_other", "session_restored"] })
+        : f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement });
+      await started;
+      if (race === "hold") f.held.add("session_this");
+      else if (race === "scope" && bulk) useSessionModelStore.getState().setModel("session_other_model", { providerID: old.providerId, modelID: old.modelId }, "low");
+      else useSessionModelStore.getState().setModel("session_this", { providerID: alternate.providerId, modelID: alternate.modelId }, "high");
+      const writes = f.storageWrites.length;
+      const saved = useSessionModelStore.getState().bySessionId;
+      release();
+      await expect(pending).rejects.toThrow();
+      expect(f.storageWrites).toHaveLength(writes);
+      expect(useSessionModelStore.getState().bySessionId).toBe(saved);
+    }
+  }
+  expect(f.writes()).toEqual([]);
+  evidence.recordAssertionEvidence("Status waits cannot overwrite local state changes", "While the final authoritative read waited, a hold, newer target choice or newly matching bulk peer appeared. Each handler rejected without additional persistence and preserved the newer choice; no engine writes occurred.", true);
+});
+
 test("confirmed pending choices survive ordinary selections beyond the old 200-entry cap", async ({ evidence }) => {
   const f = await fixture();
-  await f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: { ...replacement, variant: "low" } });
+  await f.actions.rebindModel({ workspaceId: "workspace_fixture_one", from: old, to: { ...replacement, variant: "low" }, expectedSessionIds: ["session_this", "session_other", "session_restored"] });
   const before = useSessionModelStore.getState().bySessionId;
   for (let index = 0; index < 250; index++) useSessionModelStore.getState().setModel(`fixture_new_${index}`, { providerID: alternate.providerId, modelID: alternate.modelId });
   for (const [id, choice] of Object.entries(before)) expect(useSessionModelStore.getState().bySessionId[id]).toBe(choice);
@@ -283,7 +614,7 @@ test("canonical workspace aliases allow single and bulk repick but never admit n
   expect(preview.sessions.map((item) => item.sessionId)).toEqual(["session_this", "session_other"]);
   expect(f.storageWrites).toEqual([]);
   expect(await f.actions.setModel({ workspaceId: "workspace_fixture_one", sessionId: "session_this", model: replacement })).toMatchObject({ savedLocally: true, count: 1 });
-  expect(await f.actions.rebindModel(args)).toMatchObject({ savedLocally: true, count: 1 });
+  expect(await f.actions.rebindModel({ ...args, expectedSessionIds: ["session_other"] })).toMatchObject({ savedLocally: true, count: 1 });
   const saved = useSessionModelStore.getState().bySessionId;
   expect(Object.keys(saved).sort()).toEqual(["session_other", "session_this"]);
   for (const id of ["session_nested", "session_neighbor", "session_other_workspace"]) {
@@ -311,7 +642,7 @@ test("same-id effort changes and bulk selections publish model/variant atomicall
   const observations: unknown[] = [];
   const unsubscribe = useSessionModelStore.subscribe((state) => observations.push(state.bySessionId));
   try {
-    await f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: { ...alternate, variant: "high" } });
+    await f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: { ...alternate, variant: "high" }, expectedSessionIds: ["session_other", "session_restored"] });
     expect(observations).toHaveLength(1);
     expect(observations[0]).toMatchObject({
       session_other: { model: { providerID: alternate.providerId, modelID: alternate.modelId }, variant: "high" },

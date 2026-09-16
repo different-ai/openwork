@@ -121,6 +121,8 @@ export const openworkSessionRebindModelArgsSchema = z.object({
   to: openworkModelSelectorSchema,
   expectedSessionIds: z.array(z.string()).optional(),
   dryRun: z.boolean().optional(),
+}).refine((value) => value.dryRun === true || value.expectedSessionIds !== undefined, {
+  path: ["expectedSessionIds"], message: "expectedSessionIds is required to save. Preview with dryRun:true, then confirm the exact session set.",
 })
 
 export const openworkSessionModelPreflightArgsSchema = z.object({

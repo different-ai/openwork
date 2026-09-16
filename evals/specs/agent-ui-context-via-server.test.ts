@@ -157,12 +157,21 @@ test("the in-app agent reads renderer context through openwork-server and gets a
     }
     expect((await fetch(pendingPath, { headers: viewerHeaders })).status).toBe(403);
 
-    for (const kind of ["query", "command"]) {
+    const owner: unknown = await (await fetch(`${world.base}/tokens`, {
+      method: "POST", headers: hostHeaders, body: JSON.stringify({ scope: "owner", label: "UI owner witness" }),
+    })).json();
+    if (!isRecord(owner) || typeof owner.token !== "string") throw new Error("Expected an issued owner token");
+    const ownerHeaders = { authorization: `Bearer ${owner.token}`, "content-type": "application/json" };
+    const bulkInput = { id: "session.rebind_model", args: { workspaceId: "synthetic-workspace", from: { providerId: "old", modelId: "removed" }, to: { providerId: "new", modelId: "available" }, dryRun: true } };
+    for (const deniedHeaders of [{ "content-type": "application/json" }, viewerHeaders]) {
+      expect((await fetch(requestPath, { method: "POST", headers: deniedHeaders, body: JSON.stringify({ kind: "command", input: bulkInput }) })).status).toBe("authorization" in deniedHeaders ? 403 : 401);
+    }
+    for (const [kind, requestHeaders] of [["query", headers], ["command", headers], ["command", ownerHeaders]] satisfies [string, Record<string, string>][]) {
       await fetch(pendingPath, { headers });
-      const input = { id: "mailbox.witness", args: { marker: kind } };
+      const input = kind === "command" ? bulkInput : { id: "mailbox.witness", args: { marker: kind } };
       const result = { ok: true, result: { marker: kind } };
       const requested = fetch(requestPath, {
-        method: "POST", headers, body: JSON.stringify({ kind, input }), signal: AbortSignal.timeout(10_000),
+        method: "POST", headers: requestHeaders, body: JSON.stringify({ kind, input }), signal: AbortSignal.timeout(10_000),
       });
       const response = await fetch(`${pendingPath}?wait=1`, { headers, signal: AbortSignal.timeout(12_000) });
       const payload: unknown = await response.json();
@@ -185,7 +194,7 @@ test("the in-app agent reads renderer context through openwork-server and gets a
     }
     evidence.recordAssertionEvidence(
       "Viewer tokens cannot control the UI, claim pending requests, or forge replies",
-      "Unauthenticated calls returned 401, viewer control requests returned 403, viewer poll and forged replies returned 403, invalid kinds returned 400, collaborator replies survived the relay, a second poll was empty, and duplicate replies returned 404.",
+      "Unauthenticated calls returned 401, viewer control requests returned 403, viewer poll and forged replies returned 403, invalid kinds returned 400, collaborator and owner rebind_model requests were admitted unchanged while unauthenticated/viewer rebind requests were rejected, collaborator replies survived the relay, a second poll was empty, and duplicate replies returned 404.",
       true,
     );
   });

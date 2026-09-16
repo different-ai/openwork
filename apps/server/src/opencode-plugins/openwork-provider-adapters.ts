@@ -201,13 +201,13 @@ function sessionContribution(): OpenworkFeatureContribution {
       }),
       affordance({
         id: "session.set_model", kind: "command", title: "Choose a session model", provider, effects: writeEffects,
-        description: "Save locally for next send, not an engine binding update. Provide model (models.list ids or alias/displayName and variant) or alias. dryRun previews without writing. No global default mutation or automatic send; repick to undo. Requires a renderer host.",
+        description: "Save locally for next send, not an engine binding update. Provide model (models.list ids or alias/displayName and variant) or alias. dryRun previews without writing. No global default mutation or automatic send. You can choose another available model later; this does not restore an unavailable original binding. Requires a renderer host.",
         arguments: [argument("sessionId", "string", true, "Session to repick."), argument("workspaceId", "string", false, "Exact workspace id; avoids unrelated workspace inventory reads."), argument("model", "object", false, "Available model selector and optional variant (≤60 chars)."), argument("alias", "string", false, "Exact model display name, instead of model."), argument("dryRun", "boolean", false, "Preview without saving.")],
       }),
       affordance({
         id: "session.rebind_model", kind: "command", title: "Repick matching sessions", provider, effects: writeEffects,
-        description: "Preview with dryRun:true, then explicitly save a local choice for next send on all unarchived sessions in one workspace using from. Matches effective bindings: local override wins over engine. Never changes other models, archives, workspaces, global default or engine bindings. Requires a renderer host; repick to undo.",
-        arguments: [argument("workspaceId", "string", true, "Exact workspace id."), argument("from", "object", true, "Exact providerId/modelId to replace."), argument("to", "object", true, "Available model selector and optional variant (≤60 chars)."), argument("expectedSessionIds", "array", false, "Optional exact preview set; reject if it changed before confirmation."), argument("dryRun", "boolean", false, "Preview exact session set without saving.")],
+        description: "Preview with dryRun:true, show the returned session set and obtain confirmation, then submit its expectedSessionIds. Saves locally for next send on idle unarchived sessions in one workspace using the same unavailable exact from provider/model. Matches effective bindings: local override wins over engine. Never changes other models, archives, workspaces, global default or engine bindings. Requires a renderer host. You can choose another available model later; this does not restore unavailable original bindings.",
+        arguments: [argument("workspaceId", "string", true, "Exact workspace id."), argument("from", "object", true, "Exact providerId/modelId to replace."), argument("to", "object", true, "Available model selector and optional variant (≤60 chars)."), argument("expectedSessionIds", "array", false, "Required unless dryRun:true; exact confirmed preview IDs. Rejects changed matches."), argument("dryRun", "boolean", false, "Preview exact session set without saving.")],
       }),
       affordance({
         id: "session.send",

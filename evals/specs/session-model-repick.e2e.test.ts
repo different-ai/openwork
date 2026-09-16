@@ -40,8 +40,9 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     ...world.sessions.map((session) => ({ ...session, workspaceId: world.workspace.workspaceId })),
     { ...world.otherSession, workspaceId: world.otherWorkspace.workspaceId },
   ];
+  const repickTitle = { text: /^Eval Unavailable Model [AB] is no longer available$/ };
   const dismissRepick = async () => {
-    if (await probe.has("Choose a replacement model")) await user.click({ role: "button", label: "Done" });
+    if (await probe.has("Eval Unavailable Model A is no longer available") || await probe.has("Eval Unavailable Model B is no longer available")) await user.click({ role: "button", label: "Done" });
   };
   const open = async (sessionId: string) => {
     await dismissRepick();
@@ -109,13 +110,13 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     sessions: initialFacts.map((fact) => ({ sessionId: fact.sessionId, directory: record(fact.session).directory })),
   }), true);
   const choose = async () => {
-    await user.see({ text: "Choose a replacement model" });
+    await user.see(repickTitle);
     await user.click({ role: "combobox", label: "Models" });
-    await user.click({ role: "option", label: `${string(available.title)} · ${string(available.providerName)}` });
+    await user.click({ role: "option", label: `${string(available.title)} (${string(available.providerName)})` });
     await user.see({ role: "combobox", label: "Models" }, { text: string(available.title) });
   };
-  const confirm = (count: number): Target => ({ role: "button", label: `Confirm for ${count} session(s)` });
-  const all = (count: number) => ({ text: new RegExp(`^All ${count} unarchived sessions using .+ in this workspace$`) });
+  const confirm = (count: number): Target => ({ role: "button", label: `Save for ${count} session${count === 1 ? "" : "s"}` });
+  const all = (count: number) => ({ text: `All ${count} matching session${count === 1 ? "" : "s"} in this workspace (unarchived)` });
   const checkUnchanged = async () => {
     expect(await probe.storage("openwork.preferences")).toEqual(initialPreferences);
     expect(await probe.storage("openwork.defaultModel")).toEqual(initialDefault);
@@ -127,7 +128,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     await open(peer.sessionId);
     await open(target.sessionId);
     await user.reload();
-    await user.see({ text: "Choose a replacement model" });
+    await user.see(repickTitle);
     await dismissRepick();
     await user.see("composer", { text: draft });
     await user.screenshot();
@@ -165,7 +166,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
 
   await step("confirming this session persists only its selected override, not defaults or engine state", async () => {
     await user.click(confirm(1));
-    await user.see({ text: /Saved locally for the next send/ });
+    await user.see({ text: /Saved for next send/ });
     const expected = { ...initialSelections, [target.sessionId]: { model: replacement, variant: null } };
     expect(await probe.storage("openwork.sessionModels.v1")).toEqual(expected);
     await user.click({ role: "button", label: "Done" });
@@ -187,7 +188,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     await user.click(all(1));
     expect((await probe.dom('[role="dialog"] li')).elements.map((element) => element.text)).toEqual([peer.title]);
     await user.click(confirm(1));
-    await user.see({ text: /Saved locally for the next send/ });
+    await user.see({ text: /Saved for next send/ });
     expect(await probe.storage("openwork.sessionModels.v1")).toEqual({
       ...initialSelections,
       [target.sessionId]: { model: replacement, variant: null },

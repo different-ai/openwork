@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { afterAll, afterEach, describe, expect, jest, spyOn, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,6 +9,10 @@ import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoin
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
+
+// Model catalog actions share this registry but are not exercised by archive.
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false }));
+mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({ useDenAuth: () => ({ isSignedIn: false }) }));
 
 // The archive hook talks to a real (fake) engine over HTTP; happy-dom's fetch
 // polyfill cannot parse Bun.serve responses, so keep the runtime's fetch.
