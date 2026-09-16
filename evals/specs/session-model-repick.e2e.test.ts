@@ -42,7 +42,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
   ];
   const repickTitle = { text: /^Eval Unavailable Model [AB] is no longer available$/ };
   const dismissRepick = async () => {
-    if (await probe.has("Eval Unavailable Model A is no longer available") || await probe.has("Eval Unavailable Model B is no longer available")) await user.click({ role: "button", label: "Done" });
+    if (await probe.has("Eval Unavailable Model A is no longer available") || await probe.has("Eval Unavailable Model B is no longer available")) await user.click({ role: "button", label: "Close" });
   };
   const open = async (sessionId: string) => {
     await dismissRepick();
@@ -169,7 +169,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     await user.see({ text: /Saved for next send/ });
     const expected = { ...initialSelections, [target.sessionId]: { model: replacement, variant: null } };
     expect(await probe.storage("openwork.sessionModels.v1")).toEqual(expected);
-    await user.click({ role: "button", label: "Done" });
+    await user.click({ role: "button", label: "Close" });
     await checkUnchanged();
     await user.reload();
     await user.see("composer", { editable: true, text: draft });
@@ -179,24 +179,27 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     evidence.recordAssertionEvidence("Single-session repick is explicit and device-local", "The real composer preview listed only two matching unarchived sessions. Confirming the default scope changed only the target override; the draft, engine sessions, transcripts and defaults remained unchanged after reload.", true);
   });
 
-  await step("opening the remaining unavailable session resets scope and bulk confirmation excludes sentinels", async () => {
+  await step("confirming all applies one replacement to two matching sessions and excludes sentinels", async () => {
+    // Recreate the original unavailable local choice after proving single-scope
+    // persistence, so this separate bulk action must update two sessions.
+    await seedMissing(target.sessionId);
     await open(peer.sessionId);
     await choose();
     await user.see(confirm(1));
-    await user.see(all(1));
+    await user.see(all(2));
     expect((await probe.dom('[role="dialog"] li')).elements).toEqual([]);
-    await user.click(all(1));
-    expect((await probe.dom('[role="dialog"] li')).elements.map((element) => element.text)).toEqual([peer.title]);
-    await user.click(confirm(1));
+    await user.click(all(2));
+    expect((await probe.dom('[role="dialog"] li')).elements.map((element) => element.text).sort()).toEqual([peer.title, target.title].sort());
+    await user.click(confirm(2));
     await user.see({ text: /Saved for next send/ });
     expect(await probe.storage("openwork.sessionModels.v1")).toEqual({
       ...initialSelections,
       [target.sessionId]: { model: replacement, variant: null },
       [peer.sessionId]: { model: replacement, variant: null },
     });
-    await user.click({ role: "button", label: "Done" });
+    await user.click({ role: "button", label: "Close" });
     await open(target.sessionId);
     await checkUnchanged();
-    evidence.recordAssertionEvidence("All-scope repick excludes archived, unrelated-model and other-workspace sessions", "Explicit all-scope confirmation changed only the remaining matching peer. Every engine session and transcript stayed identical; archived, unrelated-model and other-workspace local overrides and defaults were preserved, with no prompt sent.", true);
+    evidence.recordAssertionEvidence("All-scope repick excludes archived, unrelated-model and other-workspace sessions", "Explicit all-scope confirmation changed both matching sessions (target and peer) in one UI action. Every engine session and transcript stayed identical; archived, unrelated-model and other-workspace local overrides and defaults were preserved, with no prompt sent.", true);
   });
 });

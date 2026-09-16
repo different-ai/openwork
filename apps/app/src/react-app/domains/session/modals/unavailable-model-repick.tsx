@@ -86,7 +86,7 @@ export function UnavailableModelRepick(props: {
           <label className="flex items-center gap-2"><RadioGroupItem value="all" disabled={!bulkReady} />{bulkReady ? t("models.repick_all", { count: preview.data.count }) : t("models.repick_all_unverified")}</label>
         </RadioGroup>
         {all && bulkReady && <ul className="max-h-36 overflow-auto text-xs text-muted-foreground">{preview.data?.sessions.map((session) => <li key={session.sessionId}>{session.title}</li>)}</ul>}
-        <p className="text-xs text-muted-foreground">{t("models.repick_local")}</p>
+        <span className="text-xs text-muted-foreground">{t("models.repick_local")}</span>
         {preview.isError && <p role="alert" className="text-xs text-muted-foreground">{t("models.repick_bulk_failed")}</p>}
         {single.isError && !all && <p role="alert">{t("models.repick_single_failed")}</p>}
         {catalog.isError && <p role="alert">{t("models.repick_catalog_failed")}</p>}
@@ -94,7 +94,7 @@ export function UnavailableModelRepick(props: {
         {catalog.data?.length === 0 && <p>{t("models.no_models_available")}</p>}
       </div>}
       <DialogFooter>
-        <Button variant="outline" disabled={saving} onClick={props.onClose}>{t("models.done")}</Button>
+        <Button variant="outline" disabled={saving} onClick={props.onClose}>{t("common.close")}</Button>
         {!saved && <Button disabled={!canConfirm} onClick={() => void confirm()}>{t("models.repick_confirm", { count: all ? preview.data?.count ?? 0 : 1 })}</Button>}
       </DialogFooter>
     </DialogContent>

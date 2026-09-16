@@ -1215,7 +1215,7 @@ export default {
   "models.repick_all_one": "All {count} matching session in this workspace (unarchived)",
   "models.repick_all_other": "All {count} matching sessions in this workspace (unarchived)",
   "models.repick_all_unverified": "All matching sessions in this workspace (unarchived)",
-  "models.repick_local": "Local choice for next send. No message sent or default changed.",
+  "models.repick_local": "This device, next send only; changeable later",
   "models.repick_confirm_one": "Save for {count} session",
   "models.repick_confirm_other": "Save for {count} sessions",
   "models.repick_saved": "Saved for next send. You can choose another available model later.",
