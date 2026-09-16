@@ -5,7 +5,7 @@ import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
 
 async function listen(handler) {
   const server = createServer(handler);
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(undefined)));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing fixture listener");
   return { url: `http://127.0.0.1:${address.port}`, async close() {
@@ -84,7 +84,7 @@ test("cancellation includes held body consumption and preserves the caller reaso
     const response = await fetchFiniteDesktopHttp(server.url, { signal: controller.signal }, noExternal);
     const body = response.text();
     controller.abort(reason);
-    await assert.rejects(body, error => error === reason || error.name === "AbortError");
+    await assert.rejects(body, error => error === reason || (error instanceof Error && error.name === "AbortError"));
     assert.equal(controller.signal.reason, reason);
     assert.equal(calls, 1);
     await assert.rejects(fetchFiniteDesktopHttp(server.url, { signal: controller.signal }, noExternal));

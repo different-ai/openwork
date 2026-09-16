@@ -2,7 +2,7 @@
 
 ## Verdict
 
-**Two mechanisms reproduced; original installed incident not attributed.** PR #5014 is merged: `d16d4a1aa9b4d8b8cf081b213ac9fa50628032b0`. The follow-up isolates archive transport, with passing initial pressure proof. Final-head verification, revert-fails results, CI/review gates and merge status are recorded in the follow-up PR's immutable test-evidence comments; until those gates are satisfied the mission is **Incomplete**.
+**Two mechanisms reproduced; original installed incident not attributed.** PR #5014 is merged: `d16d4a1aa9b4d8b8cf081b213ac9fa50628032b0`. [Follow-up #5063](https://github.com/different-ai/openwork/pull/5063) isolates archive transport, with passing pressure proof and a revert-fails control. Final-head verification, CI/review gates and merge status are recorded in that PR's immutable test-evidence comments; until those gates are satisfied the mission is **Incomplete**.
 
 Local isolated source-built Electron was used, as authorized. No installed-app CDP, engine database access, private transcript capture, main-checkout edits (except fetch), or other worktree edits. Public examples contain only test-generated identities.
 
@@ -51,7 +51,7 @@ Source evidence: `evals/results/test-runs/2026-09-16T19-18-54-591Z-investigative
 
 Thus, success through a main-hosted affordance seconds after UI failure is **not proof of a different request pool**. The controlled recovery explicitly observes that affordance's successful PATCH in Chromium after pressure is released. Historical timing or route/registration recovery could explain the difference; the installed request path/timing was not captured.
 
-The generic IPC `__fetch` calibration under pressure also failed after **2002.5 ms**. Its handler uses `electronNet.fetch`, which does not by itself establish networking isolation from renderer SSE contention. A hypothetical Node loopback route remains to be proven.
+The generic IPC `__fetch` calibration under pressure also failed after **2002.5 ms**. Its handler uses `electronNet.fetch`, which does not by itself establish networking isolation from renderer SSE contention. The later Node-loopback implementation and its pressure proof are described below; this calibration establishes why IPC routing alone is insufficient.
 
 ## Independent registration-lapse evidence
 
@@ -118,9 +118,13 @@ OPENWORK_ARCHIVE_PRESSURE_MODE=fixed pnpm evals:e2e session-archive-pressure --l
 pnpm evals:e2e session-mailbox-liveness --local --engine v1 --surface electron
 ```
 
-Baseline mode is an investigative assertion of failure/recovery, **not** a passing UX claim. Fixed mode requires archive success before releasing pressure. Final verification must use fixed mode on the final head and restored production baseline as a revert-fails control.
+Baseline mode is an investigative assertion of failure/recovery, **not** a passing UX claim. Fixed mode requires archive success before releasing pressure.
 
-Retained red runs: first bootstrap lacked the separate evals workspace install (`vitest` missing); installing `pnpm --dir evals install --frozen-lockfile` repaired that prerequisite. First pressure run's unchanged-count oracle rejected a fifth stream establishing after four original blockers; corrected to require all original blockers still live. A subsequent #5014-only run failed during setup navigation, before pressure; row hover-preview read succeeded but route stayed sessionless. Setup now uses the existing `session.open` affordance; the archive action remains a trusted UI click. None is labeled pre-existing without a clean control.
+**Revert-fails completed:** at 15:58, restore `apps/app/src/react-app/domains/session/sidebar/use-session-archive.tsx` from #5014 merge `d16d4a1aa`, retaining all tests and the new native transport witness. The identical fixed-mode pressure command failed (exit 1; 0 passed / 1 failed / 0 skipped): expected no failure toast, received one after **10008.9 ms**. This removes the archive transport opt-in only; the main helper remains available for witness/control traffic. Restore the signed HEAD file afterward. The receipt `evals/results/test-runs/2026-09-16T19-58-48-558Z-regression-sidebar-archive-succeeds-while-real-same-origin-http-1-1-sse-pressure/` records HEAD `cb6cca1d6` with a deliberately dirty production baseline, **not a fixed-head result**. Fixed-mode runs immediately before and after passed, with one successful native PATCH while all initial SSE blockers remained held; the first fixed-head toast took **117 ms**, not a longer timeout.
+
+Final-head evidence is regenerated after every commit; do not substitute the historical control receipt for the final fixed-head tests.
+
+Retained red runs: first bootstrap lacked the separate evals workspace install (`vitest` missing); installing `pnpm --dir evals install --frozen-lockfile` repaired that prerequisite. First pressure run's unchanged-count oracle rejected a fifth stream establishing after four original blockers; corrected to require all original blockers still live. A subsequent #5014-only run failed during setup navigation, before pressure; row hover-preview read succeeded but route stayed sessionless. Setup now uses the existing `session.open` affordance; the archive action remains a trusted UI click. None is labeled pre-existing without a clean control. Follow-up CI caught two introduced JS-test type errors in the new native transport test (listener callback arity and accessing an unknown error's name). The exact `pnpm --filter @openwork/desktop typecheck:electron` command reproduced both locally; callback wrapping and an `instanceof Error` guard repair them without changing production code or the test assertions.
 
 ## Merge record
 
