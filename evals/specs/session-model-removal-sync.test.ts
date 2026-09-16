@@ -164,7 +164,7 @@ for (const fault of ["none", "after_config", "inventory", "restart", "canonical_
   expect(notifications.list("one").filter((event) => !isOpenworkModelRemovalNotification(event))).toEqual([]);
   expect(isOpenworkModelRemovalNotification({ trigger: { modelRemoval: undefined } })).toBe(false);
   expect(sync.status().modelRemovalPending).toBe(false);
-  expect(memory.workspace.get("__cloud_provider_ownership__")?.pendingModelRemovals).toEqual({});
+  expect(memory.workspace.get("__cloud_provider_ownership__")?.pendingModelRemovals).toBeUndefined();
   if (fault !== "restart") expect(reloads).toBe(initialReloads + 1);
   await sync.run("noop");
   expect(impacts).toHaveLength(2);
