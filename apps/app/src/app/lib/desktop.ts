@@ -506,7 +506,7 @@ async function desktopFetchThroughMain(
   }
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
-  const signal = (method ?? "GET").toUpperCase() === "GET" && diagnosticsDeadlineAtMs === undefined
+  const signal = ["GET", "PATCH"].includes((method ?? "GET").toUpperCase()) && diagnosticsDeadlineAtMs === undefined
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
   const transferId = signal ? desktopTransferId() : undefined;

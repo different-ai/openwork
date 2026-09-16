@@ -2406,7 +2406,7 @@ const desktopCommandHandlers = {
           body: await response.text(),
         };
       };
-      return (requestInit.method ?? "GET").toUpperCase() === "GET" && init.transferId
+      return ["GET", "PATCH"].includes((requestInit.method ?? "GET").toUpperCase()) && init.transferId
         ? desktopTransfers.run(event, init.transferId, fetchResponse)
         : fetchResponse(undefined);
   },

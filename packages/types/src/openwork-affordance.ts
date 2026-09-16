@@ -124,6 +124,10 @@ const openworkAffordanceSuccessSchema = z.object({
  * - `self_archive_while_working`: a session asked to archive itself (or its
  *   parent) from inside its own running turn; finish the turn, the reviewer
  *   archives.
+ * - `verification_failed`: archive safety checks could not finish; no archive
+ *   mutation was sent by this attempt.
+ * - `archive_outcome_unknown`: the archive mutation was sent but its outcome
+ *   could not be confirmed; read the session before considering another attempt.
  */
 export const openworkAffordanceFailureCodeSchema = z.enum([
   "unavailable",
@@ -132,6 +136,8 @@ export const openworkAffordanceFailureCodeSchema = z.enum([
   "failed",
   "target_working",
   "self_archive_while_working",
+  "verification_failed",
+  "archive_outcome_unknown",
 ])
 export type OpenworkAffordanceFailureCode = z.infer<typeof openworkAffordanceFailureCodeSchema>
 
