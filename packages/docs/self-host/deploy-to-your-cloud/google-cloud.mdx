@@ -1,9 +1,22 @@
 ---
 title: "Deploy on Google Cloud"
-description: "Run OpenWork on GKE Autopilot with Cloud SQL for MySQL."
+description: "Run OpenWork on GKE Autopilot or Google Cloud Run with Cloud SQL for MySQL."
 ---
 
-The recommended Google Cloud path is Helm on a regional GKE Autopilot cluster with Cloud SQL for MySQL. Use GKE Ingress, a reserved global IP address, Google-managed certificates, and explicit backend health checks for Den web and Den API.
+OpenWork supports two Google Cloud deployment shapes. Use GKE Autopilot and Helm when you need the full chart surface. Use the Cloud Run starter for a serverless Den Web and Den API deployment with a separate migration job.
+
+<CardGroup cols={2}>
+  <Card title="GKE with Helm" icon="container" href="https://github.com/different-ai/openwork/blob/dev/docs/gcp-gke-helm.md">
+    Full chart path, including Kubernetes customization and the optional Gateway.
+  </Card>
+  <Card title="Google Cloud Run" icon="cloud" href="https://github.com/different-ai/openwork/blob/dev/docs/gcp-cloud-run.md">
+    Serverless starter for Den Web, Den API, Cloud SQL, Secret Manager, and explicit migration jobs.
+  </Card>
+</CardGroup>
+
+## Choose a deployment target
+
+Choose GKE when you need Helm hooks, pod-level customization, custom CA mounts, installer artifact volumes, or the optional OpenWork Gateway. Choose Cloud Run when Den Web and Den API fit the request-driven service model and you prefer managed autoscaling without a Kubernetes cluster.
 
 ## What Google Cloud manages
 
@@ -14,7 +27,7 @@ The recommended Google Cloud path is Helm on a regional GKE Autopilot cluster wi
 
 The OpenWork chart manages Deployments, Services, ConfigMaps, Secret references, probes, the Ingress, and the database migration Job. GKE `BackendConfig` and `ManagedCertificate` resources are applied alongside the chart.
 
-## Google Cloud checklist
+## GKE checklist
 
 1. Enable the Kubernetes Engine, Compute Engine, Cloud SQL Admin, and Service Networking APIs.
 2. Create a regional GKE Autopilot cluster and install `gke-gcloud-auth-plugin` if your Cloud SDK does not include it.
@@ -24,6 +37,17 @@ The OpenWork chart manages Deployments, Services, ConfigMaps, Secret references,
 6. Start from the chart's `values.gcp-ingress.yaml` example, install the chart, and verify migrations and readiness.
 7. Point both hostnames at the reserved address and wait for the managed certificate to become active.
 
-For exact `gcloud` commands, values, health checks, migration troubleshooting, verification, and cleanup, follow the [GKE operator runbook](https://github.com/different-ai/openwork/blob/dev/docs/gcp-gke-helm.md).
+For exact GKE commands, values, health checks, migration troubleshooting, verification, and cleanup, follow the [GKE operator runbook](https://github.com/different-ai/openwork/blob/dev/docs/gcp-gke-helm.md).
+
+## Cloud Run checklist
+
+1. Enable Cloud Run, Artifact Registry, Cloud SQL Admin, and Secret Manager APIs.
+2. Mirror the versioned Den API and Den Web images into Artifact Registry.
+3. Create Cloud SQL for MySQL and store independent application secrets in Secret Manager.
+4. Render the starter service and job manifests from `packaging/cloud-run`.
+5. Execute the migration job before deploying the API and Web revisions.
+6. Verify all four health and readiness endpoints before opening setup.
+
+Follow the [Cloud Run operator runbook](https://github.com/different-ai/openwork/blob/dev/docs/gcp-cloud-run.md) for the manifests, exact commands, migration ordering, verification, and upgrade notes.
 
 Next: [Create the first administrator](/self-host/deploy-to-your-cloud/first-administrator).
