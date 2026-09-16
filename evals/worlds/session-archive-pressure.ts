@@ -481,6 +481,7 @@ export async function sessionArchivePressure(seed: Seed, context: { place: Place
     ownershipPaths: [targetPath, `${mount(a2.workspaceId)}/path`],
     eventPaths: mounts.map(value => `${value}/event`),
     readEngine,
+    mainRequests: fixture.mainRequests,
     mainFetchControl: () => evaluate(app.client, browserScript(async path => {
       const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
       const started = performance.now();

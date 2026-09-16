@@ -128,6 +128,10 @@ test(title, async ({ world, user, agent, probe, step, evidence }) => {
       for (const read of native.statusReads) expect(read.elapsedMs).toBeLessThan(1_500);
       const mainFetch = await world.mainFetchControl();
       evidence.recordJsonArtifact("Existing main-fetch pool calibration", mainFetch);
+      if (mode === "fixed") {
+        expect(mainFetch).toMatchObject({ completed: true, status: 200 });
+        expect(mainFetch.elapsedMs).toBeLessThan(1_500);
+      }
       evidence.recordJsonArtifact("Established HTTP/1.1 pressure and responsive event loop", { ...pressure, canary, independentEngine: native });
       evidence.recordAssertionEvidence("Network pressure is real rather than a blocked JavaScript promise",
         `${pressure.establishedCount} injected SSE streams delivered bytes on distinct HTTP/1.1 connections; excess streams and the two-second GET had no headers. Renderer timers/frames advanced and runner-side engine reads succeeded.`, true);
@@ -206,12 +210,17 @@ test(title, async ({ world, user, agent, probe, step, evidence }) => {
         expect(pressure.renderer.activeRows).not.toContain(target.sessionId);
         expect(pressure.renderer.activeRows).toContain(selected.sessionId);
         expect(await probe.hash()).toBe(route);
-        const patches = pressure.renderer.requests.filter(request => request.method === "PATCH");
-        expect(patches.every(request => request.path === targetPath)).toBe(true);
+        const rendererPatches = pressure.renderer.requests.filter(request => request.method === "PATCH");
+        expect(rendererPatches).toEqual([]);
+        const main = await world.mainRequests();
+        const patches = main.filter(request => request.action === "metadata");
+        expect(patches).toEqual([expect.objectContaining({ path: targetPath, result: 200, transport: "main" })]);
+        expect(main.some(request => request.path === targetPath && request.action === "session" && request.result === 200)).toBe(true);
+        expect(main.filter(request => request.action === "abort" || request.action === "prompt_async")).toEqual([]);
         const stillQueued = await world.canary();
         expect(stillQueued).toMatchObject({ status: null, abortReason: { name: "TimeoutError" }, bodyComplete: false });
         await held();
-        evidence.recordJsonArtifact("Fixed archive under sustained pressure", { native, pressure, stillQueued, rendererPatchAttempts: patches.length });
+        evidence.recordJsonArtifact("Fixed archive under sustained pressure", { native, pressure, stillQueued, mainRequests: main, rendererPatchAttempts: rendererPatches.length });
         evidence.recordAssertionEvidence("Fixed-mode UI archive succeeds under sustained real connection pressure",
           `The target was archived by the trusted sidebar click while the same ${establishedKeys.length} injected SSE connections stayed open; a subsequent raw renderer GET still queued. All neighbors remained unarchived and idle.`, true);
       });

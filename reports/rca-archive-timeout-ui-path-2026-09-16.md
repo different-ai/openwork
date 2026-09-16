@@ -2,7 +2,7 @@
 
 ## Verdict
 
-**Incomplete mission; two mechanisms reproduced, original installed incident not attributed.** PR #5014 is merged: `d16d4a1aa9b4d8b8cf081b213ac9fa50628032b0`. The follow-up transport fix has not yet landed. This report is a checkpoint and will be updated with final-head evidence.
+**Two mechanisms reproduced; original installed incident not attributed.** PR #5014 is merged: `d16d4a1aa9b4d8b8cf081b213ac9fa50628032b0`. The follow-up isolates archive transport, with passing initial pressure proof. Final-head verification, revert-fails results, CI/review gates and merge status are recorded in the follow-up PR's immutable test-evidence comments; until those gates are satisfied the mission is **Incomplete**.
 
 Local isolated source-built Electron was used, as authorized. No installed-app CDP, engine database access, private transcript capture, main-checkout edits (except fetch), or other worktree edits. Public examples contain only test-generated identities.
 
@@ -91,6 +91,21 @@ Static scope: SSE is keyed by workspaceId + baseUrl; retained tabs do not equal 
 Covers bounded bridge verification, effective caller cancellation, fail-closed preflight with no late PATCH, unknown outcome after dispatched write, and hold/busy release. It keeps the human 15-second operation budget and the normal ten-second transport read deadline. It is not a socket allocator or a mailbox heartbeat change.
 
 The stronger test—UI archive succeeds while established stream pressure remains held—will be required of the follow-up. The #5014-only pressure rerun at 15:32 passed its investigative failure oracle (1 passed / 0 failed / 0 skipped): UI still timed out before PATCH, then recovered after pressure release. Thus #5014 alone does **not** make this pressured UI archive succeed. Receipt: `evals/results/test-runs/2026-09-16T19-32-01-947Z-investigative-baseline-real-sse-pool-pressure-times-out-sidebar-archive-before-p/`.
+
+## Follow-up implementation and proof scope
+
+The production diff is deliberately transport-only:
+
+- `use-session-archive.tsx` opts both archive (including safety reads and confirmed Stop) and restore into the finite main-process client transport. No ownership, queue, approval, descendant, confirmation, or pin decision is removed.
+- `opencode.ts` adds an explicit `desktopTransport: "main"` client option. The default client path is unchanged. Streaming requests still use renderer fetch and cannot enter the buffering IPC call. Web behavior is unchanged.
+- `finite-http-fetch.mjs` routes only HTTP `127.0.0.1`, `localhost`, and `[::1]` through Node fetch. It rejects all redirects. HTTPS—including HTTPS loopback—and all external/lookalike origins keep the exact Electron fetch passed by main, preserving system proxy and OS certificate trust. Existing transfer IDs, caller signals, timeout races and unknown-PATCH outcomes remain intact.
+- `main.mjs` uses that finite HTTP selector for the existing `__fetch` handler. No new public native archive state machine or retry is introduced.
+
+Initial fixed pressure E2E passed at 15:38 (1 passed / 0 failed / 0 skipped): trusted sidebar archive persisted while the same real streams remained held and a raw renderer canary still timed out. Native transport tests use real loopback HTTP to assert scoped headers/body, HTTP rejection without retries, held-body cancellation, redirect rejection without reaching the redirect target, and unchanged external fetch selection.
+
+Archive fault tests previously wrapped only renderer `fetch`; that boundary would miss the new archive traffic. A **test-only** CJS preload, installed into the spawned dev Electron through `NODE_OPTIONS`, now observes main global fetch beneath the real IPC handler as well. Setup fails if it is absent. It configures only the fixture server origin and known workspaces; it is not shipped or imported by production. The old behavioral specs retain their assertions, including held-message failure, no late PATCH, and recovery. Pressure proof separately counts the exact successful main PATCH and requires zero renderer PATCHes and no abort/prompt replay. The synthetic held-body fixture must not be confused with the real-socket pressure witness.
+
+The separate mailbox-liveness fixture deliberately remains unchanged in production: it identifies a possible misleading no-window refusal, not a new justification to extend the registration lease while its consumer is stalled. Registration repair and broader SSE budgeting remain separate work if actual installed diagnostics identify them.
 
 ## Commands and failures retained
 

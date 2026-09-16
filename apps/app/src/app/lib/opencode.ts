@@ -1,6 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-import { desktopFetch } from "./desktop";
+import { desktopFetch, desktopFetchViaMain } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 
 export type FieldsResult<T> =
@@ -293,7 +293,7 @@ function nativeFetchRef(): typeof globalThis.fetch {
   return globalThis.fetch as typeof globalThis.fetch;
 }
 
-export const createDesktopFetch = (auth?: OpencodeAuth) => {
+export const createDesktopFetch = (auth?: OpencodeAuth, finiteFetch: typeof globalThis.fetch = desktopFetch) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
@@ -306,7 +306,7 @@ export const createDesktopFetch = (auth?: OpencodeAuth) => {
     const shouldStream = requestIsStreaming(input, init);
     const underlyingFetch = shouldStream
       ? nativeFetchRef()
-      : desktopFetch;
+      : finiteFetch;
     // Streams should never be timed out at the transport layer; the caller
     // aborts via AbortSignal when the subscription unmounts.
     const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
@@ -349,7 +349,7 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
   throw new Error(message || "Unknown error");
 }
 
-export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth) {
+export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth, options?: { desktopTransport: "main" }) {
   const headers: Record<string, string> = {};
   if (!isDesktopRuntime()) {
     const authHeader = resolveAuthHeader(auth);
@@ -359,7 +359,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   }
 
   const fetchImpl = isDesktopRuntime()
-    ? createDesktopFetch(auth)
+    ? createDesktopFetch(auth, options?.desktopTransport === "main" ? desktopFetchViaMain : desktopFetch)
     : (input: RequestInfo | URL, init?: RequestInit) => {
         const timeoutMs = requestIsStreaming(input, init) ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
         return fetchWithTimeout(globalThis.fetch, input, init, timeoutMs);

@@ -57,6 +57,7 @@ import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
+import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
 import { createDesktopTransferRegistry, downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
 import {
   createLinuxDesktopIntegration,
@@ -2398,7 +2399,7 @@ const desktopCommandHandlers = {
       const fetchResponse = async (callerSignal) => {
         const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
         const signal = callerSignal && deadline ? AbortSignal.any([callerSignal, deadline]) : callerSignal ?? deadline;
-        const response = await electronNet.fetch(url, { ...requestInit, signal });
+        const response = await fetchFiniteDesktopHttp(url, { ...requestInit, signal }, electronNet.fetch);
         return {
           status: response.status,
           statusText: response.statusText,
