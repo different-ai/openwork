@@ -1,4 +1,4 @@
-import { beforeAll, expect, test } from "bun:test"
+import { beforeAll, expect, mock, spyOn, test } from "bun:test"
 
 import { HeadlessThreadError } from "@openwork/headless-threads"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -9,7 +9,21 @@ import type {
   RemoteSessionToolResult,
 } from "../src/mcp/remote-session-capabilities.js"
 import type { CloudWorkerAccess } from "../src/workers/worker-access.js"
-import type { RemoteSessionCommandStore } from "../src/remote-sessions/commands.js"
+import type { RemoteSessionCommand, RemoteSessionCommandStore } from "../src/remote-sessions/commands.js"
+
+mock.module("../src/auth.js", () => ({
+  auth: {},
+  DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "ow_mcp_at_",
+  DEN_MCP_FIRST_PARTY_CLIENT_ID: "openwork-desktop",
+  DEN_MCP_FIRST_PARTY_RESOURCES: ["http://127.0.0.1:8790/mcp", "http://127.0.0.1:8790/mcp/agent", "http://127.0.0.1:8790/mcp/admin"],
+  DEN_MCP_GRANT_ID_CLAIM: "https://openworklabs.com/grant_id",
+  DEN_MCP_ORG_ID_CLAIM: "https://openworklabs.com/org_id",
+  DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp/agent",
+  DEN_MCP_RESOURCE: "http://127.0.0.1:8790/mcp",
+  DEN_MCP_RESOURCE_CLAIM: "https://openworklabs.com/resource",
+  DEN_MCP_RESOURCES: ["http://127.0.0.1:8790/mcp"],
+  DEN_MCP_TOKEN_USE_CLAIM: "https://openworklabs.com/token_use",
+}))
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -21,7 +35,10 @@ function seedRequiredEnv() {
 }
 
 type RemoteSessionModule = typeof import("../src/mcp/remote-session-capabilities.js")
+type EnvModule = typeof import("../src/env.js")
 
+let deploymentEnv: EnvModule["env"]
+let DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionModule["DEFAULT_REMOTE_SESSION_DEPS"]
 let executeRemoteSessionCapability: RemoteSessionModule["executeRemoteSessionCapability"]
 let parseRemoteSessionCapabilityName: RemoteSessionModule["parseRemoteSessionCapabilityName"]
 let searchRemoteSessionCapabilities: RemoteSessionModule["searchRemoteSessionCapabilities"]
@@ -31,6 +48,8 @@ let resolveRemoteSessionWorkspace: RemoteSessionModule["resolveRemoteSessionWork
 beforeAll(async () => {
   seedRequiredEnv()
   const module = await import("../src/mcp/remote-session-capabilities.js")
+  deploymentEnv = (await import("../src/env.js")).env
+  DEFAULT_REMOTE_SESSION_DEPS = module.DEFAULT_REMOTE_SESSION_DEPS
   executeRemoteSessionCapability = module.executeRemoteSessionCapability
   parseRemoteSessionCapabilityName = module.parseRemoteSessionCapabilityName
   searchRemoteSessionCapabilities = module.searchRemoteSessionCapabilities
@@ -480,35 +499,28 @@ test("capability names round-trip through the registry parser", async () => {
   expect(CAPABILITY_SOURCES.marketplace.parseName("remote-session:create")).toBeNull()
 })
 
-async function registryContext(input: { remoteSessionsEnabled: boolean }) {
+async function registryContext() {
   const registry = await import("../src/mcp/capability-registry.js")
-  const { createDenTypeId: createId } = await import("@openwork-ee/utils/typeid")
   const { Hono } = await import("hono")
-  const organizationId = createId("organization")
+  const organizationId = createDenTypeId("organization")
   type SearchContext = Parameters<(typeof registry)["CAPABILITY_SOURCES"]["remoteSession"]["search"]>[0]
   const context: SearchContext = {
-    app: new Hono(),
-    env: undefined,
-    catalog: [],
-    principal: {
-      userId: createId("user"),
+    ...registry.createCapabilityRegistryContext({
+      app: new Hono(),
+      env: undefined,
+      catalog: [],
+      principal: {
+        userId: createDenTypeId("user"),
+        organizationId,
+        scopes: new Set(["mcp:read", "mcp:write"]),
+        payload: {},
+      },
       organizationId,
-      scopes: new Set(["mcp:read", "mcp:write"]),
-      payload: {},
-    },
-    organizationId,
-    member: { orgMembershipId: createId("member"), teamIds: [] },
-    redirectUriBase: "http://127.0.0.1:8790",
-    generatedArtifactViewsEnabled: false,
-    externalMcpConnectionsEnabled: true,
-    remoteSessionsEnabled: input.remoteSessionsEnabled,
-    resolvePlatformAdmin: () => Promise.resolve(false),
-    resolveNamespaceContext: () => Promise.resolve({
-      nativeProviderEntries: [],
-      externalMcpConnections: [],
-      codemodeNativeProviderEntries: [],
-      codemodeExternalMcpConnections: [],
-      namespaces: { native: new Map(), externalMcp: new Map() },
+      member: { orgMembershipId: createDenTypeId("member"), teamIds: [] },
+      redirectUriBase: "http://127.0.0.1:8790",
+      generatedArtifactViewsEnabled: false,
+      organizationMetadata: null,
+      mcpConnectionsGatingEnabled: false,
     }),
     sourceFilter: { api: true, admin: true, mcp: true, marketplace: true, skills: true },
     reportExternalCoverage: () => {},
@@ -516,25 +528,184 @@ async function registryContext(input: { remoteSessionsEnabled: boolean }) {
   return { registry, context }
 }
 
-test("a deployment that cannot host Cloud never discovers remote-session capabilities", async () => {
-  const { registry, context } = await registryContext({ remoteSessionsEnabled: false })
-  const source = registry.CAPABILITY_SOURCES.remoteSession
-  const matches = await source.search(context, "remote session cloud web", 10)
-  expect(matches).toEqual([])
+type RemoteSessionDeployment = {
+  orgMode: EnvModule["env"]["orgMode"]
+  provisionerMode: EnvModule["env"]["provisionerMode"]
+  daytonaApiKey?: string
+  runtimeEnabled?: boolean
+}
 
-  const executed = await source.execute(
-    context,
-    { kind: "remoteSession", name: "remote-session:create", action: "create" },
-    { name: "remote-session:create", body: {} },
-  )
-  expect(executed.isError).toBe(true)
-  const text = executed.content.find((part) => part.type === "text")
-  expect(text?.type === "text" ? text.text : "").toContain("unknown_capability")
+async function withDeployment(deployment: RemoteSessionDeployment, run: () => Promise<void>) {
+  const previous = {
+    orgMode: deploymentEnv.orgMode,
+    provisionerMode: deploymentEnv.provisionerMode,
+    daytonaApiKey: deploymentEnv.daytona.apiKey,
+    runtimeEnabled: deploymentEnv.automations.runtimeEnabled,
+  }
+  try {
+    deploymentEnv.orgMode = deployment.orgMode
+    deploymentEnv.provisionerMode = deployment.provisionerMode
+    deploymentEnv.daytona.apiKey = deployment.daytonaApiKey
+    deploymentEnv.automations.runtimeEnabled = deployment.runtimeEnabled ?? true
+    await run()
+  } finally {
+    deploymentEnv.orgMode = previous.orgMode
+    deploymentEnv.provisionerMode = previous.provisionerMode
+    deploymentEnv.daytona.apiKey = previous.daytonaApiKey
+    deploymentEnv.automations.runtimeEnabled = previous.runtimeEnabled
+  }
+}
+
+const noCloudDeployments: (RemoteSessionDeployment & { name: string })[] = [
+  { name: "stub provider", orgMode: "multi_org", provisionerMode: "stub" },
+  { name: "Render provider", orgMode: "multi_org", provisionerMode: "render" },
+  { name: "missing Daytona credentials", orgMode: "multi_org", provisionerMode: "daytona" },
+  { name: "blank Daytona credentials", orgMode: "multi_org", provisionerMode: "daytona", daytonaApiKey: " " },
+  { name: "single-org hosting", orgMode: "single_org", provisionerMode: "daytona", daytonaApiKey: "witness-not-a-real-key" },
+]
+
+for (const deployment of noCloudDeployments) {
+  test(`desktop dispatch stays scoped without Cloud: ${deployment.name}`, async () => {
+    await withDeployment(deployment, async () => {
+      const { registry, context } = await registryContext()
+      if (!context.member) throw new Error("Fixture membership missing")
+      const command: RemoteSessionCommand = {
+        id: createDenTypeId("remoteSessionCommand"),
+        organizationId: context.organizationId,
+        ownerMemberId: context.member.orgMembershipId,
+        createdByUserId: context.principal.userId,
+        status: "pending",
+        title: "Desktop handoff",
+        prompt: "Inspect the repo",
+        model: null,
+        idempotencyKey: null,
+        expiresAt: Date.now() + 600_000,
+        claimedByRunnerId: null,
+        claimedAt: null,
+        sessionId: null,
+        workspaceId: null,
+        resultSummary: null,
+        error: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+      const access = spyOn(DEFAULT_REMOTE_SESSION_DEPS, "getOpenWorkWebAccess").mockResolvedValue({ hasAccess: true })
+      const presence = spyOn(DEFAULT_REMOTE_SESSION_DEPS, "desktopPresence").mockResolvedValue({ connected: true, ownerMemberId: command.ownerMemberId })
+      const enqueue = spyOn(DEFAULT_REMOTE_SESSION_DEPS.commandStore, "enqueue").mockResolvedValue(command)
+      const get = spyOn(DEFAULT_REMOTE_SESSION_DEPS.commandStore, "get").mockImplementation(async (scope) => (
+        scope.commandId === command.id && scope.organizationId === command.organizationId && scope.createdByUserId === command.createdByUserId
+          ? command
+          : null
+      ))
+      const workerAccess = await import("../src/workers/worker-access.js")
+      const resolveCloud = spyOn(workerAccess, "resolveCloudRuntimeAccess").mockImplementation(async () => {
+        throw new Error("Cloud runtime access must not be attempted without hosting")
+      })
+      const client = spyOn(DEFAULT_REMOTE_SESSION_DEPS, "createClient").mockImplementation(() => {
+        throw new Error("No Cloud client should be created")
+      })
+      try {
+        expect(context.remoteSessionsEnabled).toBe(true)
+        const source = registry.CAPABILITY_SOURCES.remoteSession
+        expect((await source.search(context, "remote session desktop", 10)).map((match) => match.name).sort()).toEqual([
+          "remote-session:create", "remote-session:read", "remote-session:send",
+        ])
+        expect(await source.enumerate(context)).toEqual([])
+        const createInput = { name: "remote-session:create", body: { target: "desktop", title: command.title, prompt: command.prompt } }
+        const readOnlyContext = { ...context, principal: { ...context.principal, scopes: new Set(["mcp:read"]) } }
+        expect((await registry.executeCapability(readOnlyContext, createInput)).structuredContent?.error).toBe("insufficient_mcp_scope")
+        expect(access).not.toHaveBeenCalled()
+        expect(presence).not.toHaveBeenCalled()
+        expect(enqueue).not.toHaveBeenCalled()
+
+        const created = await registry.executeCapability(context, createInput)
+        expect(created.isError).toBeUndefined()
+        expect(created.structuredContent).toEqual({ target: "desktop", state: "queued", commandId: command.id, expiresAt: command.expiresAt })
+        expect(presence).toHaveBeenCalledWith({ organizationId: context.organizationId, userId: context.principal.userId })
+        expect(enqueue).toHaveBeenCalledTimes(1)
+        expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+          organizationId: command.organizationId, ownerMemberId: command.ownerMemberId, createdByUserId: command.createdByUserId,
+          title: command.title, prompt: command.prompt, ttlMs: 600_000,
+        }))
+        for (const call of [
+          { name: "remote-session:create", body: {} },
+          { name: "remote-session:create", body: { target: "cloud" } },
+          { name: "remote-session:send", body: { sessionId: "ses_fixture", prompt: "Continue" } },
+          { name: "remote-session:read", body: { sessionId: "ses_fixture" } },
+        ]) {
+          const result = await registry.executeCapability(context, call)
+          expect(result.isError).toBe(true)
+          expect(result.structuredContent).toMatchObject({ error: "cloud_not_available", retryable: false })
+          expect(result.structuredContent?.message).toContain("targeting Cloud")
+        }
+        expect(resolveCloud).not.toHaveBeenCalled()
+        expect(client).not.toHaveBeenCalled()
+
+        access.mockResolvedValue({ hasAccess: false })
+        access.mockClear()
+        const readInput = { name: "remote-session:read", body: { commandId: command.id } }
+        expect((await registry.executeCapability(readOnlyContext, readInput)).structuredContent).toMatchObject({ commandId: command.id, target: "desktop", state: "pending" })
+        const otherUser = { ...context, principal: { ...context.principal, userId: createDenTypeId("user") } }
+        const otherOrgId = createDenTypeId("organization")
+        const otherOrg = { ...context, organizationId: otherOrgId, principal: { ...context.principal, organizationId: otherOrgId } }
+        for (const foreign of [otherUser, otherOrg]) {
+          const result = await registry.executeCapability(foreign, readInput)
+          expect(result.isError).toBe(true)
+          expect(result.structuredContent?.error).toBe("unknown_command")
+        }
+        expect(access).not.toHaveBeenCalled()
+        expect((await registry.executeCapability(context, createInput)).structuredContent?.error).toBe("openwork_web_access_required")
+        expect(presence).toHaveBeenCalledTimes(1)
+        expect(enqueue).toHaveBeenCalledTimes(1)
+      } finally {
+        access.mockRestore()
+        presence.mockRestore()
+        enqueue.mockRestore()
+        get.mockRestore()
+        resolveCloud.mockRestore()
+        client.mockRestore()
+      }
+    })
+  })
+}
+
+test("a deployment without desktop or Cloud runtime hides remote-session capabilities", async () => {
+  await withDeployment({ orgMode: "multi_org", provisionerMode: "stub", runtimeEnabled: false }, async () => {
+    const { registry, context } = await registryContext()
+    expect(context.remoteSessionsEnabled).toBe(false)
+    expect(await registry.CAPABILITY_SOURCES.remoteSession.search(context, "remote session", 10)).toEqual([])
+    context.principal.scopes = new Set(["mcp:read"])
+    const executed = await registry.executeCapability(context, { name: "remote-session:create", body: {} })
+    expect(executed.isError).toBe(true)
+    const text = executed.content.find((part) => part.type === "text")
+    expect(text?.type === "text" ? text.text : "").toContain("unknown_capability")
+  })
 })
 
-test("a hosted Cloud deployment discovers remote-session capabilities for every organization", async () => {
-  const { registry, context } = await registryContext({ remoteSessionsEnabled: true })
-  const source = registry.CAPABILITY_SOURCES.remoteSession
-  const matches = await source.search(context, "remote session cloud web", 10)
-  expect(matches.map((match) => match.name)).toContain("remote-session:create")
+test("Cloud availability does not enable a disabled desktop runner", async () => {
+  await withDeployment({ orgMode: "multi_org", provisionerMode: "daytona", daytonaApiKey: "witness-not-a-real-key", runtimeEnabled: false }, async () => {
+    const { registry, context } = await registryContext()
+    expect(context.remoteSessionsEnabled).toBe(true)
+    expect((await registry.CAPABILITY_SOURCES.remoteSession.search(context, "remote session cloud web", 10)).map((match) => match.name)).toContain("remote-session:create")
+    const result = await executeRemoteSessionCapability(executeInput("create", { target: "desktop" }), {
+      ...readyDeps({}),
+      desktopPresence: async () => { throw new Error("A disabled runner must not be probed") },
+    })
+    expect(result.isError).toBe(true)
+    expect(payload(result).error).toBe("desktop_offline")
+  })
+})
+
+test("desktop availability never exposes remote-session capabilities without membership", async () => {
+  await withDeployment({ orgMode: "multi_org", provisionerMode: "stub" }, async () => {
+    const { registry, context } = await registryContext()
+    context.member = null
+    expect(await registry.CAPABILITY_SOURCES.remoteSession.search(context, "remote session desktop", 10)).toEqual([])
+    for (const action of ["create", "send", "read"]) {
+      const result = await registry.executeCapability(context, { name: `remote-session:${action}`, body: {} })
+      expect(result.isError).toBe(true)
+      const text = result.content.find((part) => part.type === "text")
+      expect(text?.type === "text" ? text.text : "").toContain("membership_required")
+    }
+  })
 })

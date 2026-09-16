@@ -237,8 +237,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return tab;
     }
     catch (error) {
-      // No usable handle was returned; retries must not retain abandoned pages.
-      closeBrowserTab(tab.tabId);
+      // Preserve the initiating failure when last-tab cleanup revokes control.
+      closeBrowserTab(tab.tabId, false, error);
       throw error;
     }
     finally { signal?.removeEventListener("abort", stop); tab.operation = false; sendBrowserState(); }
@@ -1122,11 +1122,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return tab;
   }
 
-  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false) {
+  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined) {
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
     approvals.get(tabId)?.finish(false);
-    taskHost.invalidate(tabId, { closed: true });
+    taskHost.invalidate(tabId, { closed: true, reason });
     if (!preserve) suspendedTabs.delete(tabId);
     if (menuRequest?.tabId === tabId) hideContextMenu();
     const wasOnScreen = registry.onScreenTabId() === tabId;

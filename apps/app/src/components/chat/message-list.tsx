@@ -745,9 +745,16 @@ const UserMessage = React.memo(
                         )
                       }
                       if (isFileUIPart(part)) {
+                        // An attachment is identified by its position among the
+                        // message's files, not by its URL or filename: a sent image
+                        // first shows the composer's blob: preview, then the server's
+                        // recompressed data: copy. Keeping one element lets the
+                        // browser swap the bitmap in place instead of remounting an
+                        // <img> that has to decode before it can paint.
+                        const attachmentIndex = inlineParts.slice(0, index).filter(isFileUIPart).length
                         return (
                           <span
-                            key={`file-${part.url}-${index}`}
+                            key={`file-${attachmentIndex}`}
                             className="mx-1 inline-flex align-middle not-prose"
                           >
                             <FileMessage part={part} tone="user" />
@@ -1572,14 +1579,15 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     () => collectLatestAssistantToolParts(messages),
     [messages],
   )
-  const hasVisibleToolActivity = latestAssistantToolParts.some(isToolPartInFlight)
+  // Delegated task rows may be above newer messages; keep the run footer visible.
+  const hasVisibleToolActivity = latestAssistantToolParts.some((part) => !isTaskToolPart(part) && isToolPartInFlight(part))
   const waiting = activityStatus === "waiting" || activityStatus === "compacting" || childBlocked
   const showReconnecting = !waiting && !retryStatus && shouldShowRunReconnecting(status, syncDegraded)
   const noNewActivity = hasNoNewActivity({
     active: activityActive && activityStatus !== "error", waiting, retrying: status === "retrying" || Boolean(retryStatus),
     disconnected: syncDegraded, lastProgressAt, now: Date.now(),
   })
-  const showLoading = !waiting && !noNewActivity && !showReconnecting && tasks.length === 0
+  const showLoading = !waiting && !noNewActivity && !showReconnecting
     && shouldShowMessageListLoading(status, messages.length, hasVisibleToolActivity)
   const baseUrl = workspace?.opencodeBaseUrl
   React.useEffect(() => {

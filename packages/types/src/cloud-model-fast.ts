@@ -76,11 +76,21 @@ export function materializeLegacyFastProviders(providers: Record<string, Record<
     if (provider.npm !== "@ai-sdk/openai" || !isRecord(provider.models)) continue;
     const models = { ...provider.models };
     for (const [modelId, model] of Object.entries(models)) {
-      if (!isRecord(model) || !isRecord(model.variants)
-        || !fastMetadata.safeParse(model.variants[CATALOG_FAST_VARIANT]).success
+      if (!isRecord(model) || !isRecord(model.variants)) continue;
+      const metadata = fastMetadata.safeParse(model.variants[CATALOG_FAST_VARIANT]);
+      if (!metadata.success
         || (isRecord(model.provider) && model.provider.npm !== undefined && model.provider.npm !== provider.npm)
         || Object.keys(model.variants).some((key) => key.startsWith(FAST_VARIANT_PREFIX))) continue;
       const { [CATALOG_FAST_VARIANT]: _metadata, ...variants } = model.variants;
+      // v1 merges configured variants into its inferred defaults, including for
+      // opaque gateway aliases. Explicitly disable efforts the catalog excludes;
+      // an absent entry would leave the engine's unsupported fallback selectable.
+      const efforts = metadata.data.reasoningEfforts;
+      if (efforts?.length) {
+        for (const effort of reasoningEffort.options) {
+          if (!efforts.includes(effort) && !Object.hasOwn(variants, effort)) variants[effort] = { disabled: true };
+        }
+      }
       for (const variant of nativeModelVariants(model.variants, "@opencode-ai/ai/providers/openai")) {
         if (!Object.hasOwn(variants, variant.id)) variants[variant.id] = variant.settings.providerOptions;
       }

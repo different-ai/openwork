@@ -95,6 +95,33 @@ Rules for adding cache helpers:
 - Do not add new security-critical cache helpers without explicit invalidation and tests.
 - Prefer names that read like domain calls, for example `cache.auth.session(token)` or `cache.org.members(orgId)`.
 
+## SCIM existing-user adoption
+
+The SCIM plugin in `src/auth.ts` requires existing membership in the connector's
+organization before adopting an existing account. Its `shouldLinkUser` callback
+also performs an uncached membership read by normalized user and organization
+IDs with `removed_at IS NULL`. Better Auth 1.7.0-beta.10's built-in membership
+lookup does not exclude removed rows, so both checks must remain enabled.
+Invitations without a joined user, removed memberships, outside-org accounts,
+and tokens without an organization cannot authorize adoption. No email-domain
+exception applies. Successful adoption preserves the user ID and membership role;
+the new-user provisioning path is unchanged.
+
+The plugin evaluates this policy **before** its account-creation transaction.
+The fresh read excludes already-removed memberships, but does not serialize a
+concurrent removal with linking. Closing that race requires transactional policy
+support in the plugin; this callback is not an atomic membership lock.
+
+Run the installed-plugin regression suite in its own Node process:
+
+```bash
+pnpm --filter @openwork-ee/den-api test:scim-existing-user-linking
+```
+
+It uses Better Auth's memory adapter and compiles the membership SQL without
+executing it. It does not import Den's full auth graph, start MySQL, configure
+OAuth, or require real credentials.
+
 ## TypeID validation
 
 - Shared Den TypeID validation lives in `ee/packages/utils/src/typeid.ts`.

@@ -412,7 +412,7 @@ async function runCancellableDesktopTransfer<T>(
 ): Promise<T> {
   if (signal?.aborted) throw signal.reason;
   const cancel = () => {
-    void invokeElectronHelper("__cancelTransfer", transferId);
+    void invokeElectronHelper("__cancelTransfer", transferId).catch(() => undefined);
   };
   signal?.addEventListener("abort", cancel, { once: true });
   try {
@@ -506,7 +506,12 @@ async function desktopFetchThroughMain(
   }
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
-  const result = await invokeElectronHelper("__fetch", url, {
+  const signal = (method ?? "GET").toUpperCase() === "GET" && diagnosticsDeadlineAtMs === undefined
+    ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
+    : undefined;
+  const transferId = signal ? desktopTransferId() : undefined;
+  const fetchResponse = () => invokeElectronHelper("__fetch", url, {
+    transferId,
     method,
     headers,
     body,
@@ -515,6 +520,16 @@ async function desktopFetchThroughMain(
       ? undefined
       : { deadlineAtMs: diagnosticsDeadlineAtMs },
   });
+  let result: DesktopFetchResult;
+  try {
+    result = transferId && signal
+      ? await runCancellableDesktopTransfer(transferId, signal, fetchResponse)
+      : await fetchResponse();
+    signal?.throwIfAborted();
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
+  }
 
   // Response constructor rejects bodies for null-body status codes, so we
   // must pass null instead of an empty string for those.

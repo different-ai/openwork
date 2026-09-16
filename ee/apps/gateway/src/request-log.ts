@@ -28,6 +28,7 @@ export type RequestLogStartInput = {
   upstreamPath: string
   method: string
   requestedModel: string | null
+  requestedModelSource?: "request" | "header"
   upstreamModel: string | null
   stream: boolean
   gatewayProviderId?: GatewayRequestLogRow["gateway_provider_id"]
@@ -192,6 +193,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         // Existing enum placeholder; completed_at NULL is the pending marker.
         outcome: "client_aborted", usage_source: "missing",
         openwork_request_id: input.openworkRequestId, request_bytes: input.requestBytes ?? null,
+        ...(input.requestedModelSource ? { metadata: { requested_model_source: input.requestedModelSource } } : {}),
       }
       const row = pending
       startWrite = persist(async () => { await dependencies.insertRequestLog(row); return true }, "request_log_insert_failed")
@@ -254,9 +256,9 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         completed_at: now(),
         request_bytes: started.requestBytes ?? null,
         response_bytes: input.responseBytes ?? null,
-        metadata: { cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
+        metadata: { ...pending.metadata, cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
       }
-      if (row.cost_micro_usd === null) row.metadata = { cost_source: "unknown" }
+      if (row.cost_micro_usd === null) row.metadata = { ...pending.metadata, cost_source: "unknown" }
       finishWrite = (async () => {
         if (!await startWrite) return
         const saved = await persist(() => (dependencies.updateRequestLog ?? updateRequestLogInDb)(row), "request_log_update_failed")

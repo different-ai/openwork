@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto"
+import { runtimeProviderErrorCode } from "@openwork-ee/cloud-runtime/contract"
+import { cloudRuntimeErrorCode } from "@openwork-ee/cloud-runtime/orchestrator"
 import type { WorkerTable } from "@openwork-ee/den-db/schema"
 import { OpenWorkWebAccessRequiredError } from "../openwork-web-access-error.js"
 
@@ -60,9 +62,45 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message.toLowerCase() : ""
 }
 
+function classifyRuntimeError(error: unknown): CloudStartupFailureCode | null {
+  switch (cloudRuntimeErrorCode(error)) {
+    case "runtime_health_timeout":
+      return "runtime_health_timeout"
+    case "runtime_start_failed":
+      return "runtime_start_failed"
+    case "instance_missing":
+      return "sandbox_missing"
+    case "instance_start_failed":
+      return "sandbox_start_failed"
+    case "checkpoint_not_restored":
+      return "provider_operation_failed"
+    case null:
+      break
+  }
+  switch (runtimeProviderErrorCode(error)) {
+    case "rate_limited":
+      return "provider_rate_limited"
+    case "capacity":
+      return "provider_capacity_unavailable"
+    case "not_found":
+      return "sandbox_missing"
+    case "invalid_state":
+      return "sandbox_start_failed"
+    default:
+      return null
+  }
+}
+
 export function classifyCloudStartupFailure(error: unknown): CloudStartupFailureCode {
   if (error instanceof OpenWorkWebAccessRequiredError) return "web_access_required"
   const message = errorMessage(error)
+  // Storage waits surface as provider timeouts; keep them distinct from a
+  // slow instance start.
+  if (message.includes("volume") && (message.includes("timed out") || message.includes("unavailable"))) {
+    return "storage_unavailable"
+  }
+  const typed = classifyRuntimeError(error)
+  if (typed) return typed
   if (/\b429\b|rate[ -]?limit|too many requests/.test(message)) return "provider_rate_limited"
   if (/quota|capacity|insufficient (cpu|memory|disk)|resource exhausted|no available/.test(message)) {
     return "provider_capacity_unavailable"
@@ -70,14 +108,13 @@ export function classifyCloudStartupFailure(error: unknown): CloudStartupFailure
   if (message.includes("provisioning deadline") || message.includes("cloud wake") && message.includes("deadline")) {
     return "provisioning_timeout"
   }
-  if (message.includes("timed out waiting for daytona worker health")) return "runtime_health_timeout"
+  if (message.includes("timed out waiting for cloud runtime health") || message.includes("timed out waiting for daytona worker health")) {
+    return "runtime_health_timeout"
+  }
   if (message.includes("openwork session exited") || message.includes("binary missing")) return "runtime_start_failed"
   if (message.includes("sandbox") && message.includes("not found")) return "sandbox_missing"
   if (message.includes("start failed") || message.includes("sandbox") && message.includes("state change")) {
     return "sandbox_start_failed"
-  }
-  if (message.includes("volume") && (message.includes("timed out") || message.includes("unavailable"))) {
-    return "storage_unavailable"
   }
   return "provider_operation_failed"
 }

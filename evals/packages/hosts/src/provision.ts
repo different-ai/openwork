@@ -123,6 +123,8 @@ export interface DesktopSandboxOptions {
   releaseFetch?: typeof fetch;
   /** Daytona idle shutdown in minutes; preview worlds pass 0 so their owner process controls expiry. */
   autoStopMinutes?: number;
+  private?: boolean;
+  onCreated?: (sandbox: string) => Promise<void>;
   /** Test-only override for the sandbox exec-readiness budget. */
   sandboxReadyTimeoutMs?: number;
   log?: (line: string) => void;
@@ -676,6 +678,7 @@ async function provisionSandbox(
     : undefined;
   const ref = release ? "" : assertSafeRef(options.ref);
   const reused = options.reuse?.trim() || "";
+  if (options.private === true && reused) throw new Error("Private sandbox provisioning cannot reuse an unverified sandbox.");
   let sandbox = reused;
   let created = false;
   let ownedSandbox = "";
@@ -703,13 +706,14 @@ async function provisionSandbox(
             "--snapshot", id,
             ...(options.secrets === true ? ["--volume", "openwork-eval-secrets:/daytona-secrets"] : []),
             "--auto-stop", requestedAutoStop,
-            "--public",
+            ...(options.private === true ? [] : ["--public"]),
             "--target", "us",
           ],
           `sandbox creation gate for ${sandbox}`,
           { timeoutMs: 300_000 },
         );
         created = true;
+        await options.onCreated?.(sandbox);
         log(`==> ${surface} sandbox created: ${sandbox}`);
       }
       await waitForExecReady(exec, sandbox, options.sandboxReadyTimeoutMs);

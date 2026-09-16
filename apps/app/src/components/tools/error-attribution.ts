@@ -81,7 +81,7 @@ export function connectionCardPayloadFromChatToolResult(
   result: unknown,
   input?: unknown,
 ): ConnectionActionPayload | null {
-  if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+  if (!(OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName) || /^openwork-cloud_run_artifact_[A-Za-z0-9_-]+$/.test(toolName))) return null
   if (toolName === "openwork-cloud_search_capabilities" && (!isRecord(input) || input.intent !== "connect")) return null
   const parsed = parseResultRecord(result)
   if (!parsed) return null
@@ -110,7 +110,7 @@ export function reconnectActionFromChatToolResult(
   // Only canonical OpenWork Cloud tools may produce a native connection action.
   // Discovery may offer authorization only for an explicit setup request;
   // finding an unavailable connection is not itself a reason to prompt.
-  if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+  if (!(OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName) || /^openwork-cloud_run_artifact_[A-Za-z0-9_-]+$/.test(toolName))) return null
   if (toolName === "openwork-cloud_search_capabilities" && (!isRecord(input) || input.intent !== "connect")) return null
 
   const parsed = parseResultRecord(result)

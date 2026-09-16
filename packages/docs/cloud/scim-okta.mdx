@@ -96,6 +96,19 @@ can create a duplicate OpenWork member instead of linking SSO and SCIM.
 
 ## 4. Provision one test user
 
+SCIM can adopt an existing OpenWork account only when that account already has
+an active membership in the connector's organization. Adoption preserves the
+existing user ID, organization membership, and role, and places the identity
+under SCIM management for subsequent updates and deactivation. New-user
+provisioning is unchanged.
+
+An email or domain match alone is not enough. Removed memberships, pending
+invitations, personal accounts without an active membership in this organization,
+and membership only in another organization cannot be adopted; creation returns
+`409` with `scimType: uniqueness`. A token without an organization cannot adopt
+an existing account either. Complete the normal organization joining process
+before provisioning an existing account; do not use SCIM to bypass it.
+
 For the cleanest first test, use a user who has never been assigned or
 provisioned to this Okta application:
 
@@ -191,7 +204,7 @@ change.
 | --- | --- | --- |
 | **Create connector** is disabled | OpenWork does not see an enabled SSO provider | Complete and test Okta SAML first; if SAML returns `invalid_saml_configuration`, upgrade and save the connection again |
 | **Test API Credentials** fails | Incorrect base URL, stale token, whitespace, or a rewritten hostname | Copy both values again from OpenWork and use the advertised base URL unchanged |
-| Okta reports `409 User already exists` | The user existed before SCIM, or more than one create job ran for the same assignment | Inspect the System Log first. If a successful create immediately precedes the conflict and the exact member exists in OpenWork, stop triggering **Provision User**. Use a never-before-provisioned user for the clean lifecycle test |
+| Okta reports `409 User already exists` | The existing account lacks an active membership in this connector's organization, or the provider account already exists | Check membership in the selected organization and inspect the System Log. Removed or invited-only members cannot be adopted. If a successful create immediately precedes the conflict, stop triggering **Provision User**. Use a never-before-provisioned user for the clean lifecycle test |
 | Okta creates a duplicate member | SAML NameID and SCIM `userName` differ | Map both to the same stable work email |
 | Assignment succeeds but no member appears | To App provisioning is disabled or the user is outside assignment scope | Enable **Create Users** and confirm the person is assigned to the application |
 | **Run reconciliation** does not provision an assigned user | Reconciliation only checks OpenWork's local SCIM identity state | Trigger and inspect outbound provisioning in Okta instead |

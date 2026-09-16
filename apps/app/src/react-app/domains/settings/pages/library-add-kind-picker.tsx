@@ -21,11 +21,9 @@ import {
 import type { LibraryAddKind } from "../library";
 
 const PICKER_KIND_ORDER: LibraryAddKind[] = [
+  "mcp",
   "skill",
-  "command",
-  "agent",
-  "workspace-mcp",
-  "connection",
+  "plugin",
 ];
 
 type KindMeta = {
@@ -64,7 +62,7 @@ function kindMeta(kind: LibraryAddKind): KindMeta {
     case "mcp":
       return {
         title: t("extensions.kind_mcp"),
-        description: t("extensions.kind_mcp_hint"),
+        description: t("extensions.empty_mcp_hint"),
         icon: Server,
       };
     case "workspace-mcp":
@@ -130,7 +128,7 @@ function KindOptionRow(props: {
         <span className="mt-0.5 block text-[13px] leading-[18px] text-dls-secondary">
           {meta.description}
         </span>
-        {props.kind === "connection" && props.connectorCues.length > 0 ? (
+        {props.kind === "mcp" && props.connectorCues.length > 0 ? (
           <span
             className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5"
             data-testid="connection-logo-cues"

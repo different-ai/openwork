@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { AlertCircle, CheckCircle2, ChevronRight, Loader2 } from "lucide-react";
+import { AlertCircle, ChevronRight, Loader2 } from "lucide-react";
 import type { EnablementResult } from "../../app/extensions";
 import { t } from "../../i18n";
 import {
@@ -66,8 +66,9 @@ const taxonomyStyle: Record<ExtensionTaxonomy, string> = {
 
 type ReadinessState = "ready" | "partial" | "none";
 
+// A connected item reads as calm: the Connected chip is the only green, so
+// the card shell and icon stay neutral. Partial setup still asks for attention.
 function readinessSurface(state: ReadinessState) {
-  if (state === "ready") return "border-green-6 bg-green-2";
   if (state === "partial") return "border-amber-6 bg-amber-2";
   return "border-dls-border bg-dls-hover";
 }
@@ -102,11 +103,7 @@ function ExtensionIcon(props: {
         )}
       </div>
       {/* In the dense list, readiness lives as a dot next to the name instead of a corner overlay. */}
-      {props.compact ? null : props.readiness === "ready" ? (
-        <div className="absolute -bottom-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full border-2 border-dls-surface bg-green-9">
-          <CheckCircle2 size={9} className="text-white" strokeWidth={3} />
-        </div>
-      ) : props.readiness === "partial" ? (
+      {props.compact ? null : props.readiness === "partial" ? (
         <div className="absolute -bottom-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full border-2 border-dls-surface bg-amber-9">
           <AlertCircle size={9} className="text-white" strokeWidth={3} />
         </div>
@@ -198,11 +195,9 @@ export function ExtensionCard(props: ExtensionCardProps) {
   const someMet = enablement ? enablement.some((r) => r.met) && !allMet : false;
   const readiness: ReadinessState = allMet ? "ready" : someMet ? "partial" : "none";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url }) ?? null;
-  const shellState = readiness === "ready"
-    ? "border-green-6 bg-green-2"
-    : readiness === "partial"
-      ? "border-amber-6 bg-amber-2"
-      : "border-dls-border bg-dls-surface hover:bg-dls-hover";
+  const shellState = readiness === "partial"
+    ? "border-amber-6 bg-amber-2"
+    : "border-dls-border bg-dls-surface hover:bg-dls-hover";
   const shellClassName = `group w-full border text-left transition-all ${shellState} ${hidden ? "border-dashed opacity-70" : ""}`;
   const badges = (
     <ExtensionBadges

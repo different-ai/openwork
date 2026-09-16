@@ -38,6 +38,7 @@ import { emptyObjectSchema, emptyResponse, jsonResponse } from "../../openapi.js
 import { getSingletonSsoStatus } from "../../orgs.js"
 import { cache } from "../../cache.js"
 import { appLogger } from "../../observability/logger.js"
+import { timeScimDiagnosticStage } from "../../observability/scim-diagnostics.js"
 import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from "../../sso-test-lifecycle.js"
@@ -725,7 +726,7 @@ async function handleAuthRequest(c: Context) {
 
   let response: Response
   try {
-    response = await auth.handler(authRequest)
+    response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(authRequest))
   } catch (error) {
     if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
       await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")

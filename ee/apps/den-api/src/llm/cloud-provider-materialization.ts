@@ -1,21 +1,27 @@
 import { createHash } from "node:crypto"
 import { catalogFastVariants, materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
+import type { GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
+  GatewayProviderTable,
   LlmProviderModelTable,
   LlmProviderTable,
+  MemberTable,
   WorkerTable,
   WorkerTokenTable,
 } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { ensureMemberGatewayKey } from "../gateway-keys.js"
 import { organizationAllowsManagedModels } from "../inference.js"
 import { appLogger } from "../observability/logger.js"
 import { fetchPreviewNoRedirect, fetchWithConnectRetry, previewFetch } from "../workers/preview-fetch.js"
+import { gatewaySummary } from "./gateway-matrix.js"
 import {
   decodeProviderCredential,
   readProviderEnvNames,
   runtimeProviderEnvNames,
+  runtimeProviderEnvTag,
   selectLegacyScalarCredentialEnvName,
   selectPrimaryCredentialEnvName,
   toRuntimeProviderEnv,
@@ -25,8 +31,7 @@ type JsonRecord = Record<string, unknown>
 type OrganizationId = typeof LlmProviderTable.$inferSelect.organizationId
 type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerTokenScope = typeof WorkerTokenTable.$inferSelect.scope
-type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
-type LlmProviderSource = typeof LlmProviderTable.$inferSelect.source
+type LlmProviderSource = typeof LlmProviderTable.$inferSelect.source | "openwork_gateway"
 
 type EnvEntry = {
   key: string
@@ -41,7 +46,7 @@ type WorkerToken = {
 }
 
 export type CloudProviderMaterializationProvider = {
-  id: LlmProviderId
+  id: string
   source: LlmProviderSource
   providerId: string
   name: string
@@ -55,7 +60,7 @@ export type CloudProviderMaterializationProvider = {
 }
 
 export type CloudProviderMaterializationStore = {
-  listProviders: (organizationId: OrganizationId) => Promise<CloudProviderMaterializationProvider[]>
+  listProviders: (organizationId: OrganizationId, workerId: WorkerId) => Promise<CloudProviderMaterializationProvider[]>
   getActiveTokens: (workerId: WorkerId) => Promise<WorkerToken[]>
 }
 
@@ -155,49 +160,108 @@ const modelConfigPassthroughKeys = [
   "variants",
 ]
 
+async function listLegacyProviders(organizationId: OrganizationId): Promise<CloudProviderMaterializationProvider[]> {
+  const managedModelsAllowed = await organizationAllowsManagedModels(organizationId)
+  const providers = await db
+    .select()
+    .from(LlmProviderTable)
+    .where(and(
+      eq(LlmProviderTable.organizationId, organizationId),
+      managedModelsAllowed ? undefined : sql`${LlmProviderTable.source} <> 'openwork'`,
+    ))
+    .orderBy(asc(LlmProviderTable.id))
+
+  if (providers.length === 0) return []
+
+  const providerIds = providers.map((provider) => provider.id)
+  const models = await db
+    .select()
+    .from(LlmProviderModelTable)
+    .where(inArray(LlmProviderModelTable.llmProviderId, providerIds))
+    .orderBy(asc(LlmProviderModelTable.llmProviderId), asc(LlmProviderModelTable.modelId))
+
+  const modelsByProvider = new Map<string, CloudProviderMaterializationProvider["models"]>()
+  for (const model of models) {
+    const existing = modelsByProvider.get(model.llmProviderId) ?? []
+    existing.push({
+      modelId: model.modelId,
+      name: model.name,
+      modelConfig: model.modelConfig,
+    })
+    modelsByProvider.set(model.llmProviderId, existing)
+  }
+
+  return providers.map((provider) => ({
+    id: provider.id,
+    source: provider.source,
+    providerId: provider.providerId,
+    name: provider.name,
+    providerConfig: provider.providerConfig,
+    apiKey: provider.apiKey ?? null,
+    models: modelsByProvider.get(provider.id) ?? [],
+  }))
+}
+
+export function gatewayMaterializationProvider(summary: GatewayProviderSummary, memberKey: string): CloudProviderMaterializationProvider {
+  const runtimePrefix = `${runtimeProviderEnvTag(summary.id)}_`
+  const envNames = readProviderEnvNames(summary.providerConfig).map((name) => name.startsWith(runtimePrefix) ? name.slice(runtimePrefix.length) : name)
+  const credential = envNames.length > 1
+    ? JSON.stringify(Object.fromEntries(envNames.map((name) => [name, memberKey])))
+    : memberKey
+  return {
+    id: summary.id,
+    source: "openwork_gateway",
+    providerId: summary.providerId,
+    name: summary.name,
+    providerConfig: { ...summary.providerConfig, env: envNames },
+    apiKey: credential,
+    models: summary.models.map((model) => ({
+      modelId: model.id,
+      name: model.name,
+      modelConfig: model.config,
+    })),
+  }
+}
+
+async function listGatewayProviders(organizationId: OrganizationId, workerId: WorkerId): Promise<CloudProviderMaterializationProvider[]> {
+  const [owner] = await db
+    .select({ memberId: MemberTable.id })
+    .from(WorkerTable)
+    .innerJoin(MemberTable, and(
+      eq(MemberTable.organizationId, organizationId),
+      eq(MemberTable.userId, WorkerTable.created_by_user_id),
+      isNull(MemberTable.removedAt),
+    ))
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, organizationId)))
+    .limit(1)
+  if (!owner) return []
+
+  const providers = await db
+    .select()
+    .from(GatewayProviderTable)
+    .where(and(
+      eq(GatewayProviderTable.organization_id, organizationId),
+      eq(GatewayProviderTable.status, "active"),
+    ))
+    .orderBy(asc(GatewayProviderTable.id))
+  const materialized: CloudProviderMaterializationProvider[] = []
+  let memberKey: string | null = null
+  for (const provider of providers) {
+    const summary = await gatewaySummary(provider, owner.memberId, env.gatewayPublicBaseUrl, false)
+    if (summary.models.length === 0) continue
+    memberKey ??= await ensureMemberGatewayKey({ organizationId, memberId: owner.memberId })
+    materialized.push(gatewayMaterializationProvider(summary, memberKey))
+  }
+  return materialized
+}
+
 const databaseMaterializationStore: CloudProviderMaterializationStore = {
-  async listProviders(organizationId) {
-    const managedModelsAllowed = await organizationAllowsManagedModels(organizationId)
-    const providers = await db
-      .select()
-      .from(LlmProviderTable)
-      .where(and(
-        eq(LlmProviderTable.organizationId, organizationId),
-        managedModelsAllowed ? undefined : sql`${LlmProviderTable.source} <> 'openwork'`,
-      ))
-      .orderBy(asc(LlmProviderTable.id))
-
-    if (providers.length === 0) {
-      return []
-    }
-
-    const providerIds = providers.map((provider) => provider.id)
-    const models = await db
-      .select()
-      .from(LlmProviderModelTable)
-      .where(inArray(LlmProviderModelTable.llmProviderId, providerIds))
-      .orderBy(asc(LlmProviderModelTable.llmProviderId), asc(LlmProviderModelTable.modelId))
-
-    const modelsByProvider = new Map<LlmProviderId, CloudProviderMaterializationProvider["models"]>()
-    for (const model of models) {
-      const existing = modelsByProvider.get(model.llmProviderId) ?? []
-      existing.push({
-        modelId: model.modelId,
-        name: model.name,
-        modelConfig: model.modelConfig,
-      })
-      modelsByProvider.set(model.llmProviderId, existing)
-    }
-
-    return providers.map((provider) => ({
-      id: provider.id,
-      source: provider.source,
-      providerId: provider.providerId,
-      name: provider.name,
-      providerConfig: provider.providerConfig,
-      apiKey: provider.apiKey ?? null,
-      models: modelsByProvider.get(provider.id) ?? [],
-    }))
+  async listProviders(organizationId, workerId) {
+    const [legacy, gateway] = await Promise.all([
+      listLegacyProviders(organizationId),
+      listGatewayProviders(organizationId, workerId),
+    ])
+    return [...legacy, ...gateway]
   },
   async getActiveTokens(workerId) {
     return db
@@ -254,7 +318,7 @@ function runtimeProviderId(provider: Pick<CloudProviderMaterializationProvider, 
 }
 
 function isCloudManagedProviderKey(providerId: string) {
-  return /^lpr_/i.test(providerId) || providerId.trim() === "openwork"
+  return /^(?:lpr_|ipr_)/i.test(providerId) || providerId.trim() === "openwork"
 }
 
 function upsertEnvEntry(entries: EnvEntry[], key: string, value: string) {
@@ -1016,7 +1080,7 @@ export async function materializeCloudWorkerProviders(input: {
       return recentFailure.result
     }
 
-    const providers = await store.listProviders(input.organizationId)
+    const providers = await store.listProviders(input.organizationId, input.workerId)
     const prepared = prepareMaterialization(providers)
     fingerprint = prepared.fingerprint
     providerCount = prepared.providers.length

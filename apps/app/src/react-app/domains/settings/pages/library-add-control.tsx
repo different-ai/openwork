@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { t } from "../../../../i18n";
 import type { LibraryAddKind } from "../library";
 import type { LibraryConnectorCue } from "../library-connector-cues";
@@ -33,7 +34,10 @@ export function LibraryAddControl(props: {
   onSelect: (kind: LibraryAddKind) => void;
   pending?: boolean;
   size?: "xs" | "sm" | "default";
-  variant?: "default" | "outline";
+  variant?: "default" | "outline" | "ghost";
+  iconOnly?: boolean;
+  disabledReason?: string;
+  label?: string;
 }) {
   const kinds = props.kinds;
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -44,34 +48,49 @@ export function LibraryAddControl(props: {
 
   const onlyKind = kinds[0];
   if (kinds.length === 1 && onlyKind) {
+    const label = props.label ?? libraryAddKindLabel(onlyKind);
     return (
-      <Button
-        variant={variant}
-        size={size}
-        className="shrink-0 rounded-lg"
-        disabled={props.pending}
-        aria-busy={props.pending}
-        aria-label={props.pending ? `${libraryAddKindLabel(onlyKind)} — ${pendingLabel}` : undefined}
-        title={props.pending ? pendingLabel : undefined}
-        onClick={() => props.onSelect(onlyKind)}
-      >
-        {props.pending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-        {libraryAddKindLabel(onlyKind)}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger render={
+          <Button
+            variant={variant}
+            size={props.iconOnly ? "icon-sm" : size}
+            className={props.iconOnly ? "shrink-0 rounded-lg text-dls-secondary hover:bg-dls-hover hover:text-foreground" : "shrink-0 rounded-lg"}
+            disabled={props.pending || Boolean(props.disabledReason)}
+            focusableWhenDisabled
+            aria-busy={props.pending}
+            aria-label={label}
+            onClick={() => props.onSelect(onlyKind)}
+          >
+            {props.pending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={props.iconOnly ? 20 : 16} className={props.iconOnly ? "size-5" : undefined} />}
+            {props.iconOnly ? null : label}
+          </Button>
+        } />
+        <TooltipContent>{props.disabledReason ?? (props.pending ? pendingLabel : label)}</TooltipContent>
+      </Tooltip>
     );
   }
 
   return (
     <>
-      <Button
-        variant={variant}
-        size={size}
-        className="shrink-0 gap-1 rounded-lg"
-        onClick={() => setPickerOpen(true)}
-      >
-        <Plus size={16} />
-        {t("common.add")}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger render={
+          <Button
+            variant={variant}
+            size={props.iconOnly ? "icon-sm" : size}
+            className="shrink-0 gap-1 rounded-lg"
+            aria-label={props.label ?? t("common.add")}
+            aria-busy={props.pending}
+            disabled={props.pending || Boolean(props.disabledReason)}
+            focusableWhenDisabled
+            onClick={() => setPickerOpen(true)}
+          >
+            {props.pending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={props.iconOnly ? 20 : 16} className={props.iconOnly ? "size-5" : undefined} />}
+            {props.iconOnly ? null : props.label ?? t("common.add")}
+          </Button>
+        } />
+        <TooltipContent>{props.disabledReason ?? (props.pending ? pendingLabel : props.label ?? t("common.add"))}</TooltipContent>
+      </Tooltip>
       <LibraryAddKindPicker
         open={pickerOpen}
         kinds={kinds}

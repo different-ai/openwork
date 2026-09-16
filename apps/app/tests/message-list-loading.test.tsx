@@ -198,6 +198,26 @@ const delegated: UIMessage = { id: "assistant", role: "assistant", parts: [task]
 const followup: UIMessage = { id: "followup", role: "user", parts: [{ type: "text", text: "What is the update?" }] };
 
 describe("task-linked meaningful progress", () => {
+  test("keeps the working footer for current delegations without duplicating ordinary tool activity", () => {
+    expect(renderList([userMessage, delegated], "streaming")).toContain('data-loading-message="working"');
+    const ordinaryTool: UIMessage = {
+      id: "ordinary-tool", role: "assistant", parts: [{
+        type: "dynamic-tool", toolName: "bash", toolCallId: "command", state: "input-available",
+        input: { command: "pwd" },
+      }],
+    };
+    for (const messages of [[userMessage, ordinaryTool], [userMessage, delegated, ordinaryTool]]) {
+      expect(renderList(messages, "streaming")).not.toContain('data-loading-message="working"');
+    }
+    expect(renderList([userMessage, delegated], "ready")).not.toContain('data-loading-message="working"');
+    expect(renderList([userMessage, delegated], "streaming", { degraded: true, lastConfirmedAt: null }))
+      .not.toContain('data-loading-message="working"');
+    for (const activityStatus of ["waiting", "compacting"] satisfies SessionActivityStatus[]) {
+      expect(renderToStaticMarkup(list([userMessage, delegated], "streaming", undefined, activityStatus)))
+        .not.toContain('data-loading-message="working"');
+    }
+  });
+
   test.each<ThreadStatus>(["submitted", "streaming", "ready"])("keeps delegated tasks before the follow-up while the parent is %s", (status) => {
     const messages = [userMessage, delegated, followup];
     expect(activeDelegatedTasks(messages)).toEqual([task]);
@@ -206,8 +226,8 @@ describe("task-linked meaningful progress", () => {
     expect(html.indexOf('data-subagent-run="delegation"')).toBeLessThan(html.indexOf("What is the update?"));
     expect(html).not.toContain('data-testid="active-subagents"');
     expect(html).not.toContain("data-subagent-history");
-    expect(html).not.toContain('data-loading-message="working"');
-    expect(html).not.toContain('data-loading-message="starting"');
+    expect(html.includes('data-loading-message="working"')).toBe(status === "streaming");
+    expect(html.includes('data-loading-message="starting"')).toBe(status === "submitted");
     expect(html).not.toContain("PRIVATE TASK PROMPT");
   });
 

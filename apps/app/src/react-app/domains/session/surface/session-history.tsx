@@ -264,6 +264,20 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
       return client.fetchQuery(options);
     }
   }, [client, input.snapshotQueryKey, fullReader]);
+  // A follow-up decides whether to interrupt delegated work from the current
+  // turn's newest messages. Cached complete history already holds them;
+  // otherwise one bounded newest read does. A send never waits on the uncapped
+  // read a saved reading position leaves in flight: on a cold engine that read
+  // can outlast its request timeout, and a timed-out read must not bounce the
+  // person's message back into the composer.
+  const readSendHistory = useCallback(async (): Promise<OpenworkSessionHistory["messages"]> => {
+    const cached = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
+    if (cached?.session.id === input.sessionId) return cached.messages;
+    if (!input.readLatest) return (await ensureFullSnapshot()).messages;
+    const latest = await input.readLatest(new AbortController().signal);
+    if (latest.session.id !== input.sessionId) throw new Error("Conversation history belongs to another session.");
+    return latest.messages;
+  }, [client, ensureFullSnapshot, input.readLatest, input.sessionId, input.snapshotQueryKey]);
   const runWithFullSnapshot = useCallback(async (
     action: (snapshot: OpenworkSessionHistory) => void | Promise<unknown>,
     options: { fresh?: boolean } = {},
@@ -312,6 +326,7 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
       ? !entry.warm || !input.readLatest || !latestQuery.isFetching
       : backgroundOwner === input.owner,
     ensureFullSnapshot,
+    readSendHistory,
     runWithFullSnapshot,
   };
 }
@@ -347,10 +362,10 @@ export function SessionHistoryStatus({ complete, pending, loading, failed, onRet
   if (complete || (pending && !failed && !retrying)) return null;
   // Only a read that is actually in flight may announce loading. A read that
   // is not enabled yet, paused, or reverted by a cancellation has nothing to
-  // report, and an announcement derived from missing history alone would sit
-  // over the first message with nothing left to clear it.
+  // report, and an announcement derived from missing history alone would stay
+  // visible with nothing left to clear it.
   if (!loading && !failed && !retrying) return null;
-  return <div data-thread-history-status className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+  return <div data-thread-history-status className="pointer-events-none flex shrink-0 justify-center px-3 pt-2 sm:px-5">
     <div role={failed && !retrying ? "alert" : "status"} aria-live="polite" className="pointer-events-auto flex items-center gap-2 rounded-md bg-dls-surface/95 px-3 py-1 text-xs text-dls-secondary shadow-sm">
       <span>{retrying ? pending ? "Loading conversation…" : "Loading earlier messages…" : failed
         ? pending ? "This conversation could not be loaded." : "The rest of this conversation could not be loaded."

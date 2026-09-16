@@ -38,13 +38,18 @@ test("queued follow-ups come back as an unsent draft after a renderer restart in
     await user.type("composer", world.running.prompt, { verify: true });
     await user.press(enter);
     await user.see({ text: "Building the release." });
-    await user.type("composer", world.queued.prompt, { verify: true });
-    await user.press(enter);
-    await user.see({ text: /1 queued/ });
-    await user.type("composer", second, { verify: true });
-    await user.press(enter);
-    await user.see({ text: /2 queued/ });
-    await user.see("composer", { editable: true, text: "" });
+    const queued: string[] = [];
+    for (const text of [world.queued.prompt, second]) {
+      await user.type("composer", text, { verify: true });
+      await user.press(enter);
+      queued.push(text);
+      await user.see({ text: `${queued.length} queued` });
+      await user.see("composer", { editable: true, text: "" });
+      const stored = await storedDrafts();
+      assertObserved("Each queued follow-up clears persisted composer text without removing or duplicating queued messages",
+        { stored, queued }, stored.length === 1 && stored[0]!.text === ""
+          && JSON.stringify(stored[0]!.queued) === JSON.stringify(queued));
+    }
     const rows = (await userMessages()).elements;
     assertObserved("Queued follow-ups wait in the panel and are not sent while the task runs",
       { rows: rows.length, queuedRequests: (await world.modelRequests(world.queued.prompt)).length },

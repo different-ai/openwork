@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
-import { clearDenSession } from "../src/app/lib/den";
-import { denSessionUpdatedEvent } from "../src/app/lib/den-session-events";
+import type { CloudImportedProvider } from "../src/app/cloud/import-state";
+import { clearDenSession, DenApiError } from "../src/app/lib/den";
+import { denSessionUpdatedEvent, dispatchDenSessionUpdated } from "../src/app/lib/den-session-events";
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { createClient } from "../src/app/lib/opencode";
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 import type { ProviderListItem, WorkspaceDisplay } from "../src/app/types";
+import { resolveDenAuthFailureStatus } from "../src/react-app/domains/cloud/den-auth-provider";
 import { createSessionOpenworkServer } from "../src/react-app/domains/connections/provider-auth/session-openwork-server";
 import { createProviderAuthStore } from "../src/react-app/domains/connections/provider-auth/store";
 
@@ -182,6 +185,7 @@ function installFetchMock(
     identityResponse?: (attempt: number) => Response | Promise<Response>;
     runResponse?: Promise<Response> | ((attempt: number) => Response | Promise<Response>);
     statusResponse?: Promise<Response>;
+    respond?: (request: RecordedRequest) => Response | Promise<Response> | undefined;
   } = {},
 ) {
   let runIndex = 0;
@@ -192,13 +196,16 @@ function installFetchMock(
     value: async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(getRequestUrl(input));
       const method = getRequestMethod(input, init);
-      requests.push({
+      const request = {
         url: url.toString(),
         method,
         body: typeof init?.body === "string" ? init.body : null,
         headers: normalizeHeaders(init),
         signal: init?.signal,
-      });
+      };
+      requests.push(request);
+      const response = options.respond?.(request);
+      if (response) return response;
 
       if (url.origin === "https://den.example" && url.pathname === "/api/den/v1/llm-providers") {
         return options.providerResponse ?? jsonResponse({ llmProviders: [cloudProviderPayload()] });
@@ -252,13 +259,14 @@ function installFetchMock(
   });
 }
 
-function makeEndpoint(options: { origin: string; isRemote: boolean }): ResolvedWorkspaceEndpoint {
+function makeEndpoint(options: { origin: string; isRemote: boolean; workspaceId?: string }): ResolvedWorkspaceEndpoint {
   const client = createOpenworkServerClient({ baseUrl: options.origin, token: "client-token" });
-  const mountedBaseUrl = `${options.origin}/workspace/ws_1`;
+  const workspaceId = options.workspaceId ?? "ws_1";
+  const mountedBaseUrl = `${options.origin}/workspace/${workspaceId}`;
   return {
     baseUrl: options.origin,
     token: "client-token",
-    workspaceId: "ws_1",
+    workspaceId,
     isRemote: options.isRemote,
     client,
     mountedBaseUrl,
@@ -271,6 +279,7 @@ function createSessionRouteStore(options: {
   hostToken: string;
   generation?: number;
   connectedProviderIds?: string[];
+  providerList?: ProviderListResponse;
   engineReady?: boolean;
   workspaceReady?: boolean;
   onProviderStateWrite?: () => void;
@@ -286,12 +295,12 @@ function createSessionRouteStore(options: {
     preset: "default",
     workspaceType: options.endpoint?.isRemote ? "remote" : "local",
   } satisfies WorkspaceDisplay;
-  let providers: ProviderListItem[] = [];
-  let providerDefaults: Record<string, string> = {};
-  let providerConnectedIds: string[] = options.connectedProviderIds ?? [];
+  let providers: ProviderListItem[] = options.providerList?.all ?? [];
+  let providerDefaults: Record<string, string> = options.providerList?.default ?? {};
+  let providerConnectedIds: string[] = options.connectedProviderIds ?? options.providerList?.connected ?? [];
   let disabledProviders: string[] = [];
 
-  return createProviderAuthStore({
+  const store = createProviderAuthStore({
     client: () => options.engineReady === false ? null : opencodeClient,
     providers: () => providers,
     providerDefaults: () => providerDefaults,
@@ -301,7 +310,7 @@ function createSessionRouteStore(options: {
     selectedWorkspaceDisplay: () => workspace,
     providerBaseUrl: () => "https://engine.example",
     selectedWorkspaceRoot: () => options.workspaceReady === false ? "" : "/tmp/workspace_test",
-    runtimeWorkspaceId: () => options.workspaceReady === false ? null : "ws_1",
+    runtimeWorkspaceId: () => options.workspaceReady === false ? null : options.endpoint?.workspaceId ?? "ws_1",
     // The exact snapshot builder the session route mounts.
     openworkServer: createSessionOpenworkServer({
       endpoint: () => options.endpoint,
@@ -326,6 +335,29 @@ function createSessionRouteStore(options: {
     },
     markOpencodeConfigReloadRequired: () => options.onProviderStateWrite?.(),
   });
+  return {
+    ...store,
+    getProviderState: () => ({ all: providers, default: providerDefaults, connected: providerConnectedIds }),
+  };
+}
+
+function logoutProvider(id: string, source: ProviderListItem["source"]): ProviderListItem {
+  return {
+    id, name: id, source, env: [], options: {},
+    models: {
+      "fixture-model": {
+        id: "fixture-model", providerID: id, name: "Fixture model",
+        api: { id: "fixture-model", url: "https://provider.example", npm: "@ai-sdk/openai-compatible" },
+        capabilities: {
+          temperature: true, reasoning: false, attachment: false, toolcall: true, interleaved: false,
+          input: { text: true, audio: false, image: false, video: false, pdf: false },
+          output: { text: true, audio: false, image: false, video: false, pdf: false },
+        },
+        cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+        limit: { context: 1000, output: 100 }, status: "active", options: {}, headers: {}, release_date: "",
+      },
+    },
+  };
 }
 
 describe("session-route cloud provider sync wiring", () => {
@@ -405,35 +437,301 @@ describe("session-route cloud provider sync wiring", () => {
     store.dispose();
   });
 
-  test("logout removes connected provider credentials and resets their saved default", async () => {
-    const storage = installWindow();
-    installCloudSession(storage);
-    storage.setItem("openwork.defaultModel", "anthropic/claude-fable-5");
-    const requests: RecordedRequest[] = [];
-    installFetchMock(requests);
-    const store = createSessionRouteStore({
-      endpoint: null,
-      hostToken: "",
-      connectedProviderIds: ["opencode", "anthropic"],
+  for (const scenario of [
+    { owner: "server", imported: true, default: "anthropic", trigger: "logout" },
+    { owner: "server", imported: true, default: "cloud", trigger: "expired-session event" },
+    { owner: "server", imported: false, default: "lpr_manual", trigger: "logout" },
+    { owner: "server", imported: false, default: "cloud", trigger: "expired-session event" },
+    { owner: "renderer", imported: true, default: "anthropic", trigger: "logout" },
+    { owner: "renderer", imported: true, default: "anthropic", trigger: "expired-session event" },
+  ]) {
+    test(`${scenario.trigger} preserves personal providers with ${scenario.owner} cleanup, ${scenario.imported ? "known" : "lost"} imports, and a ${scenario.default} default`, async () => {
+      const storage = installWindow();
+      installCloudSession(storage);
+      const serverOwned = scenario.owner === "server";
+      const managedId = serverOwned ? "ipr_test" : "team-provider";
+      const defaultId = scenario.default === "cloud" ? managedId : scenario.default;
+      const savedDefault = `${defaultId}/fixture-model`;
+      storage.setItem("openwork.defaultModel", savedDefault);
+      const personalProviders = [
+        logoutProvider("anthropic", "api"),
+        logoutProvider("env-provider", "env"),
+        logoutProvider("opencode", "env"),
+        ...(serverOwned ? [logoutProvider("lpr_manual", "config")] : []),
+      ];
+      const runtimeProviders = new Map(
+        [...personalProviders, logoutProvider(managedId, "config")].map((provider) => [provider.id, provider]),
+      );
+      const auth = new Map([
+        ["anthropic", "personal-fixture-key"],
+        [managedId, "cloud-fixture-key"],
+      ]);
+      if (serverOwned) auth.set("lpr_manual", "manual-fixture-key");
+      const imported: CloudImportedProvider = {
+        cloudProviderId: "lpr_test", providerId: managedId, sourceProviderId: "anthropic",
+        name: "Team provider", source: "custom", updatedAt: null, importedAt: 1, modelIds: ["fixture-model"],
+      };
+      let imports = { [imported.cloudProviderId]: imported };
+      const providerList = (): ProviderListResponse => ({
+        all: [...runtimeProviders.values()],
+        connected: [...runtimeProviders.values()]
+          .filter((provider) => provider.source === "env" || auth.has(provider.id))
+          .map((provider) => provider.id),
+        default: Object.fromEntries([...runtimeProviders.keys()].map((id) => [id, "fixture-model"])),
+      });
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests, {
+        providerResponse: scenario.imported ? undefined : Promise.resolve(jsonResponse({ llmProviders: [] })),
+        respond: (request) => {
+          const path = new URL(request.url).pathname;
+          if (path === "/cloud-provider-sync/status") {
+            return jsonResponse({
+              hasSession: true, lastRun: null, reloadPending: false, skippedProviders: [],
+              providers: scenario.imported ? [imported] : [],
+            });
+          }
+          if (path === "/den-session" && request.method === "DELETE") {
+            auth.delete(managedId);
+            runtimeProviders.delete(managedId);
+            return new Response(null, { status: 204 });
+          }
+          if (path.startsWith("/auth/") && request.method === "DELETE") {
+            auth.delete(decodeURIComponent(path.slice("/auth/".length)));
+            return jsonResponse(true);
+          }
+          if (path === "/provider") return jsonResponse(providerList());
+          if (path === "/workspace/ws_1/config" && request.method === "GET") {
+            return jsonResponse({
+              opencode: { provider: Object.fromEntries(runtimeProviders) },
+              openwork: { cloudImports: { providers: imports } },
+            });
+          }
+          if (path === "/workspace/ws_1/config" && request.method === "PATCH") {
+            const patch: {
+              opencode?: { provider?: Record<string, unknown> };
+              openwork?: { cloudImports?: { providers: Record<string, CloudImportedProvider> } };
+            } = JSON.parse(request.body ?? "{}");
+            for (const [id, value] of Object.entries(patch.opencode?.provider ?? {})) {
+              if (value === null) runtimeProviders.delete(id);
+            }
+            if (patch.openwork?.cloudImports) imports = patch.openwork.cloudImports.providers;
+            return jsonResponse({ updatedAt: 1 });
+          }
+        },
+      });
+      const store = createSessionRouteStore({
+        endpoint: makeEndpoint({ origin: serverOwned ? LOCAL_SERVER_ORIGIN : REMOTE_SERVER_ORIGIN, isRemote: !serverOwned }),
+        hostToken: serverOwned ? "host-token-live" : "",
+        providerList: providerList(),
+      });
+      try {
+        store.start();
+        if (scenario.imported) {
+          await store.refreshImportedCloudProviders();
+          await store.refreshCloudOrgProviders();
+        }
+        expect(Object.keys(store.getSnapshot().importedCloudProviders)).toHaveLength(scenario.imported ? 1 : 0);
+
+        if (scenario.trigger === "logout") clearDenSession();
+        else {
+          const status = resolveDenAuthFailureStatus(new DenApiError(401, "session_expired", "Session expired"));
+          expect(status).toBe("signed_out");
+          if (status === "signed_out") {
+            storage.removeItem("openwork.den.authToken");
+            storage.removeItem("openwork.den.activeOrgId");
+            dispatchDenSessionUpdated({ status, message: "Session expired" });
+          }
+        }
+        expect(store.getProviderState().connected).toContain("anthropic");
+        expect(store.getSnapshot().cloudOrgProviders).toEqual([]);
+        await waitFor(() => !auth.has(managedId) && Object.keys(store.getSnapshot().importedCloudProviders).length === 0);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(auth.get("anthropic")).toBe("personal-fixture-key");
+        if (serverOwned) expect(auth.get("lpr_manual")).toBe("manual-fixture-key");
+        expect([...runtimeProviders.values()]).toEqual(personalProviders);
+        expect(store.getProviderState()).toEqual(providerList());
+        expect(store.getSnapshot().cloudProviderServerSync).toBeNull();
+        expect(storage.getItem("openwork.den.authToken")).toBeNull();
+        expect(storage.getItem("openwork.den.activeOrgId")).toBeNull();
+        if (scenario.default === "cloud") expect(storage.getItem("openwork.defaultModel")).not.toBe(savedDefault);
+        else expect(storage.getItem("openwork.defaultModel")).toBe(savedDefault);
+        const authDeletes = requests.filter((request) => request.method === "DELETE" && new URL(request.url).pathname.startsWith("/auth/"));
+        expect(authDeletes.map((request) => new URL(request.url).pathname)).toEqual(serverOwned ? [] : [`/auth/${managedId}`]);
+        expect(requests.filter((request) => request.method !== "GET" && new URL(request.url).pathname.startsWith("/env"))).toHaveLength(0);
+        if (serverOwned) {
+          expect(requests.filter((request) => request.method !== "GET")).toEqual([
+            expect.objectContaining({ method: "DELETE", url: `${LOCAL_SERVER_ORIGIN}/den-session`, headers: expect.objectContaining({ "x-openwork-host-token": "host-token-live" }) }),
+          ]);
+        }
+      } finally {
+        store.dispose();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     });
+  }
 
-    store.start();
-    clearDenSession();
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (requests.some((request) =>
-        request.method === "DELETE" && new URL(request.url).pathname === "/auth/anthropic"
-      )) break;
+  test("signed-out startup delegates persisted cleanup to the server without sweeping personal provider prefixes", async () => {
+    const storage = installWindow();
+    storage.setItem("openwork.defaultModel", "lpr_manual/fixture-model");
+    const requests: RecordedRequest[] = [];
+    const personal = logoutProvider("lpr_manual", "config");
+    installFetchMock(requests, {
+      respond: (request) => new URL(request.url).pathname === "/workspace/ws_1/config"
+        ? jsonResponse({ opencode: { provider: { lpr_manual: personal } }, openwork: {} })
+        : undefined,
+    });
+    const store = createSessionRouteStore({
+      endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+      hostToken: "host-token-live",
+      providerList: { all: [personal], connected: [personal.id], default: { [personal.id]: "fixture-model" } },
+    });
+    try {
+      store.start();
+      await waitFor(() => requests.some((request) => request.method === "DELETE" && new URL(request.url).pathname === "/den-session"));
       await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(requests.filter((request) => request.method !== "GET").map((request) => new URL(request.url).pathname)).toEqual(["/den-session"]);
+      expect(store.getProviderState().all).toEqual([personal]);
+      expect(storage.getItem("openwork.defaultModel")).toBe("lpr_manual/fixture-model");
+    } finally {
+      store.dispose();
     }
-
-    expect(
-      requests.filter((request) =>
-        request.method === "DELETE" && new URL(request.url).pathname === "/auth/anthropic"
-      ),
-    ).toHaveLength(1);
-    expect(storage.getItem("openwork.defaultModel")).not.toBe("anthropic/claude-fable-5");
-    store.dispose();
   });
+
+  for (const transition of ["stay signed out", "new sign-in", "workspace switch", "workspace switch during cleanup"]) {
+    test(`a delayed hostless startup import read after logout handles ${transition} without touching personal providers`, async () => {
+      const storage = installWindow();
+      installCloudSession(storage);
+      storage.setItem("openwork.defaultModel", "anthropic/fixture-model");
+      const requests: RecordedRequest[] = [];
+      const delayed = deferredResponse();
+      const cleanupRead = deferredResponse();
+      let cleanupReadStarted = false;
+      const personal = logoutProvider("anthropic", "api");
+      const managed = logoutProvider("openwork", "config");
+      const runtimeProviders = new Map([[personal.id, personal], [managed.id, managed]]);
+      const auth = new Map([[personal.id, "personal-fixture-key"], [managed.id, "old-cloud-fixture-key"]]);
+      const imported: CloudImportedProvider = {
+        cloudProviderId: "lpr_delayed", providerId: managed.id, sourceProviderId: "openwork",
+        name: "Cloud provider", source: "openwork", updatedAt: null, importedAt: 1, modelIds: ["fixture-model"],
+      };
+      let imports: Record<string, CloudImportedProvider> = { [imported.cloudProviderId]: imported };
+      let configReads = 0;
+      installFetchMock(requests, {
+        providerResponse: Promise.resolve(jsonResponse({ llmProviders: [] })),
+        respond: (request) => {
+          const path = new URL(request.url).pathname;
+          if (/^\/workspace\/[^/]+\/config$/.test(path)) {
+            if (request.method === "GET") {
+              if (++configReads === 1) return delayed.promise;
+              if (transition === "workspace switch during cleanup" && path === "/workspace/ws_1/config" && !runtimeProviders.has(managed.id)) {
+                cleanupReadStarted = true;
+                return cleanupRead.promise;
+              }
+              return jsonResponse({
+                opencode: { provider: Object.fromEntries(runtimeProviders) },
+                openwork: { cloudImports: { providers: imports } },
+              });
+            }
+            if (request.method === "PATCH") {
+              const patch: {
+                opencode?: { provider?: Record<string, unknown> };
+                openwork?: { cloudImports?: { providers: Record<string, CloudImportedProvider> } };
+              } = JSON.parse(request.body ?? "{}");
+              for (const [id, value] of Object.entries(patch.opencode?.provider ?? {})) {
+                if (value === null) runtimeProviders.delete(id);
+              }
+              if (patch.openwork?.cloudImports) imports = patch.openwork.cloudImports.providers;
+              return jsonResponse({ updatedAt: 1 });
+            }
+          }
+          if (path.startsWith("/auth/") && request.method === "DELETE") {
+            auth.delete(decodeURIComponent(path.slice("/auth/".length)));
+            return jsonResponse(true);
+          }
+        },
+      });
+      const options = {
+        endpoint: makeEndpoint({ origin: REMOTE_SERVER_ORIGIN, isRemote: true }),
+        hostToken: "",
+        providerList: {
+          all: [personal, managed], connected: [personal.id, managed.id],
+          default: { [personal.id]: "fixture-model", [managed.id]: "fixture-model" },
+        },
+      };
+      const store = createSessionRouteStore(options);
+      let obsoletePublished = false;
+      const unsubscribe = store.subscribe(() => {
+        if (store.getSnapshot().importedCloudProviders[imported.cloudProviderId]) obsoletePublished = true;
+      });
+      try {
+        store.start();
+        await waitFor(() => configReads === 1);
+        clearDenSession();
+        await waitFor(() => requests.some((request) => new URL(request.url).pathname === "/workspace/ws_1/opencode-config"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(store.getSnapshot().importedCloudProviders).toEqual({});
+        expect(auth.get(managed.id)).toBe("old-cloud-fixture-key");
+
+        const switchContext = async () => {
+          if (transition === "new sign-in") {
+            installCloudSession(storage);
+            storage.setItem("openwork.den.authToken", "new-den-token");
+            storage.setItem("openwork.den.activeOrgId", "org_replacement");
+          } else {
+            options.endpoint = makeEndpoint({ origin: REMOTE_SERVER_ORIGIN, isRemote: true, workspaceId: "ws_2" });
+          }
+          imports = { lpr_current: { ...imported, cloudProviderId: "lpr_current", importedAt: 2 } };
+          auth.set(managed.id, "current-cloud-fixture-key");
+          runtimeProviders.set(managed.id, managed);
+          storage.setItem("openwork.defaultModel", "openwork/fixture-model");
+          await store.refreshImportedCloudProviders();
+        };
+        if (transition !== "stay signed out" && transition !== "workspace switch during cleanup") await switchContext();
+        if (transition === "stay signed out") {
+          runtimeProviders.set("lpr_untracked", logoutProvider("lpr_untracked", "config"));
+          auth.set("lpr_untracked", "untracked-personal-fixture-key");
+        }
+        let writesBeforeRelease = requests.filter((request) => request.method !== "GET").length;
+        const staleConfig = { openwork: { cloudImports: { providers: { [imported.cloudProviderId]: imported } } } };
+        delayed.resolve(jsonResponse(staleConfig));
+        if (transition === "workspace switch during cleanup") {
+          await waitFor(() => cleanupReadStarted);
+          await switchContext();
+          writesBeforeRelease = requests.filter((request) => request.method !== "GET").length;
+          cleanupRead.resolve(jsonResponse(staleConfig));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(obsoletePublished).toBe(false);
+        expect(auth.get(personal.id)).toBe("personal-fixture-key");
+        expect(runtimeProviders.get(personal.id)).toEqual(personal);
+        if (transition === "stay signed out") {
+          expect(auth.has(managed.id)).toBe(false);
+          expect(runtimeProviders.has(managed.id)).toBe(false);
+          expect(runtimeProviders.has("lpr_untracked")).toBe(true);
+          expect(auth.get("lpr_untracked")).toBe("untracked-personal-fixture-key");
+          expect(imports).toEqual({});
+          expect(store.getSnapshot().importedCloudProviders).toEqual({});
+          expect(store.getProviderState()).toEqual({ all: [personal], connected: [personal.id], default: { [personal.id]: "fixture-model" } });
+          expect(storage.getItem("openwork.defaultModel")).toBe("anthropic/fixture-model");
+          expect(requests.filter((request) => request.method === "DELETE").map((request) => new URL(request.url).pathname)).toEqual(["/auth/openwork"]);
+        } else {
+          expect(auth.get(managed.id)).toBe("current-cloud-fixture-key");
+          expect(runtimeProviders.get(managed.id)).toEqual(managed);
+          expect(Object.keys(store.getSnapshot().importedCloudProviders)).toEqual(["lpr_current"]);
+          expect(storage.getItem("openwork.defaultModel")).toBe("openwork/fixture-model");
+          expect(requests.filter((request) => request.method !== "GET")).toHaveLength(writesBeforeRelease);
+        }
+      } finally {
+        unsubscribe();
+        store.dispose();
+        delayed.resolve(jsonResponse({ openwork: {} }));
+        cleanupRead.resolve(jsonResponse({ openwork: {} }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    });
+  }
 
   test("an organization provider request started before logout cannot restore stale models", async () => {
     const storage = installWindow();

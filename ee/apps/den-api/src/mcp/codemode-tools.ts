@@ -109,6 +109,31 @@ export function restrictCodemodeToolTree(input: {
   }
 }
 
+export function restrictReadOnlyCodemodeToolTree(input: {
+  built: BuiltCodemodeTools
+  requiredCapabilities: readonly CodemodeManifestEntry[]
+}): { tools: CodemodeToolTree; missing: CodemodeManifestEntry[]; unsafe: CodemodeManifestEntry[] } {
+  const restricted = restrictCodemodeToolTree(input)
+  const missing = new Set(restricted.missing)
+  const unsafe: CodemodeManifestEntry[] = []
+  const permitted: CodemodeManifestEntry[] = []
+  for (const required of input.requiredCapabilities) {
+    if (missing.has(required)) continue
+    const entries = input.built.manifest.filter((entry) =>
+      entry.scriptPath === required.scriptPath && entry.capabilityName === required.capabilityName)
+    if (entries.length === 0 || entries.some((entry) => entry.authority !== "den" || entry.readOnly !== true)) {
+      unsafe.push(required)
+      continue
+    }
+    permitted.push(required)
+  }
+  return {
+    tools: restrictCodemodeToolTree({ built: input.built, requiredCapabilities: permitted }).tools,
+    missing: restricted.missing,
+    unsafe,
+  }
+}
+
 /**
  * Unattended Cloud runs may be retried after a lost lease, so Phase 1 admits
  * only read-only capabilities implemented by Den itself. External MCP tools
@@ -169,6 +194,7 @@ export function buildDenCatalogToolTree(input: {
   const definitions = operations.map((operation) => [operation.name, Tool.make({
     description: operation.operation.summary ?? operation.operation.description ?? operation.name,
     input: denInputJsonSchema(operation),
+    output: operation.outputSchema,
     run: (toolInput) => Effect.promise(() => invokeMcpOperation({
       app: input.app,
       env: input.env,
@@ -239,6 +265,7 @@ export async function buildNativeProviderToolTree(input: {
     const definitions = nativeOperations(input.catalog, connection.nativeProviderKey).map((operation) => [operation.name, Tool.make({
       description: operation.operation.summary ?? operation.operation.description ?? operation.name,
       input: denInputJsonSchema(operation),
+      output: operation.outputSchema,
       run: (toolInput) => Effect.promise(() => executeNativeCapability({
         app: input.app,
         env: input.env,

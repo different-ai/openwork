@@ -12,6 +12,7 @@ import {
   isCloudManagedProviderKey,
   OPENWORK_GATEWAY_BADGE_LABEL,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import type { ProviderLoadState } from "../../connections/provider-auth/store";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { SettingsNotice, SettingsStatusBadge } from "../settings-section";
 import {
@@ -39,6 +40,8 @@ export type AiSettingsViewProps = {
   providerStatusLabel: string;
   providerStatusStyle: string;
   providerSummary: string;
+  providerLoadState: ProviderLoadState;
+  onRetryProviders: () => void | Promise<void>;
   connectedProviders: ConnectedProvider[];
   disconnectingProviderId: string | null;
   providerConnectError: string | null;
@@ -129,6 +132,9 @@ export function GatewayConnectRow(props: {
 
 export function AiSettingsView(props: AiSettingsViewProps) {
   const organizationProviderLabel = props.organizationName?.trim() || t("settings.provider_source_organization");
+  const providersReady = props.providerLoadState.status === "ready";
+  const providersLoading = props.providerLoadState.status === "loading" || props.providerLoadState.status === "idle";
+  const providerLoadError = props.providerLoadState.error;
 
   return (
     <LayoutStack>
@@ -142,17 +148,21 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>
-              {props.providerSummary}
-              <SettingsStatusBadge
-                tone={providerStatusTone(props.providerStatusLabel)}
-                label={props.providerStatusLabel}
-              />
+              {providerLoadError
+                ? t("providers.load_failed")
+                : providersLoading ? t("settings.loading_providers") : props.providerSummary}
+              {providersReady ? (
+                <SettingsStatusBadge
+                  tone={providerStatusTone(props.providerStatusLabel)}
+                  label={props.providerStatusLabel}
+                />
+              ) : null}
             </LayoutSectionItemTitle>
             {props.canAddProviders ? (
               <LayoutSectionItemHeaderActions>
                 <Button
                   onClick={() => void props.onOpenProviderAuth()}
-                  disabled={props.busy || props.providerAuthBusy}
+                  disabled={props.busy || props.providerAuthBusy || !providersReady}
                 >
                   {props.providerAuthBusy
                     ? t("settings.loading_providers")
@@ -163,7 +173,24 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
 
-        {props.showOpenWorkModelsSubscribe ? (
+        {providerLoadError ? (
+          <SettingsNotice tone="error" className="flex flex-wrap items-center justify-between gap-3">
+            <div role="alert" className="min-w-0 flex-1 space-y-1">
+              <p>{providerLoadError}</p>
+              {props.connectedProviders.length > 0 ? <p>{t("settings.providers_not_refreshed")}</p> : null}
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void props.onRetryProviders()}
+              disabled={props.busy || providersLoading}
+              aria-busy={providersLoading}
+            >
+              {t("settings.providers_retry")}
+            </Button>
+          </SettingsNotice>
+        ) : null}
+
+        {providersReady && props.showOpenWorkModelsSubscribe ? (
           <LayoutSectionItem className="relative overflow-hidden rounded-2xl border border-blue-6 bg-blue-2/30 px-4 py-4">
             <button
               type="button"
@@ -247,6 +274,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                       disabled={
                         props.busy ||
                         props.providerAuthBusy ||
+                        !providersReady ||
                         props.disconnectingProviderId !== null ||
                         !props.canDisconnectProvider(provider)
                       }
@@ -273,7 +301,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           />
         ))}
 
-        {props.showOpenWorkModelsConnect ? (
+        {providersReady && props.showOpenWorkModelsConnect ? (
           <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-dls-border px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
               <ProviderIcon providerId="openwork" size={20} className="text-muted-foreground" />
@@ -300,7 +328,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           </LayoutSectionItem>
         ) : null}
 
-        {props.showOpenWorkModelsSyncing ? (
+        {providersReady && props.showOpenWorkModelsSyncing ? (
           <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-6/50 bg-amber-2/20 px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
               <ProviderIcon providerId="openwork" size={20} className="text-amber-11" />

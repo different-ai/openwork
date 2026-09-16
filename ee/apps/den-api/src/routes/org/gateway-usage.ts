@@ -36,7 +36,7 @@ const responseSchema: z.ZodType<GatewayUsageResponse> = z.object({
     groupBy: groupBySchema, days: z.number().int().min(1).max(366),
     from: z.iso.date(), to: z.iso.date(), timezone: z.literal("UTC"),
     emptyReason: z.literal("no_teams").optional(),
-    totalTokens: countSchema, unreportedRequests: countSchema.nullable(),
+    requestCount: countSchema, uncountableRequests: z.object({ ok: countSchema.nullable(), upstream_error: countSchema.nullable(), upstream_unreachable: countSchema.nullable(), client_aborted: countSchema.nullable(), rejected: countSchema.nullable() }), totalTokens: countSchema, unreportedRequests: countSchema.nullable(),
     totalCostMicroUsd: countSchema, unpricedRequests: countSchema.nullable(),
     series: z.array(optionSchema),
     daily: z.array(z.object({
@@ -47,7 +47,7 @@ const responseSchema: z.ZodType<GatewayUsageResponse> = z.object({
   }),
 })
 const bucketsSchema = z.array(z.object({
-  date: z.iso.date(), totalTokens: z.string(), unreportedRequests: z.string().nullable(),
+  date: z.iso.date(), requestCount: z.string(), successfulUnreportedRequests: z.string().nullable(), upstreamErrorUnreportedRequests: z.string().nullable(), unreachableUnreportedRequests: z.string().nullable(), abortedUnreportedRequests: z.string().nullable(), rejectedUnreportedRequests: z.string().nullable(), totalTokens: z.string(), unreportedRequests: z.string().nullable(),
   totalCostMicroUsd: z.string(), unpricedRequests: z.string().nullable(),
 })).max(366)
 
@@ -60,6 +60,10 @@ function safeCount(value: string | number): number {
   const count = Number(value)
   if (!Number.isSafeInteger(count) || count < 0) throw new UsageReadError("gateway_usage_invalid_totals", "Usage exceeds the safe integer range.")
   return count
+}
+
+function addNullableCount(total: number | null, value: string | null): number | null {
+  return total === null || value === null ? null : safeCount(total + safeCount(value))
 }
 
 function checkCardinality(size: number, limit: number) {
@@ -139,7 +143,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     if (!teams.length) return { usage: {
       groupBy: "team", days: query.days, timezone: "UTC", emptyReason: "no_teams",
       from: new Date(fromMs).toISOString().slice(0, 10), to: new Date(toMs).toISOString().slice(0, 10),
-      totalTokens: 0, unreportedRequests: 0, totalCostMicroUsd: 0, unpricedRequests: 0, series: [], filterOptions: [],
+      requestCount: 0, uncountableRequests: { ok: 0, upstream_error: 0, upstream_unreachable: 0, client_aborted: 0, rejected: 0 }, totalTokens: 0, unreportedRequests: 0, totalCostMicroUsd: 0, unpricedRequests: 0, series: [], filterOptions: [],
       daily: Array.from({ length: query.days }, (_, offset) => ({
         date: new Date(fromMs + offset * DAY_MS).toISOString().slice(0, 10), totalTokens: 0, values: {}, totalCostMicroUsd: 0, costValues: {},
       })),
@@ -159,10 +163,31 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     return { date, seriesId, filterId }
   }
 
+  // Older summaries lack the outcome/coverage intersection. Only infer a
+  // count when their existing counters determine it exactly.
+  const legacyMissing = (outcomeCount: typeof rollup.ok_count | typeof rollup.aborted_count) => sql<number | null>`case
+    when ${outcomeCount} = 0 then 0
+    when ${rollup.total_tokens_count} is null then null
+    when ${rollup.total_tokens_count} = ${rollup.request_count} then 0
+    when ${rollup.total_tokens_count} = 0 then ${outcomeCount}
+    when ${outcomeCount} = ${rollup.request_count} then ${rollup.request_count} - ${rollup.total_tokens_count}
+    else null end`
+  const legacyErrorMissing = sql<number | null>`case when ${rollup.error_count} = 0 or ${rollup.total_tokens_count} = ${rollup.request_count} then 0 else null end`
+  const successfulUnreportedRequestsRollup = sql<number | null>`coalesce(${rollup.uncountable_ok_count}, ${legacyMissing(rollup.ok_count)})`
+  const upstreamErrorUnreportedRequestsRollup = sql<number | null>`coalesce(${rollup.uncountable_upstream_error_count}, ${legacyErrorMissing})`
+  const unreachableUnreportedRequestsRollup = sql<number | null>`coalesce(${rollup.uncountable_upstream_unreachable_count}, ${legacyErrorMissing})`
+  const abortedUnreportedRequestsRollup = sql<number | null>`coalesce(${rollup.uncountable_client_aborted_count}, ${legacyMissing(rollup.aborted_count)})`
+  const rejectedUnreportedRequestsRollup = sql<number | null>`coalesce(${rollup.uncountable_rejected_count}, ${legacyErrorMissing})`
   const rawDimensions = dimensions(raw, raw.started_at)
   const rollupDimensions = dimensions(rollup, rollup.bucket_start)
   const sources = db.select({
     ...rawDimensions,
+    requestCount: sql<string>`count(*)`.as("request_count"),
+    successfulUnreportedRequests: sql<string | null>`sum(case when ${raw.outcome} = 'ok' and ${raw.total_tokens} is null then 1 else 0 end)`.as("uncountable_ok"),
+    upstreamErrorUnreportedRequests: sql<string | null>`sum(case when ${raw.outcome} = 'upstream_error' and ${raw.total_tokens} is null then 1 else 0 end)`.as("uncountable_upstream_error"),
+    unreachableUnreportedRequests: sql<string | null>`sum(case when ${raw.outcome} = 'upstream_unreachable' and ${raw.total_tokens} is null then 1 else 0 end)`.as("uncountable_upstream_unreachable"),
+    abortedUnreportedRequests: sql<string | null>`sum(case when ${raw.outcome} = 'client_aborted' and ${raw.total_tokens} is null then 1 else 0 end)`.as("uncountable_client_aborted"),
+    rejectedUnreportedRequests: sql<string | null>`sum(case when ${raw.outcome} = 'rejected' and ${raw.total_tokens} is null then 1 else 0 end)`.as("uncountable_rejected"),
     totalTokens: sql<string>`coalesce(sum(${raw.total_tokens}), 0)`.as("total_tokens"),
     unreportedRequests: sql<string | null>`count(*) - count(${raw.total_tokens})`.as("unreported_requests"),
     totalCostMicroUsd: sql<string>`coalesce(sum(${raw.cost_micro_usd}), 0)`.as("total_cost_micro_usd"),
@@ -172,6 +197,12 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     sql`${raw.started_at} >= from_unixtime(${fromSeconds}) and ${raw.started_at} < from_unixtime(${endSeconds})`,
   )).groupBy(rawDimensions.date, rawDimensions.seriesId, rawDimensions.filterId).unionAll(db.select({
     ...rollupDimensions,
+    requestCount: sql<string>`sum(${rollup.request_count})`.as("request_count"),
+    successfulUnreportedRequests: sql<string | null>`case when count(${successfulUnreportedRequestsRollup}) = count(*) then sum(${successfulUnreportedRequestsRollup}) else null end`.as("uncountable_ok"),
+    upstreamErrorUnreportedRequests: sql<string | null>`case when count(${upstreamErrorUnreportedRequestsRollup}) = count(*) then sum(${upstreamErrorUnreportedRequestsRollup}) else null end`.as("uncountable_upstream_error"),
+    unreachableUnreportedRequests: sql<string | null>`case when count(${unreachableUnreportedRequestsRollup}) = count(*) then sum(${unreachableUnreportedRequestsRollup}) else null end`.as("uncountable_upstream_unreachable"),
+    abortedUnreportedRequests: sql<string | null>`case when count(${abortedUnreportedRequestsRollup}) = count(*) then sum(${abortedUnreportedRequestsRollup}) else null end`.as("uncountable_client_aborted"),
+    rejectedUnreportedRequests: sql<string | null>`case when count(${rejectedUnreportedRequestsRollup}) = count(*) then sum(${rejectedUnreportedRequestsRollup}) else null end`.as("uncountable_rejected"),
     totalTokens: sql<string>`sum(${rollup.total_tokens})`.as("total_tokens"),
     unreportedRequests: sql<string | null>`case when count(${rollup.total_tokens_count}) = count(*) then sum(${rollup.request_count}) - sum(${rollup.total_tokens_count}) else null end`.as("unreported_requests"),
     totalCostMicroUsd: sql<string>`coalesce(sum(${rollup.cost_micro_usd}), 0)`.as("total_cost_micro_usd"),
@@ -183,6 +214,12 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
 
   const groupedUsage = db.select({
     date: sources.date, seriesId: sources.seriesId,
+    requestCount: sql<string>`cast(sum(${sources.requestCount}) as char)`.as("request_count"),
+    successfulUnreportedRequests: sql<string | null>`case when count(${sources.successfulUnreportedRequests}) = count(*) then cast(sum(${sources.successfulUnreportedRequests}) as char) else null end`.as("uncountable_ok"),
+    upstreamErrorUnreportedRequests: sql<string | null>`case when count(${sources.upstreamErrorUnreportedRequests}) = count(*) then cast(sum(${sources.upstreamErrorUnreportedRequests}) as char) else null end`.as("uncountable_upstream_error"),
+    unreachableUnreportedRequests: sql<string | null>`case when count(${sources.unreachableUnreportedRequests}) = count(*) then cast(sum(${sources.unreachableUnreportedRequests}) as char) else null end`.as("uncountable_upstream_unreachable"),
+    abortedUnreportedRequests: sql<string | null>`case when count(${sources.abortedUnreportedRequests}) = count(*) then cast(sum(${sources.abortedUnreportedRequests}) as char) else null end`.as("uncountable_client_aborted"),
+    rejectedUnreportedRequests: sql<string | null>`case when count(${sources.rejectedUnreportedRequests}) = count(*) then cast(sum(${sources.rejectedUnreportedRequests}) as char) else null end`.as("uncountable_rejected"),
     totalTokens: sql<string>`cast(sum(${sources.totalTokens}) as char)`.as("total_tokens"),
     unreportedRequests: sql<string | null>`case when count(${sources.unreportedRequests}) = count(*) then cast(sum(${sources.unreportedRequests}) as char) else null end`.as("unreported_requests"),
     totalCostMicroUsd: sql<string>`cast(sum(${sources.totalCostMicroUsd}) as char)`.as("total_cost_micro_usd"),
@@ -206,6 +243,12 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     daily = db.select({
       date: memberDaily.date,
       seriesId: sql<string>`${memberships.teamId}`.as("series_id"),
+      requestCount: sql<string>`cast(sum(${memberDaily.requestCount}) as char)`.as("request_count"),
+      successfulUnreportedRequests: sql<string | null>`case when count(${memberDaily.successfulUnreportedRequests}) = count(*) then cast(sum(${memberDaily.successfulUnreportedRequests}) as char) else null end`.as("uncountable_ok"),
+      upstreamErrorUnreportedRequests: sql<string | null>`case when count(${memberDaily.upstreamErrorUnreportedRequests}) = count(*) then cast(sum(${memberDaily.upstreamErrorUnreportedRequests}) as char) else null end`.as("uncountable_upstream_error"),
+      unreachableUnreportedRequests: sql<string | null>`case when count(${memberDaily.unreachableUnreportedRequests}) = count(*) then cast(sum(${memberDaily.unreachableUnreportedRequests}) as char) else null end`.as("uncountable_upstream_unreachable"),
+      abortedUnreportedRequests: sql<string | null>`case when count(${memberDaily.abortedUnreportedRequests}) = count(*) then cast(sum(${memberDaily.abortedUnreportedRequests}) as char) else null end`.as("uncountable_client_aborted"),
+      rejectedUnreportedRequests: sql<string | null>`case when count(${memberDaily.rejectedUnreportedRequests}) = count(*) then cast(sum(${memberDaily.rejectedUnreportedRequests}) as char) else null end`.as("uncountable_rejected"),
       totalTokens: sql<string>`cast(sum(${memberDaily.totalTokens}) as char)`.as("total_tokens"),
       unreportedRequests: sql<string | null>`case when count(${memberDaily.unreportedRequests}) = count(*) then cast(sum(${memberDaily.unreportedRequests}) as char) else null end`.as("unreported_requests"),
       totalCostMicroUsd: sql<string>`cast(sum(${memberDaily.totalCostMicroUsd}) as char)`.as("total_cost_micro_usd"),
@@ -222,7 +265,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   // SQL compacts to at most 366 buckets per series; limit+1 fails explicitly.
   const seriesRows = db.select({
     kind: sql<string>`'series'`.as("kind"), id: daily.seriesId,
-    buckets: sql<z.infer<typeof bucketsSchema>>`json_arrayagg(json_object('date', ${daily.date}, 'totalTokens', ${daily.totalTokens}, 'unreportedRequests', ${daily.unreportedRequests}, 'totalCostMicroUsd', ${daily.totalCostMicroUsd}, 'unpricedRequests', ${daily.unpricedRequests}))`
+    buckets: sql<z.infer<typeof bucketsSchema>>`json_arrayagg(json_object('date', ${daily.date}, 'requestCount', ${daily.requestCount}, 'successfulUnreportedRequests', ${daily.successfulUnreportedRequests}, 'upstreamErrorUnreportedRequests', ${daily.upstreamErrorUnreportedRequests}, 'unreachableUnreportedRequests', ${daily.unreachableUnreportedRequests}, 'abortedUnreportedRequests', ${daily.abortedUnreportedRequests}, 'rejectedUnreportedRequests', ${daily.rejectedUnreportedRequests}, 'totalTokens', ${daily.totalTokens}, 'unreportedRequests', ${daily.unreportedRequests}, 'totalCostMicroUsd', ${daily.totalCostMicroUsd}, 'unpricedRequests', ${daily.unpricedRequests}))`
       .mapWith((value: unknown) => bucketsSchema.parse(typeof value === "string" ? JSON.parse(value) : value)).as("buckets"),
     label: sql<string | null>`null`.as("option_label"),
   }).from(daily).groupBy(daily.seriesId).limit(MAX_SERIES + 1).as("usage_series")
@@ -301,6 +344,8 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     const date = new Date(fromMs + offset * DAY_MS).toISOString().slice(0, 10)
     days.set(date, { date, totalTokens: 0, values: {}, totalCostMicroUsd: 0, costValues: {} })
   }
+  let requestCount = 0
+  const uncountableRequests: Record<"ok" | "upstream_error" | "upstream_unreachable" | "client_aborted" | "rejected", number | null> = { ok: 0, upstream_error: 0, upstream_unreachable: 0, client_aborted: 0, rejected: 0 }
   let totalTokens = 0
   let unreportedRequests: number | null = 0
   let totalCostMicroUsd = 0
@@ -312,20 +357,26 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     const label = query.groupBy === "model"
       ? usageModelLabel(row.id, modelLabels) ?? (modelHex === "~" ? "Unreported model" : Buffer.from(modelHex, "hex").toString("utf8"))
       : options.get(row.id) ?? removedLabel
-    seriesLabels.set(row.id, label)
+    if (row.buckets.some((bucket) => safeCount(bucket.totalTokens) > 0 || safeCount(bucket.totalCostMicroUsd) > 0)) seriesLabels.set(row.id, label)
     for (const bucket of row.buckets) {
       const day = days.get(bucket.date)
       if (!day) throw new Error("Gateway usage date outside requested UTC range")
+      requestCount = safeCount(requestCount + safeCount(bucket.requestCount))
+      uncountableRequests.ok = addNullableCount(uncountableRequests.ok, bucket.successfulUnreportedRequests)
+      uncountableRequests.upstream_error = addNullableCount(uncountableRequests.upstream_error, bucket.upstreamErrorUnreportedRequests)
+      uncountableRequests.upstream_unreachable = addNullableCount(uncountableRequests.upstream_unreachable, bucket.unreachableUnreportedRequests)
+      uncountableRequests.client_aborted = addNullableCount(uncountableRequests.client_aborted, bucket.abortedUnreportedRequests)
+      uncountableRequests.rejected = addNullableCount(uncountableRequests.rejected, bucket.rejectedUnreportedRequests)
       const tokens = safeCount(bucket.totalTokens)
       const missing = bucket.unreportedRequests === null ? null : safeCount(bucket.unreportedRequests)
       const cost = safeCount(bucket.totalCostMicroUsd)
       const unpriced = bucket.unpricedRequests === null ? null : safeCount(bucket.unpricedRequests)
-      day.values[row.id] = tokens
+      if (tokens > 0) day.values[row.id] = tokens
       day.totalTokens = safeCount(day.totalTokens + tokens)
       totalTokens = safeCount(totalTokens + tokens)
       unreportedRequests = unreportedRequests === null || missing === null ? null : safeCount(unreportedRequests + missing)
       // Keep recorded positive subtotals, but never present unobserved cost as free.
-      day.costValues[row.id] = cost === 0 && unpriced !== 0 ? null : cost
+      if (seriesLabels.has(row.id)) day.costValues[row.id] = cost === 0 && unpriced !== 0 ? null : cost
       day.totalCostMicroUsd = safeCount(day.totalCostMicroUsd + cost)
       totalCostMicroUsd = safeCount(totalCostMicroUsd + cost)
       unpricedRequests = unpricedRequests === null || unpriced === null ? null : safeCount(unpricedRequests + unpriced)
@@ -334,7 +385,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   if (query.groupBy === "model") disambiguateUsageLabels(seriesLabels, true)
   return { usage: {
     groupBy: query.groupBy, days: query.days, from: new Date(fromMs).toISOString().slice(0, 10), to: new Date(toMs).toISOString().slice(0, 10), timezone: "UTC",
-    totalTokens, unreportedRequests, totalCostMicroUsd, unpricedRequests,
+    requestCount, uncountableRequests, totalTokens, unreportedRequests, totalCostMicroUsd, unpricedRequests,
     series: [...seriesLabels].map(([id, label]) => ({ id, label })).sort(labelOrder), daily: [...days.values()],
     filterOptions: [...options].map(([id, label]) => ({ id, label })).sort(labelOrder),
   } }
@@ -343,7 +394,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
 export function registerOrgGatewayUsageRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get("/v1/inference-providers/usage", describeRoute({
     tags: ["Inference Providers"], summary: "Read organization Gateway usage by UTC day",
-    description: "Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts only org_provider traffic. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.",
+    description: "Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts only org_provider traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.",
     responses: {
       200: jsonResponse("Gateway usage", responseSchema),
       400: jsonResponse("Invalid query", invalidRequestSchema),

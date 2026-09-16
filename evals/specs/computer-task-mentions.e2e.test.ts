@@ -19,6 +19,18 @@ test("computer mentions steer tasks through Connect and Automations names the co
     evidence.recordAssertionEvidence("Mention acceptance preserves the draft suffix", "Selection-only caret movement offers cloud for the middle @cl mention. Enter, Tab, and mouse replace that mention without changing the later @notes text or sending a message.", true);
   });
 
+  await step("email text after an agent mention does not open mention suggestions", async () => {
+    await user.type("composer", "@openwork person@cl", { replace: true });
+    await user.see("composer", { text: "@openwork person@cl" });
+    await user.notSee({ role: "button", label: /^@/ });
+    await user.type("composer", " @cl", { replace: false });
+    await user.see({ role: "button", label: /^@cloud/ });
+    await user.press("Tab");
+    await user.see("composer", { text: "@openwork person@cl @cloud" });
+    expect((await probe.composer()).userMessageCount).toBe(0);
+    evidence.recordAssertionEvidence("Only a separate mention opens suggestions", "An embedded email @ after @openwork leaves the draft unchanged and opens no mention menu. A separate @cl still offers cloud and accepts Tab without sending or replacing the email text.", true);
+  });
+
   await step("the mention menu explains both computers without starting a task", async () => {
     await user.type("composer", "@", { replace: true });
     await user.see({ text: "Start a task on your cloud computer" });

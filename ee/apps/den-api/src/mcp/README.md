@@ -77,3 +77,38 @@ Untagged operations are excluded by default. Today these are OAuth/MCP discovery
 - `/register`
 
 They are required for OAuth/MCP setup, but should not appear as callable MCP tools.
+
+### Live generated apps
+
+GeneratedArtifactView.dataMode is optional on the wire. An absent value means
+legacy snapshot; new save_artifact_view calls persist live by default.
+The mode is immutable for a view. Migration 0101_artifact_view_data_mode
+preserves existing rows as snapshots.
+
+Live views expose run_artifact_<id> alongside render and preview tools.
+All three execute the current saved Workflow as the authenticated caller,
+using only exact declared capabilities whose current Den authority marks them
+read-only. Normal explicit Workflow runs and Automation authority are unchanged.
+A view's output schema must match the current version before execution.
+
+The only live run argument is optional timeZone, an IANA zone, defaulting to
+UTC. Desktop callers should supply Intl.DateTimeFormat().resolvedOptions().timeZone.
+The Workflow receives input.runtime with now (ISO instant), today (YYYY-MM-DD),
+timeZone, dayStart (ISO instant), and dayEnd (exclusive ISO instant). The server
+computes these values for every run, including daylight-saving changes.
+Author Workflow input schemas to accept that runtime object; example inputs
+and creation dates are never reused. Arbitrary inputs and receipt overrides
+are rejected.
+
+GET /v1/apps/:appId also executes live views, accepts timeZone, and returns
+Cache-Control: private, no-store. A failed run returns a null payload and an
+optional structured runError, including connection status/card details when
+available. MCP failures retain those details and connection cards.
+
+Receipts, detail results, and snapshot pages are caller-private, including for
+organization admins. Sharing an app shares the Workflow and view, never a
+personal receipt. Explicit snapshot creation rejects capability-dependent
+Workflows, including Google and other personal integrations. External metadata
+hints cannot establish non-personal data. This contract does not provide a
+cross-member snapshot-data sharing override; legacy snapshots and Automation
+results remain readable by their own caller.

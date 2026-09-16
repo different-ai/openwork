@@ -52,6 +52,7 @@ type McpAppCsp = {
 
 export type McpAppResource = {
   launchId?: string;
+  refresh?: { resourceDigest: string; expiresAt: number };
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -71,6 +72,7 @@ type McpAppLaunch = {
   toolName: string;
   resourceUri: string;
   fingerprint: string;
+  resourceDigest?: string;
   expiresAt: number;
 };
 
@@ -107,7 +109,7 @@ async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceI
   return createHash("sha256").update(JSON.stringify({ config, managed, runtimeRevisions, privateRevision })).digest("hex");
 }
 
-function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext }, app: McpAppResource, fingerprint: string): McpAppResource {
+function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext }, app: McpAppResource, fingerprint: string, tool: Tool): McpAppResource {
   // Old clients can read HTML, but cannot manufacture an actionable launch from a server name.
   if (!input.context || input.context.readOnly) return app;
   const launches = liveLaunches(input.serverConfig);
@@ -116,13 +118,16 @@ function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; wo
     if (oldest) launches.delete(oldest);
   }
   const launchId = randomUUID();
+  const expiresAt = Date.now() + LAUNCH_TTL_MS;
+  const resourceDigest = input.context.sessionId === null && toolVisibility(tool, "app") && !toolRequiresApproval(tool)
+    ? mcpAppResourceDigest(app) : undefined;
   launches.set(launchId, {
     workspaceId: input.workspaceId, workspaceRoot: input.workspaceRoot, sessionId: input.context.sessionId,
     engine: input.context.engine ?? "v1",
     serverName: app.serverName, toolName: app.toolName, resourceUri: app.resourceUri,
-    fingerprint, expiresAt: Date.now() + LAUNCH_TTL_MS,
+    fingerprint, resourceDigest, expiresAt,
   });
-  return { ...app, launchId };
+  return { ...app, launchId, ...(resourceDigest ? { refresh: { resourceDigest, expiresAt } } : {}) };
 }
 
 export type ConnectMcpAppLaunchReference = {
@@ -238,6 +243,19 @@ function resourcePresentationMeta(value: unknown): { csp: McpAppCsp; prefersBord
     },
     prefersBorder: ui.prefersBorder !== false,
   };
+}
+
+function mcpAppResourceDigest({ html, csp, prefersBorder }: Pick<McpAppResource, "html" | "csp" | "prefersBorder">): string {
+  return createHash("sha256").update(JSON.stringify({
+    html,
+    csp: {
+      connectDomains: [...csp.connectDomains].sort(),
+      resourceDomains: [...csp.resourceDomains].sort(),
+      frameDomains: [...csp.frameDomains].sort(),
+      baseUriDomains: [...csp.baseUriDomains].sort(),
+    },
+    prefersBorder,
+  })).digest("hex");
 }
 
 function remoteUrl(config: Record<string, unknown>): URL | null {
@@ -683,7 +701,7 @@ export async function resolveMcpAppResource(input: {
     item.config.enabled !== false
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
-  const matches: Array<{ app: McpAppResource; fingerprint: string }> = [];
+  const matches: Array<{ app: McpAppResource; fingerprint: string; tool: Tool }> = [];
   const resolutionErrors: McpAppHostError[] = [];
   for (const item of candidates) {
     if (!remoteUrl(item.config)) continue;
@@ -708,12 +726,15 @@ export async function resolveMcpAppResource(input: {
       const resource = findHtmlResource(resourceUri, read);
       const presentation = resourcePresentationMeta(resource.meta);
       return {
-        serverName: item.name,
-        toolName: tool.name,
-        resourceUri,
-        html: resource.html,
-        ...presentation,
-      } satisfies McpAppResource;
+        app: {
+          serverName: item.name,
+          toolName: tool.name,
+          resourceUri,
+          html: resource.html,
+          ...presentation,
+        } satisfies McpAppResource,
+        tool,
+      };
     }).catch((error) => {
       if (error instanceof McpAppHostError && error.code !== "mcp_unreachable") throw error;
       resolutionErrors.push(error instanceof McpAppHostError
@@ -721,13 +742,13 @@ export async function resolveMcpAppResource(input: {
         : new McpAppHostError("mcp_app_resolution_failed", "The MCP App resource could not be resolved."));
       return null;
     });
-    if (match) matches.push({ app: match, fingerprint });
+    if (match) matches.push({ ...match, fingerprint });
   }
   if (matches.length > 1) {
     throw new McpAppHostError("ambiguous_tool", "More than one configured MCP App matches this projected tool name.");
   }
   if (matches.length === 0 && resolutionErrors[0]) throw resolutionErrors[0];
-  return matches[0] ? bindLaunch(input, matches[0].app, matches[0].fingerprint) : null;
+  return matches[0] ? bindLaunch(input, matches[0].app, matches[0].fingerprint, matches[0].tool) : null;
 }
 
 /**
@@ -764,7 +785,7 @@ export async function resolveConnectMcpAppResource(input: {
   const { serverName } = item;
   const fingerprint = await launchFingerprint(input, serverName, item.config);
 
-  const app = await withRemoteClient(item.config, async (client) => {
+  const match = await withRemoteClient(item.config, async (client) => {
     const tool = (await listTools(client)).find((candidate) => candidate.name === input.launch.toolName);
     if (!tool) {
       throw new McpAppHostError("tool_not_found", "The originating MCP App tool is no longer advertised.");
@@ -789,14 +810,17 @@ export async function resolveConnectMcpAppResource(input: {
     const resource = findHtmlResource(resourceUri, read);
     const presentation = resourcePresentationMeta(resource.meta);
     return {
-      serverName,
-      toolName: tool.name,
-      resourceUri,
-      html: resource.html,
-      ...presentation,
+      app: {
+        serverName,
+        toolName: tool.name,
+        resourceUri,
+        html: resource.html,
+        ...presentation,
+      },
+      tool,
     };
   });
-  return bindLaunch(input, app, fingerprint);
+  return bindLaunch(input, match.app, fingerprint, match.tool);
 }
 
 /** Resolve an indirect launch against the same MCP server that owns the
@@ -827,7 +851,7 @@ export async function resolveSameServerMcpAppResource(input: {
     && remoteUrl(item.config)
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
-  const matches: Array<{ app: McpAppResource; fingerprint: string }> = [];
+  const matches: Array<{ app: McpAppResource; fingerprint: string; tool: Tool }> = [];
   for (const item of candidates) {
     const fingerprint = await launchFingerprint(input, item.name, item.config);
     const match = await withRemoteClient(item.config, async (client) => {
@@ -852,20 +876,23 @@ export async function resolveSameServerMcpAppResource(input: {
       });
       const resource = findHtmlResource(resourceUri, read);
       return {
-        serverName: item.name,
-        toolName: launchTool.name,
-        resourceUri,
-        html: resource.html,
-        ...resourcePresentationMeta(resource.meta),
-      } satisfies McpAppResource;
+        app: {
+          serverName: item.name,
+          toolName: launchTool.name,
+          resourceUri,
+          html: resource.html,
+          ...resourcePresentationMeta(resource.meta),
+        } satisfies McpAppResource,
+        tool: launchTool,
+      };
     });
-    if (match) matches.push({ app: match, fingerprint });
+    if (match) matches.push({ ...match, fingerprint });
   }
   if (matches.length > 1) {
     throw new McpAppHostError("ambiguous_tool", "More than one configured MCP server matches this capability gateway launch.");
   }
   if (!matches[0]) throw new McpAppHostError("server_unavailable", "The MCP server that produced this App launch is unavailable.");
-  return bindLaunch(input, matches[0].app, matches[0].fingerprint);
+  return bindLaunch(input, matches[0].app, matches[0].fingerprint, matches[0].tool);
 }
 
 export async function callMcpAppTool(input: {
@@ -878,6 +905,7 @@ export async function callMcpAppTool(input: {
   serverName: string;
   name: string;
   resourceUri?: string;
+  expectedResourceDigest?: string;
   arguments?: Record<string, unknown>;
   approved?: boolean;
   /** Required for conversation leases; the HTTP host checks current ownership/archive state. */
@@ -895,6 +923,11 @@ export async function callMcpAppTool(input: {
   };
   assertLive();
   if (!launch) throw staleLaunch();
+  const expectedResourceDigest = input.expectedResourceDigest;
+  if (expectedResourceDigest !== undefined
+    && (typeof expectedResourceDigest !== "string" || expectedResourceDigest.length !== 64 || !/^[a-f0-9]{64}$/i.test(expectedResourceDigest))) {
+    throw new McpAppHostError("invalid_resource_digest", "expectedResourceDigest must be a SHA-256 hex digest.");
+  }
   const currentConfig = async () => {
     const privateItem = await privateConnectMcpConfig({
       serverConfig: input.serverConfig,
@@ -920,9 +953,25 @@ export async function callMcpAppTool(input: {
     const tools = await listTools(client);
     const original = tools.find((candidate) => candidate.name === launch.toolName);
     if (!original || !toolVisibility(original, "app") || toolUiResourceUri(original) !== launch.resourceUri) throw staleLaunch();
-    findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
-      throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
-    }));
+    if (expectedResourceDigest !== undefined
+      && (!launch.resourceDigest || launch.sessionId !== null || input.name !== launch.toolName
+        || input.approved === true || toolRequiresApproval(original))) {
+      throw new McpAppHostError("mcp_app_refresh_denied", "Guarded refresh requires the original read-only dashboard tool without approval.");
+    }
+    try {
+      const resource = findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
+        throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
+      }));
+      if (expectedResourceDigest !== undefined) {
+        const resourceDigest = mcpAppResourceDigest({ html: resource.html, ...resourcePresentationMeta(resource.meta) });
+        if (expectedResourceDigest.toLowerCase() !== launch.resourceDigest || resourceDigest !== launch.resourceDigest) {
+          throw new McpAppHostError("mcp_app_resource_changed", "The App resource changed. OpenWork stopped the refresh before calling the tool. Reload the App before refreshing again.");
+        }
+      }
+    } catch (error) {
+      if (expectedResourceDigest !== undefined) releaseMcpAppLaunch(input.serverConfig, input.workspaceId, launchId);
+      throw error;
+    }
     if ((await diagnoseMcpToolDenies(input.workspaceRoot, input.serverName, [projectedMcpToolName(input.serverName, original.name)])).length > 0) {
       throw new McpAppHostError("tool_denied", "The originating App tool is denied. Reopen it after reviewing the workspace tool policy.");
     }

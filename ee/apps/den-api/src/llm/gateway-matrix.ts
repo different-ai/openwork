@@ -7,7 +7,7 @@ import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickIn
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
+import { buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
 import { isGoogleOAuthInferenceProviderId } from "./inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { getModelsDevProvider, type ModelsDevProvider } from "./models-dev.js"
@@ -301,7 +301,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
     for (const model of models.filter((model) => links.some((link) => link.model_group_id === group.id && link.gateway_provider_model_id === model.id))) {
       const id = createGatewayModelAlias({ modelGroupId: group.id, credentialSetId: grant.credential_set_id, gatewayProviderModelId: model.id })
       const name = model.name
-      usableModels.push({ id, name, config: { ...nonSecretProviderConfig(model.model_config), id, name }, upstreamModelId: model.model_id, modelGroupId: group.id, modelGroupName: group.name, credentialSetId: set.id, credentialSetName: set.name })
+      usableModels.push({ id, name, config: buildGatewayModelConfig({ id, name, config: model.model_config }), upstreamModelId: model.model_id, modelGroupId: group.id, modelGroupName: group.name, credentialSetId: set.id, credentialSetName: set.name })
     }
   }
   const migration = provider.settings.migration

@@ -135,6 +135,7 @@ for (const surface of ["compact", "full"]) {
     let behaviorOptions = [...standard, ...standard.map((option) => ({ ...option, value: fastVariantId(option.value), label: `${option.label} + Fast` }))];
     let value: string | null = "high";
     const changes: Array<string | null> = [];
+    const openChanges: boolean[] = [];
     const selected: unknown[] = [];
     const queryClient = new QueryClient();
     const host = document.createElement("div");
@@ -146,7 +147,7 @@ for (const surface of ["compact", "full"]) {
         behaviorTitle: "Effort", behaviorLabel: "Default", behaviorDescription: "", behaviorValue: null, behaviorOptions }];
       const picker = surface === "compact" ? createElement(ModelSelect, {
         open: true, value: current, fallbackOptions: options, behaviorValue: value,
-        onOpenChange: () => undefined, onChange: (model) => selected.push(model), onBehaviorChange: change,
+        onOpenChange: (open) => openChanges.push(open), onChange: (model) => selected.push(model), onBehaviorChange: change,
       }) : createElement(ModelPickerModal, {
         open: true, options, current, currentBehaviorValue: value, target: "session", query: "", setQuery: () => undefined,
         onSelect: (model) => selected.push(model), onBehaviorChange: (_model, next) => change(next),
@@ -166,8 +167,22 @@ for (const surface of ["compact", "full"]) {
     try {
       await act(async () => render());
       for (const label of ["Fast", "Low", "Fast", "CustomExact", "Fast", "Default", "Fast"]) {
+        if (surface === "compact" && label === "Fast") {
+          const menu = document.querySelector('[data-slot="model-select-root"]');
+          const toggle = menu?.querySelector<HTMLButtonElement>('[role="switch"]');
+          if (!toggle) throw new Error("Missing main-menu Fast mode switch");
+          expect(toggle.closest('[title]')?.getAttribute("title")).toContain("higher pricing");
+          const wasChecked = toggle.getAttribute("aria-checked") === "true";
+          await act(async () => toggle.click());
+          expect(toggle.getAttribute("aria-checked")).toBe(String(!wasChecked));
+          expect(document.querySelector('[data-slot="model-select-root"]')).not.toBeNull();
+          const effort = Array.from(menu?.querySelectorAll("button") ?? []).find((entry) => entry.textContent?.includes("Effort"));
+          expect(effort?.textContent).not.toContain("Fast");
+          continue;
+        }
         await openSettings();
-        expect(settings()?.textContent).toContain("higher pricing");
+        if (surface === "full") expect(settings()?.textContent).toContain("higher pricing");
+        else expect(settings()?.querySelector('[role="switch"]')).toBeNull();
         const button = Array.from(settings()?.querySelectorAll<HTMLButtonElement>("button") ?? [])
           .find((entry) => label === "Fast" ? entry.textContent?.startsWith("Fast") : entry.textContent === label);
         if (!button) throw new Error(`Missing ${surface} ${label} control`);
@@ -176,9 +191,14 @@ for (const surface of ["compact", "full"]) {
       expect(changes).toEqual([fastVariantId("high"), fastVariantId("low"), "low", "CustomExact",
         fastVariantId("CustomExact"), fastVariantId(null), null]);
       expect(selected).toEqual([]);
+      expect(openChanges).toEqual([]);
       behaviorOptions = standard;
       value = "high";
       await act(async () => render());
+      if (surface === "compact") {
+        expect(document.querySelector('[data-slot="model-select-root"] [role="switch"]')).toBeNull();
+        expect(document.querySelector('[data-slot="model-select-root"]')?.textContent).not.toContain("Fast mode");
+      }
       await openSettings();
       expect(settings()?.textContent).not.toContain("Fast");
       expect(settings()?.textContent).not.toContain("higher pricing");

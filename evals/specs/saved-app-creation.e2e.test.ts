@@ -1,9 +1,97 @@
 import { expect } from "vitest";
 import { saveWorkflow, runWorkflow } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
-import { creationPrompt, creationReply, field, record, savedAppCreation, isolatedMcpApps, isolationPrompt, isolationReply } from "../worlds/saved-apps.ts";
+import { creationPrompt, creationReply, field, record, savedAppCreation, isolatedMcpApps, isolationPrompt, isolationReply, cloudDraftRouting, draftRoutingPrompt, draftRoutingReply } from "../worlds/saved-apps.ts";
 
 const test = spec.world(savedAppCreation, { timeout: 900_000 });
+
+const draftTest = spec.world(cloudDraftRouting, {
+  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
+  needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000,
+});
+
+draftTest("APP-DRAFT-ROUTING Cloud SDK draft allows automatic reads and one trusted Send without a second modal, replay, or cross-server dispatch", async ({ world, agent, user, probe, evidence }) => {
+  const sinceIso = new Date().toISOString();
+  expect(draftRoutingPrompt).not.toContain(world.connectionId);
+  await agent.send(draftRoutingPrompt);
+  await user.see({ text: draftRoutingReply }, { timeoutMs: 120_000 });
+  await user.screenshot();
+  const modelRequests = (await world.den.mocks.slack.agentRequests({ promptMarker: draftRoutingPrompt }))
+    .filter(request => request.kind === "tool" || request.kind === "final");
+  expect(modelRequests.length).toBeGreaterThan(0);
+  for (const request of modelRequests) {
+    expect(request.advertisedToolNames?.some(name => name.endsWith("execute_capability"))).toBe(true);
+    expect(request.advertisedToolNames?.some(name => name.includes("resolve_recipient") || name.includes("other_server_helper") || name.includes("send_slack_message"))).toBe(false);
+  }
+  try {
+    const launches = await world.den.mocks.slack.toolCalls({ name: "render_slack_draft", sinceIso, atLeast: 0 });
+    expect(launches.map(call => call.args), "The gateway must dispatch the originating provider launch before SDK rendering").toEqual([{ recipient: "Test recipient" }]);
+    const launched = await probe.eventually(() => world.reports(), { within: 30_000, label: "SDK draft received launch result", until: values => values.some(value => value.result !== null) });
+    expect(launched).toHaveLength(1);
+    expect(launched[0]).toMatchObject({ input: { recipient: "Test recipient" }, result: {
+      content: [{ type: "text", text: "Draft ready for Test recipient" }], isError: false,
+    } });
+  } catch (error) {
+    const diagnostics = await world.launchDiagnostics(sinceIso);
+    evidence.recordAssertionEvidence("Synthetic draft launch failure diagnostics", JSON.stringify(diagnostics), false);
+    await user.screenshot();
+    throw error;
+  }
+  await user.notSee({ text: "Allow App action?" });
+  const reports = await probe.eventually(() => world.reports(), { within: 30_000, label: "automatic SDK recipient resolution and completed background, forged, and synthetic send denials", until: values => values.some(value => value.complete === true) });
+  expect(reports).toHaveLength(1);
+  const sdkApprovalError = { code: -32603, message: expect.stringContaining("requires user approval") };
+  expect(reports[0]).toMatchObject({ input: { recipient: "Test recipient" }, helper: { isError: false, structuredContent: { recipient: "Test recipient", id: "synthetic-recipient" } },
+    complete: true, send: null, sendError: null, sendClicks: 0, trustedClick: false,
+    backgroundSend: null, backgroundSendError: sdkApprovalError, forgedSend: null, forgedSendError: sdkApprovalError,
+    syntheticSend: null, syntheticSendError: sdkApprovalError, syntheticClicks: 1, syntheticTrustedClick: false,
+    replay: null, replayError: null, replayComplete: false });
+  const deniedSend = { approved: false, status: 422, code: "tool_requires_approval" };
+  const backgroundRequests = await world.sendRequests();
+  expect(backgroundRequests).toEqual([deniedSend, deniedSend, deniedSend]);
+  await user.notSee({ text: "Allow App action?" });
+  const rejected = reports[0].rejected;
+  expect(rejected).toEqual([{ name: "unknown_helper", error: expect.any(String) }, { name: "other_server_helper", error: expect.any(String) }]);
+  const calls = await world.den.mocks.slack.toolCalls({ sinceIso, atLeast: 2 });
+  expect(calls.map(call => ({ name: call.name, args: call.args }))).toEqual([
+    { name: "render_slack_draft", args: { recipient: "Test recipient" } },
+    { name: "resolve_recipient", args: { recipient: "Test recipient" } },
+  ]);
+  expect(await world.den.mocks.other.toolCalls({ sinceIso, atLeast: 0 })).toEqual([]);
+  const resolveDelay = await world.resolveDelay();
+  expect(resolveDelay.delayed).toBeGreaterThan(0);
+  expect(resolveDelay.completed).toBe(resolveDelay.delayed);
+  expect(resolveDelay.aborted).toBe(0);
+  await user.notSee({ text: "Interactive view unavailable. The normal tool result is still available." });
+  await user.screenshot();
+  evidence.recordAssertionEvidence("Cloud draft survives a 12-second resolve, permits automatic read-only helpers, and blocks untrusted sends", JSON.stringify({ reconciled: world.reconciled, resolveDelay, reports, backgroundRequests, calls: calls.map(call => ({ name: call.name, args: call.args })), otherDispatches: 0 }), true);
+
+  await using draft = await world.draftSurface();
+  const draftUser = user.on(draft);
+  await draftUser.see({ text: "Recipient resolved: Test recipient. Draft only; nothing sent." });
+  await draftUser.click({ role: "button", label: "Send" });
+  await user.notSee({ text: "Allow App action?" });
+  await draftUser.see({ text: "Sent to Test recipient." }, { timeoutMs: 30_000 });
+  const sent = await probe.eventually(() => world.reports(), { within: 30_000, label: "trusted Send and immediate replay both settled", until: values => values.some(value => value.replayComplete === true) });
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatchObject({ sendClicks: 1, trustedClick: true, sendError: null,
+    syntheticClicks: 1, syntheticTrustedClick: false, replay: null, replayError: sdkApprovalError, replayComplete: true,
+    send: { isError: false, structuredContent: { sent: true, id: "synthetic-message" } } });
+  const sendRequests = await world.sendRequests();
+  expect(sendRequests).toEqual([...backgroundRequests, { approved: true, status: 200, code: null }, deniedSend]);
+  const sentCalls = await world.den.mocks.slack.toolCalls({ sinceIso, atLeast: 3 });
+  expect(sentCalls.map(call => ({ name: call.name, args: call.args }))).toEqual([
+    { name: "render_slack_draft", args: { recipient: "Test recipient" } },
+    { name: "resolve_recipient", args: { recipient: "Test recipient" } },
+    { name: "send_slack_message", args: { recipient: "synthetic-recipient", text: "The review is ready." } },
+  ]);
+  expect(await world.den.mocks.other.toolCalls({ sinceIso, atLeast: 0 })).toEqual([]);
+  await user.notSee({ text: "Allow App action?" });
+  await user.screenshot();
+  expect((await world.den.mocks.slack.toolCalls({ sinceIso, atLeast: 0 })).map(call => ({ name: call.name, args: call.args })))
+    .toEqual(sentCalls.map(call => ({ name: call.name, args: call.args })));
+  evidence.recordAssertionEvidence("One trusted Send dispatches the reviewed Slack message exactly once without a second modal; its immediate replay is denied", JSON.stringify({ reports: sent, sendRequests, calls: sentCalls.map(call => ({ name: call.name, args: call.args })), otherDispatches: 0 }), true);
+});
 
 const isolationTest = spec.world(isolatedMcpApps, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
@@ -14,10 +102,12 @@ isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initia
   const sinceIso = new Date().toISOString();
   await agent.send(isolationPrompt);
   await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
+  await user.notSee({ text: "Allow App action?" });
   const reports = await probe.eventually(() => world.reports(), {
     within: 30_000, label: "both SDK Apps received their own input, result, and helper reply",
     until: values => values.length === 2 && values.every(value => value.complete === true),
   });
+  expect(await world.nativeConfirmCalls()).toBe(0);
   for (const label of ["A", "B"]) {
     expect(reports.find(value => value.label === label)).toMatchObject({
       input: { marker: `input-${label}` },
@@ -37,7 +127,29 @@ isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initia
   expect(secondCalls.map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);
   evidence.recordAssertionEvidence("Sibling Apps cannot read or inject into each other", "App A attempted sibling DOM reads, proxy script injection, and a forged helper request; both DOM operations raised SecurityError and neither provider observed the forged call.", true);
   evidence.recordAssertionEvidence("Opaque Apps retain the standard SDK round trip", "Both real SDK Apps initialized through the shared renderer, received their distinct launch input and result, and completed exactly one legitimate helper call on their own provider.", true);
+  await user.notSee({ text: "Allow App action?" });
+  evidence.recordAssertionEvidence("Open Apps complete read-only background helpers without an extra host approval", "Both annotated read-only helpers completed on their own provider exactly once without a host approval click or native confirmation; App A preserved its provider error result.", true);
   evidence.recordAssertionEvidence("Launch delivery preserves provider data and truthfully reports inline-only display", "Complete input arrived before the result; provider structured fields, view-only metadata, and explicit false survived. The helper error flag survived too. The host advertised tools and links and returned inline for all three valid display-mode requests.", true);
+
+  await user.reload();
+  const reloaded = await probe.eventually(() => world.reports(), {
+    within: 30_000, label: "reloaded Apps complete one background helper each without host approval",
+    until: values => values.length === 2 && values.every(value => value.complete === true),
+  });
+  for (const label of ["A", "B"]) {
+    expect(reloaded.find(value => value.label === label)).toMatchObject({
+      helperError: null, helper: { content: [{ type: "text", text: `helper-${label}` }], isError: label === "A" },
+    });
+  }
+  await user.notSee({ text: "Allow App action?" });
+  expect((await world.first.toolCalls({ name: "read_detail", sinceIso })).map(call => call.args)).toEqual([
+    { marker: "legitimate-A" }, { marker: "legitimate-A" },
+  ]);
+  expect((await world.second.toolCalls({ name: "read_detail", sinceIso })).map(call => call.args)).toEqual([
+    { marker: "legitimate-B" }, { marker: "legitimate-B" },
+  ]);
+  expect(await world.nativeConfirmCalls()).toBe(0);
+  evidence.recordAssertionEvidence("Reload preserves read-only background dispatch without duplicates or forged calls", "Each reloaded App completed one additional annotated read-only helper on its own provider. Both provider counts reached exactly two, with no forged arguments, approval dialog, or native confirmation.", true);
 });
 
 // The v2 engine does not expose a native archive mutation yet.
@@ -45,6 +157,7 @@ isolationTest.skipIf(process.env.OPENWORK_EVAL_ENGINE === "v2")("APP-ARCHIVE arc
   const sinceIso = new Date().toISOString();
   await agent.send(isolationPrompt);
   await user.see({ text: isolationReply }, { timeoutMs: 120_000 });
+  await user.notSee({ text: "Allow App action?" });
   await probe.eventually(() => world.reports(), {
     within: 30_000, label: "active Apps complete their initial helper requests",
     until: values => values.length === 2 && values.every(value => value.complete === true && value.helper !== null),
@@ -67,11 +180,13 @@ isolationTest.skipIf(process.env.OPENWORK_EVAL_ENGINE === "v2")("APP-ARCHIVE arc
   }
   expect((await world.first.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-A" }]);
   expect((await world.second.toolCalls({ name: "read_detail", sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ marker: "legitimate-B" }]);
-  evidence.recordAssertionEvidence("Archived conversations cannot dispatch App helper calls", "Reopened archived Apps received their original inputs and results, rejected helper requests, and neither provider recorded an additional call.", true);
+  await user.notSee({ text: "Allow App action?" });
+  expect(await world.nativeConfirmCalls()).toBe(0);
+  evidence.recordAssertionEvidence("Archived conversations cannot dispatch even read-only App helper calls", "After active Apps completed their initial read-only helpers without host approval, reopened archived Apps received their original inputs and results, rejected helper requests without an approval dialog, and neither provider recorded an additional call. No native confirmation was invoked.", true);
 });
 
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
-  await step("advertise direct artifact creation guidance and prerequisites", async () => {
+  await step("advertise direct artifact creation guidance and mode-specific prerequisites", async () => {
     const { tools } = await world.listTools();
     if (!Array.isArray(tools)) throw new Error("MCP did not advertise tools.");
     const search = tools.map(record).find((tool) => tool.name === "search_capabilities");
@@ -80,11 +195,11 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(search?.description).toContain("use save_artifact_view and follow its prerequisites");
     expect(search?.description).not.toContain("Always search first");
     expect(builder?.description).toContain("in-app dashboard or artifact view");
-    expect(builder?.description).toContain("current version must declare an explicit JSON Schema outputSchema");
-    expect(builder?.description).toContain("have a successful saved-Workflow run matching that schema");
-    expect(builder?.description).toContain("execute_capability_script alone does not create its artifact snapshot");
+    expect(builder?.description).toContain("current saved Workflow must declare outputSchema");
+    expect(builder?.description).toContain("New apps default to live");
+    expect(builder?.description).toContain("Snapshot mode is restricted to workflows without capability dependencies");
   });
-  evidence.recordAssertionEvidence("MCP tool descriptions advertise direct artifact creation and saved-run prerequisites", "The live tools/list response includes save_artifact_view. Its descriptions identify the direct builder and require an output schema and matching successful saved-Workflow run; search no longer says Always search first. These assertions verify advertised guidance, not model tool selection. The conversation below uses a prescribed model workload to verify the artifact integration.", true);
+  evidence.recordAssertionEvidence("MCP tool descriptions advertise direct artifact creation and mode-specific prerequisites", "The live tools/list response includes save_artifact_view. Its descriptions require an output schema, default new apps to live and restrict snapshots to dependency-free workflows; search no longer says Always search first. These assertions verify advertised guidance, not model tool selection. The conversation below uses a prescribed snapshot workload with deterministic data to verify the artifact integration.", true);
   const viewsPath = `/v1/workflows/${world.configObjectId}/views`;
   expect(record((await probe.api(world.den.admin, viewsPath)).body).items).toEqual([]);
   await step("only offer sharing when the server supports it", async () => {
@@ -107,7 +222,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open("/dashboard");
     await user.click({ role: "button", label: "Add" });
     await user.click("Create with OpenWork");
-    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create a reusable app for my dashboard that") });
+    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     expect(creationPrompt).not.toContain(world.configObjectId);
     await user.type("composer", creationPrompt, { replace: true });
     await user.click("Run task");
@@ -224,6 +339,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("reopen the saved app after a reload", async () => {
     await world.open("/dashboard");
     await user.reload();
+    await user.click("App options for Team briefing");
     await user.click("Open Team briefing");
     await user.see({ text: "Saved app" }, { timeoutMs: 30_000 });
     await user.click("App options for Team briefing");
@@ -251,13 +367,80 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
     await world.open("/dashboard");
     await user.reload();
-    await user.see("Open Team briefing", { timeoutMs: 30_000 });
+    await user.see("App options for Team briefing", { timeoutMs: 30_000 });
     await probe.eventually(() => world.previewText(), { within: 30_000, label: "saved app rendered on dashboard", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
     await user.see({ text: "Project updates" });
     expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
     await user.screenshot();
   });
   evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Choose an existing app added the personal card again and it survived reload beside Project updates.", true);
+
+  await step("a saved snapshot reserves its measured tile size while reloading", async () => {
+    const saved = await readApp();
+    expect(record(saved.view).dataMode).toBe("snapshot");
+    const profile = await probe.api(world.den.admin, "/v1/me");
+    expect(profile.response.status, profile.text).toBe(200);
+    const userId = field(record(profile.body).user, "id");
+    const organizationId = await probe.storage("openwork.den.activeOrgId");
+    if (typeof organizationId !== "string" || !organizationId) throw new Error("Missing dashboard organization scope");
+    const scope = [world.proxy.ref.webUrl, userId, organizationId, world.proxy.ref.apiUrl];
+    const geometryKey = `openwork.react.dashboardTileCache.v1.${userId}.${organizationId}.snapshots.${encodeURIComponent(JSON.stringify(scope))}.geometry`;
+    const entryId = JSON.stringify([appId, field(saved.revision, "id"), field(saved.revision, "resourceUri")]);
+    const tileSelector = `[data-personal-dashboard-app="${appId}"]`;
+    const readSize = async () => {
+      const { elements, viewportWidth } = await probe.dom(`${tileSelector}, ${tileSelector} iframe`);
+      expect(elements).toHaveLength(2);
+      const [tile, frame] = elements;
+      if (!tile || !frame) throw new Error("The saved dashboard app must have a tile and an embedded view");
+      return { viewportWidth, width: tile.rect.width, height: tile.rect.height, frameWidth: frame.rect.width, frameHeight: frame.rect.height };
+    };
+    await user.notSee({ label: "Loading Team briefing" });
+    const measured = await probe.eventually(async () => {
+      const size = await readSize();
+      const persisted = await probe.storage(geometryKey);
+      const entries = persisted === null ? undefined : record(record(persisted).entries)[entryId];
+      const geometry = Array.isArray(entries) ? entries.map(record).find((entry) => entry.workspaceId === world.workspace.workspaceId
+        && entry.contentWidth === Math.round(size.frameWidth)) : undefined;
+      return { size, geometry };
+    }, { within: 10_000, label: "the visible snapshot's measured geometry is persisted for this workspace and width",
+      until: ({ size, geometry }) => geometry !== undefined && geometry.frameHeight === size.frameHeight
+        && typeof geometry.outerHeight === "number" && Math.abs(geometry.outerHeight - size.height) <= 1 });
+    const before = measured.size;
+    expect(before.width).toBeGreaterThan(0);
+    expect(before.frameHeight).toBeGreaterThan(0);
+    expect(before.frameHeight).toBeLessThanOrEqual(800);
+    expect(before.height).toBeGreaterThan(before.frameHeight);
+    const detailPath = `/v1/apps/${appId}`;
+    const requestCount = (await world.proxy.requestLog()).length;
+    try {
+      await world.proxy.faults.latency(detailPath, 15_000, { times: 1 });
+      await world.proxy.faults.latency(`/api/den${detailPath}`, 15_000, { times: 1 });
+      await user.reload();
+      await user.see({ text: "Loading app…" }, { timeoutMs: 30_000 });
+      const loading = await probe.dom(tileSelector);
+      expect(loading.elements).toHaveLength(1);
+      expect(loading.viewportWidth).toBe(before.viewportWidth);
+      const [tile] = loading.elements;
+      if (!tile) throw new Error("The saved tile disappeared while its detail was loading");
+      expect(Math.abs(tile.rect.width - before.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(tile.rect.height - before.height)).toBeLessThanOrEqual(1);
+      expect((await probe.dom(`${tileSelector} iframe`)).elements).toHaveLength(0);
+      await probe.eventually(() => world.previewText(), { within: 30_000, label: "the same saved result returns after the delayed detail request",
+        until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
+      const restored = await probe.eventually(readSize, { within: 10_000, label: "saved tile and iframe return to their measured size",
+        until: (size) => size.viewportWidth === before.viewportWidth && Math.abs(size.width - before.width) <= 1
+          && Math.abs(size.height - before.height) <= 1 && Math.abs(size.frameWidth - before.frameWidth) <= 1
+          && Math.abs(size.frameHeight - before.frameHeight) <= 1 });
+      expect((await world.proxy.requestLog()).slice(requestCount).filter((request) => request.method === "GET"
+        && request.path.endsWith(detailPath) && request.faulted && request.status === 200)).toHaveLength(1);
+      expect((await readApp()).revision).toMatchObject({ id: revisionId });
+      expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
+      evidence.recordAssertionEvidence("Saved snapshot loading preserves measured dashboard geometry", JSON.stringify({ before, loading: tile.rect, restored,
+        scope: "same app revision, workspace and width", coverage: "snapshot reload only; no live refresh or guest-state continuity claim" }), true);
+    } finally {
+      await world.resetProxy();
+    }
+  });
 
   // Keep an exact preview mounted while another client changes the saved app.
   await world.open(`/dashboard${originalPath}`);
@@ -338,7 +521,7 @@ test("create, preview, save and reopen an app without changing already-open resu
       pluginId: field(memberSaved.body, "pluginId"), configObjectVersionId: field(memberSaved.body, "configObjectVersionId"), input: memberInput,
     });
     const memberBuilt = await world.rpc("save_artifact_view", {
-      configObjectId: memberWorkflowId, title: "Personal report", reactSource: 'export default function Report({data}) { return <p>{data.topic}</p> }',
+      configObjectId: memberWorkflowId, dataMode: "snapshot", title: "Personal report", reactSource: 'export default function Report({data}) { return <p>{data.topic}</p> }',
     }, colleague);
     const memberView = record(record(memberBuilt.structuredContent).view);
     const memberAppId = field(memberView, "id");
@@ -375,7 +558,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     pluginId: field(privateWorkflow.body, "pluginId"), configObjectVersionId: field(privateWorkflow.body, "configObjectVersionId"), input: privateInput,
   });
   const privateBuilt = await world.rpc("save_artifact_view", {
-    configObjectId: privateWorkflowId, title: "Private planning", reactSource: 'export default function Planning({data}) { return <p>{data.topic}</p> }',
+    configObjectId: privateWorkflowId, dataMode: "snapshot", title: "Private planning", reactSource: 'export default function Planning({data}) { return <p>{data.topic}</p> }',
   });
   const privateView = record(record(privateBuilt.structuredContent).view);
   const privateAppId = field(privateView, "id");
@@ -386,7 +569,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(privateSave.response.status, privateSave.text).toBe(200);
 
   const companionBuilt = await world.rpc("save_artifact_view", {
-    configObjectId: world.configObjectId, title: "Briefing companion", reactSource: 'export default function Companion({data}) { return <p>{data.topic}</p> }',
+    configObjectId: world.configObjectId, dataMode: "snapshot", title: "Briefing companion", reactSource: 'export default function Companion({data}) { return <p>{data.topic}</p> }',
   });
   const companionView = record(record(companionBuilt.structuredContent).view);
   const companionAppId = field(companionView, "id");
@@ -572,6 +755,44 @@ test("create, preview, save and reopen an app without changing already-open resu
   const cleanupPrivate = await seed.api(world.den.admin, `/v1/artifact-views/${privateAppId}/retire`, { method: "POST" });
   expect(cleanupPrivate.response.status, cleanupPrivate.text).toBe(200);
 
+  await step("ENG-100 schema-mismatch warning hands off an unsent update prompt without changing the saved app", async () => {
+    const saved = await readApp();
+    const savedView = record(saved.view);
+    expect(savedView.activeRevisionId).toBe(optOutRevision);
+    const appsBefore = record((await probe.api(world.den.admin, "/v1/apps")).body).items;
+    const viewsBefore = record((await probe.api(world.den.admin, viewsPath)).body).items;
+    const previewNotice = "The workflow’s results have changed. Ask OpenWork to update this app to match.";
+    const body = { ...saved, html: null, payload: null, previewNotice };
+    try {
+      await world.proxy.faults.status(`/v1/apps/${appId}`, 200, { times: 100, body });
+      await world.proxy.faults.status(`/api/den/v1/apps/${appId}`, 200, { times: 100, body });
+      await world.open("/dashboard");
+      await user.reload();
+      await user.see({ text: previewNotice }, { timeoutMs: 30_000 });
+      expect((await world.proxy.requestLog()).some((request) => request.path.endsWith(`/v1/apps/${appId}`) && request.faulted)).toBe(true);
+      await user.click({ role: "button", label: "Update app" });
+      const composer = await probe.eventually(() => probe.composer(), {
+        within: 30_000, label: "existing app update prompt ready for review",
+        until: (value) => value.composerEditable && value.draftText.includes(`artifactViewId: ${appId}, configObjectId: ${world.configObjectId})`),
+      });
+      expect(composer.draftText).toContain("Preserve the existing artifactViewId and configObjectId");
+      expect(composer.draftText).toContain("do not recreate the app or workflow");
+      expect(composer.draftText).toContain("explicitly choose Save");
+      expect(composer.draftText).toContain("Do not autoactivate the draft or change the active revision without my explicit Save");
+      expect(composer).toMatchObject({ runTaskVisible: true, userMessageCount: 0, assistantMessageCount: 0 });
+      const after = record((await readApp()).view);
+      expect(after.activeRevisionId).toBe(savedView.activeRevisionId);
+      expect(after.revisions).toEqual(savedView.revisions);
+      expect(record((await probe.api(world.den.admin, "/v1/apps")).body).items).toEqual(appsBefore);
+      expect(record((await probe.api(world.den.admin, viewsPath)).body).items).toEqual(viewsBefore);
+    } finally {
+      await world.resetProxy();
+      await world.open("/dashboard");
+      await user.reload();
+    }
+  });
+  evidence.recordAssertionEvidence("ENG-100 schema-mismatch recovery opens an unsent update conversation", "A fault-injected saved-app detail displayed the schema-mismatch warning. Update app seeded the exact app and workflow IDs with preserve and explicit Save intent; no messages were submitted, and direct API reads retained the active revision, revisions, saved apps, and workflow views. This covers the UI handoff only, not actual schema evolution or a compiler rebuild.", true);
+
   const beforeDelete = await readWorkflow();
   const beforeDeleteSnapshots = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;
   await step("an admin cancels deletion in the app and confirms it on the dashboard", async () => {
@@ -579,7 +800,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("App options for Team briefing");
     await user.click("Delete Team briefing");
     await user.see({ text: "Delete “Team briefing”?" });
-    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Its workflow and past results stay available." });
+    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Past results stay available." });
     await user.screenshot();
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
@@ -607,7 +828,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see("Choose an existing app");
     await user.screenshot();
     await user.click("Create with OpenWork");
-    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create a reusable app for my dashboard that") });
+    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     await user.screenshot();
   });
 });

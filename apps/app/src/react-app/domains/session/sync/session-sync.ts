@@ -31,6 +31,7 @@ import {
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import type { LatestSessionHistory } from "../surface/session-render-state";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
+import { upsertMessageByChronology } from "./message-merge";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
@@ -855,6 +856,11 @@ function toUIParts(part: Part): UIMessage["parts"] {
 
 function upsertMessage(messages: UIMessage[], next: UIMessage) {
   const index = messages.findIndex((message) => message.id === next.id);
+  if (next.metadata !== undefined) {
+    const existing = messages[index];
+    const merged = existing ? { ...existing, ...next, parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
+    return upsertMessageByChronology(messages, merged);
+  }
   if (index === -1) return [...messages, next];
   return messages.map((message, messageIndex) =>
     messageIndex === index
@@ -1871,6 +1877,15 @@ export function seedSessionStatus(
     undefined,
     { snapshotStartedAt },
   );
+  if (!isLiveStatus(status)) {
+    // Run status is not an interaction snapshot. An idle read must not hide
+    // cached approvals/questions when their independent refresh fails or waits.
+    const activity = useSessionActivityStore.getState();
+    const permissions = queryClient.getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId));
+    const questions = queryClient.getQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId));
+    if (permissions) activity.replaceWaitingRequests(workspaceId, sessionId, "permission", permissions.map((item) => item.id));
+    if (questions) activity.replaceWaitingRequests(workspaceId, sessionId, "question", questions.map((item) => item.id));
+  }
   queryClient.setQueryData(statusKey(workspaceId, sessionId), status);
   if (isLiveStatus(status)) {
     for (const entry of syncs.values()) {

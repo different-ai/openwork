@@ -62,7 +62,10 @@ const definitions = {
     cases: [{ id: 'STOP-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
   'saved-app-creation.e2e.test.ts': {
-    cases: [{ id: 'APP-ISOLATION', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+    cases: [
+      { id: 'APP-ISOLATION', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+      { id: 'APP-DRAFT-ROUTING', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+    ],
   },
   // Its Cloud endpoint is an in-process loopback MCP fixture reachable only from the spec process.
   'opencode-v2-skill-jit.e2e.test.ts': {

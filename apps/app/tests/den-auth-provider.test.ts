@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DenApiError } from "../src/app/lib/den";
+import { connectionDiagnosticHistory } from "../src/app/lib/connection-diagnostic-history";
 import {
   DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS,
   hasRetainedDenSession,
@@ -132,5 +133,15 @@ describe("resolveDenActiveOrganizationWithRetry", () => {
     expect(result).toEqual(resolvedOrganization);
     expect(attempts).toBe(3);
     expect(waits).toEqual([200, 600]);
+    const history = connectionDiagnosticHistory.read();
+    const recovered = history.recent.findLast((event) => event.reason === "den_org_recovered");
+    expect(recovered).toMatchObject({ kind: "recovered", retryCount: 2 });
+    const events = history.recent.filter((event) => event.source === recovered?.source);
+    expect(events.map((event) => event.reason)).toEqual([
+      "den_org_unresolved", "den_org_retry", "den_org_unresolved", "den_org_retry", "den_org_recovered",
+    ]);
+    expect(history.trackedSources).toBe(0);
+    expect(JSON.stringify(events)).not.toContain(resolvedOrganization.id);
+    expect(JSON.stringify(events)).not.toContain("Failed to fetch");
   });
 });

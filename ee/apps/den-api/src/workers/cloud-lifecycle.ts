@@ -8,12 +8,18 @@ import { captureException } from "../observability/runtime.js"
 import { CLOUD_INSTANCE_BACKEND } from "./cloud-constants.js"
 import { automationUpdateChangedRows } from "../automations/update-result.js"
 import {
-  isDaytonaSandboxMissingError,
-  provisionWorkerOnDaytona,
-  stopWorkerOnDaytona,
-  wakeWorkerOnDaytona,
-  type StopWorkerOnDaytonaResult,
-} from "./daytona.js"
+  isCloudRuntimeInstanceMissingError,
+  type ProvisionInput,
+  type ProvisionedInstance,
+  type StopInstanceResult,
+} from "@openwork-ee/cloud-runtime/orchestrator"
+import { cloudRuntimeConfigured, cloudRuntimeStore, getCloudRuntime, type CloudRuntimeAvailabilityOptions } from "./cloud-runtime.js"
+import {
+  hasActiveCloudAutomationRun,
+  resolveCloudWorkerInterruptibility,
+  type CloudWorkerInterruptibility,
+  type ProbeCloudWorkerActivity,
+} from "./cloud-activity.js"
 import { withProvisionDeadline } from "./provision-deadline.js"
 import { touchProvisioningWorker, withProvisioningHeartbeat } from "./provisioning-heartbeat.js"
 import {
@@ -27,9 +33,11 @@ type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerStatus = typeof WorkerTable.$inferSelect.status
 type CloudWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status" | "last_active_at" | "updated_at"> & Partial<Pick<typeof WorkerTable.$inferSelect, "org_id">>
 type WorkerToken = typeof WorkerTokenTable.$inferSelect
-type WakeWorkerOnDaytona = typeof wakeWorkerOnDaytona
-type ProvisionWorkerOnDaytona = typeof provisionWorkerOnDaytona
-type StopWorkerOnDaytona = typeof stopWorkerOnDaytona
+type WakeWorker = (input: ProvisionInput) => Promise<ProvisionedInstance>
+type ProvisionWorker = (input: ProvisionInput) => Promise<ProvisionedInstance>
+type StopWorker = (workerId: WorkerId) => Promise<StopInstanceResult>
+type FlushWorker = (workerId: WorkerId) => Promise<boolean>
+type IdleStopInstance = { url: string; hostToken: string } | null
 
 type CloudLifecycleStore = {
   getWorker: (workerId: WorkerId) => Promise<CloudWorker | null>
@@ -49,8 +57,8 @@ type CloudLifecycleStore = {
 
 type WakeCloudWorkerOptions = {
   store?: CloudLifecycleStore
-  wakeWorker?: WakeWorkerOnDaytona
-  provisionWorker?: ProvisionWorkerOnDaytona
+  wakeWorker?: WakeWorker
+  provisionWorker?: ProvisionWorker
   materializeProviders?: typeof materializeCloudWorkerProviders
   deadlineMs?: number
   heartbeatIntervalMs?: number
@@ -58,8 +66,14 @@ type WakeCloudWorkerOptions = {
 
 type StopIdleCloudWorkersOptions = {
   store?: CloudLifecycleStore
-  stopWorker?: StopWorkerOnDaytona
-  provisionerMode?: typeof env.provisionerMode
+  stopWorker?: StopWorker
+  /** Best-effort checkpoint flush before the stop; a failure never blocks the stop. */
+  flushWorker?: FlushWorker
+  /** The running instance to ask before stopping it; `null` means it cannot be asked. */
+  resolveInstance?: (workerId: WorkerId) => Promise<IdleStopInstance>
+  probeActivity?: ProbeCloudWorkerActivity
+  hasActiveAutomationRun?: (workerId: WorkerId) => Promise<boolean>
+  provisionerMode?: CloudRuntimeAvailabilityOptions["provisionerMode"]
   idleMs?: number
   idleBefore?: Date
   batchSize?: number
@@ -77,6 +91,22 @@ let cloudIdleStopPromise: Promise<void> | null = null
 
 function tokenByScope(tokens: WorkerToken[], scope: typeof WorkerTokenTable.$inferSelect.scope) {
   return tokens.find((entry) => entry.scope === scope)?.token ?? null
+}
+
+// A scheduled headless run can be admitted before the worker's normal
+// activity heartbeat lands. Keep idle shutdown from racing that run.
+function noActiveCloudAutomationRun() {
+  return notExists(
+    db.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
+      .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+      .innerJoin(MemberTable, eq(MemberTable.id, AutomationTable.owner_member_id))
+      .where(and(
+        eq(AutomationTable.organization_id, WorkerTable.org_id),
+        eq(MemberTable.userId, WorkerTable.created_by_user_id),
+        eq(AutomationRunTable.execution_target, "cloud"),
+        inArray(AutomationRunTable.status, ["claimed", "running"]),
+      )),
+  )
 }
 
 const databaseCloudLifecycleStore: CloudLifecycleStore = {
@@ -118,19 +148,7 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
           lt(WorkerTable.last_active_at, input.idleBefore),
           and(isNull(WorkerTable.last_active_at), lt(WorkerTable.updated_at, input.idleBefore)),
         ),
-        // A scheduled headless run can be admitted before the worker's normal
-        // activity heartbeat lands. Keep idle shutdown from racing that run.
-        notExists(
-          db.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
-            .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
-            .innerJoin(MemberTable, eq(MemberTable.id, AutomationTable.owner_member_id))
-            .where(and(
-              eq(AutomationTable.organization_id, WorkerTable.org_id),
-              eq(MemberTable.userId, WorkerTable.created_by_user_id),
-              eq(AutomationRunTable.execution_target, "cloud"),
-              inArray(AutomationRunTable.status, ["claimed", "running"]),
-            )),
-        ),
+        noActiveCloudAutomationRun(),
       ))
       .orderBy(asc(WorkerTable.updated_at))
       .limit(input.limit)
@@ -143,17 +161,7 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
         lt(WorkerTable.last_active_at, input.idleBefore),
         and(isNull(WorkerTable.last_active_at), lt(WorkerTable.updated_at, input.idleBefore)),
       ),
-      notExists(
-        db.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
-          .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
-          .innerJoin(MemberTable, eq(MemberTable.id, AutomationTable.owner_member_id))
-          .where(and(
-            eq(AutomationTable.organization_id, WorkerTable.org_id),
-            eq(MemberTable.userId, WorkerTable.created_by_user_id),
-            eq(AutomationRunTable.execution_target, "cloud"),
-            inArray(AutomationRunTable.status, ["claimed", "running"]),
-          )),
-      ),
+      noActiveCloudAutomationRun(),
     ))
     return automationUpdateChangedRows(result)
   },
@@ -200,8 +208,8 @@ async function safelyMarkWorkerFailed(store: CloudLifecycleStore, workerId: Work
 
 async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCloudWorkerOptions) {
   const store = options.store ?? databaseCloudLifecycleStore
-  const wakeWorker = options.wakeWorker ?? wakeWorkerOnDaytona
-  const provisionWorker = options.provisionWorker ?? provisionWorkerOnDaytona
+  const wakeWorker = options.wakeWorker ?? ((input: ProvisionInput) => getCloudRuntime().wake(input))
+  const provisionWorker = options.provisionWorker ?? ((input: ProvisionInput) => getCloudRuntime().provision(input))
   const materializeProviders = options.materializeProviders ?? materializeCloudWorkerProviders
   const deadlineMs = options.deadlineMs ?? env.cloudProvisionDeadlineMs
 
@@ -252,11 +260,11 @@ async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCl
             try {
               return await wakeWorker(wakeInput)
             } catch (error) {
-              if (!isDaytonaSandboxMissingError(error)) {
+              if (!isCloudRuntimeInstanceMissingError(error)) {
                 throw error
               }
 
-              logger.warn("worker wake sandbox missing; reprovisioning", { worker_id: workerId, error })
+              logger.warn("worker wake instance missing; reprovisioning", { worker_id: workerId, error })
               return provisionWorker(wakeInput)
             }
           })(),
@@ -342,17 +350,61 @@ export async function recoverClaimedCloudWorker(workerId: WorkerId, options: Wak
   return runWorkerRecoveryOnce(workerId, () => runClaimedCloudWorkerRecovery(workerId, options))
 }
 
-function stopResultAllowsStoppedStatus(result: StopWorkerOnDaytonaResult) {
-  return result.status === "stopped" || result.status === "no_sandbox"
+function stopResultAllowsStoppedStatus(result: StopInstanceResult) {
+  return result.status === "stopped" || result.status === "no_instance"
+}
+
+/**
+ * Consecutive cycles in which an instance could not be asked. A wedged server
+ * on a running VM must not stay up forever, so after this many unknown answers
+ * the idle stop proceeds; the unreachable path would restart it anyway.
+ */
+export const idleStopUnknownCyclesBeforeStop = 3
+const idleStopUnknownCycles = new Map<WorkerId, number>()
+
+function idleStopMayProceed(workerId: WorkerId, interruptibility: CloudWorkerInterruptibility) {
+  if (interruptibility.verdict === "interruptible") {
+    idleStopUnknownCycles.delete(workerId)
+    return true
+  }
+  if (interruptibility.verdict === "busy") {
+    idleStopUnknownCycles.delete(workerId)
+    return false
+  }
+  const cycles = (idleStopUnknownCycles.get(workerId) ?? 0) + 1
+  if (cycles < idleStopUnknownCyclesBeforeStop) {
+    idleStopUnknownCycles.set(workerId, cycles)
+    return false
+  }
+  idleStopUnknownCycles.delete(workerId)
+  return true
+}
+
+/** Test seam: forget unknown-cycle counts between scenarios. */
+export function resetIdleStopUnknownCycles() {
+  idleStopUnknownCycles.clear()
+}
+
+async function resolveIdleStopInstance(store: CloudLifecycleStore, workerId: WorkerId): Promise<IdleStopInstance> {
+  const hostToken = tokenByScope(await store.getActiveTokens(workerId), "host")
+  if (!hostToken) return null
+  const record = await cloudRuntimeStore().get(workerId)
+  if (!record) return null
+  const endpoint = record.endpointExpiresAt.getTime() > Date.now()
+    ? record
+    : await getCloudRuntime().refreshEndpoint(workerId).catch(() => null)
+  return endpoint ? { url: endpoint.endpointUrl, hostToken } : null
 }
 
 export async function stopIdleCloudWorkers(options: StopIdleCloudWorkersOptions = {}) {
-  if ((options.provisionerMode ?? env.provisionerMode) !== "daytona") {
+  if (!cloudRuntimeConfigured({ provisionerMode: options.provisionerMode })) {
     return { checked: 0, stopped: 0 }
   }
 
   const store = options.store ?? databaseCloudLifecycleStore
-  const stopWorker = options.stopWorker ?? stopWorkerOnDaytona
+  const stopWorker = options.stopWorker ?? ((workerId: WorkerId) => getCloudRuntime().stop(workerId))
+  const flushWorker = options.flushWorker ?? ((workerId: WorkerId) => getCloudRuntime().flushCheckpoint(workerId))
+  const resolveInstance = options.resolveInstance ?? ((workerId: WorkerId) => resolveIdleStopInstance(store, workerId))
   const idleBefore = options.idleBefore ?? new Date(Date.now() - (options.idleMs ?? env.cloudIdleStopMs))
   const workers = await store.listIdleWorkers({
     idleBefore,
@@ -362,7 +414,23 @@ export async function stopIdleCloudWorkers(options: StopIdleCloudWorkersOptions 
 
   for (const worker of workers) {
     try {
+      // The heartbeat is minutes old and only sees session updates. Ask the
+      // instance before taking it away from a run that is still going.
+      const interruptibility = await resolveCloudWorkerInterruptibility({
+        workerId: worker.id,
+        trigger: "idle_stop",
+        hasActiveAutomationRun: options.hasActiveAutomationRun ?? hasActiveCloudAutomationRun,
+        instance: () => resolveInstance(worker.id),
+        probeActivity: options.probeActivity,
+      })
+      if (!idleStopMayProceed(worker.id, interruptibility)) continue
       if (!await store.reserveIdleStop({ workerId: worker.id, idleBefore })) continue
+      // Nothing changed since the last periodic flush, so this is normally a
+      // no-op; it exists so no Den-initiated stop can lose state.
+      await flushWorker(worker.id).catch((error: unknown) => {
+        logger.warn("cloud idle stop checkpoint flush failed", { worker_id: worker.id, error })
+        return false
+      })
       const result = await stopWorker(worker.id)
       if (stopResultAllowsStoppedStatus(result)) {
         await store.updateWorkerStatus({ workerId: worker.id, status: "stopped", onlyWhenStatus: "provisioning" })

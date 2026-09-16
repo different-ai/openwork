@@ -39,6 +39,7 @@ export async function bootDevHeadless(
   stack: AsyncDisposableStack,
   options: DevHeadlessOptions = {},
 ): Promise<HeadlessWebHandle> {
+  assertDevHeadlessPlacement(process.env);
   const handle = await launchHeadlessWeb({
     repoRoot: REPO_ROOT,
     name: options.name ?? DEV_HEADLESS_NAME,
@@ -48,6 +49,12 @@ export async function bootDevHeadless(
     rotateTokens: options.rotateTokens,
   });
   return stack.adopt(handle, (headless) => headless.stop());
+}
+
+export function assertDevHeadlessPlacement(env: NodeJS.ProcessEnv): void {
+  if (env.OPENWORK_WORLD_PLACE && env.OPENWORK_WORLD_PLACE !== "local") {
+    throw new Error("dev-headless supports only --place local; use app-web for Daytona.");
+  }
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {

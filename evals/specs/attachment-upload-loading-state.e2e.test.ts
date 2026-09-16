@@ -1,9 +1,11 @@
 import { browserScript } from "@openwork/testkit";
+import { resolveEvalEngine } from "@openwork/env";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { attachmentUpload } from "../worlds/chat.ts";
 
 const attachmentName = "big-photo.png";
+const evalEngine = resolveEvalEngine();
 const test = spec.world(attachmentUpload, {
   needs: { commands: ["bun"] },
   timeout: 300_000,
@@ -135,6 +137,15 @@ test(`sending an image in ${entryPoint} immediately moves it into the thread whi
     label: "one decoded thread preview and cleared composer while upload is held",
     until: (value) => value === true,
   })).toBe(true);
+  // Mark the held preview element. React never touches this attribute on the
+  // element it keeps and never copies it to a replacement, so its survival
+  // after the send settles proves the thread swapped the bitmap in place.
+  expect(await probe.eval(() => {
+    const image = document.querySelector<HTMLImageElement>('[data-message-role="user"] img');
+    if (!image || !image.src.startsWith("blob:")) return false;
+    image.setAttribute("data-eval-held-preview", "true");
+    return true;
+  })).toBe(true);
   await step("Send moves the attachments immediately and preserves the next draft", async () => {
     await user.see("composer", { text: "" });
     expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
@@ -151,6 +162,25 @@ test(`sending an image in ${entryPoint} immediately moves it into the thread whi
   await user.see({ text: "attachment upload loading proof" });
   await user.see("composer", { text: "Continue after upload." });
   expect((await probe.dom('[data-message-role="user"]')).elements).toHaveLength(1);
+  await step("the settled thread keeps the held preview element while the server copy replaces the blob", async () => {
+    // v1 echoes the sent image as a data: file part, so the same element must
+    // now show the server copy. Native v2 may never expose the file part; the
+    // element still must not be replaced.
+    const settled = await probe.eventually(() => probe.eval(() => {
+      const images = document.querySelectorAll<HTMLImageElement>('[data-message-role="user"] img');
+      const image = images[0];
+      if (images.length !== 1 || !image || !image.complete || image.naturalWidth === 0) return "pending";
+      if (!image.hasAttribute("data-eval-held-preview")) return "replaced";
+      if (image.src.startsWith("data:image/")) return "server-copy";
+      return image.src.startsWith("blob:") ? "preview" : "unexpected";
+    }), {
+      within: 30_000,
+      intervalMs: 50,
+      label: "settled thread image keeps its element",
+      until: (value) => value === "server-copy" || (evalEngine === "v2" && value === "preview"),
+    });
+    expect(settled === "server-copy" || (evalEngine === "v2" && settled === "preview")).toBe(true);
+  });
   await user.notSee({ text: /1 queued/ });
   expect((await probe.hash()).includes("/session/ses_")).toBe(true);
   // TODO(primitive): inspect attachment cleanup and error-toast state after send.

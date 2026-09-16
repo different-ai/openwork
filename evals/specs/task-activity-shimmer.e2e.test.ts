@@ -16,6 +16,19 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   if (!native?.childId) throw new Error("Missing native child association");
   expect(native.status, JSON.stringify(native)).toBe("running");
   evidence.recordJsonArtifact("Native delegation identity", native);
+  const readWorkingFooter = () => probe.eval(() =>
+    document.querySelector('[data-loading-message="working"]')?.textContent ?? "",
+  );
+  const working = await probe.eventually(readWorkingFooter, {
+    within: 5_000, intervalMs: 100, label: "parent working footer remains visible during delegation",
+    until: (value) => /^Working \d/.test(value),
+  });
+  const advanced = await probe.eventually(readWorkingFooter, {
+    within: 5_000, intervalMs: 100, label: "parent working timer advances while the child is held",
+    until: (value) => /^Working \d/.test(value) && value !== working,
+  });
+  expect(advanced).not.toBe(working);
+  evidence.recordJsonArtifact("Parent working footer during delegation", { working, advanced });
   await user.type("composer", "What is the update?", { verify: true });
   // Busy Enter queues; the production Cmd/Ctrl+Enter shortcut sends steering now.
   await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");

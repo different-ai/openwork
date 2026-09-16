@@ -484,6 +484,19 @@ describe("native OpenCode session operations", () => {
     }
   });
 
+  test("a transport failure keeps its own message when the SDK settles without a response", async () => {
+    // The SDK client answers a thrown fetch (timeout, refused connection) with
+    // `response: undefined`; the person must read the cause, not a TypeError.
+    const settledWithoutResponse = {
+      error: new Error("Request timed out."),
+      request: new Request(endpoint.opencodeBaseUrl),
+      response: undefined,
+    } as unknown as FieldsResult<never>;
+    await expect(getNativeSessionMessages(endpoint, session.id, undefined, {
+      createOperations: () => operations({ messages: async () => settledWithoutResponse }),
+    })).rejects.toThrow("Request timed out.");
+  });
+
   test("fails the snapshot when any native operation fails", async () => {
     await expect(composeNativeSessionSnapshot(endpoint, session.id, undefined, {
       createOperations: () => operations({

@@ -475,6 +475,7 @@ export type OpenworkMcpItem = {
 export type OpenworkMcpAppResource = {
   /** Opaque, short-lived host context. Absent on generated previews and older servers. */
   launchId?: string;
+  refresh?: { resourceDigest: string; expiresAt: number };
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -530,6 +531,7 @@ export type OpenworkMcpAppToolResult = {
 export type OpenworkMcpAppSandbox = {
   url: string;
   expectedOrigin: string;
+  sandbox: "allow-scripts" | "allow-scripts allow-same-origin";
 };
 
 export function normalizeMcpAppHostOrigin(hostOrigin: string): string {
@@ -754,6 +756,8 @@ export type OpenworkCloudMcpHealth = {
   connectCatalogEnabled: boolean;
   /** Local private credential readiness, not provider health. Older servers omit it. */
   appHostAuthorizationReady?: boolean | null;
+  connectCatalogDiagnostic?: "ready" | "empty" | "missing_app_host_auth" | "untrusted_origin"
+    | "invalid_catalog" | "invalid_proxy_descriptor" | "discovery_unavailable";
   workspace: {
     id: string;
     type: string;
@@ -1260,7 +1264,9 @@ export function hydrateOpenworkServerSettingsFromEnv() {
     let changed = false;
 
     if (envUrl && (forceEnvSettings || !current.urlOverride)) {
-      const normalized = normalizeOpenworkServerUrl(envUrl);
+      const normalized = normalizeOpenworkServerUrl(
+        envUrl === "/api/openwork" ? new URL(envUrl, window.location.origin).href : envUrl,
+      );
       if (normalized && normalized !== current.urlOverride) {
         next.urlOverride = normalized;
         changed = true;
@@ -2026,7 +2032,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           body: { projectedToolName, ...(launch ? { launch } : {}), ...(context ? { context: { sessionId: context.sessionId, readOnly: context.readOnly, engine: context.engine } } : {}) },
-          timeoutMs: timeouts.config,
+          timeoutMs: timeouts.binary,
         },
       ),
     mcpAppSandbox: (app: OpenworkMcpAppResource, hostOrigin: string): OpenworkMcpAppSandbox => {
@@ -2036,7 +2042,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       else if (url.origin === hostOrigin && url.hostname === "127.0.0.1") url.hostname = "localhost";
       url.searchParams.set("csp", JSON.stringify(app.csp));
       url.searchParams.set("hostOrigin", messageOrigin);
-      return { url: url.toString(), expectedOrigin: url.origin };
+      // Hosted Web serves the trusted proxy on its own origin. Keep that frame
+      // opaque rather than granting it access to the host's DOM and storage.
+      const sameOrigin = url.origin === messageOrigin;
+      return {
+        url: url.toString(),
+        expectedOrigin: sameOrigin ? "null" : url.origin,
+        sandbox: sameOrigin ? "allow-scripts" : "allow-scripts allow-same-origin",
+      };
     },
     callMcpAppTool: (
       workspaceId: string,
@@ -2047,6 +2060,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         serverName: string;
         name: string;
         resourceUri: string;
+        expectedResourceDigest?: string;
         arguments?: Record<string, unknown>;
         approved?: boolean;
       },
@@ -2096,6 +2110,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           body: payload,
           timeoutMs: timeouts.cloudMcpReconcile,
         },
+      ),
+    refreshOpenworkCloudMcpCatalog: (workspaceId: string, providerModel?: OpenworkCloudMcpProviderModelContext) =>
+      requestJson<OpenworkCloudMcpHealth>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`,
+        { token, hostToken, method: "POST", body: { mode: "refresh_catalog", ...providerModel }, timeoutMs: timeouts.cloudMcpReconcile },
       ),
     refreshOpenworkCloudMcpEngine: (
       workspaceId: string,

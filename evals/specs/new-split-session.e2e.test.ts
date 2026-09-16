@@ -324,6 +324,36 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await user.screenshot();
   });
 
+  await step("the workspace plus opens a new main thread even when the side chat is focused", async () => {
+    await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
+    const original = await waitSplit(primary);
+    await user.click({ placeholder: "Describe your task...", nth: 1 });
+    await probe.eventually(facts, { within: 10_000, label: "the side chat owns focus before clicking plus",
+      until: value => value.focused === "secondary",
+    });
+    const saved = await ids();
+    const plusLabel = await probe.eval(browserScript((id) => document.querySelector(
+      `[data-sidebar-workspace-id="${id}"] [data-workspace-new-task]`,
+    )?.getAttribute("aria-label"), [workspaceId]));
+    if (typeof plusLabel !== "string") throw new Error("Workspace plus label missing");
+    await user.hover({ role: "button", label: plusLabel.replace(/^New session · /, "") });
+    await user.click({ role: "button", label: plusLabel });
+    await probe.eventually(() => probe.composer(), { within: 15_000,
+      label: "plus navigates to the main empty composer before creating a session",
+      until: value => value.route.replace(/^#/, "") === `/workspace/${workspaceId}/session`,
+    });
+    expect((await facts()).panes).toBe(0);
+    expect(await ids()).toEqual(saved);
+    await send("primary", world.primaryPrompt);
+    await answer("primary", "Primary split received", "Secondary split received");
+    const created = (await ids()).filter(id => !saved.includes(id));
+    expect(created).toHaveLength(1);
+    expect(await facts()).toMatchObject({ primary: created[0], panes: 0 });
+    await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
+    await waitSplit(primary, original.secondary);
+    await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline");
+  });
+
   await step("cold history stays free of starters and foreign messages before and after the delayed loader", async () => {
     // Reload away from this thread to discard renderer snapshots, not persisted history.
     await reopen(world.switchSession.sessionId);

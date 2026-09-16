@@ -46,6 +46,11 @@ export const ROLLUP_OBSERVATION_COLUMNS = [
   "input_tokens_count", "output_tokens_count", "total_tokens_count",
   "cache_read_tokens_count", "cache_write_tokens_count", "reasoning_tokens_count",
   "cost_count", "latency_count", "ttfb_count", "request_bytes_count", "response_bytes_count",
+  "uncountable_ok_count",
+  "uncountable_upstream_error_count",
+  "uncountable_upstream_unreachable_count",
+  "uncountable_client_aborted_count",
+  "uncountable_rejected_count",
 ] as const
 
 export type AggregatedRollup = RollupDimensions & RollupSums & Partial<Record<(typeof ROLLUP_OBSERVATION_COLUMNS)[number], number | null>>
@@ -156,6 +161,11 @@ const rawSums = {
   input_tokens_count: sql<number>`count(${raw.input_tokens})`.mapWith(Number),
   output_tokens_count: sql<number>`count(${raw.output_tokens})`.mapWith(Number),
   total_tokens_count: sql<number>`count(${raw.total_tokens})`.mapWith(Number),
+  uncountable_ok_count: sum(sql`case when ${raw.total_tokens} is null and ${raw.completed_at} is not null and ${raw.outcome} = 'ok' then 1 else 0 end`),
+  uncountable_upstream_error_count: sum(sql`case when ${raw.total_tokens} is null and ${raw.completed_at} is not null and ${raw.outcome} = 'upstream_error' then 1 else 0 end`),
+  uncountable_upstream_unreachable_count: sum(sql`case when ${raw.total_tokens} is null and ${raw.completed_at} is not null and ${raw.outcome} = 'upstream_unreachable' then 1 else 0 end`),
+  uncountable_client_aborted_count: sum(sql`case when ${raw.total_tokens} is null and (${raw.completed_at} is null or ${raw.outcome} = 'client_aborted') then 1 else 0 end`),
+  uncountable_rejected_count: sum(sql`case when ${raw.total_tokens} is null and ${raw.completed_at} is not null and ${raw.outcome} = 'rejected' then 1 else 0 end`),
   cache_read_tokens_count: sql<number>`count(${raw.cache_read_tokens})`.mapWith(Number),
   cache_write_tokens_count: sql<number>`count(${raw.cache_write_tokens})`.mapWith(Number),
   reasoning_tokens_count: sql<number>`count(${raw.reasoning_tokens})`.mapWith(Number),

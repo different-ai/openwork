@@ -1,17 +1,7 @@
 import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
-import { EmailSendError, sendEmail, type FeedbackEmailProps } from "@openwork/email";
-
-type FeedbackContext = {
-  source?: string;
-  entrypoint?: string;
-  deployment?: string;
-  appVersion?: string;
-  openworkServerVersion?: string;
-  opencodeVersion?: string;
-  osName?: string;
-  osVersion?: string;
-  platform?: string;
-};
+import { createPlainFormClient } from "../_lib/plain";
+import { ForbiddenError } from "@team-plain/graphql";
+import { buildFeedbackThreadFields, type FeedbackContext } from "../../../lib/plain-feedback-fields";
 
 type FeedbackPayload = {
   name?: string;
@@ -22,8 +12,6 @@ type FeedbackPayload = {
   mode?: string;
   context?: FeedbackContext;
 };
-
-const DEFAULT_INTERNAL_FEEDBACK_EMAIL = "team@openworklabs.com";
 
 function sanitizeValue(value: unknown, maxLength = 240) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -41,22 +29,6 @@ function sanitizeContext(input: FeedbackContext | undefined) {
     osVersion: sanitizeValue(input?.osVersion),
     platform: sanitizeValue(input?.platform),
   };
-}
-
-function formatDiagnosticsSummary(context: ReturnType<typeof sanitizeContext>) {
-  const osLabel = [context.osName, context.osVersion].filter(Boolean).join(" ");
-  const lines = [
-    ["Source", context.source],
-    ["Entrypoint", context.entrypoint],
-    ["Deployment", context.deployment],
-    ["App version", context.appVersion],
-    ["OpenWork server", context.openworkServerVersion],
-    ["OpenCode", context.opencodeVersion],
-    ["OS", osLabel],
-    ["Platform", context.platform],
-  ].filter(([, value]) => value);
-
-  return lines.map(([label, value]) => `${label}: ${value}`).join("\n");
 }
 
 export async function POST(request: Request) {
@@ -80,11 +52,6 @@ export async function POST(request: Request) {
   if (!botProtection.ok) {
     return jsonResponse(request, { error: botProtection.error }, botProtection.status);
   }
-
-  const internalEmail =
-    process.env.OPENWORK_FEEDBACK_EMAIL?.trim() ||
-    process.env.LOOPS_INTERNAL_FEEDBACK_EMAIL?.trim() ||
-    DEFAULT_INTERNAL_FEEDBACK_EMAIL;
 
   let payload: FeedbackPayload;
   try {
@@ -132,50 +99,57 @@ export async function POST(request: Request) {
   }
 
   const context = sanitizeContext(payload.context);
-  const diagnosticsSummary = formatDiagnosticsSummary(context);
   const submittedAt = new Date().toISOString();
 
-  const feedbackProps = {
-    name,
-    email,
-    message,
-    mode,
-    source: context.source || "openwork-app",
-    entrypoint: context.entrypoint || "unknown",
-    deployment: context.deployment || "desktop",
-    appVersion: context.appVersion || "unknown",
-    openworkServerVersion: context.openworkServerVersion || "unknown",
-    opencodeVersion: context.opencodeVersion || "unknown",
-    osName: context.osName || "unknown",
-    osVersion: context.osVersion || "",
-    platform: context.platform || "unknown",
-    diagnosticsSummary,
-    submittedAt,
-  } satisfies FeedbackEmailProps;
+  const apiKey = process.env.PLAIN_API_KEY?.trim();
+  if (!apiKey) {
+    return jsonResponse(request, {
+      error: "This form is temporarily unavailable. Please email team@openworklabs.com.",
+    }, 503);
+  }
 
+  let operation = "upsertCustomer";
   try {
-    await sendEmail({
-      to: internalEmail,
-      template: "feedback",
-      props: feedbackProps,
-      config: {
-        devMode: process.env.NODE_ENV === "development",
-        from: process.env.EMAIL_FROM?.trim(),
-        resendApiKey: process.env.RESEND_API_KEY?.trim(),
-        smtp: {
-          host: process.env.SMTP_HOST?.trim(),
-          port: Number(process.env.SMTP_PORT ?? "587"),
-          user: process.env.SMTP_USER?.trim(),
-          pass: process.env.SMTP_PASS,
-          secure: (process.env.SMTP_SECURE ?? "false").toLowerCase() === "true",
-        },
+    const plain = createPlainFormClient(apiKey);
+    const customerResult = await plain.upsertCustomer({
+      identifier: { emailAddress: email },
+      onCreate: {
+        fullName: name,
+        email: { email, isVerified: false },
       },
+      // Public submissions must not overwrite an existing customer's profile.
+      onUpdate: {},
     });
-  } catch (error) {
-    if (error instanceof EmailSendError) {
-      return jsonResponse(request, { error: error.detail ?? error.message }, 502);
+    if (customerResult.error || !customerResult.customer?.id) {
+      throw new Error("Plain customer upsert failed", { cause: customerResult.error?.code });
     }
-    throw error;
+
+    operation = "createThread";
+    const threadResult = await plain.createThread({
+      customerIdentifier: { customerId: customerResult.customer.id },
+      title: mode === "contact" ? "OpenWork contact message" : "OpenWork app feedback",
+      threadFields: buildFeedbackThreadFields({ ...context, name, email, mode, submittedAt }),
+      components: [
+        { componentPlainText: { plainText: message } },
+      ],
+    });
+    if (threadResult.error || !threadResult.thread?.id) {
+      throw new Error("Plain thread creation failed", { cause: threadResult.error?.code });
+    }
+  } catch (error) {
+    // Do not log API response bodies, which may contain submitted personal data.
+    console.error("Plain form submission failed", {
+      operation,
+      errorType: error instanceof Error ? error.name : "UnknownError",
+      code: error instanceof ForbiddenError ? "forbidden"
+        : error instanceof Error && typeof error.cause === "string" ? error.cause : undefined,
+      permissions: error instanceof ForbiddenError
+        ? [...new Set(error.message.match(/\b[a-z][a-zA-Z]*:(?:read|create|edit|update|delete|search)\b/g) ?? [])]
+        : undefined,
+    });
+    return jsonResponse(request, {
+      error: "We couldn't send your message. Please try again or email team@openworklabs.com.",
+    }, 502);
   }
 
   return jsonResponse(request, { ok: true });

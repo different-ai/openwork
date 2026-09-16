@@ -19,7 +19,7 @@ export function useAppsClient() {
     client: auth.isSignedIn ? client : null,
     orgId: settings.activeOrgId,
     orgName: settings.activeOrgName,
-    scope: [settings.baseUrl, auth.user?.id, settings.activeOrgId],
+    scope: [settings.baseUrl, auth.user?.id, settings.activeOrgId, settings.apiBaseUrl],
   };
 }
 

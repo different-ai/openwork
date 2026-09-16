@@ -165,6 +165,9 @@ test("bundled engine recovers from a startup outage and uses preseeded organizat
     JSON.stringify(connectionStatus), true);
 
   await user.click("Library");
+  await user.click({ role: "button", label: "MCPs" });
+  await user.notSee({ text: world.connectionName });
+  await user.click({ role: "tab", label: /^Needs your sign-in\b/ });
   await user.see({ text: world.connectionName }, { timeoutMs: 60_000 });
   await user.screenshot();
 

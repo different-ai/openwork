@@ -9,7 +9,9 @@ import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast
 // `<LPR_tag>_<declared name>`, derived from nothing but the row id.
 const ANTHROPIC_PROVIDER_ID = "lpr_01kx4t3amgendr682dmp6120jv" as const
 const AZURE_PROVIDER_ID = "lpr_01kx4t3apjendr685c2ryzevqe" as const
+const GATEWAY_PROVIDER_ID = "ipr_01kx4t3aqfendr688a4dedf2m5" as const
 const ANTHROPIC_API_KEY_ENV = `${runtimeProviderEnvTag(ANTHROPIC_PROVIDER_ID)}_ANTHROPIC_API_KEY`
+const GATEWAY_API_KEY_ENV = `${runtimeProviderEnvTag(GATEWAY_PROVIDER_ID)}_ANTHROPIC_API_KEY`
 const AZURE_RESOURCE_NAME_ENV = `${runtimeProviderEnvTag(AZURE_PROVIDER_ID)}_AZURE_RESOURCE_NAME`
 const AZURE_API_KEY_ENV = `${runtimeProviderEnvTag(AZURE_PROVIDER_ID)}_AZURE_API_KEY`
 
@@ -30,6 +32,7 @@ const organizationId = createDenTypeId("organization")
 const instanceUrl = "https://worker.example.test"
 let materializeCloudWorkerProviders: MaterializerModule["materializeCloudWorkerProviders"]
 let computeCloudProviderMaterializationFingerprint: MaterializerModule["computeCloudProviderMaterializationFingerprint"]
+let gatewayMaterializationProvider: MaterializerModule["gatewayMaterializationProvider"]
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -44,6 +47,7 @@ beforeAll(async () => {
   const materializer = await import("../src/llm/cloud-provider-materialization.js")
   materializeCloudWorkerProviders = materializer.materializeCloudWorkerProviders
   computeCloudProviderMaterializationFingerprint = materializer.computeCloudProviderMaterializationFingerprint
+  gatewayMaterializationProvider = materializer.gatewayMaterializationProvider
 })
 
 function jsonResponse(body: unknown, status = 200) {
@@ -121,6 +125,56 @@ function makeAnthropicProvider(input: {
         },
       },
     ],
+  }
+}
+
+function makeGatewayProvider(apiKey = "ow_gw_synthetic_member_key"): CloudProviderMaterializationProvider {
+  const modelId = "gateway-group.gateway-set.claude-fable-5"
+  const api = `http://127.0.0.1:18791/api/v1/providers/${GATEWAY_PROVIDER_ID}`
+  return gatewayMaterializationProvider({
+    id: GATEWAY_PROVIDER_ID,
+    source: "openwork_gateway",
+    providerId: "anthropic",
+    name: "Anthropic via OpenWork Gateway",
+    credentialMode: "org",
+    credentialStatus: "ready",
+    authUrl: null,
+    status: "active",
+    updatedAt: "2026-09-13T00:00:00.000Z",
+    providerConfig: {
+      id: "anthropic",
+      name: "Anthropic via OpenWork Gateway",
+      npm: "@ai-sdk/anthropic",
+      env: [GATEWAY_API_KEY_ENV],
+      api,
+      options: { baseURL: api },
+    },
+    modelIds: ["claude-fable-5"],
+    models: [{
+      id: modelId,
+      name: "Claude Fable 5",
+      config: { id: modelId, name: "Claude Fable 5", tool_call: true },
+      upstreamModelId: "claude-fable-5",
+      modelGroupId: "gateway-group",
+      modelGroupName: "Gateway group",
+      credentialSetId: "gateway-set",
+      credentialSetName: "Gateway set",
+    }],
+    authorizationRequests: [],
+  }, apiKey)
+}
+
+function makeGatewayRuntimeProvider() {
+  const modelId = "gateway-group.gateway-set.claude-fable-5"
+  const api = `http://127.0.0.1:18791/api/v1/providers/${GATEWAY_PROVIDER_ID}`
+  return {
+    api,
+    options: { baseURL: api },
+    npm: "@ai-sdk/anthropic",
+    models: { [modelId]: { tool_call: true, name: "Claude Fable 5", id: modelId } },
+    env: [GATEWAY_API_KEY_ENV],
+    name: "Anthropic via OpenWork Gateway",
+    id: "anthropic",
   }
 }
 
@@ -480,6 +534,49 @@ describe("Cloud provider materialization", () => {
       },
     })
     expect(writeCalls(instance.calls).map((call) => call.method)).toEqual(["PUT", "PATCH"])
+  })
+
+  test("materializes a member Gateway provider without changing the legacy provider path", async () => {
+    const legacy = makeAnthropicProvider({ apiKey: "sk-legacy-synthetic" })
+    const gateway = makeGatewayProvider()
+    const instance = makeInstance()
+
+    const result = await materialize({
+      providers: () => [legacy, gateway],
+      fetchImpl: instance.fetchImpl,
+      force: true,
+    })
+
+    expect(result).toMatchObject({ ok: true, status: "applied", providers: 2 })
+    const envWrite = instance.calls.find((call) => call.method === "PUT" && call.path === "/env")
+    expect(isRecord(envWrite?.body) && Array.isArray(envWrite.body.entries) ? envWrite.body.entries : []).toEqual(expect.arrayContaining([
+      { key: ANTHROPIC_API_KEY_ENV, value: "sk-legacy-synthetic" },
+      { key: GATEWAY_API_KEY_ENV, value: "ow_gw_synthetic_member_key" },
+    ]))
+    const patch = instance.calls.find((call) => call.method === "PATCH" && call.path === "/runtime-config/providers")
+    const providers = providerPatchFromBody(patch?.body)
+    expect(Object.keys(providers).sort()).toEqual([ANTHROPIC_PROVIDER_ID, GATEWAY_PROVIDER_ID].sort())
+    expect(providers[GATEWAY_PROVIDER_ID]).toMatchObject({
+      id: "anthropic",
+      name: "Anthropic via OpenWork Gateway",
+      env: [GATEWAY_API_KEY_ENV],
+      api: `http://127.0.0.1:18791/api/v1/providers/${GATEWAY_PROVIDER_ID}`,
+      options: { baseURL: `http://127.0.0.1:18791/api/v1/providers/${GATEWAY_PROVIDER_ID}` },
+      models: { "gateway-group.gateway-set.claude-fable-5": { id: "gateway-group.gateway-set.claude-fable-5" } },
+    })
+  })
+
+  test("removes a Gateway provider that is no longer in the member's usable inventory", async () => {
+    const instance = makeInstance({
+      envValues: { [GATEWAY_API_KEY_ENV]: "ow_gw_synthetic_member_key" },
+      runtimeProviders: { [GATEWAY_PROVIDER_ID]: makeGatewayRuntimeProvider() },
+    })
+
+    const result = await materialize({ providers: () => [], fetchImpl: instance.fetchImpl, force: true })
+
+    expect(result).toMatchObject({ ok: true, status: "applied", providers: 0 })
+    const patch = instance.calls.find((call) => call.method === "PATCH" && call.path === "/runtime-config/providers")
+    expect(patch?.body).toEqual({ provider: { [GATEWAY_PROVIDER_ID]: null } })
   })
 
   test("writes Azure resource name and API key env while preserving the provider env config", async () => {

@@ -21,7 +21,7 @@ When the feature is enabled for the organization, Dashboards appear in the OpenW
     Open **Dashboards**, click **New dashboard**, enter a **Name** such as `Support overview`, then click **Create dashboard**.
   </Step>
   <Step title="Add apps">
-    Click **Add app**, pick an **MCP**, choose one of its Apps, and click **Add**. MCPs without Apps are hidden. If the app's tool requires input, fill **Launch input (JSON)**. Reorder or remove apps from the list.
+    Click **Add app**, pick an **MCP**, choose one of its Apps, and click **Add**. MCPs without Apps are hidden. If the app's tool requires input, fill **Launch input (JSON)**. Use the up/down arrows beside an app to reorder it, or remove it from the list. Order saves automatically; wait for the arrows to become available before making another move.
   </Step>
   <Step title="Decide how each app runs">
     Apps run on request by default: the member clicks **Run**. Turn on **Run automatically** to run an app on dashboard load and refresh. This also applies to tools that modify data, so enable it only for apps you trust.
@@ -33,15 +33,27 @@ When the feature is enabled for the organization, Dashboards appear in the OpenW
 
 ## What members see
 
-The desktop sidebar shows **Dashboard**, with one section per assigned dashboard labeled **Managed by your organization**.
+The sidebar shows **Dashboard**, with one section per assigned dashboard labeled **From your company**.
 
-Tiles have one of these badges:
+Apps use a compact masonry layout in the saved order. Each app keeps its own height, so shorter apps can stack beside a taller one; narrow windows use one column. Successful apps show their own UI without an extra title bar or card border. Hover over an app or focus its **App options** button to find **Refresh** and its current status. On touch devices the options button stays visible.
+
+OpenWork remembers the embedded view's height and the surrounding tile's height for its displayed width, scoped to the account, organization, workspace and app. On reload or reopening, the tile can reserve that remembered shape while loading; a matching width uses its recorded measurements. These are loading estimates, not a fixed layout: app size notifications still update the height, up to the existing **800px** embedded-view limit. Live tiles without remembered measurements start with a **320px** loading area.
+
+Eligible live, read-only Apps can receive refreshed data in the same embedded document instead of reloading it. This lets an App keep filters, text inputs and scroll position while displaying the new result, provided its own result handler preserves that state. A full dashboard reload creates new documents; restoring arbitrary state inside an App after that reload is not guaranteed.
+
+Remembered geometry and saved preview data are display-only, not permission to run tools or open links. Cached previews do not retain a live launch lease. Generated views remain limited to displaying, filtering and exploring results, not submitting writes.
+
+Apps awaiting a run or needing recovery keep visible controls and status, including:
 
 - **Organization auto-run**
 - **Run on request**
 - **Run once to enable**
 
-A tool that is not read-only runs only when the member clicks **Run**, unless an admin enabled auto-run.
+A tile's launch tool that is not read-only runs only when the member clicks **Run**, unless an admin enabled auto-run. **Run** and manual refresh do not ask for a second confirmation.
+
+Once a connected App is open, annotated read-only helpers can run automatically. Any tool that can modify data requires a recent, verified click inside that App. Clicking **Send**, for example, authorizes one tool call without an additional OpenWork approval modal. Native keyboard activation of a button counts; synthetic clicks and background writes do not.
+
+The interaction grant is single-use and lasts at most **1,500 milliseconds** in the focused App. The first tool call consumes it, even if that call is read-only; a second write needs a new trusted click. Unapproved writes fail with `tool_requires_approval` before reaching the provider. Calls still require authenticated collaborator access, organization permissions, the originating server, and a live launch lease. Read-only previews and archived conversations cannot call tools, even read-only helpers. These rules do not change the dashboard **Run** or admin-enabled **Run automatically** launch policy.
 
 ## Build an MCP App widget
 
@@ -52,7 +64,8 @@ A tool that is not read-only runs only when the member clicks **Run**, unless an
 The shared chat and dashboard renderer uses the stable **2026-01-26** protocol with `ext-apps` **1.7.5**:
 
 - After initialization, the host sends complete `ui/notifications/tool-input` arguments before `ui/notifications/tool-result`. Result delivery retains `content`, `structuredContent`, `_meta`, and the optional `isError` flag, including explicit `false`.
-- Writable Apps advertise `serverTools` and `openLinks`. Tool calls retain the originating endpoint, workspace, session, engine (when supplied), and live launch lease through approval and dispatch. Link requests require an active writable view, use the host's HTTP(S)-only opener, and report failures.
+- Eligible dashboard refreshes use notification updates in that same document: ordered input/result delivery updates the data without another initialization. App result handlers must accept subsequent results rather than treating the first result as the only one.
+- Writable Apps advertise `serverTools` and `openLinks`. Tool calls retain the originating endpoint, workspace, session, engine (when supplied), and live launch lease through dispatch. Automatic read-only helpers are allowed; writes require the recent single-use trusted interaction described above, without an additional host confirmation. OpenWork's sandbox proxy verifies the interaction and overwrites request `_meta["openwork/userInteraction"]`; an App cannot authorize itself by supplying that field. Link requests require an active writable view, use the host's HTTP(S)-only opener, and report failures.
 - Only `inline` display is available. Valid `ui/request-display-mode` requests return the current `inline` mode, including requests for fullscreen or picture-in-picture; they do not change the layout.
 - Size notifications adjust the inline height within host limits. Unmount retains the existing bounded `ui/resource-teardown` handshake and bridge close.
 - Message/context writes, View-provided tools, and resource proxy requests are not supported by this renderer. Unsupported requests receive protocol errors, not successful empty responses. There is no full progress or cancellation forwarding.
@@ -65,7 +78,9 @@ The shared chat and dashboard renderer uses the stable **2026-01-26** protocol w
 | Cached dashboard preview | Neither advertised nor allowed until a fresh launch succeeds | Cached data never persists a live lease; Run obtains a new one. |
 | Generated result preview | Neither advertised nor allowed | Explicit read-only origin without a conversation session. |
 
-Closing or replacing a view disables its pending actions and releases its owned lease. Dashboard endpoint removal also retires that endpoint's lease. A restored cached view cannot reuse the previous lease, and the server revalidates launch ownership before dispatching tools.
+Launch leases expire **30 minutes after creation**; tool calls and clicks do not extend that fixed lifetime. This lease is separate from the 1,500-millisecond interaction grant. Closing or replacing a view disables its pending actions and releases its owned lease. Dashboard endpoint removal also retires that endpoint's lease. A restored cached view cannot reuse the previous lease, and the server revalidates launch ownership before dispatching tools. Reopen or freshly launch the App after its lease expires.
+
+In-place refresh requires a valid, eligible read-only dashboard launch with server-advertised `app.refresh` metadata containing `resourceDigest` and `expiresAt`. The host submits the expected resource digest; the server checks the live lease, permissions, tool and current resource before dispatch. A changed resource is denied before the tool runs, and the host replaces the old view through the normal guarded launch path instead of delivering incompatible data to it. A changed launch scope, input or policy also invalidates document reuse; any permitted fresh launch creates a replacement document. Refresh does not extend the fixed lease, authorize a write, or relax authentication, approval or retry rules. This continuity behavior does not add automatic recovery from expired-launch errors.
 
 Chat views mount from completed, preserved results; dashboard tiles render successful or saved results. A cancelled in-flight launch therefore has no mounted recipient for `ui/notifications/tool-cancelled`. Cancelling another operation or unmounting an already completed result does not invent a cancellation notification. Early mounting and streaming launch input are not implemented. Dashboard launch failures retain the existing error or saved-result presentation rather than mounting an actionable failed launch.
 
@@ -82,7 +97,7 @@ Schema guidance is also appended as a separate text content block under `openwor
 - `resources/read` for that URI returns exactly one content item with `mimeType` `text/html;profile=mcp-app`, at most 768 KiB.
 - Optional `_meta.ui.csp` on the resource supports `connectDomains`, `resourceDomains`, `frameDomains`, and `baseUriDomains`: HTTPS origins only, up to 16 each. `permissions` and `domain` are not supported; OpenWork rejects a resource containing either.
 - The server is reachable over HTTP(S) as a remote Streamable HTTP MCP server. Local stdio servers cannot be dashboard apps.
-- Mark read-only tools with `annotations: { readOnlyHint: true }`. Tools without it, or with `destructiveHint: true`, are treated as modifying data and run only on request unless an admin enables auto-run.
+- Mark read-only tools with `annotations: { readOnlyHint: true }` and do not mark them destructive. Helpers with this annotation and without `destructiveHint: true` can run automatically in an active writable App. Other helper calls require a recent single-use trusted click. Launch tools without the read-only annotation, or with `destructiveHint: true`, still run only on request unless an admin enables auto-run; that launch policy is unchanged.
 - The dashboard picker uses `title`, or `annotations.title`, as the tile name. It shows a **Launch input** field when `inputSchema.required` is non-empty.
 
 ### Example: a Team budget widget

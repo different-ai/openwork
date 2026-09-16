@@ -1,4 +1,5 @@
 import type { ModelsDevProvider } from "./models-dev.js"
+import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
 import { validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
 import { readProviderEnvNames, runtimeProviderEnvNames } from "./provider-credentials.js"
@@ -201,6 +202,18 @@ export function buildGatewayProviderConfig(
     api: url,
     options: { ...options, baseURL: url },
   }
+}
+
+export function buildGatewayModelConfig(model: { id: string; name: string; config: JsonRecord }): JsonRecord & { id: string } {
+  const config = nonSecretProviderConfig(model.config)
+  const headers = Object.fromEntries(Object.entries(isRecord(config.headers) ? config.headers : {})
+    .filter(([name]) => name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER))
+  return { ...config, id: model.id, name: model.name, headers: {
+    ...headers,
+    // OpenCode forwards model headers before uploading the request body. This
+    // preserves the desktop's selection even when the upload is interrupted.
+    [GATEWAY_REQUEST_MODEL_HEADER]: model.id,
+  } }
 }
 
 function isRecord(value: unknown): value is JsonRecord {

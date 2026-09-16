@@ -543,6 +543,11 @@ export class EnginePool {
     return { target: primaryConnection, fallback };
   }
 
+  /** Live proxied event streams, i.e. clients currently listening to this engine. */
+  eventProxyCount(): number {
+    return this.eventProxyControllers.size;
+  }
+
   openEventProxy(clientSignal?: AbortSignal): EngineEventProxyLease {
     const controller = new AbortController();
     this.eventProxyControllers.add(controller);

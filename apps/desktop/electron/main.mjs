@@ -57,7 +57,7 @@ import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
-import { downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
+import { createDesktopTransferRegistry, downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
@@ -102,6 +102,7 @@ const desktopPackageMetadata = require("../package.json");
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -1101,7 +1102,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
-const nativeContextMenus = createNativeContextMenus({ Menu, getWindow: () => mainWindow });
+const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
   showNativeContextMenu: nativeContextMenus.show,
@@ -1137,24 +1138,10 @@ const workspaceStore = createWorkspaceStore({
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
 
-const activeDesktopTransfers = new Map();
-
-function desktopTransferKey(event, transferId) {
-  const normalizedId = typeof transferId === "string" ? transferId.trim() : "";
-  if (!normalizedId || normalizedId.length > 128 || !/^[a-zA-Z0-9._-]+$/.test(normalizedId)) {
-    throw new Error("A valid transferId is required.");
-  }
-  return `${event.sender.id}:${normalizedId}`;
-}
+const desktopTransfers = createDesktopTransferRegistry();
 
 async function runDesktopTransfer(event, input, operation) {
-  const key = desktopTransferKey(event, input?.transferId);
-  if (activeDesktopTransfers.has(key)) throw new Error("transferId is already active.");
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  activeDesktopTransfers.set(key, controller);
-  event.sender.once("destroyed", abort);
-  try {
+  return desktopTransfers.run(event, input?.transferId, async (signal) => {
     // Both authorities come from app-owned state in userData; workspace-
     // writable configuration must never widen where a transfer may write.
     const [authorizedRoots, allowedUrlPrefixes] = await Promise.all([
@@ -1168,12 +1155,9 @@ async function runDesktopTransfer(event, input, operation) {
       // workspace root until they complete.
       stagingDir: path.join(app.getPath("userData"), "binary-transfers"),
       fetcher: electronNet.fetch,
-      signal: controller.signal,
+      signal,
     });
-  } finally {
-    event.sender.removeListener("destroyed", abort);
-    activeDesktopTransfers.delete(key);
-  }
+  });
 }
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
@@ -2411,16 +2395,20 @@ const desktopCommandHandlers = {
         );
       }
       const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
-        ...requestInit,
-        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-      });
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Array.from(response.headers.entries()),
-        body: await response.text(),
+      const fetchResponse = async (callerSignal) => {
+        const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+        const signal = callerSignal && deadline ? AbortSignal.any([callerSignal, deadline]) : callerSignal ?? deadline;
+        const response = await electronNet.fetch(url, { ...requestInit, signal });
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Array.from(response.headers.entries()),
+          body: await response.text(),
+        };
       };
+      return (requestInit.method ?? "GET").toUpperCase() === "GET" && init.transferId
+        ? desktopTransfers.run(event, init.transferId, fetchResponse)
+        : fetchResponse(undefined);
   },
   "__uploadMultipart": async (event, ...args) => {
       return runDesktopTransfer(event, args[0] ?? {}, uploadMultipartFromBytes);
@@ -2429,10 +2417,7 @@ const desktopCommandHandlers = {
       return runDesktopTransfer(event, args[0] ?? {}, downloadBinaryToPath);
   },
   "__cancelTransfer": async (event, ...args) => {
-      const controller = activeDesktopTransfers.get(desktopTransferKey(event, args[0]));
-      if (!controller) return false;
-      controller.abort();
-      return true;
+      return desktopTransfers.cancel(event, args[0]);
   },
   "__homeDir": async (event, ...args) => {
       return os.homedir();

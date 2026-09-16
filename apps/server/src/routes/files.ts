@@ -485,7 +485,15 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       const rel = normalizeResolvedRelativePath(relRaw);
 
       if (entry.isDirectory()) {
-        const info = await stat(absPath);
+        let info;
+        try {
+          info = await stat(absPath);
+        } catch (error: unknown) {
+          if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
+            continue;
+          }
+          throw error;
+        }
         items.push({
           path: rel,
           kind: "dir",
@@ -498,7 +506,15 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       }
 
       if (!entry.isFile()) continue;
-      const info = await stat(absPath);
+      let info;
+      try {
+        info = await stat(absPath);
+      } catch (error: unknown) {
+        if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
+          continue;
+        }
+        throw error;
+      }
       items.push({
         path: rel,
         kind: "file",

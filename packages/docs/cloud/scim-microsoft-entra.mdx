@@ -85,6 +85,19 @@ with another email domain, verify which Entra attribute is mapped to
 `userName`. Keep the SAML NameID and SCIM identity consistent so Entra does not
 create a second OpenWork member for the same person.
 
+### Existing OpenWork accounts
+
+SCIM can link a matching existing account only when the user is already an
+active member of the connector's OpenWork organization. The account keeps its
+existing user ID; provisioning does not grant a new organization role.
+
+An existing account with no active membership in that organization returns
+`409 Conflict` instead of being linked by email alone. Membership in another
+organization, a removed membership, or a pending invitation does not qualify.
+An authorized administrator must establish active membership through the normal
+onboarding process before retrying. Brand-new accounts follow the normal SCIM
+provisioning flow.
+
 ## 4. Assign test users and groups
 
 In the enterprise application, open **Users and groups** and select **Add

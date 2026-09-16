@@ -99,6 +99,7 @@ function fixture() {
   document.body.append(host);
   const root = createRoot(host);
   let ensureFullSnapshot: (() => Promise<OpenworkSessionHistory>) | undefined;
+  let readSendHistory: ReturnType<typeof useOpeningSessionHistory>["readSendHistory"] | undefined;
   let runWithFullSnapshot: ReturnType<typeof useOpeningSessionHistory>["runWithFullSnapshot"] | undefined;
   const reads: { owner: string; authToken?: string; window?: OpeningHistoryWindow; signal: AbortSignal; resolve: (snapshot: OpenworkSessionHistory) => void; reject: (error: Error) => void }[] = [];
   const latestReads: { owner: string; authToken?: string; signal: AbortSignal; resolve: (history: Pick<OpenworkSessionHistory, "session" | "messages">) => void; reject: (error: Error) => void }[] = [];
@@ -117,6 +118,7 @@ function fixture() {
     const workspaceId = key[1];
     const opening = useOpeningSessionHistory(options);
     ensureFullSnapshot = opening.ensureFullSnapshot;
+    readSendHistory = opening.readSendHistory;
     runWithFullSnapshot = opening.runWithFullSnapshot;
     // The hero's one-step auto-send fires from a mount effect, before any read settled.
     useEffect(() => { onMount?.(opening.ensureFullSnapshot); }, [onMount, opening.ensureFullSnapshot]);
@@ -129,9 +131,12 @@ function fixture() {
     const messages = deriveRenderedSessionMessages({ snapshot: current, transcriptState: transcript.data, historyComplete: Boolean(full.data), latestHistory: opening.latestHistory });
     const pending = !current || (!full.data && Boolean(current.session.revert));
     const failed = full.isError && !full.isFetching;
-    return <><span>Composer {owner}</span><input aria-label="Draft" /><div className="relative"><div data-thread-scroll><SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
-      <div>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.parts.map((part) => part.type === "text" ? part.text : part.type === "dynamic-tool" ? `${part.state}:${JSON.stringify({ input: part.input, output: "output" in part ? part.output : null })}` : "").join(" ")}</div>)}
-    </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} loading={full.isFetching && opening.partial} failed={failed} onRetry={() => full.refetch()} /></div></>;
+    return <><span>Composer {owner}</span><input aria-label="Draft" /><div className="flex min-h-0 flex-col">
+      <SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} loading={full.isFetching && opening.partial} failed={failed} onRetry={() => full.refetch()} />
+      <div className="relative min-h-0 flex-1"><div data-thread-scroll><SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
+        <div>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.parts.map((part) => part.type === "text" ? part.text : part.type === "dynamic-tool" ? `${part.state}:${JSON.stringify({ input: part.input, output: "output" in part ? part.output : null })}` : "").join(" ")}</div>)}
+      </SessionHistoryBoundary></div></div>
+    </div></>;
   }
   async function renderInput(options: ReturnType<typeof input>, mount: { strict?: boolean; onMount?: (ensure: () => Promise<OpenworkSessionHistory>) => void } = {}) {
     const tree = <QueryClientProvider client={client}><Harness options={options} onMount={mount.onMount} /></QueryClientProvider>;
@@ -160,6 +165,10 @@ function fixture() {
     ensureFullSnapshot() {
       if (!ensureFullSnapshot) throw new Error("History is not mounted");
       return ensureFullSnapshot();
+    },
+    readSendHistory() {
+      if (!readSendHistory) throw new Error("History is not mounted");
+      return readSendHistory();
     },
     render(owner = "a", authToken?: string, cacheOwner = owner) { return renderInput(input(owner, authToken, cacheOwner)); },
     async resolve(index: number, title: string | OpenworkSessionHistory) {
@@ -403,7 +412,7 @@ describe("opening a thread", () => {
     expect(cancel).toHaveBeenCalledTimes(2);
   });
 
-  test("partial, failed, retrying, and complete history status stays outside the reader's scroll geometry", async () => {
+  test("partial, failed, retrying, and complete history status reserves a row above the reader", async () => {
     const view = fixture();
     await view.render();
     await view.resolve(0, snapshot("a", "Reading preview", [...fullWindow, "anchor"]));
@@ -419,7 +428,9 @@ describe("opening a thread", () => {
       const element = view.host.querySelector("[data-thread-history-status]");
       if (status === null) expect(element).toBeNull();
       else {
-        expect(element?.className).toContain("absolute");
+        expect(element?.classList.contains("absolute")).toBe(false);
+        expect(element?.classList.contains("shrink-0")).toBe(true);
+        expect(element?.nextElementSibling).toBe(scroller.parentElement);
         expect(element?.textContent).toContain(status);
       }
     };
@@ -428,15 +439,21 @@ describe("opening a thread", () => {
     await paint();
     await paint();
     checkGeometry("Loading earlier messages…");
+    const loadingStatus = view.host.querySelector("[data-thread-history-status]");
     await act(async () => view.reads[1].reject(new Error("Full read unavailable")));
     await settle();
     checkGeometry("could not be loaded");
+    expect(view.host.querySelector('[data-thread-history-status] [role="status"]')).toBeNull();
+    expect(view.host.querySelectorAll("[data-thread-history-status]")).toHaveLength(1);
     await act(async () => view.host.querySelector("button")?.click());
     checkGeometry("Retrying…");
     await view.resolve(2, snapshot("a", "Full history", ["before", ...fullWindow, "anchor", "after"]));
     expect(scroller.scrollTop).toBe(800);
     expect(scroller.querySelector('[data-message-id="anchor"]')).toBe(anchor);
     expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(loadingStatus?.isConnected).toBe(false);
+    await view.render();
+    checkGeometry(null);
   });
 
   test("branching at a singleton preview waits for the next native message in complete history", async () => {
@@ -614,6 +631,28 @@ describe("opening a thread", () => {
     expect(view.reads).toHaveLength(2);
   });
 
+  test("a send reads the current turn from cached complete history or one bounded newest read, never the uncapped read", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, "Reading preview");
+    // Cold thread: the preview may be an older saved region and the uncapped
+    // read is still in flight. The send takes the bounded newest read instead.
+    const pending = view.readSendHistory();
+    expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }]);
+    expect(view.latestReads).toHaveLength(1);
+    await view.resolveLatest(0, snapshot("a", "Newest turn", ["older", "current"]));
+    expect((await pending).map(({ info }) => info.id)).toEqual(["older", "current"]);
+    // A newest read that belongs to another thread is refused, never sent with.
+    const foreign = view.readSendHistory().then(() => "sent", (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    await view.resolveLatest(1, snapshot("b", "Other thread", ["x"]));
+    expect(await foreign).toBe("Conversation history belongs to another session.");
+    // Warm thread: cached complete history answers without any read.
+    view.client.setQueryData(snapshotKey("workspace", "a"), snapshot("a", "Complete", ["1", "2", "3"]));
+    expect((await view.readSendHistory()).map(({ info }) => info.id)).toEqual(["1", "2", "3"]);
+    expect(view.latestReads).toHaveLength(2);
+    expect(view.reads.filter((read) => read.window === undefined)).toHaveLength(0);
+  });
+
   test("a send started from a mount effect survives StrictMode dropping and re-adding the reader mid-read", async () => {
     // Development builds run every mount effect twice (StrictMode simulates an
     // unmount). The hero's auto-send starts the uncapped read in the first pass;
@@ -654,13 +693,32 @@ describe("opening a thread", () => {
     expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }, undefined]);
     expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
     expect(view.host.querySelector('[data-thread-scroll] [data-thread-history-status]')).toBeNull();
-    expect(view.host.querySelector('[data-thread-history-status]')?.className).toContain("absolute");
+    expect(view.host.querySelector('[data-thread-history-status]')?.classList.contains("absolute")).toBe(false);
+    expect(view.host.querySelector('[data-thread-history-status]')?.classList.contains("shrink-0")).toBe(true);
     expect(view.host.textContent).toContain("Latest messages");
     await view.resolve(1, "Complete history");
     expect(view.host.textContent).toContain("Complete history");
     expect(view.host.querySelector('[role="status"]')).toBeNull();
     await act(async () => { jest.advanceTimersByTime(150); });
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
+  });
+
+  test("an empty preview and completed empty read leave no history status or loading node", async () => {
+    const view = fixture();
+    await view.render();
+    const loading = view.host.querySelector("[data-thread-loading]");
+    expect(loading).not.toBeNull();
+    await view.resolve(0, snapshot("a", "Empty conversation"));
+    expect(loading?.isConnected).toBe(false);
+    await paint();
+    await paint();
+    expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }, undefined]);
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    await view.resolve(1, snapshot("a", "Empty conversation"));
+    expect(view.client.getQueryState(snapshotKey("workspace", "a"))).toMatchObject({ status: "success", fetchStatus: "idle" });
+    await view.render();
+    expect(view.host.querySelectorAll("[data-message-id], [data-thread-loading], [data-thread-history-status]")).toHaveLength(0);
+    expect(view.reads).toHaveLength(2);
   });
 
   test("a short preview never announces earlier messages, and a reverted read does not stay announced", async () => {

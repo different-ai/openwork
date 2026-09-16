@@ -67,8 +67,9 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
   expect(catalog.body).toMatchObject({ data: expect.arrayContaining([
     expect.objectContaining({ id: world.modelId, providerID: world.providerId, variants: [{ id: "low" }, { id: "high" }, { id: "CustomExact" }, { id: "auto" }] }),
     expect.objectContaining({ id: "standard", providerID: world.providerId, variants: [] }),
+    expect.objectContaining({ id: world.fastModelId, providerID: world.fastProviderId, variants: [{ id: "high" }, { id: world.fastDefaultVariant }, { id: world.fastHighVariant }] }),
   ]) });
-  expect(JSON.stringify(catalog.body)).not.toMatch(/synthetic-effort-key|"settings":|"providerOptions":|"headers":/);
+  expect(JSON.stringify(catalog.body)).not.toMatch(/synthetic-(effort|fast)-key|"settings":|"providerOptions":|"headers":/);
   evidence.recordJsonArtifact("MODEL-01 native catalog", catalog);
   await step("Default leaves the closed trigger showing only the model", async () => {
     await user.looks([
@@ -201,5 +202,42 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     const explicit = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
     expect(explicit.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "auto" } } });
     evidence.recordJsonArtifact("MODEL-01 explicit auto variant after reload", explicit);
+  });
+  await step("Default plus Fast hides only Default and preserves speed after reload", async () => {
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Model\s+Reasoning witness/ });
+    await user.type({ placeholder: "Search models..." }, "Fast witness");
+    await user.click({ role: "option", label: /^Fast witness/ });
+    await user.click({ role: "button", label: "Default" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness$/ });
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Effort/ });
+    await user.click({ role: "button", label: /^Fast\s+Off$/ });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· Fast$/ });
+    await user.reload();
+    await user.see("Run task", { timeoutMs: 60_000 });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· Fast$/ });
+    await user.looks(["The closed composer model trigger shows Fast witness followed by a middle-dot separator and Fast with a dropdown chevron. It does not show Default or Default + Fast."]);
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Effort/ });
+    await user.see({ role: "button", label: /^Fast\s+On$/ });
+    await user.see({ role: "button", label: "Default" });
+    const pressed = await probe.dom('[data-slot="model-thinking-submenu"] button[aria-pressed="true"]');
+    expect(pressed.elements.map((button) => button.text.replace(/\s/g, ""))).toEqual(["FastOn", "Default"]);
+    await user.looks(["The open effort picker for Fast witness shows Fast On and Default selected, and retains a High effort choice."]);
+    await user.press("Escape");
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await probe.eventually(() => world.requests(), { within: 90_000, label: "Default plus Fast reaches provider", until: (requests) => requests.length === 7 });
+    expect((await world.requests())[6]).toMatchObject({ model: world.fastModelId, reasoningEffort: "medium" });
+    const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
+    expect(native.body).toMatchObject({ data: { model: { id: world.fastModelId, providerID: world.fastProviderId, variant: world.fastDefaultVariant } } });
+    evidence.recordJsonArtifact("MODEL-01 Default plus Fast native request", { native, requests: await world.requests() });
+    await user.see("Run task", { timeoutMs: 30_000 });
+    await user.click({ role: "button", label: "Change model" });
+    await user.click({ role: "button", label: /^Effort/ });
+    await user.click({ role: "button", label: "High" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· High \+ Fast$/ });
+    await user.looks(["The closed composer model trigger shows Fast witness followed by a middle-dot separator and High + Fast, with a dropdown chevron."]);
   });
 });

@@ -1,4 +1,5 @@
 import { expect, jest, test } from "bun:test";
+import { connectionDiagnosticHistory } from "../src/app/lib/connection-diagnostic-history";
 
 import {
   startSyncStreamLifecycle,
@@ -108,7 +109,18 @@ test("a stale-token stream restarts on generation change and resumes events", as
       "live",
     ]);
 
+    const history = connectionDiagnosticHistory.read();
+    const recovery = history.recent.findLast((event) => event.kind === "recovered" && event.reason === "engine_live");
+    expect(recovery).toMatchObject({ retryCount: 3, durationMs: 6_000 });
+    expect(history.recent.some((event) => event.reason === "engine_auth_blocked")).toBe(true);
+    expect(JSON.stringify(history)).not.toContain("generation-");
+    expect(JSON.stringify(history)).not.toContain("output-");
+    expect(JSON.stringify(history)).not.toContain("subscribe rejected");
     lifecycle.dispose();
+    const afterDispose = connectionDiagnosticHistory.read().retainedEntries;
+    await advanceTimersByTime(60_000);
+    expect(connectionDiagnosticHistory.read().retainedEntries).toBe(afterDispose);
+    expect(connectionDiagnosticHistory.read().trackedSources).toBe(0);
   } finally {
     jest.useRealTimers();
   }

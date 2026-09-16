@@ -54,6 +54,8 @@ test("plan classifies and up adopts without duplicating worlds", async ({ eviden
   const holdUrl = pathToFileURL(join(REPO_ROOT, "packages", "world", "src", "hold.ts")).href;
   const previousSnapshotDirectory = process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
   const previousStage = process.env.OPENWORK_WORLD_STAGE;
+  const previousPlace = process.env.OPENWORK_WORLD_PLACE;
+  const previousConfig = process.env.WORLD_TEST_CONFIG;
   const launchedPids = new Set<number>();
   let printedLines: string[] = [];
 
@@ -73,6 +75,7 @@ test("plan classifies and up adopts without duplicating worlds", async ({ eviden
   try {
     process.env.OPENWORK_WORLD_SNAPSHOT_DIR = scriptsDirectory;
     delete process.env.OPENWORK_WORLD_STAGE;
+    delete process.env.OPENWORK_WORLD_PLACE;
     await mkdir(worldsDirectory);
     await mkdir(scriptsDirectory, { recursive: true });
     const fixtureSource = `
@@ -123,6 +126,7 @@ if (import.meta.main) await main();
     launchedPids.add(first.pid);
     assert.equal(first.version, 2);
     assert.match(first.recipeHash ?? "", /^sha256:[0-9a-f]{64}$/);
+    assert.match(first.invocationHash ?? "", /^sha256:[0-9a-f]{64}$/);
     const firstProbe = await probe(first.outputs.url);
     assert.deepEqual(firstProbe, { status: 200, body: "ok" });
     evidence.recordAssertionEvidence(
@@ -134,12 +138,12 @@ if (import.meta.main) await main();
     const runningPlan = await run(["plan", fixturePath]);
     assert.equal(runningPlan.code, 0, runningPlan.lines.join("\n"));
     assert.deepEqual(runningPlan.lines, [
-      "• running (attachable)",
+      "• running (invocation unverified)",
       `receipt  ${snapshotPath}`,
       `url  ${first.outputs.url}`,
     ]);
     evidence.recordAssertionEvidence(
-      "Plan identifies an attachable matching runtime",
+      "Plan identifies a running recipe without claiming verified invocation identity",
       "With the hashed process alive, plan printed the exact running classification, receipt path, and URL output line.",
       true,
     );
@@ -163,7 +167,38 @@ if (import.meta.main) await main();
       true,
     );
 
-    await appendFile(fixturePath, "\n// recipe hash change\n", "utf8");
+    const originalReceipt = await readFile(snapshotPath, "utf8");
+    const originalLog = await readFile(logPath, "utf8");
+    for (const changed of [["--place", "daytona"], ["--", "--ref", "private-ref-value"], ["--env", "WORLD_TEST_CONFIG"]]) {
+      const rejected = await run(["up", fixturePath, "--detach", ...changed]);
+      assert.equal(rejected.code, 1);
+      assert.match(rejected.lines.join("\n"), /invocation changed; run pnpm world down/);
+      assert.equal(rejected.lines.join("\n").includes("private-ref-value"), false);
+      assert.equal(await readFile(snapshotPath, "utf8"), originalReceipt);
+      assert.equal(await readFile(logPath, "utf8"), originalLog);
+      assert.equal(isProcessAlive(first.pid), true);
+    }
+    const explicitLocal = await run(["up", fixturePath, "--detach", "--place", "local"]);
+    assert.equal(explicitLocal.code, 0);
+    process.env.WORLD_TEST_CONFIG = "unselected-private-config";
+    assert.equal((await run(["up", fixturePath, "--detach"])).code, 0);
+    process.env.OPENWORK_WORLD_PLACE = "daytona";
+    assert.equal((await run(["up", fixturePath, "--detach"])).code, 1);
+    assert.equal((await run(["up", fixturePath, "--detach", "--place", "local"])).code, 0);
+    delete process.env.OPENWORK_WORLD_PLACE;
+    const { invocationHash, ...legacy } = first;
+    assert.ok(invocationHash);
+    await writeFile(snapshotPath, JSON.stringify(legacy));
+    assert.equal((await run(["up", fixturePath, "--detach"])).code, 0);
+    for (const args of [["--env", "WORLD_TEST_CONFIG"], ["--place", "daytona"], ["--", "--ref", "private-ref-value"]]) {
+      const rejected = await run(["up", fixturePath, "--detach", ...args]);
+      assert.equal(rejected.code, 1);
+      assert.match(rejected.lines.join("\n"), /invocation identity is missing/);
+      assert.equal(isProcessAlive(first.pid), true);
+    }
+    await writeFile(snapshotPath, originalReceipt);
+
+    await appendFile(fixturePath, "\nvoid 0;\n", "utf8");
     const stalePlan = await run(["plan", fixturePath]);
     assert.equal(stalePlan.code, 0, stalePlan.lines.join("\n"));
     assert.deepEqual(stalePlan.lines, [
@@ -214,7 +249,9 @@ if (import.meta.main) await main();
     assert.equal(await exists(snapshotPath), true);
 
     await writeFile(fixturePath, fixtureSource, "utf8");
-    const recreatedUp = await run(["up", fixturePath, "--detach", "--timeout", "10000"]);
+    process.env.WORLD_TEST_CONFIG = "private-config-one";
+    const selectedUp = ["up", fixturePath, "--detach", "--timeout", "10000", "--env", "WORLD_TEST_CONFIG", "--", "--ref", "private-ref-value"];
+    const recreatedUp = await run(selectedUp);
     assert.equal(recreatedUp.code, 0, recreatedUp.lines.join("\n"));
     assert.equal(recreatedUp.lines[0], `Removed stale world receipt "${fixtureName}" (pid ${deadPid}); recreating.`);
     const recreated = await readScriptWorldSnapshot(snapshotPath);
@@ -224,6 +261,23 @@ if (import.meta.main) await main();
     assert.notEqual(recreated.pid, deadPid);
     assert.equal(isProcessAlive(recreated.pid), true);
     assert.deepEqual(await probe(recreated.outputs.url), { status: 200, body: "ok" });
+    const configuredReceipt = await readFile(snapshotPath, "utf8");
+    const configuredLog = await readFile(logPath, "utf8");
+    assert.equal((await run(selectedUp)).code, 0);
+    assert.equal((await run([...selectedUp.slice(0, -1), "changed-private-ref"])).code, 1);
+    assert.equal((await run(["up", fixturePath, "--detach", "--env", "WORLD_TEST_CONFIG", "--env", "WORLD_TEST_CONFIG", "--", "--ref", "private-ref-value"])).code, 0);
+    process.env.WORLD_TEST_CONFIG = "private-config-two";
+    const changedConfig = await run(selectedUp);
+    assert.equal(changedConfig.code, 1);
+    assert.match(changedConfig.lines.join("\n"), /invocation changed/);
+    delete process.env.WORLD_TEST_CONFIG;
+    assert.equal((await run(selectedUp)).code, 1);
+    assert.equal((await run(["up", fixturePath, "--detach", "--", "--ref", "private-ref-value"])).code, 1);
+    assert.equal(await readFile(snapshotPath, "utf8"), configuredReceipt);
+    assert.equal(await readFile(logPath, "utf8"), configuredLog);
+    assert.equal(isProcessAlive(recreated.pid), true);
+    const visible = JSON.stringify([configuredReceipt, configuredLog, recreatedUp.lines, changedConfig.lines, (await run(["outputs", fixtureName, "--json"])).lines]);
+    for (const secret of ["private-config-one", "private-config-two", "private-ref-value"]) assert.equal(visible.includes(secret), false);
     evidence.recordAssertionEvidence(
       "Orphan planning is read-only and up recreates stale state",
       "After teardown, plan classified a hand-written dead-pid receipt as orphaned without removing it; restored-source up printed stale removal and launched a distinct live pid.",
@@ -264,6 +318,10 @@ if (import.meta.main) await main();
     else process.env.OPENWORK_WORLD_SNAPSHOT_DIR = previousSnapshotDirectory;
     if (previousStage === undefined) delete process.env.OPENWORK_WORLD_STAGE;
     else process.env.OPENWORK_WORLD_STAGE = previousStage;
+    if (previousPlace === undefined) delete process.env.OPENWORK_WORLD_PLACE;
+    else process.env.OPENWORK_WORLD_PLACE = previousPlace;
+    if (previousConfig === undefined) delete process.env.WORLD_TEST_CONFIG;
+    else process.env.WORLD_TEST_CONFIG = previousConfig;
     await rm(root, { recursive: true, force: true });
   }
 }, 60_000);

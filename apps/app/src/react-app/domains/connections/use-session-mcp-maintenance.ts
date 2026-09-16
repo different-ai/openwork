@@ -277,12 +277,14 @@ export async function syncCloudControlMcpInBackground(input: {
   }
   const configuredUrl = typeof configured?.config.url === "string" ? configured.config.url : null;
 
+  const refreshCatalog = input.client.refreshOpenworkCloudMcpCatalog;
   const result = await runOpenworkCloudMcpReconciler({
     mode: "repair",
     client: {
       baseUrl: input.client.baseUrl,
       getOpenworkCloudMcpHealth: (...args) => guarded(() => input.client.getOpenworkCloudMcpHealth(...args)),
       reconcileOpenworkCloudMcp: (...args) => guarded(() => input.client.reconcileOpenworkCloudMcp(...args)),
+      ...(refreshCatalog ? { refreshOpenworkCloudMcpCatalog: (...args: Parameters<typeof refreshCatalog>) => guarded(() => refreshCatalog(...args)) } : {}),
     },
     context: {
       ...scope,

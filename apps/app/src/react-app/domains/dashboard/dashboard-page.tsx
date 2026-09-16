@@ -25,6 +25,8 @@ import {
 } from "./granted-dashboard-store";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
 import { DashboardApps, type CreateDashboardApp } from "./dashboard-apps";
+import { useSavedApps } from "../apps/use-apps";
+import { DashboardMasonry } from "./dashboard-masonry";
 
 /**
  * Personal apps alongside the dashboards shared by the organization.
@@ -36,6 +38,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
   const denAuth = useDenAuth();
+  const personal = useSavedApps();
   // The active org lives in den settings, which change outside React; track
   // them through the settings-changed event so an org switch swaps the board
   // scope and the granted-dashboard fetch together.
@@ -51,8 +54,8 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
     [activeOrgId, denAuth.user?.id],
   );
   const cacheScopeKey = useMemo(
-    () => dashboardTileCacheScopeKey(denAuth.user?.id ?? null, activeOrgId),
-    [activeOrgId, denAuth.user?.id],
+    () => `${dashboardTileCacheScopeKey(denAuth.user?.id ?? null, activeOrgId)}.deployment.${encodeURIComponent(JSON.stringify([denSettings.baseUrl, denSettings.apiBaseUrl]))}`,
+    [activeOrgId, denAuth.user?.id, denSettings.baseUrl, denSettings.apiBaseUrl],
   );
 
   const token = denSettings.authToken?.trim() || null;
@@ -66,7 +69,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   );
   const grantedReady = denAuth.isSignedIn && Boolean(denClient && activeOrgId);
   const grantedQuery = useQuery({
-    queryKey: ["den", "granted-dashboards", denAuth.user?.id ?? null, activeOrgId],
+    queryKey: ["den", "granted-dashboards", denAuth.user?.id ?? null, activeOrgId, denSettings.baseUrl, denSettings.apiBaseUrl],
     queryFn: () => {
       if (!denClient || !activeOrgId) return Promise.resolve([]);
       return denClient.listGrantedDashboards(activeOrgId);
@@ -77,9 +80,10 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
 
   // Hold the board (and every launch) until its user/org scope and managed
   // dashboard payload are final.
-  if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending)) {
+  if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending && !grantedQuery.isFetched)
+    || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-6 py-6" data-dashboard-page>
+      <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4" data-dashboard-page>
         <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
@@ -89,7 +93,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   }
   return (
     <DashboardBoard
-      key={consentScopeKey}
+      key={cacheScopeKey}
       consentScopeKey={consentScopeKey}
       cacheScopeKey={cacheScopeKey}
       grantedDashboards={grantedReady ? grantedQuery.data ?? [] : []}
@@ -123,12 +127,12 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
 
   return (
     <div
-      className="mx-auto w-full max-w-6xl px-6 py-6"
+      className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
       data-dashboard-consent-scope={consentScopeKey}
     >
-      <DashboardApps key={consentScopeKey} onCreateApp={onCreateApp} />
+      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} />
       {grantedError ? (
         <p className="mb-4 text-xs text-muted-foreground" role="status">
           Your organization&apos;s dashboards could not be loaded right now.
@@ -143,7 +147,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
           {dashboard.elements.length === 0 ? (
             <p className="text-xs text-muted-foreground">This dashboard has no apps yet.</p>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
+            <DashboardMasonry>
               {dashboard.elements.map((element) => {
                 const id = grantedEntryId(dashboard.id, element);
                 return (
@@ -158,7 +162,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
                   />
                 );
               })}
-            </div>
+            </DashboardMasonry>
           )}
         </section>
       ))}

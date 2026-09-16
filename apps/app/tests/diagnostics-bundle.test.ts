@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { connectionDiagnosticHistory } from "../src/app/lib/connection-diagnostic-history";
 
 import {
   composeDiagnosticsBundleJson,
@@ -30,6 +31,21 @@ function baseInputs(): DiagnosticsBundleInputs {
 }
 
 describe("diagnostics bundle", () => {
+  test("exports always-on bounded history even when developer and performance logs are empty", () => {
+    const source = connectionDiagnosticHistory.createSource();
+    source.record("den_request_http_failure", "failure", { httpStatus: 503 });
+    const parsed = JSON.parse(composeDiagnosticsBundleJson(baseInputs()));
+    expect(parsed.runtime.developerMode).toBe(false);
+    expect(parsed.developerLogs.recent).toEqual([]);
+    expect(parsed.performance.recent).toEqual([]);
+    expect(parsed.connectionHistory.maxEvents).toBe(500);
+    expect(parsed.connectionHistory.maxAgeMs).toBe(3_600_000);
+    expect(parsed.connectionHistory.recent.at(-1)).toMatchObject({
+      reason: "den_request_http_failure", kind: "failure", httpStatus: 503,
+    });
+    source.dispose();
+  });
+
   test("redacts known token values while preserving token presence", () => {
     const settingsSecret = "settings-secret-token-1234";
     const settingsHostSecret = "settings-host-secret-1234";

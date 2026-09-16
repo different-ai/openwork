@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { access, chmod, mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -69,6 +70,7 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
     || (value.outputMeta !== undefined && (value.version !== 2 || outputMeta === false))
     || (value.version === 2 && "stage" in value && value.stage !== undefined && typeof value.stage !== "string")
     || (value.version === 2 && "recipeHash" in value && value.recipeHash !== undefined && typeof value.recipeHash !== "string")
+    || (value.invocationHash !== undefined && (value.version !== 2 || typeof value.invocationHash !== "string"))
     || (value.version === 2 && "place" in value && value.place !== undefined && typeof value.place !== "string")
   ) {
     throw new Error("The file is not a valid script world snapshot.");
@@ -84,6 +86,7 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
     ...(outputMeta === undefined || outputMeta === false ? {} : { outputMeta }),
     ...(value.version === 2 && typeof value.stage === "string" ? { stage: value.stage } : {}),
     ...(value.version === 2 && typeof value.recipeHash === "string" ? { recipeHash: value.recipeHash } : {}),
+    ...(value.version === 2 && typeof value.invocationHash === "string" ? { invocationHash: value.invocationHash } : {}),
     ...(value.version === 2 && typeof value.place === "string" ? { place: value.place } : {}),
   };
 }
@@ -92,6 +95,38 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
 export async function computeRecipeHash(filePath: string): Promise<string> {
   const bytes = await readFile(filePath);
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+export function computeInvocationHash(
+  recipeHash: string,
+  args: readonly string[],
+  place: string,
+  env: NodeJS.ProcessEnv,
+  sourceHash?: string,
+): string {
+  const configuration = Object.keys(env).sort().map((key) => [key, env[key] ?? null]);
+  return `sha256:${createHash("sha256").update(JSON.stringify([recipeHash, args, place, configuration, sourceHash ?? null])).digest("hex")}`;
+}
+
+export async function computeLocalSourceHash(cwd: string): Promise<string | undefined> {
+  const exec = promisify(execFile);
+  const git = async (args: string[]) => (await exec("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })).stdout;
+  try { await git(["rev-parse", "--show-toplevel"]); }
+  catch (error) {
+    if (error instanceof Error && "stderr" in error && typeof error.stderr === "string" && error.stderr.includes("not a git repository")) return undefined;
+    throw error;
+  }
+  const hash = createHash("sha256");
+  for (const args of [["rev-parse", "HEAD"], ["status", "--porcelain=v1", "-z", "--untracked-files=all"], ["diff", "HEAD", "--binary", "--no-ext-diff"]]) {
+    hash.update(JSON.stringify(await git(args)));
+  }
+  const root = (await git(["rev-parse", "--show-toplevel"])).trim();
+  const names = (await git(["ls-files", "--others", "--exclude-standard", "--full-name", "-z"])).split("\0").filter(Boolean).sort();
+  for (const name of names) {
+    hash.update(JSON.stringify(name));
+    hash.update(createHash("sha256").update(await readFile(join(root, name))).digest());
+  }
+  return `sha256:${hash.digest("hex")}`;
 }
 
 export function isProcessAlive(pid: number): boolean {
@@ -224,6 +259,8 @@ export interface LaunchScriptWorldOptions {
   timeoutMs?: number;
   stage?: string;
   recipeHash?: string;
+  invocationHash?: string;
+  env?: NodeJS.ProcessEnv;
   place?: string;
   print: (line: string) => void;
   foregroundLog?: boolean;
@@ -238,6 +275,8 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   const logPath = scriptWorldLogPath(options.snapshotDirectory, stagedName);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...options.env,
+    OPENWORK_WORLD_SELECTED_ENV_KEYS: JSON.stringify(Object.keys(options.env ?? {}).sort()),
     OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory,
     [LEDGER_ENV]: ledgerPath(options.snapshotDirectory, stagedName),
     [EVENTS_ENV]: eventPath,
@@ -246,6 +285,8 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   else env.OPENWORK_WORLD_STAGE = options.stage;
   if (options.recipeHash === undefined) delete env.OPENWORK_WORLD_RECIPE_HASH;
   else env.OPENWORK_WORLD_RECIPE_HASH = options.recipeHash;
+  if (options.invocationHash === undefined) delete env.OPENWORK_WORLD_INVOCATION_HASH;
+  else env.OPENWORK_WORLD_INVOCATION_HASH = options.invocationHash;
   if (options.place === undefined) delete env.OPENWORK_WORLD_PLACE;
   else env.OPENWORK_WORLD_PLACE = options.place;
   await assertNoRunningSnapshot(snapshotPath, stagedName);

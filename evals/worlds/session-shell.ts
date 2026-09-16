@@ -31,7 +31,7 @@ export interface StormPlan extends ShellSession, ShellWorkspace {
   finalReply: string;
 }
 
-type InstantMetricKind = "new-task" | "user-row";
+type InstantMetricKind = "new-task" | "hero-preparing" | "user-row";
 type InstantBoundaryKind = "creation" | "prompt";
 type InstantBoundaryStage = "request" | "response";
 
@@ -79,6 +79,9 @@ async function observeInstantRenderer(
     };
     let startedAt = 0;
     let frame = 0;
+    let submittedHero: HTMLElement | null = null;
+    let submittedEditor: HTMLElement | null = null;
+    let submittedEditorRect: DOMRect | null = null;
 
     const visibleInViewport = (node: HTMLElement) => {
       const rect = node.getBoundingClientRect();
@@ -129,6 +132,22 @@ async function observeInstantRenderer(
         const hit = document.elementFromPoint(x, y);
         return hit instanceof Node && node.contains(hit);
       }
+      if (kind === "hero-preparing") {
+        const composer = editor();
+        const heading = [...surface.root.querySelectorAll<HTMLElement>("h2")]
+          .find((node) => node.textContent?.trim() === "What do you need done?" && visibleInViewport(node));
+        const hero = heading?.parentElement?.parentElement;
+        if (surface.kind !== "new-task" || !surface.headingVisible || !hero || hero !== submittedHero
+          || !composer || composer !== submittedEditor || !submittedEditorRect
+          || !hero.contains(composer) || !visibleInViewport(composer)
+          || surface.root.querySelector('[data-message-role="user"]')) return false;
+        const rect = composer.getBoundingClientRect();
+        if (rect.x !== submittedEditorRect.x || rect.y !== submittedEditorRect.y
+          || rect.width !== submittedEditorRect.width || rect.height !== submittedEditorRect.height) return false;
+        return !surface.root.querySelector('[data-loading-message="starting"], [data-loading-message="working"]')
+          && [...hero.querySelectorAll<HTMLElement>('button[aria-label="Creating conversation..."][aria-busy="true"]')]
+            .some((node) => visibleInViewport(node) && Boolean(node.querySelector('.animate-spin')));
+      }
       if (requireStarting) {
         const starting = [...surface.root.querySelectorAll<HTMLElement>('[data-loading-message="starting"]')].filter(visibleInViewport);
         if (starting.length !== 1 || starting[0]?.getAttribute("role") !== "status" || starting[0]?.innerText.trim() !== "Starting…"
@@ -156,6 +175,18 @@ async function observeInstantRenderer(
         if (!(event instanceof KeyboardEvent) || event.key !== "Enter") return;
         const node = editor();
         if (!node || !(event.target instanceof Node) || !(event.target === node || node.contains(event.target))) return;
+        if (kind === "hero-preparing") {
+          if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || event.isComposing || event.repeat) return;
+          const surface = surfaceRoot();
+          const heading = [...(surface?.root.querySelectorAll<HTMLElement>("h2") ?? [])]
+            .find((candidate) => candidate.textContent?.trim() === "What do you need done?" && visibleInViewport(candidate));
+          const hero = heading?.parentElement?.parentElement;
+          if (surface?.kind !== "new-task" || !hero || !hero.contains(node) || !visibleInViewport(node)
+            || !node.innerText.includes(marker) || !node.innerText.trim()) return;
+          submittedHero = hero;
+          submittedEditor = node;
+          submittedEditorRect = node.getBoundingClientRect();
+        }
       }
       state.started = true;
       state.trusted = true;
@@ -179,7 +210,7 @@ async function observeInstantRenderer(
   return {
     async read(): Promise<InstantRendererState> {
       const value = await seed.evalIn(app, () => window.__instantSendMetric?.state ?? null);
-      if (!isRecord(value) || (value.kind !== "new-task" && value.kind !== "user-row")
+      if (!isRecord(value) || (value.kind !== "new-task" && value.kind !== "hero-preparing" && value.kind !== "user-row")
         || typeof value.started !== "boolean" || typeof value.trusted !== "boolean"
         || !(value.elapsedMs === null || typeof value.elapsedMs === "number")
         || typeof value.frames !== "number" || typeof value.mutations !== "number"

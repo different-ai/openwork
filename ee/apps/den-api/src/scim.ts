@@ -1,4 +1,3 @@
-import { Buffer } from "node:buffer"
 import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { withOrganizationTeamMutation } from "./organization-team-roles.js"
@@ -10,7 +9,7 @@ import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 import { removeOrganizationMember } from "./orgs.js"
-import { verifyStoredScimToken } from "./scim-token-storage.js"
+import { resolveStoredScimProvider } from "./scim-token-storage.js"
 import { reconcileScimGroupsForUser } from "./scim-groups.js"
 import { deleteGlobalAuthUser } from "./user-deletion.js"
 import { shouldDeleteGlobalUser } from "./scim-deprovisioning.js"
@@ -34,12 +33,6 @@ type ScimUserResource = {
   name?: unknown
   emails?: unknown
   active?: unknown
-}
-
-function decodeBase64Url(value: string) {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/")
-  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4))
-  return Buffer.from(`${normalized}${padding}`, "base64").toString("utf8")
 }
 
 export function buildOrganizationScimProviderId(organizationId: OrganizationId) {
@@ -69,31 +62,14 @@ function nextScimRetryAt(attempts: number, now = new Date()) {
 }
 
 export async function resolveScimProviderFromBearerToken(bearerToken: string) {
-  let decoded: string
-  try {
-    decoded = decodeBase64Url(bearerToken)
-  } catch {
-    return null
-  }
-
-  const [rawToken, providerId, ...organizationParts] = decoded.split(":")
-  const organizationId = organizationParts.join(":")
-  if (!rawToken || !providerId || !organizationId) {
-    return null
-  }
-
-  const providerRows = await db
-    .select()
-    .from(ScimProviderTable)
-    .where(and(eq(ScimProviderTable.providerId, providerId), eq(ScimProviderTable.organizationId, organizationId as OrganizationId)))
-    .limit(1)
-
-  const provider = providerRows[0] ?? null
-  if (!provider || !verifyStoredScimToken({ storedToken: provider.scimToken, rawToken })) {
-    return null
-  }
-
-  return provider
+  return resolveStoredScimProvider(bearerToken, async (providerId, organizationId) => {
+    const providerRows = await db
+      .select()
+      .from(ScimProviderTable)
+      .where(and(eq(ScimProviderTable.providerId, providerId), eq(ScimProviderTable.organizationId, organizationId as OrganizationId)))
+      .limit(1)
+    return providerRows[0] ?? null
+  })
 }
 
 export async function clearRemovedMemberMemoryForScimReactivation(input: {

@@ -4,6 +4,7 @@ import type * as SentryModule from "@sentry/nextjs";
 
 import { getDenWebObservabilityConfig } from "./server-config";
 import { setStructuredLogSink } from "./runtime-logger";
+import { scimProxyFailureDiagnostic, scimProxyFailureEvent, scrubScimProxyFailureEvent } from "./scim-proxy-failure";
 import {
   scrubSentryBreadcrumb,
   scrubSentryEvent,
@@ -75,7 +76,17 @@ export function initSentryRuntime(sentry: SentrySdk, env: ObservabilityEnv = pro
     attachStacktrace: false,
     includeLocalVariables: false,
     enableMetrics: false,
-    beforeSend: scrubSentryEvent,
+    beforeSend: (event, hint) => {
+      if (event.tags?.diagnostic !== scimProxyFailureDiagnostic) return scrubSentryEvent(event);
+      const sanitized = scrubScimProxyFailureEvent(event, hint);
+      return sanitized === null ? null : {
+        ...sanitized,
+        // Only deployment configuration, never inherited event/scope metadata.
+        environment: config.sentryBuild.values.SENTRY_ENVIRONMENT,
+        release: config.sentryBuild.values.SENTRY_RELEASE,
+        dist: config.sentryBuild.values.SENTRY_DIST,
+      };
+    },
     beforeSendTransaction: scrubSentryEvent,
     beforeBreadcrumb: scrubSentryBreadcrumb,
     beforeSendSpan: scrubSentrySpan,
@@ -96,5 +107,9 @@ export function initSentryRuntime(sentry: SentrySdk, env: ObservabilityEnv = pro
   sentry.setAttributes?.({ service: config.serviceName });
   setStructuredLogSink({
     log: (level, message, fields) => logToSentry(sentry, level, message, fields),
+    // captureEvent is independent of tracesSampleRate; never pass the thrown error.
+    captureScimProxyFailure: (fields) => {
+      sentry.captureEvent(scimProxyFailureEvent(fields));
+    },
   });
 }

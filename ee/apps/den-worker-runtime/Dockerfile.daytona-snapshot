@@ -21,6 +21,8 @@ COPY . .
 RUN pnpm install --frozen-lockfile --filter openwork-server... --filter @openwork/app...
 
 ARG TARGETARCH
+# .git is excluded from the Docker context; pass the UI source revision in.
+ARG OPENWORK_GIT_SHA
 
 RUN set -eux; \
   arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \

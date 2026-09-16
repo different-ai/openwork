@@ -173,6 +173,13 @@
         ]
       },
       {
+        "tab": "AI Gateway",
+        "pages": [
+          "ai-gateway/counting-usage",
+          "ai-gateway/token-costs"
+        ]
+      },
+      {
         "tab": "API",
         "openapi": "/openapi.json"
       },

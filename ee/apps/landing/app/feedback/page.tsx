@@ -40,7 +40,7 @@ export default async function FeedbackPage({ searchParams }: PageProps) {
   const prefill: AppFeedbackPrefill = {
     source: readSearchParam(resolvedSearchParams, "source") || "openwork-app",
     entrypoint: readSearchParam(resolvedSearchParams, "entrypoint") || "unknown",
-    deployment: readSearchParam(resolvedSearchParams, "deployment") || "desktop",
+    deployment: readSearchParam(resolvedSearchParams, "deployment"),
     appVersion: readSearchParam(resolvedSearchParams, "appVersion"),
     openworkServerVersion: readSearchParam(resolvedSearchParams, "openworkServerVersion"),
     opencodeVersion: readSearchParam(resolvedSearchParams, "opencodeVersion"),

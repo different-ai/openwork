@@ -61,7 +61,7 @@ for (const engine of ["v1", "v2"]) {
     await mkdir(directory);
     const configPath = join(root, "base.json");
     const rawModelConfig = {
-      name: "Synthetic mode witness", reasoning: true, limit: { context: 128_000, output: 8_192 },
+      name: "Synthetic mode witness", reasoning: true, release_date: "2026-09-04", limit: { context: 128_000, output: 8_192 },
       reasoning_options: [{ type: "effort", values: advertisedEfforts }],
       // Exercise Default + Fast's merge with an existing model option without
       // pinning a reasoning effort or changing the actual wire model ID.
@@ -77,6 +77,7 @@ for (const engine of ["v1", "v2"]) {
       hasApiKey: true, apiKey: "synthetic-only", apiKeys: null, createdAt: null, updatedAt: null,
       models: [
         { id: "gpt-6-astra", name: "Synthetic mode witness", config: rawModelConfig, createdAt: null },
+        { id: "gwm_synthetic", name: "Opaque gateway alias", config: rawModelConfig, createdAt: null },
         { id: "gpt-5.4", name: "GPT-5.4 control", createdAt: null,
           config: { ...rawModelConfig, reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh"] }] } },
       ],
@@ -124,15 +125,20 @@ for (const engine of ["v1", "v2"]) {
       );
       expect(catalog).not.toContain(CATALOG_FAST_VARIANT);
       expect(catalog).toContain(fastVariantId("high"));
-      if (engine === "v2") {
-        const payload: unknown = JSON.parse(catalog);
+      const payload: unknown = JSON.parse(catalog);
+      for (const modelId of Object.keys(models)) {
         const entries = isRecord(payload) && Array.isArray(payload.data) ? payload.data : [];
-        const model = entries.find((entry) => isRecord(entry) && entry.id === "gpt-6-astra");
+        const providers = isRecord(payload) && Array.isArray(payload.all) ? payload.all : [];
+        const provider = providers.find((entry) => isRecord(entry) && entry.id === "witness");
+        const model = engine === "v2"
+          ? entries.find((entry) => isRecord(entry) && entry.id === modelId)
+          : isRecord(provider) && isRecord(provider.models) ? provider.models[modelId] : undefined;
         const variants = isRecord(model) && Array.isArray(model.variants)
-          ? model.variants.flatMap((entry) => isRecord(entry) && typeof entry.id === "string" ? [entry.id] : []) : [];
-        evidence.recordAssertionEvidence("Realistic Astra native catalog variant IDs", JSON.stringify(variants), true);
-        expect(variants).toHaveLength(advertisedEfforts.length * 2 + 1);
-        expect(variants).toEqual(expect.arrayContaining([...advertisedEfforts, fastVariantId(null), ...advertisedEfforts.map(fastVariantId)]));
+          ? model.variants.flatMap((entry) => isRecord(entry) && typeof entry.id === "string" ? [entry.id] : [])
+          : isRecord(model) && isRecord(model.variants) ? Object.keys(model.variants) : [];
+        const efforts = modelId === "gpt-5.4" ? advertisedEfforts.filter((effort) => effort !== "max") : advertisedEfforts;
+        expect(variants.sort()).toEqual([...efforts, fastVariantId(null), ...efforts.map(fastVariantId)].sort());
+        evidence.recordAssertionEvidence(`${engine} ${modelId} exposes only advertised efforts and Fast combinations`, JSON.stringify(variants), true);
       }
       const dispatches: { model: string; variant: string | null; effort: unknown; tier: unknown; verbosity: unknown }[] = [];
       for (const model of Object.keys(models)) {
@@ -144,7 +150,7 @@ for (const engine of ["v1", "v2"]) {
         const sessionID = data.id;
         const selections: Array<string | null> = [
           "high", fastVariantId("high"), fastVariantId("low"), "low",
-          ...(model === "gpt-6-astra" ? ["medium", "xhigh", "max"] : ["medium", "xhigh"]).flatMap((effort) => [effort, fastVariantId(effort)]),
+          ...(model === "gpt-5.4" ? ["medium", "xhigh"] : ["medium", "xhigh", "max"]).flatMap((effort) => [effort, fastVariantId(effort)]),
           null, fastVariantId(null), null,
         ];
         for (const variant of selections) {

@@ -173,6 +173,7 @@ test("opening a long conversation shows the latest and full history while ancill
       return (await probe.dom(`${surface} [data-thread-history-complete="true"]`)).elements.length;
     }, { within: 30_000, label: "background history mounting preserves the latest viewport", until: (count) => count === 1 });
     expect((await probe.dom(`${surface} [data-thread-loading]`)).elements).toHaveLength(0);
+    expect((await probe.dom(`${surface} [data-thread-history-status]`)).elements).toHaveLength(0);
     expect((await probe.dom(`${surface} [data-message-id]`)).elements).toHaveLength(longHistoryCount);
     const fault = await probe.eventually(readFault, {
       within: 15_000, label: "full history frame recorded without replacing the original held reads",
@@ -200,6 +201,7 @@ test("opening a long conversation shows the latest and full history while ancill
   await step("the first message is reachable at the top of the transcript", async () => {
     await agent.run("session.scroll_top");
     await user.see({ text: longHistoryFirst }, { timeoutMs: 30_000 });
+    expect((await probe.dom(`${surface} [data-thread-history-status]`)).elements).toHaveLength(0);
     await user.looks([
       `The conversation transcript visibly starts with a user message reading "${longHistoryFirst}"`,
       "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
@@ -347,6 +349,7 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount);
     expect((await probe.dom(`${surface} [data-thread-history-complete="true"]`)).elements).toHaveLength(1);
     expect((await probe.dom(`${surface} [data-thread-loading]`)).elements).toHaveLength(0);
+    expect((await probe.dom(`${surface} [data-thread-history-status]`)).elements).toHaveLength(0);
     const stored = await probe.desktopApi(messagesPath);
     expect(stored.status).toBe(200);
     expect(messageTexts(stored.body)).toEqual(persisted);

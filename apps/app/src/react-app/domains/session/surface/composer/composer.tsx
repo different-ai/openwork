@@ -37,6 +37,8 @@ import {
   mergeComposerConnectionInventory,
 } from "./composer-connections";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
+import { connectionDiagnosticHistory, type ConnectionDiagnosticSource, type SendDiagnosticReason } from "@/app/lib/connection-diagnostic-history";
+import { composerDiagnosticBlockers } from "./composer-diagnostics";
 
 type MentionItem = {
   id: string;
@@ -63,6 +65,8 @@ type ComposerProps = {
   submissionPreparingLabel?: string;
   queuedCount: number;
   disabled: boolean;
+  disabledReasons?: readonly SendDiagnosticReason[];
+  preparingReasons?: readonly SendDiagnosticReason[];
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
   organizationModelsEmpty?: boolean;
@@ -531,7 +535,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (!mentionOpen) return;
     let cancelled = false;
     setMentionItems(COMPUTER_MENTIONS);
-    void Promise.all([props.listAgents(), props.searchFiles(mentionQuery), listRunningAppsForMention()]).then(([agentList, files, apps]) => {
+    void Promise.all([
+      props.listAgents().catch(() => []),
+      props.searchFiles(mentionQuery).catch(() => []),
+      listRunningAppsForMention(),
+    ]).then(([agentList, files, apps]) => {
       if (cancelled) return;
       const recent = props.recentFiles.slice(0, 8);
       const next: MentionItem[] = [
@@ -778,6 +786,26 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     ? importedPlugins.find((plugin) => `plugin:${plugin.pluginId}` === toolMenuSection) ?? null
     : null;
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
+  const diagnosticsRef = useRef<ConnectionDiagnosticSource | null>(null);
+  useEffect(() => {
+    const diagnostics = connectionDiagnosticHistory.createSource();
+    diagnosticsRef.current = diagnostics;
+    return () => {
+      diagnostics.dispose();
+      diagnosticsRef.current = null;
+    };
+  }, [props.sessionId, props.draftScopeKey]);
+  useEffect(() => {
+    diagnosticsRef.current?.blockers(composerDiagnosticBlockers({
+      disabled: props.disabled,
+      disabledReasons: props.disabledReasons,
+      busy: props.busy,
+      stopping: props.stopping,
+      canSend,
+      submissionPreparing: props.submissionPreparing,
+      preparingReasons: props.preparingReasons,
+    }));
+  });
 
   const renderConnectionRows = () => {
     const servers = connectionInventory.servers;
@@ -1698,13 +1726,13 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 <div data-composer-settings className="col-span-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1 border-b border-dls-border pb-2 @min-[560px]/composer:flex-1 @min-[560px]/composer:border-0 @min-[560px]/composer:pb-0">
                 {/* Agent picker (#2101/#1971). Only shown once a non-default
                     agent is selected. Switching back to Default agent lives in
-                    this menu and in the + tools menu. */}
+                    this menu and in the + tools menu. Selection configures
+                    subsequent submissions without interrupting the running turn. */}
                 <div ref={agentMenuRef} className={showAgentPicker ? "relative min-w-0 max-w-full shrink-0" : "hidden"}>
                   <button
                     type="button"
                     className="flex h-9 max-h-9 max-w-full items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
                     onClick={() => setAgentMenuOpen((value) => !value)}
-                    disabled={props.busy}
                     aria-expanded={agentMenuOpen}
                     title={t("composer.agent_label")}
                   >

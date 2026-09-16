@@ -51,7 +51,7 @@ import { automationCreationPlacement } from "./automation-availability"
 import { AutomationEditor } from "./automation-editor"
 import { dispatchAutomationsStateChanged } from "./automation-events"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
-import { formatAutomationSchedule, formatAutomationTime } from "./automation-format"
+import { automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { automationModelOptions, describeAutomationModel } from "./automation-model-options"
 
@@ -75,19 +75,6 @@ function runVariant(status: AutomationRun["status"]): "default" | "secondary" | 
   if (status === "failed") return "destructive"
   if (ACTIVE_RUN_STATUSES.has(status)) return "secondary"
   return "outline"
-}
-
-function runLabel(run: AutomationRun) {
-  if (run.status === "skipped" && run.error?.code === "runner_unavailable") {
-    // Den names the cause it observed — no desktop, a busy desktop, or one
-    // that stayed silent. Older receipts predate that and carry the single
-    // generic wording, so fall back rather than restate it for every cause.
-    return run.error.message.trim() || "Missed — desktop runner unavailable"
-  }
-  if (run.status === "skipped" && (run.error?.code === "model_access_lost" || run.error?.code === "provider_unavailable")) {
-    return "Skipped — model unavailable"
-  }
-  return run.status === "succeeded" ? "Completed" : run.status.replaceAll("_", " ")
 }
 
 function ExecutionIcon({ run }: { run: AutomationRun }) {
@@ -408,6 +395,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
       || task.needsAttentionReason?.code === "provider_unavailable"
     const runs = runsQuery.data?.items ?? []
     const selectedReceipt = receiptQuery.data?.run.id === selectedRunId ? receiptQuery.data : undefined
+    const runNotice = selectedReceipt ? automationRunNotice(selectedReceipt.run) : null
     const receiptIsLoading = receiptQuery.isLoading || (receiptQuery.isFetching && !selectedReceipt)
     const threadMatches = !selectedThreadId || selectedReceipt?.run.executionThread?.id === selectedThreadId
     const localSessionRoute = selectedReceipt?.run.executionThread
@@ -594,7 +582,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
                   >
                     <span className="min-w-0">
                       <span className="flex flex-wrap items-center gap-2">
-                        <Badge variant={runVariant(run.status)}>{runLabel(run)}</Badge>
+                        <Badge variant={runVariant(run.status)}>{runStatusLabel(run)}</Badge>
                         <span className="text-xs text-muted-foreground">{run.trigger}</span>
                         {run.executionThread ? (
                           <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -650,7 +638,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
               ) : (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={runVariant(selectedReceipt.run.status)}>{runLabel(selectedReceipt.run)}</Badge>
+                    <Badge variant={runVariant(selectedReceipt.run.status)}>{runStatusLabel(selectedReceipt.run)}</Badge>
                     {selectedReceipt.run.executionThread ? (
                       <Badge variant="outline"><ExecutionIcon run={selectedReceipt.run} />{automationExecutionIdentity(selectedReceipt.run.executionThread).label}</Badge>
                     ) : selectedReceipt.run.status === "queued" ? (
@@ -670,8 +658,12 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
                       </Button>
                     ) : null}
                   </div>
-                  {selectedReceipt.run.error ? (
-                    <Alert variant="destructive"><AlertCircle /><AlertTitle>{selectedReceipt.run.error.code}</AlertTitle><AlertDescription>{selectedReceipt.run.error.message}</AlertDescription></Alert>
+                  {runNotice ? (
+                    <Alert variant={runNotice.variant} data-automation-run-notice={selectedReceipt.run.id} data-variant={runNotice.variant}>
+                      <AlertCircle />
+                      <AlertTitle>{runNotice.title}</AlertTitle>
+                      <AlertDescription>{runNotice.message}</AlertDescription>
+                    </Alert>
                   ) : null}
                   {selectedReceipt.run.resultSummary ? (
                     <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Result</p><p className="mt-1 whitespace-pre-wrap text-sm">{selectedReceipt.run.resultSummary}</p></div>
@@ -776,7 +768,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>{formatAutomationSchedule(item.revision.schedule)}</span>
-                <span>{item.latestRun ? `Last run: ${runLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
+                <span>{item.latestRun ? `Last run: ${runStatusLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
               </div>
             </button>
           ))}

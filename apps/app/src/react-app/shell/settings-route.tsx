@@ -83,7 +83,7 @@ import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/pro
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
-import "@/react-app/domains/settings/ollama-config";
+import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/computer-use-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
@@ -122,7 +122,6 @@ import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-sessio
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
-import { SettingsContent } from "@/react-app/domains/settings/shell/panel";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { useLocal } from "@/react-app/kernel/local-provider";
@@ -311,6 +310,7 @@ export function parseSettingsPath(pathname: string): {
   switch (head) {
     case "general":
     case "ai":
+    case "ollama":
     case "preferences":
     case "permissions":
     case "appearance":
@@ -453,6 +453,7 @@ export function extensionsPathForRoute(route: ReturnType<typeof parseSettingsPat
 export type SettingsSurfaceProps = {
   embedded?: boolean;
   standaloneExtensions?: boolean;
+  libraryHeaderActionsTarget?: HTMLDivElement | null;
   initialPath?: string;
   workspaceId?: string;
   onClose?: () => void;
@@ -950,6 +951,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () => readCachedConnectCapabilities(connectScope) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY,
   );
   const [connectCapabilitiesLoading, setConnectCapabilitiesLoading] = useState(false);
+  const [connectCapabilitiesError, setConnectCapabilitiesError] = useState<string | null>(null);
   const connectCapabilitiesRequestRef = useRef(0);
   const refreshConnectCapabilities = useCallback(async (options?: { force?: boolean }) => {
     const requestId = connectCapabilitiesRequestRef.current + 1;
@@ -957,12 +959,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (!cloudSession.isSignedIn || !connectScope.organizationId) {
       setConnectCapabilities(EMPTY_CONNECT_CAPABILITY_INVENTORY);
       setConnectCapabilitiesLoading(false);
+      setConnectCapabilitiesError(null);
       return;
     }
     // Paint what the app already fetched, then revalidate behind it.
     const cached = readCachedConnectCapabilities(connectScope);
     if (cached) setConnectCapabilities(cached);
     setConnectCapabilitiesLoading(!cached);
+    setConnectCapabilitiesError(null);
     try {
       const inventory = await loadConnectCapabilities({
         client: cloudSession.client,
@@ -973,8 +977,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         setConnectCapabilities(inventory);
       }
     } catch {
-      if (connectCapabilitiesRequestRef.current === requestId && !cached) {
-        setConnectCapabilities(EMPTY_CONNECT_CAPABILITY_INVENTORY);
+      if (connectCapabilitiesRequestRef.current === requestId) {
+        if (!cached) setConnectCapabilities(EMPTY_CONNECT_CAPABILITY_INVENTORY);
+        setConnectCapabilitiesError(t("extensions.cloud_unavailable"));
       }
     } finally {
       if (connectCapabilitiesRequestRef.current === requestId) setConnectCapabilitiesLoading(false);
@@ -2396,6 +2401,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerStatusLabel={providerStatusLabel}
             providerStatusStyle={providerStatusStyle}
             providerSummary={providerSummary}
+            providerLoadState={activeClient ? providerAuthSnapshot.providerLoadState : { status: "idle", error: null }}
+            onRetryProviders={async () => { await providerAuthStore.refreshProviders({ force: true }); }}
             connectedProviders={connectedProviders}
             disconnectingProviderId={null}
             providerConnectError={providerAuthSnapshot.providerAuthError}
@@ -2445,6 +2452,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 serverSync={providerAuthSnapshot.cloudProviderServerSync}
               />
             }
+          />
+        );
+      case "ollama":
+        return (
+          <OllamaConfig
+            busy={localProviderBusy}
+            status={localProviderStatus}
+            error={localProviderError}
+            onInstall={installLocalProvider}
           />
         );
       case "preferences":
@@ -2501,8 +2517,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               void orgMcpConnections.refresh();
               void refreshConnectCapabilities({ force: true });
             }}
-            mcpView={({ initialFilter, onFilterChange, initialState, onStateChange, detailId, onDetailIdChange, onRefresh }) => (
+            mcpView={({ initialFilter, onFilterChange, initialState, pluginsContent, detailId, onDetailIdChange, onRefresh }) => (
               <McpView
+                headerActionsTarget={props.libraryHeaderActionsTarget}
+                pluginsContent={pluginsContent}
+                onOpenCloudAccount={() => navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account") : "/settings/cloud-account")}
                 busy={busy}
                 selectedWorkspaceRoot={selectedWorkspaceRoot}
                 isRemoteWorkspace={isRemoteWorkspace}
@@ -2513,8 +2532,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 managedOAuthAvailable={connectionsSnapshot.managedOAuthAvailable}
                 mcpConnectingName={connectionsSnapshot.mcpConnectingName}
                 allowManageExtensions={allowManageExtensions}
-                selectedMcp={connectionsSnapshot.selectedMcp}
-                setSelectedMcp={(name) => connectionsStore.setSelectedMcp(name)}
                 quickConnect={extensionItems.quickConnectEntries}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
@@ -2542,6 +2559,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 availableConnectMcpServers={libraryConnectMcpServers}
                 availableConnectMcpStatuses={connectCapabilities.mcpStatuses}
                 inventoryLoading={connectCapabilitiesLoading || (orgMcpConnections.loading && !orgMcpConnections.loaded)}
+                inventoryError={connectCapabilitiesError}
                 installedPlugins={libraryConnectPlugins}
                 orgMcpItems={orgMcpConnectionItems}
                 organizationName={cloudSession.activeOrgName}
@@ -2561,7 +2579,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 initialFilter={initialFilter}
                 onFilterChange={onFilterChange}
                 initialState={initialState}
-                onStateChange={onStateChange}
                 detailId={detailId}
                 onDetailIdChange={onDetailIdChange}
                 onRefresh={onRefresh}
@@ -2739,7 +2756,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     <>
       {props.standaloneExtensions ? (
         <div data-extensions-main-surface className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
-          <SettingsContent>{settingsView}</SettingsContent>
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-8">{settingsView}</div>
         </div>
       ) : (
         <SettingsShell

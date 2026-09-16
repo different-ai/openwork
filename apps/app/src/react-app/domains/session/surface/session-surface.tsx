@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, CirclePause, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -51,8 +51,10 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { sessionComposerDiagnosticReasons } from "./composer/composer-diagnostics";
 import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
+import { getSessionAgentSelection, useSessionAgentSelection } from "./session-mode-memory";
 import type { ProviderCatalog } from "./use-model-behavior";
 import type { ModelAvailability } from "./model-availability";
 import { isComputerTarget } from "./composer/computer-mentions";
@@ -611,7 +613,7 @@ export type SessionSurfaceProps = {
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   archived?: boolean;
   onRestoreSession?: () => Promise<void>;
-  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void) => Promise<CloudMcpSubmissionResult>;
+  onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null) => Promise<CloudMcpSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -621,6 +623,7 @@ export type SessionSurfaceProps = {
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
   onModelVariantChange: (value: string | null) => void;
+  /** New-task defaults, adopted only when this session has no remembered agent. */
   agentLabel: string;
   selectedAgent: string | null;
   listAgents: () => Promise<import("@opencode-ai/sdk/v2/client").Agent[]>;
@@ -1036,6 +1039,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     scopeKey: persistedDraftKey,
     snapshot: persistedDraftSnapshot,
     save: persistDraft,
+    clear: clearPersistedDraft,
   } = useSessionDraftState(props.draftScope, props.workspaceId, props.sessionId);
   const appliedPersistedDraftRef = useRef<{
     scopeKey: string;
@@ -1048,6 +1052,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useLayoutEffect(() => {
     const applied = appliedPersistedDraftRef.current;
     if (applied?.scopeKey === persistedDraftKey && applied.snapshot === persistedDraftSnapshot) return;
+
+    // No scope yet is not a boundary. A Cloud identity re-check clears the
+    // verified identity for the round trip, so the key is momentarily empty;
+    // the person keeps typing into the same conversation the whole time. Hold
+    // the live composer as-is and leave the previous claim in place: when the
+    // scope resolves again, an unchanged claim means nothing to replace, and a
+    // different one still crosses the account/organization boundary below.
+    // Persistence stays gated on the hydrated scope, so nothing is written to
+    // an unowned key in between.
+    if (!persistedDraftKey) {
+      appliedPersistedDraftRef.current = { scopeKey: persistedDraftKey, snapshot: persistedDraftSnapshot };
+      return;
+    }
 
     const claimedScopeKey = getComposerSessionDraftScope(props.sessionId);
     claimComposerSessionDraftScope(props.sessionId, persistedDraftKey);
@@ -1076,6 +1093,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       nextScopeKey: persistedDraftKey,
       currentText: currentDraft,
       storedText: nextDraft,
+      currentHasAttachments: getComposerAttachments(currentState, props.sessionId).length > 0,
     });
 
     if (restoredQueue.length > 0) {
@@ -1087,6 +1105,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         revokeAttachmentPreview(attachment);
       }
       hydrateComposerDraft(props.sessionId, nextDraft);
+    } else {
+      // The live composer won over a snapshot that moved underneath it. Write
+      // it back so a reload restores what is on screen, not the older text.
+      const liveText = persistableComposerDraftText(currentDraft);
+      if (liveText !== storedDraft) persistDraft({ text: liveText, mode: persistedDraftSnapshot?.mode ?? "prompt" });
     }
     setHydratedDraftScopeKey(persistedDraftKey);
   }, [hydrateComposerDraft, persistDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
@@ -1095,6 +1118,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // session B when the route swaps the same surface component to another
   // session.
   const queuedItems = useComposerStateStore((state) => getComposerQueuedDrafts(state, props.sessionId));
+  const sessionAgent = useSessionAgentSelection({
+    sessionId: props.sessionId,
+    fallbackAgent: props.selectedAgent,
+    onFallbackAgentChange: props.onSelectAgent,
+  });
   useEffect(() => {
     if (queuedItems.length === 0) return;
     setQueuedSendContext(props.sessionId, {
@@ -1104,7 +1132,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       opencodeBaseUrl: props.opencodeBaseUrl,
       openworkToken: props.openworkToken,
       client: props.client,
-      agent: props.selectedAgent,
+      agent: sessionAgent.selectedAgent,
       variant: props.modelVariant,
       model: props.selectedModel,
       environmentRuntimeKey: props.environmentRuntimeKey ?? null,
@@ -1115,7 +1143,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.modelVariant,
     props.opencodeBaseUrl,
     props.openworkToken,
-    props.selectedAgent,
+    sessionAgent.selectedAgent,
     props.selectedModel,
     props.sessionId,
     props.workspaceId,
@@ -1312,7 +1340,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     const previous = snapshotOwnerRef.current;
     snapshotOwnerRef.current = { queryKey: snapshotQueryKey, owner: sessionOwner };
-    if (previous.queryKey !== snapshotQueryKey || previous.owner === sessionOwner) return;
+    if (hashKey(previous.queryKey) !== hashKey(snapshotQueryKey) || previous.owner === sessionOwner) return;
     const filters = { queryKey: snapshotQueryKey, exact: true };
     void queryClient.cancelQueries(filters).then(() => queryClient.invalidateQueries(filters));
   }, [queryClient, sessionOwner, snapshotQueryKey]);
@@ -1503,6 +1531,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const pendingReconciliation = useMemo(() => {
     const matchedIds = new Set<string>();
     const messageIdReplacements = new Map<string, string>();
+    const precedingPendingIds = new Set<string>();
     const messages = [...baseRenderedMessages];
     const remaining = (pendingMessages ?? []).flatMap((item) => {
       const { draft: pending, previousMessageIds } = item;
@@ -1516,9 +1545,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
           && Boolean(acknowledgementText?.trim()) && v2PromptText(message.parts) === acknowledgementText)));
       const { parts, attachmentsReady } = pendingMessageParts(text, pending.attachments, match?.parts);
       if (!match) {
-        messages.push({ id: pending.messageId, role: "user", parts });
+        const submissionIds = new Set(item.submissionMessageIds);
+        const previousIndex = messages.findLastIndex((message) => submissionIds.has(message.id) || precedingPendingIds.has(message.id));
+        messages.splice(previousIndex + 1, 0, { id: pending.messageId, role: "user", parts });
+        precedingPendingIds.add(pending.messageId);
         return [item];
       }
+      precedingPendingIds.add(match.id);
       matchedIds.add(match.id);
       if (match.id !== pending.messageId) messageIdReplacements.set(match.id, pending.messageId);
       messages[messages.indexOf(match)] = { ...match, parts };
@@ -1529,9 +1562,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
     // A server turn can acknowledge only one pending send, even when two
     // consecutive prompts have identical text and v2 assigns its own IDs.
+    const acknowledgedIds = new Map([...messageIdReplacements].map(([serverId, pendingId]) => [pendingId, serverId]));
     return { messages, messageIdReplacements, remaining: remaining.map((item) => {
       const claimed = [...matchedIds].filter((id) => id !== item.serverMessageId && !item.previousMessageIds.includes(id));
-      return claimed.length ? { ...item, previousMessageIds: [...item.previousMessageIds, ...claimed] } : item;
+      const submissionMessageIds = item.submissionMessageIds.some((id) => acknowledgedIds.has(id))
+        ? item.submissionMessageIds.map((id) => acknowledgedIds.get(id) ?? id)
+        : item.submissionMessageIds;
+      return claimed.length || submissionMessageIds !== item.submissionMessageIds
+        ? { ...item, submissionMessageIds, previousMessageIds: [...item.previousMessageIds, ...claimed] }
+        : item;
     }) };
   }, [baseRenderedMessages, pendingMessages, props.opencodeBaseUrl]);
   const inputHistory = useMemo(() => deriveComposerHistory(pendingReconciliation.messages), [pendingReconciliation.messages]);
@@ -2065,6 +2104,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     onPrepared?: (text?: string) => void,
     options: { consumeQueuedItem?: boolean } = {},
   ): Promise<CloudMcpSubmissionResult | { outcome: "unknown" }> => {
+    // Capture before interruption/readiness waits; later selections affect only later sends.
+    const agent = getSessionAgentSelection(props.sessionId, props.selectedAgent);
     const messageId = nextDraft.messageId ?? createPromptMessageID();
     const generation = getQueuedSendGeneration(props.sessionId);
     const submissionId = Symbol();
@@ -2073,16 +2114,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
-      // The reading preview can omit the current delegated turn. Reuse or finish
-      // the uncapped read before deciding whether this follow-up must interrupt it.
-      const sendSnapshot = await openingHistory.ensureFullSnapshot();
+      // The reading preview can omit the current delegated turn. Decide whether
+      // this follow-up must interrupt it from cached complete history or one
+      // bounded newest read; never wait on the uncapped read.
+      const sendMessages = await openingHistory.readSendHistory();
       if (getQueuedSendGeneration(props.sessionId) !== generation) throw new Error("Send cancelled by Stop.");
       const result = await submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, opencodeClient, props.sessionId,
-        sendSnapshot.messages, async () => {
+        sendMessages, async () => {
           if (getQueuedSendGeneration(props.sessionId) !== generation) {
             return { outcome: "cancelled", reason: "context_changed" };
           }
-          return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared);
+          return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared, agent);
         }, { directory: props.workspaceRoot.trim() || undefined, messageID: messageId });
       // Drain listeners can reconcile idle and claim another item synchronously.
       // Consume the submitted row while its send slot is still held.
@@ -2136,12 +2178,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [archived, archiveStateKnown, opencodeClient, openingHistory.ensureFullSnapshot, props.onSendDraft, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError]);
+  }, [archived, archiveStateKnown, opencodeClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError]);
 
   const clearComposer = useCallback(() => {
+    clearPersistedDraft();
     clearComposerSession(props.sessionId);
     props.onDraftChange(buildDraft("", []));
-  }, [buildDraft, clearComposerSession, props.onDraftChange, props.sessionId]);
+  }, [buildDraft, clearComposerSession, clearPersistedDraft, props.onDraftChange, props.sessionId]);
 
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
@@ -2177,6 +2220,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
           draft: nextDraft,
           composer: savedComposer,
           previousMessageIds: baseRenderedMessages.map((message) => message.id),
+          submissionMessageIds: [
+            ...baseRenderedMessages.map((message) => message.id),
+            ...(state.pendingMessages[sessionOwner] ?? []).map((item) => item.serverMessageId ?? item.draft.messageId),
+          ],
           settled: false,
         }],
       },
@@ -2615,7 +2662,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // coming from the default agent (#2101).
     if (kind === "agent") {
       setComposerDraft(props.sessionId, nextDraft ?? draft.replace(/@([^\s@]*)$/, ""));
-      props.onSelectAgent(value);
+      sessionAgent.setAgent(value);
       toast.success(t("composer.agent_selected", { agent: value }));
       return;
     }
@@ -2641,7 +2688,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         }
       })();
     }
-  }, [draft, mentions, props.onSelectAgent, props.sessionId, setComposerDraft, setComposerMentions]);
+  }, [draft, mentions, sessionAgent.setAgent, props.sessionId, setComposerDraft, setComposerMentions]);
 
   const handlePasteText = useCallback((text: string) => {
     const pasted = createPastedTextChip(text);
@@ -3222,6 +3269,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       onFocusCapture={handleFindSurfaceInteraction}
       className="flex h-full min-h-0 flex-col"
     >
+      <SessionHistoryStatus key={sessionOwner} complete={hasFullHistory} pending={pendingSessionLoad}
+        loading={snapshotQuery.isFetching && openingHistory.partial}
+        failed={snapshotQuery.isError && !snapshotQuery.isFetching} onRetry={() => snapshotQuery.refetch()} />
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
@@ -3356,9 +3406,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : null}
           </div>
         </div>
-        <SessionHistoryStatus key={sessionOwner} complete={hasFullHistory} pending={pendingSessionLoad}
-          loading={snapshotQuery.isFetching && openingHistory.partial}
-          failed={snapshotQuery.isError && !snapshotQuery.isFetching} onRetry={() => snapshotQuery.refetch()} />
         <SessionScrollOverlay
           sessionId={props.sessionId}
           owner={sessionOwner}
@@ -3454,6 +3501,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
         disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
+        disabledReasons={sessionComposerDiagnosticReasons({
+          archiveStateKnown,
+          archiveHeld,
+          modelTransitioning: model.transitionState !== "idle",
+          modelUnavailable: sessionModelUnavailable,
+          admissionUnknown: queuedDrainState.phase.kind === "admission_unknown",
+        })}
+        preparingReasons={[
+          ...(preparingCloudTools ? ["send_preparing_tools" as const] : []),
+          ...(sending ? ["send_submitting" as const] : []),
+          ...(autoSending ? ["send_auto_sending" as const] : []),
+        ]}
         modelUnavailable={sessionModelUnavailable}
         modelUnavailableMessage={sessionModelUnavailable ? props.modelUnavailableMessage : null}
         organizationModelsEmpty={props.organizationModelsEmpty}
@@ -3475,10 +3534,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
         modelVariant={sessionModel.modelVariant}
         modelBehaviorOptions={sessionModel.modelBehaviorOptions}
         onModelVariantChange={handleModelVariantChange}
-        agentLabel={props.agentLabel}
-        selectedAgent={props.selectedAgent}
+        agentLabel={sessionAgent.selectedAgent === props.selectedAgent ? props.agentLabel : sessionAgent.selectedAgent ? sessionAgent.selectedAgent.charAt(0).toUpperCase() + sessionAgent.selectedAgent.slice(1) : t("session.default_agent")}
+        selectedAgent={sessionAgent.selectedAgent}
         listAgents={props.listAgents}
-        onSelectAgent={props.onSelectAgent}
+        onSelectAgent={sessionAgent.setAgent}
         listCommands={props.listCommands}
         listSkills={listSkills}
         skills={toolSkills}

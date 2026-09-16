@@ -502,7 +502,7 @@ function BrowserPanelContent({
 const browserOperationLabels: Record<string, string> = {
   observe: "Reading this page", site_tools: "Finding website tools", site_tool: "Using a website tool",
   navigate: "Opening a page", click: "Clicking a control", fill: "Entering text", key: "Using the keyboard", scroll: "Scrolling",
-  "Website access": "Review website access", website_blocked: "This website is blocked", browser_disabled: "Browser control is disabled",
+  "Browser control": "Allow control for this thread", website_blocked: "This website is blocked", browser_disabled: "Browser control is disabled",
   stale_observation: "A fresh page view is needed", stale_tool: "Website tools have changed", user_denied: "The action was declined",
   needs_attention: "Review this page", sign_in_required: "Sign in directly in this browser", timeout: "Check the page before continuing",
   result_withheld: "Website result was kept private",

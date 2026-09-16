@@ -301,6 +301,12 @@ export const GatewayUsageRollupTable = mysqlTable(
     input_tokens_count: bigint("input_tokens_count", { mode: "number" }),
     output_tokens_count: bigint("output_tokens_count", { mode: "number" }),
     total_tokens_count: bigint("total_tokens_count", { mode: "number" }),
+    // Missing total-token observations by outcome; NULL for older summaries.
+    uncountable_ok_count: bigint("uncountable_ok_count", { mode: "number" }),
+    uncountable_upstream_error_count: bigint("uncountable_upstream_error_count", { mode: "number" }),
+    uncountable_upstream_unreachable_count: bigint("uncountable_upstream_unreachable_count", { mode: "number" }),
+    uncountable_client_aborted_count: bigint("uncountable_client_aborted_count", { mode: "number" }),
+    uncountable_rejected_count: bigint("uncountable_rejected_count", { mode: "number" }),
     cache_read_tokens_count: bigint("cache_read_tokens_count", { mode: "number" }),
     cache_write_tokens_count: bigint("cache_write_tokens_count", { mode: "number" }),
     reasoning_tokens_count: bigint("reasoning_tokens_count", { mode: "number" }),

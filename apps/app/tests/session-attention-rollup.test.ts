@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { useSessionActivityStore, type SessionActivityStatus } from "../src/react-app/domains/session/status/session-activity-store";
-import { selectSessionAttention, sessionAttentionLabel, sessionAttentionSidebarStatus } from "../src/react-app/domains/session/status/session-attention";
+import type { UIMessage } from "ai";
+import { currentLocale, setLocale, t } from "../src/i18n";
+import { createSessionChildIdsSelector, useSessionActivityStore, type SessionActivityStatus } from "../src/react-app/domains/session/status/session-activity-store";
+import { createWorkspaceSessionAttentionSelector, selectSessionAttention, sessionAttentionLabel, sessionAttentionSidebarStatus } from "../src/react-app/domains/session/status/session-attention";
 import { listControlSessions } from "../src/react-app/domains/session/control/list-control-sessions";
 
 const workspaceId = "ws-rollup";
@@ -10,14 +12,34 @@ const grandchild = { id: "ses-grandchild", title: "Read server", parentID: child
 const unrelated = { id: "ses-other", title: "Unrelated root" };
 const sessions = [parent, child, grandchild, unrelated];
 
-function attentionFor(sessionId: string) {
+const selectChildIds = createSessionChildIdsSelector();
+const selectWorkspaceAttention = createWorkspaceSessionAttentionSelector();
+
+function workspaceAttention(workspace = workspaceId, inventory = sessions, serverId?: string) {
   const state = useSessionActivityStore.getState();
-  return selectSessionAttention(
-    sessions,
-    (id) => state.statusesByWorkspaceId[workspaceId]?.[id],
-    (id) => state.waitingByWorkspaceId[workspaceId]?.[id],
-    (id) => state.recordsByWorkspaceId[workspaceId]?.[id]?.childSessionIds ?? [],
-  ).get(sessionId);
+  const children = selectChildIds(state);
+  return selectWorkspaceAttention(inventory, {
+    statuses: state.statusesByWorkspaceId[workspace],
+    waiting: state.waitingByWorkspaceId[workspace],
+    childIds: children[workspace],
+    serverStatuses: serverId ? state.statusesByWorkspaceId[serverId] : undefined,
+    serverWaiting: serverId ? state.waitingByWorkspaceId[serverId] : undefined,
+    serverChildIds: serverId ? children[serverId] : undefined,
+  });
+}
+
+function attentionFor(sessionId: string) {
+  return workspaceAttention().get(sessionId);
+}
+
+function taskTranscript(childSessionId: string, text = "Inspecting"): UIMessage[] {
+  return [{
+    id: "msg-task", role: "assistant", parts: [{
+      type: "dynamic-tool", toolName: "task", toolCallId: "call-task", state: "input-available",
+      input: { description: "Inspect", prompt: "Inspect tests", subagent_type: "general" },
+      callProviderMetadata: { openwork: { childSessionId } },
+    }, { type: "text", text }],
+  }];
 }
 
 const empty = { busy: 0, waiting: 0, unknown: 0 };
@@ -26,6 +48,162 @@ describe("descendant attention inventory", () => {
   beforeEach(() => {
     useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {}, waitingByWorkspaceId: {} });
     for (const session of sessions) useSessionActivityStore.getState().setRunStatus(workspaceId, session.id, "idle");
+  });
+
+  test("locale changes refresh cached fallback titles without changing attention state", () => {
+    const previousLocale = currentLocale();
+    const select = createWorkspaceSessionAttentionSelector();
+    const inventory = [parent, { ...child, title: "" }];
+    const inputs = {
+      statuses: { [parent.id]: "idle", [child.id]: "waiting" } satisfies Record<string, SessionActivityStatus>,
+      waiting: { [child.id]: "question" } satisfies Record<string, "question">,
+    };
+    try {
+      setLocale("en");
+      const english = select(inventory, inputs);
+      expect(select(inventory, inputs)).toBe(english);
+      expect(english.get(parent.id)?.blockedBy?.title).toBe(t("session.default_title"));
+      setLocale("fr");
+      const french = select(inventory, inputs);
+      expect(french).not.toBe(english);
+      expect(select(inventory, inputs)).toBe(french);
+      const blockedBy = french.get(parent.id)?.blockedBy;
+      expect(blockedBy?.title).toBe(t("session.default_title"));
+      expect(blockedBy?.title).not.toBe(english.get(parent.id)?.blockedBy?.title);
+      if (!blockedBy) throw new Error("Expected a pending child question");
+      expect(sessionAttentionLabel(blockedBy)).toBe(`${t("session.subagent_question_pending")}: ${t("session.default_title")}`);
+      expect(french.get(parent.id)?.descendantActivity).toEqual(english.get(parent.id)?.descendantActivity);
+      expect(french.get(parent.id)?.status).toBe("waiting");
+    } finally {
+      setLocale(previousLocale);
+    }
+  });
+
+  test("progress, timestamps, and unrelated records preserve relationship and attention identity", () => {
+    const store = useSessionActivityStore.getState();
+    store.observeTranscript(workspaceId, parent.id, taskTranscript(child.id));
+    const before = useSessionActivityStore.getState();
+    const relationships = selectChildIds(before);
+    const attention = workspaceAttention();
+    let relationshipChanges = 0;
+    const unsubscribe = useSessionActivityStore.subscribe((state) => {
+      if (selectChildIds(state) !== relationships) relationshipChanges += 1;
+    });
+    try {
+      store.observeTranscript(workspaceId, parent.id, taskTranscript(child.id, "Inspecting more files"));
+      store.seedSessionRun(workspaceId, parent.id, "idle", false, {
+        snapshotStartedAt: before.recordsByWorkspaceId[workspaceId][parent.id].runStatusAt + 1,
+      });
+      store.markMessageRole(workspaceId, unrelated.id, "other-message", "assistant");
+      store.markMessageRole("unrelated-workspace", "other-session", "message", "assistant");
+      const after = useSessionActivityStore.getState();
+      expect(after.recordsByWorkspaceId[workspaceId][parent.id]).not.toBe(before.recordsByWorkspaceId[workspaceId][parent.id]);
+      expect(after.recordsByWorkspaceId[workspaceId][parent.id].progressRevision).not.toBe(before.recordsByWorkspaceId[workspaceId][parent.id].progressRevision);
+      expect(selectChildIds(after)).toBe(relationships);
+      expect(relationshipChanges).toBe(0);
+      expect(workspaceAttention()).toBe(attention);
+      expect(attentionFor(parent.id)).toBe(attention.get(parent.id));
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("child and status changes invalidate only the affected workspace attention", () => {
+    const store = useSessionActivityStore.getState();
+    const otherSessions = [{ id: "other-parent", title: "Other workspace" }];
+    store.setRunStatus("other-workspace", "other-parent", "idle");
+    store.observeTranscript("other-workspace", "other-parent", taskTranscript("other-missing"));
+    const otherRelationships = selectChildIds(useSessionActivityStore.getState())["other-workspace"];
+    const otherAttention = workspaceAttention("other-workspace", otherSessions);
+    const initial = workspaceAttention();
+    store.observeTranscript(workspaceId, parent.id, taskTranscript("missing-child"));
+    const relationships = selectChildIds(useSessionActivityStore.getState());
+    expect(relationships[workspaceId][parent.id]).toEqual(["missing-child"]);
+    expect(relationships["other-workspace"]).toBe(otherRelationships);
+    const linked = workspaceAttention();
+    expect(linked).not.toBe(initial);
+    expect(linked.get(parent.id)?.descendantActivity).toEqual({ ...empty, unknown: 1 });
+    store.setRunStatus(workspaceId, child.id, "running");
+    expect(selectChildIds(useSessionActivityStore.getState())).toBe(relationships);
+    const busy = workspaceAttention();
+    expect(busy).not.toBe(linked);
+    expect(busy.get(parent.id)?.descendantActivity).toEqual({ busy: 1, waiting: 0, unknown: 1 });
+    store.setWaitingRequest(workspaceId, child.id, "question", "question", true);
+    const waiting = workspaceAttention();
+    expect(waiting).not.toBe(busy);
+    expect(waiting.get(parent.id)?.blockedBy?.kind).toBe("question");
+    store.setWaitingRequest(workspaceId, child.id, "permission", "permission", true);
+    expect(workspaceAttention()).not.toBe(waiting);
+    expect(attentionFor(parent.id)?.blockedBy?.kind).toBe("permission");
+    expect(workspaceAttention("other-workspace", otherSessions)).toBe(otherAttention);
+  });
+
+  test("removal and reset discard relationships without clearing surviving parent links", () => {
+    const store = useSessionActivityStore.getState();
+    store.observeTranscript(workspaceId, parent.id, taskTranscript(child.id));
+    store.observeTranscript(workspaceId, child.id, taskTranscript("missing-child"));
+    const before = selectChildIds(useSessionActivityStore.getState());
+    const attention = workspaceAttention();
+    store.removeSession(workspaceId, child.id);
+    const removed = selectChildIds(useSessionActivityStore.getState());
+    expect(removed).not.toBe(before);
+    expect(removed[workspaceId][parent.id]).toBe(before[workspaceId][parent.id]);
+    expect(removed[workspaceId][child.id]).toBeUndefined();
+    expect(workspaceAttention()).not.toBe(attention);
+    expect(attentionFor(parent.id)?.descendantActivity).toEqual({ ...empty, unknown: 1 });
+    store.removeSession(workspaceId, parent.id);
+    expect(selectChildIds(useSessionActivityStore.getState())).toEqual({});
+    store.observeTranscript(workspaceId, parent.id, taskTranscript("new-child"));
+    expect(selectChildIds(useSessionActivityStore.getState())[workspaceId][parent.id]).toEqual(["new-child"]);
+    useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {}, waitingByWorkspaceId: {} });
+    expect(selectChildIds(useSessionActivityStore.getState())).toEqual({});
+    store.seedWorkspaceSessions(workspaceId, sessions.map((session) => ({ ...session, status: "idle" })));
+    expect(attentionFor(parent.id)?.descendantActivity).toEqual(empty);
+  });
+
+  test("workspace and server aliases merge children with server status and waiting precedence", () => {
+    const store = useSessionActivityStore.getState();
+    store.observeTranscript(workspaceId, parent.id, taskTranscript(child.id));
+    store.observeTranscript("server", parent.id, taskTranscript("missing-child"));
+    store.setWaitingRequest(workspaceId, child.id, "question", "question", true);
+    const local = workspaceAttention();
+    store.setWaitingRequest("server", child.id, "permission", "permission", true);
+    const aliased = workspaceAttention(workspaceId, sessions, "server");
+    expect(aliased.get(parent.id)).toMatchObject({
+      status: "waiting", blockedBy: { kind: "permission" },
+      descendantActivity: { busy: 0, waiting: 1, unknown: 1 },
+    });
+    store.setError("server", child.id, "failed");
+    const errored = workspaceAttention(workspaceId, sessions, "server");
+    expect(errored).not.toBe(aliased);
+    expect(errored.get(parent.id)).toMatchObject({ status: "idle", blockedBy: null, descendantActivity: { ...empty, unknown: 1 } });
+    expect(workspaceAttention(workspaceId, sessions, "server")).toBe(errored);
+    expect(local.get(parent.id)?.blockedBy?.kind).toBe("question");
+    store.removeSession("server", child.id);
+    expect(workspaceAttention(workspaceId, sessions, "server").get(parent.id)?.blockedBy?.kind).toBe("question");
+  });
+
+  test("inventory changes invalidate cached archives, titles, and cyclic parent relationships", () => {
+    const select = createWorkspaceSessionAttentionSelector();
+    const inputs = {
+      statuses: { [parent.id]: "idle", [child.id]: "waiting" } satisfies Record<string, SessionActivityStatus>,
+      waiting: { [child.id]: "question" } satisfies Record<string, "question">,
+    };
+    const inventory = [parent, child];
+    const initial = select(inventory, inputs);
+    expect(select(inventory, inputs)).toBe(initial);
+    const renamed = select([parent, { ...child, title: "Renamed child" }], inputs);
+    expect(renamed).not.toBe(initial);
+    expect(renamed.get(parent.id)?.blockedBy?.title).toBe("Renamed child");
+    const archived = select([parent, { ...child, time: { archived: 1 } }], inputs);
+    expect(archived.get(parent.id)?.descendantActivity).toEqual(empty);
+    const unlinked = select([parent, { ...child, parentID: null }], inputs);
+    expect(unlinked.get(parent.id)?.working).toBe(false);
+    const cyclic = select([{ ...parent, parentID: child.id }, child], {
+      ...inputs, childIds: { [parent.id]: [child.id, child.id, "missing"], [child.id]: [parent.id] },
+    });
+    expect(cyclic.get(parent.id)?.descendantActivity).toEqual({ busy: 0, waiting: 1, unknown: 1 });
+    expect(cyclic.get(child.id)?.descendantActivity).toEqual({ ...empty, unknown: 1 });
   });
 
   test("a busy child keeps an idle parent working without fabricating own activity", () => {

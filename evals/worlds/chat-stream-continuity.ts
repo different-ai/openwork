@@ -60,6 +60,10 @@ export async function chatStreamContinuityWeb(seed: Seed, context: { place: Plac
   const providerId = "stream-continuity-mock";
   const modelId = "stream-continuity-model";
   const workspacePath = seed.tmpPath("chat-stream-continuity");
+  const planPrompt = "Outline the next continuity check.";
+  const planReply = "The next check will compare the retained report with its checkpoints.";
+  const defaultPrompt = "Verify the completed continuity report.";
+  const defaultReply = "The retained report still matches every continuity checkpoint.";
   const mock = seed.mock({
     isolatedProcessEnv: true,
     agentWorkloads: [{
@@ -69,7 +73,17 @@ export async function chatStreamContinuityWeb(seed: Seed, context: { place: Plac
       finalReplyChunks: [...streamedContinuityChunks],
       finalReplyInitiallyReleasedChunks: 1,
       steps: [],
-    }],
+    }, ...(engine === "v1" ? [{
+      promptMarker: planPrompt,
+      latestUserTurn: true,
+      finalReply: planReply,
+      steps: [],
+    }, {
+      promptMarker: defaultPrompt,
+      latestUserTurn: true,
+      finalReply: defaultReply,
+      steps: [],
+    }] : [])],
   });
 
   const app = await seed.appWeb({
@@ -85,6 +99,7 @@ export async function chatStreamContinuityWeb(seed: Seed, context: { place: Plac
   const continuity = chatContinuity(app, workspace.workspaceId);
   const engineHttpEvents = await continuity.observeEngineHttpEvents();
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    ...(engine === "v1" ? { default_agent: "build" } : {}),
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
@@ -105,11 +120,15 @@ export async function chatStreamContinuityWeb(seed: Seed, context: { place: Plac
     workspace,
     session,
     neighbor,
+    planPrompt,
+    planReply,
+    defaultPrompt,
+    defaultReply,
     continuity,
     engineHttpEvents: () => engineHttpEvents.read(),
     replyState: () => agentMock.agentReplyState(streamedContinuityMarker),
     releaseReply: (count = 1) => agentMock.releaseAgentReply(streamedContinuityMarker, count),
-    providerFinalRequests: async () => (await agentMock.agentRequests({ promptMarker: streamedContinuityMarker }))
+    providerFinalRequests: async (promptMarker = streamedContinuityMarker) => (await agentMock.agentRequests({ promptMarker }))
       .filter((request) => request.kind === "final"),
     readNative: (sessionId: string) => seed.evalIn(app, browserScript(async (path) => {
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");

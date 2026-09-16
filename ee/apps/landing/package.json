@@ -5,17 +5,19 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "test": "bun test --isolate test/",
-    "prebuild": "pnpm --dir ../../../packages/email build && pnpm --dir ../../../packages/ui build && node ../../../scripts/check-connect-installer-parity.mjs && node scripts/copy-bootstrap-cli.mjs",
+    "plain:setup-fields": "node scripts/setup-plain-feedback-fields.mjs",
+    "prebuild": "pnpm --dir ../../../packages/ui build && node ../../../scripts/check-connect-installer-parity.mjs && node scripts/copy-bootstrap-cli.mjs",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "lint": "next lint"
   },
   "dependencies": {
-    "@openwork/email": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@paper-design/shaders-react": "0.0.72",
+    "@team-plain/graphql": "^3.1.0",
     "botid": "^1.5.11",
     "framer-motion": "^12.35.1",
+    "graphql": "^16.13.2",
     "lucide-react": "^0.577.0",
     "next": "15.5.24",
     "react": "catalog:react18",

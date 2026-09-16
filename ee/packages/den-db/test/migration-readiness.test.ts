@@ -111,7 +111,7 @@ describe("local startup migration safety (offline)", () => {
     assert.throws(() => historyPrefix(plan, [...receipts, receipts[95]]), /exact hash\/timestamp prefix/)
   })
 
-  test("only consolidated 0097 receipts retain the final prefix without restamping", () => {
+  test("consolidated 0097 receipts retain their prefix without restamping", () => {
     const current = plan[96]
     assert.equal(current.tag, "0097_gateway_access_matrix")
     assert.equal(current.folderMillis, 1788895934602)
@@ -122,7 +122,7 @@ describe("local startup migration safety (offline)", () => {
       const before = structuredClone(recorded)
       assert.equal(historyPrefix(plan, recorded), 97)
       assert.deepEqual(recorded, before)
-      assert.deepEqual(plan.slice(historyPrefix(plan, recorded)), [])
+      assert.equal(plan[historyPrefix(plan, recorded)]?.tag, "0098_gateway_uncountable_usage")
     }
   })
 
@@ -157,7 +157,7 @@ describe("local startup migration safety (offline)", () => {
   })
 
   test("consolidated 0097 receipts require schema parity and do not rerun source guards", async () => {
-    const receipts = plan.map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+    const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
     const before = structuredClone(receipts)
     const shape = shapeAt("0097_")
     const healthy = fixture(shape, { receipts })

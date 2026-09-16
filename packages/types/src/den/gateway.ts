@@ -124,6 +124,8 @@ export interface GatewaySelection {
 }
 
 export const GATEWAY_GRANT_HEADER = "x-openwork-gateway-grant-id";
+// Diagnostic request metadata only; never authorizes or selects an upstream.
+export const GATEWAY_REQUEST_MODEL_HEADER = "x-openwork-gateway-request-model";
 
 export interface GatewaySelectionConflict {
   error: "gateway_selection_required";

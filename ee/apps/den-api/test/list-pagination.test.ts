@@ -31,6 +31,7 @@ let databaseAvailable = true
 
 const organizationId = createDenTypeId("organization")
 const workerOrgId = createDenTypeId("org")
+const memberId = createDenTypeId("member")
 const configObjectId = createDenTypeId("configObject")
 const base = Date.UTC(2026, 8, 9, 12, 0, 0)
 
@@ -90,6 +91,7 @@ test("workflow snapshot pages join without gaps or duplicates and the no-cursor 
     await db.insert(WorkflowRunTable).values({
       id: createDenTypeId("workflowRun"),
       organization_id: organizationId,
+      org_membership_id: memberId,
       plugin_id: pluginId,
       config_object_id: configObjectId,
       config_object_version_id: versionId,
@@ -114,7 +116,7 @@ test("workflow snapshot pages join without gaps or duplicates and the no-cursor 
     finished_at: new Date(base + 9000),
   })
 
-  const all = await workflows.workflowSnapshotPage(organizationId, configObjectId, {})
+  const all = await workflows.workflowSnapshotPage(organizationId, configObjectId, { memberId })
   expect(all.items).toHaveLength(5)
   expect(all.nextCursor).toBeNull()
   expect(all.items.map((item) => new Date(item.finishedAt).getTime())).toEqual(
@@ -122,7 +124,7 @@ test("workflow snapshot pages join without gaps or duplicates and the no-cursor 
   )
 
   const paged = await walk(
-    (cursor) => workflows.workflowSnapshotPage(organizationId, configObjectId, { limit: 2, cursor }),
+    (cursor) => workflows.workflowSnapshotPage(organizationId, configObjectId, { memberId, limit: 2, cursor }),
     (item) => item.receiptId,
   )
   expect(paged.pages).toBe(3)

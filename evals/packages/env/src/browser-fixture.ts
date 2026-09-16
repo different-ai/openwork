@@ -4,7 +4,7 @@ import type { Surface } from "@openwork/cdp";
 import { browserScriptValue, runBrowserHost } from "./browser-task.ts";
 
 const page = `<!doctype html><meta charset="utf-8"><title>Browser task fixture</title>
-<style>body{font:16px sans-serif;margin:16px}input,button{display:block;margin:8px 0}#popup{background:rgb(18,238,193);width:110px;height:40px;border:0}</style>
+<style>html{scroll-behavior:auto}body{font:16px sans-serif;margin:16px;min-height:300vh}input,button{display:block;margin:8px 0}#popup{background:rgb(18,238,193);width:110px;height:40px;border:0}</style>
 <h1>Project status</h1><p id="auth">Signed out</p>
 <form id="signin"><label>Fixture user<input name="user" required></label><label>Fixture password<input name="password" type="password" required></label><button>Sign in to project</button></form>
 <p id="status">Nothing saved</p><input aria-label="Draft title" oninput="fetch('/input',{method:'POST',body:this.value})">

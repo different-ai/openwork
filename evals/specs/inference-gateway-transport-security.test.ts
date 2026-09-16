@@ -55,10 +55,10 @@ async function fixture(config: Record<string, unknown> = {}, timeoutMs = 30_000,
       return fetch(`${url}/api/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer ow_inf_fixture", "content-type": "application/json" }, body: '{"model":"z-ai/glm-5.2","messages":[]}', signal: AbortSignal.timeout(10_000), ...init })
     },
     async state() { return readState(url) },
-    async waitFor(predicate: (state: FixtureState) => boolean) {
+    async waitFor<Args extends unknown[]>(predicate: (state: FixtureState, ...args: Args) => boolean, ...args: Args) {
       for (let i = 0; i < 100; i++) {
         const state = await readState(url)
-        if (predicate(state)) return state
+        if (predicate(state, ...args)) return state
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
       throw new Error(`Fixture condition timed out: ${output}`)
@@ -272,7 +272,7 @@ test("model metadata stays local and forbidden operations or provider resources 
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ error: { code: entry.code } })
     count++
-    const state = await f.waitFor((s) => s.rows.length === count && Boolean(s.rows[count - 1]?.completed_at))
+    const state = await f.waitFor((s, expectedCount: number) => s.rows.length === expectedCount && Boolean(s.rows[expectedCount - 1]?.completed_at), count)
     expect(state).toMatchObject({ requests: [], upstreamReads: 0, credentialReads: 0, tokenCalls: 0 })
     expect(state.rows[count - 1]).toMatchObject({ status: 400, outcome: "rejected", error_code: entry.code })
     expect(f.output + JSON.stringify([state.rows, state.reports])).not.toContain(marker)
