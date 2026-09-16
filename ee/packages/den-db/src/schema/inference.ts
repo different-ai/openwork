@@ -221,6 +221,8 @@ export const GatewayRequestLogTable = mysqlTable(
     stream: boolean("stream").notNull(),
     status: smallint("status"),
     outcome: mysqlEnum("outcome", GATEWAY_REQUEST_OUTCOMES).notNull(),
+    generation_outcome: mysqlEnum("generation_outcome", ["completed", "content_filtered", "refused", "length_limited", "tool_calls", "unknown"]).notNull().default("unknown"),
+    provider_terminal_reason: mysqlEnum("provider_terminal_reason", ["stop", "length", "tool_calls", "content_filter", "end_turn", "stop_sequence", "max_tokens", "tool_use", "refusal", "completed", "incomplete", "max_output_tokens", "unknown"]).notNull().default("unknown"),
     error_code: varchar("error_code", { length: 64 }),
     input_tokens: int("input_tokens"),
     output_tokens: int("output_tokens"),

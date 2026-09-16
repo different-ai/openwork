@@ -27,6 +27,15 @@ describe("local startup migration safety (offline)", () => {
     assert.ok(saved.tables.inference_usage_ledger_entries.columns.provider_usage)
     assert.ok(saved.tables.gateway_providers.columns.model_ids)
     assert.ok(saved.tables.gateway_credential_sets.columns.created_by_org_membership_id)
+    for (const column of ["generation_outcome", "provider_terminal_reason"]) {
+      assert.equal(saved.tables.gateway_request_logs.columns[column].notNull, true)
+      assert.equal(saved.tables.gateway_request_logs.columns[column].default, "'unknown'")
+    }
+    for (const outcome of ["ok", "upstream_error", "upstream_unreachable", "client_aborted", "rejected"]) {
+      const column = saved.tables.gateway_usage_rollups.columns[`uncountable_${outcome}_count`]
+      assert.equal(column.type, "bigint")
+      assert.equal(column.notNull, false)
+    }
   })
   function shapeAt(tag: string) {
     const snapshot = plan.find((entry) => entry.tag.startsWith(tag))?.snapshot
@@ -112,7 +121,7 @@ describe("local startup migration safety (offline)", () => {
     assert.throws(() => historyPrefix(plan, [...receipts, receipts[95]]), /exact hash\/timestamp prefix/)
   })
 
-  test("consolidated 0097 receipts retain their prefix without restamping", () => {
+  test("consolidated 0097 receipts retain their prefix without restamping and leave later migrations pending", () => {
     const current = plan[96]
     assert.equal(current.tag, "0097_gateway_access_matrix")
     assert.equal(current.folderMillis, 1788895934602)
@@ -123,6 +132,7 @@ describe("local startup migration safety (offline)", () => {
       const before = structuredClone(recorded)
       assert.equal(historyPrefix(plan, recorded), 97)
       assert.deepEqual(recorded, before)
+      assert.deepEqual(plan.slice(historyPrefix(plan, recorded)), plan.slice(97))
       assert.equal(plan[historyPrefix(plan, recorded)]?.tag, "0098_gateway_uncountable_usage")
     }
   })
@@ -157,20 +167,22 @@ describe("local startup migration safety (offline)", () => {
     assert.throws(() => historyPrefix(plan, [...receipts, receipts[96]]), /prefix at receipt 98/)
   })
 
-  test("consolidated 0097 receipts require schema parity and do not rerun source guards", async () => {
-    const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
-    const before = structuredClone(receipts)
-    const shape = shapeAt("0097_")
-    const healthy = fixture(shape, { receipts })
-    await migrateLocalDatabase(healthy.executor, plan, true)
-    assert.ok(healthy.queries.every((sql) => sql.startsWith("SELECT")))
-    assert.ok(matrixPreflightQueries(plan).every((guard) => !healthy.queries.includes(guard.sql)))
-    const drifted = new Map(shape)
-    drifted.delete("column:gateway_provider_access.model_group_id")
-    const invalid = fixture(drifted, { receipts })
-    await assert.rejects(migrateLocalDatabase(invalid.executor, plan, true), /Schema differs from its recorded migration/)
-    assert.ok(invalid.queries.every((sql) => sql.startsWith("SELECT")))
-    assert.deepEqual(receipts, before)
+  test("0097 and later receipt prefixes require matching schema and do not rerun source guards", async () => {
+    for (let applied = 97; applied <= plan.length; applied++) {
+      const receipts = plan.slice(0, applied).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+      const before = structuredClone(receipts)
+      const shape = shapeAt(plan[applied - 1].tag)
+      const healthy = fixture(shape, { receipts })
+      await migrateLocalDatabase(healthy.executor, plan, true)
+      assert.ok(healthy.queries.every((sql) => sql.startsWith("SELECT")))
+      assert.ok(matrixPreflightQueries(plan).every((guard) => !healthy.queries.includes(guard.sql)))
+      const drifted = new Map(shape)
+      drifted.delete("column:gateway_provider_access.model_group_id")
+      const invalid = fixture(drifted, { receipts })
+      await assert.rejects(migrateLocalDatabase(invalid.executor, plan, true), /Schema differs from its recorded migration/)
+      assert.ok(invalid.queries.every((sql) => sql.startsWith("SELECT")))
+      assert.deepEqual(receipts, before)
+    }
   })
 
   test("consolidated source checks are eight read-only existence probes", () => {

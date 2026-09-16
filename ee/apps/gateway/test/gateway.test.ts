@@ -150,7 +150,12 @@ function createTestServer(options: TestServerOptions = {}) {
   const credentialLookups: Array<Parameters<LoadProviderCredential>[0]> = []
   const handledErrors: Array<Parameters<InferenceReporter["handledError"]>[0]> = []
   const tokenCalls = { mint: 0, refresh: 0 }
-  const reporter: InferenceReporter = { request() {}, handledError(report) { handledErrors.push(report) } }
+  const terminals: Parameters<NonNullable<InferenceReporter["terminal"]>>[0][] = []
+  const reporter: InferenceReporter = {
+    request() {},
+    handledError(report) { handledErrors.push(report) },
+    terminal(report) { terminals.push(report) },
+  }
   const capturingFetch: typeof fetch = async (input, init) => {
     upstreamRequests.push({
       url: requestUrl(input),
@@ -227,7 +232,7 @@ function createTestServer(options: TestServerOptions = {}) {
     },
   })
 
-  return { app, upstreamRequests, logRows, accessChecks, credentialLookups, accessRows, handledErrors, tokenCalls }
+  return { app, upstreamRequests, logRows, accessChecks, credentialLookups, accessRows, handledErrors, tokenCalls, terminals }
 }
 
 function gatewayRequest(input: { path: string; method?: string; body?: unknown; rawBody?: string; headers?: Record<string, string>; id?: string }) {
@@ -1422,6 +1427,10 @@ test("a failed body upload retains the desktop model hint without dispatching up
   assert.equal(row.metadata?.requested_model_source, "header")
   assert.equal(row.model_group_id, selected.group.id)
   assert.equal(row.total_tokens, null)
+  assert.equal(fixture.terminals.length, 1)
+  assert.equal(fixture.terminals[0]?.modelAlias, selected.model.id)
+  assert.equal(fixture.terminals[0]?.transportOutcome, "rejected")
+  assert.equal(fixture.terminals[0]?.generationOutcome, "unknown")
 })
 
 test("diagnostic model hints cannot override a body selection or leak upstream", async () => {
@@ -1436,6 +1445,11 @@ test("diagnostic model hints cannot override a body selection or leak upstream",
   assert.equal(row.requested_model, "gpt-4o")
   assert.equal(row.upstream_model, "gpt-4o")
   assert.equal(row.metadata?.requested_model_source, "request")
+  const selected = fixture.accessRows.find((entry) => entry.model?.model_id === "gpt-4o")
+  assert.ok(selected?.model)
+  assert.equal(fixture.terminals.length, 1)
+  assert.equal(fixture.terminals[0]?.modelAlias, selected.model.id)
+  assert.notEqual(fixture.terminals[0]?.modelAlias, hinted.model.id)
   assert.equal(fixture.upstreamRequests[0]?.headers.get(GATEWAY_REQUEST_MODEL_HEADER), null)
   assert.equal(parseJsonObject(fixture.upstreamRequests[0]?.body ?? null).model, "gpt-4o")
 })
@@ -1449,4 +1463,6 @@ test("a valid diagnostic hint cannot authorize a denied body model", async () =>
   const row = await waitForRows(fixture.logRows)
   assert.equal(row.requested_model, "denied-model")
   assert.equal(row.upstream_model, null)
+  assert.equal(fixture.terminals.length, 1)
+  assert.equal(fixture.terminals[0]?.modelAlias, null)
 })

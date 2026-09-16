@@ -1,0 +1,2 @@
+ALTER TABLE `gateway_request_logs` ADD `generation_outcome` enum('completed','content_filtered','refused','length_limited','tool_calls','unknown') DEFAULT 'unknown' NOT NULL;--> statement-breakpoint
+ALTER TABLE `gateway_request_logs` ADD `provider_terminal_reason` enum('stop','length','tool_calls','content_filter','end_turn','stop_sequence','max_tokens','tool_use','refusal','completed','incomplete','max_output_tokens','unknown') DEFAULT 'unknown' NOT NULL;
