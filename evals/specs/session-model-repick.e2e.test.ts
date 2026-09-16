@@ -127,6 +127,11 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     await open(peer.sessionId);
     await open(target.sessionId);
     await user.reload();
+    await user.see({ text: "Choose a replacement model" });
+    await dismissRepick();
+    await user.see("composer", { text: draft });
+    await user.screenshot();
+    await user.reload();
     await choose();
     await user.see(confirm(1));
     expect((await probe.dom('[role="dialog"] label:has([role="radio"][aria-checked="true"])')).elements.map((element) => element.text)).toEqual(["This session only"]);
@@ -169,6 +174,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     await user.see("composer", { editable: true, text: draft });
     expect(await probe.storage("openwork.sessionModels.v1")).toEqual(expected);
     await checkUnchanged();
+    await user.screenshot();
     evidence.recordAssertionEvidence("Single-session repick is explicit and device-local", "The real composer preview listed only two matching unarchived sessions. Confirming the default scope changed only the target override; the draft, engine sessions, transcripts and defaults remained unchanged after reload.", true);
   });
 
