@@ -213,7 +213,6 @@ export async function sessionArchivePressure(seed: Seed, context: { place: Place
   const targets = [a1, a2, b1, child, faultCandidate];
   const workspaceIds = [workspaceA.workspaceId, workspaceB.workspaceId];
   const mount = (workspaceId: string) => `/workspace/${encodeURIComponent(workspaceId)}/opencode`;
-  const mounts = workspaceIds.map(mount);
   const targetPath = `${mount(a2.workspaceId)}/session/${encodeURIComponent(a2.sessionId)}`;
   const server = await evaluate(app.client, async () => {
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
@@ -226,15 +225,93 @@ export async function sessionArchivePressure(seed: Seed, context: { place: Place
     || baseUrl.pathname !== "/" || baseUrl.search || baseUrl.hash) {
     throw new Error("Pressure witness only accepts the isolated HTTP loopback fixture server");
   }
-  const network = resources.use(await observeNetwork(app, baseUrl.origin, mounts));
+  const pressure = resources.use(await installSsePressure(app, workspaceIds, {
+    clickSelector: `[data-testid="session-archive-${a2.sessionId}"]`,
+    failureText: "Couldn't archive session", successText: `Session archived: ${a2.title}`,
+  }));
+
+  const get = async (path: string): Promise<unknown> => {
+    try {
+      const response = await fetch(`${baseUrl.origin}${path}`, {
+        method: "GET", headers: { Authorization: `Bearer ${server.token}` }, signal: AbortSignal.timeout(5_000), redirect: "error",
+      });
+      if (response.status !== 200) throw new Error("Non-success fixture readback");
+      return await response.json();
+    } catch { throw new Error(`Runner-side fixture readback failed: GET ${path}`); }
+  };
+  const readEngine = async () => {
+    const startedAt = performance.now();
+    const statuses = await Promise.all(workspaceIds.map(async workspaceId => {
+      const path = `${mount(workspaceId)}/session/status`;
+      const start = performance.now();
+      const data = await get(path);
+      if (!isRecord(data)) throw new Error("Malformed fixture status response");
+      return { workspaceId, data, path, elapsedMs: performance.now() - start };
+    }));
+    const sessions = await Promise.all(targets.map(async target => {
+      const path = `${mount(target.workspaceId)}/session/${encodeURIComponent(target.sessionId)}`;
+      const [session, messages] = await Promise.all([get(path), get(`${path}/message?limit=20`)]);
+      if (!isRecord(session) || session.id !== target.sessionId || !isRecord(session.time) || !Array.isArray(messages)) {
+        throw new Error("Malformed fixture session readback");
+      }
+      const archivedAt = session.time.archived ?? 0;
+      if (typeof archivedAt !== "number") throw new Error("Malformed fixture archive timestamp");
+      const owner = statuses.find(status => status.workspaceId === target.workspaceId);
+      if (!owner) throw new Error("Missing fixture status owner");
+      const status = owner.data[target.sessionId];
+      if (status !== undefined && (!isRecord(status) || typeof status.type !== "string")) throw new Error("Malformed fixture session status");
+      return { workspaceId: target.workspaceId, sessionId: target.sessionId, archivedAt,
+        idle: status === undefined || (isRecord(status) && status.type === "idle"), messageCount: messages.length };
+    }));
+    return { transport: "runner-fetch", elapsedMs: performance.now() - startedAt, sessions,
+      statusReads: statuses.map(({ workspaceId, path, elapsedMs }) => ({ workspaceId, path, elapsedMs, status: 200 })) };
+  };
+  const lifetime = resources.move();
+  return {
+    ...pressure,
+    app, target: a2, selected: a1, targets, rootTargets: [a1, a2, b1, faultCandidate], workspaceIds, targetPath,
+    ownershipPaths: [targetPath, `${mount(a2.workspaceId)}/path`],
+    readEngine,
+    mainRequests: fixture.mainRequests,
+    mainFetchControl: () => evaluate(app.client, browserScript(async path => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      const started = performance.now();
+      try {
+        const response = await window.__OPENWORK_ELECTRON__.invokeDesktop("__fetch", `${info.baseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${info.ownerToken ?? info.clientToken}` }, timeoutMs: 2_000,
+        });
+        return { path, status: response.status, elapsedMs: performance.now() - started, completed: true };
+      } catch {
+        return { path, status: null, elapsedMs: performance.now() - started, completed: false };
+      }
+    }, [`${mount(a2.workspaceId)}/session/status`]), { awaitPromise: true, timeoutMs: 4_000 }),
+    async [Symbol.asyncDispose]() { await lifetime.disposeAsync(); },
+  };
+}
+
+export async function installSsePressure(app: Surface, workspaceIds: string[], ui: {
+  clickSelector: string; failureText: string; successText: string;
+  clickText?: string; successWhenClickTargetGone?: boolean;
+}) {
+  await using resources = new AsyncDisposableStack();
+  const mounts = workspaceIds.map(id => `/workspace/${encodeURIComponent(id)}/opencode`);
+  const origin = await evaluate(app.client, async () => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info.running || !info.baseUrl) throw new Error("Pressure fixture server unavailable");
+    const url = new URL(info.baseUrl);
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+      || url.pathname !== "/" || url.search || url.hash) throw new Error("Pressure requires isolated loopback");
+    return url.origin;
+  }, { awaitPromise: true, timeoutMs: 5_000 });
+  const network = resources.use(await observeNetwork(app, origin, mounts));
   resources.defer(async () => {
     await evaluate(app.client, async () => {
       await window.__sessionArchivePressure?.dispose();
     }, { awaitPromise: true, timeoutMs: 8_000 });
   });
-  await evaluate(app.client, browserScript(async (origin, mounts, targetSessionId, targetTitle) => {
+  await evaluate(app.client, browserScript(async (origin, mounts, uiConfig) => {
     if (window.__sessionArchivePressure) throw new Error("Pressure witness already installed");
-    if (window.__archiveNetwork.mode !== "none" || window.__archiveNetwork.release) {
+    if (window.__archiveNetwork && (window.__archiveNetwork.mode !== "none" || window.__archiveNetwork.release)) {
       throw new Error("Pressure witness refuses synthetic archive faults");
     }
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
@@ -305,19 +382,24 @@ export async function sessionArchivePressure(seed: Seed, context: { place: Place
     };
     const sampleToast = () => {
       if (ui.clickedAt === null) return;
+      if (uiConfig.successWhenClickTargetGone && ![...document.querySelectorAll<HTMLElement>(uiConfig.clickSelector)]
+        .some(node => node.getClientRects().length && node.textContent?.trim() === uiConfig.clickText)) {
+        ui.successMs ??= performance.now() - ui.clickedAt;
+      }
       for (const toast of document.querySelectorAll<HTMLElement>("[data-sonner-toast]")) {
         if (!toast.getClientRects().length) continue;
         const text = toast.textContent ?? "";
-        if (text.includes("Couldn't archive session")) {
+        if (text.includes(uiConfig.failureText)) {
           ui.failureMs ??= performance.now() - ui.clickedAt;
           ui.timeoutDescription ||= text.includes("Request timed out.");
         }
-        if (text.includes(`Session archived: ${targetTitle}`)) ui.successMs ??= performance.now() - ui.clickedAt;
+        if (uiConfig.successText && text.includes(uiConfig.successText)) ui.successMs ??= performance.now() - ui.clickedAt;
       }
     };
     const capture = (event: MouseEvent) => {
-      if (phase !== "sidebar" || ui.clickedAt !== null || !event.isTrusted || !(event.target instanceof Element)
-        || !event.target.closest(`[data-testid="session-archive-${targetSessionId}"]`)) return;
+      if ((phase !== "sidebar" && phase !== "recovery") || ui.clickedAt !== null || !event.isTrusted || !(event.target instanceof Element)
+        || !event.target.closest(uiConfig.clickSelector)
+        || (uiConfig.clickText && event.target.closest(uiConfig.clickSelector)?.textContent?.trim() !== uiConfig.clickText)) return;
       ui.trustedClick = true;
       ui.clickedAt = performance.now();
       lastTick = performance.now();
@@ -437,63 +519,11 @@ export async function sessionArchivePressure(seed: Seed, context: { place: Place
     observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     document.addEventListener("click", capture, true);
     frame = requestAnimationFrame(paint);
-  }, [baseUrl.origin, mounts, a2.sessionId, a2.title]), { awaitPromise: true, timeoutMs: 5_000 });
+  }, [origin, mounts, ui]), { awaitPromise: true, timeoutMs: 5_000 });
 
-  const get = async (path: string): Promise<unknown> => {
-    try {
-      const response = await fetch(`${baseUrl.origin}${path}`, {
-        method: "GET", headers: { Authorization: `Bearer ${server.token}` }, signal: AbortSignal.timeout(5_000), redirect: "error",
-      });
-      if (response.status !== 200) throw new Error("Non-success fixture readback");
-      return await response.json();
-    } catch { throw new Error(`Runner-side fixture readback failed: GET ${path}`); }
-  };
-  const readEngine = async () => {
-    const startedAt = performance.now();
-    const statuses = await Promise.all(workspaceIds.map(async workspaceId => {
-      const path = `${mount(workspaceId)}/session/status`;
-      const start = performance.now();
-      const data = await get(path);
-      if (!isRecord(data)) throw new Error("Malformed fixture status response");
-      return { workspaceId, data, path, elapsedMs: performance.now() - start };
-    }));
-    const sessions = await Promise.all(targets.map(async target => {
-      const path = `${mount(target.workspaceId)}/session/${encodeURIComponent(target.sessionId)}`;
-      const [session, messages] = await Promise.all([get(path), get(`${path}/message?limit=20`)]);
-      if (!isRecord(session) || session.id !== target.sessionId || !isRecord(session.time) || !Array.isArray(messages)) {
-        throw new Error("Malformed fixture session readback");
-      }
-      const archivedAt = session.time.archived ?? 0;
-      if (typeof archivedAt !== "number") throw new Error("Malformed fixture archive timestamp");
-      const owner = statuses.find(status => status.workspaceId === target.workspaceId);
-      if (!owner) throw new Error("Missing fixture status owner");
-      const status = owner.data[target.sessionId];
-      if (status !== undefined && (!isRecord(status) || typeof status.type !== "string")) throw new Error("Malformed fixture session status");
-      return { workspaceId: target.workspaceId, sessionId: target.sessionId, archivedAt,
-        idle: status === undefined || (isRecord(status) && status.type === "idle"), messageCount: messages.length };
-    }));
-    return { transport: "runner-fetch", elapsedMs: performance.now() - startedAt, sessions,
-      statusReads: statuses.map(({ workspaceId, path, elapsedMs }) => ({ workspaceId, path, elapsedMs, status: 200 })) };
-  };
   const lifetime = resources.move();
   return {
-    app, target: a2, selected: a1, targets, rootTargets: [a1, a2, b1, faultCandidate], workspaceIds, targetPath,
-    ownershipPaths: [targetPath, `${mount(a2.workspaceId)}/path`],
     eventPaths: mounts.map(value => `${value}/event`),
-    readEngine,
-    mainRequests: fixture.mainRequests,
-    mainFetchControl: () => evaluate(app.client, browserScript(async path => {
-      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-      const started = performance.now();
-      try {
-        const response = await window.__OPENWORK_ELECTRON__.invokeDesktop("__fetch", `${info.baseUrl}${path}`, {
-          headers: { Authorization: `Bearer ${info.ownerToken ?? info.clientToken}` }, timeoutMs: 2_000,
-        });
-        return { path, status: response.status, elapsedMs: performance.now() - started, completed: true };
-      } catch {
-        return { path, status: null, elapsedMs: performance.now() - started, completed: false };
-      }
-    }, [`${mount(a2.workspaceId)}/session/status`]), { awaitPromise: true, timeoutMs: 4_000 }),
     renderer: () => evaluate(app.client, () => {
       if (!window.__sessionArchivePressure) throw new Error("Pressure renderer observer missing");
       return window.__sessionArchivePressure.read();

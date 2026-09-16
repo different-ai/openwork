@@ -1970,11 +1970,12 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
       const opening: { openedAt: number | null; trusted: boolean; first: Paint | null; latest: Paint | null; full: Paint | null } = {
         openedAt: null, trusted: false, first: null, latest: null, full: null,
       };
+      const pageReads: { before: string | null; limit: string | null; nextCursor: string | null }[] = [];
       const state = {
         workspaceId, sessionId, documentId: performance.timeOrigin, opening, reads,
         status: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
         todo: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
-        history: { limited: 0, full: 0, fullSucceeded: 0 },
+        history: { limited: 0, full: 0, fullSucceeded: 0, single: 0, pageReads },
         released: false,
         expired: false,
       };
@@ -2032,13 +2033,23 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
         if (!kind) {
           const historyRead = messagePaths.has(url.pathname);
           const full = historyRead && !url.searchParams.has("limit");
-          if (historyRead) {
+          const pageRead: (typeof pageReads)[number] | null = historyRead
+            ? { before: url.searchParams.get("before"), limit: url.searchParams.get("limit"), nextCursor: null } : null;
+          if (pageRead) {
+            pageReads.push(pageRead);
             if (full) state.history.full += 1;
             else state.history.limited += 1;
             publish();
+          } else if ([...messagePaths].some((path) => url.pathname.startsWith(`${path}/`) && !url.pathname.slice(path.length + 1).includes("/"))) {
+            state.history.single += 1;
+            publish();
           }
           const response = await originalFetch.call(window, input, init);
-          if (full && response.ok) { state.history.fullSucceeded += 1; publish(); }
+          if (pageRead) {
+            pageRead.nextCursor = response.headers.get("X-Next-Cursor");
+            if (full && response.ok) state.history.fullSucceeded += 1;
+            publish();
+          }
           return response;
         }
         const counter = state[kind];

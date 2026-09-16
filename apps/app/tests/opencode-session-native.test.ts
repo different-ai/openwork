@@ -5,6 +5,7 @@ import type { Message, Part, Session, SessionStatus, Todo } from "@opencode-ai/s
 import { createClient, createPromptMessageID, hasAcceptedPromptMessage, PromptAdmissionUnknownError, promptAdmissionFailure, readPromptAdmission, unwrap, type FieldsResult } from "../src/app/lib/opencode";
 import { holdSessionWork, interruptSessionTurn, sendSessionCommand, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn } from "../src/app/lib/opencode-interruption";
 import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
+import { resolveForkBoundaryId } from "../src/react-app/domains/session/sync/transcript-reconcile";
 import {
   composeNativeSessionHistory,
   composeNativeSessionHistoryWithRetry,
@@ -104,6 +105,117 @@ function turnMessages(sessionID: string, parts: ReturnType<typeof delegatedTool>
 }
 
 describe("native OpenCode session operations", () => {
+  test("native pages replay opaque cursors through the SDK, including retries, and use headers for exact-limit exhaustion", async () => {
+    const cursor = "opaque+/=%25?older&owner=one";
+    const older = [{ info: { ...messages[0]!.info, id: "msg_older" }, parts: [] }];
+    let olderAttempts = 0;
+    await withSessionFetch((request) => {
+      const url = new URL(request.url);
+      expect(request.headers.get("Authorization")).toBe(`Bearer ${endpoint.token}`);
+      expect(request.method).toBe("GET");
+      if (url.pathname.endsWith(`/session/${session.id}`)) return Response.json(session);
+      expect(`${url.origin}${url.pathname}`).toBe(`${endpoint.opencodeBaseUrl}/session/${session.id}/message`);
+      expect(url.searchParams.get("limit")).toBe("1");
+      if (url.searchParams.has("before")) {
+        expect(url.searchParams.get("before")).toBe(cursor);
+        olderAttempts += 1;
+        return olderAttempts === 1 ? Response.json({ code: "engine_reloading" }, { status: 503 }) : Response.json(older);
+      }
+      return Response.json(messages, { headers: {
+        "X-Next-Cursor": cursor,
+        Link: '<http://internal-engine/session/foreign/message?before=wrong>; rel="next"',
+      } });
+    }, async (requests) => {
+      const newest = await composeNativeSessionHistory(endpoint, session.id, { limit: 1 });
+      expect(newest.pagination).toEqual({ nextCursor: cursor, limit: 1 });
+      const previous = await composeNativeSessionHistoryWithRetry("owner", () => ({ owner: "owner", endpoint, sessionId: session.id }), {
+        limit: 1, before: newest.pagination?.nextCursor ?? undefined,
+      }, { waitForSnapshotRetry: async () => {} });
+      expect(previous).toEqual({ session, messages: older, pagination: { before: cursor, nextCursor: null, limit: 1 } });
+      expect(olderAttempts).toBe(2);
+      expect(requests.filter((request) => new URL(request.url).pathname.endsWith("/message"))).toHaveLength(3);
+    });
+  });
+
+  test("native empty pages exhaust and activity snapshots retain boundedness without marking full reads as pages", async () => {
+    await withSessionFetch((request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith(`/session/${session.id}`)) return Response.json(session);
+      if (url.pathname.endsWith("/todo")) return Response.json(todos);
+      if (url.pathname.endsWith("/status")) return Response.json({});
+      if (url.searchParams.has("before")) return Response.json([]);
+      return Response.json(messages, { headers: { "X-Next-Cursor": "older" } });
+    }, async () => {
+      expect((await composeNativeSessionHistory(endpoint, session.id, { before: "older", limit: 1 })).pagination)
+        .toEqual({ before: "older", nextCursor: null, limit: 1 });
+      const bounded = await composeNativeSessionSnapshot(endpoint, session.id, { limit: 1 });
+      expect(bounded.pagination).toEqual({ nextCursor: "older", limit: 1 });
+      expect(bounded.todos).toEqual(todos);
+      expect(bounded.status).toEqual({ type: "idle" });
+      const full = await composeNativeSessionSnapshot(endpoint, session.id);
+      expect(full.messages).toEqual(messages);
+      expect(full.pagination).toBeUndefined();
+      expect((await composeNativeSessionHistory(endpoint, session.id, { limit: 0 })).pagination).toBeUndefined();
+    });
+  });
+
+  test("v2 history normalizes descending pages chronologically so forks use the following message across page boundaries", async () => {
+    const target = { ...endpoint, opencodeBaseUrl: endpoint.opencodeBaseUrl.replace("opencode", "opencode2") };
+    const cursors: Array<string | null> = [];
+    const records = (ids: string[]) => ids.map((id) => ({ id, type: "user", time: { created: 7 }, content: [] }));
+    await withSessionFetch((request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith(`/session/${session.id}`)) return Response.json({ data: session });
+      if (url.pathname.endsWith("/active")) return Response.json({ data: {} });
+      expect(url.pathname.endsWith("/api/session/ses_native/message")).toBe(true);
+      expect(url.searchParams.has("before")).toBe(false);
+      const cursor = url.searchParams.get("cursor");
+      cursors.push(cursor);
+      if (cursor === "empty") return Response.json({ data: [], cursor: {} });
+      return Response.json(cursor === "older" ? {
+        data: records(["a-answer", "z-first"]), cursor: { previous: "newer", next: "empty" },
+      } : {
+        data: records(["b-last", "m-next"]), cursor: { previous: "newer", next: "older" },
+      });
+    }, async () => {
+      const page = await composeNativeSessionHistory(target, session.id, { limit: 2 });
+      expect(page.messages.map(({ info }) => info.id)).toEqual(["m-next", "b-last"]);
+      expect(page.pagination).toEqual({ nextCursor: "older", limit: 2 });
+      const older = await composeNativeSessionHistory(target, session.id, { limit: 2, before: "older" });
+      expect(older.messages.map(({ info }) => info.id)).toEqual(["z-first", "a-answer"]);
+      expect(older.pagination).toEqual({ before: "older", nextCursor: "empty", limit: 2 });
+      const exhausted = await composeNativeSessionHistory(target, session.id, { limit: 2, before: "empty" });
+      expect(exhausted.messages).toEqual([]);
+      expect(exhausted.pagination).toEqual({ before: "empty", nextCursor: null, limit: 2 });
+      const full = await composeNativeSessionSnapshot(target, session.id);
+      const transcript = full.messages.map(({ info }) => info);
+      expect(transcript.map(({ id }) => id)).toEqual(["z-first", "a-answer", "m-next", "b-last"]);
+      expect(resolveForkBoundaryId(transcript, "z-first")).toBe("a-answer");
+      expect(resolveForkBoundaryId(transcript, "a-answer")).toBe("m-next");
+      expect(resolveForkBoundaryId(transcript, "m-next")).toBe("b-last");
+      expect(resolveForkBoundaryId(transcript, "b-last")).toBeNull();
+      expect(full.pagination).toBeUndefined();
+      expect(full.status).toEqual({ type: "idle" });
+      expect(cursors).toEqual([null, "older", "empty", null, "older", "empty"]);
+    });
+  });
+
+  test("native repeated cursors fail instead of advertising an endless older page", async () => {
+    await withSessionFetch((request) => Response.json(new URL(request.url).pathname.endsWith("/message") ? messages : session,
+      { headers: { "X-Next-Cursor": "same" } }), async () => {
+      await expect(composeNativeSessionHistory(endpoint, session.id, { before: "same", limit: 1 }))
+        .rejects.toThrow("cursor did not advance");
+    });
+  });
+
+  test.each([undefined, 0, -1, 1.5, Infinity])("a cursor requires a positive integer limit (%s) before any history read", async (limit) => {
+    const dependencies = { createOperations: () => operations({ messages: async () => { throw new Error("Unexpected read"); } }) };
+    await expect(composeNativeSessionHistory(endpoint, session.id, { before: "older", limit }, dependencies))
+      .rejects.toThrow("positive integer limit");
+    await expect(getNativeSessionMessages(endpoint, session.id, { before: "older", limit }, dependencies))
+      .rejects.toThrow("positive integer limit");
+  });
+
   test.each([undefined, { limit: 24 }, { messageIds: ["msg_1"] }])("history reads verify metadata/messages without reading activity (%j)", async (window) => {
     const metadata = Promise.withResolvers<FieldsResult<Session>>();
     const calls: string[] = [];
@@ -140,7 +252,7 @@ describe("native OpenCode session operations", () => {
       { messages: async () => result([{ ...record, parts: record.parts.map((part) => ({ ...part, sessionID: "ses_other" })) }]) },
       { messages: async () => result([{ ...record, parts: record.parts.map((part) => ({ ...part, messageID: "msg_other" })) }]) },
     ]) {
-      await expect(composeNativeSessionHistory(endpoint, session.id, { limit: 24 }, {
+      await expect(composeNativeSessionHistory(endpoint, session.id, { limit: 24, before: "older" }, {
         createOperations: () => operations(overrides),
       })).rejects.toThrow("verify the session history owner");
     }
@@ -153,7 +265,7 @@ describe("native OpenCode session operations", () => {
     let owner = "owner-a";
     let attempts = 0;
     const history = composeNativeSessionHistoryWithRetry(owner, () => ({ owner, endpoint, sessionId: session.id }), {
-      limit: 24, signal: controller.signal,
+      limit: 24, before: "older", signal: controller.signal,
     }, {
       createOperations: () => {
         attempts += 1;
@@ -393,7 +505,8 @@ describe("native OpenCode session operations", () => {
       if (path.endsWith("/active")) return Response.json({ data: {} });
       throw new Error(`Unexpected request: ${request.method} ${path}`);
     }, async (requests) => {
-      const snapshot = await composeNativeSessionHistory(target, session.id, { messageIds: ids, limit: 24, signal: controller.signal });
+      const snapshot = await composeNativeSessionHistory(target, session.id, { messageIds: ids, limit: 24, before: "ignored-legacy-cursor", signal: controller.signal });
+      expect(snapshot.pagination).toBeUndefined();
       expect(snapshot.messages.map(({ info }) => info.id)).toEqual(["msg_z", "msg_m"]);
       expect(snapshot.messages.every(({ info, parts }) => info.sessionID === session.id && parts.length === 1
         && parts.every((part) => part.sessionID === session.id && part.messageID === info.id))).toBe(true);

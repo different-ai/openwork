@@ -2409,7 +2409,7 @@ const desktopCommandHandlers = {
       };
       const method = (requestInit.method ?? "GET").toUpperCase();
       const cancellable = ["GET", "PATCH"].includes(method)
-        || (method === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname));
+        || (method === "POST" && /\/(?:session\/[^/]+\/abort|permission\/[A-Za-z0-9_-]+\/reply)$/.test(new URL(url).pathname));
       return cancellable && init.transferId
         ? desktopTransfers.run(event, init.transferId, fetchResponse)
         : fetchResponse(undefined);

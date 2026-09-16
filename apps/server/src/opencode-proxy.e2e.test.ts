@@ -42,6 +42,7 @@ function auth(token: string) {
 type MockReadOptions = {
   onRead?: (request: Request) => Promise<void>;
   sessions?: unknown;
+  messagePage?: (request: Request) => Response;
 };
 
 function startMockOpencode(input?: MockReadOptions & { holdCommand?: Promise<void>; foreignSessionDirectory?: string; nativeV2Directory?: string; recovery?: { active: boolean; turn: number } }) {
@@ -162,6 +163,7 @@ function startMockOpencode(input?: MockReadOptions & { holdCommand?: Promise<voi
       }
 
       if (url.pathname === "/session/ses_1/message") {
+        if (input?.messagePage) return input.messagePage(request);
         return Response.json([
           {
             info: {
@@ -327,6 +329,49 @@ async function waitUntil(predicate: () => boolean, attempts = 20) {
 }
 
 describe("workspace OpenCode proxy", () => {
+  test.serial("native history pagination exposes cursors to browsers, preserves upstream headers, and verifies every page owner", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const cursor = "opaque+/=%25?older&owner=one";
+    const link = '<http://internal-engine/session/ses_1/message?before=opaque>; rel="next"';
+    const engine = startMockOpencode({
+      foreignSessionDirectory: "/workspace/foreign",
+      messagePage: (request) => {
+        const before = new URL(request.url).searchParams.get("before");
+        if (before !== null) {
+          expect(before).toBe(cursor);
+          return Response.json([], { headers: { "Access-Control-Expose-Headers": "X-Upstream-Trace" } });
+        }
+        return Response.json([{ info: { id: "msg_1", sessionID: "ses_1" }, parts: [] }], { headers: {
+          "X-Next-Cursor": cursor, Link: link, "Access-Control-Expose-Headers": "X-Upstream-Trace",
+        } });
+      },
+    });
+    const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${engine.server.port}` });
+    const request = (sessionId: string, before?: string) => fetch(
+      `http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode/session/${sessionId}/message?${new URLSearchParams({ limit: "1", ...(before ? { before } : {}) })}`,
+      { headers: { ...auth(openwork.token), Origin: "https://app.example" }, signal: AbortSignal.timeout(2_000) },
+    );
+    const newest = await request("ses_1");
+    expect(newest.status).toBe(200);
+    expect(newest.headers.get("X-Next-Cursor")).toBe(cursor);
+    expect(newest.headers.get("Link")).toBe(link);
+    const older = await request("ses_1", newest.headers.get("X-Next-Cursor") ?? undefined);
+    expect(older.status).toBe(200);
+    expect(await older.json()).toEqual([]);
+    expect(older.headers.get("X-Next-Cursor")).toBeNull();
+    for (const response of [newest, older]) {
+      expect(response.headers.get("Access-Control-Expose-Headers")?.split(/,\s*/)).toEqual(expect.arrayContaining(["X-Upstream-Trace", "X-Next-Cursor", "Link"]));
+    }
+    const foreign = await request("ses_foreign", cursor);
+    expect(foreign.status).toBe(404);
+    expect(engine.requests.some(({ pathname }) => pathname === "/session/ses_foreign/message")).toBe(false);
+    expect(engine.requests.filter(({ pathname }) => pathname === "/session/ses_1")).toHaveLength(2);
+    const pages = engine.requests.filter(({ pathname }) => pathname === "/session/ses_1/message");
+    expect(pages).toHaveLength(2);
+    expect(new URLSearchParams(pages[1]?.search).get("before")).toBe(cursor);
+    expect(pages.every(({ method }) => method === "GET")).toBe(true);
+  });
+
   for (const version of ["v1", "v2"]) {
     for (const phase of ["ownership", "history"]) {
       test.serial(`${version} history disconnect cancels the upstream ${phase} GET`, async () => {

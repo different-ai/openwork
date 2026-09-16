@@ -76,7 +76,7 @@ function observeStorageWrites() {
   return writes;
 }
 
-function fixture(geometryOwner?: string) {
+function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useSessionScrollController>[0], "historyPages" | "windowReady" | "pageForAnchor" | "historyComplete" | "ensureFullHistory"> = {}) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -113,7 +113,7 @@ function fixture(geometryOwner?: string) {
       });
     }, []);
     const scroll = useSessionScrollController({
-      selectedSessionId: sessionId, geometryOwner, submittedMessageId: null, historyReady: ready, renderedMessages: [...layout.messages], containerRef, contentRef,
+      selectedSessionId: sessionId, geometryOwner, submittedMessageId: null, historyReady: ready, renderedMessages: [...layout.messages], containerRef, contentRef, ...pagination,
     });
     controls = scroll;
     return <div ref={setContainer} onScroll={scroll.handleScroll} onWheel={(event) => scroll.markScrollGesture(event.target)}
@@ -161,6 +161,143 @@ function fixture(geometryOwner?: string) {
 }
 
 describe("session reading position", () => {
+  test("explicit first-message navigation waits for complete history and the corresponding DOM commit", async () => {
+    let finish = () => {};
+    const full = mock(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const older = mock(async () => {});
+    const options = { historyComplete: false, windowReady: true, ensureFullHistory: full,
+      historyPages: { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false, load: older } };
+    const view = fixture("owner-a", options);
+    view.layout.complete = false;
+    await view.render();
+    const before = view.container.scrollTop;
+    let navigation: Promise<boolean> = Promise.resolve(false);
+    await act(async () => { navigation = view.controls.scrollToTop(); });
+    expect(full).toHaveBeenCalledTimes(1);
+    expect(older).not.toHaveBeenCalled();
+    expect(view.container.scrollTop).toBe(before);
+    await act(async () => finish());
+    expect(view.container.scrollTop).toBe(before);
+    for (const message of view.layout.messages) message.top += 500;
+    view.layout.messages.unshift({ id: "actual-first", top: 0, height: 500 });
+    view.layout.height += 500;
+    view.layout.complete = true;
+    options.historyComplete = true;
+    await view.render();
+    expect(await navigation).toBe(true);
+    expect(view.container.scrollTop).toBe(0);
+    expect(state("a", "owner-a")).toMatchObject({ mode: "manual", anchor: { messageId: "actual-first", offset: 0 } });
+    expect(older).not.toHaveBeenCalled();
+  });
+
+  test("leaving a surface cancels a delayed first-message navigation", async () => {
+    let finish = () => {};
+    const options = { historyComplete: false, ensureFullHistory: () => new Promise<void>((resolve) => { finish = resolve; }) };
+    const view = fixture("owner-a", options);
+    await view.render();
+    const navigation = view.controls.scrollToTop();
+    await view.render("b");
+    const destination = view.container.scrollTop;
+    await act(async () => finish());
+    expect(await navigation).toBe(false);
+    expect(view.container.scrollTop).toBe(destination);
+  });
+
+  test("a missing saved anchor cannot be consumed while its bounded recovery is pending", async () => {
+    const store = useSessionScrollStore.getState();
+    const key = sessionScrollKey("a", "owner-a");
+    store.setManualScroll(key, 325, null, { messageId: "saved", offset: -25 });
+    const options = { windowReady: false };
+    const view = fixture("owner-a", options);
+    view.layout.complete = false;
+    await view.render();
+    expect(state("a", "owner-a")).toMatchObject({ scrollTop: 325, anchor: { messageId: "saved", offset: -25 } });
+    for (const message of view.layout.messages) message.top += 400;
+    view.layout.messages.unshift({ id: "saved", top: 0, height: 400 });
+    view.layout.height += 400;
+    options.windowReady = true;
+    await view.render();
+    expect(view.container.scrollTop).toBe(25);
+    expect(state("a", "owner-a")).toMatchObject({ anchor: { messageId: "saved", offset: -25 } });
+  });
+
+  test("native page demand ignores sticky auto-scroll and preserves the latest message offset when older rows prepend", async () => {
+    let finish = () => {};
+    const load = mock(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false, load };
+    const page = { before: null, limit: 24, lineage: [null] };
+    const view = fixture("owner-a", { windowReady: true, historyPages: pages, pageForAnchor: () => page });
+    view.layout.complete = false;
+    await view.render();
+    view.scroll(800);
+    runFrames();
+    view.resize();
+    expect(load).not.toHaveBeenCalled();
+    view.wheel(120);
+    expect(load.mock.calls).toEqual([["older"]]);
+    view.wheel(160);
+    const before = state("a", "owner-a");
+    expect(before).toMatchObject({ mode: "manual", anchor: { messageId: "first", offset: -160 }, geometry: { page } });
+    for (const message of view.layout.messages) message.top += 400;
+    view.layout.messages.unshift({ id: "older", top: 0, height: 400 });
+    view.layout.height += 400;
+    pages.version = {};
+    pages.hasOlder = false;
+    await view.render();
+    finish();
+    expect(view.container.scrollTop).toBe(560);
+    expect(state("a", "owner-a")).toMatchObject({ mode: "manual", anchor: { messageId: "first", offset: -160 } });
+    expect(load).toHaveBeenCalledTimes(1);
+    flushSessionScrollState();
+    expect(readPersistedSessionScrollState()[sessionScrollKey("a", "owner-a")].geometry?.page).toEqual(page);
+  });
+
+  test("a saved middle window demands newer data near its loaded end rather than making its suffix sticky", async () => {
+    const load = mock(async () => {});
+    const pages = { version: {}, hasOlder: false, hasNewer: true, loading: false, failed: false, load };
+    const view = fixture("owner-a", { historyPages: pages, windowReady: true });
+    useSessionScrollStore.getState().setManualScroll(sessionScrollKey("a", "owner-a"), 325, null, { messageId: "reading", offset: -25 });
+    view.layout.complete = false;
+    view.layout.height = 2000;
+    await view.render();
+    expect(load).not.toHaveBeenCalled();
+    view.wheel(800);
+    expect(load.mock.calls).toEqual([["newer"]]);
+    view.wheel(1800);
+    expect(state("a", "owner-a").mode).toBe("manual");
+    await Promise.resolve();
+    pages.failed = true;
+    view.wheel(1750);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  test("a stable page with a deleted saved anchor settles locally and an empty page can demand newer history", async () => {
+    const load = mock(async () => {});
+    const pages = { version: {}, hasOlder: false, hasNewer: true, loading: false, failed: false, load };
+    const key = sessionScrollKey("a", "owner-a");
+    useSessionScrollStore.getState().setManualScroll(key, 300, null, { messageId: "deleted", offset: 0 });
+    const view = fixture("owner-a", { historyPages: pages, windowReady: true });
+    view.layout.complete = false;
+    await view.render();
+    expect(state("a", "owner-a")).toMatchObject({ mode: "manual", anchor: { messageId: "reading", offset: 0 } });
+    view.layout.messages = [];
+    view.layout.height = 400;
+    await view.render();
+    view.controls.markScrollGesture(view.container);
+    runFrames();
+    expect(load.mock.calls).toEqual([["newer"]]);
+  });
+
+  test("persisted pagination requires a bounded nonrepeating lineage rooted at newest", () => {
+    const geometry = { owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["reading"] };
+    for (const lineage of [["cursor"], [null, "cursor", "cursor"], [null, ...Array.from({ length: 64 }, (_, index) => `c${index}`)]]) {
+      localStorage.setItem(storageKey, JSON.stringify({ a: { mode: "manual", scrollTop: 300, anchor: { messageId: "reading", offset: 0 },
+        geometry: { ...geometry, page: { before: "cursor", limit: 24, lineage } } } }));
+      expect(readPersistedSessionScrollState().a.geometry?.page).toBeUndefined();
+      expect(readPersistedSessionScrollState().a.geometry?.messageIds).toEqual(["reading"]);
+    }
+  });
+
   test("signals explicit navigation for pending Find cancellation, not passive sticky reconciliation", async () => {
     const view = fixture();
     await view.render();

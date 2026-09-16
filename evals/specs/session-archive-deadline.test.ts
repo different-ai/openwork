@@ -20,8 +20,9 @@ test("archive deadlines settle stalled reads and uncertain writes, preserve call
     env: { ...process.env, NO_COLOR: "1" },
   });
   const output = result.stdout + result.stderr;
-  // Upstream added seven transport cases: three history GETs, one override, two IPC cancellations, and one POST guard.
-  const passed = result.error === undefined && result.status === 0 && /\b117 pass/.test(output)
+  // Keep the original coverage floor while allowing upstream regression cases.
+  const passedCount = Number(output.match(/\b(\d+) pass\b/)?.[1]);
+  const passed = result.error === undefined && result.status === 0 && passedCount >= 117
     && /\b0 fail/.test(output) && !/\b[1-9]\d* (skip|todo|filtered out)/.test(output);
   evidence.recordAssertionEvidence(
     "Bounded preflight never sends a late PATCH; uncertain PATCH is not reported as cancellation; holds and busy state recover; caller signals and pin state survive",

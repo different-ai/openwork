@@ -282,7 +282,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     backgroundSessionLoadCoalescerRef.current.invalidate(workspaceId);
     loadedWorkspaceIdsRef.current.delete(workspaceId);
     delete pendingCreatedSessionIdsRef.current[workspaceId];
-    delete hydratedRouteSessionIdsRef.current[workspaceId];
+    // Invalidate reference authority, not the open session's verified display
+    // metadata. A same-scope refresh can return an empty index; keep the direct
+    // session.get result until navigation, deletion, or an engine scope change.
     sessionMetadataGenerationsRef.current.set(workspaceId, (sessionMetadataGenerationsRef.current.get(workspaceId) ?? 0) + 1);
     sessionMetadataCallbacksRef.current.delete(workspaceId);
     runtimeSessionChangesRef.current.delete(workspaceId);
@@ -1297,6 +1299,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     for (const id of scopes.keys()) {
       if (workspaces.some((workspace) => workspace.id === id)) continue;
       scopes.delete(id);
+      delete hydratedRouteSessionIdsRef.current[id];
       invalidateSessionInventory(id);
     }
     if (changed.length === 0) return;

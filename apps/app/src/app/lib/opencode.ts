@@ -1,6 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-import { desktopFetch, desktopFetchViaMain } from "./desktop";
+import { desktopFetch, desktopFetchViaMain, isPermissionReplyRequest } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 
 export type FieldsResult<T> =
@@ -196,13 +196,14 @@ async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   timeoutMs: number,
+  cancelPermissionReply = false,
 ) {
-  const effectiveTimeoutMs = resolveRequestTimeoutMs(input, timeoutMs);
+  const effectiveTimeoutMs = cancelPermissionReply ? timeoutMs : resolveRequestTimeoutMs(input, timeoutMs);
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs <= 0) {
     return fetchImpl(input, init);
   }
 
-  const cancellable = ["GET", "PATCH"].includes((init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase());
+  const cancellable = cancelPermissionReply || ["GET", "PATCH"].includes((init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase());
   const callerSignal = cancellable
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
@@ -281,10 +282,7 @@ const STREAM_URL_RE = /\/(event|stream)(\b|\/|$|\?)/;
 function requestIsStreaming(input: RequestInfo | URL, init?: RequestInit): boolean {
   const url = getRequestUrl(input);
   if (STREAM_URL_RE.test(url)) return true;
-  const accept =
-    input instanceof Request
-      ? input.headers.get("accept") ?? input.headers.get("Accept")
-      : new Headers(init?.headers).get("accept") ?? new Headers(init?.headers).get("Accept");
+  const accept = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get("accept");
   return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
 }
 
@@ -304,21 +302,23 @@ export const createDesktopFetch = (auth?: OpencodeAuth, finiteFetch: typeof glob
     // Streams must go through the webview's native fetch to avoid the
     // Tauri HTTP plugin's `fetch_read_body` hang on never-closing bodies.
     const shouldStream = requestIsStreaming(input, init);
+    const permissionReply = isPermissionReplyRequest(input, init);
     const underlyingFetch = shouldStream
       ? nativeFetchRef()
-      : finiteFetch;
+      : permissionReply && finiteFetch === desktopFetch ? desktopFetchViaMain : finiteFetch;
     // Streams should never be timed out at the transport layer; the caller
     // aborts via AbortSignal when the subscription unmounts.
     const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
 
+    if (permissionReply && !(input instanceof Request)) input = new Request(input, init);
     if (input instanceof Request) {
-      const requestInit = ["GET", "PATCH"].includes((init?.method ?? input.method).toUpperCase()) ? init : undefined;
+      const requestInit = permissionReply || isPermissionReplyRequest(input) || ["GET", "PATCH"].includes((init?.method ?? input.method).toUpperCase()) ? init : undefined;
       const headers = new Headers(requestInit?.headers ?? input.headers);
       addAuth(headers);
       const request = new Request(input, { ...requestInit, headers });
       // Keep an explicit null override even in runtimes whose Request clone
       // retains the original signal when constructed with signal: null.
-      return fetchWithTimeout(underlyingFetch, request, { signal: requestInit?.signal }, timeoutMs);
+      return fetchWithTimeout(underlyingFetch, request, { signal: requestInit?.signal }, timeoutMs, permissionReply);
     }
 
     const headers = new Headers(init?.headers);
@@ -331,6 +331,7 @@ export const createDesktopFetch = (auth?: OpencodeAuth, finiteFetch: typeof glob
         headers,
       },
       timeoutMs,
+      permissionReply,
     );
   };
 };
