@@ -70,7 +70,9 @@ test(title, async ({ world, user, agent, probe, step, evidence }) => {
 
   try {
     await step("the isolated fixture has two workspaces and idle nonpinned short sessions before transport pressure", async () => {
-      await user.click({ testId: `sidebar-session-${selected.sessionId}` });
+      // Route setup is not the behavior under test; the archive below remains
+      // a trusted sidebar click. Avoid a hover-preview row intercepting setup.
+      expect(await agent.run("session.open", { sessionId: selected.sessionId })).toMatchObject({ ok: true });
       await probe.eventually(() => probe.hash(), { within: 30_000, label: "selected fixture session opens", until: hash => hash === route });
       await user.see("composer", { editable: true });
       const inventory = await agent.run("session.list_sessions");
