@@ -1269,7 +1269,7 @@ export class CloudProviderSync {
       }
       const status = changed ? "applied" : "noop";
       this.lastRun = { at: new Date().toISOString(), status, detail };
-      return { status, affectedSessions: this.affectedSessions };
+      return { status, ...(this.affectedSessions.length > 0 ? { affectedSessions: this.affectedSessions } : {}) };
     } catch (error) {
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
       const message = error instanceof Error ? error.message : "cloud_provider_sync_failed";
@@ -1593,7 +1593,7 @@ export class CloudProviderSync {
     await writeOpenworkWorkspaceConfig(this.config, "__cloud_provider_ownership__", () => ({
       envHashes: Object.fromEntries(this.ownedEnvKeys),
       providerIds: [...this.managedProviderIds],
-      pendingModelRemovals: this.pendingModelRemovals,
+      ...(Object.keys(this.pendingModelRemovals).length > 0 ? { pendingModelRemovals: this.pendingModelRemovals } : {}),
       ...(this.managedProviderIds.size > 0 && this.materializationContextHash !== null
         ? { materializationContextHash: this.materializationContextHash }
         : {}),
