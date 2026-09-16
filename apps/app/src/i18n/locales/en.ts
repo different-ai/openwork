@@ -77,6 +77,7 @@ export default {
   "common.refresh": "Refresh",
   "common.remove": "Remove",
   "common.reset": "Reset",
+  "common.retry": "Retry",
   "common.save": "Save",
   "common.select": "select",
   "common.show": "Show",

@@ -23,6 +23,9 @@ afterAll(() => GlobalRegistrator.unregister())
 const { ConnectionCard } = await import("../src/components/chat/connection-card")
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider")
+const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
+const { removeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
+const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
 const {
   buildMcpAppCsp,
   connectorCatalogFromPart,
@@ -290,6 +293,154 @@ describe("MCP App startup scheduling", () => {
       expect(host.errorSpy).not.toHaveBeenCalled()
       expect(host.timers.size).toBe(0)
     } finally { finish?.(); await host.dispose() }
+  })
+})
+
+describe("MCP App retry ownership", () => {
+  test.each([false, true])("standalone retry only restarts its iframe (readOnly: %j)", async readOnly => {
+    const host = await startupFixture()
+    const resolveSpy = spyOn(host.client, "resolveMcpApp")
+    const callSpy = spyOn(host.client, "callMcpAppTool")
+    const releaseSpy = spyOn(host.client, "releaseMcpApp")
+    try {
+      await host.renderView({ origin: { client: host.client, workspaceId: "fixture", sessionId: null, readOnly } })
+      const original = host.frame(0)
+      await host.notify(0, "ui/notifications/sandbox-diagnostic")
+      expect(host.container.querySelector("iframe")).toBeNull()
+      const retry = host.container.querySelector<HTMLButtonElement>("button")
+      expect(retry?.textContent).toBe("Retry")
+      await act(async () => retry?.click())
+      expect(host.frame(0)).not.toBe(original)
+      expect(host.srcAssignments).toHaveLength(2)
+      expect(resolveSpy).not.toHaveBeenCalled()
+      expect(callSpy).not.toHaveBeenCalled()
+      expect(releaseSpy).not.toHaveBeenCalled()
+    } finally {
+      await host.dispose()
+      for (const spy of [resolveSpy, callSpy, releaseSpy]) spy.mockRestore()
+    }
+  })
+
+  test("owner retry keeps the diagnostic mounted until the owner replaces the view", async () => {
+    const host = await startupFixture()
+    const retryOwner = jest.fn()
+    try {
+      await host.renderView({ onRetry: retryOwner })
+      await host.notify(0, "ui/notifications/sandbox-diagnostic")
+      const diagnostic = host.container.querySelector('[role="status"]')
+      const retry = host.container.querySelector<HTMLButtonElement>("button")
+      expect(retry?.textContent).toBe("Retry")
+      await act(async () => retry?.click())
+      await host.renderView()
+      expect(retryOwner).toHaveBeenCalledTimes(1)
+      expect(host.container.querySelector('[role="status"]')).toBe(diagnostic)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      expect(host.srcAssignments).toHaveLength(1)
+      expect(host.sandboxSpy).toHaveBeenCalledTimes(1)
+    } finally { await host.dispose() }
+  })
+
+  test.each(["safe", "approval", "denied"])("dashboard child retry replaces the failed lease without restarting its healthy sibling (%s)", async policy => {
+    const host = await startupFixture()
+    const pending = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const resolutions = [0, 0]
+    const released: string[] = []
+    const calls: Array<Parameters<OpenworkServerClient["callMcpAppTool"]>[1]> = []
+    const resolveSpy = spyOn(host.client, "resolveMcpApp").mockImplementation(async (_workspace, name) => {
+      const index = name === "render-0" ? 0 : 1
+      const attempt = ++resolutions[index]
+      if (index === 0 && attempt === 2) return pending.promise
+      return { app: fixture({ toolName: name, launchId: `${name}-${attempt}` }) }
+    })
+    const releaseSpy = spyOn(host.client, "releaseMcpApp").mockImplementation(async (_workspace, id) => {
+      released.push(id)
+      return { released: true }
+    })
+    const callSpy = spyOn(host.client, "callMcpAppTool").mockImplementation(async (_workspace, request) => {
+      calls.push(request)
+      if (request.launchId && released.includes(request.launchId)) throw new Error("Released lease reused")
+      if (request.launchId === "render-0-2" && request.name === "render-0") {
+        if (policy === "denied") throw new OpenworkServerError(403, "tool_denied", "Forbidden")
+        if (policy === "approval" && !request.approved) throw new OpenworkServerError(422, "tool_requires_approval", "Approval required")
+      }
+      return { content: [] }
+    })
+    const disabled = jest.fn()
+    const scope = `retry-ownership-${policy}`
+    const tile = (id: number) => createElement(McpAppTile, {
+      key: id,
+      entry: { kind: "mcp", id: `retry-${id}`, title: `Retry ${id}`, serverName: "fixture", toolName: `render-${id}`,
+        projectedToolName: `render-${id}`, resourceUri: fixture().resourceUri, autoLaunch: true },
+      cacheScopeKey: scope, onAutoLaunchDisabled: disabled,
+    })
+    const shell = (id: number) => {
+      const element = host.container.querySelector<HTMLElement>(`[data-dashboard-tile="retry-${id}"]`)
+      if (!element) throw new Error(`Missing tile ${id}`)
+      return element
+    }
+    try {
+      await host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, tile(0), tile(1)))
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      await host.notify(1, "ui/notifications/sandbox-proxy-ready")
+      await act(async () => { host.bridges[0].oninitialized?.(); host.bridges[1].oninitialized?.() })
+      const healthyFrame = host.frame(1)
+      const failedBridge = host.bridges[0]
+      expect(shell(0).querySelector("header")).toBeNull()
+      await host.notify(0, "ui/notifications/sandbox-diagnostic")
+      expect(released).toEqual(["render-0-1"])
+      expect(shell(0).querySelector("iframe")).toBeNull()
+      expect(resolutions).toEqual([1, 1])
+      expect(calls).toHaveLength(2)
+      const retry = Array.from(shell(0).querySelectorAll("button")).find(button => button.textContent === "Retry")
+      if (!retry) throw new Error("Missing child Retry")
+      await act(async () => retry.click())
+      expect(resolutions).toEqual([2, 1])
+      expect(shell(0).querySelector("iframe")).toBeNull()
+      expect(host.srcAssignments).toHaveLength(2)
+      expect(host.frame(1)).toBe(healthyFrame)
+      await act(async () => { failedBridge.oninitialized?.() })
+      expect(shell(0).querySelector("[data-dashboard-loading]")).not.toBeNull()
+      const actionContext = {
+        requestId: 1, signal: new AbortController().signal,
+        sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") },
+      }
+      await expect(failedBridge.oncalltool?.({ name: "read_detail" }, actionContext)).rejects.toThrow("closed or changed")
+      expect(calls).toHaveLength(2)
+      await act(async () => pending.resolve({ app: fixture({ toolName: "render-0", launchId: "render-0-2" }) }))
+      const retried = calls.filter(call => call.launchId === "render-0-2")
+      expect(retried.map(call => call.approved)).toEqual(policy === "approval" ? [undefined, true] : [undefined])
+      expect(disabled).toHaveBeenCalledTimes(policy === "approval" ? 1 : 0)
+      if (policy === "denied") {
+        expect(shell(0).textContent).toContain("Forbidden")
+        expect(shell(0).querySelector("iframe")).toBeNull()
+        expect(released).toEqual(["render-0-1", "render-0-2"])
+        expect(host.srcAssignments).toHaveLength(2)
+      } else {
+        await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+        await act(async () => { host.bridges[2].oninitialized?.() })
+        expect(shell(0).querySelector("header")).toBeNull()
+        expect(shell(0).querySelector("[data-dashboard-loading]")).toBeNull()
+        expect(shell(0).getAttribute("aria-busy")).toBe("false")
+        expect(host.srcAssignments).toHaveLength(3)
+        expect(released).toEqual(["render-0-1"])
+        await expect(host.bridges[2].oncalltool?.({ name: "read_detail" }, actionContext)).resolves.toEqual({ content: [] })
+        expect(calls.at(-1)).toMatchObject({ launchId: "render-0-2", name: "read_detail" })
+      }
+      expect(host.frame(1)).toBe(healthyFrame)
+      expect(shell(1).querySelector("header")).toBeNull()
+      expect(resolutions).toEqual([2, 1])
+      expect(calls.filter(call => call.launchId === "render-1-1")).toHaveLength(1)
+      expect(released).not.toContain("render-1-1")
+    } finally {
+      for (const id of [0, 1]) removeDashboardTileCache(scope, `retry-${id}`)
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally {
+        for (const spy of [resolveSpy, releaseSpy, callSpy]) spy.mockRestore()
+      }
+    }
+    expect([...released].sort()).toEqual(["render-0-1", "render-0-2", "render-1-1"])
   })
 })
 

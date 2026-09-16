@@ -665,6 +665,7 @@ function McpAppTileContent({
                 updateMode="notify"
                 unavailableNotice="This app view is unavailable."
                 presentation="dashboard"
+                onRetry={run}
                 initialHeight={geometry.initialHeight ?? lastHeight.current}
                 onReady={() => { if (currentDocument(state.lifetime) && !state.lifetime.failed) setReadyDocument(state.lifetime); }}
                 onHeightChange={(height) => {
