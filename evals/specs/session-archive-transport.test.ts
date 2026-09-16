@@ -4,7 +4,7 @@ import { expect } from "vitest";
 import { needs, test } from "@openwork/testkit";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-test("finite archive IPC preserves scoped requests, cancellation, no retries and external trust boundaries", async ({ evidence }) => {
+test("finite archive IPC preserves scoped requests, cancellation, no retries and external trust boundaries", { timeout: 90_000 }, async ({ evidence }) => {
   needs({ commands: ["bun", "node"], placement: "local" });
   for (const run of [
     { command: "node", args: ["--test", "apps/desktop/electron/finite-http-fetch.test.mjs", "apps/desktop/electron/no-bare-external-fetch.test.mjs"], cwd: root },
@@ -18,4 +18,4 @@ test("finite archive IPC preserves scoped requests, cancellation, no retries and
     expect(result.status, output).toBe(0);
     expect(passed, output).toBe(true);
   }
-}, 90_000);
+});

@@ -5,7 +5,7 @@ import { needs, test } from "@openwork/testkit";
 
 const appDirectory = fileURLToPath(new URL("../../apps/app/", import.meta.url));
 
-test("archive deadlines settle stalled reads and uncertain writes, preserve caller cancellation, and retain pin and working-session contracts", async ({ evidence }) => {
+test("archive deadlines settle stalled reads and uncertain writes, preserve caller cancellation, and retain pin and working-session contracts", { timeout: 120_000 }, async ({ evidence }) => {
   needs({ commands: ["bun"], placement: "local" });
   const files = [
     "tests/session-archive-agent-contract.test.tsx",
@@ -31,4 +31,4 @@ test("archive deadlines settle stalled reads and uncertain writes, preserve call
   expect(result.error).toBeUndefined();
   expect(result.status, output).toBe(0);
   expect(passed, output).toBe(true);
-}, 120_000);
+});
