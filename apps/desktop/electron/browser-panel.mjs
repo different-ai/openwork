@@ -398,10 +398,46 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     await showContextMenu(tabMenuRequest(tab, point));
   }
 
-  async function showLinkContextMenu({ url, point, sessionId }) {
-    if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return;
+  function isSafeLinkUrl(url) {
+    if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return false;
     const parsed = new URL(url);
-    if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
+    return !parsed.username && !parsed.password && !/[\u0000-\u001f\u007f]/.test(url);
+  }
+
+  async function openMiddleClickedLink(event, url) {
+    const mainWindow = window();
+    const contents = event.sender;
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed() || !contents || !isSafeLinkUrl(url)) return;
+    const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === contents);
+    if (contents !== mainWindow.webContents && (!tab || !browserTabVisible(tab.tabId))) return;
+    if (contents.isDestroyed() || event.senderFrame !== contents.mainFrame) return;
+    // The isolated preloads accept app links or top-level website links only.
+    // Recheck the sender here; a website frame cannot acquire shell access.
+    let source;
+    try { source = new URL(contents.getURL()); } catch { return; }
+    const target = new URL(url);
+    if (tab) {
+      if (!isHttpUrl(source.href)) return;
+      if (target.origin === source.origin && target.pathname === source.pathname && target.search === source.search) return;
+    } else if (target.origin === source.origin) return;
+    const owner = tab ? registry.ownerOf(tab.tabId) : null;
+    let navigated = false;
+    const invalidate = (_event, _url, _inPlace, isMainFrame) => { if (isMainFrame) navigated = true; };
+    const isCurrent = () => !navigated && window() === mainWindow && !mainWindow.isDestroyed()
+      && !mainWindow.webContents.isDestroyed() && !contents.isDestroyed() && event.senderFrame === contents.mainFrame
+      && (!tab || (getBrowserTab(tab.tabId) === tab && registry.ownerOf(tab.tabId) === owner && browserTabVisible(tab.tabId)));
+    contents.on("did-start-navigation", invalidate);
+    try {
+      // Reuse the native menu's policy-checked default-browser action and error
+      // dialog. A denial or uncertain launch never falls back to built-in tabs.
+      await handleMenuChoice({ source: "link", url }, "open-external", isCurrent);
+    } finally {
+      contents.removeListener("did-start-navigation", invalidate);
+    }
+  }
+
+  async function showLinkContextMenu({ url, point, sessionId }) {
+    if (!isSafeLinkUrl(url)) return;
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
     // Capture ownership before discovery; a later focus change must not retarget
     // the link. Dismissals invalidate pending discovery through the serial.
@@ -1587,6 +1623,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return browserControlEnabled;
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.on("openwork:browser:middleClickLink", (event, url) => {
+      const opening = openMiddleClickedLink(event, url);
+      runDetachedTask("open middle-clicked link", () => opening);
+    });
     ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
       const mainContents = window()?.webContents;
       if (event.sender !== mainContents || event.senderFrame !== mainContents?.mainFrame) return;

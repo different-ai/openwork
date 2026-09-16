@@ -77,6 +77,39 @@ if (process.isMainFrame) {
   });
 }
 
+// Own middle-clicks and Cmd/Ctrl-clicks before Markdown/citation/React handlers
+// or Chromium can open a built-in tab. Web clients retain their defaults.
+// Keep this in the isolated main frame; never expose a page-callable launch API.
+if (process.isMainFrame) {
+  /** @param {MouseEvent} event */
+  const handleExternalLinkClick = (event) => {
+    const middleClick = event.type === "auxclick" && event.button === 1;
+    // Use the platform accelerator: Control-click on macOS is a context menu.
+    // Keyboard activation has detail=0 and must keep its existing behavior.
+    const modifiedClick = event.type === "click" && event.button === 0 && event.detail > 0
+      && (process.platform === "darwin" ? event.metaKey : event.ctrlKey);
+    if (!event.isTrusted || event.defaultPrevented || (!middleClick && !modifiedClick)) return;
+    const eventPath = event.composedPath();
+    if (eventPath.some((node) => node instanceof HTMLElement && (
+      node.isContentEditable || node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+    ))) return;
+    const anchor = eventPath.find((node) => node instanceof HTMLAnchorElement);
+    if (!anchor || anchor.hasAttribute("download")) return;
+    const href = anchor.getAttribute("href") ?? "";
+    // Relative paths in the app include attachments and internal routes.
+    if (!/^(https?:)?\/\//i.test(href) || /[\u0000-\u001f\u007f]/.test(href)) return;
+    let url;
+    try { url = new URL(anchor.href); } catch { return; }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.href.length > 32_768) return;
+    if (url.origin === location.origin) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ipcRenderer.send("openwork:browser:middleClickLink", url.href);
+  };
+  window.addEventListener("auxclick", handleExternalLinkClick, { capture: true });
+  window.addEventListener("click", handleExternalLinkClick, { capture: true });
+}
+
 // Selected text and ordinary editors use Chromium's native context-menu event.
 // Explicit editor action menus compose their own editing + formatting menu.
 window.addEventListener("contextmenu", (event) => {

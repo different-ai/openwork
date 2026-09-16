@@ -1375,6 +1375,113 @@ test("deletion cancels pending suspension and restoration without resurrecting s
   }
 });
 
+test("middle-click IPC uses the default-browser policy action once without creating or navigating tabs", async () => {
+  for (const source of ["app", "page"]) {
+    const { invoke, emit, mainContents, views, onScreen, policies } = createPanel();
+    invoke("openwork:browser:setVisibleSession", "A");
+    invoke("openwork:browser:createTab", "https://example.com/source", "A");
+    invoke("openwork:browser:createTab", "https://example.com/neighbor", "B");
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    await flush();
+    const contents = source === "app" ? mainContents : onScreen().webContents;
+    const tabs = invoke("openwork:browser:state").tabs;
+    const loads = views().map(view => [...view.webContents.loads]);
+    policies.length = 0;
+    emit("openwork:browser:middleClickLink", { sender: contents, senderFrame: contents.mainFrame }, LINK.url);
+    await flush();
+    assert.deepEqual(policies, [{ url: LINK.url, external: true }], source);
+    assert.deepEqual(effects, [{ type: "external", url: LINK.url }], source);
+    assert.deepEqual(invoke("openwork:browser:state").tabs, tabs);
+    assert.deepEqual(views().map(view => view.webContents.loads), loads);
+    invoke("openwork:browser:destroy");
+  }
+});
+
+test("middle-click denial, unavailable policy and failed launch show an error without retry or built-in fallback", async (t) => {
+  const { shell } = await import("electron");
+  for (const mode of ["denied", "unavailable", "launch"]) {
+    for (const source of ["app", "page"]) {
+      const { invoke, emit, onScreen, mainContents, policies, views } = createPanel(async ({ external }) => {
+        if (external && mode !== "launch") throw new Error(mode);
+      });
+      invoke("openwork:browser:createTab", "https://example.com/source");
+      invoke("openwork:browser:show", PANEL_BOUNDS);
+      await flush();
+      const contents = source === "app" ? mainContents : onScreen().webContents;
+      let launches = 0;
+      const stub = t.mock.method(shell, "openExternal", async () => { launches++; throw new Error("unavailable browser"); });
+      policies.length = 0;
+      emit("openwork:browser:middleClickLink", { sender: contents, senderFrame: contents.mainFrame }, LINK.url);
+      await flush();
+      assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+      assert.equal(launches, mode === "launch" ? 1 : 0);
+      assert.deepEqual(effects, [{ type: "dialog" }]);
+      assert.equal(views().length, 1);
+      assert.equal(invoke("openwork:browser:state").tabs.length, 1);
+      stub.mock.restore();
+      invoke("openwork:browser:destroy");
+    }
+  }
+});
+
+test("middle-click IPC rejects foreign senders, subframes, hidden pages, internal routes and unsafe destinations", async () => {
+  const { emit, invoke, mainContents, views, policies } = createPanel();
+  invoke("openwork:browser:setVisibleSession", "A");
+  invoke("openwork:browser:createTab", "https://example.com/source", "B");
+  await flush();
+  const hidden = views()[0].webContents;
+  policies.length = 0;
+  for (const event of [{ sender: {}, senderFrame: {} }, { sender: mainContents, senderFrame: {} }, { sender: mainContents, senderFrame: null }, { sender: hidden, senderFrame: hidden.mainFrame }]) {
+    emit("openwork:browser:middleClickLink", event, LINK.url);
+  }
+  for (const url of [null, {}, "javascript:alert(1)", "file:///tmp/link.html", "data:text/html,link", "openwork://settings", "https://user:password@example.com", "https://example.com/\npath", "https://example.com/\u007f", `https://example.com/${"a".repeat(32_768)}`, "http://localhost/settings", "#section", "/workspace/session"]) {
+    invoke("openwork:browser:middleClickLink", url);
+  }
+  invoke("openwork:browser:show", PANEL_BOUNDS, "B");
+  emit("openwork:browser:middleClickLink", { sender: hidden, senderFrame: {} }, LINK.url);
+  emit("openwork:browser:middleClickLink", { sender: hidden, senderFrame: hidden.mainFrame }, "https://example.com/source#fragment");
+  hidden.url = "data:text/html,untrusted";
+  emit("openwork:browser:middleClickLink", { sender: hidden, senderFrame: hidden.mainFrame }, LINK.url);
+  await flush();
+  assert.deepEqual(policies, []);
+  assert.deepEqual(effects, []);
+  assert.equal(views().length, 1);
+  invoke("openwork:browser:destroy");
+});
+
+test("middle-click policy completion cannot act on stale renderer or website documents", async () => {
+  for (const source of ["app", "page"]) {
+    for (const ending of ["navigation", "destroyed", "window-destroyed", "frame-replaced", ...(source === "page" ? ["hidden", "closed", "conversation"] : [])]) {
+      const policy = gate();
+      const { invoke, emit, mainWindow, mainContents, onScreen, policies } = createPanel(({ external }) => external ? policy.promise : undefined);
+      invoke("openwork:browser:createTab", "https://example.com/source", "A");
+      invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+      await flush();
+      const contents = source === "app" ? mainContents : onScreen().webContents;
+      const listeners = source === "app" ? contents.listenerCount("did-start-navigation") : null;
+      policies.length = 0;
+      emit("openwork:browser:middleClickLink", { sender: contents, senderFrame: contents.mainFrame }, LINK.url);
+      await flush();
+      assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+      if (ending === "navigation") {
+        if (source === "app") contents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+        else contents.emit("did-start-navigation", "https://next.example", false, true);
+      }
+      if (ending === "destroyed") contents.destroyed = true;
+      if (ending === "window-destroyed") mainWindow.destroyed = true;
+      if (ending === "frame-replaced") contents.mainFrame = {};
+      if (ending === "hidden") invoke("openwork:browser:hide");
+      if (ending === "closed") invoke("openwork:browser:closeAllTabs");
+      if (ending === "conversation") invoke("openwork:browser:setVisibleSession", "B");
+      policy.finish();
+      await flush();
+      assert.deepEqual(effects, [], `${source}: ${ending}`);
+      if (source === "app") assert.equal(contents.listenerCount("did-start-navigation"), listeners);
+      invoke("openwork:browser:destroy");
+    }
+  }
+});
+
 test("a native choice launches only the selected installed or default browser with the exact link", async () => {
   for (const itemId of ["browser:chrome", "browser:firefox", "open-external"]) {
     const { openLinkMenu, invoke, policies, views } = createPanel();

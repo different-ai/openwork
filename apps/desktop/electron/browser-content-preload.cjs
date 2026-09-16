@@ -309,6 +309,38 @@ function installDismissListeners() {
   window.addEventListener("keydown", dismissMenuOverlay, { capture: true });
 }
 
+function installExternalLinkClickListeners() {
+  // Sandboxed preloads cannot import local helpers. Keep this small DOM guard in
+  // sync with the app preload, but resolve website-relative links here. No bridge
+  // is exposed to page JavaScript and iframe privileges are deliberately unchanged.
+  if (typeof process === "undefined" || !process.isMainFrame) return;
+  /** @param {MouseEvent} event */
+  const handleExternalLinkClick = (event) => {
+    const middleClick = event.type === "auxclick" && event.button === 1;
+    const modifiedClick = event.type === "click" && event.button === 0 && event.detail > 0
+      && (process.platform === "darwin" ? event.metaKey : event.ctrlKey);
+    if (!event.isTrusted || event.defaultPrevented || (!middleClick && !modifiedClick)) return;
+    if (!["http:", "https:"].includes(location.protocol)) return;
+    const eventPath = event.composedPath();
+    if (eventPath.some((node) => node instanceof HTMLElement && (
+      node.isContentEditable || node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+    ))) return;
+    const anchor = eventPath.find((node) => node instanceof HTMLAnchorElement);
+    if (!anchor || anchor.hasAttribute("download")) return;
+    const href = anchor.getAttribute("href") ?? "";
+    if (!href.trim() || href.trim().startsWith("#") || /[\u0000-\u001f\u007f]/.test(href)) return;
+    let url;
+    try { url = new URL(anchor.href); } catch { return; }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.href.length > 32_768) return;
+    if (url.origin === location.origin && url.pathname === location.pathname && url.search === location.search) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ipcRenderer.send("openwork:browser:middleClickLink", url.href);
+  };
+  window.addEventListener("auxclick", handleExternalLinkClick, { capture: true });
+  window.addEventListener("click", handleExternalLinkClick, { capture: true });
+}
+
 function installToolChangeRelay() {
   let timer = null;
   window.addEventListener("openwork:webmcp-tools-changed", () => {
@@ -370,6 +402,7 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
     installDismissListeners();
   }
   installToolChangeRelay();
+  installExternalLinkClickListeners();
 }
 
 if (typeof module !== "undefined") module.exports = { installWebMcpRuntime };
