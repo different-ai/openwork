@@ -329,6 +329,7 @@ migrations:
   enabled: true
   hook: true
   hookDeletePolicy: before-hook-creation,hook-succeeded
+  writersStoppedFor0097: false
   backoffLimit: 2
   # Counts from Job creation and includes pulling the den-api image (~800 MB),
   # so it must cover a cold pull on the slowest node. Pass a matching Helm

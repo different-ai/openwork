@@ -278,6 +278,8 @@ export function registerAgentGeneratedArtifactViews(input: {
           },
         )
       }
+      const displayToolName = `${view.status === "active" && view.activeRevisionId === revision.id ? "render" : "preview"}_artifact_${view.id}`
+      const liveInputInstruction = "Live tools run the saved Workflow as the authenticated viewer with optional timeZone (IANA zone, default UTC). The server supplies input.runtime.{now,today,timeZone,dayStart,dayEnd}. No other inputs or receipt overrides are accepted."
       // Model tool catalogs can stay fixed for the rest of a turn. Give the
       // host an exact preview reference without requiring the new tool first.
       const preview = await input.loadData({
@@ -286,9 +288,15 @@ export function registerAgentGeneratedArtifactViews(input: {
         dataMode: view.dataMode ?? "snapshot",
       })
       if (!preview.ok) {
+        if (view.dataMode === "live") {
+          syncView(view)
+          input.notifyCatalogChanged()
+        }
         return errorToolResult(
           "artifact_view_preview_unavailable",
-          "The app draft compiled, but its preview has no compatible readable Workflow result. Run the current saved Workflow version explicitly with its example inputs using execute_capability, then retry save_artifact_view with the artifactViewId below. An ad-hoc execute_capability_script run is not a saved Workflow result. Do not schedule an Automation or report the preview ready yet.",
+          view.dataMode === "live"
+            ? `The app draft compiled, but its live preview failed. Resolve the reported Workflow or connection issue first, following the returned connection action when present. Then call ${displayToolName} to retry this revision's preview. ${liveInputInstruction} Do not rebuild or activate the draft just to retry data loading. Once the preview succeeds, let the user choose Save in OpenWork. Do not schedule an Automation or report the preview ready yet.`
+            : "The app draft compiled, but its preview has no compatible readable Workflow result. Run the current saved Workflow version explicitly with its example inputs using execute_capability, then retry save_artifact_view with the artifactViewId below. An ad-hoc execute_capability_script run is not a saved Workflow result. Do not schedule an Automation or report the preview ready yet.",
           {
             artifactViewId: view.id,
             viewRevisionId: revision.id,
@@ -302,9 +310,9 @@ export function registerAgentGeneratedArtifactViews(input: {
       }
       syncView(view)
       input.notifyCatalogChanged()
-      const displayInstruction = `Call ${view.status === "active" && view.activeRevisionId === revision.id
-        ? `render_artifact_${view.id}`
-        : `preview_artifact_${view.id}`} to display that revision.`
+      const displayInstruction = `Call ${displayToolName} to display that revision.` + (view.dataMode === "live"
+        ? ` The live launch tool is run_artifact_${view.id}; it opens the active revision when present, otherwise the newest draft. ${liveInputInstruction} Show the draft preview and let the user choose Save in OpenWork to keep it on their dashboard. Do not activate a draft merely because it built successfully.`
+        : "")
       return {
         content: [{ type: "text" as const, text: `Saved immutable view revision ${revision.id} at ${revision.resourceUri}. OpenWork opens the artifact preview automatically. In other MCP clients: ${displayInstruction}` }],
         structuredContent: { view },

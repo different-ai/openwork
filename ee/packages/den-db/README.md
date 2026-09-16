@@ -41,6 +41,61 @@ Containerized production installs run the precompiled artifact directly:
 node /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
+## Production 0097 upgrade preconditions
+
+For an existing database with canonical 0097 still pending, use the compiled
+`bootstrap.js` entrypoint above, not the raw `db:migrate` command. Bootstrap runs
+ordinary predecessors through 0096 with Drizzle, then executes the hash-pinned
+0097 compatibility path, preserving the eight existing `PRIMARY(id)` keys. It
+verifies the affected source and target definitions and empty tables before
+recording the original 0097 hash/timestamp. Shipped SQL and history are unchanged.
+
+Before approving this upgrade, take and verify a restorable backup, and externally
+stop and drain **all application/gateway writers, callbacks, cron jobs and competing
+deploy jobs**. Keep them isolated until migration completion has been verified.
+Only then acknowledge those operational actions for this migration process:
+
+```bash
+DEN_DB_0097_WRITERS_STOPPED=1 node /app/ee/packages/den-db/dist/scripts/bootstrap.js
+```
+
+Only the exact environment value `1` is accepted. **This acknowledgement does not
+freeze or stop writers.** The advisory lock coordinates compatible migration
+runners only. A visible-active-session check can reject competing work, but cannot
+exclude sleeping connections, sessions hidden by privileges, or later arrivals.
+External isolation remains required regardless of the check's result.
+
+For Helm, the narrow boolean `migrations.writersStoppedFor0097` defaults to `false`.
+After the external actions above, the reviewed deployment may set it temporarily:
+
+```bash
+helm upgrade openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml \
+  --set migrations.writersStoppedFor0097=true
+```
+
+This emits only `DEN_DB_0097_WRITERS_STOPPED=1` in the migration Job, without
+changing database, encryption or managed-secret settings. Helm retains supplied
+values, so explicitly restore `migrations.writersStoppedFor0097=false` in subsequent
+deployments and do not store a permanent acknowledgement in production values.
+Old reused values with this field absent remain unacknowledged. Empty current
+snapshot installs and already-receipted canonical 0097+ do not require the flag.
+
+Pending compatibility also requires session `default_storage_engine=InnoDB`,
+advisory-lock support, writable temporary storage for predecessor staging, and
+verifiable direct global or exact database-wide `SELECT`, `SHOW VIEW`, `TRIGGER`
+and `REFERENCES` grants. Role-only/table-level grants and partial revocations are
+refused rather than treating incomplete metadata visibility as proof of absence.
+Affected table/column collations must match the database defaults. The runner does
+not change engine settings, PK requirements, grants, encryption or TLS.
+
+History must be the exact canonical hash/timestamp prefix. Unknown, superseded,
+unjournaled, nonempty intermediate or partial-0097 states require separately
+reviewed recovery; bootstrap does not repair, replay partial DDL, or baseline them.
+A failed or uncertain completion must be inspected before any restart. For callers
+of the exported core function, pass the fifth argument
+`{ writersStoppedFor0097: true }` only after the same external actions; its default
+is unacknowledged and it never reads process environment itself.
+
 ## Local startup safety
 
 `pnpm dev:web-local` runs guarded loopback-only migrations before application
@@ -61,9 +116,9 @@ the same PR are empty, as confirmed by the operator, so no backfills are needed.
 The local runner pins the generated SQL hash and rejects nonempty sources before
 writes. A verified 0095 baseline skips only its absent rollup lock, then checks
 all eight sources after 0096. Old 0097/0098/0099 receipts or partial schemas require
-explicit recovery, never automatic stamping. This is not production rollout
-approval: the production transaction runner and generated primary-key drop/add
-compatibility remain unresolved. See [0097 notes](drizzle/0097_gateway_access_matrix.md).
+explicit recovery, never automatic stamping. These local checks are not production
+rollout approval; production uses the guarded bootstrap path and operational
+preconditions above. See [0097 notes](drizzle/0097_gateway_access_matrix.md).
 
 ## Automated migrations (CI)
 
@@ -86,6 +141,9 @@ local env vars — see `.env.example`):
 | `DATABASE_PASSWORD` | PlanetScale branch password |
 
 ### One-time baseline
+
+This is not a recovery path for pending or partial 0097. Do not use baselining to
+bypass bootstrap's canonical history or schema checks.
 
 A database previously managed with `db:push` has no `__drizzle_migrations`
 table, so the first `db:migrate` would try to replay every migration.

@@ -1,4 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
+import posthog from "posthog-js";
+import { beforeSendPosthog } from "./posthog-privacy";
 
 import { parseBrowserObservabilityEnv } from "./observability/browser-config";
 import {
@@ -8,6 +10,37 @@ import {
   scrubText,
   scrubUnknownRecord,
 } from "./observability/scrub";
+
+// Official Next.js integration: initialize the bundled SDK before hydration.
+// next.config.js exposes a token only for eligible hosted production builds.
+const posthogToken = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
+if (process.env.NODE_ENV === "production" && posthogToken && typeof window !== "undefined"
+  && window.location.origin === "https://app.openworklabs.com" && !window.posthog) {
+  try {
+    posthog.init(posthogToken, {
+      api_host: "/ow",
+      ui_host: "https://us.posthog.com",
+      defaults: "2026-05-30",
+      persistence: "localStorage",
+      cross_subdomain_cookie: false,
+      person_profiles: "identified_only",
+      capture_pageview: "history_change",
+      capture_pageleave: false,
+      autocapture: false,
+      rageclick: false,
+      disable_session_recording: true,
+      disable_surveys: true,
+      advanced_disable_flags: true,
+      save_referrer: false,
+      save_campaign_params: false,
+      before_send: beforeSendPosthog,
+    });
+    // Compatibility for existing analytics call sites; no auth helpers change.
+    window.posthog = posthog;
+  } catch {
+    // Optional analytics initialization must not prevent application startup.
+  }
+}
 
 const config = parseBrowserObservabilityEnv({
   backend: process.env.NEXT_PUBLIC_DEN_OBSERVABILITY_BACKEND,

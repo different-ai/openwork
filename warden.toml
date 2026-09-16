@@ -2,8 +2,9 @@ version = 1
 
 # Warden gates clearance on blocking findings from three skills:
 # diff-security-review and confidentiality-review (all findings block) and
-# desktop-den-sync-review (only high findings block). Provenance and medium/low
-# sync advisories remain in Warden check summaries but create no new threads.
+# desktop-den-sync-review (only high findings block). Provenance, design-spec,
+# and medium/low sync advisories remain in Warden check summaries but create
+# no new threads and never block.
 # Clearance itself is granted by .github/workflows/warden-clearance.yml.
 
 [defaults]
@@ -87,3 +88,29 @@ actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 type = "local"
 failOn = "high"
 minConfidence = "low"
+
+# Advisory design review against DESIGN.md. Findings appear in the Warden
+# check summary as advisories; they never block clearance or fail locally.
+[[skills]]
+name = "design-spec-review"
+reportOn = "low"
+paths = [
+  "apps/app/src/**",
+  "apps/desktop/src/**",
+  "apps/desktop/electron/**",
+  "ee/apps/den-web/**",
+]
+ignorePaths = [
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/__tests__/**",
+  "**/*.stories.*",
+]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
+
+[[skills.triggers]]
+type = "local"
+failOn = "off"
