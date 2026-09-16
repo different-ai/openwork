@@ -1,3 +1,5 @@
+import type { liveArtifactConnectionFailure } from "./mcp/capability-registry.js"
+import { artifactRuntime } from "./artifact-runtime.js"
 import type {
   AutomationAction,
 } from "@openwork/types/automations"
@@ -8,7 +10,7 @@ import type {
   WorkflowVersion,
 } from "@openwork/types/workflows"
 import { WorkflowGraph } from "@openwork/codemode"
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
   AutomationRunTable,
@@ -46,6 +48,7 @@ import {
   type PluginArchActorContext,
 } from "./routes/org/plugin-system/access.js"
 import { memberHasRole } from "./routes/org/shared.js"
+import { assertWorkflowSourceSafe, getWorkflowAuthoringSource } from "./workflow-authoring-receipts.js"
 
 const DEFAULT_WORKFLOWS_PLUGIN_NAME = "My Workflows"
 const LEGACY_WORKFLOW_PLUGIN_NAMES = ["My Programs", "Saved scripts"]
@@ -55,13 +58,15 @@ export type SaveWorkflowInput = {
   pluginId?: string
   name: string
   description?: string
-  code: string
+  code?: string
+  receiptId?: string
   currentInput?: unknown
   inputSchema?: unknown
   outputSchema?: unknown
 }
 
-export type WorkflowDraft = SaveWorkflowInput & {
+export type WorkflowDraft = Omit<SaveWorkflowInput, "receiptId" | "code"> & {
+  code: string
   exampleInput?: unknown
   requiredCapabilities: Array<{ capabilityName: string; scriptPath: string }>
 }
@@ -234,14 +239,25 @@ async function workflowVersions(
   })
 }
 
+function snapshotReadAccess(memberId: DenTypeId<"member">) {
+  if (!memberId) throw new Error("workflow_receipt_member_required")
+  return or(
+    eq(WorkflowRunTable.org_membership_id, memberId),
+    eq(WorkflowRunTable.source, sql`concat('plugin:', ${WorkflowRunTable.plugin_id}, ':', ${WorkflowRunTable.config_object_id})`),
+  )
+}
+
 async function snapshotRows(
   organizationId: DenTypeId<"organization">,
   configObjectId: ConfigObjectId,
+  memberId: DenTypeId<"member">,
   limit = 100,
   cursor?: KeysetCursor,
 ) {
+  if (!memberId) throw new Error("workflow_receipt_member_required")
   const conditions: Array<SQL | undefined> = [
     eq(WorkflowRunTable.organization_id, organizationId),
+    snapshotReadAccess(memberId),
     eq(WorkflowRunTable.config_object_id, configObjectId),
     isNotNull(WorkflowRunTable.config_object_version_id),
   ]
@@ -257,10 +273,10 @@ async function snapshotRows(
 export async function workflowSnapshotPage(
   organizationId: DenTypeId<"organization">,
   configObjectId: ConfigObjectId,
-  input: { limit?: number; cursor?: KeysetCursor },
+  input: { memberId: DenTypeId<"member">; limit?: number; cursor?: KeysetCursor },
 ): Promise<{ items: WorkflowArtifactSnapshot[]; nextCursor: string | null }> {
   const limit = Math.min(200, Math.max(1, input.limit ?? 100))
-  const rows = await snapshotRows(organizationId, configObjectId, limit + 1, input.cursor)
+  const rows = await snapshotRows(organizationId, configObjectId, input.memberId, limit + 1, input.cursor)
   const page = keysetPage(rows, limit, (row) => ({ at: row.receipt.finished_at, id: row.receipt.id }))
   return {
     items: page.items.flatMap((row) => {
@@ -284,7 +300,7 @@ export async function getWorkflowDetail(input: {
   })
   const [versions, rows] = await Promise.all([
     workflowVersions(input.context, resource.configObject.id, role === "manager"),
-    snapshotRows(resource.configObject.organizationId, resource.configObject.id),
+    snapshotRows(resource.configObject.organizationId, resource.configObject.id, input.context.organizationContext.currentMember.id),
   ])
   const currentVersion = versions[0]
   if (!currentVersion) throw new Error("workflow_version_not_found")
@@ -390,6 +406,7 @@ export async function listWorkflowSnapshots(input: {
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "viewer")
   return workflowSnapshotPage(resource.configObject.organizationId, resource.configObject.id, {
+    memberId: input.context.organizationContext.currentMember.id,
     limit: input.limit,
     cursor: input.cursor,
   })
@@ -407,6 +424,7 @@ export async function getWorkflowSnapshot(input: {
     .where(and(
     eq(WorkflowRunTable.id, parseReceiptId(input.receiptId)),
     eq(WorkflowRunTable.organization_id, resource.configObject.organizationId),
+    snapshotReadAccess(input.context.organizationContext.currentMember.id),
     eq(WorkflowRunTable.config_object_id, resource.configObject.id),
     isNotNull(WorkflowRunTable.config_object_version_id),
   )).limit(1)
@@ -451,6 +469,7 @@ export async function createWorkflowVersion(input: {
   buildTools: () => Promise<BuiltCodemodeTools>
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
+  assertWorkflowSourceSafe(input.draft.code)
   const payload = normalizedPayload(input.draft)
   if (payload.parsed.inputSchema) {
     const validation = validateCodemodeScriptInput(payload.parsed.inputSchema, input.draft.exampleInput)
@@ -549,6 +568,7 @@ export async function deleteWorkflowSnapshotContent(input: {
   const rows = await db.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.id, receiptId),
     eq(WorkflowRunTable.organization_id, resource.configObject.organizationId),
+    eq(WorkflowRunTable.org_membership_id, input.context.organizationContext.currentMember.id),
     eq(WorkflowRunTable.config_object_id, resource.configObject.id),
     isNotNull(WorkflowRunTable.config_object_version_id),
   )).limit(1)
@@ -700,14 +720,63 @@ export async function saveWorkflow(input: {
       role: "editor",
     })
   }
+  const explicitReceipt = input.workflow.receiptId !== undefined
+  let receiptId: DenTypeId<"workflowRun"> | undefined
+  if (explicitReceipt) {
+    try {
+      receiptId = parseReceiptId(input.workflow.receiptId ?? "")
+    } catch {
+      throw new Error("workflow_authoring_receipt_required")
+    }
+  }
+  const retained = receiptId === undefined ? null : await getWorkflowAuthoringSource({
+    receiptId, organizationId, orgMembershipId: ownerMemberId,
+  })
+  if (explicitReceipt && !retained) throw new Error("workflow_authoring_receipt_required")
+  const code = retained?.code ?? input.workflow.code
+  if (!code) throw new Error("workflow_code_or_receipt_required")
+  if (retained && input.workflow.code !== undefined && input.workflow.code !== retained.code) {
+    throw new Error("workflow_authoring_receipt_required")
+  }
+  assertWorkflowSourceSafe(code)
+  if (retained?.mode === "live" && Object.hasOwn(input.workflow, "currentInput")) {
+    throw new Error("workflow_live_current_input_forbidden")
+  }
+  const validationInput = retained?.mode === "live"
+    ? { runtime: retained.runtime }
+    : input.workflow.currentInput
+  if (retained && (retained.inputDigest !== artifactDigest(validationInput ?? null)
+    || retained.inputSchemaDigest !== optionalArtifactDigest(input.workflow.inputSchema)
+    || retained.outputSchemaDigest !== optionalArtifactDigest(input.workflow.outputSchema))) {
+    throw new Error("workflow_authoring_receipt_required")
+  }
+  const codeDigest = codemodeCodeDigest(code)
   const receipts = await db.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.organization_id, organizationId),
     eq(WorkflowRunTable.org_membership_id, ownerMemberId),
-    eq(WorkflowRunTable.code_digest, codemodeCodeDigest(input.workflow.code)),
+    eq(WorkflowRunTable.code_digest, codeDigest),
     eq(WorkflowRunTable.status, "succeeded"),
     gt(WorkflowRunTable.finished_at, new Date(Date.now() - RECENT_RUN_WINDOW_MS)),
+    receiptId === undefined ? undefined : eq(WorkflowRunTable.id, receiptId),
+    retained === null
+      ? sql`${WorkflowRunTable.source} <> ${"authoring:live"}`
+      : eq(WorkflowRunTable.source, retained.source),
   )).orderBy(desc(WorkflowRunTable.finished_at)).limit(1)
   const receipt = receipts[0]
+  if (!retained && receipt?.source === "authoring:live") throw new Error("workflow_authoring_receipt_required")
+  if (retained) {
+    if (!receipt || receipt.id !== retained.receiptId
+      || receipt.organization_id !== organizationId || receipt.org_membership_id !== ownerMemberId
+      || receipt.source !== retained.source || receipt.code_digest !== codeDigest || retained.codeDigest !== codeDigest
+      || receipt.status !== "succeeded" || receipt.finished_at.getTime() <= Date.now() - RECENT_RUN_WINDOW_MS
+      || receipt.finished_at.getTime() > Date.now()
+      || receipt.script_input_digest !== retained.inputDigest
+      || receipt.input_schema_digest !== retained.inputSchemaDigest || receipt.output_schema_digest !== retained.outputSchemaDigest
+      || receipt.script_input !== null || receipt.config_object_id !== null || receipt.config_object_version_id !== null
+      || receipt.plugin_id !== null || receipt.automation_run_id !== null || receipt.artifact_content_deleted_at !== null) {
+      throw new Error("workflow_authoring_receipt_required")
+    }
+  }
   if (!receipt) throw new Error("workflow_recent_receipt_required")
 
   // Saving does not authorize unattended execution; executeWorkflow checks that at run time.
@@ -731,16 +800,23 @@ export async function saveWorkflow(input: {
     language: "codemode-js",
     ...(input.workflow.inputSchema === undefined ? {} : { inputSchema: input.workflow.inputSchema }),
     ...(input.workflow.outputSchema === undefined ? {} : { outputSchema: input.workflow.outputSchema }),
-    ...(input.workflow.currentInput === undefined ? {} : { exampleInput: input.workflow.currentInput }),
+    ...(retained?.mode === "live" || input.workflow.currentInput === undefined ? {} : { exampleInput: input.workflow.currentInput }),
     requiredCapabilities,
   }
   const parsed = parseCodemodeScriptPayload(normalizedPayloadJson)
   if (!parsed.ok) throw new Error(`workflow_invalid_schema:${parsed.message}`)
   if (parsed.payload.inputSchema) {
-    const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, input.workflow.currentInput)
+    const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, retained ? validationInput ?? null : validationInput)
     if (!validation.ok) throw new Error("workflow_current_input_invalid")
   }
-  const graph = WorkflowGraph.analyze(input.workflow.code)
+  const graph = WorkflowGraph.analyze(code)
+  if (retained) {
+    const current = await getWorkflowAuthoringSource(retained)
+    if (!current || artifactDigest(current) !== artifactDigest(retained)
+      || receipt.finished_at.getTime() <= Date.now() - RECENT_RUN_WINDOW_MS) {
+      throw new Error("workflow_authoring_receipt_required")
+    }
+  }
 
   return db.transaction(async (tx) => {
     const plugins = requestedPluginId
@@ -856,7 +932,7 @@ export async function saveWorkflow(input: {
       organizationId,
       configObjectId,
       normalizedPayloadJson,
-      rawSourceText: input.workflow.code,
+      rawSourceText: code,
       schemaVersion: "codemode-script-v1",
       createdVia: "cloud",
       createdByOrgMembershipId: ownerMemberId,
@@ -871,4 +947,46 @@ export async function saveWorkflow(input: {
       mermaid: WorkflowGraph.toMermaid(graph),
     }
   })
+}
+
+export async function executeLiveArtifactWorkflow(input: {
+  context: PluginArchActorContext
+  configObjectId: string
+  expectedOutputSchemaDigest: string
+  timeZone?: string
+  describeUnavailable?: (missing: readonly { capabilityName: string }[]) => ReturnType<typeof liveArtifactConnectionFailure>
+  buildTools: () => Promise<BuiltCodemodeTools>
+}) {
+  const resource = await workflowResource(input.context, input.configObjectId, "viewer")
+  const rows = await db.select().from(ConfigObjectVersionTable).where(and(
+    eq(ConfigObjectVersionTable.organizationId, resource.configObject.organizationId),
+    eq(ConfigObjectVersionTable.configObjectId, resource.configObject.id),
+    eq(ConfigObjectVersionTable.isDeletedVersion, false),
+  )).orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id)).limit(1)
+  const version = rows[0]
+  if (!version) throw new Error("workflow_version_not_found")
+  const parsed = parseCodemodeScriptPayload(version.normalizedPayloadJson)
+  if (!parsed.ok || !parsed.payload.outputSchema
+    || optionalArtifactDigest(parsed.payload.outputSchema) !== input.expectedOutputSchemaDigest) {
+    throw new Error("artifact_view_schema_incompatible")
+  }
+  const result = await executeWorkflow({
+    database: db,
+    organizationId: resource.configObject.organizationId,
+    orgMembershipId: input.context.organizationContext.currentMember.id,
+    pluginId: resource.plugin.id,
+    configObjectId: resource.configObject.id,
+    configObjectVersionId: version.id,
+    normalizedPayloadJson: version.normalizedPayloadJson,
+    code: version.rawSourceText ?? "",
+    scriptInput: { runtime: artifactRuntime(input.timeZone) },
+    validateOutput: true,
+    readOnly: true,
+    buildTools: input.buildTools,
+  })
+  if (!result.ok && result.error === "capability_unavailable" && input.describeUnavailable) {
+    const connection = await input.describeUnavailable(result.missing).catch(() => null)
+    if (connection) return { ...result, ...connection }
+  }
+  return result
 }

@@ -36,6 +36,7 @@ export type CapabilityMatch = {
   bodySchema?: unknown
   /** Exact OpenAPI JSON schema for the query string parameters, present only when the operation documents any. */
   querySchema?: unknown
+  outputSchema?: Record<string, unknown>
   /** Exact MCP arguments schema returned by a live MCP tool list. */
   argumentsSchema?: unknown
   /** Tells generic execute callers where MCP arguments must be supplied. */
@@ -143,6 +144,7 @@ export function searchCapabilities(
         hasBody: hasJsonRequestBody(operation.operation),
         ...(bodySchema === undefined ? {} : { bodySchema }),
         ...(querySchema === undefined ? {} : { querySchema }),
+        ...(operation.outputSchema === undefined ? {} : { outputSchema: operation.outputSchema }),
       }
     })
     .filter((match) => match.score > 0)

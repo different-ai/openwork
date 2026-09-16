@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -38,7 +39,12 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSessionDirectory?: string; nativeV2Directory?: string; recovery?: { active: boolean; turn: number } }) {
+type MockReadOptions = {
+  onRead?: (request: Request) => Promise<void>;
+  sessions?: unknown;
+};
+
+function startMockOpencode(input?: MockReadOptions & { holdCommand?: Promise<void>; foreignSessionDirectory?: string; nativeV2Directory?: string; recovery?: { active: boolean; turn: number } }) {
   const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -56,6 +62,7 @@ function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSession
         if (text) record.body = JSON.parse(text);
       }
       requests.push(record);
+      if (request.method === "GET") await input?.onRead?.(request);
 
       if (input?.nativeV2Directory) {
         const sessionId = url.pathname.match(/^\/api\/session\/(ses_[^/]+)$/)?.[1];
@@ -72,7 +79,12 @@ function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSession
             parts: [{ id: "prt_1", type: "text", text: "Stored history" }] };
           return Response.json({ data: messageSession[2] ? message : [message] });
         }
-        if (["/api/mcp", "/api/skill", "/api/session"].includes(url.pathname)) return Response.json({ data: [] });
+        if (url.pathname === "/api/session") return Response.json({ data: input.sessions ?? [
+          { id: "ses_1", location: { directory: input.nativeV2Directory } },
+          { id: "ses_foreign", location: { directory: input.foreignSessionDirectory } },
+          { id: "ses_unscoped" },
+        ] });
+        if (["/api/mcp", "/api/skill"].includes(url.pathname)) return Response.json({ data: [] });
         if (url.pathname === "/api/session/ses_1/instructions/entries/openwork.context"
           || url.pathname === "/api/session/ses_1/prompt") return Response.json({ data: { accepted: true } });
         return Response.json({ code: "not_found" }, { status: 404 });
@@ -275,10 +287,10 @@ function readinessGate() {
   };
 }
 
-async function startV2Proxy() {
+async function startV2Proxy(options?: MockReadOptions) {
   const workspaceRoot = await createWorkspaceRoot();
   const secondWorkspaceRoot = await createWorkspaceRoot();
-  const engine = startMockOpencode({ nativeV2Directory: workspaceRoot, foreignSessionDirectory: secondWorkspaceRoot });
+  const engine = startMockOpencode({ ...options, nativeV2Directory: workspaceRoot, foreignSessionDirectory: secondWorkspaceRoot });
   const provider = readinessGate();
   const mcp = readinessGate();
   const status = () => ({ enabled: true, chatRouting: true, running: true,
@@ -306,8 +318,8 @@ async function startV2Proxy() {
   }
 }
 
-async function waitUntil(predicate: () => boolean) {
-  for (let index = 0; index < 20; index++) {
+async function waitUntil(predicate: () => boolean, attempts = 20) {
+  for (let index = 0; index < attempts; index++) {
     if (predicate()) return true;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -315,6 +327,74 @@ async function waitUntil(predicate: () => boolean) {
 }
 
 describe("workspace OpenCode proxy", () => {
+  for (const version of ["v1", "v2"]) {
+    for (const phase of ["ownership", "history"]) {
+      test.serial(`${version} history disconnect cancels the upstream ${phase} GET`, async () => {
+        const prefix = version === "v2" ? "/api" : "";
+        const historyPath = `${prefix}/session/ses_1/message`;
+        const heldPath = phase === "ownership" ? `${prefix}/session/ses_1` : historyPath;
+        const release = deferred();
+        let observed: AbortSignal | undefined;
+        const onRead = async (request: Request) => {
+          if (new URL(request.url).pathname !== heldPath) return;
+          observed = request.signal;
+          await release.promise;
+        };
+        const fixture = version === "v2" ? await startV2Proxy({ onRead }) : await (async () => {
+          const workspaceRoot = await createWorkspaceRoot();
+          const engine = startMockOpencode({ onRead });
+          const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${engine.server.port}` });
+          return { engine, request: (path: string, init: RequestInit) => fetch(
+            `http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode${path}`,
+            { headers: auth(openwork.token), ...init },
+          ) };
+        })();
+        const caller = new AbortController();
+        const result = fixture.request(historyPath, { signal: caller.signal }).catch((error: unknown) => error);
+        try {
+          expect(await waitUntil(() => observed !== undefined, 100)).toBe(true);
+          caller.abort();
+          expect(await result).toMatchObject({ name: "AbortError" });
+          expect(await waitUntil(() => observed?.aborted === true, 100)).toBe(true);
+          if (phase === "ownership") expect(fixture.engine.requests.some((entry) => entry.pathname === historyPath)).toBe(false);
+          expect(fixture.engine.requests.every((entry) => entry.method === "GET")).toBe(true);
+        } finally {
+          caller.abort();
+          release.resolve();
+          await result;
+        }
+      });
+    }
+  }
+
+  test.serial("v2 session list resolves each directory once per page without caching ownership across pages", async () => {
+    const alias = join(await createWorkspaceRoot(), "alias");
+    const sessions = { items: [
+      { id: "ses_a", location: { directory: alias } },
+      { info: { id: "ses_b", location: { directory: alias } } },
+      { id: "ses_unscoped" },
+    ], next: "next-page" };
+    const fixture = await startV2Proxy({ sessions });
+    await symlink(fixture.workspaceRoot, alias, "dir");
+    const resolvePath = spyOn(fs, "realpath");
+    try {
+      const first = await fixture.request("/api/session?limit=50");
+      expect(first.status).toBe(200);
+      await expect(first.json()).resolves.toEqual({ data: { ...sessions, items: sessions.items.slice(0, 2) } });
+      expect(resolvePath.mock.calls.filter(([directory]) => directory === alias)).toHaveLength(1);
+      await rm(alias);
+      await symlink(fixture.secondWorkspaceRoot, alias, "dir");
+      const second = await fixture.request("/api/session?cursor=next-page&limit=50");
+      expect(second.status).toBe(200);
+      await expect(second.json()).resolves.toEqual({ data: { ...sessions, items: [] } });
+      expect(resolvePath.mock.calls.filter(([directory]) => directory === alias)).toHaveLength(2);
+      expect(fixture.provider.calls).toEqual([]);
+      expect(fixture.mcp.calls).toEqual([]);
+    } finally {
+      resolvePath.mockRestore();
+    }
+  });
+
   test.serial("v2 stored history responds while provider and MCP readiness are held; prompts wait for both", async () => {
     const fixture = await startV2Proxy();
     let promptSettled = false;
@@ -323,6 +403,9 @@ describe("workspace OpenCode proxy", () => {
     for (const gate of [fixture.provider, fixture.mcp]) {
       await gate.entered;
       const before = fixture.engine.requests.length;
+      const list = await fixture.request(`/api/session?limit=50&location[directory]=${encodeURIComponent(fixture.secondWorkspaceRoot)}`);
+      expect(list.status).toBe(200);
+      await expect(list.json()).resolves.toEqual({ data: [{ id: "ses_1", location: { directory: fixture.workspaceRoot } }] });
       for (const suffix of ["", "/message", "/message/msg_1"]) {
         const query = new URLSearchParams({ "location[directory]": fixture.secondWorkspaceRoot,
           "location[project]": "foreign", location: "foreign", limit: "50" });
@@ -336,6 +419,7 @@ describe("workspace OpenCode proxy", () => {
       }
       const reads = fixture.engine.requests.slice(before);
       expect(reads.map((item) => item.pathname)).toEqual([
+        "/api/session",
         "/api/session/ses_1", "/api/session/ses_1",
         "/api/session/ses_1", "/api/session/ses_1/message",
         "/api/session/ses_1", "/api/session/ses_1/message/msg_1",
@@ -364,7 +448,8 @@ describe("workspace OpenCode proxy", () => {
       if (failingGate === "provider") { fixture.provider.fail(); fixture.mcp.release(); }
       else { fixture.provider.release(); fixture.mcp.fail(); }
       const guarded: Array<[string, string]> = [
-        ["GET", "/api/session"], ["GET", "/api/session/status"], ["GET", "/api/session/active"],
+        ["GET", "/api/session/"], ["GET", "/api/%73ession"], ["HEAD", "/api/session"],
+        ["GET", "/api/session/status"], ["GET", "/api/session/active"],
         ["GET", "/api/session/ses_1/todo"], ["GET", "/api/session/ses_1/permission"],
         ["GET", "/api/permission"], ["GET", "/api/form/request"], ["GET", "/api/provider"],
         ["GET", "/api/session/ses_1/unknown"], ["GET", "/api/session/status/message"],
@@ -390,6 +475,9 @@ describe("workspace OpenCode proxy", () => {
       expect(fixture.engine.requests).toEqual([]);
       expect(fixture.provider.calls).toHaveLength(guarded.length);
       expect(fixture.mcp.calls).toHaveLength(failingGate === "provider" ? 0 : guarded.length);
+      const list = await fixture.request("/api/session");
+      expect(list.status).toBe(200);
+      await expect(list.json()).resolves.toEqual({ data: [{ id: "ses_1", location: { directory: fixture.workspaceRoot } }] });
       for (const suffix of ["", "/message", "/message/msg_1"]) {
         const response = await fixture.request(`/api/session/ses_1${suffix}`);
         expect(response.status).toBe(200);
@@ -402,9 +490,11 @@ describe("workspace OpenCode proxy", () => {
 
   test.serial("v2 history preserves authentication, token revocation, policy and workspace ownership while readiness is held", async () => {
     const fixture = await startV2Proxy();
-    for (const suffix of ["", "/message", "/message/msg_1"]) {
+    const browsePaths = ["/api/session", "/api/session/ses_1", "/api/session/ses_1/message", "/api/session/ses_1/message/msg_1"];
+    expect((await fixture.request("/api/session", {}, "ws_missing")).status).toBe(404);
+    for (const path of browsePaths) {
       for (const headers of [{}, auth("invalid-token")]) {
-        expect((await fixture.request(`/api/session/ses_1${suffix}`, { headers })).status).toBe(401);
+        expect((await fixture.request(path, { headers })).status).toBe(401);
       }
     }
     expect(fixture.engine.requests).toEqual([]);
@@ -414,6 +504,9 @@ describe("workspace OpenCode proxy", () => {
     });
     expect(issued.status).toBe(201);
     const viewer = await issued.json();
+    const viewerList = await fixture.request("/api/session", { headers: auth(viewer.token) });
+    expect(viewerList.status).toBe(200);
+    await expect(viewerList.json()).resolves.toEqual({ data: [{ id: "ses_1", location: { directory: fixture.workspaceRoot } }] });
     expect((await fixture.request("/api/session/ses_1/message", { headers: auth(viewer.token) })).status).toBe(200);
     fixture.engine.requests.length = 0;
     expect((await fixture.request("/api/session/ses_1/message", { method: "POST", headers: auth(viewer.token) })).status).toBe(403);
@@ -421,8 +514,8 @@ describe("workspace OpenCode proxy", () => {
       method: "DELETE", headers: { "x-openwork-host-token": fixture.config.hostToken },
     });
     expect(revoked.status).toBe(200);
-    for (const suffix of ["", "/message", "/message/msg_1"]) {
-      expect((await fixture.request(`/api/session/ses_1${suffix}`, { headers: auth(viewer.token) })).status).toBe(401);
+    for (const path of browsePaths) {
+      expect((await fixture.request(path, { headers: auth(viewer.token) })).status).toBe(401);
     }
     expect(fixture.engine.requests).toEqual([]);
 
@@ -443,8 +536,8 @@ describe("workspace OpenCode proxy", () => {
     const policy = spyOn(managedDesktopPolicy(fixture.config), "assertRequest")
       .mockRejectedValue(new ApiError(403, "organization_policy_denied", "Fixture policy denied"));
     try {
-      for (const suffix of ["", "/message", "/message/msg_1"]) {
-        const response = await fixture.request(`/api/session/ses_1${suffix}`);
+      for (const path of browsePaths) {
+        const response = await fixture.request(path);
         expect(response.status).toBe(403);
         await expect(response.json()).resolves.toMatchObject({ code: "organization_policy_denied" });
       }

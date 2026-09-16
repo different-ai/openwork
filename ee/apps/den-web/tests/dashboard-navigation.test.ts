@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
-import { type DenOrgCapabilities, getOrgAccessFlags } from "../app/(den)/_lib/den-org";
+import { type DenOrgCapabilities, getOrgAccessFlags, getToolTesterRoute } from "../app/(den)/_lib/den-org";
 import type { getGatewayDashboardAccess } from "../app/(den)/dashboard/_lib/gateway-dashboard-access";
 import {
   buildDashboardNavSections,
@@ -111,6 +111,54 @@ describe("dashboard navigation index", () => {
       "Observability",
       "Team",
     ]);
+  });
+
+  test.each([
+    { role: "owner", isOwner: false, allowed: true },
+    { role: "member", isOwner: true, allowed: true },
+    { role: "super-admin", isOwner: false, allowed: true },
+    { role: "admin", isOwner: false, allowed: true },
+    { role: "admin, qa-reviewer", isOwner: false, allowed: true },
+    { role: "member", isOwner: false, allowed: false },
+    { role: "qa-reviewer", isOwner: false, allowed: false },
+  ])("Tool Tester is only a Settings child for $role (owner=$isOwner) with MCP support", ({ role, isOwner, allowed }) => {
+    const access = getOrgAccessFlags(role, isOwner, [{
+      id: "custom-role", role: "qa-reviewer", permission: { organization: ["update"] },
+      builtIn: false, protected: false, createdAt: null, updatedAt: null,
+    }]);
+    for (const orgSlug of ["example", null]) {
+      for (const mcpConnections of [true, false]) {
+        for (const orgMode of ["multi_org", "single_org"] satisfies ("multi_org" | "single_org")[]) {
+          for (const runtimeConfigLoaded of [true, false]) {
+            const sections = buildDashboardNavSections({
+              orgSlug, access, capabilities: { ...baseCapabilities, mcpConnections },
+              gatewayAccess: "denied", orgMode, runtimeConfigLoaded,
+            });
+            const visible = allowed && mcpConnections && orgSlug !== null;
+            const items = sections.flatMap((section) => section.items);
+            const settings = items.find((item) => item.label === "Settings");
+            expect(items.some((item) => item.label === "Tool Tester")).toBe(false);
+            expect(settings?.children?.filter((child) => child.label === "Tool Tester") ?? []).toEqual(
+              visible ? [{ href: "/dashboard/tool-tester", label: "Tool Tester" }] : [],
+            );
+            if (settings) expect(settings.href).toBe("/dashboard/org-settings");
+            const search = flattenNavigationForSearch(sections).filter((entry) => entry.href === "/dashboard/tool-tester");
+            expect(search).toHaveLength(visible ? 1 : 0);
+            if (visible) {
+              expect(search[0].label).toBe("Settings › Tool Tester");
+              expect(search[0].section).toBe("Team");
+              expect(search[0].keywords).toEqual(expect.arrayContaining(["tools", "test", "mcp"]));
+            }
+          }
+        }
+      }
+    }
+  });
+
+  test("keeps the existing Tool Tester URL for direct links and active-organization navigation", () => {
+    expect(getToolTesterRoute()).toBe("/dashboard/tool-tester");
+    expect(getToolTesterRoute("example")).toBe("/dashboard/tool-tester");
+    expect(getToolTesterRoute("another-workspace")).toBe("/dashboard/tool-tester");
   });
 
   test("keeps workflow analytics inside the Analytics destination", () => {

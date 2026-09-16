@@ -57,6 +57,7 @@ import {
   type MarketplaceCapabilityObjectType,
 } from "./marketplace-capabilities.js"
 import {
+  connectionStatusMatch,
   executeNativeCapability,
   parseNativeCapabilityName,
   searchNativeCapabilities,
@@ -838,3 +839,22 @@ export const CAPABILITY_REGISTRY = createCapabilityRegistry(CAPABILITY_SOURCES)
 export const searchCapabilityRegistry = CAPABILITY_REGISTRY.search
 export const executeCapability = CAPABILITY_REGISTRY.execute
 export const buildCapabilityToolTree = CAPABILITY_REGISTRY.buildToolTree
+
+export async function liveArtifactConnectionFailure(
+  context: CapabilityRegistryContext,
+  missing: readonly { capabilityName: string }[],
+) {
+  const ids = new Set(missing.flatMap((entry) => {
+    const parsed = parseNativeCapabilityName(entry.capabilityName)
+    return parsed ? [parsed.connectionId] : []
+  }))
+  if (!ids.size) return null
+  const namespace = await context.resolveNamespaceContext()
+  const connection = namespace.nativeProviderEntries.find((entry) => ids.has(entry.id) && !entry.connectedForMe)
+  if (!connection) return null
+  const status = connectionStatusMatch(connection, 1).connectionStatus
+  return status ? {
+    connectionStatus: status,
+    connectionCard: connectionActionPayloadFromStatus(status),
+  } : null
+}

@@ -1,5 +1,5 @@
 import type { OpenworkMcpAppResource } from "@/app/lib/openwork-server";
-import { DASHBOARD_TILE_CACHE_STORAGE_PREFIX } from "@/app/lib/dashboard-cache-storage";
+import { createDashboardTileCacheStore, DASHBOARD_TILE_CACHE_STORAGE_PREFIX } from "@/app/lib/dashboard-cache-storage";
 import type { PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
 
 const MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1_000;
@@ -7,6 +7,7 @@ const MAX_SCOPE_CACHE_BYTES = 3_000_000;
 export const DASHBOARD_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 
 export type DashboardTileCache = {
+  argumentsSignature?: string;
   cachedAt: number;
   workspaceId: string;
   app: OpenworkMcpAppResource;
@@ -67,8 +68,89 @@ function parseCache(value: unknown, now: number): DashboardTileCache | null {
   if (value.cachedAt <= 0 || now - value.cachedAt > MAX_CACHE_AGE_MS) return null;
   const app = parseApp(value.app);
   const result = parseResult(value.result);
-  return app && result ? { cachedAt: value.cachedAt, workspaceId: value.workspaceId, app, result } : null;
+  return app && result ? {
+    cachedAt: value.cachedAt, workspaceId: value.workspaceId, app, result,
+    ...(typeof value.argumentsSignature === "string" ? { argumentsSignature: value.argumentsSignature } : {}),
+  } : null;
 }
+
+// Tiles from one App host usually share a single large HTML resource. Storing
+// that resource once per scope keeps every tile inside the size budget instead
+// of evicting the oldest results as soon as a few tiles are added.
+const SHARED_HTML_KEY = "$html";
+const SHARED_ENTRIES_KEY = "$entries";
+
+function parseScope(value: unknown, now: number): Map<string, DashboardTileCache> {
+  const scope = new Map<string, DashboardTileCache>();
+  if (!isRecord(value)) return scope;
+  const shared = isRecord(value[SHARED_HTML_KEY]) ? value[SHARED_HTML_KEY] : null;
+  const entries = shared && isRecord(value[SHARED_ENTRIES_KEY]) ? value[SHARED_ENTRIES_KEY] : value;
+  for (const [entryId, entry] of Object.entries(entries)) {
+    if (!shared && (entryId === SHARED_HTML_KEY || entryId === SHARED_ENTRIES_KEY)) continue;
+    let candidate: unknown = entry;
+    if (shared && isRecord(entry) && isRecord(entry.app) && typeof entry.app.htmlRef === "string") {
+      const html = shared[entry.app.htmlRef];
+      if (typeof html !== "string") continue;
+      const { htmlRef: _ref, ...app } = entry.app;
+      candidate = { ...entry, app: { ...app, html } };
+    }
+    const cache = parseCache(candidate, now);
+    if (cache) scope.set(entryId, cache);
+  }
+  return scope;
+}
+
+function htmlRefFor(html: string, refs: Map<string, string>): string {
+  let ref = refs.get(html);
+  if (ref === undefined) {
+    ref = `h${refs.size}`;
+    refs.set(html, ref);
+  }
+  return ref;
+}
+
+function serializeScope(scope: Map<string, DashboardTileCache>, now: number): string | null {
+  // Newest first so the freshest tiles survive eviction; shared HTML is
+  // charged once, when its first referencing entry is kept.
+  const ordered = [...scope].sort((left, right) => right[1].cachedAt - left[1].cachedAt);
+  const refs = new Map<string, string>();
+  const kept: Array<{ entryId: string; serialized: string }> = [];
+  const keptHtml = new Set<string>();
+  let size = `{"${SHARED_HTML_KEY}":{},"${SHARED_ENTRIES_KEY}":{}}`.length;
+  for (const [entryId, value] of ordered) {
+    const cache = parseCache(value, now);
+    if (!cache) {
+      scope.delete(entryId);
+      continue;
+    }
+    const ref = htmlRefFor(cache.app.html, refs);
+    let serialized: string;
+    let htmlCost = 0;
+    try {
+      const { html, ...app } = cache.app;
+      serialized = `${JSON.stringify(entryId)}:${JSON.stringify({ ...cache, app: { ...app, htmlRef: ref } })}`;
+      if (!keptHtml.has(ref)) htmlCost = `${JSON.stringify(ref)}:${JSON.stringify(html)},`.length;
+    } catch {
+      scope.delete(entryId);
+      continue;
+    }
+    const cost = serialized.length + 1 + htmlCost;
+    if (size + cost > MAX_SCOPE_CACHE_BYTES) {
+      scope.delete(entryId);
+      continue;
+    }
+    size += cost;
+    keptHtml.add(ref);
+    scope.set(entryId, cache);
+    kept.push({ entryId, serialized });
+  }
+  if (kept.length === 0) return null;
+  const htmlEntries = [...refs].filter(([, ref]) => keptHtml.has(ref))
+    .map(([html, ref]) => `${JSON.stringify(ref)}:${JSON.stringify(html)}`);
+  return `{${JSON.stringify(SHARED_HTML_KEY)}:{${htmlEntries.join(",")}},${JSON.stringify(SHARED_ENTRIES_KEY)}:{${kept.map((entry) => entry.serialized).join(",")}}}`;
+}
+
+const cacheStore = createDashboardTileCacheStore(parseScope, serializeScope);
 
 export function dashboardTileCacheScopeKey(userId: string | null, organizationId: string | null): string {
   return `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.${userId?.trim() || "local"}.${organizationId?.trim() || "none"}`;
@@ -108,42 +190,33 @@ export function readDashboardTileCache(
   entryId: string,
   now = Date.now(),
 ): DashboardTileCache | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(scopeKey);
-  if (raw === null) return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return isRecord(parsed) ? parseCache(parsed[entryId], now) : null;
-  } catch {
+  const scope = cacheStore.read(scopeKey, now);
+  const cache = scope?.get(entryId);
+  if (!scope || !cache) return null;
+  if (now - cache.cachedAt > MAX_CACHE_AGE_MS) {
+    scope.delete(entryId);
+    cacheStore.schedule(scopeKey);
     return null;
   }
+  return cache;
 }
 
 export function writeDashboardTileCache(
   scopeKey: string,
   entryId: string,
   cache: DashboardTileCache,
-) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(scopeKey);
-    const parsed: unknown = raw === null ? {} : JSON.parse(raw);
-    const next: Record<string, unknown> = isRecord(parsed) ? { ...parsed } : {};
-    // A live host lease must not survive in persisted HTML/result caches.
-    next[entryId] = { ...cache, app: parseApp(cache.app) };
+): void {
+  const next = parseCache(cache, Date.now());
+  if (!next) return;
+  const scope = cacheStore.read(scopeKey);
+  if (!scope) return;
+  scope.set(entryId, next);
+  cacheStore.schedule(scopeKey);
+}
 
-    const entries = Object.entries(next).sort((left, right) => {
-      const leftAt = isRecord(left[1]) && typeof left[1].cachedAt === "number" ? left[1].cachedAt : 0;
-      const rightAt = isRecord(right[1]) && typeof right[1].cachedAt === "number" ? right[1].cachedAt : 0;
-      return leftAt - rightAt;
-    });
-    let serialized = JSON.stringify(Object.fromEntries(entries));
-    while (serialized.length > MAX_SCOPE_CACHE_BYTES && entries.length > 1) {
-      entries.shift();
-      serialized = JSON.stringify(Object.fromEntries(entries));
-    }
-    if (serialized.length <= MAX_SCOPE_CACHE_BYTES) window.localStorage.setItem(scopeKey, serialized);
-  } catch {
-    // Caching is best-effort. A live result still renders when storage is unavailable.
-  }
+export function removeDashboardTileCache(scopeKey: string, entryId: string): void {
+  const scope = cacheStore.read(scopeKey);
+  if (!scope) return;
+  scope.delete(entryId);
+  cacheStore.schedule(scopeKey);
 }

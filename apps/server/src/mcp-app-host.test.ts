@@ -11,6 +11,7 @@ import {
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { addMcp, listMcp } from "./mcp.js";
 import {
@@ -34,6 +35,7 @@ import {
 } from "./mcp-app-host.js";
 import type { ServerConfig } from "./types.js";
 import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
+import { opencodeConfigPath } from "./workspace-files.js";
 
 const WORKSPACE_ID = "ws_mcp_apps_host";
 const RESOURCE_URI = "ui://fixture/v1/view.html";
@@ -72,9 +74,17 @@ async function startFixtureMcp(
 ) {
   let activeResourceUri = RESOURCE_URI;
   let catalogReads = 0;
+  let resourceReads = 0;
+  let resourceMeta: Record<string, unknown> = {
+    ui: {
+      csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] },
+      prefersBorder: true,
+    },
+  };
   const calls: Array<{ name: string; arguments?: Record<string, unknown> }> = [];
   let launchVisible = true;
   let launchPresent = true;
+  let launchAnnotations: Tool["annotations"] = { readOnlyHint: true, destructiveHint: false };
   const mcp = new Server(
     { name: "mcp-app-fixture", version: "1.0.0" },
     {
@@ -93,7 +103,7 @@ async function startFixtureMcp(
         name: "render_fixture",
         description: "Render the fixture",
         inputSchema: { type: "object", properties: {} },
-        annotations: { readOnlyHint: true, destructiveHint: false },
+        annotations: launchAnnotations,
         _meta: { ui: { resourceUri: activeResourceUri, visibility: launchVisible ? ["model", "app"] : ["model"] } },
       },
       {
@@ -153,6 +163,7 @@ async function startFixtureMcp(
     ].filter(tool => launchPresent || tool.name !== "render_fixture"),
   }));
   mcp.setRequestHandler(ReadResourceRequestSchema, async ({ params }) => {
+    resourceReads += 1;
     if (params.uri !== RESOURCE_URI && params.uri !== UPDATED_RESOURCE_URI) throw new Error("not found");
     const content = params.uri === UPDATED_RESOURCE_URI ? { text: UPDATED_RESOURCE_HTML } : resourceContent;
     return {
@@ -160,12 +171,7 @@ async function startFixtureMcp(
         uri: params.uri,
         mimeType: "text/html;profile=mcp-app",
         ...content,
-        _meta: {
-          ui: {
-            csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] },
-            prefersBorder: true,
-          },
-        },
+        _meta: resourceMeta,
       }],
     };
   });
@@ -255,6 +261,10 @@ async function startFixtureMcp(
     url: `${serverOrigin}/provider`,
     catalogUrl: `${serverOrigin}/catalog`,
     catalogReads: () => catalogReads,
+    resourceReads: () => resourceReads,
+    setResourceContent: (content: { text?: string; blob?: string }) => { resourceContent = content; },
+    setResourceMeta: (meta: Record<string, unknown>) => { resourceMeta = meta; },
+    setLaunchAnnotations: (annotations: Tool["annotations"]) => { launchAnnotations = annotations; },
     calls,
     hideLaunch: () => { launchVisible = false; },
     removeLaunch: () => { launchPresent = false; },
@@ -278,6 +288,10 @@ async function configuredFixture(
   root: string;
   activateUpdatedResource: () => Promise<void>;
   catalogReads: () => number;
+  resourceReads: () => number;
+  setResourceContent: (content: { text?: string; blob?: string }) => void;
+  setResourceMeta: (meta: Record<string, unknown>) => void;
+  setLaunchAnnotations: (annotations: Tool["annotations"]) => void;
   calls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   hideLaunch: () => void;
   removeLaunch: () => void;
@@ -337,6 +351,10 @@ async function configuredFixture(
     root,
     activateUpdatedResource: fixture.activateUpdatedResource,
     catalogReads: fixture.catalogReads,
+    resourceReads: fixture.resourceReads,
+    setResourceContent: fixture.setResourceContent,
+    setResourceMeta: fixture.setResourceMeta,
+    setLaunchAnnotations: fixture.setLaunchAnnotations,
     calls: fixture.calls,
     hideLaunch: fixture.hideLaunch,
     removeLaunch: fixture.removeLaunch,
@@ -350,6 +368,22 @@ async function fixtureLaunch(config: ServerConfig, root: string) {
   });
   if (!app?.launchId) throw new Error("Fixture launch missing");
   return { launchId: app.launchId, sessionId: "session-a", resourceUri: app.resourceUri, assertSessionActive: async () => {} };
+}
+
+async function fixtureDashboardLaunch(config: ServerConfig, root: string) {
+  const app = await resolveMcpAppResource({
+    serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+    projectedToolName: "fixture_render_fixture", context: { sessionId: null, readOnly: false },
+  });
+  if (!app?.launchId || !app.refresh) throw new Error("Fixture refresh guard missing");
+  return {
+    refresh: app.refresh,
+    request: {
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      serverName: app.serverName, name: app.toolName, resourceUri: app.resourceUri,
+      launchId: app.launchId, sessionId: null, expectedResourceDigest: app.refresh.resourceDigest,
+    },
+  };
 }
 
 describe("MCP Apps host transport", () => {
@@ -983,5 +1017,247 @@ describe("MCP Apps host transport", () => {
     expect(identities[1]).not.toEqual(identities[2]);
     expect(JSON.stringify(identities)).not.toContain("synthetic-private-credential");
     expect(await localManagedMcpAppIdentity(config, WORKSPACE_ID, "fixture", "https://ordinary.invalid/mcp")).toBeNull();
+  });
+});
+
+describe("MCP App guarded dashboard refresh", () => {
+  test.each(["direct", "same-server", "connect"])("advertises a guard only for the original read-only launch tool: %s", async (route) => {
+    const connectionId = route === "connect" ? "emc_fixture_refresh" : undefined;
+    const serverName = connectionId ? connectMcpAppHostName(connectionId) : "fixture";
+    const { config, root, calls, resourceReads } = await configuredFixture("openwork-app-refresh-advertise-", undefined, serverName, connectionId);
+    for (const toolName of ["render_fixture", "render_editor"]) {
+      const input = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, context: { sessionId: null, readOnly: false } };
+      const startedAt = Date.now();
+      const app = connectionId
+        ? await resolveConnectMcpAppResource({ ...input, launch: { connectionId, toolName, resourceUri: RESOURCE_URI } })
+        : route === "same-server"
+          ? await resolveSameServerMcpAppResource({ ...input, projectedToolName: "fixture_save_artifact_view", launch: { toolName, resourceUri: RESOURCE_URI } })
+          : await resolveMcpAppResource({ ...input, projectedToolName: `fixture_${toolName}` });
+      if (!app?.launchId) throw new Error("Fixture lease missing");
+      if (toolName === "render_editor") {
+        expect(app.refresh).toBeUndefined();
+      } else {
+        if (!app.refresh) throw new Error("Fixture refresh guard missing");
+        expect(Object.keys(app.refresh).sort()).toEqual(["expiresAt", "resourceDigest"]);
+        expect(app.refresh.resourceDigest).toMatch(/^[a-f0-9]{64}$/);
+        expect(app.refresh.expiresAt).toBeGreaterThanOrEqual(startedAt + 30 * 60_000);
+        expect(app.refresh.expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 60_000);
+      }
+    }
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  test("does not advertise refresh for previews, chat origins, hidden or approval-required tools", async () => {
+    const { config, root, calls, hideLaunch, setLaunchAnnotations } = await configuredFixture("openwork-app-refresh-ineligible-");
+    const input = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, projectedToolName: "fixture_render_fixture" };
+    for (const context of [undefined, { sessionId: null, readOnly: true }, { sessionId: "session-a", readOnly: false }, { sessionId: "archived", readOnly: true }]) {
+      const app = await resolveMcpAppResource({ ...input, context });
+      expect(app?.html).toBe(RESOURCE_HTML);
+      expect(app?.refresh).toBeUndefined();
+    }
+    for (const annotations of [undefined, {}, { readOnlyHint: false }, { readOnlyHint: true, destructiveHint: true }]) {
+      setLaunchAnnotations(annotations);
+      const app = await resolveMcpAppResource({ ...input, context: { sessionId: null, readOnly: false } });
+      expect(app?.launchId).toBeDefined();
+      expect(app?.refresh).toBeUndefined();
+    }
+    setLaunchAnnotations({ readOnlyHint: true });
+    hideLaunch();
+    const hidden = await resolveMcpAppResource({ ...input, context: { sessionId: null, readOnly: false } });
+    expect(hidden?.refresh).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  test("dispatches the same-resource guarded launch once with only the existing revalidation read", async () => {
+    const { config, root, calls, resourceReads } = await configuredFixture("openwork-app-refresh-call-");
+    const { refresh, request } = await fixtureDashboardLaunch(config, root);
+    expect(resourceReads()).toBe(1);
+    expect(await callMcpAppTool({ ...request, expectedResourceDigest: refresh.resourceDigest.toUpperCase(), arguments: { id: "current" } })).toMatchObject({
+      structuredContent: { id: "current" },
+    });
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([{ name: "render_fixture", arguments: { id: "current" } }]);
+  });
+
+  test("digests decoded HTML and normalized effective presentation, not wire encoding or CSP ordering", async () => {
+    const { config, root, calls, resourceReads, setResourceContent, setResourceMeta } = await configuredFixture("openwork-app-refresh-normalized-");
+    setResourceMeta({ ui: { csp: { connectDomains: ["https://B.example:443", "https://a.example/", "https://b.example"] }, prefersBorder: true } });
+    const { request } = await fixtureDashboardLaunch(config, root);
+    setResourceContent({ blob: Buffer.from(RESOURCE_HTML, "utf8").toString("base64") });
+    setResourceMeta({ ui: { csp: { connectDomains: ["https://a.example", "https://b.example"], resourceDomains: [], frameDomains: [], baseUriDomains: [] } } });
+    await callMcpAppTool(request);
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([{ name: "render_fixture", arguments: {} }]);
+  });
+
+  test.each(["html", "connectDomains", "resourceDomains", "frameDomains", "baseUriDomains", "prefersBorder"])("retires document drift before dispatch: %s", async (change) => {
+    const { config, root, calls, resourceReads, setResourceContent, setResourceMeta } = await configuredFixture("openwork-app-refresh-drift-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    if (change === "html") setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    else if (change === "prefersBorder") setResourceMeta({ ui: { prefersBorder: false } });
+    else setResourceMeta({ ui: { csp: { [change]: ["https://changed.example"] } } });
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({
+      code: "mcp_app_resource_changed", message: expect.stringContaining("before calling the tool"),
+    });
+    expect(calls).toEqual([]);
+    expect(resourceReads()).toBe(2);
+    expect(releaseMcpAppLaunch(config, WORKSPACE_ID, request.launchId)).toBe(false);
+    setResourceContent({ text: RESOURCE_HTML });
+    setResourceMeta({});
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(resourceReads()).toBe(2);
+  });
+
+  test.each(["permissions", "domain", "csp", "html"])("retires leases on resolve-time resource validation failures before guarded dispatch: %s", async (change) => {
+    const { config, root, calls, resourceReads, setResourceContent, setResourceMeta } = await configuredFixture("openwork-app-refresh-validation-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    if (change === "html") setResourceContent({ blob: Buffer.from([0xff]).toString("base64") });
+    else setResourceMeta(change === "permissions" ? { ui: { permissions: { camera: {} } } }
+      : change === "domain" ? { ui: { domain: "https://sandbox.example" } }
+        : { ui: { csp: { connectDomains: ["https://api.example/path"] } } });
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({
+      code: change === "html" ? "invalid_resource" : change === "csp" ? "invalid_resource_csp" : "unsupported_resource_permissions",
+    });
+    setResourceContent({ text: RESOURCE_HTML });
+    setResourceMeta({});
+    for (const name of ["read_detail", "write_detail"]) {
+      await expect(callMcpAppTool({ ...request, name, expectedResourceDigest: undefined, approved: true })).rejects.toMatchObject({ code: "stale_launch_context" });
+    }
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects malformed and incorrect expected digests without dispatch", async () => {
+    const { config, root, calls, resourceReads } = await configuredFixture("openwork-app-refresh-digest-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    for (const digest of ["", "sha256:" + "a".repeat(64), "g".repeat(64), "a".repeat(63), "a".repeat(65), "a".repeat(64) + "\n"]) {
+      await expect(callMcpAppTool({ ...request, expectedResourceDigest: digest })).rejects.toMatchObject({ code: "invalid_resource_digest" });
+    }
+    expect(resourceReads()).toBe(1);
+    const wrongDigest = (request.expectedResourceDigest.startsWith("0") ? "1" : "0") + request.expectedResourceDigest.slice(1);
+    await expect(callMcpAppTool({ ...request, expectedResourceDigest: wrongDigest })).rejects.toMatchObject({ code: "mcp_app_resource_changed" });
+    expect(calls).toEqual([]);
+  });
+
+  test("cannot substitute a current resource digest for the original leased document", async () => {
+    const { config, root, calls, setResourceContent } = await configuredFixture("openwork-app-refresh-original-");
+    const original = await fixtureDashboardLaunch(config, root);
+    setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    const current = await fixtureDashboardLaunch(config, root);
+    expect(current.refresh.resourceDigest).not.toBe(original.refresh.resourceDigest);
+    await expect(callMcpAppTool({ ...original.request, expectedResourceDigest: current.refresh.resourceDigest })).rejects.toMatchObject({ code: "mcp_app_resource_changed" });
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects helper grants, approval overrides, chat origins and session mismatches", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-scope-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    for (const override of [{ name: "read_detail" }, { name: "read_bound_detail" }, { name: "render_report" }, { name: "write_detail", approved: true }, { approved: true }]) {
+      await expect(callMcpAppTool({ ...request, ...override })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+    }
+    for (const sessionId of [undefined, "session-a"]) {
+      await expect(callMcpAppTool({ ...request, sessionId })).rejects.toMatchObject({ code: "stale_launch_context" });
+    }
+    const chat = await fixtureLaunch(config, root);
+    await expect(callMcpAppTool({ ...request, ...chat })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+    await expect(callMcpAppTool({ ...request, ...chat, sessionId: null })).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(calls).toEqual([]);
+  });
+
+  test("rechecks current launch annotations and never permits a manual approval override", async () => {
+    const { config, root, calls, setLaunchAnnotations } = await configuredFixture("openwork-app-refresh-approval-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    for (const annotations of [undefined, { readOnlyHint: false }, { readOnlyHint: true, destructiveHint: true }]) {
+      setLaunchAnnotations(annotations);
+      for (const approved of [false, true]) {
+        await expect(callMcpAppTool({ ...request, approved })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+      }
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("does not promote an originally manual lease when the tool later becomes read-only", async () => {
+    const { config, root, calls, setLaunchAnnotations } = await configuredFixture("openwork-app-refresh-manual-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    setLaunchAnnotations({ readOnlyHint: false });
+    const manual = await resolveMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: "fixture_render_fixture", context: { sessionId: null, readOnly: false },
+    });
+    if (!manual?.launchId) throw new Error("Fixture manual lease missing");
+    expect(manual.refresh).toBeUndefined();
+    setLaunchAnnotations({ readOnlyHint: true });
+    await expect(callMcpAppTool({ ...request, launchId: manual.launchId })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+    expect(calls).toEqual([]);
+  });
+
+  test("preserves workspace tool policy checks during guarded refresh", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-policy-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    await Bun.write(opencodeConfigPath(root), JSON.stringify({ tools: { fixture_render_fixture: false } }));
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "tool_denied" });
+    expect(calls).toEqual([]);
+  });
+
+  test.each(["release", "config"])("retains the final live lease and config checks before guarded dispatch: %s", async (change) => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-final-gate-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    await expect(callMcpAppTool({ ...request, assertSessionActive: async () => {
+      if (change === "release") releaseMcpAppLaunch(config, WORKSPACE_ID, request.launchId);
+      else await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, current => ({ ...current, mcp: {} }));
+    } })).rejects.toMatchObject({ code: change === "release" ? "stale_launch_context" : "server_unavailable" });
+    expect(calls).toEqual([]);
+  });
+
+  test("a successful guarded refresh does not extend the fixed 30-minute lease", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-expiry-");
+    const { refresh, request } = await fixtureDashboardLaunch(config, root);
+    const clock = spyOn(Date, "now").mockReturnValue(refresh.expiresAt - 1);
+    try {
+      await callMcpAppTool(request);
+      clock.mockReturnValue(refresh.expiresAt);
+      await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "stale_launch_context" });
+      expect(calls).toEqual([{ name: "render_fixture", arguments: {} }]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("unguarded calls retain existing helper and approved-write behavior after HTML drift", async () => {
+    const { config, root, calls, setResourceContent } = await configuredFixture("openwork-app-refresh-legacy-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    await callMcpAppTool({ ...request, expectedResourceDigest: undefined, name: "read_detail" });
+    await callMcpAppTool({ ...request, expectedResourceDigest: undefined, name: "write_detail", approved: true });
+    expect(calls).toEqual([{ name: "read_detail", arguments: {} }, { name: "write_detail", arguments: {} }]);
+  });
+
+  test("the HTTP call contract rejects invalid guards and returns 422 for pre-dispatch resource changes", async () => {
+    const { config, root, calls, setResourceContent } = await configuredFixture("openwork-app-refresh-route-");
+    const { startServer } = await import("./server.js");
+    const server = await startServer(config);
+    stops.push(() => server.stop());
+    const { request } = await fixtureDashboardLaunch(config, root);
+    const payload = {
+      launchId: request.launchId, sessionId: null, serverName: request.serverName,
+      name: request.name, resourceUri: request.resourceUri, expectedResourceDigest: request.expectedResourceDigest,
+    };
+    const post = (body: Record<string, unknown>) => fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/mcp-apps/call`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` }, body: JSON.stringify(body),
+    });
+    for (const digest of [null, 42, false, {}, [], "", "f".repeat(63), "g".repeat(64), "f".repeat(64) + "\n"]) {
+      const response = await post({ ...payload, expectedResourceDigest: digest });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "invalid_resource_digest" });
+    }
+    const approved = await post({ ...payload, approved: true });
+    expect(approved.status).toBe(422);
+    expect(await approved.json()).toMatchObject({ code: "mcp_app_refresh_denied" });
+    setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    const changed = await post(payload);
+    expect(changed.status).toBe(422);
+    expect(await changed.json()).toMatchObject({ code: "mcp_app_resource_changed", message: expect.stringContaining("before calling the tool") });
+    expect(calls).toEqual([]);
   });
 });

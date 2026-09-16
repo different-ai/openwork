@@ -1,3 +1,4 @@
+import { workflowConnectionError } from "../workflow-connection-error.js"
 import type { createDenDb } from "@openwork-ee/den-db"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { recordWorkflowRun, recordWorkflowResult } from "../workflow-runs.js"
@@ -14,7 +15,7 @@ import {
   validateCodemodeScriptOutput,
   type CodemodeScriptInputIssue,
 } from "./codemode-script-object.js"
-import { firstUnattendedUnsafeCapability, restrictCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
+import { firstUnattendedUnsafeCapability, restrictCodemodeToolTree, restrictReadOnlyCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
 import { runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
 
@@ -50,6 +51,8 @@ export type WorkflowExecutionResult =
       error: "script_failed"
       message: string
       kind: string
+      connectionStatus?: Record<string, unknown>
+      connectionCard?: Record<string, unknown>
       toolCalls: Array<{ name: string }>
       receiptId?: DenTypeId<"workflowRun"> | null
     }
@@ -66,6 +69,7 @@ export async function executeWorkflow(input: {
   code: string
   receiptSource?: string
   scriptInput?: unknown
+  readOnly?: boolean
   validateOutput?: boolean
   buildTools: () => Promise<BuiltCodemodeTools>
 }): Promise<WorkflowExecutionResult> {
@@ -76,7 +80,9 @@ export async function executeWorkflow(input: {
   const scriptInputDigest = artifactDigest(normalizedScriptInput)
   const inputSchemaDigest = optionalArtifactDigest(parsed.payload.inputSchema)
   const outputSchemaDigest = optionalArtifactDigest(parsed.payload.outputSchema)
-  const receiptSource = input.receiptSource ?? `plugin:${input.pluginId}:${input.configObjectId}`
+  const receiptSource = input.readOnly
+    ? `live:plugin:${input.pluginId}:${input.configObjectId}`
+    : input.receiptSource ?? `plugin:${input.pluginId}:${input.configObjectId}`
   const recordPreflightFailure = (errorKind: string, errorMessage: string) => {
     const now = new Date()
     return recordWorkflowRun(input.database, {
@@ -127,7 +133,14 @@ export async function executeWorkflow(input: {
       receiptId,
     }
   }
-  const restricted = restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
+  const restricted = input.readOnly
+    ? restrictReadOnlyCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
+    : { ...restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities }), unsafe: [] }
+  if (restricted.unsafe.length > 0) {
+    const message = "Live apps may only call current Den-authorized read-only capabilities."
+    const receiptId = await recordPreflightFailure("CapabilityUnavailable", message)
+    return { ok: false, error: "capability_unavailable", message, providerCallAttempted: false, missing: restricted.unsafe, receiptId }
+  }
   const firstMissing = restricted.missing[0]
   if (firstMissing) {
     const message = `Required capability ${firstMissing.scriptPath} (${firstMissing.capabilityName}) is unavailable or disabled for this organization.`
@@ -146,6 +159,7 @@ export async function executeWorkflow(input: {
   const result = await runCodemodeScript({
     code: input.code,
     scriptInput,
+    readOnlyInput: input.readOnly,
     tools: restricted.tools,
     timeoutMs: Math.min(parsed.payload.limits?.timeoutMs ?? 120_000, 170_000),
     maxToolCalls: parsed.payload.limits?.maxToolCalls,
@@ -173,6 +187,7 @@ export async function executeWorkflow(input: {
       error: "script_failed",
       message: result.error.message,
       kind: result.error.kind,
+      ...workflowConnectionError(result.error.message),
       toolCalls: result.toolCalls,
       receiptId,
     }

@@ -104,6 +104,9 @@ const EnvSchema = z.object({
   CLOUD_IDLE_STOP_MINUTES: z.string().optional(),
   CLOUD_IDLE_LOOP_SECONDS: z.string().optional(),
   CLOUD_IDLE_STOP_BATCH_SIZE: z.string().optional(),
+  CLOUD_ACTIVITY_PROBE_TIMEOUT_MS: z.string().optional(),
+  CLOUD_UNREACHABLE_GRACE_MS: z.string().optional(),
+  CLOUD_STOP_FLUSH_TIMEOUT_MS: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
   // Preferred name for the sandbox host that runs OpenWork Cloud instances;
   // PROVISIONER_MODE remains accepted as an alias.
@@ -797,6 +800,15 @@ export const env = {
   cloudIdleStopMs: Number(parsed.CLOUD_IDLE_STOP_MINUTES ?? "30") * 60_000,
   cloudIdleLoopIntervalMs: Number(parsed.CLOUD_IDLE_LOOP_SECONDS ?? "60") * 1000,
   cloudIdleStopBatchSize: Number(parsed.CLOUD_IDLE_STOP_BATCH_SIZE ?? "10"),
+  // Den asks a running instance whether it is busy before stopping or
+  // restarting it. A busy instance can be slow, so this is longer than the
+  // 2.5 second signed-preview health probe.
+  cloudActivityProbeTimeoutMs: Number(parsed.CLOUD_ACTIVITY_PROBE_TIMEOUT_MS ?? "10000"),
+  // How long a running instance must answer nothing at all before Den treats
+  // it as dead and restarts it; a slow health probe alone never restarts.
+  cloudUnreachableGraceMs: Number(parsed.CLOUD_UNREACHABLE_GRACE_MS ?? "60000"),
+  // Bound for the best-effort checkpoint flush before Den stops a running instance.
+  cloudStopFlushTimeoutMs: Number(parsed.CLOUD_STOP_FLUSH_TIMEOUT_MS ?? "20000"),
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
   workerActivityBaseUrl:
     optionalString(parsed.WORKER_ACTIVITY_BASE_URL) ??

@@ -72,6 +72,8 @@ export type CloudRuntimeOrchestratorConfig = {
   destroyTimeoutMs: number
   healthcheckTimeoutMs: number
   pollIntervalMs: number
+  /** Bound for the best-effort checkpoint flush before a running instance is stopped for recovery. */
+  stopFlushTimeoutMs?: number
   activityHeartbeatUrl: (workerId: string) => string
   bootstrap: {
     imageDescription: string
@@ -119,6 +121,7 @@ const healthRequestTimeoutMs = 5_000
 const createConflictLookupMaxAttempts = 6
 const createConflictLookupBackoffMs = 2_000
 const maxEndpointTtlSeconds = 60 * 60 * 24
+const defaultStopFlushTimeoutMs = 20_000
 
 type StartedProcess = {
   endpointUrl: string
@@ -420,12 +423,36 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     throw lastError ?? new CloudRuntimeError("instance_start_failed", `Instance ${describeHandle(handle)} start failed`)
   }
 
+  /**
+   * Save whatever the instance still has on disk before it is stopped. The
+   * periodic flush runs every few minutes, so a stop without this can lose that
+   * much session and workspace state. Best effort and bounded: a dead or wedged
+   * instance must not delay its own recovery.
+   */
+  async function flushBeforeStop(workerId: string, handle: SandboxHandle) {
+    try {
+      const exec = await provider.exec(handle, {
+        command: `sh -lc ${quote(renderCheckpointFlushCommand(checkpointConfig()))}`,
+        detach: false,
+        timeoutMs: config.stopFlushTimeoutMs ?? defaultStopFlushTimeoutMs,
+        sessionId: `openwork-stop-flush-${workerHint(workerId)}-${now()}`,
+      })
+      const exitCode = await exec.exitCode()
+      if (exitCode !== 0) {
+        logger.warn("checkpoint flush before stop did not complete", { worker_id: workerId, instance: describeHandle(handle), exit_code: exitCode })
+      }
+    } catch (error) {
+      logger.warn("checkpoint flush before stop failed", { worker_id: workerId, instance: describeHandle(handle), error })
+    }
+  }
+
   async function wakeExisting(context: WakeContext): Promise<ProvisionedInstance> {
     let handle = context.handle
     if (handle.state === "running") {
       // A failed health probe means an already-running OpenWork process cannot be
       // trusted. Restart the instance before launching a new process so recovery
       // cannot leave two servers competing for the same port and state files.
+      await flushBeforeStop(context.input.workerId, handle)
       await provider.stop(handle, { timeoutMs: config.stopTimeoutMs })
       handle = await provider.inspect(handle)
     }

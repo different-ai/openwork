@@ -42,6 +42,7 @@ import {
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
 import { enterpriseActivationRequired } from "./enterprise-activation";
+import { observeDenRequest } from "./den-request-diagnostics";
 import { getOpenworkGatewayOrigin } from "./gateway-runtime";
 import { clearDesktopSignInIntent, clearOrgSelectionPending } from "./den-sign-in-intent";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
@@ -296,9 +297,11 @@ export type DenCloudStartupFailure = {
   occurredAt: string;
 };
 
+export type DenCloudInstanceUpdateDeferral = "busy" | "activity_unknown";
+
 export type DenCloudInstanceUpdateResult =
   | { ok: true; status: "update_requested" }
-  | { ok: false; error: "already_current" | "flush_failed" };
+  | { ok: false; error: "already_current" | "flush_failed" | DenCloudInstanceUpdateDeferral };
 
 export type DenMcpToken = {
   token: string;
@@ -2020,7 +2023,13 @@ function parseCloudInstanceUpdateResult(payload: unknown): DenCloudInstanceUpdat
     return { ok: true, status: "update_requested" };
   }
 
-  if (payload.ok === false && (payload.error === "already_current" || payload.error === "flush_failed")) {
+  if (
+    payload.ok === false
+    && (payload.error === "already_current"
+      || payload.error === "flush_failed"
+      || payload.error === "busy"
+      || payload.error === "activity_unknown")
+  ) {
     return { ok: false, error: payload.error };
   }
 
@@ -2843,7 +2852,7 @@ type DenRequestOptions = {
   automationModelAttentionCapable?: boolean;
 };
 
-async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number) {
+async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number, onTimeout?: () => void) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetchImpl(url, init);
   }
@@ -2855,6 +2864,7 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
+      onTimeout?.();
       try {
         controller?.abort();
       } catch {
@@ -2895,26 +2905,29 @@ async function requestJsonRaw<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetchWithTimeout(
-    resolveFetch(url),
-    url,
-    {
-      method: options.method ?? "GET",
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      credentials: "include",
-    },
-    options.timeoutMs ?? DEFAULT_DEN_TIMEOUT_MS,
-  );
+  return observeDenRequest(async (onTimeout) => {
+    const response = await fetchWithTimeout(
+      resolveFetch(url),
+      url,
+      {
+        method: options.method ?? "GET",
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        credentials: "include",
+      },
+      options.timeoutMs ?? DEFAULT_DEN_TIMEOUT_MS,
+      onTimeout,
+    );
 
-  const text = await response.text();
-  let json: T | null = null;
-  try {
-    json = text ? (JSON.parse(text) as T) : null;
-  } catch {
-    json = null;
-  }
-  return { ok: response.ok, status: response.status, json };
+    const text = await response.text();
+    let json: T | null = null;
+    try {
+      json = text ? (JSON.parse(text) as T) : null;
+    } catch {
+      json = null;
+    }
+    return { ok: response.ok, status: response.status, json };
+  });
 }
 
 async function requestJson<T>(
@@ -3085,10 +3098,11 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       }
       return { enabled: payload.enabled, sharingEnabled: payload.sharingEnabled === true, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
     },
-    async getSavedApp(orgId: string, appId: string, options: { revisionId?: string; receiptId?: string } = {}) {
+    async getSavedApp(orgId: string, appId: string, options: { revisionId?: string; receiptId?: string; timeZone?: string } = {}) {
       const params = new URLSearchParams();
       if (options.revisionId) params.set("revisionId", options.revisionId);
       if (options.receiptId) params.set("receiptId", options.receiptId);
+      if (options.timeZone) params.set("timeZone", options.timeZone);
       return savedAppDetailSchema.parse(await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}?${params}`, {
         method: "GET", token, organizationId: orgId,
       }));
@@ -3248,7 +3262,9 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "POST",
         token,
         organizationId: orgId,
-        body: {},
+        // Tell Den this shell understands a deferred update; shells that do not
+        // opt in keep receiving the older already_current / flush_failed answers.
+        body: { acceptsDeferral: true },
       });
       const result = parseCloudInstanceUpdateResult(payload);
       if (!result) {

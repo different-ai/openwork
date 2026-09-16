@@ -143,7 +143,7 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
     expect(persistSource).toContain("const config = await readWorkspaceOpenworkConfigRecord();");
     expect(persistSource).toContain("const cloudImports = readWorkspaceCloudImports(config);");
     expect(persistSource).toContain("const nextConfig = withWorkspaceCloudImports(config");
-    expect(persistSource).toContain("const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);");
+    expect(persistSource).toContain("const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig, isCurrent);");
     expect(persistSource).toContain('setStateField("importedCloudProviders", nextProviders);');
     expect(source).not.toContain("refreshDesktop" + "CloudSync");
     expect(source).not.toContain("getResource" + "Snapshot");

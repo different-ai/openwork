@@ -299,6 +299,7 @@ export type NukeReceipt = {
 };
 
 export type DesktopFetchInit = {
+  transferId?: string;
   method?: string;
   headers?: Record<string, string>;
   body?: string;

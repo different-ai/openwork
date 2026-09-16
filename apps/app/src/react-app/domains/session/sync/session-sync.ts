@@ -1877,6 +1877,15 @@ export function seedSessionStatus(
     undefined,
     { snapshotStartedAt },
   );
+  if (!isLiveStatus(status)) {
+    // Run status is not an interaction snapshot. An idle read must not hide
+    // cached approvals/questions when their independent refresh fails or waits.
+    const activity = useSessionActivityStore.getState();
+    const permissions = queryClient.getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId));
+    const questions = queryClient.getQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId));
+    if (permissions) activity.replaceWaitingRequests(workspaceId, sessionId, "permission", permissions.map((item) => item.id));
+    if (questions) activity.replaceWaitingRequests(workspaceId, sessionId, "question", questions.map((item) => item.id));
+  }
   queryClient.setQueryData(statusKey(workspaceId, sessionId), status);
   if (isLiveStatus(status)) {
     for (const entry of syncs.values()) {

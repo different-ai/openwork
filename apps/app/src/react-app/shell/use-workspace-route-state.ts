@@ -32,7 +32,7 @@ import type { WorkspaceConnectionState } from "@/app/types";
 import { normalizeDirectoryPath } from "@/app/utils";
 import { t } from "@/i18n";
 import {
-  createWorkspaceServerClientResolver,
+  createWorkspaceServerClientResolverState,
   useWorkspaceServerClient,
 } from "@/react-app/infra/workspace-server-client";
 import {
@@ -220,16 +220,13 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // resolution updates this ref: a render during refresh must not restore
   // the old endpoint while the new workspace list is still being awaited.
   const workspaceServerClientResolverRef = useRef(
-    createWorkspaceServerClientResolver({ baseUrl: "", token: "" }),
+    createWorkspaceServerClientResolverState({ baseUrl: "", token: "" }),
   );
-  const updateLocalServer = useCallback((next: { baseUrl: string; token: string }) => {
-    const resolver = createWorkspaceServerClientResolver(next);
-    workspaceServerClientResolverRef.current = resolver;
-    return resolver;
-  }, []);
+  const updateLocalServer = useCallback((next: { baseUrl: string; token: string }) =>
+    workspaceServerClientResolverRef.current.update(next), []);
   const endpointForWorkspace = useCallback(
     (workspace: RouteWorkspace | null | undefined): ResolvedWorkspaceEndpoint | null =>
-      workspaceServerClientResolverRef.current(workspace),
+      workspaceServerClientResolverRef.current.resolve(workspace),
     [],
   );
   const refreshLifecycleRef = useRef(createRouteRefreshLifecycle());

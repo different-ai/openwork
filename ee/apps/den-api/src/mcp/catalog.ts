@@ -67,6 +67,8 @@ type OpenApiDocument = {
   paths?: Record<string, Record<string, OpenApiOperation>>
   components?: {
     parameters?: Record<string, unknown>
+    schemas?: Record<string, unknown>
+    responses?: Record<string, unknown>
   }
 }
 
@@ -96,6 +98,7 @@ export type McpToolOperation = {
   path: string
   operation: OpenApiOperation
   inputSchema: McpInputSchema
+  outputSchema?: Record<string, unknown>
 }
 
 function isOpenApiParameter(value: unknown): value is OpenApiParameter {
@@ -213,6 +216,109 @@ export function getJsonRequestBodySchema(operation: OpenApiOperation): unknown {
     return undefined
   }
   return mediaType.schema
+}
+
+const OUTPUT_SCHEMA_MAX_DEPTH = 24
+const OUTPUT_SCHEMA_MAX_NODES = 2_048
+const OUTPUT_SCHEMA_MAX_CHARACTERS = 24_000
+const SCHEMA_MAP_KEYS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"])
+const SCHEMA_KEYS = new Set([
+  "items", "prefixItems", "additionalItems", "contains", "additionalProperties", "unevaluatedProperties",
+  "unevaluatedItems", "propertyNames", "allOf", "anyOf", "oneOf", "not", "if", "then", "else",
+])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function localReference(document: OpenApiDocument, ref: unknown): unknown {
+  if (typeof ref !== "string" || !ref.startsWith("#/")) return undefined
+  let segments: string[]
+  try {
+    const pointer = decodeURIComponent(ref.slice(2))
+    if (/~(?![01])/u.test(pointer)) return undefined
+    segments = pointer.split("/").map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"))
+  } catch {
+    return undefined
+  }
+  let value: unknown = document
+  for (const segment of segments) {
+    if (!isRecord(value) || !Object.hasOwn(value, segment)) return undefined
+    value = value[segment]
+  }
+  return value
+}
+
+export function getJsonResponseSchema(document: OpenApiDocument, operation: OpenApiOperation): Record<string, unknown> | undefined {
+  if (!isRecord(operation.responses)) return undefined
+  let nodes = 0
+  let characters = 0
+  const visit = (value: unknown, mode: "schema" | "map" | "value", depth: number, refs: ReadonlySet<string>): unknown => {
+    nodes += 1
+    if (depth > OUTPUT_SCHEMA_MAX_DEPTH || nodes > OUTPUT_SCHEMA_MAX_NODES) return undefined
+    if (typeof value === "string") characters += value.length
+    if (characters > OUTPUT_SCHEMA_MAX_CHARACTERS) return undefined
+    if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return value
+    if (Array.isArray(value)) {
+      const result: unknown[] = []
+      for (const item of value) {
+        const resolved = visit(item, mode, depth + 1, refs)
+        if (resolved === undefined) return undefined
+        result.push(resolved)
+      }
+      return result
+    }
+    if (!isRecord(value)) return undefined
+    if (mode === "schema" && ("$dynamicRef" in value || "$recursiveRef" in value || "$id" in value)) return undefined
+    if (mode === "schema" && Object.hasOwn(value, "$ref")) {
+      const ref = value.$ref
+      if (typeof ref !== "string" || refs.has(ref)) return undefined
+      const target = localReference(document, ref)
+      if (!isRecord(target) && typeof target !== "boolean") return undefined
+      const resolved = visit(target, "schema", depth + 1, new Set([...refs, ref]))
+      if (resolved === undefined) return undefined
+      const siblings = Object.fromEntries(Object.entries(value).filter(([key]) => key !== "$ref"))
+      if (Object.keys(siblings).length === 0) return resolved
+      const resolvedSiblings = visit(siblings, "schema", depth + 1, refs)
+      return resolvedSiblings === undefined ? undefined : { allOf: [resolved, resolvedSiblings] }
+    }
+    const entries: Array<[string, unknown]> = []
+    for (const [key, item] of Object.entries(value)) {
+      characters += key.length
+      const childMode = mode === "map" ? "schema" : mode !== "schema" ? "value"
+        : SCHEMA_MAP_KEYS.has(key) ? "map" : SCHEMA_KEYS.has(key) ? "schema" : "value"
+      const resolved = visit(item, childMode, depth + 1, refs)
+      if (resolved === undefined) return undefined
+      entries.push([key, resolved])
+    }
+    return Object.fromEntries(entries)
+  }
+  const schemas = new Map<string, Record<string, unknown>>()
+  for (const [status, response] of Object.entries(operation.responses).sort(([a], [b]) => a.localeCompare(b))) {
+    if (!/^2(?:\d{2}|XX)$/i.test(status)) continue
+    let resolved = response
+    const refs = new Set<string>()
+    while (isRecord(resolved) && Object.hasOwn(resolved, "$ref")) {
+      const ref = resolved.$ref
+      if (typeof ref !== "string" || refs.has(ref) || refs.size >= OUTPUT_SCHEMA_MAX_DEPTH) return undefined
+      refs.add(ref)
+      resolved = localReference(document, ref)
+      if (!isRecord(resolved)) return undefined
+    }
+    if (!isRecord(resolved) || !isRecord(resolved.content)) continue
+    for (const [mediaType, media] of Object.entries(resolved.content)) {
+      if (!/^application\/(?:json|[^;\s]+\+json)(?:\s*;.*)?$/i.test(mediaType)) continue
+      if (!isRecord(media) || (!isRecord(media.schema) && typeof media.schema !== "boolean")) continue
+      const schema = visit(media.schema, "schema", 0, new Set())
+      if (schema === undefined) return undefined
+      const output = schema === true ? {} : schema === false ? { not: {} } : schema
+      if (!isRecord(output)) return undefined
+      schemas.set(JSON.stringify(output), output)
+    }
+  }
+  const variants = [...schemas.values()]
+  const output = variants.length === 1 ? variants[0] : variants.length > 1 ? { anyOf: variants } : undefined
+  return output && JSON.stringify(output).length <= OUTPUT_SCHEMA_MAX_CHARACTERS ? output : undefined
 }
 
 export function getQueryParameterSchema(operation: OpenApiOperation): unknown {
@@ -366,6 +472,7 @@ export function buildMcpCatalog(document: OpenApiDocument): McpToolOperation[] {
         path,
         operation: resolvedOperation,
         inputSchema: buildInputSchema(path, resolvedOperation),
+        outputSchema: getJsonResponseSchema(document, resolvedOperation),
       })
     }
   }

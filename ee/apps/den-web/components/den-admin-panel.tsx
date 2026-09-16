@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
-import { denApiCredentials, denApiEndpoint } from "../app/(den)/_lib/den-api-origin";
+import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
 type ViewMode = "users" | "companies" | "organizations";
@@ -999,9 +999,8 @@ function adminScaleFixturePayload(path: string): unknown | null {
 
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 
-// Browser calls go straight to the api.* origin. Attach the stored bearer token
-// like den-flow's requestJson does; den-api accepts either bearer or cookie
-// credentials, so cookie-authenticated sessions keep working unchanged.
+// Preserve existing password-login bearer credentials alongside the web-host
+// session cookie. The same-origin browser proxy forwards both to Den API.
 function withStoredBearer(headers: Record<string, string>): Record<string, string> {
   if (typeof window === "undefined") {
     return headers;
@@ -1019,7 +1018,7 @@ async function requestJson(path: string, signal?: AbortSignal) {
     return { response: new Response(JSON.stringify(fixturePayload), { status: 200 }), payload: fixturePayload };
   }
 
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "GET",
     credentials: denApiCredentials(endpoint),
@@ -1048,7 +1047,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 async function patchJson(path: string, body: unknown) {
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "PATCH",
     credentials: denApiCredentials(endpoint),
@@ -1074,7 +1073,7 @@ async function patchJson(path: string, body: unknown) {
 }
 
 async function postJson(path: string, body: unknown) {
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "POST",
     credentials: denApiCredentials(endpoint),
@@ -1098,7 +1097,7 @@ async function postJson(path: string, body: unknown) {
 }
 
 async function putJson(path: string, body: unknown) {
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "PUT",
     credentials: denApiCredentials(endpoint),
@@ -1124,7 +1123,7 @@ async function putJson(path: string, body: unknown) {
 }
 
 async function deleteJson(path: string) {
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "DELETE",
     credentials: denApiCredentials(endpoint),

@@ -1,6 +1,6 @@
 import { workflowRunPreviewSchema, type WorkflowRunPreview } from "@openwork/types/workflows";
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS";
-import { denApiCredentials, denApiEndpoint } from "./den-api-origin";
+import { denApiCredentials, denBrowserEndpoint } from "./den-api-origin";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
 import { getRuntimeConfig } from "./runtime-config";
 
@@ -1274,7 +1274,7 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     if (typeof window !== "undefined") {
       await getRuntimeConfig();
     }
-    const endpoint = path.startsWith("/api/auth/") ? path : denApiEndpoint(path);
+    const endpoint = path.startsWith("/api/auth/") ? path : denBrowserEndpoint(path);
     response = await fetch(endpoint, {
       ...init,
       headers,

@@ -622,6 +622,7 @@ async function assertWorkspaceOwnsProxiedSessionRead(
   method: string,
   proxyPath: string,
   requireActive = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   const sessionId = proxiedSessionReadId(method, proxyPath);
   const directory = resolveOpencodeDirectory(workspace);
@@ -630,7 +631,9 @@ async function assertWorkspaceOwnsProxiedSessionRead(
     return;
   }
 
-  const result = await createWorkspaceOpencodeClient(config, workspace, { sessionId }).session.get({ sessionID: sessionId });
+  signal?.throwIfAborted();
+  const result = await createWorkspaceOpencodeClient(config, workspace, { sessionId }).session.get({ sessionID: sessionId }, { signal });
+  signal?.throwIfAborted();
   if (result.error !== undefined) {
     if (result.response?.status === 404) {
       throw new ApiError(404, "session_not_found", "Session not found");
@@ -854,7 +857,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
-          await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath);
+          await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath, false,
+            request.method === "GET" ? request.signal : undefined);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
           const send = () => proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath,
@@ -889,12 +893,10 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
-          // Only exact native history reads may skip execution readiness. Keep
-          // IDs literal (no encoded separators or route-prefix matches), and
-          // still verify session ownership in proxyOpencodeV2Request below.
-          const isSessionHistoryRead = request.method === "GET"
-            && /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?$/.test(mount.restPath);
-          if (!isSessionHistoryRead) {
+          const isSessionBrowseRead = request.method === "GET"
+            && (mount.restPath === "/opencode2/api/session"
+              || /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?$/.test(mount.restPath));
+          if (!isSessionBrowseRead) {
             await engineV2Preview.ensureWorkspaceReady(workspace.path);
             // Reconcile through v2's runtime MCP API before execution admission.
             // The ordinary connection routes remain authoritative.
@@ -974,7 +976,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           proxyService = "opencode";
           const workspace = config.workspaces[0];
           if (workspace) {
-            await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, url.pathname);
+            await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, url.pathname, false,
+              request.method === "GET" ? request.signal : undefined);
           }
           const send = () => proxyOpencodeRequest({ config, request, url, workspace });
           const response = taskRecovery && workspace ? await taskRecovery.forward(workspace, "v1", url.pathname, request, send) : await send();
@@ -1152,6 +1155,10 @@ export async function proxyOpencodeV2Request(input: {
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
+  const signal = method === "GET"
+    ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
+    : input.recoverySignal;
+  if (method === "GET") signal?.throwIfAborted();
   if (method !== "GET" && method !== "HEAD") ensureWritable(input.config);
 
   const withoutPrefix = input.proxyPath.slice("/opencode2".length);
@@ -1197,7 +1204,9 @@ export async function proxyOpencodeV2Request(input: {
     sessionHeaders.delete("transfer-encoding");
     const sessionResponse = await loopbackFetch(sessionUrl.toString(), {
       headers: sessionHeaders,
-      signal: AbortSignal.timeout(10_000),
+      signal: method === "GET"
+        ? AbortSignal.any([input.request.signal, AbortSignal.timeout(10_000)])
+        : AbortSignal.timeout(10_000),
     });
     if (!sessionResponse.ok) return sanitizeProxyResponse(sessionResponse);
     const payload: unknown = await sessionResponse.json();
@@ -1279,7 +1288,7 @@ export async function proxyOpencodeV2Request(input: {
     headers.delete("content-length");
     headers.set("content-type", "application/json");
   }
-  const response = await loopbackFetch(target.toString(), { method, headers, body, signal: input.recoverySignal });
+  const response = await loopbackFetch(target.toString(), { method, headers, body, signal });
   if (method === "GET" && /^\/api\/skill(?:\/|$)/.test(decodeURIComponent(forwardedPath))
     && input.actor.scope !== "owner" && response.ok) {
     // A shared client token is not authorization to bulk-read the owner's Cloud
@@ -1387,15 +1396,25 @@ export async function proxyOpencodeV2Request(input: {
     const data = isRecord(payload) && "data" in payload ? payload.data : payload;
     const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
     if (!items) throw new ApiError(502, "invalid_engine_response", "Invalid session list response");
-    const expected = await realpath(input.workspace.path).catch(() => input.workspace.path);
+    const directories = new Map<string, Promise<string>>();
+    const resolveDirectory = (directory: string) => {
+      let resolved = directories.get(directory);
+      if (!resolved) {
+        resolved = realpath(directory).catch(() => directory);
+        directories.set(directory, resolved);
+      }
+      return resolved;
+    };
+    const expected = await resolveDirectory(input.workspace.path);
     const scoped = (await Promise.all(items.map(async (item: unknown) => {
       const session = isRecord(item) && isRecord(item.info) ? item.info : item;
       const location = isRecord(session) && isRecord(session.location) ? session.location : null;
       const directory = location && typeof location.directory === "string" ? location.directory : null;
       if (!directory) return null;
-      const actual = await realpath(directory).catch(() => directory);
+      const actual = await resolveDirectory(directory);
       return actual === expected ? item : null;
     }))).filter((item) => item !== null);
+    signal?.throwIfAborted();
     const scopedData = isRecord(data) ? { ...data, items: scoped } : scoped;
     const scopedPayload = isRecord(payload) && "data" in payload ? { ...payload, data: scopedData } : scopedData;
     const responseHeaders = new Headers(response.headers);
@@ -1528,6 +1547,10 @@ export async function proxyOpencodeRequest(input: {
   const workspace = input.workspace;
   const proxyPath = input.proxyPath ?? input.url.pathname;
   const method = input.request.method.toUpperCase();
+  const signal = method === "GET"
+    ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
+    : input.recoverySignal;
+  if (method === "GET") signal?.throwIfAborted();
   // The wrapper routes enforced the server read-only mode via ensureWritable;
   // native proxy writes must honor the same guard so a read-only server never
   // forwards mutations to the engine.
@@ -1649,9 +1672,10 @@ export async function proxyOpencodeRequest(input: {
   const forward = async () => {
     let response: Response;
     try {
-      response = await loopbackFetch(targetUrl, { method, headers, body, signal: input.recoverySignal });
+      response = await loopbackFetch(targetUrl, { method, headers, body, signal });
       enginePoolForConfig(input.config)?.reportRequestSuccess(baseUrl);
     } catch (error) {
+      if (method === "GET" && isExpectedRequestCancellation(error, signal)) throw error;
       if (workspace) enginePoolForConfig(input.config)?.reportRequestFailure(baseUrl, error, workspace);
       if (isEngineConnectionFailure(error)) throw opencodeUnreachableError(error, proxyPath);
       throw error;
@@ -1663,9 +1687,10 @@ export async function proxyOpencodeRequest(input: {
       try {
         fallbackResponse = await loopbackFetch(
           buildOpencodeProxyUrl(route.fallback.baseUrl, proxyPath, search),
-          { method, headers: fallbackHeaders, body, signal: input.recoverySignal },
+          { method, headers: fallbackHeaders, body, signal },
         );
       } catch (error) {
+        if (method === "GET" && isExpectedRequestCancellation(error, signal)) throw error;
         if (workspace) enginePoolForConfig(input.config)?.reportRequestFailure(route.fallback.baseUrl, error, workspace);
         if (isEngineConnectionFailure(error)) throw opencodeUnreachableError(error, proxyPath);
         throw error;
@@ -2960,6 +2985,14 @@ function createRoutes(
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
   });
 
+  // The host that owns this instance's lifecycle asks before stopping or
+  // restarting it. Counts only; no session content leaves the instance.
+  addRoute(routes, "GET", "/runtime/activity", "host-token", async () => {
+    const response = jsonResponse(await describeRuntimeActivity(config));
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  });
+
   addRoute(routes, "PUT", "/den-session/identity", "host-token", async (ctx) => {
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
@@ -3602,6 +3635,10 @@ function createRoutes(
     const serverName = typeof body.serverName === "string" ? body.serverName.trim() : "";
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const resourceUri = typeof body.resourceUri === "string" ? body.resourceUri.trim() : "";
+    const expectedResourceDigest = body.expectedResourceDigest;
+    if (expectedResourceDigest !== undefined && typeof expectedResourceDigest !== "string") {
+      throw new ApiError(400, "invalid_resource_digest", "expectedResourceDigest must be a SHA-256 hex digest.");
+    }
     const args = body.arguments && typeof body.arguments === "object" && !Array.isArray(body.arguments)
       ? body.arguments as Record<string, unknown>
       : {};
@@ -3623,6 +3660,7 @@ function createRoutes(
         serverName,
         name,
         resourceUri,
+        expectedResourceDigest,
         arguments: args,
         approved,
         assertSessionActive: async () => {
@@ -4503,7 +4541,20 @@ function opencodeDisposeTimeoutMs(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 30_000;
 }
 
-async function requireWorkspaceRunModeIdle(config: ServerConfig, workspace: WorkspaceInfo): Promise<void> {
+/**
+ * One workspace's live engine activity: non-idle sessions plus unanswered
+ * permission and question requests across every engine connection, including
+ * draining generations. `unknown` means a probe failed or was unreadable, so a
+ * caller that wants to interrupt the workspace must treat it as not idle.
+ */
+export type WorkspaceActivityProbe = {
+  verdict: "idle" | "busy" | "unknown";
+  busySessions: number;
+  waitingRequests: number;
+  unknownReason: "unreachable" | "unreadable" | null;
+};
+
+async function probeWorkspaceActivity(config: ServerConfig, workspace: WorkspaceInfo): Promise<WorkspaceActivityProbe> {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const connections = new Map<string, string | undefined>();
   if (connection.baseUrl) connections.set(connection.baseUrl, connection.authHeader);
@@ -4512,8 +4563,12 @@ async function requireWorkspaceRunModeIdle(config: ServerConfig, workspace: Work
   for (const entry of enginePoolForConfig(config)?.connections() ?? []) {
     connections.set(entry.baseUrl, buildEngineAuthProbeHeader(entry.username, entry.password));
   }
-  await Promise.all([...connections].map(async ([baseUrl, authorization]) => {
-    await Promise.all(["/session/status", "/permission", "/question"].map(async (path) => {
+  type ProbeResult =
+    | { kind: "unknown"; reason: "unreachable" | "unreadable" }
+    | { kind: "sessions"; busy: number }
+    | { kind: "requests"; waiting: number };
+  const results = await Promise.all([...connections].map(async ([baseUrl, authorization]) =>
+    Promise.all(["/session/status", "/permission", "/question"].map(async (path): Promise<ProbeResult> => {
       let payload: unknown;
       try {
         const url = new URL(path, baseUrl);
@@ -4526,15 +4581,70 @@ async function requireWorkspaceRunModeIdle(config: ServerConfig, workspace: Work
         if (!response.ok) throw new Error("Activity probe failed");
         payload = await response.json();
       } catch {
-        throw new ApiError(409, "workspace_run_mode_activity_unknown", "Cannot verify that all workspace sessions are idle; no permission change was made.");
+        return { kind: "unknown", reason: "unreachable" };
       }
-      if (path === "/session/status" ? !isRecord(payload) || Object.values(payload).some((status) => !isRecord(status) || typeof status.type !== "string") : !Array.isArray(payload)) {
-        throw new ApiError(409, "workspace_run_mode_activity_unknown", "OpenCode returned unreadable workspace activity; no permission change was made.");
+      if (path === "/session/status") {
+        if (!isRecord(payload) || Object.values(payload).some((status) => !isRecord(status) || typeof status.type !== "string")) {
+          return { kind: "unknown", reason: "unreadable" };
+        }
+        return { kind: "sessions", busy: Object.values(payload).filter((status) => isRecord(status) && status.type !== "idle").length };
       }
-      const busy = Array.isArray(payload) ? payload.length > 0 : isRecord(payload) && Object.values(payload).some((status) => isRecord(status) && status.type !== "idle");
-      if (busy) throw new ApiError(409, "workspace_run_mode_busy", "Wait for all workspace sessions, including permission and question requests, to finish before changing run mode.");
-    }));
-  }));
+      if (!Array.isArray(payload)) return { kind: "unknown", reason: "unreadable" };
+      return { kind: "requests", waiting: payload.length };
+    }))));
+  const probe: WorkspaceActivityProbe = { verdict: "idle", busySessions: 0, waitingRequests: 0, unknownReason: null };
+  for (const result of results.flat()) {
+    if (result.kind === "sessions") probe.busySessions += result.busy;
+    else if (result.kind === "requests") probe.waitingRequests += result.waiting;
+    else probe.unknownReason ??= result.reason;
+  }
+  // A definite busy answer is authoritative even when another probe failed.
+  if (probe.busySessions > 0 || probe.waitingRequests > 0) probe.verdict = "busy";
+  else if (probe.unknownReason) probe.verdict = "unknown";
+  return probe;
+}
+
+async function requireWorkspaceRunModeIdle(config: ServerConfig, workspace: WorkspaceInfo): Promise<void> {
+  const activity = await probeWorkspaceActivity(config, workspace);
+  if (activity.verdict === "busy") {
+    throw new ApiError(409, "workspace_run_mode_busy", "Wait for all workspace sessions, including permission and question requests, to finish before changing run mode.");
+  }
+  if (activity.verdict === "unknown") {
+    throw new ApiError(409, "workspace_run_mode_activity_unknown", activity.unknownReason === "unreadable"
+      ? "OpenCode returned unreadable workspace activity; no permission change was made."
+      : "Cannot verify that all workspace sessions are idle; no permission change was made.");
+  }
+}
+
+/**
+ * The whole instance's activity, for a host (Den) deciding whether it may stop
+ * or restart this sandbox. Busy wins over unknown, unknown wins over idle, so
+ * a caller that fails closed never reads a half-answered probe as idle.
+ */
+export async function describeRuntimeActivity(config: ServerConfig): Promise<{
+  ok: true;
+  verdict: "idle" | "busy" | "unknown";
+  busySessions: number;
+  waitingRequests: number;
+  connectedClients: number;
+  workspaces: number;
+  checkedAt: string;
+}> {
+  const probes = await Promise.all(config.workspaces.map((workspace) => probeWorkspaceActivity(config, workspace)));
+  const busySessions = probes.reduce((total, probe) => total + probe.busySessions, 0);
+  const waitingRequests = probes.reduce((total, probe) => total + probe.waitingRequests, 0);
+  const verdict = busySessions > 0 || waitingRequests > 0
+    ? "busy"
+    : probes.some((probe) => probe.verdict === "unknown") ? "unknown" : "idle";
+  return {
+    ok: true,
+    verdict,
+    busySessions,
+    waitingRequests,
+    connectedClients: enginePoolForConfig(config)?.eventProxyCount() ?? 0,
+    workspaces: probes.length,
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 /**

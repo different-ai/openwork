@@ -472,6 +472,7 @@ export type OpenworkMcpItem = {
 export type OpenworkMcpAppResource = {
   /** Opaque, short-lived host context. Absent on generated previews and older servers. */
   launchId?: string;
+  refresh?: { resourceDigest: string; expiresAt: number };
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -2055,6 +2056,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         serverName: string;
         name: string;
         resourceUri: string;
+        expectedResourceDigest?: string;
         arguments?: Record<string, unknown>;
         approved?: boolean;
       },

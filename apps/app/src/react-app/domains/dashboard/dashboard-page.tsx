@@ -25,6 +25,7 @@ import {
 } from "./granted-dashboard-store";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
 import { DashboardApps, type CreateDashboardApp } from "./dashboard-apps";
+import { useSavedApps } from "../apps/use-apps";
 import { DashboardMasonry } from "./dashboard-masonry";
 
 /**
@@ -37,6 +38,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
   const denAuth = useDenAuth();
+  const personal = useSavedApps();
   // The active org lives in den settings, which change outside React; track
   // them through the settings-changed event so an org switch swaps the board
   // scope and the granted-dashboard fetch together.
@@ -52,8 +54,8 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
     [activeOrgId, denAuth.user?.id],
   );
   const cacheScopeKey = useMemo(
-    () => dashboardTileCacheScopeKey(denAuth.user?.id ?? null, activeOrgId),
-    [activeOrgId, denAuth.user?.id],
+    () => `${dashboardTileCacheScopeKey(denAuth.user?.id ?? null, activeOrgId)}.deployment.${encodeURIComponent(JSON.stringify([denSettings.baseUrl, denSettings.apiBaseUrl]))}`,
+    [activeOrgId, denAuth.user?.id, denSettings.baseUrl, denSettings.apiBaseUrl],
   );
 
   const token = denSettings.authToken?.trim() || null;
@@ -67,7 +69,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   );
   const grantedReady = denAuth.isSignedIn && Boolean(denClient && activeOrgId);
   const grantedQuery = useQuery({
-    queryKey: ["den", "granted-dashboards", denAuth.user?.id ?? null, activeOrgId],
+    queryKey: ["den", "granted-dashboards", denAuth.user?.id ?? null, activeOrgId, denSettings.baseUrl, denSettings.apiBaseUrl],
     queryFn: () => {
       if (!denClient || !activeOrgId) return Promise.resolve([]);
       return denClient.listGrantedDashboards(activeOrgId);
@@ -78,7 +80,8 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
 
   // Hold the board (and every launch) until its user/org scope and managed
   // dashboard payload are final.
-  if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending)) {
+  if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending && !grantedQuery.isFetched)
+    || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
       <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4" data-dashboard-page>
         <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
@@ -90,7 +93,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   }
   return (
     <DashboardBoard
-      key={consentScopeKey}
+      key={cacheScopeKey}
       consentScopeKey={consentScopeKey}
       cacheScopeKey={cacheScopeKey}
       grantedDashboards={grantedReady ? grantedQuery.data ?? [] : []}
@@ -129,7 +132,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
       data-dashboard-cache-scope={cacheScopeKey}
       data-dashboard-consent-scope={consentScopeKey}
     >
-      <DashboardApps key={consentScopeKey} onCreateApp={onCreateApp} />
+      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} />
       {grantedError ? (
         <p className="mb-4 text-xs text-muted-foreground" role="status">
           Your organization&apos;s dashboards could not be loaded right now.

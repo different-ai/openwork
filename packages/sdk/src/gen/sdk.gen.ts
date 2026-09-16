@@ -1776,7 +1776,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Request an update for the active organization's Cloud instance
    *
-   * Flushes a running Cloud workspace checkpoint and stops the sandbox so the next resolve can recycle it onto the latest snapshot.
+   * Flushes a running Cloud workspace checkpoint and stops the sandbox so the next resolve can recycle it onto the latest snapshot. A sandbox that is mid-task is left running; clients that send { acceptsDeferral: true } learn why (busy or activity_unknown), older clients receive already_current.
    */
   public postV1CloudInstanceUpdate<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<
@@ -2917,14 +2917,15 @@ export class DenClient extends HeyApiClient {
   /**
    * Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin
    *
-   * Turns the caller's most recent successful execute_capability_script run into a reusable Workflow: code must match that run byte-for-byte and the run must be less than 15 minutes old (400 workflow_recent_receipt_required), and the tool calls the run made become the Workflow's requiredCapabilities (400 workflow_capability_unavailable when one is no longer in the caller's tool tree). Omit pluginId to save into the member's private My Workflows Plugin, created on first use; passing pluginId requires editor access to that Plugin. Saving a name that already exists in the Plugin adds a new immutable version to that Workflow, which requires manager access to it.
+   * Saves a successful authoring run as a reusable Workflow. Supply code or receiptId, or both with byte-identical source. Explicit receiptId requires a successful run from this caller in this organization within 15 minutes, retained source (encrypted shared storage when Redis is configured; process-local otherwise), and exactly matching tested input and schema digests; missing retention fails closed (400 workflow_authoring_receipt_required). Live receipts forbid currentInput, validate with their server-generated runtime, and never save runtime day bounds as example input. Without receiptId, the existing byte-exact recent successful code lookup applies (400 workflow_recent_receipt_required). Literal credentials in source are rejected, not sanitized. The run's tool calls become requiredCapabilities and must still be available. Saving creates no artifact snapshot linkage. Omit pluginId for the private My Workflows Plugin; a chosen Plugin requires editor access. Replacing a same-name Workflow requires manager access.
    */
   public saveWorkflow<ThrowOnError extends boolean = false>(
     parameters: {
       pluginId?: string;
       name: string;
       description?: string;
-      code: string;
+      code?: string;
+      receiptId?: string;
       currentInput?: unknown;
       inputSchema?: unknown;
       outputSchema?: unknown;
@@ -2940,6 +2941,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "name" },
             { in: "body", key: "description" },
             { in: "body", key: "code" },
+            { in: "body", key: "receiptId" },
             { in: "body", key: "currentInput" },
             { in: "body", key: "inputSchema" },
             { in: "body", key: "outputSchema" },
@@ -3047,11 +3049,12 @@ export class DenClient extends HeyApiClient {
   /**
    * Open an app or an exact draft preview
    *
-   * Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. The data comes from the Workflow's latest successful snapshot, or from the snapshot named by receiptId. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.
+   * Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. Live apps execute the current saved Workflow as the caller with optional IANA timeZone (UTC by default); receiptId is forbidden for live apps. Legacy snapshots use only the caller's receipts. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.
    */
   public getV1AppsByAppId<ThrowOnError extends boolean = false>(
     parameters: {
       appId: string;
+      timeZone?: string;
       revisionId?: string;
       receiptId?: string;
     },
@@ -3063,6 +3066,7 @@ export class DenClient extends HeyApiClient {
         {
           args: [
             { in: "path", key: "appId" },
+            { in: "query", key: "timeZone" },
             { in: "query", key: "revisionId" },
             { in: "query", key: "receiptId" },
           ],
@@ -3436,7 +3440,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Run an exact Workflow version
    *
-   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
+   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live app, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. After receipt-backed saveWorkflow, run this saved version in live mode before save_artifact_view; authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
    */
   public postV1WorkflowsByConfigObjectIdRun<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3444,6 +3448,8 @@ export class DenClient extends HeyApiClient {
       pluginId: string;
       configObjectVersionId: string;
       input?: unknown;
+      mode?: "adhoc" | "live";
+      timeZone?: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3456,6 +3462,8 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "pluginId" },
             { in: "body", key: "configObjectVersionId" },
             { in: "body", key: "input" },
+            { in: "body", key: "mode" },
+            { in: "body", key: "timeZone" },
           ],
         },
       ],

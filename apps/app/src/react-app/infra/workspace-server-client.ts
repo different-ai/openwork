@@ -95,6 +95,25 @@ export function createWorkspaceServerClientResolver(
   };
 }
 
+/** Keep a route's client identities stable across equivalent connection refreshes. */
+export function createWorkspaceServerClientResolverState(localServer: LocalServerHandle) {
+  let current = normalizeLocalServer(localServer);
+  let resolver = createWorkspaceServerClientResolver(current);
+  return {
+    resolve(workspace: WorkspaceServerClientWorkspace) {
+      return resolver(workspace);
+    },
+    update(nextServer: LocalServerHandle): WorkspaceServerClientResolver {
+      const next = normalizeLocalServer(nextServer);
+      if (next.baseUrl !== current.baseUrl || next.token !== current.token) {
+        current = next;
+        resolver = createWorkspaceServerClientResolver(next);
+      }
+      return resolver;
+    },
+  };
+}
+
 export function useWorkspaceServerClient(
   workspace: WorkspaceServerClientWorkspace,
   localServer: LocalServerHandle,

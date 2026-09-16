@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { NextRequest } from "next/server";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 
 import { denApiCredentialsForEndpoint, denApiEndpointForWebOrigin, denApiOriginForWebOrigin, setDenApiOriginOverride } from "../app/(den)/_lib/den-api-origin";
+import * as runtime from "../app/(den)/_lib/runtime-config";
 import { redirectToDenApi } from "../app/api/_lib/den-api-redirect";
+import McpConsentPage from "../app/mcp/consent/page";
+import McpSelectOrganizationPage from "../app/mcp/select-organization/page";
 
 const ENV_KEYS = ["DEN_API_BASE", "DEN_API_PUBLIC_URL"] as const;
 const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -100,4 +106,59 @@ describe("Den API browser origin", () => {
       "/v1/orgs/sso/resolve?email=omar%40openworklabs.com",
     )).toBe("omit");
   });
+});
+
+const consentPages = [
+  { name: "consent authorization", page: McpConsentPage, route: "consent", button: "Authorize", path: "/api/auth/oauth2/consent" },
+  { name: "consent denial", page: McpConsentPage, route: "consent", button: "Deny", path: "/api/auth/oauth2/consent" },
+  { name: "organization selection", page: McpSelectOrganizationPage, route: "select-organization", button: null, path: "/v1/me/orgs" },
+];
+
+test.each(consentPages)("fresh $name waits for runtime configuration and keeps the web session cookie", async ({ page, route, button, path }) => {
+  const apiOrigin = "https://api-portal.example.test";
+  GlobalRegistrator.register({ url: `https://portal.example.test/mcp/${route}?client_id=test-client&scope=mcp%3Aread` });
+  const previousActEnvironment = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  delete process.env.DEN_API_BASE;
+  delete process.env.DEN_API_PUBLIC_URL;
+  setDenApiOriginOverride(null);
+
+  let resolveConfig: (config: runtime.DenWebRuntimeConfig) => void = () => { throw new Error("Runtime config not initialized"); };
+  const config = new Promise<runtime.DenWebRuntimeConfig>((resolve) => { resolveConfig = resolve; });
+  const loadConfig = spyOn(runtime, "getRuntimeConfig").mockImplementation(async () => {
+    const result = await config;
+    setDenApiOriginOverride(result.denApiUrl);
+    return result;
+  });
+  const fetchRequest = spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json({ message: "Request observed" }, { status: 400 }),
+  );
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => { root.render(createElement(page)); });
+    if (button) {
+      const control = Array.from(container.querySelectorAll("button")).find((element) => element.textContent?.trim() === button);
+      if (!control) throw new Error(`Missing ${button} button`);
+      await act(async () => { control.click(); });
+    }
+
+    expect(fetchRequest).not.toHaveBeenCalled();
+    expect(loadConfig).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveConfig({ ...runtime.EMPTY_RUNTIME_CONFIG, denApiUrl: apiOrigin }); });
+
+    expect(fetchRequest).toHaveBeenCalledTimes(1);
+    expect(fetchRequest).toHaveBeenCalledWith(path.startsWith("/api/auth/") ? path : `/api/browser${path}`, expect.objectContaining({
+      credentials: "include",
+      method: button ? "POST" : "GET",
+    }));
+  } finally {
+    await act(async () => { root.unmount(); });
+    fetchRequest.mockRestore();
+    loadConfig.mockRestore();
+    if (previousActEnvironment) Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousActEnvironment);
+    else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    await GlobalRegistrator.unregister();
+  }
 });

@@ -678,7 +678,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
   const openOwnedPolicyTab = async (tabAgent: Agent, tabUser: User, title: string, url: string) => {
     const sessionId = await tabAgent.createSession(title);
     const opening = tabAgent.run("browser.open_url", { url, provider: "builtin" });
-    await tabUser.click({ role: "button", label: "Allow origin in this tab" });
+    await tabUser.click({ role: "button", label: "Allow for this thread" });
     expect(await opening).toMatchObject({ owner_session_id: sessionId });
   };
   const effective = async (identity: typeof world.den.admin) => {

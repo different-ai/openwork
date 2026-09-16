@@ -34,6 +34,7 @@ import {
   questionKey,
   seedPermissionState,
   seedQuestionState,
+  seedSessionStatus,
   settleQuestionState,
   settlePermissionState,
   seedSessionState,
@@ -132,6 +133,7 @@ async function withInteractionHydration(
     runRetry: (delay: number) => Promise<void>;
     pendingRetryDelays: () => number[];
   }) => Promise<void>,
+  options: { interactions?: boolean; native?: boolean } = {},
 ) {
   GlobalRegistrator.register({ url: "http://localhost/" });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
@@ -157,15 +159,23 @@ async function withInteractionHydration(
     const request = new Request(input, init);
     calls.push(request);
     const path = new URL(request.url).pathname;
-    if (path.endsWith("/permission")) return Response.json(path.includes("/api/session/") ? { data: [] } : []);
-    if (path.endsWith("/question")) return Response.json([]);
+    if (!options.interactions) {
+      if (path.endsWith("/permission")) return Response.json(path.includes("/api/session/") ? { data: [] } : []);
+      if (path.endsWith("/question")) return Response.json([]);
+    } else {
+      if (path.endsWith("/session/status")) return Response.json({});
+      if (path.endsWith("/session/active")) return Response.json({ data: {} });
+      if (path.endsWith("/todo")) return Response.json(options.native ? { data: [] } : []);
+    }
     return fetchResponse(request);
   };
   Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true, value: fetchStub });
-  const client = createClient("http://localhost/opencode", "/project");
+  const client = options.native ? createClientV2("http://localhost/opencode2", "/project", {}) : createClient("http://localhost/opencode", "/project");
   function Interactions(props: UseSessionInteractionsInput) {
     const interactions = useSessionInteractions(props);
-    return createElement("div", null, interactions.todos.map((todo) => todo.content).join(", "));
+    return createElement("div", null, options.interactions
+      ? [interactions.activePermission?.id, interactions.activeQuestion?.id].filter(Boolean).join(", ")
+      : interactions.todos.map((todo) => todo.content).join(", "));
   }
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -211,7 +221,7 @@ afterEach(() => {
   setSystemTime();
   getReactQueryClient().clear();
   for (const workspaceId of ["workspace-a", "workspace-b"]) {
-    for (const sessionId of ["session-a", "session-b", "session-child"]) {
+    for (const sessionId of ["session-a", "session-b", "session-child", "child-1", "child-2", "child-3", "child-4", "child-5", "child-6"]) {
       useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
     }
   }
@@ -679,6 +689,383 @@ describe("independent session status and todo hydration", () => {
   }
 });
 
+describe("incremental interaction hydration", () => {
+  for (const kind of ["permission", "question"]) {
+    test(`idle hydration preserves a pending ${kind} until it settles without affecting another session`, () => {
+      setSystemTime(50);
+      if (kind === "permission") seedPermissionState("workspace-a", "session-a", [permission("pending", "session-a")]);
+      else seedQuestionState("workspace-a", "session-a", [question("pending", "session-a")]);
+      seedPermissionState("workspace-b", "session-b", [permission("other", "session-b")]);
+      const other = useSessionActivityStore.getState().recordsByWorkspaceId["workspace-b"]["session-b"];
+      seedSessionStatus("workspace-a", "session-a", { type: "idle" }, { snapshotStartedAt: 100 });
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toEqual({ type: "idle" });
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-a")).toBe("waiting");
+      expect(useSessionActivityStore.getState().waitingByWorkspaceId["workspace-a"]["session-a"]).toBe(kind);
+      if (kind === "permission") settlePermissionState("workspace-a", "session-a", "pending");
+      else settleQuestionState("workspace-a", "session-a", "pending");
+      seedSessionStatus("workspace-a", "session-a", { type: "idle" }, { snapshotStartedAt: 200 });
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-a")).toBe("idle");
+      expect(useSessionActivityStore.getState().waitingByWorkspaceId["workspace-a"]?.["session-a"]).toBeUndefined();
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-b"]["session-b"]).toBe(other);
+    });
+  }
+
+  for (const native of [false, true]) {
+    test(`${native ? "v2" : "v1"} adds only the new child and publishes it while a sibling is held`, async () => {
+      const held = Promise.withResolvers<Response>();
+      await withInteractionHydration(async (request) => {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/session-child/permission")) return held.promise;
+        if (path.endsWith("/session-b/permission")) return Response.json({ data: [v2Permission("perm-b", "session-b")] });
+        if (path.includes("/api/session/")) return Response.json({ data: [] });
+        if (path.endsWith("/permission")) return Response.json([]);
+        return Response.json(native ? { data: [] } : [question("question-b", "session-b")]);
+      }, async ({ client, render, calls, container }) => {
+        if (!client) throw new Error("Missing hydration client");
+        const reads = spyOn(client.v2.session.permission, "list");
+        try {
+          await render({ interactionSessionIds: ["session-child"] });
+          const heldSignal = reads.mock.calls.find(([parameters]) => parameters.sessionID === "session-child")?.[1]?.signal;
+          await render({ interactionSessionIds: ["session-child", "session-b", "session-a", "session-b"] });
+          expect(reads.mock.calls.map(([parameters]) => parameters.sessionID)).toEqual(["session-a", "session-child", "session-b"]);
+          expect(heldSignal?.aborted).toBe(false);
+          expect(container.textContent).toBe(native ? "perm-b" : "perm-b, question-b");
+          expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-b")))
+            .toMatchObject([{ id: "perm-b", protocol: "v2" }]);
+          const completed = getReactQueryClient().getQueryState(permissionKey("workspace-a", "session-b"));
+          await render({ interactionSessionIds: ["session-b", "session-child"] });
+          expect(reads).toHaveBeenCalledTimes(3);
+          expect(getReactQueryClient().getQueryState(permissionKey("workspace-a", "session-b"))).toBe(completed);
+          expect(calls.filter((request) => new URL(request.url).pathname === "/opencode/permission")).toHaveLength(native ? 0 : 1);
+          expect(calls.filter((request) => /\/(question|form\/request)$/.test(new URL(request.url).pathname))).toHaveLength(1);
+          await act(async () => { held.resolve(Response.json({ data: [v2Permission("perm-child", "session-child")] })); });
+          expect(reads).toHaveBeenCalledTimes(3);
+          expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child")))
+            .toMatchObject([{ id: "perm-child" }]);
+        } finally { reads.mockRestore(); }
+      }, { interactions: true, native });
+    });
+  }
+
+  for (const native of [false, true]) {
+    test(`${native ? "v2" : "v1"} child discovery recovers failed shared reads without repeating sibling reads`, async () => {
+      await withInteractionHydration(async () => Response.json({ data: [] }), async ({ client, render, container }) => {
+        if (!client) throw new Error("Missing hydration client");
+        const heldQuestions = Promise.withResolvers<Awaited<ReturnType<typeof client.question.list>>>();
+        const heldPermissions = Promise.withResolvers<Awaited<ReturnType<typeof client.permission.list>>>();
+        const questionReads = spyOn(client.question, "list")
+          .mockRejectedValueOnce(new Error("Temporarily unavailable"))
+          .mockImplementation(() => heldQuestions.promise);
+        const legacyReads = spyOn(client.permission, "list")
+          .mockRejectedValueOnce(new Error("Temporarily unavailable"))
+          .mockImplementation(() => heldPermissions.promise);
+        const scopedReads = spyOn(client.v2.session.permission, "list");
+        const response = { request: new Request("http://localhost/fixture"), response: Response.json([]) };
+        try {
+          await render({ interactionSessionIds: ["session-child"] });
+          expect(questionReads).toHaveBeenCalledTimes(1);
+          expect(legacyReads).toHaveBeenCalledTimes(native ? 0 : 1);
+          await render({ interactionSessionIds: ["session-child"] });
+          expect(questionReads).toHaveBeenCalledTimes(1);
+          await render({ interactionSessionIds: ["session-child", "session-b"] });
+          expect(questionReads).toHaveBeenCalledTimes(2);
+          expect(legacyReads).toHaveBeenCalledTimes(native ? 0 : 2);
+          await render({ interactionSessionIds: ["session-child", "session-b", "child-1"] });
+          expect(questionReads).toHaveBeenCalledTimes(2);
+          expect(legacyReads).toHaveBeenCalledTimes(native ? 0 : 2);
+          expect(scopedReads.mock.calls.map(([input]) => input.sessionID))
+            .toEqual(["session-a", "session-child", "session-b", "child-1"]);
+          await act(async () => {
+            heldQuestions.resolve({ ...response, data: [question("recovered-question", "session-b"), question("unrelated", "untracked")] });
+            heldPermissions.resolve({ ...response, data: [permission("recovered-approval", "session-child")] });
+          });
+          expect(container.textContent).toBe(native ? "recovered-question" : "recovered-approval, recovered-question");
+          expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-b")))
+            .toMatchObject([{ id: "recovered-question" }]);
+          expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "untracked"))).toBeUndefined();
+          if (!native) expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child")))
+            .toMatchObject([{ id: "recovered-approval" }]);
+          await render({ interactionSessionIds: ["session-child", "session-b", "child-1", "child-2"] });
+          expect(questionReads).toHaveBeenCalledTimes(2);
+          expect(legacyReads).toHaveBeenCalledTimes(native ? 0 : 2);
+          expect(scopedReads).toHaveBeenCalledTimes(5);
+        } finally {
+          heldQuestions.resolve({ ...response, data: [] });
+          heldPermissions.resolve({ ...response, data: [] });
+          questionReads.mockRestore();
+          legacyReads.mockRestore();
+          scopedReads.mockRestore();
+        }
+      }, { interactions: true, native });
+    });
+  }
+
+  test("child discovery retries a failed question refresh without refetching successful legacy permissions", async () => {
+    let questionReads = 0;
+    await withInteractionHydration(async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.includes("/api/session/")) return Response.json({ data: [] });
+      if (path.endsWith("/permission")) return Response.json([]);
+      questionReads += 1;
+      if (questionReads === 2) return Response.json({ message: "Unavailable" }, { status: 503 });
+      return Response.json(questionReads === 1 ? [] : [question("recovered", "session-b")]);
+    }, async ({ render, calls, container }) => {
+      await render();
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      expect(questionReads).toBe(2);
+      const legacyReads = calls.filter((request) => new URL(request.url).pathname === "/opencode/permission").length;
+      await render({ interactionSessionIds: ["session-b"] });
+      expect(questionReads).toBe(3);
+      expect(container.textContent).toBe("recovered");
+      expect(calls.filter((request) => new URL(request.url).pathname === "/opencode/permission")).toHaveLength(legacyReads);
+    }, { interactions: true });
+  });
+
+  test("cold permission reads are capped at four with the selected session first", async () => {
+    const held = new Map<string, ReturnType<typeof Promise.withResolvers<Response>>>();
+    let active = 0;
+    let maximum = 0;
+    await withInteractionHydration(async (request) => {
+      const match = new URL(request.url).pathname.match(/\/api\/session\/([^/]+)\/permission$/);
+      if (!match?.[1]) return Response.json({ data: [] });
+      const pending = Promise.withResolvers<Response>();
+      held.set(match[1], pending);
+      active += 1;
+      maximum = Math.max(maximum, active);
+      try { return await pending.promise; } finally { active -= 1; }
+    }, async ({ render, container, unmount }) => {
+      await render({ interactionSessionIds: ["child-1", "child-2", "child-3", "child-4", "child-5", "child-6", "session-a"] });
+      expect([...held.keys()]).toEqual(["session-a", "child-1", "child-2", "child-3"]);
+      await act(async () => { held.get("child-1")?.resolve(Response.json({ data: [v2Permission("ready", "child-1")] })); });
+      expect(container.textContent).toBe("ready");
+      expect([...held.keys()]).toEqual(["session-a", "child-1", "child-2", "child-3", "child-4"]);
+      await render({ interactionSessionIds: ["child-1", "child-2", "child-3", "child-4", "child-5"] });
+      for (const id of ["child-2", "child-3"]) {
+        await act(async () => { held.get(id)?.resolve(Response.json({ data: [] })); });
+      }
+      expect([...held.keys()]).toEqual(["session-a", "child-1", "child-2", "child-3", "child-4", "child-5"]);
+      expect(maximum).toBe(4);
+      await unmount();
+      await act(async () => {
+        for (const pending of held.values()) pending.resolve(Response.json({ data: [] }));
+      });
+    }, { interactions: true, native: true });
+  });
+
+  test("removal aborts only that child, excludes it from shared snapshots, and rejects late results after re-add", async () => {
+    const held = Promise.withResolvers<Response>();
+    const shared = Promise.withResolvers<Response>();
+    const legacy = Promise.withResolvers<Response>();
+    let childReads = 0;
+    await withInteractionHydration(async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/session-child/permission")) {
+        childReads += 1;
+        return childReads === 1 ? held.promise : Response.json({ data: [v2Permission("fresh", "session-child")] });
+      }
+      if (path.includes("/api/session/")) return Response.json({ data: [] });
+      if (path.endsWith("/permission")) return legacy.promise;
+      return shared.promise;
+    }, async ({ client, render, calls }) => {
+      if (!client) throw new Error("Missing hydration client");
+      const reads = spyOn(client.v2.session.permission, "list");
+      const questionReads = spyOn(client.question, "list");
+      try {
+        await render({ interactionSessionIds: ["session-child"] });
+        const parentSignal = reads.mock.calls[0]?.[1]?.signal;
+        const childSignal = reads.mock.calls[1]?.[1]?.signal;
+        const questionSignal = questionReads.mock.calls[0]?.[1]?.signal;
+        await render({ interactionSessionIds: ["session-b"] });
+        expect(childSignal?.aborted).toBe(true);
+        expect(parentSignal?.aborted).toBe(false);
+        expect(questionSignal?.aborted).toBe(false);
+        await act(async () => {
+          shared.resolve(Response.json([question("removed-question", "session-child"), question("active-question", "session-b")]));
+          legacy.resolve(Response.json([permission("removed-legacy", "session-child")]));
+        });
+        expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toBeUndefined();
+        expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toBeUndefined();
+        expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-b"))).toMatchObject([{ id: "active-question" }]);
+        await render({ interactionSessionIds: ["session-b", "session-child"] });
+        const before = getReactQueryClient().getQueryState(permissionKey("workspace-a", "session-child"));
+        await act(async () => { held.resolve(Response.json({ data: [v2Permission("obsolete", "session-child")] })); });
+        expect(getReactQueryClient().getQueryState(permissionKey("workspace-a", "session-child"))).toBe(before);
+        expect(reads.mock.calls.map(([parameters]) => parameters.sessionID)).toEqual(["session-a", "session-child", "session-b", "session-child"]);
+        expect(calls.filter((request) => new URL(request.url).pathname.endsWith("/question"))).toHaveLength(1);
+      } finally { reads.mockRestore(); questionReads.mockRestore(); }
+    }, { interactions: true });
+  });
+
+  for (const change of ["client", "workspace", "session", "root", "unmount"]) {
+    test(`${change} disposes the hydration owner and blocks every late interaction snapshot`, async () => {
+      const held = Promise.withResolvers<void>();
+      let hold = true;
+      await withInteractionHydration(async (request) => {
+        const stale = hold;
+        if (stale) await held.promise;
+        const path = new URL(request.url).pathname;
+        if (path.includes("/api/session/")) {
+          const id = path.includes("session-child") ? "session-child" : "session-a";
+          return Response.json({ data: stale ? [v2Permission("late-native", id)] : [] });
+        }
+        if (path.endsWith("/permission")) return Response.json(stale ? [permission("late-legacy", "session-a")] : []);
+        return Response.json(stale ? [question("late-question", "session-a")] : []);
+      }, async ({ client, render, unmount, calls }) => {
+        if (!client) throw new Error("Missing hydration client");
+        const nativeReads = spyOn(client.v2.session.permission, "list");
+        const legacyReads = spyOn(client.permission, "list");
+        const questionReads = spyOn(client.question, "list");
+        try {
+          setSystemTime(100);
+          await render({ interactionSessionIds: ["session-child"] });
+          const signals = [nativeReads.mock.calls[0]?.[1]?.signal, nativeReads.mock.calls[1]?.[1]?.signal,
+            legacyReads.mock.calls[0]?.[1]?.signal, questionReads.mock.calls[0]?.[1]?.signal];
+          expect(signals.every((signal) => signal && !signal.aborted)).toBe(true);
+          hold = false;
+          setSystemTime(200);
+          if (change === "client") await render({ client: createClient("http://localhost/opencode", "/project") });
+          else if (change === "workspace") await render({ workspaceId: "workspace-b" });
+          else if (change === "session") await render({ sessionId: "session-b" });
+          else if (change === "root") await render({ workspaceRoot: "/other-project" });
+          else await unmount();
+          expect(signals.every((signal) => signal?.aborted)).toBe(true);
+          const keys = [permissionKey("workspace-a", "session-a"), permissionKey("workspace-a", "session-child"),
+            questionKey("workspace-a", "session-a"), questionKey("workspace-a", "session-child"),
+            permissionKey("workspace-b", "session-a"), questionKey("workspace-b", "session-a")];
+          const before = keys.map((key) => getReactQueryClient().getQueryState(key));
+          await act(async () => { held.resolve(); });
+          for (const [index, key] of keys.entries()) expect(getReactQueryClient().getQueryState(key)).toBe(before[index]);
+          await unmount();
+          const count = calls.length;
+          await act(async () => { window.dispatchEvent(new Event("online")); window.dispatchEvent(new Event("focus")); });
+          expect(calls).toHaveLength(count);
+        } finally { nativeReads.mockRestore(); legacyReads.mockRestore(); questionReads.mockRestore(); }
+      }, { interactions: true });
+    });
+  }
+
+  for (const first of ["legacy", "native"]) {
+    test(`${first} approvals publish without waiting for the other v1 protocol`, async () => {
+      const held = Promise.withResolvers<void>();
+      await withInteractionHydration(async (request) => {
+        const path = new URL(request.url).pathname;
+        if (!path.endsWith("/permission")) return Response.json([]);
+        const protocol = path.includes("/api/session/") ? "native" : "legacy";
+        if (protocol !== first) await held.promise;
+        return Response.json(protocol === "native" ? { data: [v2Permission("native", "session-a")] } : [permission("legacy", "session-a")]);
+      }, async ({ render, container }) => {
+        await render();
+        expect(container.textContent).toBe(first);
+        await act(async () => { held.resolve(); });
+        expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a")))
+          .toEqual(expect.arrayContaining([expect.objectContaining({ id: "native", protocol: "v2" }), expect.objectContaining({ id: "legacy", protocol: "legacy" })]));
+      }, { interactions: true });
+    });
+  }
+
+  for (const failure of ["legacy", "native", "both"]) {
+    test(`${failure} failure retains its pending approvals and a question failure never hides the question`, async () => {
+      setSystemTime(50);
+      seedPermissionState("workspace-a", "session-a", [permission("legacy", "session-a"), {
+        ...v2Permission("native", "session-a"), source: { type: "tool", messageID: "message-a", callID: "call-a" },
+      }]);
+      seedQuestionState("workspace-a", "session-a", [question("pending-question", "session-a")]);
+      await withInteractionHydration(async (request) => {
+        const path = new URL(request.url).pathname;
+        const protocol = path.includes("/api/session/") ? "native" : "legacy";
+        if (path.endsWith("/question") || failure === "both" || protocol === failure) return Response.json({ message: "offline" }, { status: 503 });
+        return Response.json(protocol === "native" ? { data: [] } : []);
+      }, async ({ render }) => {
+        setSystemTime(100);
+        await render();
+        const retained = failure === "both" ? ["legacy", "native"] : [failure];
+        expect(getReactQueryClient().getQueryData<Array<{ id: string }>>(permissionKey("workspace-a", "session-a"))?.map((item) => item.id)).toEqual(retained);
+        if (failure !== "legacy") {
+          expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a")))
+            .toEqual(expect.arrayContaining([expect.objectContaining({ id: "native", protocol: "v2", tool: { messageID: "message-a", callID: "call-a" } })]));
+        }
+        expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-a"))).toMatchObject([{ id: "pending-question" }]);
+        expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-a")).toBe("waiting");
+      }, { interactions: true });
+    });
+  }
+
+  test("wake events share one refresh per owner and keep existing in-flight children", async () => {
+    const held = Promise.withResolvers<void>();
+    let refreshing = false;
+    await withInteractionHydration(async (request) => {
+      if (refreshing) await held.promise;
+      const path = new URL(request.url).pathname;
+      if (path.includes("/api/session/")) return Response.json({ data: [] });
+      return Response.json([]);
+    }, async ({ render, calls, client }) => {
+      if (!client) throw new Error("Missing hydration client");
+      const reads = spyOn(client.v2.session.permission, "list");
+      try {
+        setSystemTime(100);
+        await render({ interactionSessionIds: ["session-child"] });
+        await act(async () => {
+          seedPermissionState("workspace-a", "session-child", [v2Permission("resolved", "session-child")]);
+          seedQuestionState("workspace-a", "session-child", [question("answered", "session-child")]);
+        });
+        refreshing = true;
+        setSystemTime(200);
+        await act(async () => {
+          window.dispatchEvent(new Event("focus"));
+          window.dispatchEvent(new Event("online"));
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+        const signal = reads.mock.calls[3]?.[1]?.signal;
+        await render({ interactionSessionIds: ["session-child", "session-b"] });
+        expect(signal?.aborted).toBe(false);
+        expect(reads.mock.calls.map(([parameters]) => parameters.sessionID)).toEqual(["session-a", "session-child", "session-a", "session-child", "session-b"]);
+        expect(calls.filter((request) => new URL(request.url).pathname === "/opencode/permission")).toHaveLength(2);
+        expect(calls.filter((request) => new URL(request.url).pathname.endsWith("/question"))).toHaveLength(2);
+        await act(async () => { held.resolve(); });
+        expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toEqual([]);
+        expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toEqual([]);
+      } finally { reads.mockRestore(); }
+    }, { interactions: true });
+  });
+
+  test("cached shared snapshots and held reads preserve same-clock events and cannot resurrect replies", async () => {
+    const held = Promise.withResolvers<void>();
+    let hold = false;
+    await withInteractionHydration(async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.includes("/api/session/")) {
+        if (hold) await held.promise;
+        return Response.json({ data: [v2Permission("answered-permission", "session-child")] });
+      }
+      if (path.endsWith("/permission")) return Response.json([permission("answered-legacy", "session-child")]);
+      return Response.json([question("answered-question", "session-child")]);
+    }, async ({ render, calls }) => {
+      setSystemTime(100);
+      await render();
+      await act(async () => {
+        seedPermissionState("workspace-a", "session-child", [permission("answered-legacy", "session-child"), v2Permission("answered-permission", "session-child"), permission("live-legacy", "session-child")]);
+        seedQuestionState("workspace-a", "session-child", [question("answered-question", "session-child"), question("live-question", "session-child")]);
+        settlePermissionState("workspace-a", "session-child", "answered-permission");
+        settlePermissionState("workspace-a", "session-child", "answered-legacy");
+        settleQuestionState("workspace-a", "session-child", "answered-question");
+      });
+      hold = true;
+      setSystemTime(200);
+      await render({ interactionSessionIds: ["session-child"] });
+      await act(async () => {
+        seedPermissionState("workspace-a", "session-child", [permission("live-legacy", "session-child"), v2Permission("live-permission", "session-child")]);
+        held.resolve();
+      });
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toMatchObject([
+        { id: "live-legacy", protocol: "legacy", receivedAt: 100 }, { id: "live-permission", protocol: "v2", receivedAt: 200 },
+      ]);
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toMatchObject([{ id: "live-question" }]);
+      expect(calls.filter((request) => new URL(request.url).pathname.endsWith("/question"))).toHaveLength(1);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).toBe("waiting");
+    }, { interactions: true });
+  });
+});
+
 describe("session permission sync", () => {
   for (const engine of ["v1", "v2"]) {
     test(`${engine} hydration reads only its required protocols and cancels obsolete reads`, async () => {
@@ -736,6 +1123,7 @@ describe("session permission sync", () => {
         // even when its transport ignores cancellation and returns a stale body.
         hold = true;
         await act(async () => render("session-a"));
+        await act(async () => { window.dispatchEvent(new Event("focus")); });
         const oldPermission = calls.findLast((request) => new URL(request.url).pathname.endsWith("/session-a/permission"));
         const oldQuestion = calls.findLast((request) => /\/(question|form\/request)$/.test(new URL(request.url).pathname));
         expect(oldPermission?.signal.aborted).toBe(false);

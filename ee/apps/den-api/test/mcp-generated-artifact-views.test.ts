@@ -74,6 +74,8 @@ const payload: WorkflowArtifactPayload = {
 async function withClient<T>(
   run: (client: Client) => Promise<T>,
   overrides: Partial<{
+    views: GeneratedArtifactView[]
+    loadData: Parameters<typeof registerAgentGeneratedArtifactViews>[0]["loadData"]
     save: () => Promise<GeneratedArtifactView>
     activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
     retire: () => Promise<GeneratedArtifactView>
@@ -85,9 +87,9 @@ async function withClient<T>(
   )
   registerAgentGeneratedArtifactViews({
     server,
-    views: [view],
+    views: overrides.views ?? [view],
     loadResource: async () => ({ html, resourceDigest: digest, csp: view.revisions[0]!.csp }),
-    loadData: async () => ({ ok: true, payload, markdown: "# Custom pipeline" }),
+    loadData: overrides.loadData ?? (async () => ({ ok: true, payload, markdown: "# Custom pipeline" })),
     save: overrides.save ?? (async () => view),
     activate: overrides.activate ?? (async ({ revisionId }) => ({ ...view, activeRevisionId: revisionId })),
     retire: overrides.retire ?? (async () => ({ ...view, status: "retired", activeRevisionId: null })),
@@ -259,5 +261,104 @@ test("returns actionable tool errors for missing schemas and failed builds", asy
     expect(JSON.stringify(failed.content)).toContain(viewId)
   }, {
     save: async () => ({ ...view, activeRevisionId: null, revisions: [failedRevision] }),
+  })
+})
+
+const draftDataModes: Array<GeneratedArtifactView["dataMode"]> = ["live", "snapshot", undefined]
+
+test.each(draftDataModes)("%s draft metadata preserves compatible desktop preview arguments", async (dataMode) => {
+  await withClient(async (client) => {
+    const saved = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(saved.isError).not.toBe(true)
+    expect(saved._meta?.["openwork/appDraft"]).toEqual({
+      appId: viewId,
+      revisionId: draftRevisionId,
+      title: view.title,
+      ...(dataMode === "live" ? {} : { receiptId: payload.artifact.receiptId }),
+    })
+  }, {
+    save: async () => ({ ...view, dataMode }),
+  })
+})
+
+test("live run, render and preview fetch as the caller with strict runtime inputs", async () => {
+  const requests: Array<Parameters<Parameters<typeof registerAgentGeneratedArtifactViews>[0]["loadData"]>[0]> = []
+  await withClient(async (client) => {
+    const catalog = await client.listTools()
+    const run = catalog.tools.find((tool) => tool.name === `run_artifact_${view.id}`)
+    expect(run?._meta).toMatchObject({ ui: { resourceUri: view.revisions[1]!.resourceUri } })
+    for (const prefix of ["run", "render", "preview"]) {
+      const result = await client.callTool({ name: `${prefix}_artifact_${view.id}`, arguments: { timeZone: "Asia/Tokyo" } })
+      expect(result.isError).not.toBe(true)
+    }
+    expect(requests).toHaveLength(3)
+    expect(requests.every((request) => request.dataMode === "live" && request.timeZone === "Asia/Tokyo")).toBe(true)
+    for (const argumentsValue of [{ receiptId: "foreign" }, { today: "2020-01-01" }, { timeZone: "invalid" }]) {
+      const result = await client.callTool({ name: `run_artifact_${view.id}`, arguments: argumentsValue })
+      expect(result.isError).toBe(true)
+    }
+    expect(requests).toHaveLength(3)
+  }, {
+    views: [{ ...view, dataMode: "live" }],
+    loadData: async (request) => {
+      requests.push(request)
+      return { ok: true, payload, markdown: "# Current" }
+    },
+  })
+})
+
+test.each(draftDataModes)("%s render results preserve published desktop routing", async (dataMode) => {
+  await withClient(async (client) => {
+    const catalog = await client.listTools()
+    for (const prefix of dataMode === "live" ? ["run", "render", "preview"] : ["render", "preview"]) {
+      const name = `${prefix}_artifact_${viewId}`
+      const revisionId = prefix === "preview" ? draftRevisionId : activeRevisionId
+      const resourceUri = artifactViewResourceUri(viewId, revisionId)
+      expect(catalog.tools.find((tool) => tool.name === name)?._meta).toMatchObject({ ui: { resourceUri } })
+      const result = await client.callTool({ name, arguments: {} })
+      expect(result.isError).not.toBe(true)
+      expect(result.structuredContent).toEqual(payload)
+      expect(result._meta).toMatchObject({ resourceDigest: digest, resultDigest: payload.artifact.resultDigest })
+      if (dataMode === "live") {
+        expect(result._meta?.artifactViewId).toBeUndefined()
+        expect(result._meta?.viewRevisionId).toBeUndefined()
+      } else {
+        expect(result._meta).toMatchObject({ artifactViewId: viewId, viewRevisionId: revisionId })
+      }
+      const resource = await client.readResource({ uri: resourceUri })
+      expect(resource.contents[0]).toMatchObject({ mimeType: "text/html;profile=mcp-app", text: html })
+    }
+  }, { views: [{ ...view, dataMode }] })
+})
+
+test("live connection failures preserve structured cards and never return retained data", async () => {
+  const connectionCard = { state: "needs_connection", message: "Connect your account" }
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: `run_artifact_${view.id}`, arguments: {} })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toEqual(connectionCard)
+    expect(JSON.stringify(result)).not.toContain(payload.artifact.receiptId)
+  }, {
+    views: [{ ...view, dataMode: "live" }],
+    loadData: async () => ({ ok: false, error: "capability_unavailable", message: "Connect your account", connectionCard }),
+  })
+})
+
+test("legacy views retain snapshot inputs and do not advertise live execution", async () => {
+  let receiptId: string | undefined
+  await withClient(async (client) => {
+    const catalog = await client.listTools()
+    expect(catalog.tools.some((tool) => tool.name.startsWith("run_artifact_"))).toBe(false)
+    await client.callTool({ name: `render_artifact_${view.id}`, arguments: { receiptId: "caller-receipt" } })
+    expect(receiptId).toBe("caller-receipt")
+  }, {
+    loadData: async (request) => {
+      expect(request.dataMode).toBe("snapshot")
+      receiptId = request.receiptId
+      return { ok: true, payload, markdown: "# Snapshot" }
+    },
   })
 })

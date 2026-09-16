@@ -73,7 +73,7 @@ import {
   resolveModelDisplayName,
   safeStringify,
 } from "@/app/utils";
-import { t } from "@/i18n";
+import { currentLocale, t } from "@/i18n";
 import {
   type RouteWorkspace,
   type RouteSession,
@@ -92,6 +92,7 @@ import {
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  startSidebarTask,
   TASK_CREATE_RETRY_DELAYS_MS,
   toSessionGroups,
   withTransientEngineRetry,
@@ -120,8 +121,8 @@ import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
-import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
-import { selectSessionAttention, sessionAttentionLabel, sessionAttentionSidebarStatus } from "@/react-app/domains/session/status/session-attention";
+import { createSessionChildIdsSelector, useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
+import { createWorkspaceSessionAttentionSelector, sessionAttentionLabel, sessionAttentionSidebarStatus } from "@/react-app/domains/session/status/session-attention";
 import { buildOpenworkSessionSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
   applySessionRevert,
@@ -826,7 +827,9 @@ export function SessionRoute() {
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
   const sessionWaitingByWorkspaceId = useSessionActivityStore((state) => state.waitingByWorkspaceId);
-  const sessionRecordsByWorkspaceId = useSessionActivityStore((state) => state.recordsByWorkspaceId);
+  const selectSessionChildIds = useMemo(createSessionChildIdsSelector, []);
+  const sessionChildIdsByWorkspaceId = useSessionActivityStore(selectSessionChildIds);
+  const selectWorkspaceAttention = useMemo(createWorkspaceSessionAttentionSelector, []);
 
   useEffect(() => {
     for (const group of workspaceSessionGroups) {
@@ -838,29 +841,21 @@ export function SessionRoute() {
     }
   }, [seedWorkspaceActivitySessions, workspaceSessionGroups]);
 
+  const attentionLocale = currentLocale();
   const sidebarSessionAttention = useMemo(() => {
     const statusById: Record<string, string> = {};
     const labelById: Record<string, string> = {};
     const sourceById: Record<string, "child" | "descendant"> = {};
     for (const group of workspaceSessionGroups) {
       const serverId = workspaceServerId(group.workspace);
-      const workspaceStatuses = {
-        ...(sessionActivityByWorkspaceId[group.workspace.id] ?? {}),
-        ...(serverId ? sessionActivityByWorkspaceId[serverId] ?? {} : {}),
-      };
-      const workspaceWaiting = {
-        ...(sessionWaitingByWorkspaceId[group.workspace.id] ?? {}),
-        ...(serverId ? sessionWaitingByWorkspaceId[serverId] ?? {} : {}),
-      };
-      const attention = selectSessionAttention(
-        group.sessions,
-        (sessionId) => workspaceStatuses[sessionId],
-        (sessionId) => workspaceWaiting[sessionId],
-        (sessionId) => [
-          ...(sessionRecordsByWorkspaceId[group.workspace.id]?.[sessionId]?.childSessionIds ?? []),
-          ...(serverId ? sessionRecordsByWorkspaceId[serverId]?.[sessionId]?.childSessionIds ?? [] : []),
-        ],
-      );
+      const attention = selectWorkspaceAttention(group.sessions, {
+        statuses: sessionActivityByWorkspaceId[group.workspace.id],
+        waiting: sessionWaitingByWorkspaceId[group.workspace.id],
+        childIds: sessionChildIdsByWorkspaceId[group.workspace.id],
+        serverStatuses: serverId ? sessionActivityByWorkspaceId[serverId] : undefined,
+        serverWaiting: serverId ? sessionWaitingByWorkspaceId[serverId] : undefined,
+        serverChildIds: serverId ? sessionChildIdsByWorkspaceId[serverId] : undefined,
+      });
       for (const session of group.sessions) {
         const entry = attention.get(session.id);
         if (!entry) continue;
@@ -872,7 +867,7 @@ export function SessionRoute() {
       }
     }
     return { statusById, labelById, sourceById };
-  }, [sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionRecordsByWorkspaceId, workspaceSessionGroups]);
+  }, [attentionLocale, selectWorkspaceAttention, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
 
   const sidebarActiveWorkspaceId = useMemo(() => {
@@ -3506,7 +3501,15 @@ export function SessionRoute() {
       }
       primaryTitle={appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
       primarySlot={appsRouteActive ? (
-        <AppsPage onNewApp={startAppConversation} />
+        <WorkspaceProvider
+          client={opencodeClient}
+          opencodeBaseUrl={opencodeBaseUrl}
+          openworkServerClient={dashboardEndpoint?.client ?? null}
+          workspaceId={dashboardEndpoint?.workspaceId ?? ""}
+          selectedWorkspaceRoot={selectedWorkspaceRoot}
+        >
+          <AppsPage onNewApp={startAppConversation} fallbackEndpoints={dashboardFallbackEndpoints} />
+        </WorkspaceProvider>
       ) : automationsRouteActive ? (
         <AutomationsPage providerCatalog={providerCatalog} workspaceId={selectedWorkspaceId} />
       ) : dashboardRouteActive ? (
@@ -3581,22 +3584,21 @@ export function SessionRoute() {
         },
         onPrefetchSession: handlePrefetchSession,
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
-          const { focusedPane, secondary } = useWorkbenchStore.getState();
-          const hasWorkspaceError = Boolean(errorsByWorkspaceId[workspaceId]?.trim())
-            || workspaceConnectionStateById[workspaceId]?.status === "error";
-          if (!groupId && !hasWorkspaceError && !(focusedPane === "secondary" && secondary)) {
-            // The empty composer creates its session on submit. Opening it must
-            // not wait for an engine request, especially on a cold v2 runtime.
-            setLegacySelectedWorkspaceId(workspaceId);
-            writeActiveWorkspaceId(workspaceId);
-            navigateToWorkspaceSession(workspaceId);
-            focusPromptSoon();
-            return;
-          }
-          void handleCreateTaskInWorkspace(workspaceId).then((sessionId) => {
-            if (sessionId && groupId) {
-              sessionManagementStore.getState().assignGroup(workspaceId, sessionId, groupId);
-            }
+          void startSidebarTask({
+            workspaceId,
+            groupId,
+            hasWorkspaceError: Boolean(errorsByWorkspaceId[workspaceId]?.trim())
+              || workspaceConnectionStateById[workspaceId]?.status === "error",
+            openEmptyComposer: (id) => {
+              setLegacySelectedWorkspaceId(id);
+              writeActiveWorkspaceId(id);
+              navigateToWorkspaceSession(id);
+              focusPromptSoon();
+            },
+            createTask: handleCreateTaskInWorkspaceWithOpenMode,
+            assignGroup: (id, sessionId, targetGroupId) => {
+              sessionManagementStore.getState().assignGroup(id, sessionId, targetGroupId);
+            },
           });
         },
         onCreateSplitTaskInWorkspace: (workspaceId) => {

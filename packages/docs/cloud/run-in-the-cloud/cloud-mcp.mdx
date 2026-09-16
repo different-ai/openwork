@@ -230,7 +230,7 @@ The gateway preserves provider `structuredContent` rather than adding fields to 
   ![The skill-created MCP App rendering in the OpenWork desktop app after a create-skill request](/images/skill-created-mcp-app-card.png)
 </Frame>
 
-MCP Apps from third-party providers — apps shipped by an MCP server your organization added as a connector — currently render in the OpenWork desktop app, where connectors are enabled as a native MCP Apps preview per organization. Rendering third-party apps in external clients requires exposing that connector as a full MCP server, an option that is planned but not available yet.
+MCP Apps from third-party providers render in OpenWork through its private App host. For an external MCP Apps-capable client, enable direct exposure and add the connection's own MCP URL from **Your Connections → Use in another app**. That endpoint exposes resources bound to permitted model-visible tools; it does not expose arbitrary resources or app-only helper tools. Initial App loading and interactive callback support are distinct. See [Use a connection in another MCP client](/cloud/share-with-your-team/shared-mcp-connections#use-a-connection-in-another-mcp-client).
 
 ## Troubleshooting
 

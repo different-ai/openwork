@@ -37,7 +37,7 @@ import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
 import { env } from "../env.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
-import { getWorkflowDetail, getWorkflowSnapshot } from "../workflows.js"
+import { executeLiveArtifactWorkflow, getWorkflowDetail, getWorkflowSnapshot } from "../workflows.js"
 import { artifactFreshness } from "../workflow-artifacts.js"
 import { PluginArchAuthorizationError, requirePluginArchCapability } from "../routes/org/plugin-system/access.js"
 import {
@@ -51,6 +51,7 @@ import {
 } from "./builtin-skills.js"
 import {
   buildCapabilityToolTree,
+  liveArtifactConnectionFailure,
   createCapabilityRegistryContext,
   executeCapability,
   externalCapabilityErrorToolResult,
@@ -58,11 +59,10 @@ import {
   searchCapabilityRegistry,
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
-import { runCodemodeScript } from "./codemode-run.js"
-import { normalizeToolBody } from "./invoke.js"
+import { executeWorkflowAuthoringTest, workflowAuthoringTestInputSchema } from "./workflow-authoring-test.js"
 import { parseNativeCapabilityName } from "./native-capabilities.js"
 import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
-import { recordWorkflowResult } from "../workflow-runs.js"
+import { recordWorkflowRun } from "../workflow-runs.js"
 import {
   activateArtifactViewRevision,
   getGeneratedArtifactViewRevision,
@@ -151,6 +151,7 @@ const capabilityMatchOutputSchema = z.object({
   hasBody: z.boolean(),
   bodySchema: z.unknown().optional(),
   querySchema: z.unknown().optional(),
+  outputSchema: z.unknown().optional(),
   argumentsSchema: z.unknown().optional(),
   schemaDigest: z.string().optional(),
   invocation: z.object({ argumentsField: z.literal("body") }).optional(),
@@ -177,7 +178,7 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "A remote session is the member's OpenWork Web instance: a native OpenWork chat running in the cloud, visible in the browser. When asked to do something \"on the remote session\", \"in the web\", or \"in the cloud\" (e.g. \"run a Slack search for messages on the remote session\"), do not do the work here: execute remote-session:create with the whole request as prompt (or remote-session:send to an existing sessionId), then poll remote-session:read and relay the reply. target \"desktop\" runs it on the member's connected desktop instead.",
   "Use create_skill to create one private Cloud skill in a new Plugin, and update_skill to publish a new immutable version of an existing skill. Both return a standard skill-created MCP App result plus a text fallback; do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions.",
   "Built-in remote skills create-skill, share-plugin, add-to-marketplace, and add-user-to-marketplace are always listed in the skill index. Retrieve and follow the matching one by executing its exact capability; do not invent a local copy.",
-  "For an app, dashboard, or artifact view of Workflow results, call the direct MCP tool save_artifact_view and follow its prerequisites. It is a Cloud MCP tool, not a desktop-only RPC or a search_capabilities match. Its presence in the available tools confirms availability; an empty capability search does not establish a disabled feature flag. Do not substitute a local HTML file for an in-app artifact. Use one friendly name for the workflow and app; the user previews the draft and chooses Save to keep both on their dashboard. Only create an Automation when the user asks for a schedule.",
+  "For an app, dashboard, or artifact view of Workflow results, call the direct MCP tool save_artifact_view and follow its prerequisites. It is a Cloud MCP tool, not a desktop-only RPC or a search_capabilities match. Its presence in the available tools confirms availability; an empty capability search does not establish a disabled feature flag. Do not substitute a local HTML file for an in-app artifact. Build the complete app in one shot without asking about Workflow internals, names, or runtime code. Live workflows use server-supplied input.runtime for current dates and caller timezone. Use one friendly name for the workflow and app; the user previews the draft and chooses Save to keep both on their dashboard. Only create an Automation when the user asks for a schedule.",
   "Skills teach how to perform work. Workflows are saved procedures discovered through search_capabilities and run through execute_capability. Author an ad hoc procedure with execute_capability_script; Workflow runs produce artifacts rendered by render_workflow_artifact, and Automations trigger Workflows. To keep a successful Code Mode result, save it as a Workflow inside the existing Plugin the member names (pass that pluginId); omit pluginId only for a private Workflow in their My Workflows Plugin. A Workflow inherits discovery and sharing from its Plugin and Marketplaces; never create a separate Workflow package or marketplace entry.",
   "A match with kind mcp_app is a standard MCP App from a connected MCP server: execute that exact match through execute_capability and let compatible hosts render its ui:// resource. Never import, convert, or browse for a standalone HTML URL instead; standalone URL-imported Apps are not part of this release.",
   "To add a public GitHub plugin to an organization marketplace, search for the marketplace list, GitHub plugin import preview, GitHub plugin marketplace import, and resolved marketplace detail capabilities. Preview first; do not recreate the plugin by hand. Before importing, confirm the target marketplace, selected skill/server keys, and who can use them. Do not choose one authentication type for every server: the import route resolves known presets and plugin declarations, and the request authType is only a fallback for unknown servers.",
@@ -756,11 +757,15 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       receiptId,
       maxAgeMs,
       expectedOutputSchemaDigest,
+      dataMode,
+      timeZone,
     }: {
       configObjectId: string
       receiptId?: string
       maxAgeMs?: number
       expectedOutputSchemaDigest?: string
+      dataMode?: "live" | "snapshot"
+      timeZone?: string
     }) => {
       if (!artifactContext) {
         return {
@@ -770,6 +775,19 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
       }
       try {
+        if (dataMode === "live") {
+          if (receiptId || !expectedOutputSchemaDigest) {
+            return { ok: false as const, error: "invalid_arguments", message: "Live apps require a view schema and do not accept receipt overrides." }
+          }
+          const execution = await executeLiveArtifactWorkflow({
+            context: artifactContext, configObjectId, expectedOutputSchemaDigest, timeZone,
+            buildTools: () => buildCapabilityToolTree(capabilityContext),
+            describeUnavailable: (missing) => liveArtifactConnectionFailure(capabilityContext, missing),
+          })
+          if (!execution.ok) return execution
+          if (!execution.receiptId) return { ok: false as const, error: "workflow_receipt_unavailable", message: "The live result could not be retained." }
+          receiptId = execution.receiptId
+        }
         const detail = await getWorkflowDetail({
           context: artifactContext,
           configObjectId,
@@ -845,7 +863,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         const message = error instanceof Error ? error.message : "workflow_not_found"
         return {
           ok: false as const,
-          error: message.includes("not_found") ? "workflow_not_found" : "workflow_unavailable",
+          error: message.includes("not_found") ? "workflow_not_found" : message === "artifact_view_schema_incompatible" ? message : "workflow_unavailable",
           message: "The Workflow's retained Artifact could not be loaded.",
         }
       }
@@ -861,7 +879,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         const snapshot = await getWorkflowSnapshot({ context: artifactContext, configObjectId, receiptId })
         if (!snapshot) return null
         for (const view of views) {
-          if (view.configObjectId !== configObjectId || view.useInWorkflow === false) continue
+          if (view.dataMode === "live" || view.configObjectId !== configObjectId || view.useInWorkflow === false) continue
           const revision = view.revisions.find((entry) => entry.id === view.activeRevisionId)
           if (!revision || revision.buildStatus !== "ready" || revision.retiredAt
             || revision.outputSchemaDigest !== snapshot.outputSchemaDigest) continue
@@ -915,60 +933,23 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       {
         title: "Execute capability script",
         description: [
-          "Run confined JavaScript orchestration over this organization's capabilities.",
-          "Den REST operations are available at tools.den.<operation>; connected MCP tools are available at tools.<connection>.<tool>.",
-          "search_capabilities results include scriptPath for exact paths, and tools.$codemode.search({ query }) works in-program.",
-          "The code is a plain function body in a restricted JavaScript subset: data literals, control flow, arrow functions, template strings, try/catch, common Array/String/Object/Math/JSON methods, await, and Promise.all.",
-          "Not available: import/require, classes, generators, .then/.catch chaining, timers, fetch, process, and other host globals — call tools for all external work.",
-          "Send plain source only (no markdown fences). End with `return <json-safe value>`; use console.log for progress logs.",
-          "Run independent tool calls in parallel with Promise.all and return only the fields needed.",
-          "Parameters go in `input` (a JSON object) and are read inside the script as `input.<field>`; never hardcode values that should be parameters.",
-          "Typical Workflows are recurring digests (Slack/Gmail/Calendar summaries), inbox or ticket triage, lead alerts and CRM syncs, and status reports. Put everything a person might change (channel, recipient, lookback hours, thresholds) in `input` so the saved Workflow can be scheduled as an Automation with different parameters. tools.$codemode.search is fine while exploring but a saved Workflow must call tools directly.",
+          "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls.",
+          "mode defaults to adhoc with optional input parameters. Explicit live mode is Den-authorized read-only, rejects all caller input, and supplies only input.runtime.{now,today,dayStart,dayEnd,timeZone} from the server; optional IANA timeZone defaults to UTC and is live-only.",
+          "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. For a discovered Den/native path call it with {path:{...},query:{...},body:{...}} only as advertised; native query parameters must be wrapped in query, e.g. {query:{q:input.query}}. External MCP paths take their argumentsSchema object directly.",
+          "Example adhoc code: return 1 + 1. Example live code: return {today:input.runtime.today}. tools.$codemode.search({query}) is for adhoc exploration; saved Workflows must call discovered paths directly.",
+          "Optional inputSchema is checked before dispatch and outputSchema after execution; inspect discovered outputSchema for result shape rather than guessing. Successful tests return value plus authoring-test metadata and receiptId; source retention availability/scope controls whether saveWorkflow can reuse that receipt. This is not a saved Workflow artifact snapshot. For live apps: test with mode:live and outputSchema, saveWorkflow with receiptId and the same schemas (omit code/currentInput), run the saved version with mode:live and timeZone, then save_artifact_view for draft preview; the user chooses Save.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
-        inputSchema: z.object({
-          code: z.string().min(1),
-          input: z.unknown().optional().describe("Optional parameters for the script, bound read-only as `input`. Pass a JSON object (not a JSON string). It becomes the Workflow's example input when the run is saved with saveWorkflow."),
-        }),
+        inputSchema: workflowAuthoringTestInputSchema,
       },
-      async ({ code, input }) => executeCapabilityWithBudget({
+      async (request) => executeCapabilityWithBudget({
         capability: EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
-        invoke: async (): Promise<ExecuteCapabilityToolResult> => {
-          const { tools } = await buildCapabilityToolTree(capabilityContext)
-          const startedAt = new Date()
-          const result = await runCodemodeScript({
-            code,
-            scriptInput: normalizeToolBody(input),
-            tools,
-            timeoutMs: 170_000,
-          })
-          const finishedAt = new Date()
-          await recordWorkflowResult(db, {
-            organizationId,
-            orgMembershipId: memberIdentity?.orgMembershipId,
-            source: "adhoc",
-            code,
-            startedAt,
-            finishedAt,
-          }, result)
-          if (!result.ok) {
-            return {
-              isError: true,
-              content: textContent(JSON.stringify({
-                error: "script_failed",
-                kind: result.error.kind,
-                message: result.error.message,
-                ...(result.error.suggestions ? { suggestions: result.error.suggestions } : {}),
-                toolCalls: result.toolCalls,
-              })),
-            }
-          }
-          const value = typeof result.value === "string"
-            ? result.value
-            : JSON.stringify(result.value, null, 2)
-          const logs = result.logs.length > 0 ? `\n\nLogs:\n${result.logs.join("\n")}` : ""
-          return { content: textContent(`${value}${logs}`) }
-        },
+        invoke: () => executeWorkflowAuthoringTest(request, {
+          organizationId,
+          orgMembershipId: memberIdentity?.orgMembershipId,
+          buildTools: () => buildCapabilityToolTree(capabilityContext),
+          recordRun: (receipt) => recordWorkflowRun(db, receipt),
+        }),
       }),
     )
 

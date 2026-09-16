@@ -53,6 +53,7 @@ function serializeView(row: ArtifactViewRow, revisions: ArtifactViewRevisionRow[
     status: row.status,
     activeRevisionId: row.active_revision_id,
     useInWorkflow: row.use_in_workflow,
+    dataMode: row.data_mode ?? "snapshot",
     revisions: revisions.map(serializeRevision),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -161,6 +162,7 @@ export async function saveArtifactViewRevision(input: {
   description?: string
   reactSource: string
   cssSource?: string
+  dataMode?: "live" | "snapshot"
 }): Promise<GeneratedArtifactView> {
   const script = await getWorkflowDetail({ context: input.context, configObjectId: input.configObjectId })
   if (!script.canManage) throw new Error("artifact_view_not_found")
@@ -174,6 +176,12 @@ export async function saveArtifactViewRevision(input: {
     : null
   if (existing && existing.config_object_id !== script.configObjectId) {
     throw new Error("artifact_view_script_binding_immutable")
+  }
+
+  const dataMode = input.dataMode ?? existing?.data_mode ?? "live"
+  if (existing && dataMode !== existing.data_mode) throw new Error("artifact_view_data_mode_immutable")
+  if (!existing && dataMode === "snapshot" && script.currentVersion.requiredCapabilities.length > 0) {
+    throw new Error("artifact_view_snapshot_personal_data_denied")
   }
 
   const artifactViewId = existing?.id ?? createDenTypeId("artifactView")
@@ -207,6 +215,7 @@ export async function saveArtifactViewRevision(input: {
         status: "active",
         active_revision_id: null,
         use_in_workflow: false,
+        data_mode: dataMode,
       })
     }
     await tx.insert(ArtifactViewRevisionTable).values({

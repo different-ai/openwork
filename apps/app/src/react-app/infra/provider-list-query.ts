@@ -196,7 +196,8 @@ export function ensureProviderListQuery(
     queryFn: () => fetchProviderList(input),
     gcTime: PROVIDER_LIST_CACHE_MS,
   };
-  if (input.force) {
+  const state = queryClient.getQueryState(options.queryKey);
+  if (input.force || state?.status === "error" || state?.isInvalidated || state?.fetchStatus === "fetching") {
     return queryClient.fetchQuery({
       ...options,
       staleTime: 0,

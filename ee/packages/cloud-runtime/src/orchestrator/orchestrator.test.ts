@@ -84,7 +84,7 @@ function harness(options: HarnessOptions = {}) {
     onExec: ({ spec }) => {
       execs.push(spec)
       if (spec.detach) return { exitCode: null }
-      if (spec.command?.includes("openwork-restore-marker")) {
+      if (spec.command?.includes("test -s") && spec.command.includes("openwork-restore-marker")) {
         return { exitCode: options.restoreMarkerVerified === false ? 1 : 0 }
       }
       return { exitCode: 0 }
@@ -119,7 +119,8 @@ function harness(options: HarnessOptions = {}) {
     healthChecks,
     execs,
     warnings,
-    restoreMarkerChecks: () => execs.filter((spec) => !spec.detach && spec.command?.includes("openwork-restore-marker")).length,
+    restoreMarkerChecks: () => execs.filter((spec) => !spec.detach && spec.command?.includes("test -s") && spec.command.includes("openwork-restore-marker")).length,
+    stopFlushes: () => execs.filter((spec) => !spec.detach && spec.command?.includes("flush_checkpoint")).length,
     checkpointChecks: () => provider.fake.count("storage.exists"),
     sandboxIdOf: (idempotencyKey: string) => provider.fake.sandbox(idempotencyKey)?.id ?? null,
   }
@@ -512,10 +513,36 @@ describe("Cloud runtime version-aware recycle", () => {
     expect(result.imageVersion).toBe(previousImageVersion)
     expect(h.provider.fake.count("create")).toBe(0)
     expect(h.checkpointChecks()).toBe(0)
+    expect(h.stopFlushes()).toBe(1)
+    expect(h.provider.fake.calls.indexOf(`exec:${old.id}`)).toBeLessThan(h.provider.fake.calls.indexOf(`stop:${old.id}`))
     expect(h.provider.fake.count("stop", old.id)).toBe(1)
     expect(h.provider.fake.count("start", old.id)).toBe(1)
     expect(h.provider.fake.count("destroy", old.id)).toBe(0)
     expect(h.store.upserts[0]?.sandbox.ref.sandboxId).toBe(old.id)
+  })
+
+  test("a failed flush never blocks the restart of an untrusted running instance", async () => {
+    const input = provisionInput()
+    const h = harness({
+      provider: {
+        onExec: ({ spec }) => spec.detach
+          ? { exitCode: null }
+          : spec.command?.includes("flush_checkpoint") ? { exitCode: 1, stderr: "checkpoint flush tar failed" } : { exitCode: 0 },
+      },
+    })
+    const old = h.provider.fake.seed({ idempotencyKey: "sbx-running-flush-fails", state: "running" })
+    await seedRecord(h, input, old.id, previousImageVersion)
+
+    const result = await h.orchestrator.wake(input)
+
+    const flushes = h.provider.fake.sandboxes().find((record) => record.id === old.id)?.execs
+      .filter((exec) => !exec.spec.detach && exec.spec.command?.includes("flush_checkpoint")) ?? []
+    expect(result.status).toBe("healthy")
+    expect(flushes).toHaveLength(1)
+    expect(flushes[0]?.result.exitCode).toBe(1)
+    expect(h.provider.fake.count("stop", old.id)).toBe(1)
+    expect(h.provider.fake.count("start", old.id)).toBe(1)
+    expect(h.warnings.some((warning) => warning.includes("checkpoint flush before stop"))).toBe(true)
   })
 
   test("replaces an unrecoverable running instance when a checkpoint can restore it", async () => {
@@ -642,10 +669,13 @@ describe("Cloud runtime version-aware recycle", () => {
     expect(h.provider.fake.calls.filter((call) => /^(start|stop|exec):/.test(call))).toEqual([
       `start:${old.id}`,
       `exec:${old.id}`,
+      // The checkpoint flush that precedes every stop of a running instance.
+      `exec:${old.id}`,
       `stop:${old.id}`,
       `start:${old.id}`,
       `exec:${old.id}`,
     ])
+    expect(h.stopFlushes()).toBe(1)
     expect(result.status).toBe("healthy")
     expect(result.imageVersion).toBe(imageVersion)
     expect(h.provider.fake.count("create")).toBe(1)

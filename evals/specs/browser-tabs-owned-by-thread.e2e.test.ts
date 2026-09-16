@@ -76,7 +76,7 @@ lifecycleTest("the global tab limit rejects new pages without disturbing live ta
     }, { within: 15_000, label: "closing the tab removes its native page and releases one slot" });
 
     const pending = agent.run("browser.open_url", { url: retryUrl, provider: "builtin" });
-    await user.click({ role: "button", label: "Allow origin in this tab" });
+    await user.click({ role: "button", label: "Allow for this thread" });
     const result = await pending;
     const retried = await eventually(() => world.readBrowserState(), {
       within: 15_000,
@@ -182,7 +182,7 @@ lifecycleTest("repeated refused navigations leave no allocated page or hidden ho
       const rejected = expect(world.openTabAs(`refused-${attempt}`, ownerSessionId, "http://127.0.0.1:1"))
         .rejects.toThrow(/Browser operation could not finish/);
       if (ownerSessionId === researching.sessionId) await user.click(conversation(researching.title));
-      await user.click({ role: "button", label: "Allow origin in this tab" });
+      await user.click({ role: "button", label: "Allow for this thread" });
       await rejected;
       if (ownerSessionId === researching.sessionId) await user.click(conversation(reading.title));
       await eventually(async () => {
@@ -202,7 +202,7 @@ lifecycleTest("repeated refused navigations leave no allocated page or hidden ho
   await step("An approved retry remains usable in the background after the failures", async () => {
     const pending = world.openTabAs("navigation-recovered", researching.sessionId);
     await user.click(conversation(researching.title));
-    await user.click({ role: "button", label: "Allow origin in this tab" });
+    await user.click({ role: "button", label: "Allow for this thread" });
     const recovered = await pending;
     await user.click(conversation(reading.title));
     expect((await world.readBrowserState()).tabs).toHaveLength(2);
@@ -269,7 +269,7 @@ test("a background conversation reads its owned page silently and requests atten
   const researching = { sessionId: await agent.createSession("Background research"), title: "Background research" };
   await user.click(conversation(reading.title));
   const readingOpen = agent.run("browser.open_url", { url: `${world.origin}/?viewport-probe=reading`, provider: "builtin" });
-  await user.click({ role: "button", label: "Allow origin in this tab" });
+  await user.click({ role: "button", label: "Allow for this thread" });
   const readingTab = browserTabHandle(await readingOpen);
   await user.see(tabButton("reading"), { timeoutMs: 30_000 });
   const initial = await probe.browserTabMetrics(readingTab.targetId);
@@ -299,12 +299,12 @@ test("a background conversation reads its owned page silently and requests atten
     expect(state.nativeViews.find((view) => view.tabId === blank.id)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, width: 0, height: 0 } });
     await user.see(tabButton("reading"));
     await user.notSee(tabButton("research"));
-    await user.notSee({ role: "button", label: "Allow origin in this tab" });
+    await user.notSee({ role: "button", label: "Allow for this thread" });
     expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
     await user.click(conversation(researching.title));
-    await user.see({ role: "button", label: "Allow origin in this tab" });
+    await user.see({ role: "button", label: "Allow for this thread" });
     expect((await witness()).pageRequests).toEqual(requests);
-    await user.click({ role: "button", label: "Allow origin in this tab" });
+    await user.click({ role: "button", label: "Allow for this thread" });
     const result = await pending;
     if (!result || typeof result !== "object" || !("result" in result)) throw new Error(`The background browser command returned no result: ${JSON.stringify(result)}`);
     expect(result).toMatchObject({ ok: true, result: { owner_session_id: researching.sessionId, visible: true } });
@@ -320,9 +320,9 @@ test("a background conversation reads its owned page silently and requests atten
 
   await step("The browser reads and images a hidden page, but click, fill and site callbacks need attention", async () => {
     await user.click(conversation(researching.title));
-    const access = task("observe");
-    await user.click({ role: "button", label: "Allow reading this origin" });
-    expect((await access).ok).toBe(true);
+    expect((await task("observe")).ok).toBe(true);
+    await user.notSee({ role: "button", label: "Allow for this thread" });
+    await user.notSee({ role: "button", label: "Allow reading this origin" });
     await user.click(conversation(reading.title));
     const metrics = await probe.eventually(() => probe.browserTabMetrics(researchTab.targetId), { within: 15_000, until: (value) => value.width === BACKGROUND_TAB_VIEWPORT.width && value.hasFocus, label: "the hidden page has its background viewport and focus" });
     expect(metrics).toMatchObject({ ...BACKGROUND_TAB_VIEWPORT, hasFocus: true });
@@ -367,7 +367,7 @@ test("a background conversation reads its owned page silently and requests atten
     await user.see(tabButton("reading"));
   });
 
-  await step("Switching to the owner restores its native view and permits only explicitly approved actions", async () => {
+  await step("Switching to the owner restores its native view but visible inputs still need action approval", async () => {
     await user.click(conversation(researching.title));
     const state = await probe.eventually(() => probe.browserState(), { within: 30_000, until: (value) => value.visibleSessionId === researching.sessionId && value.activeTabId === researchTab.tabId, label: "the research conversation takes the screen" });
     expect(state.tabs.map((tab) => tab.ownerSessionId).sort()).toEqual([reading.sessionId, researching.sessionId].sort());
@@ -380,21 +380,34 @@ test("a background conversation reads its owned page silently and requests atten
     expect(native.nativeViews.find((view) => view.tabId === readingTab.tabId)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT } });
     const actions: Array<{ type: "click" | "fill"; name: string; text?: string }> = [{ type: "click", name: "Save draft" }, { type: "fill", name: "Draft title", text: "ok" }];
     for (const action of actions) {
-      const observed = await task("observe");
-      const ref = observed.elements?.find((element) => element.name === action.name)?.ref;
-      if (!ref) throw new Error(`Missing observed ${action.name} control.`);
       const before = await witness();
-      const pending = task("act", { observationId: observed.observationId, action: { type: action.type, ref, text: action.text } });
-      await user.see({ role: "button", label: "Allow once" });
-      expect(await witness()).toMatchObject({ records: before.records, inputValue: before.inputValue });
-      await user.click({ role: "button", label: "Allow once" });
-      expect(await pending).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+      for (const decision of ["Deny", "Allow once"]) {
+        const observed = await task("observe");
+        const ref = observed.elements?.find((element) => element.name === action.name)?.ref;
+        if (!ref) throw new Error(`Missing observed ${action.name} control.`);
+        let settled = false;
+        const pending = task("act", { observationId: observed.observationId, action: { type: action.type, ref, text: action.text } })
+          .then((result) => { settled = true; return result; });
+        await user.see({ text: "Allow browser action?" });
+        await user.see({ role: "button", label: "Allow once" });
+        await user.notSee({ role: "button", label: "Allow for this thread" });
+        expect(settled).toBe(false);
+        expect(await witness()).toMatchObject({ records: before.records, inputValue: before.inputValue });
+        await user.click({ role: "button", label: decision });
+        const result = await pending;
+        if (decision === "Deny") {
+          expect(result).toMatchObject({ ok: false, code: "user_denied", dispatched: false, mayHaveChangedState: false });
+          expect(await witness()).toMatchObject({ records: before.records, inputValue: before.inputValue });
+        } else expect(result).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+        await user.notSee({ role: "button", label: "Allow once" });
+        await user.notSee({ role: "button", label: "Share result" });
+      }
       if (action.type === "click") await probe.eventually(() => task("observe"), { within: 5_000, until: (value) => value.text?.includes("Saved 1") === true, label: "the approved save visibly completes before the next action" });
     }
     const completed = await probe.eventually(witness, { within: 5_000, until: (value) => value.records.length === 1 && value.inputValue === "ok", label: "the fixture receives only the approved click and text" });
     expect(completed.records).toEqual([{ method: "dom", count: 1, signedIn: false }]);
     expect((await task("observe")).text).toContain("Saved 1");
-    evidence.recordAssertionEvidence("Selecting the owner restores its tab and approved actions", "Native attachment, z-order and both panel dimensions recovered. The guest fixture saw no writes before approval, then one DOM save and the expected field value; a new page observation verified Saved 1.", true);
+    evidence.recordAssertionEvidence("Selecting the owner restores its tab while inputs require separate approval", "Native attachment, z-order and both panel dimensions recovered. Reading reused the thread grant. Hidden, pending and denied inputs caused no writes; separately approved inputs produced one DOM save and the expected field value, and a new page observation verified Saved 1.", true);
   });
 
   await step("A paused background conversation cannot open through the legacy automation command", async () => {
@@ -673,7 +686,7 @@ artifactTest("a transcript link replaces the selected artifact with its own live
     expect((await world.readBrowserState()).nativeViews.every((view) => !view.attached)).toBe(true);
 
     const pending = world.openTabAs("requested-preview", reading.sessionId);
-    await user.click({ role: "button", label: "Allow origin in this tab" });
+    await user.click({ role: "button", label: "Allow for this thread" });
     const requested = await pending;
     const state = await eventually(() => world.readBrowserState(), {
       within: 15_000,

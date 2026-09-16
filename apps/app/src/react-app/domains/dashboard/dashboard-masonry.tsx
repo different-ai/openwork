@@ -24,11 +24,35 @@ function MasonryItem({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const measure = () => setRows(Math.max(1, Math.ceil((node.getBoundingClientRect().height + GAP) / ROW_HEIGHT)));
-    measure();
-    const observer = new ResizeObserver(measure);
+    let disposed = false;
+    let frame: number | null = null;
+    let appliedRows = 1;
+    let nextRows = 1;
+    const apply = () => {
+      frame = null;
+      if (disposed || nextRows === appliedRows) return;
+      appliedRows = nextRows;
+      setRows(nextRows);
+    };
+    const measure = (height: number) => {
+      if (!Number.isFinite(height) || height < 0) return;
+      nextRows = Math.max(1, Math.ceil((height + GAP) / ROW_HEIGHT));
+    };
+    measure(node.getBoundingClientRect().height);
+    apply();
+    const observer = new ResizeObserver((entries) => {
+      if (disposed) return;
+      const entry = entries.find((entry) => entry.target === node);
+      if (!entry) return;
+      measure(entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height);
+      if (nextRows !== appliedRows && frame === null) frame = requestAnimationFrame(apply);
+    });
     observer.observe(node);
-    return () => observer.disconnect();
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, []);
   return (
     <div ref={ref} className="min-w-0 self-start" style={{ gridRowEnd: `span ${rows}` }} data-dashboard-masonry-item>

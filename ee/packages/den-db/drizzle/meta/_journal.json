@@ -701,6 +701,13 @@
       "when": 1789424530207,
       "tag": "0100_external_mcp_scope_text",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "5",
+      "when": 1789424530208,
+      "tag": "0101_artifact_view_data_mode",
+      "breakpoints": true
     }
   ]
 }
