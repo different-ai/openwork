@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import {
   createStreamingMarkdownRenderer,
+  renderHighlightedMarkdownHtml,
   renderMarkdownHtml,
   type MarkdownBlockHtml,
+  type MarkdownPresentation,
 } from "../src/components/markdown/markdown-primitive";
 
 // Without a window DOMPurify is inert here, so these assertions compare the
@@ -148,6 +150,65 @@ describe("streaming markdown blocks", () => {
   });
 });
 
+
+describe("markdown task checkboxes", () => {
+  const presentations: MarkdownPresentation[] = ["chat", "surface"];
+  const fixtures = [
+    { source: "- [ ] Example unchecked", states: [false] },
+    { source: "- [x] Example checked\n- [X] Example uppercase checked", states: [true, true] },
+    { source: "- [ ] Example unchecked\n- [x] Example checked", states: [false, true] },
+    { source: "- [ ] Example unchecked\n\n- [x] Example checked", states: [false, true] },
+    { source: "3. [ ] Example ordered unchecked\n4. [x] Example ordered checked", states: [false, true] },
+    {
+      source: "- [ ] **Example bold** with `inline code` and a longer description that wraps in a narrow pane.\n  Continuation text.\n  - Ordinary nested bullet\n  - [x] Example nested checked",
+      states: [false, true],
+    },
+    { source: "> - [ ] Example quoted task\n> - [x] Example checked task", states: [false, true] },
+    { source: "- [ ] [ ] Example literal second marker", states: [false] },
+    { source: "- Ordinary bullet\n- \\[ \\] Literal marker", states: [] },
+    { source: "```markdown\n- [ ] Example code, not a task\n```", states: [] },
+  ];
+  const checkboxStates = (html: string) => {
+    const inputs = html.match(/<input\b[^>]*>/g) ?? [];
+    for (const input of inputs) {
+      expect(input).toContain('type="checkbox"');
+      expect(input).toContain('disabled=""');
+    }
+    return inputs.map((input) => input.includes('checked=""'));
+  };
+
+  for (const presentation of presentations) {
+    test(`${presentation} renders each task's checkbox exactly once and preserves its state`, () => {
+      for (const { source, states } of fixtures) {
+        expect(checkboxStates(renderMarkdownHtml(source, presentation))).toEqual(states);
+      }
+      const nested = renderMarkdownHtml(fixtures[5].source, presentation);
+      expect(nested).toContain("<strong>Example bold</strong>");
+      expect(nested).toContain("inline code</code>");
+      expect(nested).toContain("Continuation text.");
+      expect(nested).toContain("Ordinary nested bullet");
+      expect(renderMarkdownHtml(fixtures[7].source, presentation)).toContain("[ ] Example literal second marker");
+    });
+
+    test(`${presentation} keeps a single checkbox per task while streaming and settling`, () => {
+      for (const { source, states } of fixtures) {
+        const renderer = createStreamingMarkdownRenderer(presentation);
+        for (let end = 1; end <= source.length; end++) {
+          const partial = source.slice(0, end);
+          expect(joined(renderer.render(partial))).toBe(renderMarkdownHtml(partial, presentation));
+        }
+        expect(checkboxStates(joined(renderer.render(source)))).toEqual(states);
+      }
+    });
+
+    test(`${presentation} preserves single task checkboxes when upgrading to highlighted HTML`, async () => {
+      for (const { source, states } of fixtures) {
+        const withCode = `${source}\n\n\`\`\`ts\nconst example = true;\n\`\`\``;
+        expect(checkboxStates(await renderHighlightedMarkdownHtml(withCode, presentation))).toEqual(states);
+      }
+    });
+  }
+});
 
 test("video references render native players without autoplay or unsafe sources", () => {
   for (const markdown of ["[Video](clip.mp4)", "![Video](clip.webm)", "`clip.mp4`", "[Video](https://example.com/clip.MP4?download=1)"]) {

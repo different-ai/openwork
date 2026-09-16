@@ -138,12 +138,13 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   cleanups.push(unmount)
   return {
     container, ready, writes, rendered, key, ids, unmount,
-    async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode, groupKeyReplacements?: ReadonlyMap<string, string>) {
+    async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode, groupKeyReplacements?: ReadonlyMap<string, string>, priorityMessageId?: string) {
       data = next
       viewport = { ...viewport, ...update }
       const list = <ProgressiveMessageList
         groups={data} viewport={viewport} getGroupKey={key} getMessageIds={ids}
         groupKeyReplacements={groupKeyReplacements}
+        priorityMessageId={priorityMessageId}
         renderGroup={(group, index) => {
           rendered.push(index)
           if (renderer) return renderer(group, index)
@@ -415,6 +416,48 @@ describe("progressive whole-group rendering", () => {
     expect(view.message("m79")).toBe(tail)
     expect(view.rendered).toHaveLength(80)
     expect(frames.size).toBe(0)
+  })
+
+  test("mounts the latest prompt and tail alongside a middle anchor before the first frame within eight groups", async () => {
+    const view = fixture(groups(), { anchorMessageId: "m40" })
+    await view.render(undefined, {}, undefined, undefined, "m78")
+    expect(view.mounted).toHaveLength(8)
+    expect(view.message("m40")).toBeDefined()
+    expect(view.message("m79")).toBeDefined()
+    expect(view.message("m78")).toBeDefined()
+    expect(frames.size).toBe(1)
+  })
+
+  test.each([false, true])("admits the latest prompt during middle-preview hydration and preserves the anchor (tail present: %s)", async (tailPresent) => {
+    const full = groups()
+    const preview = tailPresent ? [full[40], full[79]] : [full[40]]
+    const view = fixture(preview, {
+      anchorMessageId: "m40", historyComplete: false, scrollHeight: 19_832,
+      leadingHeight: 9_920, trailingHeight: tailPresent ? 9_416 : 9_664,
+    })
+    await view.render(undefined, {}, undefined, undefined, "m78")
+    const retained = preview.map((group) => view.message(group.messages[0].id))
+    view.read("m40", -80)
+    await view.render(full, { historyComplete: true }, undefined, undefined, "m78")
+    expect(view.position("m40")).toBeCloseTo(-80, 1)
+    for (const node of retained) expect(node.isConnected).toBe(true)
+    expect(view.message("m79")).toBeDefined()
+    expect(view.message("m78")).toBeDefined()
+  })
+
+  test("admits a changed priority inside a group with a stable tail without replacing mounted nodes", async () => {
+    const data = groups()
+    data[20].messages.push({ id: "latest-prompt", height: 60 })
+    const view = fixture(data, { anchorMessageId: "m40" })
+    await view.render(undefined, {}, undefined, undefined, "m40")
+    const retained = view.mounted.map((id) => view.message(`m${id?.slice(1)}`))
+    view.read("m40", -80)
+    await view.render(undefined, {}, undefined, undefined, "latest-prompt")
+    expect(view.position("m40")).toBeCloseTo(-80, 1)
+    for (const node of retained) expect(node.isConnected).toBe(true)
+    expect(view.message("m79")).toBeDefined()
+    expect(view.message("latest-prompt")).toBeDefined()
+    expect(view.mounted).toHaveLength(9)
   })
 
   test("prioritizes an anchor inside a whole group and renders live additions without waiting", async () => {

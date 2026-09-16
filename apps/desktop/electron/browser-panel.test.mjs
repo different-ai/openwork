@@ -674,6 +674,49 @@ async function loadPreload(t) {
   return exposed.__OPENWORK_ELECTRON__.browser;
 }
 
+test("preload routes only trusted unmodified primary anchor clicks, never scripts or middle clicks", async (t) => {
+  const descriptors = new Map(["HTMLAnchorElement", "location"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const mainFrame = Object.getOwnPropertyDescriptor(process, "isMainFrame");
+  Object.defineProperty(process, "isMainFrame", { value: true, configurable: true });
+  class Anchor {
+    href = LINK.url;
+    isContentEditable = false;
+    download = false;
+    getAttribute() { return this.href; }
+    hasAttribute() { return this.download; }
+    closest() { return { getAttribute: () => "A" }; }
+  }
+  Object.defineProperty(globalThis, "HTMLAnchorElement", { value: Anchor, configurable: true });
+  Object.defineProperty(globalThis, "location", { value: new URL("http://localhost/index.html"), configurable: true });
+  t.after(() => {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+    if (mainFrame) Object.defineProperty(process, "isMainFrame", mainFrame);
+    else Reflect.deleteProperty(process, "isMainFrame");
+  });
+  await loadPreload(t);
+  const click = (overrides = {}, anchor = new Anchor()) => {
+    const event = new Event("click", { cancelable: true });
+    for (const [key, value] of Object.entries({ isTrusted: true, button: 0, composedPath: () => [anchor], ...overrides })) {
+      Object.defineProperty(event, key, { value });
+    }
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  assert.equal(click(), true);
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A" }] }]);
+  assert.equal(exposed.__OPENWORK_ELECTRON__.browser.linkClick, undefined);
+  for (const overrides of [{ isTrusted: false }, { button: 1 }, { button: 2 }, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }]) {
+    assert.equal(click(overrides), false);
+  }
+  for (const change of [{ href: "#section" }, { href: "/settings" }, { href: "javascript:alert(1)" }, { href: "http://localhost/index.html#section" }, { download: true }, { isContentEditable: true }]) {
+    assert.equal(click({}, Object.assign(new Anchor(), change)), false);
+  }
+  assert.equal(preloadCalls.length, 1);
+});
+
 test("browser manager construction before app readiness defers session hooks until the first tab", async (t) => {
   controls.ready = false;
   t.after(() => { controls.ready = true; });
@@ -1899,7 +1942,65 @@ test("the task timeout cancels the longer approval dialog and late acceptance ca
   assert.deepEqual(invoke("openwork:browser:state").tabs, []);
 });
 
-test("blocked main-window links require navigation consent and retain their originating owner", async () => {
+test("human link clicks open without control state but later agent reads require consent", async () => {
+  for (const allowed of [false, true]) {
+    const { invoke, panel, views, approve, policies, mainContents } = createPanel();
+    invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+    invoke("openwork:browser:linkClick", { url: LINK.url, sessionId: "A" });
+    invoke("openwork:browser:setVisibleSession", "B");
+    mainContents.emit("did-start-navigation", {}, "http://localhost/index.html#B", true, true);
+    await flush();
+    const tab = invoke("openwork:browser:state").tabs[0];
+    assert.equal(tab.ownerSessionId, "A");
+    assert.equal(tab.browserTask, undefined);
+    assert.equal(tab.browserApproval, null);
+    assert.equal(tab.automationProtected, false);
+    assert.deepEqual(views()[0].webContents.destinations, [LINK.url]);
+    assert.ok(policies.some(request => request.url === LINK.url && request.external === false));
+    invoke("openwork:browser:setVisibleSession", "A");
+    mockPage(views()[0].webContents);
+    let reads = 0;
+    const read = views()[0].webContents.executeJavaScriptInIsolatedWorld;
+    views()[0].webContents.executeJavaScriptInIsolatedWorld = (...args) => { reads += 1; return read(...args); };
+    const observing = panel.browserTask({ sessionId: "A", operation: "observe", args: { tabId: tab.id } });
+    await flush();
+    assert.equal(reads, 0);
+    assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval.approveLabel, "Allow for this thread");
+    assert.ok(invoke("openwork:browser:state").tabs[0].browserTask);
+    approve(allowed, tab.id);
+    const result = await observing;
+    assert.equal(result.ok, allowed);
+    if (allowed) assert.equal(result.text, "Example page");
+    else assert.equal(result.text, undefined);
+    assert.equal(reads > 0, allowed);
+    invoke("openwork:browser:destroy");
+  }
+});
+
+test("human link routing rejects other senders, unsafe URLs, denied policy and stale source documents", async () => {
+  const held = gate();
+  const { invoke, emit, mainContents, views, policies } = createPanel(async ({ url }) => {
+    if (url === LINK.url) throw new Error("managed denial");
+    await held.promise;
+  });
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  emit("openwork:browser:linkClick", { sender: {}, senderFrame: mainContents.mainFrame }, LINK);
+  emit("openwork:browser:linkClick", { sender: mainContents, senderFrame: {} }, LINK);
+  for (const url of ["javascript:alert(1)", "file:///tmp/link.html", "https://user:password@example.com"]) {
+    invoke("openwork:browser:linkClick", { url });
+  }
+  assert.deepEqual(policies, []);
+  invoke("openwork:browser:linkClick", LINK);
+  await flush();
+  assert.equal(views().length, 0);
+  invoke("openwork:browser:linkClick", { url: "https://stale.example/" });
+  mainContents.mainFrame = {};
+  held.finish();
+  await flush();
+  assert.equal(views().length, 0);
+});
+
+test("automated main-window navigation fallback requires consent and retains its originating owner", async () => {
   for (const allowed of [false, true]) {
     const { invoke, panel, views, approve } = createPanel();
     invoke("openwork:browser:show", PANEL_BOUNDS, "A");

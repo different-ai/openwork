@@ -21,6 +21,7 @@ interface ProgressiveMessageListProps<T> {
   getGroupKey: (group: T) => string
   getMessageIds: (group: T) => readonly string[]
   groupKeyReplacements?: ReadonlyMap<string, string>
+  priorityMessageId?: string
   renderGroup: (group: T, index: number) => React.ReactNode
   viewport?: MessageListViewport
   className?: string
@@ -85,16 +86,19 @@ function sameKeys(a: readonly string[], b: readonly string[]) {
 
 /** Whole groups mount once, then stay mounted. The key cancels work on a session switch. */
 export function ProgressiveMessageList<T>(props: ProgressiveMessageListProps<T>) {
-  const { groups, getGroupKey, getMessageIds } = props
+  const { groups, getGroupKey, getMessageIds, priorityMessageId } = props
   const keys = React.useMemo(() => groups.map(getGroupKey), [groups, getGroupKey])
   const anchorMessageId = props.viewport?.anchorMessageId
   const anchorIndex = React.useMemo(() => anchorMessageId
     ? groups.findIndex((group) => getMessageIds(group).includes(anchorMessageId))
     : -1, [groups, getMessageIds, anchorMessageId])
-  return <ProgressiveGroups key={props.viewport?.sessionKey ?? "eager"} {...props} keys={keys} anchorIndex={anchorIndex} />
+  const priorityIndex = React.useMemo(() => priorityMessageId
+    ? groups.findIndex((group) => getMessageIds(group).includes(priorityMessageId))
+    : -1, [groups, getMessageIds, priorityMessageId])
+  return <ProgressiveGroups key={props.viewport?.sessionKey ?? "eager"} {...props} keys={keys} anchorIndex={anchorIndex} priorityIndex={priorityIndex} />
 }
 
-type PreparedGroupsProps<T> = ProgressiveMessageListProps<T> & { keys: string[]; anchorIndex: number }
+type PreparedGroupsProps<T> = ProgressiveMessageListProps<T> & { keys: string[]; anchorIndex: number; priorityIndex: number }
 
 // Internal mount batches reuse settled output. Parent callback changes must
 // invalidate it too: the callback captures streaming, last-step and other props.
@@ -119,29 +123,31 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
   }
 
   static getDerivedStateFromProps<T>(props: PreparedGroupsProps<T>, state: MountState): MountState | null {
-    const { keys, anchorIndex } = props
+    const { keys, anchorIndex, priorityIndex } = props
     if (!keys.length) return null
     const replacements = [...(props.groupKeyReplacements ?? [])]
       .filter(([key, previous]) => state.mounted.has(previous) && !state.mounted.has(key) && keys.includes(key))
       .map(([key]) => key)
     let mounted = replacements.length ? new Set([...state.mounted, ...replacements]) : state.mounted
     const last = keys[keys.length - 1]
+    const immediate = priorityIndex >= 0 ? [keys[priorityIndex], last] : [last]
     if (!props.viewport || props.viewport.revealAll) {
       if (keys.every((key) => state.mounted.has(key))) return null
       mounted = new Set(keys)
     } else if (!state.initialized || (anchorIndex >= 0 && (state.anchorPending || !mounted.has(keys[anchorIndex])))) {
-      // Include the live tail without allowing the first mount to exceed eight groups.
       const estimatedIndex = props.viewport.scrollTop !== undefined && props.viewport.scrollHeight
         ? Math.min(keys.length - 1, Math.floor(keys.length * props.viewport.scrollTop / props.viewport.scrollHeight)) : keys.length - 1
       const nearby = addNearby(keys, mounted, anchorIndex >= 0 ? anchorIndex : estimatedIndex)
-      if (!nearby.has(last)) {
-        const furthest = [...nearby].at(-1)
-        if (furthest && !mounted.has(furthest)) nearby.delete(furthest)
-        nearby.add(last)
+      for (const key of immediate) {
+        if (nearby.has(key)) continue
+        const furthest = [...nearby].findLast((candidate) => !mounted.has(candidate)
+          && candidate !== keys[anchorIndex] && !immediate.includes(candidate))
+        if (furthest !== undefined) nearby.delete(furthest)
+        nearby.add(key)
       }
       mounted = nearby
-    } else if (!mounted.has(last)) {
-      mounted = new Set([...mounted, last])
+    } else if (immediate.some((key) => !mounted.has(key))) {
+      mounted = new Set([...mounted, ...immediate])
     } else if (mounted === state.mounted) return null
     return { ...state, mounted, initialized: true, anchorPending: state.anchorPending && anchorIndex < 0 && !props.viewport?.historyComplete }
   }

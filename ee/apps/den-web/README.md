@@ -64,10 +64,12 @@ Tailwind 4 requires Safari 16.4+, Chrome 111+, or Firefox 128+; see the
 - `DEN_WEB_OPENWORK_WEB_URL` (runtime): URL opened by the dashboard Web tab.
   - default: `https://web.openworklabs.com`
 - `DEN_WEB_OPENWORK_AUTH_CALLBACK_URL` (runtime): Canonical URL where the app returns after auth completes.
-- `DEN_WEB_POSTHOG_KEY` (server/runtime): PostHog project key used for Den analytics.
-- `DEN_WEB_POSTHOG_HOST` (server/runtime): PostHog ingest host or same-origin proxy path.
-  - default: `/ow`
-  - set it to `https://us.i.posthog.com` to bypass the local proxy
+- `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` (public, build-time): PostHog's standard client token. `next.config.js` uses `DEN_WEB_POSTHOG_KEY` as a build-time compatibility fallback only when the public variable is unset; an explicitly blank public value disables analytics. There is no hardcoded token. Supply the token before `next build`; changing only the running server environment cannot update a built client bundle. Rebuild to change or disable it.
+- The public token is emitted only when `NODE_ENV=production`, `VERCEL_ENV=production`, and no `OPENWORK_DEV_MODE` override is active. Client initialization also requires the exact origin `https://app.openworklabs.com`. Previews, local builds and self-hosted deployments remain disabled. Auth/API URL settings do not control analytics.
+- `instrumentation-client.ts` follows the [official Next.js SDK setup](https://posthog.com/docs/libraries/next-js): import the pinned `posthog-js` package and call `posthog.init` before hydration. The existing `window.posthog` analytics calls receive that same singleton. There is no inline CDN bootstrap, custom SDK queue, method replacement, or change to authentication helpers.
+- The SDK core is bundled with the app. PostHog remote requests use `/ow` via ordered Next.js rewrites; external-host overrides are unsupported. The `/ow` sanitizer strips outgoing Cookie, Authorization, and Referer headers and does not intercept auth routes or modify browser cookies.
+- SDK settings use localStorage persistence and route pageviews plus existing explicit events; autocapture, replay, surveys and automatic flags are disabled. The documented `before_send` hook removes query/fragment/userinfo from SDK URL properties and email/name from outbound event/person properties while preserving the public ingestion token. This is outbound filtering, not a guarantee that person properties never enter SDK memory or localStorage. Existing consent remains managed by the SDK; no forced opt-in or legacy-cookie cleanup is added.
+- Run `pnpm run test:posthog` for client/config tests, a real SDK smoke test with all transports blocked, and the real Next.js routing fixture with loopback-only upstreams. No test sends events to PostHog.
 - `GET /api/health` returns a shallow app health payload for container probes.
 
 ### Observability

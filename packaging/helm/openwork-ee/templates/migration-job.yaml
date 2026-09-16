@@ -1,6 +1,9 @@
 {{- include "openwork-ee.customCa.validate" . }}
 {{- if .Values.migrations.enabled }}
 {{- include "openwork-ee.migrationDatabase.validate" . }}
+{{- if and (hasKey .Values.migrations "writersStoppedFor0097") (not (kindIs "bool" .Values.migrations.writersStoppedFor0097)) }}
+{{- fail "migrations.writersStoppedFor0097 must be a boolean acknowledgement of externally stopped writers" }}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -49,6 +52,10 @@ spec:
           args:
             {{- toYaml .Values.migrations.args | nindent 12 }}
           env:
+            {{- if .Values.migrations.writersStoppedFor0097 }}
+            - name: DEN_DB_0097_WRITERS_STOPPED
+              value: "1"
+            {{- end }}
             - name: DB_MODE
               value: {{ .Values.config.databaseMode | quote }}
             {{/* Bootstrap always needs TCP MySQL, even with the PlanetScale HTTP runtime. */}}

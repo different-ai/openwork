@@ -295,7 +295,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       ownerSessionId: registry.ownerOf(tabId),
       browserApproval: tab.browserApproval ?? null,
       loadError: tab.loadError,
-      browserTask: tab.browserTask ?? { status: "idle", operation: null },
+      browserTask: tab.browserTask,
       siteToolCount: Number.isInteger(tab.webMcpToolCount) ? tab.webMcpToolCount : 0,
       siteTools: Array.isArray(tab.webMcpTools) ? tab.webMcpTools : [],
       siteToolActivity: Array.isArray(tab.webMcpActivity) ? tab.webMcpActivity : [],
@@ -1587,6 +1587,26 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return browserControlEnabled;
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.on("openwork:browser:linkClick", (event, payload) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
+      const url = payload?.url;
+      if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return;
+      const parsed = new URL(url);
+      if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
+      const ownerSessionId = normalizeSessionId(payload.sessionId) ?? registry.visibleSessionId();
+      const sourceFrame = event.senderFrame;
+      let navigated = false;
+      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) navigated = true;
+      };
+      contents.on("did-start-navigation", invalidate);
+      runDetachedTask("open clicked browser link", () => handleMenuChoice(
+        { source: "link", url, ownerSessionId }, "open-builtin",
+        () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
+          && contents.mainFrame === sourceFrame,
+      ).finally(() => contents.removeListener("did-start-navigation", invalidate)));
+    });
     ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
       const mainContents = window()?.webContents;
       if (event.sender !== mainContents || event.senderFrame !== mainContents?.mainFrame) return;

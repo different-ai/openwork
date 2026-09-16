@@ -6,7 +6,18 @@ import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } fr
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
 import { visualizationSchema } from "@openwork/types/visualization";
-import { openworkSessionModelSchema, type OpenworkAffordanceEffects, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
+import {
+  openworkSessionModelSchema,
+  openworkAffordanceResultSchema,
+  openworkModelsListResultSchema,
+  openworkEngineProviderCatalogSchema,
+  openworkCatalogModels,
+  labelOpenworkSessionModel,
+  resolveOpenworkModel,
+  type OpenworkCatalogModel,
+  type OpenworkAffordanceEffects,
+  type OpenworkSessionModel,
+} from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
   appendAgentInstructions,
@@ -23,7 +34,6 @@ import {
 import {
   buildOpenworkProviderContributions,
   sessionCreateArgsSchema,
-  sessionModelArgSchema,
   sessionReadArgsSchema,
   sessionSearchArgsSchema,
   sessionSendArgsSchema,
@@ -159,7 +169,6 @@ const WEBMCP_EXECUTION_TIMEOUT_MS = 125_000;
 
 type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;
-type SessionModelArg = z.infer<typeof sessionModelArgSchema>;
 type SessionMessage = z.infer<typeof sessionMessageSchema>;
 type SessionSearchArgs = z.infer<typeof sessionSearchArgsSchema>;
 type SessionSearchMatchMode = NonNullable<SessionSearchArgs["match"]>;
@@ -837,6 +846,26 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   };
 }
 
+const assistantErrorMessages = new Map([
+  ["ProviderAuthError", "Provider authentication failed"],
+  ["ProviderModelNotFoundError", "The selected model is unavailable"],
+  ["MessageOutputLengthError", "The model reached its output limit before finishing"],
+  ["StructuredOutputError", "The model could not produce valid structured output"],
+  ["ContextOverflowError", "The conversation is too large for the model context window"],
+  ["MessageAbortedError", "The message was interrupted"],
+  ["APIError", "The provider request failed"],
+]);
+
+function lastAssistantError(messages: SessionMessage[]): { code: string; message: string } | null {
+  const error = [...messages].reverse().find((message) => message.info.role === "assistant")?.info.error;
+  if (error === undefined || error === null) return null;
+  if (isRecord(error) && typeof error.name === "string") {
+    const message = assistantErrorMessages.get(error.name);
+    if (message !== undefined) return { code: error.name, message };
+  }
+  return { code: "UnknownError", message: "The assistant reported an error; provider details are omitted" };
+}
+
 type ReadableMessage = { index: number; id: string; role: string; createdAt: number | null; text: string };
 
 function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
@@ -849,6 +878,12 @@ function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
       text: messageText(message),
     }))
     .filter((message) => message.text.trim().length > 0);
+}
+
+async function readWorkspaceModels(workspace: OpenWorkWorkspace): Promise<OpenworkCatalogModel[]> {
+  return openworkCatalogModels(openworkEngineProviderCatalogSchema.parse(await serverGet(
+    `/workspace/${encodeURIComponent(workspace.id)}/opencode/provider`,
+  )));
 }
 
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
@@ -868,20 +903,23 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
       const session = await readWorkspaceSession(workspace, args.sessionId);
       // Reading from the start or summarizing needs the whole transcript.
       const needsFullTranscript = summary || from === "start";
-      const [messages, activity] = await Promise.all([
+      const [messages, activity, catalog] = await Promise.all([
         readSessionMessages(workspace, args.sessionId, needsFullTranscript ? undefined : count),
         readSessionActivity(workspace, session),
+        readWorkspaceModels(workspace).catch(() => []),
       ]);
+      const lastError = lastAssistantError(messages);
       const readable = readableMessages(messages);
       const metadata = {
         ...sessionMetadata(workspace, session),
         ...activity,
+        lastError,
       };
       if (summary) {
         return {
           ok: true,
           ...metadata,
-          model: sessionModelOf(session),
+          model: labelOpenworkSessionModel(sessionModelOf(session), catalog),
           totalMessages: readable.length,
           firstUser: readable.find((message) => message.role === "user") ?? null,
           lastAssistant: [...readable].reverse().find((message) => message.role === "assistant") ?? null,
@@ -891,7 +929,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
       return {
         ok: true,
         ...metadata,
-        model: sessionModelOf(session),
+        model: labelOpenworkSessionModel(sessionModelOf(session), catalog),
         from,
         returned: window.length,
         requested: count,
@@ -1067,11 +1105,11 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
  * top-level `variant` on prompt_async. Both are sent so the session is bound
  * to the model before its first turn and that turn runs at the same effort.
  */
-function engineSessionCreateModel(model: SessionModelArg) {
+function engineSessionCreateModel(model: OpenworkSessionModel) {
   return { providerID: model.providerId, id: model.modelId, ...(model.variant ? { variant: model.variant } : {}) };
 }
 
-function enginePromptModel(model: SessionModelArg) {
+function enginePromptModel(model: OpenworkSessionModel) {
   return { model: { providerID: model.providerId, modelID: model.modelId }, ...(model.variant ? { variant: model.variant } : {}) };
 }
 
@@ -1099,11 +1137,31 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
   const args = parsed.data;
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  let catalog: OpenworkCatalogModel[];
+  let models: Array<OpenworkSessionModel | undefined>;
+  try {
+    catalog = [];
+    if (args.model || args.sessions.some((session) => session.model)) {
+      const envelope = openworkAffordanceResultSchema.safeParse(await uiControlRequest("query", {
+        id: "models.list", args: { workspaceId: workspace.id },
+      }));
+      if (!envelope.success || !envelope.data.ok || envelope.data.id !== "models.list") {
+        throw new Error("Model selection requires an existing renderer host with a valid models.list response; no sessions created.");
+      }
+      const result = openworkModelsListResultSchema.parse(envelope.data.result);
+      if (result.workspaceId !== workspace.id) throw new Error("Model catalog workspace mismatch; no sessions created.");
+      catalog = result.models;
+    }
+    const defaultModel = args.model ? resolveOpenworkModel(args.model, catalog) : undefined;
+    models = args.sessions.map((session) => session.model ? resolveOpenworkModel(session.model, catalog) : defaultModel);
+  } catch (error) {
+    return { ok: false, error: unknownErrorMessage(error) };
+  }
   let createdOnEngine = false;
   const results = await Promise.all(args.sessions.map(async (session, index): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
     const inputTitle = argumentAtPath(rawArgs, ["sessions", index, "title"]);
     const titleTruncated = typeof inputTitle === "string" && inputTitle.trim().length > 120;
-    const model = session.model ?? args.model;
+    const model = models[index];
     try {
       const payload = sessionInfoSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
@@ -1120,7 +1178,7 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
         title: session.title,
         titleTruncated,
         started: true,
-        model: sessionModelOf(payload),
+        model: labelOpenworkSessionModel(sessionModelOf(payload), catalog),
         route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.id)}`,
       };
     } catch (error) {

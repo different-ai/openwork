@@ -68,7 +68,7 @@ async function archiveActions({ world, user, agent, probe }: Pick<SpecBodyContex
   return { route, start, aborts, open, send, archive, archived };
 }
 
-test("archiving exits only the viewed conversation, and working sessions require a confirmed stop without replay", async ({ world, user, agent, probe, step }) => {
+test("archiving exits only the viewed conversation, and working sessions require a confirmed stop without replay", async ({ world, user, agent, probe, step, evidence }) => {
   const { a1, a2, b1, faultCandidate } = world;
   const { route, start, aborts, open, send, archive, archived } = await archiveActions({ world, user, agent, probe });
   const unsentDraft = "Keep this unsent draft when I cancel archiving.";
@@ -346,32 +346,45 @@ test("archiving exits only the viewed conversation, and working sessions require
     await open(a2);
   });
 
-  await step("an archive completing after route unmount cannot redirect away from Settings", async () => {
+  await step("route unmount cancels a held archive transport without late mutation or navigation away from Settings", async () => {
+    const before = (await world.facts()).requests.filter(request => request.action === "metadata").length;
     await world.networkFault("hold_archive", a2.sessionId);
     await archive(a2);
     await probe.eventually(() => world.facts(), {
-      within: 15_000, label: "archive metadata write held",
+      within: 15_000, label: "archive metadata write held before upstream dispatch",
       until: facts => facts.requests.some(request => request.action === "metadata" && request.sessionId === a2.sessionId && request.result === null),
     });
     await agent.run("settings.panel.open", { panel: "general" });
     const settingsHash = await probe.hash();
     expect(settingsHash).toContain("/settings/");
-    await world.releaseAbort();
-    await world.networkFault("none", a2.sessionId);
-    await user.see({ text: "Session archived" });
-    expect(await probe.hash()).toBe(settingsHash);
-    const facts = await world.facts();
-    expect(facts.sessions.find(session => session.sessionId === a2.sessionId)?.archived).toBe(true);
-    expect(facts.tabs).not.toContain(a2.sessionId);
-    await user.click({ role: "button", label: "Undo" });
-    await probe.eventually(() => world.facts(), {
-      within: 15_000, label: "late archive Undo is metadata-only",
-      until: facts => facts.sessions.find(session => session.sessionId === a2.sessionId)?.archived === false,
+    // #5014 explicitly cancels an in-flight archive on unmount and reports an
+    // unknown write rather than promising completion. The native witness honors
+    // cancellation, unlike the old renderer promise that awaited manual release.
+    const cancelled = await probe.eventually(() => world.facts(), {
+      within: 5_000, label: "unmount cancellation reaches the held native PATCH",
+      until: facts => facts.requests.filter(request => request.action === "metadata").slice(before)
+        .some(request => request.sessionId === a2.sessionId && request.result === "cancelled"),
     });
-    expect(await probe.hash()).toBe(settingsHash);
+    expect(cancelled.requests.filter(request => request.action === "metadata").slice(before)).toEqual([
+      expect.objectContaining({ sessionId: a2.sessionId, result: "cancelled", transport: "main" }),
+    ]);
+    await world.networkFault("none", a2.sessionId);
+    const deadline = Date.now() + 2_000;
+    await probe.eventually(async () => {
+      const facts = await world.facts();
+      expect(facts.sessions.find(session => session.sessionId === a2.sessionId)?.archived).toBe(false);
+      expect(facts.requests.filter(request => request.action === "metadata").slice(before)).toEqual(
+        cancelled.requests.filter(request => request.action === "metadata").slice(before));
+      expect(await probe.hash()).toBe(settingsHash);
+      return Date.now() >= deadline;
+    }, { within: 5_000, label: "cancelled pre-dispatch PATCH never resumes or retries" });
+    await user.notSee({ text: "Session archived" });
     await user.click({ role: "button", label: "Back to app" });
     await open(a2);
+    await archived(a2, false);
     expect(await world.requests()).toHaveLength(3);
+    evidence.recordAssertionEvidence("Unmount preserves Settings and cancels held transport without replay",
+      "Exactly one native PATCH attempt was canceled before upstream dispatch; no late mutation or retry over two seconds, no successful-archive toast, same Settings route, and returning to the app retained the unarchived session.", true);
   });
 
   await step("a global queued admission cannot archive before settling or requeue its late failure after Undo", async () => {

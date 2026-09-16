@@ -218,9 +218,11 @@ declare global {
           feedUrl: string;
           currentVersion: string;
         }>;
-        check?: (channel?: "stable" | "alpha", targetVersion?: string) => Promise<{
+        check?: (channel?: "stable" | "alpha", targetVersion?: string, options?: { preserveStaged?: boolean }) => Promise<{
           available: boolean;
           currentVersion?: string;
+          totalBytes?: number | null;
+          stagedVersion?: string | null;
           latestVersion?: string | null;
           releaseDate?: string | null;
           releaseNotes?: unknown;
@@ -506,7 +508,12 @@ async function desktopFetchThroughMain(
   }
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
-  const signal = (method ?? "GET").toUpperCase() === "GET" && diagnosticsDeadlineAtMs === undefined
+  const requestMethod = (method ?? "GET").toUpperCase();
+  // Stop must retain its transport deadline when archive uses IPC. Prompt and
+  // command POSTs keep their distinct admission/unknown-outcome contract.
+  const cancellable = ["GET", "PATCH"].includes(requestMethod)
+    || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname));
+  const signal = cancellable && diagnosticsDeadlineAtMs === undefined
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
   const transferId = signal ? desktopTransferId() : undefined;
