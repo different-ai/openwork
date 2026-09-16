@@ -402,11 +402,8 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         return `<${tag}${start} class="${profile.listClassName(token.ordered)}">${token.items.map((item) => this.listitem(item)).join("")}</${tag}>`;
       },
       listitem(item) {
-        const checkbox = item.task
-          ? `<input disabled="" type="checkbox"${item.checked ? " checked=\"\"" : ""}> `
-          : "";
-
-        return `<li class="my-1">${checkbox}${this.parser.parse(item.tokens)}</li>`;
+        // Marked includes the task checkbox in item.tokens; render it only once.
+        return `<li class="my-1">${this.parser.parse(item.tokens)}</li>`;
       },
       blockquote({ tokens }) {
         return `<blockquote class="${profile.blockquoteClassName}">${this.parser.parse(tokens)}</blockquote>`;
