@@ -62,6 +62,7 @@ describe("App conversation ownership", () => {
     try {
       await act(async () => { root.render(render(false)); });
       if (retry) {
+        expect(container.querySelector('[role="status"]')?.textContent).toBe("Reconnecting…");
         for (let i = 0; i < 2; i++) {
           const callback = retryCallbacks.shift();
           if (!callback) throw new Error("Missing discovery retry");
@@ -70,8 +71,12 @@ describe("App conversation ownership", () => {
         expect(requests).toHaveLength(3);
         expect(delays).toEqual([1_000, 3_000]);
         expect(retryCallbacks).toEqual([]);
-        const button = container.querySelector<HTMLButtonElement>("button");
-        expect(button?.textContent).toBe("Retry");
+        expect(container.querySelector('[role="status"]')?.textContent).toBe("Interactive view unavailable");
+        const details = container.querySelector("details");
+        expect(details?.open).toBe(false);
+        const button = details?.querySelector<HTMLButtonElement>("button");
+        expect(button?.textContent).toBe("Reload view");
+        if (details) details.open = true;
         await act(async () => button?.click());
         expect(requests).toHaveLength(4);
         expect(container.querySelector("button")).toBeNull();

@@ -801,9 +801,12 @@ describe("MCP App sandbox presentation", () => {
         code: "MCP_APP_DOCUMENT_RUNTIME_ERROR", message: "View failed: Bearer fixture-secret",
       });
       const notice = host.container.querySelector('[role="status"]');
-      expect(notice?.textContent).toContain("Unavailable");
-      expect(notice?.textContent).toContain("MCP_APP_DOCUMENT_RUNTIME_ERROR");
-      expect(notice?.textContent).not.toContain("fixture-secret");
+      expect(notice?.textContent).toBe("Interactive view unavailable");
+      const details = host.container.querySelector("details");
+      expect(details?.open).toBe(false);
+      expect(details?.textContent).toContain("MCP_APP_DOCUMENT_RUNTIME_ERROR");
+      expect(details?.textContent).not.toContain("fixture-secret");
+      expect(details?.textContent).not.toContain("Reload view");
       expect(host.container.querySelector("iframe")).toBeNull();
       expect(host.failures).toEqual([0]);
       expect(host.errorSpy).toHaveBeenCalledTimes(1);
@@ -919,28 +922,25 @@ describe("MCP App resolution", () => {
   test.each([
     new Error("Request timed out."),
     new OpenworkServerError(500, "unexpected_failure", "Discovery failed: Bearer fixture-secret"),
-  ])("shows explicit launch failures with sanitized diagnostics and discovery-only Retry (%s)", async cause => {
+  ])("keeps unknown launch failures in details without offering an unclassified reload (%s)", async cause => {
     const host = resolutionFixture(true)
     host.resolveSpy.mockRejectedValueOnce(cause).mockResolvedValue({ app: fixture() })
     try {
       await host.render()
       const status = host.container.querySelector('[role="status"]')
-      expect(status?.textContent).toContain("Interactive view unavailable. The normal tool result is still available.")
-      expect(status?.textContent).toContain(safeMcpAppDiagnosticMessage(cause, "fallback"))
-      expect(status?.textContent).toContain("MCP_APP_RESOURCE_RESOLUTION_FAILED")
-      expect(status?.textContent).toContain("Stage: resource-resolution")
-      expect(status?.textContent).not.toContain("fixture-secret")
+      expect(status?.textContent).toBe("Interactive view unavailable")
+      const details = host.container.querySelector("details")
+      expect(details?.open).toBe(false)
+      expect(details?.textContent).toContain("Interactive view unavailable. The normal tool result is still available.")
+      expect(details?.textContent).toContain(safeMcpAppDiagnosticMessage(cause, "fallback"))
+      expect(details?.textContent).toContain("MCP_APP_RESOURCE_RESOLUTION_FAILED")
+      expect(details?.textContent).toContain("Stage: resource-resolution")
+      expect(details?.textContent).not.toContain("fixture-secret")
       expect(JSON.stringify(host.errorSpy.mock.calls)).not.toContain("fixture-secret")
-      if (cause instanceof OpenworkServerError) expect(status?.textContent).toContain(`Cause code: ${cause.code}`)
+      if (cause instanceof OpenworkServerError) expect(details?.textContent).toContain(`Cause code: ${cause.code}`)
       expect(host.resolveSpy).toHaveBeenCalledTimes(1)
       expect(host.container.querySelector("iframe")).toBeNull()
-      const retry = Array.from(host.container.querySelectorAll("button")).find(button => button.textContent === "Retry")
-      if (!retry) throw new Error("Missing resolution Retry")
-      await act(async () => retry.click())
-      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
-      expect(host.resolveSpy.mock.calls[1]).toEqual(host.resolveSpy.mock.calls[0])
-      expect(host.container.querySelector('[role="status"]')).toBeNull()
-      expect(host.container.querySelector("iframe")).not.toBeNull()
+      expect(Array.from(host.container.querySelectorAll("button")).some(button => /^(Retry|Reload view)$/.test(button.textContent ?? ""))).toBe(false)
       expect(host.callSpy).not.toHaveBeenCalled()
       expect(host.providerRetry).not.toHaveBeenCalled()
     } finally { await host.dispose() }

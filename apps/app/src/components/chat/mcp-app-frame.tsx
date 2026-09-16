@@ -12,7 +12,7 @@ import { ConnectionCard } from "./connection-card"
 import { connectionCardPayloadFromChatToolResult, reconnectActionFromChatToolResult } from "@/components/tools/error-attribution"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { openDesktopUrl } from "@/app/lib/desktop"
-import { mcpAppResolutionRetryDelayMs } from "@/app/lib/mcp-app-resolution"
+import { isTransientMcpAppResolutionCode, mcpAppResolutionRetryDelayMs } from "@/app/lib/mcp-app-resolution"
 import {
   OpenworkServerError,
   type OpenworkMcpAppLaunchReference,
@@ -22,6 +22,7 @@ import {
 import { useMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import {
   formatMcpAppDiagnostic,
   safeMcpAppDiagnosticMessage,
@@ -78,6 +79,10 @@ const ACTIONABLE_MCP_APP_RESOLUTION_CODES = new Set([
   "invalid_resource_uri",
   "invalid_launch_reference",
   "mcp_unreachable",
+  "mcp_auth_required",
+  "mcp_permission_denied",
+  "mcp_resource_unavailable",
+  "mcp_initialization_failed",
   "resource_read_failed",
   "resource_too_large",
   "server_unavailable",
@@ -270,25 +275,27 @@ export function isActionableMcpAppResolutionError(cause: unknown): boolean {
 
 const CHAT_MCP_APP_UNAVAILABLE_NOTICE = "Interactive view unavailable. The normal tool result is still available."
 
-export function McpAppDiagnosticNotice({ error, notice, onRetry }: { error: McpAppDiagnostic; notice: string; onRetry?: () => void }) {
+export function McpAppDiagnosticNotice({ error, notice, onReloadView }: { error: McpAppDiagnostic; notice: string; onReloadView?: () => void }) {
   const [detailsCopied, setDetailsCopied] = useState(false)
   const details = formatMcpAppDiagnostic(error)
+  const canReload = error.stage === "resource-resolution" && isTransientMcpAppResolutionCode(error.causeCode)
+  // This is a secondary view failure, not a failed task or a connection card.
+  // Without a real connection identity/action, do not infer a sign-in surface.
+  // McpAppFrame routes authoritative connection payloads to ConnectionCard first.
   return (
-    <div className="mt-2 text-xs text-muted-foreground" role="status">
-      <p>{notice} {error.message}</p>
-      {error.causeCode === "server_unavailable" || error.causeCode === "mcp_unreachable" ? (
-        <p className="mt-1">The connection was not ready. Retry, or check the connection under Settings &gt; Library.</p>
-      ) : null}
-      {onRetry ? (
-        <button type="button" className="mt-1 underline underline-offset-2" onClick={onRetry}>Retry</button>
-      ) : null}
-      <details className="mt-1">
-        <summary className="cursor-pointer select-none">Technical details ({error.code})</summary>
-        <p className="mt-1">Copy these details when reporting the rendering problem.</p>
+    <div className="mt-2 text-xs text-muted-foreground">
+      <span className="sr-only" role="status">Interactive view unavailable</span>
+      <details>
+        <summary className="cursor-pointer select-none">Interactive view unavailable</summary>
+        <p className="mt-1">{notice}</p>
         <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-[11px] text-foreground">{details}</pre>
-        <button
-          type="button"
-          className="mt-1 underline underline-offset-2"
+        {canReload && onReloadView ? (
+          <Button variant="link" size="xs" className="mt-1 mr-3 px-0" onClick={onReloadView}>Reload view</Button>
+        ) : null}
+        <Button
+          variant="link"
+          size="xs"
+          className="mt-1 px-0"
           onClick={() => {
             if (!navigator.clipboard) return
             void navigator.clipboard.writeText(details)
@@ -297,7 +304,7 @@ export function McpAppDiagnosticNotice({ error, notice, onRetry }: { error: McpA
           }}
         >
           {detailsCopied ? "Copied" : "Copy details"}
-        </button>
+        </Button>
       </details>
     </div>
   )
@@ -791,6 +798,7 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
   const [app, setApp] = useState<OpenworkMcpAppResource | null>(null)
   const [error, setError] = useState<McpAppDiagnostic | null>(null)
   const [resolveToken, setResolveToken] = useState(0)
+  const [reconnecting, setReconnecting] = useState(false)
   // The sandbox view unmounts on every preserved-result change; keep the last
   // measured height here so the rebuilt iframe does not snap back to default.
   const heightRef = useRef(DEFAULT_HEIGHT)
@@ -816,6 +824,7 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
     let retryTimer: number | undefined
     setApp(null)
     setError(null)
+    setReconnecting(false)
     if (draft || !result || !openworkServerClient || !workspaceId) return () => { cancelled = true }
     const startedAt = performance.now()
     const checkpoints = ["resolve-started"]
@@ -825,6 +834,7 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
         .then(({ app: resolved }) => {
           launchId = resolved?.launchId
           if (cancelled) { release(); return }
+          setReconnecting(false)
           // A preserved MCP result is neutral transport data. A null resolution
           // means the current tool definition does not advertise an MCP App, so
           // ordinary tools such as save_artifact_view render only their normal
@@ -837,9 +847,11 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
           checkpoints.push(`resolve-failed-${attemptIndex + 1}+${Math.round(performance.now() - startedAt)}ms`)
           const retryDelayMs = mcpAppResolutionRetryDelayMs(cause, attemptIndex)
           if (retryDelayMs !== null) {
+            setReconnecting(true)
             retryTimer = window.setTimeout(() => attempt(attemptIndex + 1), retryDelayMs)
             return
           }
+          setReconnecting(false)
           if (launch || isActionableMcpAppResolutionError(cause)) {
             const diagnostic: McpAppDiagnostic = {
               code: "MCP_APP_RESOURCE_RESOLUTION_FAILED",
@@ -876,7 +888,8 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
   }
   if (!result) return null
   if (!origin) return <p role="status">This App is missing its conversation origin. Reopen the conversation to use it.</p>
-  if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} onRetry={() => setResolveToken((token) => token + 1)} />
+  if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} onReloadView={() => setResolveToken((token) => token + 1)} />
+  if (reconnecting) return <span className="text-xs text-muted-foreground" role="status">Reconnecting…</span>
   if (!app || resolvedFor.current !== resolution) return null
   return (
     <McpAppSandboxView

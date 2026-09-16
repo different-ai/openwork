@@ -303,6 +303,22 @@ function connectionFailure(error: unknown): string {
   return "connection or protocol negotiation failed";
 }
 
+/** Only typed authentication failures justify asking for credentials. An MCP
+ * initialization rejection is not evidence of a signed-out connection. */
+function mcpAppConnectionFailureCode(error: unknown): string {
+  if (error instanceof UnauthorizedError) return "mcp_auth_required";
+  if (error instanceof StreamableHTTPError || error instanceof SseError) {
+    if (error.code === 401) return "mcp_auth_required";
+    if (error.code === 403) return "mcp_permission_denied";
+    if (error.code === 404 || error.code === 410) return "mcp_resource_unavailable";
+    if (error.code === 408 || error.code === 429 || (typeof error.code === "number" && error.code >= 500)) return "mcp_unreachable";
+    return "mcp_initialization_failed";
+  }
+  if (error instanceof McpError && error.code !== ErrorCode.RequestTimeout) return "mcp_initialization_failed";
+  if (connectionFailure(error) === "TLS certificate validation failed") return "mcp_initialization_failed";
+  return "mcp_unreachable";
+}
+
 async function withRemoteClient<T>(
   config: Record<string, unknown>,
   run: (client: Client) => Promise<T>,
@@ -326,6 +342,7 @@ async function withRemoteClient<T>(
     () => new SSEClientTransport(url, { requestInit, fetch: guardedFetch }),
   ];
   const failures: string[] = [];
+  let failureCode = "mcp_unreachable";
   for (const [index, createTransport] of attempts.entries()) {
     const client = new Client({ name: "openwork-mcp-app-host", version: "1.0.0" }, clientOptions());
     let connected = false;
@@ -335,6 +352,7 @@ async function withRemoteClient<T>(
       return await run(client);
     } catch (error) {
       if (connected) throw error;
+      failureCode = mcpAppConnectionFailureCode(error);
       failures.push(`${index === 0 ? "Streamable HTTP POST" : "Legacy SSE fallback"}: ${connectionFailure(error)}`);
       // MCP 2025-11-25 backwards compatibility applies only to a rejected
       // InitializeRequest, not auth/network errors or the initialized notification.
@@ -347,7 +365,7 @@ async function withRemoteClient<T>(
     }
   }
   throw new McpAppHostError(
-    "mcp_unreachable",
+    failureCode,
     failures.join("; "),
   );
 }

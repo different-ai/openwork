@@ -183,7 +183,10 @@ const COMMAND_ADMISSION_TTL_MS = 24 * 60 * 60 * 1_000;
 
 function rethrowMcpAppHostError(error: unknown): never {
   if (!(error instanceof McpAppHostError)) throw error;
-  const status = error.code === "invalid_tool_name" || error.code.startsWith("invalid_resource")
+  const status = error.code === "mcp_auth_required" ? 401
+    : error.code === "mcp_permission_denied" ? 403
+    : error.code === "mcp_resource_unavailable" ? 404
+    : error.code === "invalid_tool_name" || error.code.startsWith("invalid_resource")
     ? 400
     : error.code === "tool_not_found" || error.code === "server_unavailable"
       ? 404

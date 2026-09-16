@@ -387,6 +387,40 @@ async function fixtureDashboardLaunch(config: ServerConfig, root: string) {
 }
 
 describe("MCP Apps host transport", () => {
+  test.each([
+    [401, "mcp_auth_required"],
+    [403, "mcp_permission_denied"],
+    [410, "mcp_resource_unavailable"],
+    [503, "mcp_unreachable"],
+  ])("preserves HTTP %s recovery without legacy fallback or provider secrets", async (status, code) => {
+    const { config, root } = await configuredFixture("openwork-mcp-recovery-");
+    let requests = 0;
+    const provider = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => {
+      requests++;
+      return new Response("private-provider-body", { status });
+    } });
+    stops.push(() => { provider.stop(true); });
+    await addMcp(config, WORKSPACE_ID, "fixture", { type: "remote", url: `http://127.0.0.1:${provider.port}/mcp`, enabled: true });
+    const pending = resolveMcpAppResource({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, projectedToolName: "fixture_render_fixture" });
+    await expect(pending).rejects.toMatchObject({ code });
+    await expect(pending).rejects.not.toThrow("private-provider-body");
+    expect(requests).toBe(1);
+  });
+
+  test("does not mistake an initialization McpError for missing authentication", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-init-recovery-");
+    let requests = 0;
+    const provider = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
+      requests++;
+      const body = await request.json();
+      return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32603, message: "private-provider-body" } });
+    } });
+    stops.push(() => { provider.stop(true); });
+    await addMcp(config, WORKSPACE_ID, "fixture", { type: "remote", url: `http://127.0.0.1:${provider.port}/mcp`, enabled: true });
+    await expect(resolveMcpAppResource({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, projectedToolName: "fixture_render_fixture" })).rejects.toMatchObject({ code: "mcp_initialization_failed" });
+    expect(requests).toBe(1);
+  });
+
   test("uses OpenCode's exact projected MCP tool naming", () => {
     expect(projectedMcpToolName("sales force", "render.pipeline")).toBe("sales_force_render_pipeline");
     expect(toolUiResourceUri({ _meta: { ui: { resourceUri: RESOURCE_URI } } })).toBe(RESOURCE_URI);
