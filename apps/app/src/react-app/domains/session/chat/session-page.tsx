@@ -27,6 +27,9 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SessionReferenceProvider } from "@/components/chat/session-reference-context";
+import type { SessionMetadataCallbacks, SessionMetadataRuntime, SessionReference, SessionReferenceIdentity, SessionReferenceInventory } from "@/components/chat/session-reference";
+import { openSessionReference } from "./session-reference-navigation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -117,6 +120,7 @@ const STARTUP_SKELETON_ROWS = [
   { id: "final", titleWidth: "36%", bodyWidth: "74%" },
 ];
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
+const EMPTY_SESSION_REFERENCE_INVENTORIES: readonly SessionReferenceInventory[] = [];
 
 export type OpenSessionTab = WorkbenchSessionTab;
 
@@ -211,6 +215,9 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
+  sessionReferenceInventories?: readonly SessionReferenceInventory[];
+  createWorkspaceSessionMetadataCallbacks?: (runtime: SessionMetadataRuntime) => SessionMetadataCallbacks;
+  isSessionReferenceCurrent?: (reference: SessionReferenceIdentity) => boolean;
   sessionNumberShortcuts: SessionNumberShortcutsState;
   selectedSessionId: string | null;
   selectedWorkspaceId: string;
@@ -339,7 +346,7 @@ function WorkbenchPaneHeader(props: {
 }
 
 /** Every visible conversation owns its pending interactions, including the side pane. */
-function SplitSessionSurface(props: SessionSurfaceProps) {
+function SplitSessionSurface({ metadataCallbacks, ...props }: SessionSurfaceProps & { metadataCallbacks?: SessionMetadataCallbacks }) {
   const client = useMemo(() => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
     ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken })
     : createClient(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken, mode: "openwork" }),
@@ -348,7 +355,7 @@ function SplitSessionSurface(props: SessionSurfaceProps) {
     client, workspaceId: props.workspaceId, sessionId: props.sessionId, workspaceRoot: props.workspaceRoot ?? "",
   });
   return <>
-    <ReactSessionRuntime workspaceId={props.workspaceId} sessionId={props.sessionId}
+    <ReactSessionRuntime {...metadataCallbacks} workspaceId={props.workspaceId} sessionId={props.sessionId}
       opencodeBaseUrl={props.opencodeBaseUrl} openworkToken={props.openworkToken} />
     <SessionSurface {...props} {...interactions} />
   </>;
@@ -1135,6 +1142,16 @@ export function SessionPage(props: SessionPageProps) {
     props.sidebar.onOpenSession(workspaceId, sessionId);
   }, [focusWorkbenchPane, openWorkbenchTab, props.sidebar]);
 
+  const handleOpenSessionReference = useCallback((reference: SessionReference) => {
+    const workbench = useWorkbenchStore.getState();
+    openSessionReference(reference, workbench, {
+      openTab: workbench.openTab,
+      focusPane: workbench.focusPane,
+      setSplit: workbench.setSplit,
+      onOpenSession: props.sidebar.onOpenSession,
+    });
+  }, [props.sidebar.onOpenSession]);
+
   const closeSecondaryWorkbenchPane = useCallback(() => {
     setWorkbenchSplit(null);
   }, [setWorkbenchSplit]);
@@ -1324,6 +1341,11 @@ export function SessionPage(props: SessionPageProps) {
   ) : null;
 
   return (
+    <SessionReferenceProvider
+      inventories={props.sessionReferenceInventories ?? EMPTY_SESSION_REFERENCE_INVENTORIES}
+      isReferenceCurrent={props.isSessionReferenceCurrent}
+      onOpenReference={handleOpenSessionReference}
+    >
     <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
       <SidebarProvider
         open={sidebarOpen}
@@ -1798,6 +1820,12 @@ export function SessionPage(props: SessionPageProps) {
                               <div className="min-h-0 flex-1">
                                 <SplitSessionSurface
                                   {...splitPaneRuntime.surface}
+                                  metadataCallbacks={props.createWorkspaceSessionMetadataCallbacks?.({
+                                    workspaceId: splitSession.workspaceId,
+                                    runtimeWorkspaceId: splitPaneRuntime.runtimeWorkspaceId,
+                                    opencodeBaseUrl: splitPaneRuntime.opencodeBaseUrl,
+                                    openworkToken: splitPaneRuntime.openworkToken,
+                                  })}
                                   client={splitPaneRuntime.client}
                                   environmentClient={splitPaneRuntime.environmentClient}
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
@@ -2069,5 +2097,6 @@ export function SessionPage(props: SessionPageProps) {
 
       {/* Cloud provider notifications are now handled globally by CloudProvidersToast in app-root.tsx */}
     </div>
+    </SessionReferenceProvider>
   );
 }

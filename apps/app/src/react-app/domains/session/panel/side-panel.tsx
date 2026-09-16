@@ -301,7 +301,7 @@ function BrowserPanelContent({
 
   return (
     <>
-      {isAvailable ? (
+      {isAvailable && tab.browserTask ? (
         <div data-browser-shortcut-tab={tab.id} className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
           <span className="shrink-0 font-medium">Built-in browser</span>
           <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">

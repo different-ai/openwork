@@ -456,7 +456,7 @@ test("a background conversation reads its owned page silently and requests atten
   });
 });
 
-linkTest("a transcript link's menu copies its exact address and opens only its own conversation's browser", async ({ world, user, step }) => {
+linkTest("a transcript link's menu copies its exact address and opens only its own conversation's browser", async ({ world, user, agent, step }) => {
   const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
   const link: Target = { role: "link", label: world.linkUrl };
   const menuItem = (label: string): Target => ({ role: "menuitem", label });
@@ -588,7 +588,7 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
   });
 
-  await step("Normal click opens an owned sidebar tab instead of a separate native window", async () => {
+  const manualTabId = await step("Normal click loads an owned sidebar tab without browser control consent or controls", async () => {
     const before = await world.pageTargets();
     const browserBefore = await world.readBrowserState();
     await user.click(link);
@@ -608,6 +608,28 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     expect(newPages[0].url).toBe(world.linkUrl);
     expect(await world.readMainUrl()).toBe(mainUrl);
     expect((await world.nativeMenu()).open).toBe(false);
+    await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
+    await user.notSee({ role: "button", label: "Allow for this thread" });
+    await user.notSee({ role: "button", label: "Take over" });
+    await user.notSee({ role: "button", label: "Resume browser" });
+    if (!state.activeTabId) throw new Error("The manual link did not select a tab.");
+    return state.activeTabId;
+  });
+
+  await step("The agent must request control before reading the manually opened page", async () => {
+    let returned = false;
+    const observing = agent.browserTask({ sessionId: world.reading.sessionId, operation: "observe", args: { tabId: manualTabId } })
+      .then(result => { returned = true; return result; });
+    await user.see({ role: "button", label: "Allow for this thread" });
+    await user.see({ role: "button", label: "Take over" });
+    expect(returned).toBe(false);
+    await user.click({ role: "button", label: "Allow for this thread" });
+    const observed = await observing;
+    const destination = new URL(world.linkUrl);
+    expect(observed).toMatchObject({ ok: true, tabId: manualTabId, url: destination.origin + destination.pathname });
+    expect(typeof observed.text).toBe("string");
+    await user.notSee({ role: "button", label: "Allow for this thread" });
+    await user.see({ role: "button", label: "Take over" });
   });
 });
 
