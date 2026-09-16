@@ -1,4 +1,5 @@
 import { readDevLogs, type DevLogRecord } from "./dev-log";
+import { connectionDiagnosticHistory } from "./connection-diagnostic-history";
 import {
   appBuildInfo,
   engineInfo,
@@ -150,6 +151,7 @@ export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): st
   const clientConnected = context?.clientConnected === true;
   const bundle = {
     capturedAt: input.capturedAt,
+    connectionHistory: connectionDiagnosticHistory.read(),
     app: pickAppInfo(input.appInfo),
     opencodeEngine: pickEngineInfo(input.engineInfo),
     runtime: {

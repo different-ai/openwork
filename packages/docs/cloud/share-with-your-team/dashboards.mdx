@@ -37,6 +37,12 @@ The sidebar shows **Dashboard**, with one section per assigned dashboard labeled
 
 Apps use a compact masonry layout in the saved order. Each app keeps its own height, so shorter apps can stack beside a taller one; narrow windows use one column. Successful apps show their own UI without an extra title bar or card border. Hover over an app or focus its **App options** button to find **Refresh** and its current status. On touch devices the options button stays visible.
 
+OpenWork remembers the embedded view's height and the surrounding tile's height for its displayed width, scoped to the account, organization, workspace and app. On reload or reopening, the tile can reserve that remembered shape while loading; a matching width uses its recorded measurements. These are loading estimates, not a fixed layout: app size notifications still update the height, up to the existing **800px** embedded-view limit. Live tiles without remembered measurements start with a **320px** loading area.
+
+Eligible live, read-only Apps can receive refreshed data in the same embedded document instead of reloading it. This lets an App keep filters, text inputs and scroll position while displaying the new result, provided its own result handler preserves that state. A full dashboard reload creates new documents; restoring arbitrary state inside an App after that reload is not guaranteed.
+
+Remembered geometry and saved preview data are display-only, not permission to run tools or open links. Cached previews do not retain a live launch lease. Generated views remain limited to displaying, filtering and exploring results, not submitting writes.
+
 Apps awaiting a run or needing recovery keep visible controls and status, including:
 
 - **Organization auto-run**
@@ -58,6 +64,7 @@ The interaction grant is single-use and lasts at most **1,500 milliseconds** in 
 The shared chat and dashboard renderer uses the stable **2026-01-26** protocol with `ext-apps` **1.7.5**:
 
 - After initialization, the host sends complete `ui/notifications/tool-input` arguments before `ui/notifications/tool-result`. Result delivery retains `content`, `structuredContent`, `_meta`, and the optional `isError` flag, including explicit `false`.
+- Eligible dashboard refreshes use notification updates in that same document: ordered input/result delivery updates the data without another initialization. App result handlers must accept subsequent results rather than treating the first result as the only one.
 - Writable Apps advertise `serverTools` and `openLinks`. Tool calls retain the originating endpoint, workspace, session, engine (when supplied), and live launch lease through dispatch. Automatic read-only helpers are allowed; writes require the recent single-use trusted interaction described above, without an additional host confirmation. OpenWork's sandbox proxy verifies the interaction and overwrites request `_meta["openwork/userInteraction"]`; an App cannot authorize itself by supplying that field. Link requests require an active writable view, use the host's HTTP(S)-only opener, and report failures.
 - Only `inline` display is available. Valid `ui/request-display-mode` requests return the current `inline` mode, including requests for fullscreen or picture-in-picture; they do not change the layout.
 - Size notifications adjust the inline height within host limits. Unmount retains the existing bounded `ui/resource-teardown` handshake and bridge close.
@@ -72,6 +79,8 @@ The shared chat and dashboard renderer uses the stable **2026-01-26** protocol w
 | Generated result preview | Neither advertised nor allowed | Explicit read-only origin without a conversation session. |
 
 Launch leases expire **30 minutes after creation**; tool calls and clicks do not extend that fixed lifetime. This lease is separate from the 1,500-millisecond interaction grant. Closing or replacing a view disables its pending actions and releases its owned lease. Dashboard endpoint removal also retires that endpoint's lease. A restored cached view cannot reuse the previous lease, and the server revalidates launch ownership before dispatching tools. Reopen or freshly launch the App after its lease expires.
+
+In-place refresh requires a valid, eligible read-only dashboard launch with server-advertised `app.refresh` metadata containing `resourceDigest` and `expiresAt`. The host submits the expected resource digest; the server checks the live lease, permissions, tool and current resource before dispatch. A changed resource is denied before the tool runs, and the host replaces the old view through the normal guarded launch path instead of delivering incompatible data to it. A changed launch scope, input or policy also invalidates document reuse; any permitted fresh launch creates a replacement document. Refresh does not extend the fixed lease, authorize a write, or relax authentication, approval or retry rules. This continuity behavior does not add automatic recovery from expired-launch errors.
 
 Chat views mount from completed, preserved results; dashboard tiles render successful or saved results. A cancelled in-flight launch therefore has no mounted recipient for `ui/notifications/tool-cancelled`. Cancelling another operation or unmounting an already completed result does not invent a cancellation notification. Early mounting and streaming launch input are not implemented. Dashboard launch failures retain the existing error or saved-result presentation rather than mounting an actionable failed launch.
 

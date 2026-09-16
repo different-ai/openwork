@@ -472,7 +472,7 @@ export async function savedAppCreation(seed: Seed) {
     if (result.isError) throw new Error(JSON.stringify(result.content));
     return result;
   };
-  const code = 'const roster = await tools.den.getWorkers({}); return { topic: input.topic, total: roster.workers.length };';
+  const code = 'return { topic: input.topic, total: 7 };';
   const firstInput = { topic: "Launch briefing" };
   await rpc("execute_capability_script", { code, input: firstInput });
   const saved = await saveWorkflow(den.admin, {
@@ -493,7 +493,7 @@ export async function savedAppCreation(seed: Seed) {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [{ promptMarker: creationPrompt, finalReply: creationReply, steps: [
       { tool: "save_artifact_view", arguments: {
-        configObjectId, title: "Briefing app", reactSource: source("Weekly overview"),
+        configObjectId, dataMode: "snapshot", title: "Briefing app", reactSource: source("Weekly overview"),
         cssSource: "body{font-family:system-ui,sans-serif;padding:24px;margin:0}button{padding:8px 12px}",
       } },
     ] }] }),

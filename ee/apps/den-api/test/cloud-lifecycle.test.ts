@@ -264,12 +264,20 @@ describe("cloud lifecycle idle stop", () => {
       lastActiveAt: new Date("2026-07-25T11:10:00.000Z"),
     })
     const { store } = makeStore({ workers: [stoppedWorker, retryWorker] })
+    const calls: string[] = []
     const result = await lifecycle.stopIdleCloudWorkers({
       store,
       provisionerMode: "daytona",
       idleBefore,
       batchSize: 10,
+      ...idleActivitySeams(),
+      flushWorker: async (workerId) => {
+        calls.push(`flush:${workerId}`)
+        if (workerId === retryWorker.id) throw new Error("flush failed")
+        return true
+      },
       stopWorker: async (workerId) => {
+        calls.push(`stop:${workerId}`)
         if (workerId === retryWorker.id) {
           throw new Error("stop failed")
         }
@@ -280,8 +288,71 @@ describe("cloud lifecycle idle stop", () => {
     expect(result).toEqual({ checked: 2, stopped: 1 })
     expect(stoppedWorker.status).toBe("stopped")
     expect(retryWorker.status).toBe("healthy")
+    // Every Den-initiated stop flushes first; a failed flush never blocks the stop.
+    expect(calls).toEqual([
+      `flush:${stoppedWorker.id}`,
+      `stop:${stoppedWorker.id}`,
+      `flush:${retryWorker.id}`,
+      `stop:${retryWorker.id}`,
+    ])
+  })
+
+  test("leaves a busy or unaskable instance running and stops it only once it is idle", async () => {
+    lifecycle.resetIdleStopUnknownCycles()
+    const idleBefore = new Date("2026-07-25T12:00:00.000Z")
+    const busyWorker = makeWorker({ status: "healthy", lastActiveAt: new Date("2026-07-25T11:00:00.000Z") })
+    const automationWorker = makeWorker({ status: "healthy", lastActiveAt: new Date("2026-07-25T11:00:00.000Z") })
+    const silentWorker = makeWorker({ status: "healthy", lastActiveAt: new Date("2026-07-25T11:00:00.000Z") })
+    const { store, updates } = makeStore({ workers: [busyWorker, automationWorker, silentWorker] })
+    const stops: string[] = []
+    const run = () => lifecycle.stopIdleCloudWorkers({
+      store,
+      provisionerMode: "daytona",
+      idleBefore,
+      batchSize: 10,
+      hasActiveAutomationRun: async (workerId) => workerId === automationWorker.id,
+      resolveInstance: async (workerId) => ({ url: `https://${workerId}.example.test`, hostToken: "host-token" }),
+      probeActivity: async ({ instanceUrl }) => instanceUrl.includes(busyWorker.id)
+        ? { verdict: "busy", reason: "busy_sessions", alive: true, busySessions: 1, waitingRequests: 0, connectedClients: 1 }
+        : { verdict: "unknown", reason: "probe_failed", alive: false, busySessions: 0, waitingRequests: 0, connectedClients: 0 },
+      flushWorker: async () => true,
+      stopWorker: async (workerId) => {
+        stops.push(workerId)
+        return { status: "stopped" }
+      },
+    })
+
+    // Cycle 1: busy, automation run, and a silent instance are all left alone;
+    // nothing is even reserved.
+    expect(await run()).toEqual({ checked: 3, stopped: 0 })
+    expect(updates).toEqual([])
+    expect([busyWorker.status, automationWorker.status, silentWorker.status]).toEqual(["healthy", "healthy", "healthy"])
+
+    // Cycles 2 and 3: the silent instance is stopped only after three unknown
+    // answers; the busy one answers busy each time and stays.
+    expect(await run()).toEqual({ checked: 3, stopped: 0 })
+    expect(await run()).toEqual({ checked: 3, stopped: 1 })
+    expect(stops).toEqual([silentWorker.id])
+    expect(silentWorker.status).toBe("stopped")
+    expect(busyWorker.status).toBe("healthy")
+    expect(automationWorker.status).toBe("healthy")
   })
 })
+
+function idleActivitySeams() {
+  return {
+    hasActiveAutomationRun: async () => false,
+    resolveInstance: async () => ({ url: "https://sandbox.example.test", hostToken: "host-token" }),
+    probeActivity: async () => ({
+      verdict: "idle" as const,
+      reason: "idle" as const,
+      alive: true,
+      busySessions: 0,
+      waitingRequests: 0,
+      connectedClients: 0,
+    }),
+  }
+}
 
 describe("cloud lifecycle wake", () => {
   test("marks the worker failed when wake exceeds the provisioning deadline", async () => {

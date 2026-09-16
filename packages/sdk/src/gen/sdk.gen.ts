@@ -1776,7 +1776,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Request an update for the active organization's Cloud instance
    *
-   * Flushes a running Cloud workspace checkpoint and stops the sandbox so the next resolve can recycle it onto the latest snapshot.
+   * Flushes a running Cloud workspace checkpoint and stops the sandbox so the next resolve can recycle it onto the latest snapshot. A sandbox that is mid-task is left running; clients that send { acceptsDeferral: true } learn why (busy or activity_unknown), older clients receive already_current.
    */
   public postV1CloudInstanceUpdate<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<

@@ -191,7 +191,7 @@ export type CloudInstanceUpdateResponse =
     }
   | {
       ok: false;
-      error: "already_current" | "flush_failed";
+      error: "already_current" | "flush_failed" | "busy" | "activity_unknown";
     };
 
 export type CloudGatewayInstanceResponse = {

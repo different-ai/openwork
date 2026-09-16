@@ -1,4 +1,4 @@
-import type { DenCloudInstance, DenCloudStartupFailure } from "@/app/lib/den";
+import type { DenCloudInstance, DenCloudInstanceUpdateDeferral, DenCloudStartupFailure } from "@/app/lib/den";
 
 export function cloudWorkspaceFailureLogFields(failure: DenCloudStartupFailure) {
   return {
@@ -153,12 +153,40 @@ export function cloudWorkspaceUpdateAvailable(instance: DenCloudInstance | null)
   return instance.imageVersion === null || instance.imageVersion !== instance.latestVersion;
 }
 
-// Stopped instances already recycle on wake; this only nudges running stale instances,
-// skips while any client-visible run is active, and attempts once per target version so
-// failed or already_current attempts cannot retry-loop.
+/** A tab hidden this long counts as the person having stepped away. */
+export const CLOUD_AUTO_UPDATE_HIDDEN_MS = 5 * 60_000;
+/** A visible tab with no pointer or keyboard input this long counts the same. */
+export const CLOUD_AUTO_UPDATE_INPUT_IDLE_MS = 10 * 60_000;
+/** After the server defers an update, wait at least this long before asking again. */
+export const CLOUD_AUTO_UPDATE_DEFERRED_RETRY_MS = 5 * 60_000;
+
+/**
+ * Whether the person is away from this tab: hidden long enough, or visible
+ * but untouched long enough. An update restarts the workspace, so it must
+ * never start the moment someone is reading or typing.
+ */
+export function isUserAway(input: {
+  hiddenSinceMs: number | null;
+  lastInputAtMs: number;
+  nowMs: number;
+  hiddenMs?: number;
+  idleMs?: number;
+}): boolean {
+  const hiddenMs = input.hiddenMs ?? CLOUD_AUTO_UPDATE_HIDDEN_MS;
+  const idleMs = input.idleMs ?? CLOUD_AUTO_UPDATE_INPUT_IDLE_MS;
+  if (input.hiddenSinceMs !== null && input.nowMs - input.hiddenSinceMs >= hiddenMs) return true;
+  return input.nowMs - input.lastInputAtMs >= idleMs;
+}
+
+// Stopped instances already recycle on wake; this only nudges running stale instances.
+// It waits until the person is away and no client-visible run is active, honors the
+// retry window after a server-side deferral, and otherwise attempts once per target
+// version so failed or already_current attempts cannot retry-loop. The server makes
+// the authoritative busy check for other tabs, devices, remote sessions, and Automations.
 export function shouldAutoUpdateCloudWorkspace(input: {
   gatewayMode: boolean;
   visible: boolean;
+  away: boolean;
   status: "provisioning" | "waking" | "ready" | "failed" | null;
   updateAvailable: boolean;
   updating: boolean;
@@ -166,16 +194,26 @@ export function shouldAutoUpdateCloudWorkspace(input: {
   hasActiveRun: boolean;
   latestVersion: string | null;
   lastAttemptedVersion: string | null;
+  nowMs?: number;
+  retryNotBeforeMs?: number | null;
 }): boolean {
   return input.gatewayMode
     && input.visible
+    && input.away
     && input.status === "ready"
     && input.updateAvailable
     && !input.updating
     && !input.requestFailed
     && !input.hasActiveRun
     && input.latestVersion !== null
-    && input.latestVersion !== input.lastAttemptedVersion;
+    && input.latestVersion !== input.lastAttemptedVersion
+    && (input.retryNotBeforeMs == null || (input.nowMs ?? Date.now()) >= input.retryNotBeforeMs);
+}
+
+export function cloudWorkspaceUpdateDeferredLine(deferral: DenCloudInstanceUpdateDeferral): string {
+  return deferral === "busy"
+    ? "Update ready · it applies when your current work finishes"
+    : "Update ready · we couldn’t confirm your workspace is idle yet and will try again";
 }
 
 export function cloudWorkspaceStatusHasReadyContent(variant: CloudWorkspacePillVariant): boolean {
@@ -262,6 +300,7 @@ export function mapCloudWorkspaceState(input: {
   updating: boolean;
   accessRequired: boolean;
   requestFailed?: boolean;
+  updateDeferred?: DenCloudInstanceUpdateDeferral | null;
 }): CloudWorkspaceViewModel {
   const updateAvailable = cloudWorkspaceUpdateAvailable(input.instance);
   const lines = baseLines(input.instance, updateAvailable);
@@ -355,7 +394,9 @@ export function mapCloudWorkspaceState(input: {
       variant: "stale",
       label: "Update available",
       tone: "neutral",
-      statusLine: connectedStatusLine(input.instance, true),
+      statusLine: input.updateDeferred
+        ? cloudWorkspaceUpdateDeferredLine(input.updateDeferred)
+        : connectedStatusLine(input.instance, true),
       ...lines,
       updateAvailable,
       showUpdate: true,

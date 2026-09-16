@@ -428,6 +428,11 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       submissionPreparingLabel={failedSubmission ? "Restore the unsent message before sending" : "Creating conversation..."}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
+      disabledReasons={["send_model_unavailable"]}
+      preparingReasons={[
+        ...(props.busy || pendingSubmission !== null ? ["send_creating_session" as const] : []),
+        ...(failedSubmission !== null ? ["send_restore_unsent" as const] : []),
+      ]}
       modelUnavailable={context?.modelUnavailable}
       modelUnavailableMessage={context?.modelUnavailableMessage}
       organizationModelsEmpty={context?.organizationModelsEmpty}

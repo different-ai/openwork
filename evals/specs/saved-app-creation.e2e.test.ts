@@ -186,7 +186,7 @@ isolationTest.skipIf(process.env.OPENWORK_EVAL_ENGINE === "v2")("APP-ARCHIVE arc
 });
 
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
-  await step("advertise direct artifact creation guidance and prerequisites", async () => {
+  await step("advertise direct artifact creation guidance and mode-specific prerequisites", async () => {
     const { tools } = await world.listTools();
     if (!Array.isArray(tools)) throw new Error("MCP did not advertise tools.");
     const search = tools.map(record).find((tool) => tool.name === "search_capabilities");
@@ -195,11 +195,11 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(search?.description).toContain("use save_artifact_view and follow its prerequisites");
     expect(search?.description).not.toContain("Always search first");
     expect(builder?.description).toContain("in-app dashboard or artifact view");
-    expect(builder?.description).toContain("current version must declare an explicit JSON Schema outputSchema");
-    expect(builder?.description).toContain("have a successful saved-Workflow run matching that schema");
-    expect(builder?.description).toContain("execute_capability_script alone does not create its artifact snapshot");
+    expect(builder?.description).toContain("current saved Workflow must declare outputSchema");
+    expect(builder?.description).toContain("New apps default to live");
+    expect(builder?.description).toContain("Snapshot mode is restricted to workflows without capability dependencies");
   });
-  evidence.recordAssertionEvidence("MCP tool descriptions advertise direct artifact creation and saved-run prerequisites", "The live tools/list response includes save_artifact_view. Its descriptions identify the direct builder and require an output schema and matching successful saved-Workflow run; search no longer says Always search first. These assertions verify advertised guidance, not model tool selection. The conversation below uses a prescribed model workload to verify the artifact integration.", true);
+  evidence.recordAssertionEvidence("MCP tool descriptions advertise direct artifact creation and mode-specific prerequisites", "The live tools/list response includes save_artifact_view. Its descriptions require an output schema, default new apps to live and restrict snapshots to dependency-free workflows; search no longer says Always search first. These assertions verify advertised guidance, not model tool selection. The conversation below uses a prescribed snapshot workload with deterministic data to verify the artifact integration.", true);
   const viewsPath = `/v1/workflows/${world.configObjectId}/views`;
   expect(record((await probe.api(world.den.admin, viewsPath)).body).items).toEqual([]);
   await step("only offer sharing when the server supports it", async () => {
@@ -222,7 +222,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open("/dashboard");
     await user.click({ role: "button", label: "Add" });
     await user.click("Create with OpenWork");
-    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create a reusable app for my dashboard that") });
+    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     expect(creationPrompt).not.toContain(world.configObjectId);
     await user.type("composer", creationPrompt, { replace: true });
     await user.click("Run task");
@@ -339,6 +339,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("reopen the saved app after a reload", async () => {
     await world.open("/dashboard");
     await user.reload();
+    await user.click("App options for Team briefing");
     await user.click("Open Team briefing");
     await user.see({ text: "Saved app" }, { timeoutMs: 30_000 });
     await user.click("App options for Team briefing");
@@ -366,13 +367,80 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
     await world.open("/dashboard");
     await user.reload();
-    await user.see("Open Team briefing", { timeoutMs: 30_000 });
+    await user.see("App options for Team briefing", { timeoutMs: 30_000 });
     await probe.eventually(() => world.previewText(), { within: 30_000, label: "saved app rendered on dashboard", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
     await user.see({ text: "Project updates" });
     expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
     await user.screenshot();
   });
   evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Choose an existing app added the personal card again and it survived reload beside Project updates.", true);
+
+  await step("a saved snapshot reserves its measured tile size while reloading", async () => {
+    const saved = await readApp();
+    expect(record(saved.view).dataMode).toBe("snapshot");
+    const profile = await probe.api(world.den.admin, "/v1/me");
+    expect(profile.response.status, profile.text).toBe(200);
+    const userId = field(record(profile.body).user, "id");
+    const organizationId = await probe.storage("openwork.den.activeOrgId");
+    if (typeof organizationId !== "string" || !organizationId) throw new Error("Missing dashboard organization scope");
+    const scope = [world.proxy.ref.webUrl, userId, organizationId, world.proxy.ref.apiUrl];
+    const geometryKey = `openwork.react.dashboardTileCache.v1.${userId}.${organizationId}.snapshots.${encodeURIComponent(JSON.stringify(scope))}.geometry`;
+    const entryId = JSON.stringify([appId, field(saved.revision, "id"), field(saved.revision, "resourceUri")]);
+    const tileSelector = `[data-personal-dashboard-app="${appId}"]`;
+    const readSize = async () => {
+      const { elements, viewportWidth } = await probe.dom(`${tileSelector}, ${tileSelector} iframe`);
+      expect(elements).toHaveLength(2);
+      const [tile, frame] = elements;
+      if (!tile || !frame) throw new Error("The saved dashboard app must have a tile and an embedded view");
+      return { viewportWidth, width: tile.rect.width, height: tile.rect.height, frameWidth: frame.rect.width, frameHeight: frame.rect.height };
+    };
+    await user.notSee({ label: "Loading Team briefing" });
+    const measured = await probe.eventually(async () => {
+      const size = await readSize();
+      const persisted = await probe.storage(geometryKey);
+      const entries = persisted === null ? undefined : record(record(persisted).entries)[entryId];
+      const geometry = Array.isArray(entries) ? entries.map(record).find((entry) => entry.workspaceId === world.workspace.workspaceId
+        && entry.contentWidth === Math.round(size.frameWidth)) : undefined;
+      return { size, geometry };
+    }, { within: 10_000, label: "the visible snapshot's measured geometry is persisted for this workspace and width",
+      until: ({ size, geometry }) => geometry !== undefined && geometry.frameHeight === size.frameHeight
+        && typeof geometry.outerHeight === "number" && Math.abs(geometry.outerHeight - size.height) <= 1 });
+    const before = measured.size;
+    expect(before.width).toBeGreaterThan(0);
+    expect(before.frameHeight).toBeGreaterThan(0);
+    expect(before.frameHeight).toBeLessThanOrEqual(800);
+    expect(before.height).toBeGreaterThan(before.frameHeight);
+    const detailPath = `/v1/apps/${appId}`;
+    const requestCount = (await world.proxy.requestLog()).length;
+    try {
+      await world.proxy.faults.latency(detailPath, 15_000, { times: 1 });
+      await world.proxy.faults.latency(`/api/den${detailPath}`, 15_000, { times: 1 });
+      await user.reload();
+      await user.see({ text: "Loading app…" }, { timeoutMs: 30_000 });
+      const loading = await probe.dom(tileSelector);
+      expect(loading.elements).toHaveLength(1);
+      expect(loading.viewportWidth).toBe(before.viewportWidth);
+      const [tile] = loading.elements;
+      if (!tile) throw new Error("The saved tile disappeared while its detail was loading");
+      expect(Math.abs(tile.rect.width - before.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(tile.rect.height - before.height)).toBeLessThanOrEqual(1);
+      expect((await probe.dom(`${tileSelector} iframe`)).elements).toHaveLength(0);
+      await probe.eventually(() => world.previewText(), { within: 30_000, label: "the same saved result returns after the delayed detail request",
+        until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
+      const restored = await probe.eventually(readSize, { within: 10_000, label: "saved tile and iframe return to their measured size",
+        until: (size) => size.viewportWidth === before.viewportWidth && Math.abs(size.width - before.width) <= 1
+          && Math.abs(size.height - before.height) <= 1 && Math.abs(size.frameWidth - before.frameWidth) <= 1
+          && Math.abs(size.frameHeight - before.frameHeight) <= 1 });
+      expect((await world.proxy.requestLog()).slice(requestCount).filter((request) => request.method === "GET"
+        && request.path.endsWith(detailPath) && request.faulted && request.status === 200)).toHaveLength(1);
+      expect((await readApp()).revision).toMatchObject({ id: revisionId });
+      expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
+      evidence.recordAssertionEvidence("Saved snapshot loading preserves measured dashboard geometry", JSON.stringify({ before, loading: tile.rect, restored,
+        scope: "same app revision, workspace and width", coverage: "snapshot reload only; no live refresh or guest-state continuity claim" }), true);
+    } finally {
+      await world.resetProxy();
+    }
+  });
 
   // Keep an exact preview mounted while another client changes the saved app.
   await world.open(`/dashboard${originalPath}`);
@@ -453,7 +521,7 @@ test("create, preview, save and reopen an app without changing already-open resu
       pluginId: field(memberSaved.body, "pluginId"), configObjectVersionId: field(memberSaved.body, "configObjectVersionId"), input: memberInput,
     });
     const memberBuilt = await world.rpc("save_artifact_view", {
-      configObjectId: memberWorkflowId, title: "Personal report", reactSource: 'export default function Report({data}) { return <p>{data.topic}</p> }',
+      configObjectId: memberWorkflowId, dataMode: "snapshot", title: "Personal report", reactSource: 'export default function Report({data}) { return <p>{data.topic}</p> }',
     }, colleague);
     const memberView = record(record(memberBuilt.structuredContent).view);
     const memberAppId = field(memberView, "id");
@@ -490,7 +558,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     pluginId: field(privateWorkflow.body, "pluginId"), configObjectVersionId: field(privateWorkflow.body, "configObjectVersionId"), input: privateInput,
   });
   const privateBuilt = await world.rpc("save_artifact_view", {
-    configObjectId: privateWorkflowId, title: "Private planning", reactSource: 'export default function Planning({data}) { return <p>{data.topic}</p> }',
+    configObjectId: privateWorkflowId, dataMode: "snapshot", title: "Private planning", reactSource: 'export default function Planning({data}) { return <p>{data.topic}</p> }',
   });
   const privateView = record(record(privateBuilt.structuredContent).view);
   const privateAppId = field(privateView, "id");
@@ -501,7 +569,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(privateSave.response.status, privateSave.text).toBe(200);
 
   const companionBuilt = await world.rpc("save_artifact_view", {
-    configObjectId: world.configObjectId, title: "Briefing companion", reactSource: 'export default function Companion({data}) { return <p>{data.topic}</p> }',
+    configObjectId: world.configObjectId, dataMode: "snapshot", title: "Briefing companion", reactSource: 'export default function Companion({data}) { return <p>{data.topic}</p> }',
   });
   const companionView = record(record(companionBuilt.structuredContent).view);
   const companionAppId = field(companionView, "id");
@@ -732,7 +800,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("App options for Team briefing");
     await user.click("Delete Team briefing");
     await user.see({ text: "Delete “Team briefing”?" });
-    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Its workflow and past results stay available." });
+    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Past results stay available." });
     await user.screenshot();
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
@@ -760,7 +828,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see("Choose an existing app");
     await user.screenshot();
     await user.click("Create with OpenWork");
-    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create a reusable app for my dashboard that") });
+    await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     await user.screenshot();
   });
 });

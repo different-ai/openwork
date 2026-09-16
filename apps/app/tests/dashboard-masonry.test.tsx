@@ -15,11 +15,29 @@ function masonryFixture() {
   const root = createRoot(container);
   const heights = new Map([["short", 40.25], ["tall", 240.75]]);
   const observers: MockResizeObserver[] = [];
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  const requestFrame = spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  const cancelFrame = spyOn(globalThis, "cancelAnimationFrame").mockImplementation((id) => { frames.delete(id); });
   class MockResizeObserver {
     target: Element | null = null;
     notify: () => void;
     constructor(callback: ResizeObserverCallback) {
-      this.notify = () => callback([], this);
+      this.notify = () => {
+        if (!this.target) return;
+        const id = this.target.querySelector("[data-masonry-child]")?.getAttribute("data-masonry-child");
+        const height = heights.get(id ?? "") ?? 0;
+        callback([{
+          target: this.target,
+          contentRect: new DOMRect(0, 0, 320, height),
+          borderBoxSize: [{ blockSize: height, inlineSize: 320 }],
+          contentBoxSize: [{ blockSize: height, inlineSize: 320 }],
+          devicePixelContentBoxSize: [],
+        }], this);
+      };
       observers.push(this);
     }
     observe = mock((target: Element) => { this.target = target; });
@@ -52,13 +70,22 @@ function masonryFixture() {
     return found;
   };
   return {
-    container, heights, observers, render, child, item, observer,
+    container, heights, observers, render, child, item, observer, frames, requestFrame, geometrySpy,
+    async flush() {
+      await act(async () => {
+        const pending = [...frames.values()];
+        frames.clear();
+        for (const callback of pending) callback(0);
+      });
+    },
     async dispose() {
       try {
         await act(async () => root.unmount());
         for (const observer of observers) expect(observer.disconnect).toHaveBeenCalledTimes(1);
       } finally {
         geometrySpy.mockRestore();
+        requestFrame.mockRestore();
+        cancelFrame.mockRestore();
         Reflect.set(globalThis, "ResizeObserver", previousObserver);
         Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
         container.remove();
@@ -84,13 +111,47 @@ describe("Dashboard masonry mocked DOM measurements (not real geometry proof)", 
       for (const [height, span] of [[160.01, 22], [80, 11], [0.25, 2], [0, 1], [800, 101]]) {
         host.heights.set("short", height);
         await act(async () => host.observer("short").notify());
+        await host.flush();
         expect(host.item("short")).toBe(short);
         expect(short.style.gridRowEnd).toBe(`span ${span}`);
         expect(host.item("tall").style.gridRowEnd).toBe("span 32");
       }
       host.heights.set("tall", 400.5);
       await act(async () => host.observer("tall").notify());
+      await host.flush();
       expect(host.item("tall").style.gridRowEnd).toBe("span 52");
+    } finally { await host.dispose(); }
+  });
+
+  test("uses observer sizes without layout reads, skips unchanged tracks and coalesces bursts", async () => {
+    const host = masonryFixture();
+    try {
+      await host.render(["short"]);
+      const item = host.item("short");
+      expect(item.style.gridRowEnd).toBe("span 7");
+      expect(host.requestFrame).not.toHaveBeenCalled();
+      host.geometrySpy.mockClear();
+      host.observer("short").notify();
+      host.heights.set("short", 41);
+      host.observer("short").notify();
+      expect(host.requestFrame).not.toHaveBeenCalled();
+      expect(host.geometrySpy).not.toHaveBeenCalled();
+      host.heights.set("short", 80);
+      host.observer("short").notify();
+      host.heights.set("short", 120);
+      host.observer("short").notify();
+      expect(host.requestFrame).toHaveBeenCalledTimes(1);
+      expect(item.style.gridRowEnd).toBe("span 7");
+      await host.flush();
+      expect(host.item("short")).toBe(item);
+      expect(item.style.gridRowEnd).toBe("span 16");
+      expect(host.geometrySpy).not.toHaveBeenCalled();
+      host.heights.set("short", 160);
+      host.observer("short").notify();
+      await host.render([]);
+      expect(host.frames.size).toBe(0);
+      await host.flush();
+      expect(item.isConnected).toBe(false);
     } finally { await host.dispose(); }
   });
 

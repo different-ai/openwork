@@ -37,6 +37,8 @@ import {
   mergeComposerConnectionInventory,
 } from "./composer-connections";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
+import { connectionDiagnosticHistory, type ConnectionDiagnosticSource, type SendDiagnosticReason } from "@/app/lib/connection-diagnostic-history";
+import { composerDiagnosticBlockers } from "./composer-diagnostics";
 
 type MentionItem = {
   id: string;
@@ -63,6 +65,8 @@ type ComposerProps = {
   submissionPreparingLabel?: string;
   queuedCount: number;
   disabled: boolean;
+  disabledReasons?: readonly SendDiagnosticReason[];
+  preparingReasons?: readonly SendDiagnosticReason[];
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
   organizationModelsEmpty?: boolean;
@@ -782,6 +786,26 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     ? importedPlugins.find((plugin) => `plugin:${plugin.pluginId}` === toolMenuSection) ?? null
     : null;
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
+  const diagnosticsRef = useRef<ConnectionDiagnosticSource | null>(null);
+  useEffect(() => {
+    const diagnostics = connectionDiagnosticHistory.createSource();
+    diagnosticsRef.current = diagnostics;
+    return () => {
+      diagnostics.dispose();
+      diagnosticsRef.current = null;
+    };
+  }, [props.sessionId, props.draftScopeKey]);
+  useEffect(() => {
+    diagnosticsRef.current?.blockers(composerDiagnosticBlockers({
+      disabled: props.disabled,
+      disabledReasons: props.disabledReasons,
+      busy: props.busy,
+      stopping: props.stopping,
+      canSend,
+      submissionPreparing: props.submissionPreparing,
+      preparingReasons: props.preparingReasons,
+    }));
+  });
 
   const renderConnectionRows = () => {
     const servers = connectionInventory.servers;

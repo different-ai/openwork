@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import { AnimatePresence, LazyMotion, domMax, m, useReducedMotion } from "motion/react";
 
-import { clearDenSession, createDenClient, DenApiError, readDenSettings } from "@/app/lib/den";
+import { clearDenSession, createDenClient, DenApiError, readDenSettings, type DenCloudInstanceUpdateDeferral } from "@/app/lib/den";
 import { isOpenworkGatewayRuntime } from "@/app/lib/gateway-runtime";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Button } from "@/components/ui/button";
@@ -15,11 +15,13 @@ import { useSessionActivityStore } from "@/react-app/domains/session/status/sess
 import { usePlatform } from "@/react-app/kernel/platform";
 import { softCardClass } from "@/react-app/domains/workspace/modal-styles";
 import {
+  CLOUD_AUTO_UPDATE_DEFERRED_RETRY_MS,
   cloudWorkspaceBootIsSlow,
   cloudWorkspaceBootStages,
   cloudWorkspaceFailureLogFields,
   cloudWorkspaceTakeoverCopy,
   formatCloudWorkspaceElapsed,
+  isUserAway,
   mapCloudWorkspaceState,
   shouldAutoUpdateCloudWorkspace,
   shouldShowCloudWorkspaceStatusPill,
@@ -38,6 +40,8 @@ type CloudWorkspaceStatusContextValue = {
   accessRequired: boolean;
   requestFailed: boolean;
   updating: boolean;
+  /** The server deferred the last update request; the pill explains why. */
+  updateDeferred: DenCloudInstanceUpdateDeferral | null;
   retrying: boolean;
   viewModel: CloudWorkspaceViewModel;
   refresh: () => Promise<void>;
@@ -65,6 +69,7 @@ const fallbackCloudWorkspaceStatus: CloudWorkspaceStatusContextValue = {
   accessRequired: false,
   requestFailed: false,
   updating: false,
+  updateDeferred: null,
   retrying: false,
   viewModel: fallbackViewModel,
   refresh: noopRefresh,
@@ -97,6 +102,52 @@ export function useCloudWorkspaceStatus() {
   return useContext(CloudWorkspaceStatusContext) ?? fallbackCloudWorkspaceStatus;
 }
 
+const presenceInputEvents = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
+const presenceEvaluateIntervalMs = 30_000;
+
+/**
+ * Whether the person has stepped away from this tab (hidden for a while, or
+ * visible but untouched). Re-evaluated on input, visibility changes, and a
+ * slow timer, so a hidden tab still converges even under browser throttling.
+ */
+function useUserAway(enabled: boolean): boolean {
+  const [away, setAway] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || typeof document === "undefined" || typeof window === "undefined") {
+      setAway(false);
+      return;
+    }
+    let lastInputAtMs = Date.now();
+    let hiddenSinceMs: number | null = document.visibilityState === "hidden" ? Date.now() : null;
+    const evaluate = () => setAway(isUserAway({ hiddenSinceMs, lastInputAtMs, nowMs: Date.now() }));
+    const onInput = () => {
+      lastInputAtMs = Date.now();
+      evaluate();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenSinceMs = Date.now();
+      } else {
+        hiddenSinceMs = null;
+        lastInputAtMs = Date.now();
+      }
+      evaluate();
+    };
+    for (const eventName of presenceInputEvents) window.addEventListener(eventName, onInput, { capture: true, passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
+    const timer = window.setInterval(evaluate, presenceEvaluateIntervalMs);
+    evaluate();
+    return () => {
+      for (const eventName of presenceInputEvents) window.removeEventListener(eventName, onInput, { capture: true });
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(timer);
+    };
+  }, [enabled]);
+
+  return away;
+}
+
 export function cloudWorkspaceRequestFailureLogFields(error: unknown) {
   return error instanceof DenApiError
     ? { failure_code: error.code, http_status: error.status }
@@ -109,9 +160,11 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
   const [accessRequired, setAccessRequired] = useState(false);
   const [requestFailed, setRequestFailed] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [updateDeferred, setUpdateDeferred] = useState<DenCloudInstanceUpdateDeferral | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [takeoverActive, setTakeoverActive] = useState(false);
   const lastAttemptedVersion = useRef<string | null>(null);
+  const autoUpdateRetryNotBefore = useRef<number | null>(null);
   const lastLoggedFailureReference = useRef<string | null>(null);
   const lastLoggedRequestFailure = useRef<string | null>(null);
   const retryInFlight = useRef<Promise<void> | null>(null);
@@ -125,6 +178,7 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
   const authToken = settings.authToken?.trim() ?? "";
   const orgId = settings.activeOrgId?.trim() ?? "";
   const visible = denAuth.isSignedIn || authToken.length > 0;
+  const away = useUserAway(gatewayMode && visible);
   const denClient = useMemo(
     () => createDenClient({ baseUrl: settings.baseUrl, token: authToken }),
     [authToken, settings.baseUrl],
@@ -194,8 +248,8 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
   }, [authToken, denClient, gatewayMode, orgId]);
 
   const viewModel = useMemo(
-    () => mapCloudWorkspaceState({ instance, updating, accessRequired, requestFailed }),
-    [accessRequired, instance, requestFailed, updating],
+    () => mapCloudWorkspaceState({ instance, updating, accessRequired, requestFailed, updateDeferred }),
+    [accessRequired, instance, requestFailed, updateDeferred, updating],
   );
 
   useEffect(() => {
@@ -220,6 +274,15 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
     }
   }, [accessRequired, gatewayMode, instance, requestFailed, updating]);
 
+  // A deferral only describes a pending update; once the workspace is current
+  // (or no longer ready) the explanation is stale.
+  useEffect(() => {
+    if (!updateDeferred) return;
+    if (instance?.status !== "ready" || !mapCloudWorkspaceState({ instance, updating: false, accessRequired, requestFailed }).updateAvailable) {
+      setUpdateDeferred(null);
+    }
+  }, [accessRequired, instance, requestFailed, updateDeferred]);
+
   const signOut = useCallback(() => {
     if (authToken) {
       void denClient.signOut().catch(() => undefined);
@@ -237,7 +300,18 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
       .then((result) => {
         if (!result.ok) {
           setUpdating(false);
+          if (result.error === "busy" || result.error === "activity_unknown") {
+            // The workspace is mid-task somewhere (another tab, a remote
+            // session, an Automation) or could not be asked. Not a failure:
+            // keep the update pending and ask again later.
+            setUpdateDeferred(result.error);
+            lastAttemptedVersion.current = null;
+            autoUpdateRetryNotBefore.current = Date.now() + CLOUD_AUTO_UPDATE_DEFERRED_RETRY_MS;
+            return;
+          }
           setRequestFailed(result.error === "flush_failed");
+        } else {
+          setUpdateDeferred(null);
         }
         void refresh();
       })
@@ -254,6 +328,7 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
     if (!shouldAutoUpdateCloudWorkspace({
       gatewayMode,
       visible,
+      away,
       status: instance?.status ?? null,
       updateAvailable: viewModel.updateAvailable,
       updating,
@@ -261,10 +336,11 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
       hasActiveRun,
       latestVersion,
       lastAttemptedVersion: lastAttemptedVersion.current,
+      retryNotBeforeMs: autoUpdateRetryNotBefore.current,
     })) return;
     lastAttemptedVersion.current = latestVersion;
     updateNow();
-  }, [gatewayMode, instance, requestFailed, updateNow, updating, viewModel.updateAvailable, visible]);
+  }, [away, gatewayMode, instance, requestFailed, updateNow, updating, viewModel.updateAvailable, visible]);
 
   const value = useMemo<CloudWorkspaceStatusContextValue>(() => ({
     gatewayMode,
@@ -273,6 +349,7 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
     accessRequired,
     requestFailed,
     updating,
+    updateDeferred,
     retrying,
     viewModel,
     refresh,
@@ -281,7 +358,7 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
     updateNow,
     takeoverActive,
     setTakeoverActive,
-  }), [accessRequired, gatewayMode, instance, refresh, requestFailed, retry, retrying, signOut, takeoverActive, updateNow, updating, viewModel, visible]);
+  }), [accessRequired, gatewayMode, instance, refresh, requestFailed, retry, retrying, signOut, takeoverActive, updateDeferred, updateNow, updating, viewModel, visible]);
 
   return (
     <CloudWorkspaceStatusContext.Provider value={value}>
