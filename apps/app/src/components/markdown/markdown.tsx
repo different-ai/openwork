@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
+import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
 import { useOpenArtifactPath } from "@/lib/artifacts";
 import { openTargetFromUrl, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
@@ -96,6 +97,8 @@ type MarkdownBlockInnerProps = {
   className?: string;
   text: string;
   streaming?: boolean;
+  /** Opt in only for conversation prose, never tool output or artifact previews. */
+  sessionReferences?: boolean;
   highlightQuery?: string;
 } & Omit<
   React.ComponentProps<"div">,
@@ -115,6 +118,7 @@ function MarkdownBlockInner({
   className,
   text,
   streaming,
+  sessionReferences = false,
   highlightQuery,
   ...props
 }: MarkdownBlockInnerProps) {
@@ -130,7 +134,9 @@ function MarkdownBlockInner({
   }, [client, workspaceId, workspaceRoot]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
-  const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
+  const references = useSessionReferencesMaybe();
+  const resolveReference = sessionReferences ? references?.resolve : undefined;
+  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer("chat", resolveReference), [resolveReference]);
   const streamedBlocks = useMemo(
     () => (streaming ? streamingRenderer.render(text) : null),
     [streaming, streamingRenderer, text],
@@ -139,10 +145,10 @@ function MarkdownBlockInner({
     if (!streaming) streamingRenderer.reset();
   }, [streaming, streamingRenderer]);
   const syncHtml = useMemo(
-    () => (streamedBlocks ? "" : renderMarkdownHtml(text)),
-    [streamedBlocks, text],
+    () => (streamedBlocks ? "" : renderMarkdownHtml(text, "chat", resolveReference)),
+    [streamedBlocks, text, resolveReference],
   );
-  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string; resolveReference: typeof resolveReference } | null>(null);
 
   const handleCodeBlockCopy = useCallback(async (button: HTMLButtonElement, code: string) => {
     try {
@@ -193,10 +199,10 @@ function MarkdownBlockInner({
   }, []);
 
   const candidate = useMemo<RenderedMarkdown>(() => {
-    if (!streaming && highlightedHtml?.text === text) return { kind: "document", html: highlightedHtml.html };
+    if (!streaming && highlightedHtml?.text === text && highlightedHtml.resolveReference === resolveReference) return { kind: "document", html: highlightedHtml.html };
     if (streamedBlocks) return { kind: "blocks", blocks: streamedBlocks };
     return { kind: "document", html: syncHtml };
-  }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text]);
+  }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text, resolveReference]);
   const rendered = useSelectionStableValue(rootRef, candidate);
   // Keep the innerHTML prop referentially stable too: a fresh wrapper object
   // can make an unrelated React render replace selected text nodes even when
@@ -220,8 +226,8 @@ function MarkdownBlockInner({
     if (!root || isEmpty || rendered.kind !== "document") return;
     let cancelled = false;
     const stopObserving = enhanceNearViewport([root], () => {
-      void renderHighlightedMarkdownHtml(text).then((html) => {
-        if (!cancelled && html.trim()) setHighlightedHtml({ text, html });
+      void renderHighlightedMarkdownHtml(text, "chat", resolveReference).then((html) => {
+        if (!cancelled && html.trim()) setHighlightedHtml({ text, html, resolveReference });
       }).catch(() => {
         if (!cancelled) setHighlightedHtml(null);
       });
@@ -230,7 +236,7 @@ function MarkdownBlockInner({
       cancelled = true;
       stopObserving();
     };
-  }, [isEmpty, rendered.kind, streaming, text]);
+  }, [isEmpty, rendered.kind, streaming, text, resolveReference]);
 
   useMermaidEnhancer(rootRef, rendered, !streaming);
 
@@ -311,8 +317,25 @@ function MarkdownBlockInner({
       if (event.target instanceof HTMLImageElement) sync();
     };
 
+    const handleSessionReference = (event: MouseEvent) => {
+      if (!sessionReferences || !(event.target instanceof Element)) return false;
+      const link = event.target.closest("a[data-openwork-session-reference]");
+      if (!(link instanceof HTMLAnchorElement) || !root.contains(link)) return false;
+      // Even a stale/selected reference must never reach a browser or a file
+      // target. Resolve and authorize again at activation, using its stable pair.
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.type !== "mousedown" && (event.button === 0 || event.button === 1)) {
+        const destination = link.dataset.openworkSessionReference ?? "";
+        const reference = resolveReference?.(destination);
+        if (reference && link.getAttribute("href") === destination) references?.openReference(reference);
+      }
+      return true;
+    };
+    const handleAuxClick = (event: MouseEvent) => { handleSessionReference(event); };
+    const handleMouseDown = (event: MouseEvent) => { if (event.button === 1) handleSessionReference(event); };
     const handleClick = (event: MouseEvent) => {
-      if (!(event.target instanceof Element)) return;
+      if (!(event.target instanceof Element) || handleSessionReference(event)) return;
 
       const copyButton = event.target.closest("[data-openwork-code-copy]");
       if (copyButton instanceof HTMLButtonElement) {
@@ -394,12 +417,16 @@ function MarkdownBlockInner({
 
     root.addEventListener("load", handleLoad, true);
     root.addEventListener("click", handleClick);
+    root.addEventListener("auxclick", handleAuxClick);
+    root.addEventListener("mousedown", handleMouseDown);
     root.addEventListener("keydown", handleKeyDown);
 
     if (globalThis.ResizeObserver === undefined) {
       return () => {
         root.removeEventListener("load", handleLoad, true);
         root.removeEventListener("click", handleClick);
+        root.removeEventListener("auxclick", handleAuxClick);
+        root.removeEventListener("mousedown", handleMouseDown);
         root.removeEventListener("keydown", handleKeyDown);
       };
     }
@@ -411,9 +438,11 @@ function MarkdownBlockInner({
       observer.disconnect();
       root.removeEventListener("load", handleLoad, true);
       root.removeEventListener("click", handleClick);
+      root.removeEventListener("auxclick", handleAuxClick);
+      root.removeEventListener("mousedown", handleMouseDown);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCodeBlockCopy, onOpenTarget, openArtifactPath, openTargets, rendered]);
+  }, [handleCodeBlockCopy, onOpenTarget, openArtifactPath, openTargets, rendered, references, resolveReference, sessionReferences]);
 
   if (isEmpty) {
     return null;

@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 import emojiKeywords from "emojilib";
-import { Marked, type MarkedExtension, type Token, type Tokens } from "marked";
+import { Marked, Renderer, TextRenderer, type MarkedExtension, type Token, type Tokens } from "marked";
 import { markedEmoji } from "marked-emoji";
 import {
   transformerMetaHighlight,
@@ -16,6 +16,8 @@ import { bundledLanguages, codeToHtml } from "shiki";
 import { faviconUrlForHref } from "@/lib/favicon";
 
 import { markdownMath } from "./markdown-math";
+import { parseSessionReference } from "@/components/chat/session-reference";
+import { containsInlineHtml, markUnsafeReferenceTokens, stripSessionReferenceAttributes, renderSessionReferenceText, sessionReferenceHtml, type ResolveSessionReference } from "./session-reference-html";
 
 export type MarkdownPresentation = "chat" | "surface";
 type RawHtmlMode = "passthrough" | "shiki-only";
@@ -377,22 +379,36 @@ function renderImage(profile: MarkdownProfile, href: string, title: string | nul
   return `<img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="my-4 max-w-full rounded-[18px] border border-dls-border/70">`;
 }
 
-function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPresentation, isAsync: boolean) {
+function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPresentation, isAsync: boolean, resolveReference?: ResolveSessionReference, unsafeReferenceTokens = new WeakSet<object>(), generatedHtmlTokens = new WeakSet<object>()) {
+  let suppressReferences = 0;
+  const withoutReferences = (render: () => string) => {
+    suppressReferences++;
+    try { return render(); } finally { suppressReferences--; }
+  };
+  const inline = (tokens: Token[], render: () => string) => containsInlineHtml(tokens) ? withoutReferences(render) : render();
   return {
     async: isAsync,
     breaks: false,
     gfm: true,
     pedantic: false,
     silent: true,
+    hooks: {
+      processAllTokens(tokens) {
+        if (resolveReference) markUnsafeReferenceTokens(tokens, unsafeReferenceTokens);
+        return tokens;
+      },
+    },
     renderer: {
-      html({ text }) {
-        return profile.rawHtmlMode === "shiki-only" && !text.includes('data-openwork-shiki="true"') ? "" : text;
+      html(token) {
+        const { text } = token;
+        if (generatedHtmlTokens.has(token)) return text;
+        return profile.rawHtmlMode === "shiki-only" && !text.includes('data-openwork-shiki="true"') ? "" : stripSessionReferenceAttributes(text);
       },
       paragraph({ tokens }) {
-        return `<p class="my-3 leading-relaxed">${this.parser.parseInline(tokens)}</p>`;
+        return `<p class="my-3 leading-relaxed">${inline(tokens, () => this.parser.parseInline(tokens))}</p>`;
       },
       heading({ tokens, depth }) {
-        return `<h${depth} class="${profile.headingClassName(depth)}">${this.parser.parseInline(tokens)}</h${depth}>`;
+        return `<h${depth} class="${profile.headingClassName(depth)}">${inline(tokens, () => this.parser.parseInline(tokens))}</h${depth}>`;
       },
       list(token) {
         const tag = token.ordered ? "ol" : "ul";
@@ -415,8 +431,16 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         if (isMermaidLanguage(lang)) return mermaidBlockHtml(text, presentation);
         return profile.codeBlockHtml(text, lang);
       },
-      codespan({ text }) {
-        const path = profile.linkPresentation === "chat" ? inlineCodeArtifactPath(text) : null;
+      text(token) {
+        const tokens = token.type === "text" ? token.tokens : undefined;
+        if (tokens) return inline(tokens, () => this.parser.parseInline(tokens));
+        return resolveReference && !suppressReferences && !unsafeReferenceTokens.has(token) ? renderSessionReferenceText(token, resolveReference) : false;
+      },
+      codespan(token) {
+        const { text } = token;
+        const reference = !suppressReferences && !unsafeReferenceTokens.has(token) ? resolveReference?.(text) : undefined;
+        if (reference) return sessionReferenceHtml(reference);
+        const path = profile.linkPresentation === "chat" && !suppressReferences ? inlineCodeArtifactPath(text) : null;
         const video = path ? renderVideo(path, path) : null;
         if (video) return video;
         const pathAttributes = path
@@ -430,10 +454,19 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
           return escapeHtml(raw);
         }
 
-        return `<del>${this.parser.parseInline(tokens)}</del>`;
+        return `<del>${inline(tokens, () => this.parser.parseInline(tokens))}</del>`;
       },
-      link({ href, title, tokens }) {
-        return renderLink(profile, href, title, this.parser.parseInline(tokens));
+      link(token) {
+        const { href, title, tokens } = token;
+        if (resolveReference && parseSessionReference(href)) {
+          const reference = !suppressReferences && !unsafeReferenceTokens.has(token) ? resolveReference(href) : undefined;
+          if (reference) return sessionReferenceHtml(reference);
+          // A recognized but unavailable internal destination must not fall
+          // through to file handling or the browser. Keep its original label.
+          const label = this.parser.parseInline(tokens, new TextRenderer());
+          return `<span title="Task reference unavailable">${new Renderer().text({ type: "text", raw: label, text: label })}</span>`;
+        }
+        return withoutReferences(() => renderLink(profile, href, title, this.parser.parseInline(tokens)));
       },
       image({ href, title, text }) {
         return renderImage(profile, href, title, text);
@@ -451,7 +484,7 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         const tag = header ? "th" : "td";
         const className = header ? profile.tableHeaderClassName : profile.tableCellClassName;
 
-        return `<${tag}${alignAttribute(align)} class="${className}">${this.parser.parseInline(tokens)}</${tag}>`;
+        return `<${tag}${alignAttribute(align)} class="${className}">${inline(tokens, () => this.parser.parseInline(tokens))}</${tag}>`;
       },
       hr() {
         return `<hr class="my-6 border-none h-px bg-gray-4">`;
@@ -502,20 +535,23 @@ async function highlightedCodeHtml(
   return profile.shikiContainer.replace("%s", html);
 }
 
-function highlightedCodeExtension(profile: MarkdownProfile): MarkedExtension<string, string> {
+function highlightedCodeExtension(profile: MarkdownProfile, generatedHtmlTokens: WeakSet<object>): MarkedExtension<string, string> {
   return {
     async: true,
     async walkTokens(token) {
       if (!isCodeToken(token) || isMermaidLanguage(token.lang)) return;
       const html = await highlightedCodeHtml(token, profile);
       Object.assign(token, { type: "html", block: true, text: `${html}\n` });
+      generatedHtmlTokens.add(token);
     },
   };
 }
 
-function createMarkdownParsers(presentation: MarkdownPresentation) {
+function createMarkdownParsers(presentation: MarkdownPresentation, resolveReference?: ResolveSessionReference) {
   const profile = markdownProfileForPresentation(presentation);
-  const markdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, false)).use(
+  const unsafeReferenceTokens = new WeakSet<object>();
+  const generatedHtmlTokens = new WeakSet<object>();
+  const markdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, false, resolveReference, unsafeReferenceTokens)).use(
     markedEmoji({
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),
@@ -524,31 +560,41 @@ function createMarkdownParsers(presentation: MarkdownPresentation) {
   );
   // Math must be registered on both parsers, otherwise formulas would flicker away
   // when a message containing a fenced code block upgrades to the Shiki render.
-  const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, true)).use(
+  const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, true, resolveReference, new WeakSet<object>(), generatedHtmlTokens)).use(
     markedEmoji({
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),
     }),
     markdownMath(),
-    highlightedCodeExtension(profile),
+    highlightedCodeExtension(profile, generatedHtmlTokens),
   );
 
-  return { markdownParser, highlightedMarkdownParser };
+  return { markdownParser, highlightedMarkdownParser, unsafeReferenceTokens };
 }
 
 const chatParsers = createMarkdownParsers("chat");
 const surfaceParsers = createMarkdownParsers("surface");
 
-function parsersForPresentation(presentation: MarkdownPresentation) {
-  return presentation === "surface" ? surfaceParsers : chatParsers;
+// One parser pair per inventory revision, shared by all message blocks. Never
+// mutate the global parsers with a workspace/user resolver.
+const referenceParsers = new WeakMap<ResolveSessionReference, ReturnType<typeof createMarkdownParsers>>();
+function parsersForPresentation(presentation: MarkdownPresentation, resolveReference?: ResolveSessionReference) {
+  if (presentation === "surface") return surfaceParsers;
+  if (!resolveReference) return chatParsers;
+  let parsers = referenceParsers.get(resolveReference);
+  if (!parsers) {
+    parsers = createMarkdownParsers("chat", resolveReference);
+    referenceParsers.set(resolveReference, parsers);
+  }
+  return parsers;
 }
 
-export function renderMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {
+export function renderMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat", resolveReference?: ResolveSessionReference) {
   if (!text.trim()) {
     return "";
   }
 
-  const { markdownParser } = parsersForPresentation(presentation);
+  const { markdownParser } = parsersForPresentation(presentation, resolveReference);
   return sanitizeMarkdownHtml(markdownParser.parse(text, { async: false }));
 }
 
@@ -593,8 +639,8 @@ function hasReferenceDefinition(tokens: Token[]) {
  * Reference-style link definitions resolve across blocks, so a source that
  * contains one always takes the full lex.
  */
-export function createStreamingMarkdownRenderer(presentation: MarkdownPresentation = "chat"): StreamingMarkdownRenderer {
-  const { markdownParser } = parsersForPresentation(presentation);
+export function createStreamingMarkdownRenderer(presentation: MarkdownPresentation = "chat", resolveReference?: ResolveSessionReference): StreamingMarkdownRenderer {
+  const { markdownParser, unsafeReferenceTokens } = parsersForPresentation(presentation, resolveReference);
   let state: StreamingMarkdownState | null = null;
 
   const renderBlock = (token: Token): MarkdownBlockHtml => ({
@@ -603,7 +649,9 @@ export function createStreamingMarkdownRenderer(presentation: MarkdownPresentati
 
   const renderAll = (source: string, previous: StreamingMarkdownState | null): StreamingMarkdownState => {
     const tokens = markdownParser.lexer(source);
-    const reusable = previous && !hasReferenceDefinition(tokens) && !hasReferenceDefinition(previous.tokens)
+    if (resolveReference) markUnsafeReferenceTokens(tokens, unsafeReferenceTokens);
+    const htmlScopeChanged = resolveReference && (containsInlineHtml(tokens) || (previous && containsInlineHtml(previous.tokens)));
+    const reusable = previous && !htmlScopeChanged && !hasReferenceDefinition(tokens) && !hasReferenceDefinition(previous.tokens)
       ? previous
       : null;
     const blocks = tokens.map((token, index) => {
@@ -621,7 +669,7 @@ export function createStreamingMarkdownRenderer(presentation: MarkdownPresentati
     let offset = 0;
     for (const token of previous.tokens.slice(0, keep)) offset += token.raw.length;
     const tail = markdownParser.lexer(source.slice(offset));
-    if (hasReferenceDefinition(tail)) return null;
+    if (hasReferenceDefinition(tail) || (resolveReference && (containsInlineHtml(tail) || containsInlineHtml(previous.tokens)))) return null;
 
     return {
       source,
@@ -647,8 +695,8 @@ export function createStreamingMarkdownRenderer(presentation: MarkdownPresentati
   };
 }
 
-export async function renderHighlightedMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {
-  const { highlightedMarkdownParser } = parsersForPresentation(presentation);
+export async function renderHighlightedMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat", resolveReference?: ResolveSessionReference) {
+  const { highlightedMarkdownParser } = parsersForPresentation(presentation, resolveReference);
   const html = await highlightedMarkdownParser.parse(text, { async: true });
   return sanitizeMarkdownHtml(html);
 }

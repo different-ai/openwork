@@ -54,6 +54,8 @@ import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
+import { useSessionReferencesMaybe, type SessionReferences } from "@/components/chat/session-reference-context"
+import { SessionReferenceLink } from "@/components/chat/session-reference-link"
 import { ProgressiveMessageList, type MessageListViewport } from "@/components/chat/progressive-message-list"
 import {
   DescriptiveButtonContent,
@@ -521,6 +523,7 @@ const AssistantMessage = React.memo(
                   key={`text-${index}`}
                   className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
                   markdown
+                  sessionReferences
                   isStreaming={isStreaming}
                   highlightQuery={highlightQuery}
                 >
@@ -620,11 +623,43 @@ function renderPlainTextWithSearchHighlights(text: string, highlightQuery: strin
   return nodes
 }
 
+function renderPlainTextWithSessionReferences(text: string, highlightQuery: string | undefined, keyPrefix: string, references: SessionReferences | undefined) {
+  if (!references) return renderPlainTextWithSearchHighlights(text, highlightQuery, keyPrefix)
+  const nodes: React.ReactNode[] = []
+  let cursor = 0
+  for (const match of text.matchAll(/[^\s()[\]{}<>"'`]+/g)) {
+    const raw = match[0].replace(/[.,;:!]+$/, "")
+    const reference = references.resolve(raw)
+    if (!reference) continue
+    const start = match.index
+    nodes.push(
+      <React.Fragment key={`${keyPrefix}:pre:${cursor}`}>
+        {renderPlainTextWithSearchHighlights(text.slice(cursor, start), highlightQuery, `${keyPrefix}:pre:${cursor}`)}
+      </React.Fragment>
+    )
+    const needle = highlightQuery?.trim().toLowerCase() ?? ""
+    nodes.push(
+      <SessionReferenceLink key={`${keyPrefix}:session:${start}`} reference={reference} openReference={references.openReference}>
+        {needle.length >= 2 && raw.toLowerCase().includes(needle) ? (
+          <mark data-search-highlight="true" className={SEARCH_HIGHLIGHT_MARK_CLASS}>{reference.title}</mark>
+        ) : renderPlainTextWithSearchHighlights(reference.title, highlightQuery, `${keyPrefix}:title:${start}`)}
+      </SessionReferenceLink>
+    )
+    cursor = start + raw.length
+  }
+  nodes.push(
+    <React.Fragment key={`${keyPrefix}:post:${cursor}`}>
+      {renderPlainTextWithSearchHighlights(text.slice(cursor), highlightQuery, `${keyPrefix}:post:${cursor}`)}
+    </React.Fragment>
+  )
+  return nodes
+}
+
 // Bare URL, excluding trailing punctuation that usually ends a sentence.
 const PLAIN_URL_RE = /https?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g
 
 /** User bubbles are plain text, so bare https:// URLs need explicit anchors. */
-function renderPlainTextWithLinks(text: string, highlightQuery: string | undefined, keyPrefix: string) {
+function renderPlainTextWithLinks(text: string, highlightQuery: string | undefined, keyPrefix: string, references: SessionReferences | undefined) {
   const nodes: React.ReactNode[] = []
   let cursor = 0
   for (const match of text.matchAll(PLAIN_URL_RE)) {
@@ -633,7 +668,7 @@ function renderPlainTextWithLinks(text: string, highlightQuery: string | undefin
     if (start > cursor) {
       nodes.push(
         <React.Fragment key={`${keyPrefix}:pre:${cursor}`}>
-          {renderPlainTextWithSearchHighlights(text.slice(cursor, start), highlightQuery, `${keyPrefix}:pre:${cursor}`)}
+          {renderPlainTextWithSessionReferences(text.slice(cursor, start), highlightQuery, `${keyPrefix}:pre:${cursor}`, references)}
         </React.Fragment>
       )
     }
@@ -661,36 +696,98 @@ function renderPlainTextWithLinks(text: string, highlightQuery: string | undefin
     )
     cursor = start + url.length
   }
-  if (nodes.length === 0) return renderPlainTextWithSearchHighlights(text, highlightQuery, keyPrefix)
+  if (nodes.length === 0) return renderPlainTextWithSessionReferences(text, highlightQuery, keyPrefix, references)
   if (cursor < text.length) {
     nodes.push(
       <React.Fragment key={`${keyPrefix}:post:${cursor}`}>
-        {renderPlainTextWithSearchHighlights(text.slice(cursor), highlightQuery, `${keyPrefix}:post:${cursor}`)}
+        {renderPlainTextWithSessionReferences(text.slice(cursor), highlightQuery, `${keyPrefix}:post:${cursor}`, references)}
       </React.Fragment>
     )
   }
   return nodes
 }
 
-function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithLinks(text, highlightQuery, "text")
+function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
+  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithLinks(text, highlightQuery, "text", references)
   let offset = 0
   return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
     const key = `${offset}:${segment}`
     offset += segment.length
     const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
     if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
-    return <React.Fragment key={key}>{renderPlainTextWithLinks(segment, highlightQuery, key)}</React.Fragment>
+    return <React.Fragment key={key}>{renderPlainTextWithLinks(segment, highlightQuery, key, references)}</React.Fragment>
   })
+}
+
+function renderUserProse(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
+  const nodes: React.ReactNode[] = []
+  const ticks = /`+/g
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = ticks.exec(text))) {
+    const start = match.index
+    const delimiter = match[0]
+    const bodyStart = ticks.lastIndex
+    let closing: RegExpExecArray | null
+    do {
+      closing = ticks.exec(text)
+    } while (closing && closing[0] !== delimiter)
+    const end = closing ? ticks.lastIndex : text.length
+    const body = text.slice(bodyStart, closing?.index ?? text.length)
+    const exactId = Boolean(closing) && /^ses_[A-Za-z0-9][A-Za-z0-9_-]*$/.test(body)
+    nodes.push(
+      <React.Fragment key={`prose:${cursor}`}>
+        {renderUserTextWithSkillChips(text.slice(cursor, start), highlightQuery, references)}
+      </React.Fragment>,
+      <React.Fragment key={`inline-code:${start}`}>
+        {renderUserTextWithSkillChips(text.slice(start, end), highlightQuery, exactId ? references : undefined)}
+      </React.Fragment>
+    )
+    cursor = end
+    if (!closing) break
+  }
+  nodes.push(<React.Fragment key={`prose:${cursor}`}>{renderUserTextWithSkillChips(text.slice(cursor), highlightQuery, references)}</React.Fragment>)
+  return nodes
+}
+
+function renderUserText(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
+  if (!references) return renderUserTextWithSkillChips(text, highlightQuery, undefined)
+  const nodes: React.ReactNode[] = []
+  const blocks = /^(?:[ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,}|~{3,})[^\n]*(?:\n|$)|(?: {4}|\t)[^\n]*(?:\n|$))/gm
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = blocks.exec(text))) {
+    const start = match.index
+    const fence = match[1]
+    let end = blocks.lastIndex
+    if (fence) {
+      const closing = new RegExp(`^[ \\t]*(?:>[ \\t]*)*${fence[0]}{${fence.length},}[ \\t]*\\r?(?:\\n|$)`, "gm")
+      closing.lastIndex = end
+      end = closing.exec(text) ? closing.lastIndex : text.length
+      blocks.lastIndex = end
+    }
+    nodes.push(
+      <React.Fragment key={`prose:${cursor}`}>
+        {renderUserProse(text.slice(cursor, start), highlightQuery, references)}
+      </React.Fragment>,
+      <React.Fragment key={`code-block:${start}`}>
+        {renderUserTextWithSkillChips(text.slice(start, end), highlightQuery, undefined)}
+      </React.Fragment>
+    )
+    cursor = end
+  }
+  nodes.push(<React.Fragment key={`prose:${cursor}`}>{renderUserProse(text.slice(cursor), highlightQuery, references)}</React.Fragment>)
+  return nodes
 }
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
+    const references = useSessionReferencesMaybe()
     const branching = forkingMessageId === message.id
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
-      if (!onOpenTarget || !(event.target instanceof Element)) return
+      if (event.defaultPrevented || !onOpenTarget || !(event.target instanceof Element)) return
       const link = event.target.closest("a[href]")
       const target = openTargetFromUrl(link?.getAttribute("href") ?? "")
       if (!target) return
@@ -740,7 +837,7 @@ const UserMessage = React.memo(
                       if (part.type === "text") {
                         return (
                           <span key={`text-${index}`} className="whitespace-pre-wrap">
-                            {renderUserTextWithSkillChips(part.text, highlightQuery)}
+                            {renderUserText(part.text, highlightQuery, references)}
                           </span>
                         )
                       }
