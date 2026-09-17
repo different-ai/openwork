@@ -225,6 +225,9 @@ function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useS
     viewportHeight: 200,
     complete: true,
     virtualized: false,
+    transcriptHidden: false,
+    transcriptCommitted: true,
+    fallback: false,
     placeholders: [] as { id: string; before: string; top: number; height: number }[],
     messages: [
       { id: "first", top: 0, height: 300 },
@@ -264,7 +267,10 @@ function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useS
         contentRef.current = node;
         if (node) node.getBoundingClientRect = () => new DOMRect(0, 40 - scrollTop, 500, layout.height + Number.parseFloat(node.style.paddingBottom || "0"));
       }} data-thread-virtualized={layout.virtualized}>
-        <div data-thread-history-complete={layout.complete} data-thread-loading={!ready ? "" : undefined} />
+        {!ready || layout.fallback ? <div data-thread-loading /> : null}
+        {layout.transcriptCommitted ? <div data-thread-history-complete={layout.complete} ref={(node) => {
+          if (node) node.getBoundingClientRect = () => layout.transcriptHidden ? new DOMRect() : new DOMRect(0, 40 - scrollTop, 500, layout.height);
+        }}>
         {layout.messages.map((message) => <Fragment key={message.id}>
           {layout.placeholders.filter((placeholder) => placeholder.before === message.id).map((placeholder) =>
             <div key={placeholder.id} data-thread-placeholder={placeholder.id} ref={(node) => {
@@ -272,10 +278,11 @@ function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useS
             }} />)}
           <div data-thread-group={layout.virtualized ? message.id : undefined}>
             <div data-message-id={message.id} data-message-role={message.role} ref={(node) => {
-              if (node) node.getBoundingClientRect = () => new DOMRect(0, 40 + message.top - scrollTop, 500, message.height);
+              if (node) node.getBoundingClientRect = () => layout.transcriptHidden ? new DOMRect() : new DOMRect(0, 40 + message.top - scrollTop, 500, message.height);
             }}>{message.id}</div>
           </div>
         </Fragment>)}
+        </div> : null}
         <div data-scrollable>Nested scroll area</div>
       </div>
       {renderOverlay ? <SessionScrollOverlay sessionId={sessionId} owner={geometryOwner} isStreaming={false}
@@ -632,6 +639,94 @@ describe("session reading position", () => {
     await view.render();
     expect(view.container.scrollTop).toBe(445);
     expect(state("a", "owner-a")).toEqual(saved);
+  });
+
+  test.each(["hidden", "fallback", "uncommitted"])("waits for committed transcript geometry despite historyReady (%s)", async (kind) => {
+    const store = useSessionScrollStore.getState();
+    const key = sessionScrollKey("a", "owner-a");
+    store.setManualScroll(key, 125, null, { messageId: "reading", offset: -25 });
+    store.setGeometry(key, { owner: "owner-a", scrollHeight: 1000, viewportWidth: 500, before: 0, after: 0, messageIds: ["first", "reading", "latest"] });
+    const saved = state("a", "owner-a");
+    const view = fixture("owner-a");
+    const messages = view.layout.messages;
+    view.layout.transcriptHidden = kind === "hidden";
+    view.layout.transcriptCommitted = kind !== "uncommitted";
+    view.layout.fallback = kind === "fallback";
+    if (kind === "fallback") view.layout.messages = [];
+    await view.render();
+    view.resize();
+    runFrames();
+    view.scroll(view.container.scrollTop);
+    expect(state("a", "owner-a")).toEqual(saved);
+    if (kind === "fallback") expect(view.container.scrollTop).toBe(125);
+    view.layout.transcriptHidden = false;
+    view.layout.fallback = false;
+    view.layout.transcriptCommitted = true;
+    view.layout.messages = messages;
+    await view.render();
+    view.controls.refresh();
+    runFrames();
+    expect(view.container.scrollTop).toBe(325);
+    expect(state("a", "owner-a").anchor).toEqual(saved.anchor);
+    expect(frames.size).toBe(0);
+  });
+
+  test("an empty history without a list settles without waiting for a transcript", async () => {
+    const view = fixture();
+    view.layout.transcriptCommitted = false;
+    view.layout.messages = [];
+    view.layout.height = 200;
+    await view.render();
+    runFrames();
+    expect(view.container.scrollTop).toBe(0);
+    expect(state().mode).toBe("stickyBottom");
+    view.layout.height = 500;
+    view.resize();
+    runFrames();
+    expect(view.container.scrollTop).toBe(300);
+    expect(frames.size).toBe(0);
+  });
+
+  test.each(["manual", "stickyBottom"])("does not save fallback clamps after restoring (%s)", async (mode) => {
+    if (mode === "manual") useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    const view = fixture();
+    await view.render();
+    const saved = state();
+    view.layout.transcriptHidden = true;
+    view.layout.fallback = true;
+    view.layout.height = 400;
+    await view.render();
+    view.scroll(0);
+    view.resize();
+    runFrames();
+    expect(state()).toEqual(saved);
+    expect(frames.size).toBe(0);
+    view.layout.transcriptHidden = false;
+    view.layout.fallback = false;
+    view.layout.height = 1000;
+    await view.render();
+    runFrames();
+    expect(view.container.scrollTop).toBe(mode === "manual" ? 325 : 800);
+    expect(state()).toEqual(saved);
+    expect(frames.size).toBe(0);
+  });
+
+  test("a gesture during an independent fallback cancels restoration without saving hidden geometry", async () => {
+    useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    const saved = state();
+    const view = fixture();
+    view.layout.transcriptHidden = true;
+    view.layout.fallback = true;
+    await view.render();
+    view.wheel(80);
+    expect(state()).toEqual(saved);
+    view.layout.transcriptHidden = false;
+    view.layout.fallback = false;
+    await view.render();
+    view.resize();
+    runFrames();
+    expect(view.container.scrollTop).toBe(80);
+    expect(state()).toMatchObject({ mode: saved.mode, scrollTop: saved.scrollTop, anchor: saved.anchor });
   });
 
   test("records complete geometry and nearby IDs without replacing it with partial or zero-sized layout", async () => {
