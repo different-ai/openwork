@@ -989,18 +989,24 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (tab.domReady) emulateBackgroundTab(tab);
   }
 
+  function queueBrowserTabEmulation(tab, label, operation) {
+    const isCurrent = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
+    const execute = () => { if (isCurrent()) return operation(isCurrent); };
+    const emulation = tab.emulation.then(execute, execute);
+    tab.emulation = emulation;
+    runDetachedTask(label, () => emulation);
+  }
+
   function emulateBackgroundTab(tab) {
-    const webContents = tab.view.webContents;
-    const cdp = webContents.debugger;
-    tab.emulation = tab.emulation.then(async () => {
-      if (webContents.isDestroyed() || !tab.background) return;
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "emulate background browser tab", async (isCurrent) => {
+      if (!tab.background) return;
       if (!cdp.isAttached()) cdp.attach("1.3");
       for (const { method, params } of backgroundTabEmulationCommands()) {
-        if (webContents.isDestroyed() || !tab.background) return;
+        if (!isCurrent() || !tab.background) return;
         await cdp.sendCommand(method, params);
       }
     });
-    runDetachedTask("emulate background browser tab", () => tab.emulation);
   }
 
   function exitBackgroundMode(tab) {
@@ -1010,15 +1016,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     detachBrowserView(tab.view);
     if (webContents.isDestroyed()) return;
     const cdp = webContents.debugger;
-    if (!cdp.isAttached()) return;
-    runDetachedTask("restore foreground browser tab", async () => {
+    queueBrowserTabEmulation(tab, "restore foreground browser tab", async (isCurrent) => {
+      if (tab.background || !cdp.isAttached()) return;
       try {
         for (const { method, params } of foregroundTabEmulationCommands()) {
-          if (webContents.isDestroyed()) return;
+          if (!isCurrent() || tab.background) return;
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (!webContents.isDestroyed() && cdp.isAttached()) cdp.detach();
+        if (isCurrent() && !tab.background && cdp.isAttached()) cdp.detach();
       }
     });
   }
@@ -1112,7 +1118,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!tab?.domReady || tab.background || tab.suspending) return;
     const cdp = webContents.debugger;
     if (cdp.isAttached()) return;
-    runDetachedTask("reset browser viewport emulation", async () => {
+    queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent) => {
+      if (tab.background || tab.suspending || cdp.isAttached()) return;
       cdp.attach("1.3");
       try {
         await cdp.sendCommand("Emulation.setDeviceMetricsOverride", {
@@ -1121,9 +1128,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           deviceScaleFactor: 0,
           mobile: false,
         });
+        if (!isCurrent() || tab.background || tab.suspending) return;
         await cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
       } finally {
-        if (cdp.isAttached()) cdp.detach();
+        if (isCurrent() && !tab.background && cdp.isAttached()) cdp.detach();
       }
     });
   }

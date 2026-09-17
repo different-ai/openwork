@@ -40,8 +40,8 @@ test("a visible built-in browser tab left with an automation viewport snaps back
   });
 });
 
-geometryTest("the native browser follows app zoom and keyboard panel resizing without replacing its page or losing input", async ({ world, user, probe, step }) => {
-  const { tab, page, session } = world;
+geometryTest("the native browser survives zoom, resizing, overlays and conversation changes without losing input", async ({ world, user, probe, step }) => {
+  const { tab, page, session, neighbor } = world;
   const field: Target = { role: "textbox" };
   const draft = "Keep this browser input through layout changes";
   const budgetMs = 5_000;
@@ -161,6 +161,60 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
     await aligned(1.1);
     await user.press("Control+0");
     await aligned(1);
+  });
+  const noNativeOverlay = async () => {
+    const state = await probe.eventually(() => probe.browserState(), {
+      within: budgetMs,
+      until: value => value.nativeViews.every(view => !view.aboveApp || !view.visible),
+      label: "no native browser is painted over the app",
+    });
+    expect(state.tabs.map(item => item.id)).toEqual([tab.tabId]);
+    expect(await probe.browserTabMetrics(tab.targetId)).toMatchObject(identity);
+  };
+  const palette = { placeholder: "Search actions, settings, and sessions…" };
+  await step("A dialog hides the native sibling, and sidebar position changes restore the same page", async () => {
+    const before = await aligned(1);
+    for (let toggle = 0; toggle < 2; toggle++) {
+      await focusSeparator();
+      await user.press("Control+K");
+      await user.see(palette);
+      await noNativeOverlay();
+      await user.type(palette, "> Toggle sidebar", { replace: true });
+      await user.click({ role: "option", label: /^Toggle sidebar/ });
+      await user.notSee(palette);
+      const after = await aligned(1);
+      if (toggle === 0) expect(after.rect.left).not.toBe(before.rect.left);
+      else expect(Math.abs(after.rect.left - before.rect.left)).toBeLessThanOrEqual(1);
+    }
+  });
+  await step("Repeated panel close and reopen cannot leave a native overlay or replace the document", async () => {
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await user.click({ role: "button", label: "Close side panel" });
+      await noNativeOverlay();
+      await user.click({ role: "button", label: "Open side panel" });
+      await aligned(1);
+    }
+  });
+  await step("Repeated conversation round trips preserve the page and keep background geometry off screen", async () => {
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await user.click({ text: neighbor.title });
+      await noNativeOverlay();
+      const parked = await probe.eventually(() => probe.browserState(), {
+        within: budgetMs,
+        until: value => value.visibleSessionId === neighbor.sessionId
+          && value.nativeViews.every(view => !view.aboveApp),
+        label: "the neighbor owns the screen without a browser overlay",
+      });
+      expect(parked.nativeViews).toHaveLength(1);
+      expect(parked.nativeViews[0]).toMatchObject({ tabId: tab.tabId, attached: false, aboveApp: false });
+      await probe.eventually(() => probe.browserTabMetrics(tab.targetId), {
+        within: budgetMs,
+        until: value => value.width === 1280 && value.height === 800,
+        label: "background viewport emulation remains usable after each round trip",
+      });
+      await user.click({ text: session.title });
+      await aligned(1);
+    }
   });
   await user.on(page).type(field, " and still editable");
   await user.on(page).see(field, { value: `${draft} and still editable`, timeoutMs: budgetMs });
