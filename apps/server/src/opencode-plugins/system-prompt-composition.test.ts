@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { OPENWORK_AGENT_PROMPT } from "../openwork-agent-prompt.js";
+import { buildOpenWorkV2Instructions } from "../opencode-v2-instructions.js";
 import { OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import {
@@ -9,6 +10,38 @@ import {
   OPENWORK_GOOGLE_CONNECTION_INSTRUCTION,
 } from "./openwork-extensions-preview-steering.js";
 import { OpenWorkSpreadsheets } from "./openwork-spreadsheets.js";
+
+test.each(["v1", "v2-connected", "v2-disconnected"])("%s gates native connection questions on the current host contract", async (engine) => {
+  const prompt = engine === "v1"
+    ? (await composePrompt())[0]
+    : buildOpenWorkV2Instructions(engine === "v2-connected").operatingInstructions;
+  for (const instruction of [
+    "actually blocked on member OAuth",
+    "explicitly requests connect/reconnect (never incidental discovery)",
+    "call openwork_context",
+    "root.context",
+    "context.features.connectionQuestions === true",
+    "native question tool is available",
+    "startup fallback snapshots",
+    "already verified, unambiguous connection identity",
+    "never invent connection IDs",
+    'header exactly "Connection"',
+    'question exactly "Connect <connectionName> to continue?"',
+    '"label":"Authenticate"',
+    '"label":"Skip"',
+    "multiple: false, custom: false",
+    "The native question waits",
+    "Authenticate answer only AFTER OAuth confirms",
+    "without replaying completed writes",
+    "On Skip, continue without that connection",
+    "do not substitute authentication, use a workaround, or automatically reconnect",
+    "Never abort then send a follow-up",
+    "keep the existing manual Connect/Reconnect card response",
+    "Do not emit a normal question claiming authentication completed",
+  ]) expect(prompt).toContain(instruction);
+  expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("connectionQuestions");
+  expect(OPENWORK_GOOGLE_CONNECTION_INSTRUCTION).not.toContain("connectionQuestions");
+});
 
 function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;

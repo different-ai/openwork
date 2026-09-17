@@ -33,6 +33,7 @@ on:
       - "packages/docs/openapi.json"
       - "ee/apps/den-api/**"
       - "ee/packages/**"
+      - "packages/mcp-apps/**"
       - "packages/types/**"
 
 permissions:

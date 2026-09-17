@@ -10,6 +10,7 @@ import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import type { OpenworkServerClient } from "@/app/lib/openwork-server"
 import type { McpAppOrigin } from "./mcp-app-origin"
+import type { ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 
 interface MessageListContextValue {
   mcpAppOrigin: McpAppOrigin | null
@@ -18,6 +19,8 @@ interface MessageListContextValue {
   sessionId: string
   /** Verified principal/org, endpoint, workspace and session; absent means no retention. */
   uiStateOwner?: string | null
+  getConnectionDecision?: (toolCallId: string) => ChatConnectionDecisionBinding | null
+  connectionQuestionToolCallId?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -42,9 +45,10 @@ interface MessageListContextValue {
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
+    isCurrent?: () => boolean,
   ) => Promise<ChatToolReconnectResult>
-  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
-  onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
+  onMcpRetry?: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
@@ -57,6 +61,8 @@ interface MessageListProviderProps {
   workspaceId: string
   sessionId: string
   uiStateOwner?: string | null
+  getConnectionDecision?: (toolCallId: string) => ChatConnectionDecisionBinding | null
+  connectionQuestionToolCallId?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -69,9 +75,10 @@ interface MessageListProviderProps {
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
+    isCurrent?: () => boolean,
   ) => Promise<ChatToolReconnectResult>
-  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
-  onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
+  onMcpRetry?: (action: ChatToolReconnectAction) => void | Promise<void>
   displaySuggestions: boolean
   providerConnectedCount: number
   connectorIdentities?: ConnectorToolIdentity[]
@@ -94,6 +101,8 @@ export function MessageListProvider({
   workspaceId,
   sessionId,
   uiStateOwner,
+  getConnectionDecision,
+  connectionQuestionToolCallId,
   showThinking,
   highlightQuery,
   developerMode,
@@ -161,11 +170,12 @@ export function MessageListProvider({
     onMcpReconnect: (
       action: ChatToolReconnectAction,
       onProgress: (progress: ChatToolReconnectProgress) => void,
-    ) => handlersRef.current.onMcpReconnect(action, onProgress),
-    onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => (
-      handlersRef.current.onMcpReopenAuthorization(action, authorizeUrl)
+      isCurrent?: () => boolean,
+    ) => handlersRef.current.onMcpReconnect(action, onProgress, isCurrent),
+    onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => (
+      handlersRef.current.onMcpReopenAuthorization(action, authorizeUrl, isCurrent)
     ),
-    onMcpRetry: (action: ChatToolReconnectAction) => handlersRef.current.onMcpRetry(action),
+    onMcpRetry: (action: ChatToolReconnectAction) => handlersRef.current.onMcpRetry?.(action),
   }), [])
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
@@ -180,6 +190,8 @@ export function MessageListProvider({
       workspaceId,
       sessionId,
       uiStateOwner,
+      getConnectionDecision,
+      connectionQuestionToolCallId,
       showThinking,
       highlightQuery,
       forkingMessageId,
@@ -202,6 +214,8 @@ export function MessageListProvider({
       workspaceId,
       sessionId,
       uiStateOwner,
+      getConnectionDecision,
+      connectionQuestionToolCallId,
       showThinking,
       highlightQuery,
       forkingMessageId,

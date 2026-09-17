@@ -24,7 +24,6 @@ import {
   Copy,
   ExternalLink,
   FilePen,
-  KeyRound,
   ListTodo,
   LoaderCircle,
   MessageCircleQuestion,
@@ -54,9 +53,6 @@ function toolIcon(part: ToolPart) {
       return ListTodo
     case "question":
       return MessageCircleQuestion
-    case "request_env_var":
-    case "env_var_request":
-      return KeyRound
     case "task":
       return Bot
     default:

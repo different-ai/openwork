@@ -299,8 +299,14 @@ export function dispatchQueuedDrain(sessionId: string, event: QueuedDrainEvent):
  * holds a non-ready phase, so a queued item can never be sent twice. */
 export function claimQueuedSend(sessionId: string, itemId: string, steer = false): boolean {
   const current = getQueuedDrainState(sessionId);
+  const generation = getQueuedSendGeneration(sessionId);
   const next = dispatchQueuedDrain(sessionId, { type: "send_started", itemId, steer });
-  return next !== current && next.phase.kind === "sending" && next.phase.itemId === itemId;
+  if (next === current || next.phase.kind !== "sending" || next.phase.itemId !== itemId) return false;
+  if (getQueuedSendGeneration(sessionId) !== generation) {
+    dispatchQueuedDrain(sessionId, { type: "send_result", itemId, outcome: "cancelled", at: Date.now() });
+    return false;
+  }
+  return true;
 }
 
 export function subscribeQueuedDrain(sessionId: string, listener: () => void): () => void {

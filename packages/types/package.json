@@ -56,7 +56,9 @@
     "./connection-action-app": {
       "types": "./src/connection-action-app.ts",
       "development": "./src/connection-action-app.ts",
-      "default": "./src/connection-action-app.ts"
+      "bun": "./src/connection-action-app.ts",
+      "browser": "./src/connection-action-app.ts",
+      "default": "./dist/connection-action-app.js"
     },
     "./plugin-flow-app": {
       "types": "./src/plugin-flow-app.ts",
@@ -137,11 +139,6 @@
       "types": "./src/url.ts",
       "development": "./src/url.ts",
       "default": "./src/url.ts"
-    },
-    "./visualization": {
-      "types": "./src/visualization.ts",
-      "development": "./src/visualization.ts",
-      "default": "./src/visualization.ts"
     },
     "./den/desktop-policies-runtime": {
       "types": "./src/den/desktop-policies.ts",

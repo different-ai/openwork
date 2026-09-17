@@ -1631,7 +1631,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 });
 
 describe("OpenWorkExtensionsPreview semantic tool surface", () => {
-  test("exposes semantic tools, native visualization and the WebMCP browser broker", async () => {
+  test("exposes semantic tools and the WebMCP browser broker without retired presentation tools", async () => {
+    startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview();
     const tools = Object.keys(plugin.tool).sort();
 
@@ -1639,7 +1640,6 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
       "openwork_context",
       "openwork_execute",
       "openwork_query",
-      "openwork_visualization",
       "webmcp_call_tool",
       "webmcp_list_tools",
     ]);
@@ -1652,7 +1652,8 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     expect(system).not.toContain("openwork_extension_");
     expect(system).not.toContain("openwork_browser_");
     expect(system).toContain("Use openwork_context");
-    expect(system).toContain("use openwork_visualization");
+    expect(system).not.toContain("openwork_visualization");
+    expect(system).toContain("Tool results must not open panels or move focus automatically");
     expect(system).toContain("session.search");
     expect(system).toContain("Start with browser_tabs");
     expect(system).toContain("Use webmcp_list_tools with the chosen tabId");
@@ -1702,25 +1703,6 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
         body: { toolId: "site_tool_1", input: { detail: "full" }, sessionId: "browser-test" },
       },
     ]);
-  });
-
-  test("renders a bounded visualization without calling a backend", async () => {
-    const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview();
-    const design = {
-      id: "project-overview", title: "Project overview", revision: 1,
-      sections: [{ title: "Projects", columns: "two", blocks: [
-        { kind: "metric", label: "Active", value: "12" },
-        { kind: "text", label: "Note", value: "<script>alert(1)</script>" },
-      ] }],
-    };
-    expect(JSON.parse(await plugin.tool.openwork_visualization.execute(design))).toEqual(design);
-    expect(fake.requests).toHaveLength(0);
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: [] })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, revision: 0 })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: Array(9).fill(design.sections[0]) })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: [{ title: "Unsafe", blocks: [{ kind: "html", label: "Code" }] }] })).rejects.toThrow();
-    expect(fake.requests).toHaveLength(0);
   });
 
   test("proposes an Automation without creating anything or calling a backend", async () => {

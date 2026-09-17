@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
+import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
 import { catalogFastVariants, fastVariantId } from "@openwork/types/cloud-model-fast";
 
 import {
@@ -59,6 +60,13 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
+  test("v1 receives the shared host-gated native connection question prompt", () => {
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({})).toMatchObject({
+      agent: { openwork: { prompt: OPENWORK_AGENT_PROMPT } },
+    });
+    expect(OPENWORK_AGENT_PROMPT).toContain("context.features.connectionQuestions === true");
+  });
+
   test("restricted runtime enables materialized org gateway rows, not ordinary custom providers", () => {
     const provider = { lpr_legacy: {}, ipr_gateway: {}, openwork: {}, personal: {}, opencode: {} };
     const restricted = buildOpenworkRuntimeConfigObjectFromSnapshot({

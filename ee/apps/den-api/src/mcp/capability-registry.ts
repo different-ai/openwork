@@ -34,6 +34,7 @@ import {
 import {
   connectedConnectionActionPayload,
   connectionActionPayloadFromStatus,
+  connectionActionAppMeta,
   connectionActionTextFallback,
 } from "./connection-action.js"
 import {
@@ -287,6 +288,7 @@ export function externalCapabilityErrorToolResult(
     isError: true,
     content: textContent(JSON.stringify(payload)),
     structuredContent: connectionActionPayloadFromStatus(result.connectionStatus),
+    _meta: connectionActionAppMeta(result.connectionStatus.connectionId),
   }
 }
 
@@ -563,6 +565,7 @@ const externalMcpSource: CapabilitySource = {
       return {
         content: textContent(connectionActionTextFallback(payload)),
         structuredContent: { ...payload },
+        _meta: connectionActionAppMeta(payload.connectionId),
       }
     }
     const result = await executeExternalCapability({

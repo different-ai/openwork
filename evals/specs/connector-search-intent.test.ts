@@ -84,40 +84,66 @@ test("gateway discovery preserves setup intent and execution scopes", { timeout:
   expect(rows(quiet.payload.matches).some(match => String(match.name).startsWith(`mcp:${connectionId}:`))).toBe(true);
   expect(quiet.payload.connectionAction).toBeUndefined();
   expect(quiet.payload.connectorCatalog).toBeUndefined();
+  expect(quiet.payload.connectors).toBeUndefined();
   expect(quiet.result._meta).toBeUndefined();
   const explicit = await search({ query: "Notes Search Fixture", type: "mcp", intent: "connect" });
   expect(record(explicit.payload.connectionAction).connectionId).toBe(connectionId);
   expect(explicit.payload.connectorCatalog).toBeUndefined();
+  expect(explicit.payload.connectors).toBeUndefined();
+  expect(explicit.result._meta).toMatchObject({ "openwork/mcpApp": { toolName: "connection_action", arguments: { connectionId } } });
   evidence.recordAssertionEvidence("Blocked connection discovery stays informational until explicit connect intent", "The same blocked Notes connection appeared in both real gateway searches. Default discovery returned neither action nor catalog nor UI metadata; intent connect returned that connection's action and no unrelated catalog.", true);
 
   const slackQuiet = await search({ query: "slack" });
   expect(slackQuiet.payload.connectorCatalog).toBeUndefined();
+  expect(slackQuiet.payload.connectors).toBeUndefined();
   expect(slackQuiet.payload.connectionAction).toBeUndefined();
+  expect(slackQuiet.result._meta).toBeUndefined();
   const slack = await search({ query: "slack", intent: "connect" });
-  const catalog = record(slack.payload.connectorCatalog);
-  expect(catalog.version).toBe(1);
-  expect(catalog.selectedIds).toEqual(["slack"]);
+  expect(slack.payload.connectors).toBeUndefined();
+  expect(slack.payload.connectorCatalog).toMatchObject({ version: 1, selectedIds: ["slack"] });
   expect(slack.payload.connectionAction).toBeUndefined();
+  expect(slack.result._meta).toBeUndefined();
+  evidence.recordAssertionEvidence("Named setup retains released-client suggestions without inventing a connection", "An unconfigured Slack search with explicit connect intent returned the legacy catalog selecting Slack, without a connection action or UI launch metadata. Ordinary discovery stayed quiet; modern clients suppress catalog presentation.", true);
+
+  const full = await search({ query: "available services", type: "connectors" });
+  const catalog = record(full.payload.connectorCatalog);
+  expect(catalog.version).toBe(1);
+  expect(catalog.selectedIds).toEqual([]);
   const entries = rows(catalog.entries);
+  expect(record(slack.payload.connectorCatalog).entries).toEqual(entries);
+  for (const type of ["all", "mcp"]) {
+    const named = await search({ query: "Slack", type, intent: "connect" });
+    expect(named.payload.connectorCatalog).toEqual(slack.payload.connectorCatalog);
+  }
+  for (const type of ["api", "admin", "marketplace", "skills"]) {
+    const excluded = await search({ query: "Slack", type, intent: "connect" });
+    expect(excluded.payload.connectorCatalog).toBeUndefined();
+  }
+  const unknown = await search({ query: "unknown-service", intent: "connect" });
+  expect(unknown.payload.connectorCatalog).toBeUndefined();
+  const generic = await search({ query: "quick add connectors", intent: "connect" });
+  expect(generic.payload.connectorCatalog).toEqual(catalog);
   const ids = entries.map(entry => entry.id);
   expect(ids).toHaveLength(13);
   expect(new Set(ids).size).toBe(13);
   expect(ids).toEqual(expect.arrayContaining(["slack", "google-workspace", "microsoft-365", "linear"]));
+  expect(entries.filter(entry => entry.id === "slack")).toEqual([expect.objectContaining({ name: "Slack", setup: "oauth_client" })]);
   for (const entry of entries) {
     expect(typeof entry.name).toBe("string");
+    expect(typeof entry.description).toBe("string");
+    expect(["suite", "oauth_client", "api_key", "instant", "oauth"]).toContain(entry.setup);
     const setupUrl = new URL(String(entry.setupUrl));
     expect(["http:", "https:"]).toContain(setupUrl.protocol);
+    expect(setupUrl.pathname).toBe("/dashboard/mcp-connections");
     expect(setupUrl.searchParams.get("quickAdd")).toBe(entry.id);
   }
-  evidence.recordAssertionEvidence("Explicit named setup exposes the complete curated catalog without pretending a tool is connected", "Ordinary Slack search returned no setup UI. Explicit connect selected Slack in a versioned 13-entry catalog, including both suites and Linear, with a matching quickAdd setup URL for every entry and no connection action.", true);
-
-  const full = await search({ query: "available services", type: "connectors" });
-  const fullCatalog = record(full.payload.connectorCatalog);
-  expect(fullCatalog.selectedIds).toEqual([]);
-  expect(fullCatalog.entries).toEqual(entries);
+  expect(full.payload.connectors).toBeUndefined();
   expect(full.payload.matches).toEqual([]);
   expect(full.payload.connectionAction).toBeUndefined();
-  evidence.recordAssertionEvidence("Explicit catalog browsing returns all quick adds without selecting or authorizing an account", "type connectors returned all 13 entries, no selected IDs, no executable capability matches, and no connection action.", true);
+  expect(full.result._meta).toBeUndefined();
+  expect(await den.mocks.connector.toolCalls()).toEqual([]);
+  expect((await den.mocks.connector.requests()).filter(entry => entry.path === "/authorize" || entry.path === "/token")).toEqual([]);
+  evidence.recordAssertionEvidence("Explicit connector browsing returns all quick adds as ordinary metadata without authorizing an account", "type connectors returned all 13 setup entries with valid setup URLs, the legacy version 1 catalog envelope with no selected IDs, no executable matches, no connection action or UI metadata, and no provider or OAuth calls.", true);
 
   // Discovery does not grant mutation authority. Use the same read-scoped
   // token against a healthy synthetic connector, not the private App token.

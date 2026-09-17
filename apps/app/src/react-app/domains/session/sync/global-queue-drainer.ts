@@ -11,6 +11,7 @@ import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import {
   getComposerQueuedDrafts,
+  revokeUnownedAttachmentPreviews,
   useComposerStateStore,
 } from "../surface/composer-state-store";
 import {
@@ -167,8 +168,8 @@ async function performQueuedDraftSend(
     if (isPromptAdmissionUnknown(result.error)) throw result.error;
     throw new Error(serializeSDKError(result.error));
   }
-  assertQueuedSendCurrent(sessionId, generation);
-  if (sendModel && getSessionModelSelection(sessionId) === sessionModelSelection) {
+  if (sendModel && getQueuedSendGeneration(sessionId) === generation
+    && getSessionModelSelection(sessionId) === sessionModelSelection) {
     useSessionModelStore.getState().setModel(sessionId, sendModel, sendVariant ?? null);
   }
   return "sent";
@@ -179,13 +180,6 @@ async function performQueuedDraftSend(
 function withoutRevertTarget(draft: ComposerDraft): ComposerDraft {
   if (!draft.revertMessageId) return draft;
   return { ...draft, revertMessageId: undefined };
-}
-
-// Mirrors revokeAttachmentPreview in ../surface/session-surface.tsx, with a
-// guard for app-less/node execution.
-function revokeAttachmentPreview(attachment: { previewUrl?: string }) {
-  if (!attachment.previewUrl || typeof URL === "undefined" || typeof URL.revokeObjectURL !== "function") return;
-  URL.revokeObjectURL(attachment.previewUrl);
 }
 
 function armObservationProbe(watched: WatchedSession) {
@@ -218,9 +212,10 @@ function armObservationProbe(watched: WatchedSession) {
         const admission = await readPromptAdmission(client, watched.sessionId, phase.messageID);
         if (watchedSessions.get(watched.sessionId) !== watched) return;
         if (admission === "accepted") {
-          getComposerQueuedDrafts(useComposerStateStore.getState(), watched.sessionId)
-            .find((item) => item.id === phase.itemId)?.draft.attachments.forEach(revokeAttachmentPreview);
+          const accepted = getComposerQueuedDrafts(useComposerStateStore.getState(), watched.sessionId)
+            .find((item) => item.id === phase.itemId);
           useComposerStateStore.getState().removeQueuedDraft(watched.sessionId, phase.itemId);
+          if (accepted) revokeUnownedAttachmentPreviews(accepted.draft.attachments);
           dispatchQueuedDrain(watched.sessionId, {
             type: "admission_observed", itemId: phase.itemId, messageID: phase.messageID, at: Date.now(),
           });
@@ -395,11 +390,11 @@ async function attemptDrain(sessionId: string) {
       terminalObserved: draft.mode === "shell",
       deferredMessageID: draft.command ? draft.messageId : undefined,
     });
-    draft.attachments.forEach(revokeAttachmentPreview);
     if (outcome === "cancelled") {
       useComposerStateStore.getState().clearQueuedDrafts(sessionId);
-      return;
     }
+    revokeUnownedAttachmentPreviews(draft.attachments);
+    if (outcome === "cancelled") return;
     if (getQueuedSendGeneration(sessionId) !== generation) return;
     useSessionActivityStore.getState().setRunStatus(
       context.workspaceId,
@@ -414,7 +409,7 @@ async function attemptDrain(sessionId: string) {
       });
     } else if (getQueuedSendGeneration(sessionId) !== generation) {
       dispatchQueuedDrain(sessionId, { type: "send_result", itemId: nextItem.id, outcome: "cancelled", at: Date.now() });
-      draft.attachments.forEach(revokeAttachmentPreview);
+      revokeUnownedAttachmentPreviews(draft.attachments);
     } else {
       dispatchQueuedDrain(sessionId, { type: "send_error", itemId: nextItem.id });
       // The unaccepted row is still queued for explicit retry or draft recovery.

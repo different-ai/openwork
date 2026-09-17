@@ -268,6 +268,21 @@ export function getComposerQueuedDrafts(state: ComposerStateStore, sessionId: st
   return state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
 }
 
+export function revokeUnownedAttachmentPreviews(attachments: ComposerAttachment[]) {
+  const state = useComposerStateStore.getState();
+  const retained = [
+    ...Object.values(state.sessions),
+    ...Object.values(state.failedDrafts).flat(),
+    ...Object.values(state.queuedDrafts).flat().map((item) => item.draft),
+    ...Object.values(state.pendingMessages).flat().map((item) => item.draft),
+  ].flatMap((item) => item.attachments);
+  for (const attachment of attachments) {
+    if (attachment.previewUrl && !retained.some((item) => item.previewUrl === attachment.previewUrl)) {
+      URL.revokeObjectURL(attachment.previewUrl);
+    }
+  }
+}
+
 export function getComposerRevertMessageId(state: ComposerStateStore, sessionId: string): string | null {
   return state.sessions[sessionId]?.revertMessageId ?? null;
 }

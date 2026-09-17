@@ -15,6 +15,8 @@ import type { RequestIdVariables } from "hono/request-id"
 import { z } from "zod"
 import { connectorCatalogSchema, type ConnectorCatalog } from "@openwork/types/connection-action-app"
 import { connectorCatalogForQuery } from "./connector-catalog.js"
+import { registerAgentPluginFlowApp } from "./plugin-flow-app.js"
+import { registerAgentConnectionActionApp } from "./connection-action-app.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
@@ -88,12 +90,12 @@ import {
   selectConnectMcpServerIndexConnections,
   supportsConnectMcpAppHost,
 } from "./connect-mcp-server-index.js"
-import { registerAgentSkillCreatedApp } from "./skill-created-app.js"
+import { registerAgentSkillTools } from "./skill-created-app.js"
 import {
   connectionActionSearchCard,
+  connectionActionAppMeta,
   connectionActionPayloadSchema,
 } from "./connection-action.js"
-import { registerAgentPluginFlowApp } from "./plugin-flow-app.js"
 import {
   createConfigObjectVersion,
   createPluginBundle,
@@ -171,14 +173,14 @@ export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
 })
 
 export const AGENT_MCP_INSTRUCTIONS = [
-  "When asked what can be connected or to browse quick adds, call search_capabilities with type connectors and any descriptive query. This returns the complete curated setup catalog, including Google Workspace and Microsoft 365. A named-service search includes setup suggestions only with intent connect, when the user explicitly requested setup. Suggestions are not executable capabilities or proof of connection; let the user choose Set up in the card. Never invent credentials or claim setup is finished. Existing connection actions take priority.",
+  "When asked what can be connected or to browse quick adds, call search_capabilities with type connectors and any descriptive query. This returns the legacy version 1 connectorCatalog envelope, including Google Workspace and Microsoft 365. Released clients may render their existing browse catalog; new clients intentionally ignore it. No new setup card is introduced. Setup options are not executable capabilities or proof of connection. Organization administrators manage setup in the organization Connections dashboard. Named-service searches include legacy setup suggestions only with explicit intent connect, type omitted, all, or mcp, and no matching mcp connection; modern clients ignore these catalogs. Never invent credentials or claim setup is finished. Existing connection actions take priority.",
   "This OpenWork Cloud MCP server uses standard MCP tools, resources, structured results, and list-changed notifications.",
   "For connection actions and saved Workflows, call search_capabilities with 2-4 keyword variants before concluding something is unavailable. Direct MCP tools are not capability search results; call them directly. Use execute_capability only with exact names returned by search_capabilities. A successful search_capabilities call proves this connection is authorized: Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
   "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added. Allowlisted platform admins also discover namespaced OpenWork Admin capabilities here; other members cannot.",
   "A remote session is the member's OpenWork Web instance: a native OpenWork chat running in the cloud, visible in the browser. When asked to do something \"on the remote session\", \"in the web\", or \"in the cloud\" (e.g. \"run a Slack search for messages on the remote session\"), do not do the work here: execute remote-session:create with the whole request as prompt (or remote-session:send to an existing sessionId), then poll remote-session:read and relay the reply. target \"desktop\" runs it on the member's connected desktop instead.",
-  "Use create_skill to create one private Cloud skill in a new Plugin, and update_skill to publish a new immutable version of an existing skill. Both return a standard skill-created MCP App result plus a text fallback; do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions.",
+  "Use create_skill to create one private Cloud skill in a new Plugin, and update_skill to publish a new immutable version of an existing skill. Both return text and structured skill details with the original skill-created MCP App binding for released and historical clients; modern OpenWork clients suppress that first-party confirmation presentation. No new tool or confirmation UI is introduced; do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions.",
   "Built-in remote skills create-skill, share-plugin, add-to-marketplace, and add-user-to-marketplace are always listed in the skill index. Retrieve and follow the matching one by executing its exact capability; do not invent a local copy.",
-  "For an app, dashboard, or artifact view of Workflow results, call the direct MCP tool save_artifact_view and follow its prerequisites. It is a Cloud MCP tool, not a desktop-only RPC or a search_capabilities match. Its presence in the available tools confirms availability; an empty capability search does not establish a disabled feature flag. Do not substitute a local HTML file for an in-app artifact. Build the complete app in one shot without asking about Workflow internals, names, or runtime code. Live workflows use server-supplied input.runtime for current dates and caller timezone. Use one friendly name for the workflow and app; the user previews the draft and chooses Save to keep both on their dashboard. Only create an Automation when the user asks for a schedule.",
+  "For an app, dashboard, or artifact view of Workflow results, call the direct MCP tool save_artifact_view and follow its prerequisites. It is a Cloud MCP tool, not a desktop-only RPC or a search_capabilities match. Its presence in the available tools confirms availability; an empty capability search does not establish a disabled feature flag. Do not substitute a local HTML file for an in-app artifact. Build the complete app in one shot without asking about Workflow internals, names, or runtime code. Live workflows use server-supplied input.runtime for current dates and caller timezone. Use one friendly name for the workflow and app. Saving validates preview data and retains legacy draft metadata for released clients, which may open the preview automatically. Modern OpenWork clients ignore that metadata and do not auto-open. If no preview is shown after a successful build, explicitly call the standard preview tool named in the result. Saving never activates the draft. Activate a revision only when the user explicitly asks. Only create an Automation when the user asks for a schedule.",
   "Skills teach how to perform work. Workflows are saved procedures discovered through search_capabilities and run through execute_capability. Author an ad hoc procedure with execute_capability_script; Workflow runs produce artifacts rendered by render_workflow_artifact, and Automations trigger Workflows. To keep a successful Code Mode result, save it as a Workflow inside the existing Plugin the member names (pass that pluginId); omit pluginId only for a private Workflow in their My Workflows Plugin. A Workflow inherits discovery and sharing from its Plugin and Marketplaces; never create a separate Workflow package or marketplace entry.",
   "A match with kind mcp_app is a standard MCP App from a connected MCP server: execute that exact match through execute_capability and let compatible hosts render its ui:// resource. Never import, convert, or browse for a standalone HTML URL instead; standalone URL-imported Apps are not part of this release.",
   "To add a public GitHub plugin to an organization marketplace, search for the marketplace list, GitHub plugin import preview, GitHub plugin marketplace import, and resolved marketplace detail capabilities. Preview first; do not recreate the plugin by hand. Before importing, confirm the target marketplace, selected skill/server keys, and who can use them. Do not choose one authentication type for every server: the import route resolves known presets and plugin declarations, and the request authType is only a fallback for unknown servers.",
@@ -187,7 +189,7 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest. OpenWork always attempts the downstream provider call even when local schema checks find a mismatch; schemaGuidance is advisory (returned as openwork/schemaGuidance alongside provider results): if the provider succeeded, accept the result and do not retry because of the warning; if it failed, use the warning to correct the arguments or search again.",
   "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
   "When the user explicitly asks to connect or reconnect a service, search for that service by name with intent connect. Ordinary capability searches must omit intent connect: blocked connection matches are informational and must not trigger sign-in cards or automatic status calls. Only propose authorization when an explicitly requested operation actually depends on that connection. Explicit connection searches render a card when the result identifies one connection. Do not execute the same status again when the search response includes connectionAction. For an explicit connection request without a card, execute that exact status match once. When execute_capability fails with needs_connection or connection_not_connected, execute that connection's status capability (mcp:<connectionId>:*) once for the same card. For member-owned OAuth connections in OpenWork desktop, ask the user to click Connect or Reconnect on the inline card; desktop handles authorization directly, so do not send them to Den. For other actions, name connectionStatus.connectionName and relay connectionStatus.action exactly in text, distinguishing the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console. Probes are live: after the human fixes the connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
-  "Successful postMarketplacesPlugins, postPluginsAccess, and postMarketplacesAccess calls render a confirmation card automatically in compatible hosts; report the outcome in text as well.",
+  "Successful postMarketplacesPlugins, postPluginsAccess, and postMarketplacesAccess calls preserve original operation content and legacy plugin-flow confirmation metadata for released clients. Modern OpenWork clients suppress that first-party confirmation presentation. Report the verified outcome in text; the app-only plugin_flow formatter and its original resource remain available for legacy launches.",
 ].join("\n")
 
 async function mcpRequestInfo(request: Request): Promise<{ method: string | null; resourceUri: string | null }> {
@@ -251,7 +253,12 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
   return {
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
+    ...(card ? { _meta: connectionActionAppMeta(card.connectionId) } : {}),
   }
+}
+
+export function connectorSetupToolResult() {
+  return capabilitySearchToolResult([], undefined, connectorCatalogForQuery("", true))
 }
 
 function capabilityTimeoutResult(capability: string): ExecuteCapabilityToolResult {
@@ -484,6 +491,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
     }
     const server = createAgentMcpServer()
+    registerAgentPluginFlowApp(server)
+    registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (method === "server/discover" || method === "initialize" || method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
         // Select before the per-member readiness probes so an ordinary client
@@ -552,12 +561,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           intent: z.enum(["discover", "connect"]).optional().describe("Use connect only when the user explicitly asks to connect, reconnect, or set up a service. Ordinary capability discovery must omit this or use discover; it will not show sign-in cards."),
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
           limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
-          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches built-in and marketplace skills; connectors lists the entire quick-add setup catalog without probing connected tools. Defaults to all."),
+          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches built-in and marketplace skills; connectors returns the legacy browse catalog envelope without probing connected tools; released clients may render it and new clients ignore it. Defaults to all."),
         }),
         outputSchema: SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
       },
       async ({ query, limit, type, intent }) => {
-        if (type === "connectors") return capabilitySearchToolResult([], undefined, connectorCatalogForQuery(query, true))
+        if (type === "connectors") return connectorSetupToolResult()
         const boundedLimit = limit ?? 5
         const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type })
         const matches = result.matches.sort(compareCapabilityMatches).slice(0, boundedLimit)
@@ -616,7 +625,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       },
     )
 
-    registerAgentSkillCreatedApp({
+    registerAgentSkillTools({
       server,
       create: async ({ pluginName, skillMarkdown }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
@@ -749,8 +758,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
       },
     })
-
-    registerAgentPluginFlowApp(server)
 
     const loadWorkflowArtifact = async ({
       configObjectId,

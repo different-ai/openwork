@@ -6,12 +6,15 @@ import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 
+import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store"
 import { MessageList } from "../src/components/chat/message-list"
 import { MessageListProvider } from "../src/components/chat/message-list-provider"
+import { createDefaultPlatform, PlatformProvider } from "../src/react-app/kernel/platform"
 import { getReactQueryClient } from "../src/react-app/infra/query-client"
 import { createSessionErrorUIMessage } from "../src/react-app/domains/session/sync/usechat-adapter"
 import {
   presentOpencodeSessionError,
+  describeOpencodeSessionError,
   sessionErrorPresentationFromUIMessage,
 } from "../src/react-app/domains/session/sync/session-error"
 import {
@@ -209,20 +212,26 @@ describe("session error resilience", () => {
       </MessageListProvider>,
     )
 
-    expect(html).toContain("Task interrupted")
+    expect(html).not.toContain("Task interrupted")
     expect(html).not.toContain("Output and files already produced are kept")
     expect(html).not.toContain("Prepare recovery")
     expect(html).not.toContain('aria-label="Show error details"')
     expect(html).not.toContain('data-testid="session-error-details-trigger"')
   })
 
-  const renderErrorTranscriptWithResume = (error: unknown) => {
+  const renderErrorTranscriptWithResume = (error: unknown, mode: "current" | "history" | "readonly" | "fallback" = "current") => {
     const message = createSessionErrorUIMessage(
       "assistant-turn",
       presentOpencodeSessionError(error),
     )
+    const messages: UIMessage[] = mode === "fallback"
+      ? [{ id: "current-user", role: "user", parts: [{ type: "text", text: "Check the connection" }] }]
+      : [message]
+    if (mode === "history") messages.push({ id: "later-user", role: "user", parts: [{ type: "text", text: "Next task" }] })
     return renderToStaticMarkup(
+      <PlatformProvider value={createDefaultPlatform()}>
       <MessageListProvider
+        readOnly={mode === "readonly"}
         workspaceId="workspace-1"
         sessionId="session-1"
         showThinking={false}
@@ -239,10 +248,38 @@ describe("session error resilience", () => {
         onMcpReopenAuthorization={async () => undefined}
         onMcpRetry={() => undefined}
       >
-        <MessageList messages={[message]} status="ready" />
-      </MessageListProvider>,
+        <MessageList messages={messages} status="ready" />
+      </MessageListProvider>
+      </PlatformProvider>,
     )
   }
+
+  test("suppresses abort rows in current, history, read-only and activity fallback views", () => {
+    const modes = ["current", "history", "readonly", "fallback"] satisfies Array<"current" | "history" | "readonly" | "fallback">
+    for (const mode of modes) {
+      for (const error of ["Aborted", "Task interrupted", describeOpencodeSessionError({ name: "MessageAbortedError", data: { message: "Aborted" } })]) {
+        useSessionActivityStore.getState().setError("workspace-1", "session-1", error)
+        try {
+          const html = renderErrorTranscriptWithResume({ name: "MessageAbortedError", data: { message: error } }, mode)
+          expect(html).not.toContain("Task interrupted")
+          expect(html).not.toContain('data-testid="session-error-interrupted"')
+          expect(html).not.toContain('data-testid="session-error-resume"')
+          expect(html).not.toContain("border-destructive/30")
+        } finally {
+          useSessionActivityStore.getState().clearError("workspace-1", "session-1")
+        }
+      }
+    }
+  })
+
+  test("retains non-abort activity fallback errors", () => {
+    useSessionActivityStore.getState().setError("workspace-1", "session-1", "Provider authentication failed")
+    try {
+      expect(renderErrorTranscriptWithResume("unused", "fallback")).toContain("Provider authentication failed")
+    } finally {
+      useSessionActivityStore.getState().clearError("workspace-1", "session-1")
+    }
+  })
 
   test.each(["upstream_incomplete", "upstream_interrupted", "upstream_malformed_stream", "upstream_malformed_response", "upstream_timeout"])("renders the %s safety warning with Resume without exposing diagnostics", (code) => {
     const error = {
@@ -313,24 +350,24 @@ describe("session error resilience", () => {
     expect(presentation.connectUrl).toBeUndefined()
   })
 
-  test("offers Resume on the error card for an engine abort", () => {
+  test("suppresses an engine abort even when Resume is available", () => {
     const html = renderErrorTranscriptWithResume({
       name: "MessageAbortedError",
       data: { message: "Aborted" },
     })
 
-    expect(html).toContain('data-testid="session-error-resume"')
-    expect(html).toContain("Resume")
+    expect(html).not.toContain('data-testid="session-error-resume"')
+    expect(html).not.toContain("Resume")
   })
 
-  test("renders a resumable interruption as a quiet status line, not an error card", () => {
+  test("renders neither an abort status line nor an error card", () => {
     const html = renderErrorTranscriptWithResume({
       name: "MessageAbortedError",
       data: { message: "Aborted" },
     })
 
-    expect(html).toContain("Task interrupted")
-    expect(html).toContain('data-testid="session-error-interrupted"')
+    expect(html).not.toContain("Task interrupted")
+    expect(html).not.toContain('data-testid="session-error-interrupted"')
     expect(html).not.toContain('data-testid="session-error-interruption-warning"')
     expect(html).not.toContain("Output and files already produced are kept")
     expect(html).not.toContain("border-destructive/30")

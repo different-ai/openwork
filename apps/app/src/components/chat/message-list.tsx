@@ -1,6 +1,5 @@
 "use memo";
 
-import { VisualizationTool } from "@/components/tools/visualization-tool"
 import * as React from "react"
 import {
   AlertTriangle,
@@ -37,7 +36,6 @@ import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
-import { EnvVarRequestTool } from "@/components/tools/env-var-request"
 import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
@@ -46,7 +44,6 @@ import {
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
-import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
@@ -101,7 +98,6 @@ import {
   isApplyPatchToolPart,
   isBashToolPart,
   isEditToolPart,
-  isEnvVarRequestToolPart,
   isGlobToolPart,
   isGrepToolPart,
   isLspToolPart,
@@ -188,10 +184,11 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
 }
 
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
-  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
+  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, onMcpRetry, connectionQuestionToolCallId } = useMessageList()
   const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
+  if (part.toolCallId === connectionQuestionToolCallId) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
@@ -217,24 +214,15 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     )
   }
 
-  if (lifecycle === "interrupted") {
+  const statusUnknown = isToolPartInFlight(part) && (lifecycle === "interrupted" || (!lifecycle && !parentActive))
+  if (statusUnknown) {
     return (
-      <div
-        className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        data-tool-lifecycle="interrupted"
-        role="alert"
-      >
-        <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <div>
-          <div className="font-medium">Task interrupted</div>
-          <div className="text-xs text-destructive/80">This step stopped before it finished. Retry to continue.</div>
-        </div>
+      <div className="text-sm text-muted-foreground" data-tool-lifecycle="unknown">
+        {part.type === "dynamic-tool" ? (
+          <CapabilityCallLine part={part} connector={resolveConnectorToolIdentity(part, connectorIdentities)} statusUnknown />
+        ) : "Tool activity — status unavailable"}
       </div>
     )
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_visualization") {
-    return <VisualizationTool part={part} />
   }
 
   if (isBashToolPart(part)) {
@@ -287,14 +275,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 
   if (isQuestionToolPart(part)) {
     return <QuestionTool part={part} />
-  }
-
-  if (isEnvVarRequestToolPart(part)) {
-    return <EnvVarRequestTool part={part} />
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_session_create") {
-    return <OpenWorkSessionCreateTool part={part} />
   }
 
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
@@ -932,6 +912,7 @@ const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
+      if (presentation?.kind === "aborted") return null
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
@@ -1111,7 +1092,9 @@ function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone
 
 function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired }: ErrorMessageProps) {
   const { onResumeInterrupted, developerMode, dispatchAction, sessionId } = useMessageList()
-  const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
+  const presentation = error ? presentOpencodeSessionError(error) : null
+  if (presentation?.kind === "aborted" || error?.split("\n")[0]?.trim() === "Task interrupted") return null
+  const selection = error?.includes("gateway_selection_required") ? presentation : null
   const displayError = selection?.title ?? error
   const displayDescription = selection?.description ?? description
   const displayDetails = selection?.technicalDetails ?? technicalDetails

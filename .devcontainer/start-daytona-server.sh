@@ -178,7 +178,10 @@ pnpm --filter @openwork-ee/den-db db:push > /tmp/den-db-push.log 2>&1
 
 den_api_assets_marker=.openwork-daytona/den-api-assets.tree
 den_api_assets_key="$(build_key HEAD:packages/mcp-apps)"
-if [ -n "$den_api_assets_key" ] && [ -d packages/mcp-apps/dist ] && [ -f "$den_api_assets_marker" ] \
+if [ -n "$den_api_assets_key" ] && [ -s packages/mcp-apps/dist/connection-action.js ] \
+  && [ -s packages/mcp-apps/dist/connection-action.d.ts ] \
+  && [ -s packages/mcp-apps/dist/legacy-confirmation.js ] \
+  && [ -s packages/mcp-apps/dist/legacy-confirmation.d.ts ] && [ -f "$den_api_assets_marker" ] \
   && [ "$(cat "$den_api_assets_marker")" = "$den_api_assets_key" ]; then
   echo "==> Skipping Den API runtime asset build (baked assets match this ref)."
 else

@@ -4,7 +4,7 @@ import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import type { GeneratedArtifactView, WorkflowArtifactPayload } from "@openwork/types/workflows"
 import { artifactViewResourceUri } from "../src/artifact-view-resource.js"
-import { workflowArtifactAppServerCapabilities } from "../src/mcp/workflow-artifact-app.js"
+import { registerAgentWorkflowArtifactResource, workflowArtifactAppServerCapabilities } from "../src/mcp/workflow-artifact-app.js"
 import { registerAgentGeneratedArtifactViews } from "../src/mcp/generated-artifact-views.js"
 
 const viewId = "arv_01k28e8vz5e5svgkde54dgqy0c"
@@ -85,6 +85,7 @@ async function withClient<T>(
     { name: "generated-artifact-test", version: "1.0.0" },
     { capabilities: { ...workflowArtifactAppServerCapabilities, tools: { listChanged: true }, resources: { listChanged: true } } },
   )
+  registerAgentWorkflowArtifactResource(server)
   registerAgentGeneratedArtifactViews({
     server,
     views: overrides.views ?? [view],
@@ -275,7 +276,8 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
     expect(saved.isError).not.toBe(true)
     const text = JSON.stringify(saved.content)
     expect(text).toContain(`preview_artifact_${viewId}`)
-    expect(text).toContain("OpenWork opens the artifact preview automatically")
+    expect(text).toContain("Released OpenWork clients may open the legacy preview automatically")
+    expect(text).toContain("modern clients ignore the draft metadata")
     if (dataMode === "live") {
       expect(text).toContain(`run_artifact_${viewId}`)
       expect(text).toContain("optional timeZone")
@@ -288,7 +290,7 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
         .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, activeRevisionId) } })
     } else {
       expect(text).not.toContain(`run_artifact_${viewId}`)
-      expect(saved.content).toEqual([{ type: "text", text: `Saved immutable view revision ${draftRevisionId} at ${artifactViewResourceUri(viewId, draftRevisionId)}. OpenWork opens the artifact preview automatically. In other MCP clients: Call preview_artifact_${viewId} to display that revision.` }])
+      expect(saved.content).toEqual([{ type: "text", text: `Saved immutable view revision ${draftRevisionId} at ${artifactViewResourceUri(viewId, draftRevisionId)}. Released OpenWork clients may open the legacy preview automatically; modern clients ignore the draft metadata. Call preview_artifact_${viewId} to display that revision. Saving does not activate the draft.` }])
     }
     expect(saved.structuredContent).toMatchObject({ view: { activeRevisionId } })
     expect(saved._meta?.["openwork/appDraft"]).toEqual({
@@ -300,6 +302,37 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
   }, {
     views: [{ ...view, dataMode }],
     save: async () => ({ ...view, dataMode }),
+    activate: async () => { throw new Error("Saving a draft must not activate it") },
+  })
+})
+
+test.each(draftDataModes)("%s new drafts preserve legacy metadata without activation", async (dataMode) => {
+  let loads = 0
+  const draftView = { ...view, dataMode, activeRevisionId: null }
+  await withClient(async (client) => {
+    const saved = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(saved.isError, JSON.stringify(saved.content)).not.toBe(true)
+    expect(saved.structuredContent).toEqual({ view: draftView })
+    expect(saved._meta?.["openwork/appDraft"]).toEqual({
+      appId: viewId, revisionId: draftRevisionId, title: view.title,
+      ...(dataMode === "live" ? {} : { receiptId: payload.artifact.receiptId }),
+    })
+    expect(loads).toBe(1)
+    const tools = await client.listTools()
+    expect(tools.tools.some(tool => tool.name === `render_artifact_${viewId}`)).toBe(false)
+    expect(tools.tools.find(tool => tool.name === `preview_artifact_${viewId}`)?._meta)
+      .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, draftRevisionId) } })
+    const preview = await client.callTool({ name: `preview_artifact_${viewId}`, arguments: {} })
+    expect(preview.structuredContent).toEqual(payload)
+    expect(preview._meta?.["openwork/appDraft"]).toBeUndefined()
+    expect(loads).toBe(2)
+  }, {
+    views: [],
+    save: async () => draftView,
+    loadData: async () => { loads += 1; return { ok: true, payload, markdown: "# Preview" } },
     activate: async () => { throw new Error("Saving a draft must not activate it") },
   })
 })

@@ -11,10 +11,32 @@ function executeCapability(input: unknown): DynamicToolUIPart {
     state: "output-error",
     input,
     errorText: "boom",
-  } as DynamicToolUIPart;
+  };
 }
 
 describe("capability call sentences", () => {
+  test.each(["openwork_execute_capability", "openwork-cloud_execute_capability"])("names exact connection probes from %s", (toolName) => {
+    const part = { ...executeCapability({ name: "mcp:emc_probe:*", query: "ignored" }), toolName };
+    expect(getCapabilityCallSentence(part, { connectionName: "Notion" })).toEqual({
+      service: "Notion",
+      present: "Checking Notion connection…",
+      past: "Checked Notion connection",
+      failure: "Couldn't check Notion connection",
+    });
+    expect(getCapabilityCallSentence(part)).toEqual({
+      service: null,
+      present: "Checking connection…",
+      past: "Checked connection",
+      failure: "Couldn't check connection",
+    });
+  });
+
+  test("does not classify other tools or non-exact wildcard names as probes", () => {
+    for (const name of ["mcp:emc_probe:search", "mcp:emc_probe:*:extra", "mcp::*"]) {
+      expect(getCapabilityCallSentence(executeCapability({ name })).failure).toBeUndefined();
+    }
+    expect(getCapabilityCallSentence({ ...executeCapability({ name: "mcp:emc_probe:*" }), toolName: "third-party_execute_capability" }).failure).toBeUndefined();
+  });
   test("names an org MCP capability instead of falling back to 'a capability'", () => {
     const part = executeCapability({
       name: "mcp:emc_01kx2kfb42f6d94y1s1j992jhf:query_granola_meetings",

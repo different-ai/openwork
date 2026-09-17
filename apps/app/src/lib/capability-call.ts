@@ -14,6 +14,7 @@ export type CapabilityCallSentence = {
   present: string
   /** Past-tense line once the call completed. */
   past: string
+  failure?: string
 }
 
 const PAST_TENSE: Record<string, string> = {
@@ -135,16 +136,27 @@ function verbPhrase(action: string, tense: "present" | "past"): string {
   return `${prefix} ${humanize(action)}`
 }
 
-/**
- * Build the human sentence for a dynamic (MCP / capability) tool call.
- * Tool names follow "{connection}_{tool}", e.g.
- * "openwork-cloud_search_capabilities".
- */
+export function getConnectionStatusProbeId(part: DynamicToolUIPart): string | null {
+  if (part.toolName !== "openwork_execute_capability" && part.toolName !== "openwork-cloud_execute_capability") return null
+  const input = parseRecord(part.input)
+  return typeof input?.name === "string" ? /^mcp:([^:\s]+):\*$/.exec(input.name)?.[1] ?? null : null
+}
+
 export function getCapabilityCallSentence(
   part: DynamicToolUIPart,
-  options?: { includeQuery?: boolean },
+  options?: { includeQuery?: boolean; connectionName?: string | null },
 ): CapabilityCallSentence {
   const toolName = part.toolName
+  if (getConnectionStatusProbeId(part)) {
+    const service = options?.connectionName?.trim() || null
+    const target = service ? `${service} connection` : "connection"
+    return {
+      service,
+      present: `Checking ${target}…`,
+      past: `Checked ${target}`,
+      failure: `Couldn't check ${target}`,
+    }
+  }
   const query = options?.includeQuery === false ? null : extractQuery(part.input)
   const quoted = query ? ` “${query}”` : ""
 

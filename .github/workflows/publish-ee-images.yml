@@ -291,7 +291,7 @@ jobs:
             sentry_release=${{ secrets.SENTRY_RELEASE }}
             sentry_dist=${{ secrets.SENTRY_DIST }}
 
-      - name: Assert Den DB migration assets
+      - name: Assert Den DB migration assets and MCP App assets
         if: ${{ github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
         shell: bash
         env:
@@ -303,6 +303,10 @@ jobs:
             test -s /app/ee/packages/den-db/dist/scripts/bootstrap.js
             test -s /app/ee/packages/den-db/dist/current-schema.sql
             test -s /app/ee/packages/den-db/dist/drizzle/meta/_journal.json
+            test -s /app/packages/mcp-apps/dist/connection-action.js
+            test -s /app/packages/mcp-apps/dist/connection-action.d.ts
+            test -s /app/packages/mcp-apps/dist/legacy-confirmation.js
+            test -s /app/packages/mcp-apps/dist/legacy-confirmation.d.ts
           '
 
       - name: Smoke health endpoint

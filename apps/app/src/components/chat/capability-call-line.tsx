@@ -169,8 +169,9 @@ export function CapabilityCallLine({
   // line, expanding into the Paper "Failed Call Card" (quote, instruction
   // + Reconnect/Retry, technical details).
   if (isFailed) {
-    const sentence = getCapabilityCallSentence(part, { includeQuery: false })
-    const quote = getCapabilityCallQuote(part)
+    const sentence = getCapabilityCallSentence(part, { includeQuery: false, connectionName: connector?.name })
+    const failureLabel = sentence.failure ?? `${sentence.past} failed`
+    const quote = sentence.failure ? null : getCapabilityCallQuote(part)
     const initial = sentence.service?.charAt(0).toUpperCase() ?? null
     return (
       <Collapsible
@@ -181,11 +182,11 @@ export function CapabilityCallLine({
       >
         <CollapsibleTrigger
           className="group flex min-w-0 max-w-full cursor-pointer items-center gap-2 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${sentence.past}. Hide failure details` : `${sentence.past} failed. Show what to do next`}
+          aria-label={open ? `${failureLabel}. Hide failure details` : `${failureLabel}. Show what to do next`}
         >
           {connector ? <ConnectorMark connector={connector} /> : null}
-          <span className="min-w-0 truncate">{sentence.past}</span>
-          <span className="shrink-0 text-xs font-medium text-destructive">failed</span>
+          <span className="min-w-0 truncate">{sentence.failure ?? sentence.past}</span>
+          {!sentence.failure ? <span className="shrink-0 text-xs font-medium text-destructive">failed</span> : null}
           {duration ? (
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span>
           ) : null}
@@ -204,7 +205,7 @@ export function CapabilityCallLine({
                 </span>
               ) : null}
               <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                {sentence.present}
+                {sentence.failure ?? sentence.present}
               </span>
             </div>
             {quote ? (
@@ -266,7 +267,7 @@ export function CapabilityCallLine({
     )
   }
 
-  const sentence = getCapabilityCallSentence(part)
+  const sentence = getCapabilityCallSentence(part, { connectionName: connector?.name })
   const line = statusUnknown ? `${sentence.present} — status unavailable` : inFlight ? sentence.present : sentence.past
   return (
     <Collapsible data-capability-call={part.toolName} open={open} onOpenChange={setOpen} className={className}>

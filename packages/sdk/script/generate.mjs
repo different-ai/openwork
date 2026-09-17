@@ -23,7 +23,6 @@ async function files(directory, prefix = "") {
 }
 
 try {
-  // This workspace package exposes built browser assets even in development.
   execFileSync("pnpm", ["--filter", "@openwork/mcp-apps", "build"], { cwd: repoDir, stdio: "inherit" });
   const input = join(temporary, "openapi.json");
   execFileSync("pnpm", ["--filter", "@openwork-ee/den-api", "exec", "tsx", "--conditions=development",
