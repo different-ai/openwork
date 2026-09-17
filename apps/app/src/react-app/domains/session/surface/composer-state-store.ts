@@ -8,7 +8,7 @@ import type { ComposerMentionKind } from "./composer/mention-encoding";
 export type QueuedComposerItem = {
   id: string;
   draft: ComposerDraft;
-  steer?: { owner: string; generation: number; agent: string | null };
+  steer?: { owner: string; generation: number; agent: string | null; order?: number };
 };
 
 export type ComposerPastePart = {
@@ -61,6 +61,7 @@ export type ComposerStateStore = {
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
   appendQueuedDraft: (sessionId: string, draft: ComposerDraft, steer?: QueuedComposerItem["steer"]) => void;
+  requestQueuedDraftSend: (sessionId: string, id: string, steer: NonNullable<QueuedComposerItem["steer"]>) => void;
   removeQueuedDraft: (sessionId: string, id: string) => void;
   updateQueuedDraft: (sessionId: string, id: string, draft: ComposerDraft) => void;
   reorderQueuedDrafts: (sessionId: string, ids: string[]) => void;
@@ -74,6 +75,7 @@ const EMPTY_MENTIONS: Record<string, ComposerMentionKind> = {};
 const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
 const EMPTY_QUEUED_DRAFTS: QueuedComposerItem[] = [];
 const composerSessionDraftScopes = new Map<string, string>();
+let queuedSteerOrder = 0;
 
 export function claimComposerSessionDraftScope(sessionId: string, scopeKey: string) {
   const session = sessionId.trim();
@@ -207,7 +209,14 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   appendQueuedDraft: (sessionId, draft, steer) => set((state) => {
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
     const item = createQueuedItem(draft);
-    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...current, steer ? { ...item, steer } : item] } };
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...current, steer ? { ...item, steer: { ...steer, order: ++queuedSteerOrder } } : item] } };
+  }),
+  requestQueuedDraftSend: (sessionId, id, steer) => set((state) => {
+    const current = state.queuedDrafts[sessionId];
+    const item = current?.find((item) => item.id === id);
+    if (!current || !item || item.steer) return state;
+    const requested = { ...item, steer: { ...steer, order: ++queuedSteerOrder } };
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: current.map((item) => item.id === id ? requested : item) } };
   }),
   removeQueuedDraft: (sessionId, id) => set((state) => {
     const current = state.queuedDrafts[sessionId];
@@ -281,6 +290,13 @@ export function getComposerPasteParts(state: ComposerStateStore, sessionId: stri
 
 export function getComposerQueuedDrafts(state: ComposerStateStore, sessionId: string): QueuedComposerItem[] {
   return state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
+}
+
+export function getNextComposerQueuedDraft(state: ComposerStateStore, sessionId: string, owner: string | undefined, generation: number): QueuedComposerItem | undefined {
+  const eligible = getComposerQueuedDrafts(state, sessionId).filter((item) =>
+    !item.steer || (item.steer.owner === owner && item.steer.generation === generation));
+  const requested = eligible.filter((item) => item.steer).sort((left, right) => (left.steer?.order ?? 0) - (right.steer?.order ?? 0));
+  return requested[0] ?? eligible[0];
 }
 
 export function getComposerRevertMessageId(state: ComposerStateStore, sessionId: string): string | null {
