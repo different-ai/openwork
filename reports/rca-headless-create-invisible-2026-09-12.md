@@ -2,7 +2,7 @@
 
 Date: 2026-09-12. Investigation base: `91a7459a6` (reported installed build: `0.18.47-alpha.2966`, reported dev base: `e1cf5e74f`).
 
-**Overall verdict: Incomplete.** The server receipt/error-preservation fix is implemented and has targeted proof. The sidebar event gap is confirmed, but a safe all-workspace live transport fix is not included. Do not treat the prototype's tests as proof of a sidebar fix in this branch.
+**Historical two-symptom verdict: Incomplete.** The server receipt/error-preservation fix is implemented and has targeted proof. The sidebar event gap is confirmed, but a safe all-workspace live transport fix is not included. Do not treat the prototype's tests as proof of a sidebar fix in this branch.
 
 ## Evidence boundary and timeline
 
@@ -99,4 +99,4 @@ pnpm evals:pr specs/session-create-acceptance.test.ts
 
 Targeted results during implementation: 82/82 Bun tests and 1/1 testkit spec passed, zero skips. A server revert-fails control restored only `openwork-extensions-preview.ts` from `91a7459a6` while retaining the new descriptor/test: the same testkit command exited 1 (0 passed, 1 failed), observing `issues: undefined` instead of the indexed rejection at spec line 109. The committed implementation was then restored. Final-head results are published on the PR. Prototype app checks and negative controls are investigative evidence only, not the landable tree's sidebar verdict. Broader evals checks encountered unrelated-file errors; without a clean control they are not classified as pre-existing or passed.
 
-The original user prompts remain recoverable: an authorized user can select a verified available model and resume an existing session rather than duplicate it. This investigation neither verified such a model's current availability nor reran the originals. **Completion requires the safe live-inventory fix, its final-head multi-workspace/reconnect/compatibility tests, and a revert-fails check before marking the complete request Passed or the PR ready.**
+The original user prompts remain recoverable: an authorized user can select a verified available model and resume an existing session rather than duplicate it. This investigation neither verified such a model's current availability nor reran the originals. The historical two-symptom request remains incomplete until a safe live-inventory follow-up has multi-workspace, reconnect, compatibility, and revert-fails proof; follow-up ownership is pending. The current PR is scoped to server acceptance receipts, bounded creation requests, safe error reporting, and preservation of model preflight. Its readiness depends on that server-only scope's final-head verification, not completion of the withheld sidebar fix.

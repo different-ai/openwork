@@ -66,7 +66,7 @@ export interface HeadlessThreadUsage {
 
 export interface CreateThreadInput {
   title: string;
-  /** Optional first turn. When present the thread starts running immediately. */
+  /** Optional first turn. Awaiting creation confirms engine HTTP acceptance, not inference startup or completion. */
   prompt?: string;
   model?: HeadlessThreadModel;
   signal?: AbortSignal;

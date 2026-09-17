@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import { test } from "@openwork/testkit";
 import { openworkAffordanceResultSchema } from "@openwork/types/openwork-affordance";
 import { OpenWorkExtensionsPreview } from "../../apps/server/src/opencode-plugins/openwork-extensions-preview";
@@ -17,6 +17,105 @@ function outputOf(output: string): Record<string, unknown> {
 
 function records(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+for (const phase of ["headers", "body"]) {
+  test(`session.create bounds stalled workspace discovery ${phase} without writes`, async ({ evidence }) => {
+    const requests: Array<{ method: string | undefined; path: string | undefined }> = [];
+    const server = createServer((request, response) => {
+      requests.push({ method: request.method, path: request.url });
+      if (phase === "body") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.write('{"items":[');
+      }
+    });
+    try {
+      vi.stubEnv("OPENWORK_SERVER_URL", await listen(server));
+      vi.stubEnv("OPENWORK_SERVER_TOKEN", "discovery-fixture-token");
+      const plugin = await OpenWorkExtensionsPreview();
+      const before = Date.now();
+      const output = outputOf(await plugin.tool.openwork_execute.execute({ id: "session.create", args: {
+        sessions: [{ title: "Discovery stall", prompt: "Must not write" }],
+      } }, {}));
+      const elapsed = Date.now() - before;
+      expect(elapsed).toBeGreaterThanOrEqual(6_500);
+      expect(elapsed).toBeLessThan(10_000);
+      expect(output).toMatchObject({ ok: false, id: "session.create", code: "failed" });
+      expect(openworkAffordanceResultSchema.parse(output)).toEqual(output);
+      expect(output.error).toMatch(/timeout|timed out|aborted/i);
+      expect(output.issues).toEqual([{ path: "workspaceId", message: output.error }]);
+      expect(output).not.toHaveProperty("result");
+      expect(requests).toEqual([{ method: "GET", path: "/workspaces" }]);
+      evidence.recordAssertionEvidence(
+        `Workspace discovery ${phase} has a bounded failure before mutation`,
+        `The real HTTP witness stalled ${phase}; creation returned a structured workspaceId failure in ${elapsed}ms. Exactly one GET reached the server, with no catalog, create, prompt, reload, navigation, or retry.`,
+        elapsed < 10_000 && requests.length === 1 && output.ok === false,
+      );
+    } finally {
+      await close(server);
+      vi.unstubAllEnvs();
+    }
+  });
+}
+
+for (const phase of ["discovery", "create", "prompt"]) {
+  test(`session.create redacts and bounds ${phase} failures while retaining provider reasons`, async ({ evidence }) => {
+    const secrets = ["synthetic-provider-api-key", "synthetic-provider-password", "synthetic-bearer-credential"];
+    const reason = "Provider authorization failed for requested model";
+    const message = `${reason}: ${JSON.stringify({ api_key: secrets[0], password: secrets[1], authorization: `Bearer ${secrets[2]}` })} ${"additional diagnostic detail ".repeat(100)}`;
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(`${request.method} ${request.url}`);
+      if (request.url === "/workspaces") return sendJson(response, phase === "discovery" ? 503 : 200,
+        phase === "discovery" ? { message } : { items: [{ id: "ws_redaction", name: "Redaction", path: tmpdir() }] });
+      if (request.url === "/workspace/ws_redaction/opencode/session") return sendJson(response, phase === "create" ? 400 : 200,
+        phase === "create" ? { message } : { id: "ses_redaction", title: "Redaction", directory: tmpdir() });
+      if (request.url?.endsWith("/prompt_async")) return sendJson(response, 400, { data: { message } });
+      return sendJson(response, 200, { ok: false, error: "No UI host" });
+    });
+    try {
+      vi.stubEnv("OPENWORK_SERVER_URL", await listen(server));
+      vi.stubEnv("OPENWORK_SERVER_TOKEN", "redaction-fixture-token");
+      const plugin = await OpenWorkExtensionsPreview();
+      const output = outputOf(await plugin.tool.openwork_execute.execute({ id: "session.create", args: {
+        sessions: [{ title: "Redaction", prompt: "Do not retry" }],
+      } }, {}));
+      expect(output.ok).toBe(false);
+      expect(openworkAffordanceResultSchema.parse(output)).toEqual(output);
+      for (const secret of secrets) expect(JSON.stringify(output)).not.toContain(secret);
+      expect(output.error).toContain(reason);
+      expect(output.error).toContain("[redacted]");
+      expect(String(output.error).length).toBeLessThanOrEqual(400);
+      for (const issue of records(output.issues)) {
+        expect(issue.message).toContain(reason);
+        expect(String(issue.message).length).toBeLessThan(450);
+      }
+      if (phase === "discovery") {
+        expect(output.issues).toMatchObject([{ path: "workspaceId" }]);
+        expect(requests).toEqual(["GET /workspaces"]);
+      } else {
+        if (!isRecord(output.result)) throw new Error("Missing partial failure receipt");
+        expect(output.result.created).toEqual([]);
+        const failure = records(output.result.failures)[0];
+        expect(failure?.error).toContain(reason);
+        expect(String(failure?.error).length).toBeLessThanOrEqual(400);
+        expect(failure?.path).toBe(phase === "prompt" ? "sessions[0].prompt" : "sessions[0]");
+        if (phase === "prompt") expect(failure?.sessionId).toBe("ses_redaction");
+        else expect(failure).not.toHaveProperty("sessionId");
+        expect(requests).toEqual(["GET /workspaces", "POST /workspace/ws_redaction/opencode/session", ...(phase === "prompt" ? [
+          "POST /workspace/ws_redaction/opencode/session/ses_redaction/prompt_async", "POST /experimental/ui-control/request",
+        ] : [])]);
+      }
+      evidence.recordAssertionEvidence(
+        `${phase} failure receipts preserve useful reasons without synthetic credentials`,
+        "Top-level and nested provider messages passed through the shared response redactor before the 400-character cap. Root errors, indexed issues, and partial failures retained the authorization reason and recovery identity without API keys, passwords, or bearer credentials; no retries occurred.",
+        secrets.every((secret) => !JSON.stringify(output).includes(secret)) && String(output.error).length <= 400,
+      );
+    } finally {
+      await close(server);
+      vi.unstubAllEnvs();
+    }
+  });
 }
 
 test("session.create reports asynchronous acceptance, preserves rejected session IDs, and never claims inference started", async ({ evidence }) => {

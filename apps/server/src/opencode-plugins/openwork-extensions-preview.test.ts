@@ -1415,10 +1415,13 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
-    await expect(plugin.tool.openwork_execute.execute({
+    const output = argumentErrorSchema.parse(JSON.parse(await plugin.tool.openwork_execute.execute({
       id: "session.create",
       args: { workspaceId: "ws_missing", sessions: [{ title: "Nowhere", prompt: "Research nothing." }] },
-    }, { sessionID: "ses_origin" })).rejects.toThrow("No workspace matched ws_missing");
+    }, { sessionID: "ses_origin" })));
+    expect(output).toEqual({ ok: false, error: "No workspace matched ws_missing", issues: [
+      { path: "workspaceId", message: "No workspace matched ws_missing" },
+    ] });
 
     expect(fake.requests.filter((request) => request.method === "POST" && !isHostCatalogQuery(request.body))).toEqual([]);
     expect(fake.uiControlRequests).toEqual([]);
