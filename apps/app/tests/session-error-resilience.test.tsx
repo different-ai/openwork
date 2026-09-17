@@ -11,7 +11,9 @@ import { MessageListProvider } from "../src/components/chat/message-list-provide
 import { getReactQueryClient } from "../src/react-app/infra/query-client"
 import { createSessionErrorUIMessage } from "../src/react-app/domains/session/sync/usechat-adapter"
 import {
+  isTerminalProviderRetry,
   presentOpencodeSessionError,
+  resolveOpencodeSessionErrorPresentation,
   sessionErrorPresentationFromUIMessage,
 } from "../src/react-app/domains/session/sync/session-error"
 import {
@@ -54,7 +56,7 @@ describe("session error resilience", () => {
     expect(presentation.title).toBe("Storage error reported")
     expect(presentation.description).toBe("A storage limit was reported by the task runtime or a connected service. This does not necessarily mean your computer is full. Check the affected service or workspace before freeing local disk space.")
     expect(presentation.technicalDetails).toContain(code)
-    expect(presentation.technicalDetails).toContain("at runLoop")
+    expect(presentation.technicalDetails).not.toContain("at runLoop")
     expect(presentation.recoveryPrompt).toBeNull()
   })
 
@@ -304,13 +306,59 @@ describe("session error resilience", () => {
     ).toEqual(presentation)
   })
 
-  test("does not classify an ordinary 401 as a gateway sign-in", () => {
+  test("classifies an ordinary invalid-key 401 as terminal provider auth, not Gateway sign-in", () => {
     const presentation = presentOpencodeSessionError({
       name: "APIError",
       data: { message: "invalid_api_key", statusCode: 401 },
     })
-    expect(presentation.kind).toBe("generic")
+    expect(presentation.kind).toBe("provider-auth")
     expect(presentation.connectUrl).toBeUndefined()
+  })
+
+  test.each([
+    { statusCode: 400, responseBody: '{"error":{"code":"budget_exceeded"}}' },
+    { statusCode: 429, responseBody: '{"error":{"message":"Budget has been exceeded"}}' },
+  ])("treats provider budget exhaustion at $statusCode as terminal", ({ statusCode, responseBody }) => {
+    const presentation = presentOpencodeSessionError({
+      name: "APIError",
+      data: { message: `HTTP ${statusCode}: ${responseBody}`, statusCode, responseBody },
+    })
+    expect(presentation).toMatchObject({
+      kind: "budget-exceeded",
+      title: "Provider budget exceeded",
+      action: "repick-model",
+      terminal: true,
+    })
+    expect(isTerminalProviderRetry(`HTTP ${statusCode}: ${responseBody}`)).toBe(true)
+  })
+
+  test("requires a structured signal before calling a model retired", () => {
+    expect(presentOpencodeSessionError("A tool says model not found in its document").kind).toBe("generic")
+    expect(presentOpencodeSessionError({ name: "ProviderModelNotFoundError", data: { message: "missing" } })).toMatchObject({
+      kind: "model-unavailable",
+      action: "repick-model",
+      terminal: true,
+    })
+  })
+
+  test("uses live Den and provider-sync signals for distinct recovery actions", () => {
+    const provider = presentOpencodeSessionError({ name: "APIError", data: { message: "request failed", statusCode: 503 } })
+    expect(resolveOpencodeSessionErrorPresentation(provider, { denDisconnected: true })).toMatchObject({
+      kind: "den-disconnected",
+      action: "reconnect-den",
+      terminal: true,
+    })
+    expect(resolveOpencodeSessionErrorPresentation(provider, { organizationCredentialMissing: true })).toMatchObject({
+      kind: "organization-credential-missing",
+      action: "open-den-models",
+      terminal: true,
+    })
+    expect(resolveOpencodeSessionErrorPresentation(provider, { modelUnavailable: true })).toMatchObject({
+      kind: "model-unavailable",
+      action: "repick-model",
+      terminal: true,
+    })
+    expect(isTerminalProviderRetry("temporary provider failure", { denDisconnected: true })).toBe(true)
   })
 
   test("offers Resume on the error card for an engine abort", () => {

@@ -32,7 +32,7 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
-import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
+import { presentOpencodeSessionError, resolveOpencodeSessionErrorPresentation, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error"
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -935,6 +935,7 @@ const MessageComponent = React.memo(
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
+          presentation={presentation}
           description={presentation?.description}
           showDescriptionOnResume={presentation?.kind === "provider-incomplete"}
           resumePrompt={presentation?.recoveryPrompt}
@@ -1031,6 +1032,7 @@ ReconnectingMessage.displayName = "ReconnectingMessage"
 
 interface ErrorMessageProps {
   error: string | null
+  presentation?: OpencodeSessionErrorPresentation | null
   description?: string | null
   /** Keep safety guidance visible without expanding ordinary interruption rows. */
   showDescriptionOnResume?: boolean
@@ -1109,12 +1111,13 @@ function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone
   )
 }
 
-function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired }: ErrorMessageProps) {
-  const { onResumeInterrupted, developerMode, dispatchAction, sessionId } = useMessageList()
-  const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
-  const displayError = selection?.title ?? error
-  const displayDescription = selection?.description ?? description
-  const displayDetails = selection?.technicalDetails ?? technicalDetails
+function ErrorMessage({ error, presentation, description, showDescriptionOnResume, resumePrompt, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired }: ErrorMessageProps) {
+  const { onResumeInterrupted, developerMode, dispatchAction, sessionId, sessionErrorContext, onReconnectDen, onOpenDenModels } = useMessageList()
+  const selection = presentation ?? (error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null)
+  const resolved = resolveOpencodeSessionErrorPresentation(selection ?? presentOpencodeSessionError(error ?? "Session failed"), sessionErrorContext)
+  const displayError = resolved.title
+  const displayDescription = resolved.description ?? description
+  const displayDetails = resolved.technicalDetails ?? technicalDetails
   // Status codes, provider names, and response bodies are for developers,
   // admins, and support — not the plain-language card end users see. They
   // surface only with Developer mode (Settings → Advanced), like the
@@ -1131,7 +1134,7 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
           className="flex min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
         >
           <CirclePause aria-hidden="true" className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">{error}</span>
+          <span className="min-w-0 truncate">{displayError}</span>
           <span aria-hidden="true" className="text-muted-foreground/60">·</span>
           <button
             type="button"
@@ -1166,13 +1169,13 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
             </div>
           </div>
           {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
-          {gatewaySelectionRequired || selection ? (
+          {gatewaySelectionRequired || resolved.action === "gateway-selection" ? (
             <Button variant="outline" size="sm" className="self-start" data-testid="session-error-gateway-selection"
               onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>
               Choose group and credential set
             </Button>
           ) : null}
-          {gatewayConnectUrl !== undefined ? (
+          {gatewayConnectUrl !== undefined || resolved.action === "connect-provider" ? (
             <Button
               variant="outline"
               size="sm"
@@ -1183,6 +1186,24 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
               }}
             >
               Connect
+            </Button>
+          ) : null}
+          {resolved.action === "reconnect-den" ? (
+            <Button variant="outline" size="sm" className="self-start" data-testid="session-error-reconnect-den"
+              onClick={() => void onReconnectDen?.()}>
+              {t("session.error_action_reconnect")}
+            </Button>
+          ) : null}
+          {resolved.action === "open-den-models" ? (
+            <Button variant="outline" size="sm" className="self-start" data-testid="session-error-open-den-models"
+              onClick={onOpenDenModels}>
+              {t("session.error_action_open_den_models")}
+            </Button>
+          ) : null}
+          {resolved.action === "repick-model" ? (
+            <Button variant="outline" size="sm" className="self-start" data-testid="session-error-repick-model"
+              onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>
+              {t("session.error_action_repick")}
             </Button>
           ) : null}
         </div>

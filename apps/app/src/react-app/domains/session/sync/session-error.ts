@@ -1,9 +1,17 @@
 import type { UIMessage } from "ai";
 
 import { safeStringify } from "../../../../app/utils";
+import { t } from "@/i18n";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-selection-required" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-selection-required" | "provider-auth" | "budget-exceeded" | "model-unavailable" | "den-disconnected" | "organization-credential-missing" | "generic";
+export type OpencodeSessionErrorAction = "connect-provider" | "gateway-selection" | "open-den-models" | "reconnect-den" | "repick-model";
+
+export type OpencodeSessionErrorContext = {
+  denDisconnected?: boolean;
+  organizationCredentialMissing?: boolean;
+  modelUnavailable?: boolean;
+};
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -11,6 +19,8 @@ export type OpencodeSessionErrorPresentation = {
   description: string | null;
   technicalDetails: string;
   recoveryPrompt: string | null;
+  action?: OpencodeSessionErrorAction | null;
+  terminal?: boolean;
   /**
    * `gateway-auth-required` only: the OpenWork Gateway's OAuth start URL for
    * this member (`error.auth_url` in the 401 body). Null when the body omitted
@@ -31,7 +41,7 @@ export const interruptedTaskRecoveryPrompt = [
 
 function recordValue(value: unknown, key: string) {
   if (!value || typeof value !== "object") return undefined;
-  return (value as Record<string, unknown>)[key];
+  return Reflect.get(value, key);
 }
 
 function firstStringValue(records: unknown[], keys: string[]) {
@@ -67,9 +77,10 @@ function sessionErrorKind(
   name: string | null,
   message: string | null,
   code: string | null,
+  status: number | null,
   responseBody: string | null,
 ): OpencodeSessionErrorKind {
-  const searchable = [name, message, code, responseBody].filter(Boolean).join(" ");
+  const searchable = [name, message, code, status === null ? null : String(status), responseBody].filter(Boolean).join(" ");
   if (searchable.includes("gateway_selection_required")) return "gateway-selection-required";
   if (/\b(?:ENOSPC|EDQUOT|SQLITE_FULL)\b|no space left on device|database or disk is full|disk quota exceeded/i.test(searchable)) {
     return "disk-full";
@@ -95,7 +106,36 @@ function sessionErrorKind(
   if (responseBody?.includes("FreeUsageLimitError") || message?.includes("FreeUsageLimitError")) {
     return "free-model-limit";
   }
+  if (
+    name === "ProviderModelNotFoundError" ||
+    name === "ModelNotFound" ||
+    code === "model_not_found" ||
+    code === "provider_model_not_found" ||
+    /\b(?:model_not_found|provider_model_not_found)\b/.test(searchable)
+  ) {
+    return "model-unavailable";
+  }
+  const budgetStatus = statusFromText(searchable);
+  if (
+    /\bbudget_exceeded\b/i.test(searchable) ||
+    (budgetStatus !== null && [400, 429].includes(budgetStatus) && /\bbudget has been exceeded\b/i.test(searchable))
+  ) {
+    return "budget-exceeded";
+  }
+  if (
+    name === "ProviderAuthError" ||
+    ["authentication_error", "invalid_api_key", "invalid_auth", "credential_missing", "credentials_missing"].includes(code ?? "") ||
+    /\b(?:authentication_error|invalid_api_key|invalid_auth|credential_missing|credentials_missing)\b/i.test(searchable) ||
+    ([401, 403].includes(statusFromText(searchable) ?? 0) && /\b(?:auth(?:entication|orization)?|credential|api[ _-]?key|unauthorized|forbidden)\b/i.test(searchable))
+  ) {
+    return "provider-auth";
+  }
   return "generic";
+}
+
+function statusFromText(text: string) {
+  const match = /\b(?:HTTP\s*)?(400|401|403|429)\b/i.exec(text);
+  return match?.[1] ? Number(match[1]) : null;
 }
 
 function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
@@ -107,6 +147,11 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "free-model-limit") return "The free starter model is busy right now";
   if (kind === "gateway-auth-required") return GATEWAY_AUTH_REQUIRED_TITLE;
   if (kind === "gateway-selection-required") return "Choose a Gateway model group and credential set";
+  if (kind === "provider-auth") return t("session.error_provider_auth_title");
+  if (kind === "budget-exceeded") return t("session.error_budget_exceeded_title");
+  if (kind === "model-unavailable") return t("session.error_model_unavailable_title");
+  if (kind === "den-disconnected") return t("session.error_den_disconnected_title");
+  if (kind === "organization-credential-missing") return t("session.error_organization_credential_missing_title");
   return fallback;
 }
 
@@ -131,6 +176,11 @@ function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAu
   if (kind === "gateway-auth-required") {
     return gatewayAuth?.message ?? "Your sign-in for this provider is missing or was revoked. Connect it again, then retry.";
   }
+  if (kind === "provider-auth") return t("session.error_provider_auth_description");
+  if (kind === "budget-exceeded") return t("session.error_budget_exceeded_description");
+  if (kind === "model-unavailable") return t("session.error_model_unavailable_description");
+  if (kind === "den-disconnected") return t("session.error_den_disconnected_description");
+  if (kind === "organization-credential-missing") return t("session.error_organization_credential_missing_description");
   return null;
 }
 
@@ -188,6 +238,14 @@ function normalizeSessionError(text: string) {
   return normalizeErrorText(withOpenAiTokenRefreshHint(withAttachmentRecoveryHint(text)), { cap: 500 }).display;
 }
 
+function withoutStackTrace(text: string) {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*at\s+(?:async\s+)?\S+/i.test(line))
+    .join("\n")
+    .trim();
+}
+
 function sessionErrorFields(error: unknown, fallback: string) {
   if (typeof error === "string") {
     return {
@@ -230,36 +288,80 @@ function sessionErrorFields(error: unknown, fallback: string) {
 function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnType<typeof sessionErrorFields>) {
   const lines: string[] = [];
   if (fields.name) lines.push(`Error type: ${fields.name}`);
-  if (fields.message) lines.push(`Message: ${fields.message}`);
+  if (fields.message) lines.push(`Message: ${withoutStackTrace(fields.message)}`);
   if (fields.status !== null) lines.push(`Status: ${fields.status}`);
   if (fields.provider) lines.push(`Provider: ${fields.provider}`);
   if (fields.code) lines.push(`Code: ${fields.code}`);
   if (fields.retries !== null) lines.push(`Retries: ${fields.retries}`);
   if (fields.responseBody && fields.responseBody !== fields.message) {
-    lines.push(`Response: ${normalizeErrorText(fields.responseBody, { cap: 500 }).display}`);
+    lines.push(`Response: ${normalizeErrorText(withoutStackTrace(fields.responseBody), { cap: 500 }).display}`);
   }
   if (lines.length > 0) {
     return normalizeErrorText(lines.join("\n"), { cap: 1_500 }).display;
   }
 
   const serialized = safeStringify(error);
-  return normalizeErrorText(serialized && serialized !== "{}" ? serialized : fallback, { cap: 1_500 }).display;
+  return normalizeErrorText(withoutStackTrace(serialized && serialized !== "{}" ? serialized : fallback), { cap: 1_500 }).display;
+}
+
+function errorAction(kind: OpencodeSessionErrorKind): OpencodeSessionErrorAction | null {
+  if (kind === "gateway-auth-required" || kind === "provider-auth") return "connect-provider";
+  if (kind === "gateway-selection-required") return "gateway-selection";
+  if (kind === "model-unavailable" || kind === "budget-exceeded") return "repick-model";
+  if (kind === "den-disconnected") return "reconnect-den";
+  if (kind === "organization-credential-missing") return "open-den-models";
+  return null;
+}
+
+function isProviderFailure(kind: OpencodeSessionErrorKind) {
+  return ["generic", "provider-auth", "provider-timeout", "gateway-auth-required", "budget-exceeded", "model-unavailable"].includes(kind);
+}
+
+export function resolveOpencodeSessionErrorPresentation(
+  presentation: OpencodeSessionErrorPresentation,
+  context?: OpencodeSessionErrorContext,
+): OpencodeSessionErrorPresentation {
+  if (!isProviderFailure(presentation.kind)) return presentation;
+  const kind: OpencodeSessionErrorKind = context?.denDisconnected
+    ? "den-disconnected"
+    : context?.organizationCredentialMissing
+      ? "organization-credential-missing"
+      : context?.modelUnavailable
+        ? "model-unavailable"
+        : presentation.kind;
+  if (kind === presentation.kind) return presentation;
+  return {
+    ...presentation,
+    kind,
+    title: errorTitle(kind, presentation.title),
+    description: errorDescription(kind, null),
+    action: errorAction(kind),
+    terminal: ["provider-auth", "budget-exceeded", "model-unavailable", "den-disconnected", "organization-credential-missing"].includes(kind),
+  };
+}
+
+export function isTerminalProviderRetry(message: string, context?: OpencodeSessionErrorContext) {
+  if (context?.denDisconnected || context?.organizationCredentialMissing || context?.modelUnavailable) return true;
+  const kind = sessionErrorKind(null, message, null, null, null);
+  return kind === "provider-auth" || kind === "budget-exceeded" || kind === "model-unavailable";
 }
 
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
   const fields = sessionErrorFields(error, fallback);
   const gatewayAuth = detectGatewayAuthRequired(error, fields);
   const gatewaySelection = safeStringify(error)?.includes("gateway_selection_required") === true;
-  const kind = gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody);
+  const kind = gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : sessionErrorKind(fields.name, fields.message, fields.code, fields.status, fields.responseBody);
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
-  return {
+  return resolveOpencodeSessionErrorPresentation({
     kind,
     title: errorTitle(kind, fallbackTitle),
     description: errorDescription(kind, gatewayAuth),
     technicalDetails: kind === "gateway-selection-required" ? "Error code: gateway_selection_required\nStatus: 409" : gatewayAuth ? "Error code: openwork_auth_required\nStatus: 401" : technicalErrorDetails(error, fallback, fields),
     recoveryPrompt: errorRecoveryPrompt(kind),
+    action: errorAction(kind),
+    terminal: ["provider-auth", "budget-exceeded", "model-unavailable"].includes(kind),
     ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl } : {}),
-  };
+  });
 }
 
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
@@ -274,20 +376,44 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
   if (!part || part.type !== "text") return null;
   const metadata = part.providerMetadata?.opencode;
   if (!metadata || typeof metadata !== "object") return null;
-  const sessionError = "sessionError" in metadata
-    ? (metadata as { sessionError?: unknown }).sessionError
-    : null;
+  const sessionError = "sessionError" in metadata ? Reflect.get(metadata, "sessionError") : null;
   if (!sessionError || typeof sessionError !== "object") return null;
-  const candidate = sessionError as Partial<OpencodeSessionErrorPresentation>;
+  const kind = recordValue(sessionError, "kind");
+  const title = recordValue(sessionError, "title");
+  const description = recordValue(sessionError, "description");
+  const technicalDetails = recordValue(sessionError, "technicalDetails");
+  const recoveryPrompt = recordValue(sessionError, "recoveryPrompt");
+  const connectUrl = recordValue(sessionError, "connectUrl");
+  const action = recordValue(sessionError, "action");
+  const terminal = recordValue(sessionError, "terminal");
   if (
-    typeof candidate.kind !== "string" ||
-    typeof candidate.title !== "string" ||
-    !(typeof candidate.description === "string" || candidate.description === null) ||
-    typeof candidate.technicalDetails !== "string" ||
-    !(typeof candidate.recoveryPrompt === "string" || candidate.recoveryPrompt === null) ||
-    !(candidate.connectUrl === undefined || candidate.connectUrl === null || typeof candidate.connectUrl === "string")
+    typeof kind !== "string" || !isSessionErrorKind(kind) ||
+    typeof title !== "string" ||
+    !(typeof description === "string" || description === null) ||
+    typeof technicalDetails !== "string" ||
+    !(typeof recoveryPrompt === "string" || recoveryPrompt === null) ||
+    !(connectUrl === undefined || connectUrl === null || typeof connectUrl === "string") ||
+    !(action === undefined || action === null || isSessionErrorAction(action)) ||
+    !(terminal === undefined || typeof terminal === "boolean")
   ) {
     return null;
   }
-  return candidate as OpencodeSessionErrorPresentation;
+  return {
+    kind,
+    title,
+    description,
+    technicalDetails,
+    recoveryPrompt,
+    ...(connectUrl !== undefined ? { connectUrl } : {}),
+    ...(action !== undefined ? { action } : {}),
+    ...(terminal !== undefined ? { terminal } : {}),
+  };
+}
+
+function isSessionErrorKind(value: string): value is OpencodeSessionErrorKind {
+  return ["aborted", "provider-timeout", "provider-incomplete", "free-model-limit", "disk-full", "database-error", "gateway-auth-required", "gateway-selection-required", "provider-auth", "budget-exceeded", "model-unavailable", "den-disconnected", "organization-credential-missing", "generic"].includes(value);
+}
+
+function isSessionErrorAction(value: unknown): value is OpencodeSessionErrorAction {
+  return typeof value === "string" && ["connect-provider", "gateway-selection", "open-den-models", "reconnect-den", "repick-model"].includes(value);
 }

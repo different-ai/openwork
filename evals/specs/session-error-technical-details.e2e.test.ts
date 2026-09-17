@@ -73,7 +73,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
 
   const storageErrors: Array<"disk-full" | "database-error"> = ["disk-full", "database-error"];
   for (const kind of storageErrors) {
-    await step(`${kind} shows recovery guidance and keeps the stack trace in Developer mode`, async () => {
+    await step(`${kind} shows recovery guidance without putting the stack trace in conversation`, async () => {
       await world.seedStorageError(kind);
       const title = kind === "disk-full" ? STORAGE_TITLE : "OpenWork couldn’t access its saved data";
       await user.see({ text: title });
@@ -86,7 +86,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
       await toggleDeveloperMode("on");
       await user.click(detailsToggle);
       await user.see({ text: /effect\/sql\/SqlError/ });
-      await user.see({ text: /at runLoop/ });
+      await user.notSee({ text: /at runLoop/ });
       await user.see({ role: "button", label: /copy details/i });
       await toggleDeveloperMode("off");
       await user.see({ text: title });
@@ -101,7 +101,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
       await user.notSee({ text: /at runLoop/ });
       await toggleDeveloperMode("on");
       await user.see({ text: /effect\/sql\/SqlError/ });
-      await user.see({ text: /at runLoop/ });
+      await user.notSee({ text: /at runLoop/ });
       await toggleDeveloperMode("off");
       await user.see({ text: title });
       await user.notSee({ text: /at runLoop/ });

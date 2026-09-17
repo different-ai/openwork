@@ -1057,12 +1057,15 @@ export function SessionRoute() {
     if (!cloudProviderSyncReady || !cloudProviderList) return;
     clearCloudMcpSubmissionFailure();
   }, [clearCloudMcpSubmissionFailure, cloudProviderList, cloudProviderSyncReady]);
-  const organizationModelsSettingsUrl = useMemo(() => {
-    if (!isDenOrgAdminRole(activeOrganizationRole)) {
-      return undefined;
-    }
-    return new URL("/dashboard/custom-llm-providers", readDenSettings().baseUrl).toString();
-  }, [activeOrganizationRole, denSessionVersion]);
+  const denModelsUrl = useMemo(
+    () => new URL("/dashboard/custom-llm-providers", readDenSettings().baseUrl).toString(),
+    [denSessionVersion],
+  );
+  const organizationModelsSettingsUrl = isDenOrgAdminRole(activeOrganizationRole) ? denModelsUrl : undefined;
+  const organizationCredentialMissingProviderIds = useMemo(() => Object.values(
+    sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders ?? {},
+  ).filter((provider) => provider.reason === "org_credential_missing" || provider.reason === "missing_credentials")
+    .flatMap((provider) => [provider.providerId, provider.cloudProviderId]), [sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders]);
   const restrictToCloudProviders = checkDesktopRestriction({ restriction: "allowCustomProviders" });
   const entitledModelOptions = useMemo(() => {
     const runtimeOptions = providerListModelEntitlementOptions(
@@ -1475,6 +1478,10 @@ export function SessionRoute() {
       openWorkModelsEntitled,
       openWorkModelsSyncing,
       onRefreshOrganizationModels: refreshOrganizationModelAccess,
+      denAuthStatus: denAuth.status,
+      onReconnectDen: denAuth.refresh,
+      organizationCredentialMissingProviderIds,
+      denModelsUrl,
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
         if (open) {
@@ -1767,10 +1774,14 @@ export function SessionRoute() {
     listSlashCommands,
     modelBehaviorOptions,
     cloudMcpSubmissionState,
+    denAuth.refresh,
+    denAuth.status,
+    denModelsUrl,
     developerMode,
     modelLabel,
     modelUnavailableMessage,
     organizationModelsEmpty,
+    organizationCredentialMissingProviderIds,
     modelVariantLabel,
     modelVariantValue,
     navigate,

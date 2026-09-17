@@ -46,6 +46,7 @@ import {
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
 import { isConnectDirectMcpServerName } from "@/react-app/domains/connections/cloud-mcp-user-state";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
+import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import type {
   CloudMcpSubmissionGateState,
   CloudMcpSubmissionResult,
@@ -87,7 +88,7 @@ import {
   messageHasVisibleAssistantOutput,
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
-import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError } from "@/react-app/domains/session/sync/session-error";
+import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, isTerminalProviderRetry, presentOpencodeSessionError, resolveOpencodeSessionErrorPresentation, type OpencodeSessionErrorContext } from "@/react-app/domains/session/sync/session-error";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
@@ -223,10 +224,6 @@ as $5 and $10 stay plain text.`,
 type SessionError = {
   message: string;
   kind?: "model-not-found" | "generic";
-  /** For model-not-found: the model that failed. */
-  failedModel?: { providerID: string; modelID: string };
-  /** For model-not-found: suggested replacements from the backend. */
-  suggestions?: Array<{ providerID: string; modelID: string }>;
 };
 
 function createMarkdownPrimitiveEvalMessages(sessionId: string, text?: string) {
@@ -610,6 +607,10 @@ export type SessionSurfaceProps = {
   /** The server is waiting to reload this workspace with OpenWork Models. */
   openWorkModelsSyncing?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
+  denAuthStatus?: "checking" | "signed_in" | "unavailable" | "signed_out";
+  onReconnectDen?: () => void | Promise<void>;
+  organizationCredentialMissingProviderIds?: readonly string[];
+  denModelsUrl?: string;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   archived?: boolean;
@@ -855,73 +856,79 @@ function TodoPanel(props: { todos: TodoItem[] }) {
 
 function parseSessionError(thrown: unknown): SessionError {
   const raw = thrown instanceof Error ? thrown.message : String(thrown);
-  // Try to detect ProviderModelNotFoundError from the SDK error shape.
-  // The error message may be a JSON string from our serializer in session-route.
+  // Only a structured provider signal can claim the model is unavailable.
+  // Human-readable provider text is untrusted and can mention an unrelated
+  // model, so it never opens model recovery on its own.
   try {
-    const parsed = JSON.parse(raw);
-    if (parsed?.name === "ProviderModelNotFoundError" && parsed?.data) {
-      const { providerID, modelID, suggestions } = parsed.data;
-      return {
-        message: `Model ${providerID}/${modelID} is not available.`,
-        kind: "model-not-found",
-        failedModel: { providerID, modelID },
-        suggestions: Array.isArray(suggestions) ? suggestions : [],
-      };
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      const name = Reflect.get(parsed, "name");
+      const data = Reflect.get(parsed, "data");
+      const code = data && typeof data === "object" ? Reflect.get(data, "code") : null;
+      if (name === "ProviderModelNotFoundError" || name === "ModelNotFound" || code === "model_not_found" || code === "provider_model_not_found") {
+        return { message: raw, kind: "model-not-found" };
+      }
     }
   } catch {
     // Not JSON — fall through to plain message
   }
-  // Check if the raw string mentions model-not-found patterns
-  if (/ProviderModelNotFoundError/i.test(raw) || /model.*not found/i.test(raw)) {
-    return { message: raw, kind: "model-not-found" };
-  }
   return { message: raw || "Failed to send prompt." };
 }
 
-function SessionErrorCard({ error, developerMode, onDismiss, onChangeModel, onOpenModelPicker }: {
+function SessionErrorCard({ error, context, onDismiss, onOpenModelPicker, onReconnectDen, onOpenDenModels }: {
   error: SessionError;
-  developerMode: boolean;
+  context: OpencodeSessionErrorContext;
   onDismiss: () => void;
-  onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onOpenModelPicker?: () => void;
+  onReconnectDen?: () => void | Promise<void>;
+  onOpenDenModels?: () => void;
 }) {
-  const presentation = presentOpencodeSessionError(error.message);
+  const base = presentOpencodeSessionError(error.message);
+  const presentation = resolveOpencodeSessionErrorPresentation(
+    error.kind === "model-not-found" ? { ...base, kind: "model-unavailable" } : base,
+    context,
+  );
   return (
     <div className="mx-auto max-w-[720px] px-3 py-3 sm:px-5" data-testid="session-error-card" role="alert">
       <div className="rounded-2xl border border-red-6/30 bg-red-3/15 px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-red-11">{developerMode ? error.message : presentation.title}</div>
-            {!developerMode && presentation.description ? (
+            <div className="text-sm font-medium text-red-11">{presentation.title}</div>
+            {presentation.description ? (
               <p className="mt-1 text-sm text-red-11">{presentation.description}</p>
             ) : null}
-            {error.kind === "model-not-found" ? (
+            {presentation.action ? (
               <div className="mt-2 flex flex-wrap gap-2">
-                {error.suggestions && error.suggestions.length > 0 ? (
-                  error.suggestions.map((s) => (
-                    <button
-                      key={`${s.providerID}/${s.modelID}`}
-                      type="button"
-                      className="rounded-full border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
-                      onClick={() => {
-                        onChangeModel?.(s);
-                        onDismiss();
-                      }}
-                    >
-                      Use {s.providerID}/{s.modelID}
-                    </button>
-                  ))
-                ) : null}
-                <button
+                {presentation.action === "repick-model" ? <Button
                   type="button"
-                  className="rounded-full border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
+                  data-testid="session-error-repick-model"
+                  variant="outline"
+                  size="sm"
                   onClick={() => {
                     onOpenModelPicker?.();
                     onDismiss();
                   }}
                 >
-                  Change model
-                </button>
+                  {t("session.error_action_repick")}
+                </Button> : null}
+                {presentation.action === "reconnect-den" ? <Button
+                  type="button"
+                  data-testid="session-error-reconnect-den"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void onReconnectDen?.()}
+                >
+                  {t("session.error_action_reconnect")}
+                </Button> : null}
+                {presentation.action === "open-den-models" ? <Button
+                  type="button"
+                  data-testid="session-error-open-den-models"
+                  variant="outline"
+                  size="sm"
+                  onClick={onOpenDenModels}
+                >
+                  {t("session.error_action_open_den_models")}
+                </Button> : null}
               </div>
             ) : null}
           </div>
@@ -1199,6 +1206,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionModelUnavailable = props.resolveModelAvailability
     ? props.resolveModelAvailability(sessionModel.selectedModel).status === "unavailable"
     : Boolean(props.modelUnavailable);
+  const selectedProviderId = sessionModel.selectedModel?.providerID ?? "";
+  const sessionErrorContext = useMemo<OpencodeSessionErrorContext>(() => ({
+    denDisconnected: props.denAuthStatus === "unavailable" && isCloudManagedProviderKey(selectedProviderId),
+    organizationCredentialMissing: (props.organizationCredentialMissingProviderIds ?? []).includes(selectedProviderId),
+    modelUnavailable: sessionModelUnavailable,
+  }), [props.denAuthStatus, props.organizationCredentialMissingProviderIds, selectedProviderId, sessionModelUnavailable]);
+  const openDenModels = useCallback(() => {
+    if (props.denModelsUrl) void openDesktopUrl(props.denModelsUrl);
+  }, [props.denModelsUrl]);
   // This surface is retained across navigation. Async completions must keep
   // their original owner, including when different servers reuse session IDs.
   const { owner: sessionOwner, runtimeOwner, snapshotQueryKey } = useMemo(() => sessionHistoryIdentity({
@@ -1499,13 +1515,39 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const revertMessageId = snapshot?.session.revert?.messageID ?? null;
   const revertedMessageCount = snapshot && revertMessageId ? hiddenMessageCount(snapshot, revertMessageId) : 0;
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
+  const terminalRetry = liveStatus.type === "retry" && isTerminalProviderRetry(liveStatus.message, sessionErrorContext);
+  const terminalRetryRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!terminalRetry || liveStatus.type !== "retry") {
+      terminalRetryRef.current = null;
+      return;
+    }
+    const key = `${props.sessionId}:${liveStatus.attempt}:${liveStatus.message}`;
+    if (terminalRetryRef.current === key) return;
+    terminalRetryRef.current = key;
+    const parsed = parseSessionError(liveStatus.message);
+    setError(parsed);
+    useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
+    const stopClient = isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? opencodeClient
+      : createClient(props.opencodeBaseUrl, props.workspaceRoot.trim() || undefined,
+        { token: props.openworkToken, mode: "openwork" }, { desktopTransport: "main" });
+    void interruptSessionTurn(
+      props.opencodeBaseUrl,
+      stopClient,
+      props.sessionId,
+      props.workspaceRoot.trim() || undefined,
+    ).catch(() => {
+      // The terminal card remains actionable if the engine settled between
+      // the retry observation and this cancellation request.
+    });
+  }, [liveStatus, opencodeClient, props.opencodeBaseUrl, props.openworkToken, props.sessionId, props.workspaceId, props.workspaceRoot, sessionErrorContext, setError, terminalRetry]);
   const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
     props.cloudMcpSubmissionState.status === "repairing";
   const needsStop = useSyncExternalStore(
     useCallback((listener) => subscribeSessionInterruption(props.opencodeBaseUrl, props.sessionId, listener), [props.opencodeBaseUrl, props.sessionId]),
     useCallback(() => sessionNeedsStop(props.opencodeBaseUrl, props.sessionId), [props.opencodeBaseUrl, props.sessionId]),
   );
-  const chatStreaming = needsStop || sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const chatStreaming = needsStop || sending || liveStatus.type === "busy" || (liveStatus.type === "retry" && !terminalRetry);
   const archiveHeld = useSyncExternalStore(
     useCallback((listener) => subscribeSessionInterruption(props.opencodeBaseUrl, props.sessionId, listener), [props.opencodeBaseUrl, props.sessionId]),
     useCallback(() => sessionWorkHeld(props.opencodeBaseUrl, props.sessionId), [props.opencodeBaseUrl, props.sessionId]),
@@ -1963,7 +2005,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return "streaming";
     }
 
-    if (liveStatus.type === "retry") {
+    if (liveStatus.type === "retry" && !terminalRetry) {
       return "retrying";
     }
 
@@ -1976,7 +2018,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
 
     return "ready";
-  }, [admissionOutcome, admissionOutcomeUnresolved, autoSending, evalThreadStatus, liveStatus, queuedDrainState.phase.kind, sending]);
+  }, [admissionOutcome, admissionOutcomeUnresolved, autoSending, evalThreadStatus, liveStatus, queuedDrainState.phase.kind, sending, terminalRetry]);
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -3383,15 +3425,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 onRestore={handleRestoreRevertedSession}
               />
             ) : null}
-            {error && snapshot && snapshot.messages.length > 0 ? (
-              <SessionErrorCard
-                developerMode={props.developerMode}
-                error={error}
-                onDismiss={handleDismissError}
-                onChangeModel={handleModelChange}
-                onOpenModelPicker={handleOpenModelPicker}
-              />
-            ) : null}
             <SessionHistoryBoundary owner={sessionOwner} pending={pendingSessionLoad}
               failed={Boolean(openingHistory.openingError) || snapshotQuery.isError && !snapshotQuery.isFetching} saved={initialScroll}>
             {renderedMessages.length === 0 && effectiveActivityStatus !== "idle" && !error ? (
@@ -3400,11 +3433,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </div>
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
               <SessionErrorCard
-                developerMode={props.developerMode}
                 error={error}
+                context={sessionErrorContext}
                 onDismiss={handleDismissError}
-                onChangeModel={handleModelChange}
                 onOpenModelPicker={handleOpenModelPicker}
+                onReconnectDen={props.onReconnectDen}
+                onOpenDenModels={props.denModelsUrl ? openDenModels : undefined}
               />
             ) : props.chatPane === "secondary" && snapshot && renderedMessages.length === 0 ? (
               null
@@ -3437,6 +3471,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       providerConnectedCount={props.providerConnectedCount ?? 0}
                       connectorIdentities={connectorIdentities}
                       syncDegraded={runSyncHealth.degraded}
+                      sessionErrorContext={sessionErrorContext}
+                      onReconnectDen={props.onReconnectDen}
+                      onOpenDenModels={props.denModelsUrl ? openDenModels : undefined}
                       dispatchAction={handleMessageListDispatchAction}
                       setPrompt={handleMessageListSetPrompt}
                       onRevertToUserMessage={handleRevertToUserMessage}
@@ -3455,7 +3492,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         messages={renderedMessages}
                         status={status}
                         activityStatus={effectiveActivityStatus}
-                        retryStatus={liveStatus.type === "retry" ? liveStatus : null}
+                        retryStatus={liveStatus.type === "retry" && !terminalRetry ? liveStatus : null}
                         syncHealth={runSyncHealth}
                       />
                     </MessageListProvider>

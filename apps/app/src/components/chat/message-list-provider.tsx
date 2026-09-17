@@ -9,6 +9,7 @@ import type {
 import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import type { OpenworkServerClient } from "@/app/lib/openwork-server"
+import type { OpencodeSessionErrorContext } from "@/react-app/domains/session/sync/session-error"
 import type { McpAppOrigin } from "./mcp-app-origin"
 
 interface MessageListContextValue {
@@ -29,6 +30,9 @@ interface MessageListContextValue {
    * (failed status revalidation). Working indicators must stop ticking.
    */
   syncDegraded: boolean
+  sessionErrorContext: OpencodeSessionErrorContext
+  onReconnectDen?: () => void | Promise<void>
+  onOpenDenModels?: () => void
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
@@ -76,6 +80,9 @@ interface MessageListProviderProps {
   providerConnectedCount: number
   connectorIdentities?: ConnectorToolIdentity[]
   syncDegraded?: boolean
+  sessionErrorContext?: OpencodeSessionErrorContext
+  onReconnectDen?: () => void | Promise<void>
+  onOpenDenModels?: () => void
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
 }
@@ -101,6 +108,9 @@ export function MessageListProvider({
   providerConnectedCount,
   connectorIdentities = [],
   syncDegraded = false,
+  sessionErrorContext = {},
+  onReconnectDen,
+  onOpenDenModels,
   dispatchAction,
   setPrompt,
   onRevertToUserMessage,
@@ -124,6 +134,8 @@ export function MessageListProvider({
     onMcpReconnect,
     onMcpReopenAuthorization,
     onMcpRetry,
+    onReconnectDen,
+    onOpenDenModels,
   })
   React.useEffect(() => {
     handlersRef.current = {
@@ -137,6 +149,8 @@ export function MessageListProvider({
       onMcpReconnect,
       onMcpReopenAuthorization,
       onMcpRetry,
+      onReconnectDen,
+      onOpenDenModels,
     }
   }, [
     dispatchAction,
@@ -149,6 +163,8 @@ export function MessageListProvider({
     onMcpReconnect,
     onMcpReopenAuthorization,
     onMcpRetry,
+    onReconnectDen,
+    onOpenDenModels,
   ])
   const stableHandlers = React.useMemo(() => ({
     dispatchAction: (action: DispatchAction) => handlersRef.current.dispatchAction(action),
@@ -166,6 +182,8 @@ export function MessageListProvider({
       handlersRef.current.onMcpReopenAuthorization(action, authorizeUrl)
     ),
     onMcpRetry: (action: ChatToolReconnectAction) => handlersRef.current.onMcpRetry(action),
+    onReconnectDen: () => handlersRef.current.onReconnectDen?.(),
+    onOpenDenModels: () => handlersRef.current.onOpenDenModels?.(),
   }), [])
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
@@ -188,6 +206,7 @@ export function MessageListProvider({
       providerConnectedCount,
       connectorIdentities,
       syncDegraded,
+      sessionErrorContext,
       ...stableHandlers,
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
@@ -210,6 +229,7 @@ export function MessageListProvider({
       providerConnectedCount,
       connectorIdentities,
       syncDegraded,
+      sessionErrorContext,
       stableHandlers,
       canOpenSubagentSession,
       canResumeInterrupted,
