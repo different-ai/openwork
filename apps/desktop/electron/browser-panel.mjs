@@ -1117,7 +1117,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = tabForView(view);
     if (!tab?.domReady || tab.background || tab.suspending) return;
     const cdp = webContents.debugger;
-    if (cdp.isAttached()) return;
     queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent) => {
       if (tab.background || tab.suspending || cdp.isAttached()) return;
       cdp.attach("1.3");

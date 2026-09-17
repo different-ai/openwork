@@ -40,7 +40,7 @@ test("a visible built-in browser tab left with an automation viewport snaps back
   });
 });
 
-geometryTest("the native browser survives zoom, resizing, overlays and conversation changes without losing input", async ({ world, user, probe, step }) => {
+geometryTest("the native browser survives zoom, resizing, overlays and conversation changes without losing input", async ({ world, user, probe, step, evidence }) => {
   const { tab, page, session, neighbor } = world;
   const field: Target = { role: "textbox" };
   const draft = "Keep this browser input through layout changes";
@@ -53,7 +53,6 @@ geometryTest("the native browser survives zoom, resizing, overlays and conversat
     label: "the seeded browser tab is visible in its panel before typing",
   });
   await user.on(page).see({ role: "button", label: "hit" });
-  await user.on(page).type(field, draft);
   const original = await probe.browserTabMetrics(tab.targetId);
   expect(original).toMatchObject({ url: INPUT_PROBE_PAGE, title: "input-probe" });
   const identity = { url: original.url, title: original.title, timeOrigin: original.timeOrigin };
@@ -61,7 +60,7 @@ geometryTest("the native browser survives zoom, resizing, overlays and conversat
   // This is the actual contentRef div, not the surrounding toolbar/panel shell.
   const container = '[data-slot="resizable-panel"]:has(button[aria-label="Reload page"]) .relative.min-h-0.flex-1.overflow-hidden > .h-full.overflow-hidden';
   // This bound includes CDP round trips; it is not a renderer latency measurement.
-  const aligned = async (expectedZoom: number) => {
+  const aligned = async (expectedZoom: number, expectedInput = draft) => {
     const started = performance.now();
     let consecutive = 0;
     const sample = await probe.eventually(async () => {
@@ -114,7 +113,7 @@ geometryTest("the native browser survives zoom, resizing, overlays and conversat
     }, { within: budgetMs, intervalMs: 50, until: () => consecutive >= 3, label: "three aligned native/container/viewport samples within five seconds" });
     // Keep the observation bounded even if eventually finishes a probe after its deadline.
     expect(performance.now() - started).toBeLessThanOrEqual(budgetMs);
-    await user.on(page).see(field, { value: draft, timeoutMs: budgetMs });
+    await user.on(page).see(field, { value: expectedInput, timeoutMs: budgetMs });
     return sample;
   };
 
@@ -123,6 +122,22 @@ geometryTest("the native browser survives zoom, resizing, overlays and conversat
     expect((await probe.dom('[data-slot="resizable-handle"][role="separator"]')).elements.map(element => element.focused))
       .toEqual([true]);
   };
+
+  await step("An unfocused page follows rapid initial resize without relying on focus to recover its viewport", async () => {
+    if (await probe.has("Not now")) {
+      await user.click({ role: "button", label: "Not now" });
+    }
+    await focusSeparator();
+    await user.press("Control+0");
+    const before = await aligned(1, "");
+    expect((await probe.browserTabMetrics(tab.targetId)).hasFocus).toBe(false);
+    for (let key = 0; key < 3; key++) await user.press("ArrowLeft");
+    const after = await aligned(1, "");
+    expect(after.rect.width).toBeGreaterThan(before.rect.width + 10);
+    expect((await probe.browserTabMetrics(tab.targetId)).hasFocus).toBe(false);
+    evidence.recordAssertionEvidence("Unfocused browser resize converges without a focus reset", "Three divider keys resized the native container; the unfocused page matched its new native dimensions in three consecutive samples without replacing the document.", true);
+  });
+  await user.on(page).type(field, draft);
 
   // The single separator resizes the side panel through trusted keyboard events.
   await user.click({ role: "separator" });
@@ -219,4 +234,5 @@ geometryTest("the native browser survives zoom, resizing, overlays and conversat
   await user.on(page).type(field, " and still editable");
   await user.on(page).see(field, { value: `${draft} and still editable`, timeoutMs: budgetMs });
   expect(await probe.browserTabMetrics(tab.targetId)).toMatchObject(identity);
+  evidence.recordAssertionEvidence("Browser geometry and page state survive layout and ownership transitions", "Native and page dimensions remained aligned at 90–120% zoom, through keyboard resizing, modal/sidebar transitions, two panel close/reopen cycles and three conversation round trips. Hidden views never painted over the app, and the original page retained its input and accepted further typing.", true);
 });
