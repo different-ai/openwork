@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
+import { openworkOpenAICompatibleSystemPluginPath } from "./openwork-extensions-plugin-path.js";
 import { catalogFastVariants, fastVariantId } from "@openwork/types/cloud-model-fast";
 
 import {
@@ -108,6 +109,18 @@ describe("openwork runtime config file", () => {
     expect(parsed.plugin).toContain("ordinary-plugin");
     expect(parsed.plugin).toContain("/user/plugins/managed-policy.ts");
     expect(buildOpenworkRuntimeConfigObjectFromSnapshot({}).permission).toEqual({});
+  });
+
+  test("places OpenAI-compatible system normalization after runtime plugins", () => {
+    const parsed = buildOpenworkRuntimeConfigObjectFromSnapshot({
+      plugin: ["runtime-plugin-a", "runtime-plugin-b"],
+    });
+    expect(parsed.plugin).toEqual(expect.arrayContaining(["runtime-plugin-a", "runtime-plugin-b"]));
+    expect(Array.isArray(parsed.plugin)).toBe(true);
+    if (!Array.isArray(parsed.plugin)) throw new Error("Expected runtime plugins");
+    expect(parsed.plugin.at(-1)).toBe(openworkOpenAICompatibleSystemPluginPath());
+    expect(parsed.plugin.indexOf("runtime-plugin-a")).toBeLessThan(parsed.plugin.length - 1);
+    expect(parsed.plugin.indexOf("runtime-plugin-b")).toBeLessThan(parsed.plugin.length - 1);
   });
 
   test("writes global-row MCPs and openwork defaults into the file", async () => {

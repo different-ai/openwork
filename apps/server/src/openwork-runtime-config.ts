@@ -28,6 +28,7 @@ import {
   openworkSpreadsheetsPluginPath,
   openworkChromeDevtoolsPluginPath,
   openworkPdfAttachmentsPluginPath,
+  openworkOpenAICompatibleSystemPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -106,6 +107,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicToolSchemaPluginPath(),
       openworkTitleRecoveryPluginPath(),
       ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin)),
+      // Runtime plugins execute after OpenWork's feature plugins and may append
+      // additional system entries. Keep this compatibility boundary last so
+      // OpenAI-compatible providers receive one ordered system message.
+      openworkOpenAICompatibleSystemPluginPath(),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))

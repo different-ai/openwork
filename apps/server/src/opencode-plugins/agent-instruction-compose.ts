@@ -80,12 +80,11 @@ export function composeAgentInstructions(...groups: AgentInstructionSectionGroup
  * `experimental.chat.system.transform` hook.
  *
  * OpenCode sends every entry of `system` as its own `role: "system"` message.
- * Several chat templates behind OpenAI-compatible endpoints reject any system
- * message after the first ("System message must be at the beginning."), so
- * OpenWork folds its instructions into the existing entry instead of pushing a
- * second one. The engine alone sends a single system message; this keeps that
- * shape intact. Sections are separated by a blank line so each heading starts
- * its own paragraph instead of trailing the previous sentence.
+ * OpenWork folds its own instructions into the existing entry instead of
+ * pushing another one. The final OpenAI-compatible normalizer separately
+ * handles contributions from runtime plugins. Sections are separated by a
+ * blank line so each heading starts its own paragraph instead of trailing the
+ * previous sentence.
  */
 export function appendAgentInstructions(system: string[], ...groups: AgentInstructionSectionGroup[]): void {
   const body = composeAgentInstructions(...groups).join("\n\n");

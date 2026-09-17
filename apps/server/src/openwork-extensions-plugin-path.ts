@@ -40,3 +40,4 @@ export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("ope
 export const openworkSpreadsheetsPluginPath = () => openworkPluginPath("openwork-spreadsheets");
 export const openworkPdfAttachmentsPluginPath = () => openworkPluginPath("openwork-pdf-attachments");
 export const openworkTitleRecoveryPluginPath = () => openworkPluginPath("openwork-title-recovery");
+export const openworkOpenAICompatibleSystemPluginPath = () => openworkPluginPath("openwork-openai-compatible-system");
