@@ -3,6 +3,7 @@ import type { Message, Part } from "@opencode-ai/sdk/v2/client";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, PromptAdmissionUnknownError, unwrap } from "./opencode";
 import { isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
 import { engineDirectory } from "./session-ownership";
+import { observeSendStep } from "./send-step-diagnostics";
 
 export function createSessionInterruptionClient(baseUrl: string, client: Client, directory?: string, token?: string): Client {
   return isOpencodeV2BaseUrl(baseUrl) ? client
@@ -44,7 +45,7 @@ export async function submitAfterInterruption<T>(baseUrl: string, sessionID: str
   if (turn.holds) throw new Error("This conversation is being archived.");
   const generation = turn.generation;
   const interruption = turn.interruption;
-  await interruption;
+  await (interruption ? observeSendStep("interruption", () => interruption) : interruption);
   if (turn.holds || turn.generation !== generation) throw new Error("Send cancelled by Stop.");
   let cancel!: () => void;
   const cancelled = new Promise<never>((_, reject) => {
