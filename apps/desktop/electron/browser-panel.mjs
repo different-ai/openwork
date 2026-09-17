@@ -128,6 +128,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // Last accepted geometry in window DIPs. Reattaching must not scale an old
   // CSS rectangle with a newer zoom while the renderer is still catching up.
   let lastBrowserBounds = null;
+  let lastBrowserZoomFactor = null;
   let browserTabCounter = 0;
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
@@ -1036,9 +1037,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const next = registry.setVisibleSession(sessionId);
     if (next === previous) return next;
     shortcutFocus = null;
-    hideContextMenu();
+    hideBrowserView();
     applySurfacing();
-    attachActiveBrowserView();
     sendBrowserState();
     return next;
   }
@@ -1052,22 +1052,46 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
   }
 
+  function invalidateBrowserBounds() {
+    lastBrowserBounds = null;
+    lastBrowserZoomFactor = null;
+    detachIdleBrowserViews();
+    return false;
+  }
+
+  function clampBrowserBounds(bounds) {
+    const mainWindow = window();
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const right = bounds.x + bounds.width;
+    const bottom = bounds.y + bounds.height;
+    if (![bounds.x, bounds.y, right, bottom].every(Number.isFinite)) return null;
+    const [width, height] = mainWindow.getContentSize();
+    const x = Math.max(0, bounds.x);
+    const y = Math.max(0, bounds.y);
+    const clippedRight = Math.min(width, right);
+    const clippedBottom = Math.min(height, bottom);
+    if (clippedRight <= x || clippedBottom <= y) return null;
+    return { x, y, width: clippedRight - x, height: clippedBottom - y };
+  }
+
   function acceptBrowserBounds(bounds) {
     if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
-      || bounds.width <= 0 || bounds.height <= 0) return false;
+      || bounds.width <= 0 || bounds.height <= 0) return invalidateBrowserBounds();
     const currentZoom = mainWindowZoomFactor();
     // Unstamped callers retain the existing CSS-pixel IPC contract.
     const zoom = bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
-    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return false;
+    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return invalidateBrowserBounds();
     // Round edges (not width/height) so the far edge has no sub-pixel seam.
     const x = Math.round(bounds.x * zoom);
     const y = Math.round(bounds.y * zoom);
-    lastBrowserBounds = {
+    lastBrowserBounds = clampBrowserBounds({
       x,
       y,
       width: Math.round((bounds.x + bounds.width) * zoom) - x,
       height: Math.round((bounds.y + bounds.height) * zoom) - y,
-    };
+    });
+    if (!lastBrowserBounds) return invalidateBrowserBounds();
+    lastBrowserZoomFactor = currentZoom;
     return true;
   }
 
@@ -1114,7 +1138,23 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function attachActiveBrowserView() {
     const mainWindow = window();
     if (!mainWindow || !browserViewVisible) return;
-    if (!lastBrowserBounds || lastBrowserBounds.width <= 0 || lastBrowserBounds.height <= 0) return;
+    if (!lastBrowserBounds || lastBrowserZoomFactor !== mainWindowZoomFactor()) {
+      invalidateBrowserBounds();
+      sendToRenderer("openwork:browser:bounds-invalidated");
+      return;
+    }
+    const cachedBounds = lastBrowserBounds;
+    lastBrowserBounds = clampBrowserBounds(cachedBounds);
+    if (!lastBrowserBounds) {
+      invalidateBrowserBounds();
+      sendToRenderer("openwork:browser:bounds-invalidated");
+      return;
+    }
+    if (["x", "y", "width", "height"].some(key => cachedBounds[key] !== lastBrowserBounds[key])) {
+      // The host changed placement outside a bounds IPC. Clear both renderer
+      // caches so returning to the same CSS rectangle still sends fresh bounds.
+      sendToRenderer("openwork:browser:bounds-invalidated");
+    }
     const tab = getBrowserTab();
     if (!tab) { detachIdleBrowserViews(); return; }
     exitBackgroundMode(tab);
@@ -1285,7 +1325,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       handleBrowserShortcut(event, input);
     });
     host.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
-      if (isMainFrame) shortcutFocus = null;
+      if (host === window() && isMainFrame) shortcutFocus = null;
+    });
+    host.webContents.on("did-navigate", () => {
+      // Only a committed main-frame document replaces the container. A started
+      // navigation may be canceled and rerouted to the browser by the host.
+      if (host === window()) hideBrowserView();
+    });
+    host.webContents.on("render-process-gone", () => {
+      if (host === window()) hideBrowserView();
     });
   }
 
@@ -1458,8 +1506,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!preserveShortcutFocus && shortcutFocus?.tabId) shortcutFocus = null;
     hideContextMenu();
     browserViewVisible = false;
-    if (!window()) return;
-    detachIdleBrowserViews();
+    invalidateBrowserBounds();
   }
 
   function destroyBrowserView() {
@@ -1493,11 +1540,22 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (tabId && registry.ownerOf(tabId) !== registry.visibleSessionId()) throw new Error("Select this conversation first.");
       taskHost.manualNavigation(tabId);
     }
-    ipcMain.handle("openwork:browser:show", (_event, bounds, sessionId) => (
-      attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) })
-    ));
-    ipcMain.handle("openwork:browser:hide", (_event, options) => hideBrowserView(options?.preserveShortcutFocus === true));
-    ipcMain.handle("openwork:browser:setVisibleSession", (_event, sessionId) => setVisibleSession(normalizeSessionId(sessionId)));
+    function isMainRenderer(event) {
+      const contents = window()?.webContents;
+      return !!contents && event.sender === contents && event.senderFrame === contents.mainFrame;
+    }
+    ipcMain.handle("openwork:browser:show", (event, bounds, sessionId) => {
+      if (!isMainRenderer(event)) return false;
+      return attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) });
+    });
+    ipcMain.handle("openwork:browser:hide", (event, options) => {
+      if (!isMainRenderer(event)) return false;
+      return hideBrowserView(options?.preserveShortcutFocus === true);
+    });
+    ipcMain.handle("openwork:browser:setVisibleSession", (event, sessionId) => {
+      if (!isMainRenderer(event)) return false;
+      return setVisibleSession(normalizeSessionId(sessionId));
+    });
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider, options) => (
       openBrowserUrlForAutomation(url, provider, {
         ownerSessionId: normalizeSessionId(options && typeof options === "object" ? options.sessionId : null),
@@ -1530,12 +1588,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         webContents?.reload();
       }
     });
-    ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-      if (!acceptBrowserBounds(bounds)) return false;
-      const view = getActiveBrowserView();
-      if (view && browserViewVisible) {
-        view.setBounds(lastBrowserBounds);
-      }
+    ipcMain.handle("openwork:browser:bounds", (event, bounds) => {
+      if (!isMainRenderer(event) || !acceptBrowserBounds(bounds)) return false;
+      attachActiveBrowserView();
       return true;
     });
     ipcMain.handle("openwork:browser:state", () => ({

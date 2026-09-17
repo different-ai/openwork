@@ -91,6 +91,17 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
         for (const key of edges) {
           expect(Math.abs(view.bounds[key] - expected[key]), `${key}: native vs current container at zoom ${zoom}`).toBeLessThanOrEqual(1);
         }
+        // Matching the child rectangle alone cannot prove containment when that
+        // child overflows. The native sibling must not cover the chat or toolbar.
+        const panel = await probe.dom('[data-slot="resizable-panel"]:has(button[aria-label="Reload page"])');
+        const toolbar = await probe.dom('button[aria-label="Reload page"]');
+        expect(panel.elements).toHaveLength(1);
+        expect(toolbar.elements).toHaveLength(1);
+        const paneRect = panel.elements[0].rect;
+        expect(view.bounds.x).toBeGreaterThanOrEqual(Math.round(paneRect.left * zoom) - 1);
+        expect(view.bounds.x + view.bounds.width).toBeLessThanOrEqual(Math.round(paneRect.right * zoom) + 1);
+        expect(view.bounds.y).toBeGreaterThanOrEqual(Math.round(toolbar.elements[0].rect.bottom * zoom) - 1);
+        expect(view.bounds.y + view.bounds.height).toBeLessThanOrEqual(Math.round(paneRect.bottom * zoom) + 1);
         const metrics = await probe.browserTabMetrics(tab.targetId);
         expect(metrics).toMatchObject({ ...identity, width: view.bounds.width, height: view.bounds.height });
         expect(await probe.zoom()).toBe(zoom);

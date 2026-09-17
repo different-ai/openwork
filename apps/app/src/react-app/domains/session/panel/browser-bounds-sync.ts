@@ -1,5 +1,44 @@
 export type BrowserBounds = { x: number; y: number; width: number; height: number };
 
+// A native WebContentsView is not a DOM child: CSS overflow/visibility cannot
+// clip it. Only give it the visible rectangle owned by this mounted container.
+export function computeBrowserBounds(el: HTMLElement): BrowserBounds | null {
+  const win = el.ownerDocument.defaultView;
+  if (!el.isConnected || !win) return null;
+  const rect = el.getBoundingClientRect();
+  let left = Math.max(0, rect.left);
+  let top = Math.max(0, rect.top);
+  let right = Math.min(win.innerWidth, rect.right);
+  let bottom = Math.min(win.innerHeight, rect.bottom);
+
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    const style = win.getComputedStyle(node);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse"
+      || style.opacity === "0" || style.contentVisibility === "hidden") return null;
+    const paintClip = /\b(paint|strict|content)\b/.test(style.contain);
+    const clipX = paintClip || /^(hidden|clip|scroll|auto|overlay)$/.test(style.overflowX);
+    const clipY = paintClip || /^(hidden|clip|scroll|auto|overlay)$/.test(style.overflowY);
+    if (node === el || (!clipX && !clipY)) continue;
+    const parent = node.getBoundingClientRect();
+    // Client bounds exclude borders/scrollbars; the ratios account for CSS
+    // scaling. Electron zoom is applied later, exactly once, by the host.
+    const scaleX = node.offsetWidth > 0 ? parent.width / node.offsetWidth : 1;
+    const scaleY = node.offsetHeight > 0 ? parent.height / node.offsetHeight : 1;
+    if (clipX) {
+      const x = parent.left + node.clientLeft * scaleX;
+      left = Math.max(left, x);
+      right = Math.min(right, x + node.clientWidth * scaleX);
+    }
+    if (clipY) {
+      const y = parent.top + node.clientTop * scaleY;
+      top = Math.max(top, y);
+      bottom = Math.min(bottom, y + node.clientHeight * scaleY);
+    }
+  }
+  if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top) return null;
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
 type BrowserBoundsBridge = {
   show?: (bounds: BrowserBounds, sessionId: string) => Promise<boolean | void>;
   setBounds?: (bounds: BrowserBounds) => Promise<boolean | void>;
@@ -53,9 +92,10 @@ export function createBrowserBoundsSync(
   }
 
   return {
-    sync(bounds: BrowserBounds, pixelRatio: number, occluded: boolean) {
+    sync(bounds: BrowserBounds | null, pixelRatio: number, occluded: boolean) {
       if (disposed) return;
-      if (bounds.width < 1 || bounds.height < 1 || occluded) {
+      if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+        || bounds.width < 1 || bounds.height < 1 || occluded) {
         if (visibleIntent) void browser.hide?.();
         visibleIntent = false;
         shown = false;
