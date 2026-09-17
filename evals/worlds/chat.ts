@@ -1,4 +1,5 @@
 import { addInitScript, browserScript, reattachSurface, type Surface } from "@openwork/cdp";
+import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -615,6 +616,8 @@ export async function modelPicker(seed: Seed) {
 /** Model picker contract through a real native engine and a synthetic provider. */
 export async function modelPickerEffortWeb(seed: Seed) {
   const engine = resolveEvalEngine();
+  const fastProviderId = "fast-witness";
+  const fastModelId = "gpt-5.4";
   const providerId = "effort-witness";
   const modelId = "reasoning-model";
   const prompt = "Explain why the sky looks blue.";
@@ -648,14 +651,24 @@ export async function modelPickerEffortWeb(seed: Seed) {
         [modelId]: { name: "Reasoning witness", reasoning: true, variants: {
           low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" },
           CustomExact: { reasoningEffort: "low" },
+          auto: { reasoningEffort: "low" },
           hidden: { disabled: true, reasoningEffort: "high" },
         } },
         standard: { name: "Standard witness", reasoning: false },
       },
     },
+    [fastProviderId]: {
+      npm: "@ai-sdk/openai", name: "Fast witness",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "synthetic-fast-key" },
+      models: { [fastModelId]: { name: "Fast witness", reasoning: true, variants: {
+        high: { reasoningEffort: "high" },
+        [CATALOG_FAST_VARIANT]: { disabled: true, openworkNativeFast: 1 },
+      } } },
+    },
   } }, engine);
   const session = await seedSessionRetry(seed, app, { title: "Model effort contract" });
   return { app, engine, workspace, session, prompt, providerId, modelId,
+    fastProviderId, fastModelId, fastDefaultVariant: FAST_DEFAULT_VARIANT, fastHighVariant: fastVariantId("high"),
     modelRequests: () => seed.evalIn(app, () => window.__modelEffortRequests ?? []),
     runtimeFacts: async () => ({
       ...await seed.evalIn(app, () => ({ browser: navigator.userAgent, electronBridge: Boolean(window.__OPENWORK_ELECTRON__) })),
@@ -1957,11 +1970,12 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
       const opening: { openedAt: number | null; trusted: boolean; first: Paint | null; latest: Paint | null; full: Paint | null } = {
         openedAt: null, trusted: false, first: null, latest: null, full: null,
       };
+      const pageReads: { before: string | null; limit: string | null; nextCursor: string | null }[] = [];
       const state = {
         workspaceId, sessionId, documentId: performance.timeOrigin, opening, reads,
         status: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
         todo: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
-        history: { limited: 0, full: 0, fullSucceeded: 0 },
+        history: { limited: 0, full: 0, fullSucceeded: 0, single: 0, pageReads },
         released: false,
         expired: false,
       };
@@ -2019,13 +2033,23 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
         if (!kind) {
           const historyRead = messagePaths.has(url.pathname);
           const full = historyRead && !url.searchParams.has("limit");
-          if (historyRead) {
+          const pageRead: (typeof pageReads)[number] | null = historyRead
+            ? { before: url.searchParams.get("before"), limit: url.searchParams.get("limit"), nextCursor: null } : null;
+          if (pageRead) {
+            pageReads.push(pageRead);
             if (full) state.history.full += 1;
             else state.history.limited += 1;
             publish();
+          } else if ([...messagePaths].some((path) => url.pathname.startsWith(`${path}/`) && !url.pathname.slice(path.length + 1).includes("/"))) {
+            state.history.single += 1;
+            publish();
           }
           const response = await originalFetch.call(window, input, init);
-          if (full && response.ok) { state.history.fullSucceeded += 1; publish(); }
+          if (pageRead) {
+            pageRead.nextCursor = response.headers.get("X-Next-Cursor");
+            if (full && response.ok) state.history.fullSucceeded += 1;
+            publish();
+          }
           return response;
         }
         const counter = state[kind];

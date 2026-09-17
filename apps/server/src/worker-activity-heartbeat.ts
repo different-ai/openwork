@@ -56,12 +56,16 @@ export function parseSessionActivityAt(session: unknown): number | null {
 export function resolveWorkerActivityHeartbeatConfig(env: HeartbeatEnv = process.env): WorkerActivityHeartbeatConfig {
   const enabled = (env.DEN_ACTIVITY_HEARTBEAT_ENABLED ?? "").trim().toLowerCase();
   const provider = (env.DEN_RUNTIME_PROVIDER ?? "").trim().toLowerCase();
+  const managed = (env.DEN_RUNTIME_MANAGED ?? "").trim().toLowerCase();
   const workerId = (env.DEN_WORKER_ID ?? "").trim();
   const url = (env.DEN_ACTIVITY_HEARTBEAT_URL ?? "").trim();
   const token = (env.DEN_ACTIVITY_HEARTBEAT_TOKEN ?? "").trim();
   const featureEnabled = enabled === "1" || enabled === "true" || enabled === "yes";
+  // Den sets DEN_RUNTIME_MANAGED on every instance whose idle lifecycle it owns.
+  // Older Dens only sent the provider name, so that spelling stays accepted.
+  const denManaged = managed === "1" || managed === "true" || managed === "yes" || provider === "daytona";
 
-  if (!featureEnabled || provider !== "daytona" || !workerId || !url || !token) {
+  if (!featureEnabled || !denManaged || !workerId || !url || !token) {
     return {
       enabled: false,
       workerId: "",

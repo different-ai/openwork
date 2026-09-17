@@ -55,9 +55,11 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
+import { resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
-import { downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
+import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
+import { createDesktopTransferRegistry, downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
@@ -102,6 +104,7 @@ const desktopPackageMetadata = require("../package.json");
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -1101,7 +1104,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
-const nativeContextMenus = createNativeContextMenus({ Menu, getWindow: () => mainWindow });
+const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
   showNativeContextMenu: nativeContextMenus.show,
@@ -1137,24 +1140,10 @@ const workspaceStore = createWorkspaceStore({
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
 
-const activeDesktopTransfers = new Map();
-
-function desktopTransferKey(event, transferId) {
-  const normalizedId = typeof transferId === "string" ? transferId.trim() : "";
-  if (!normalizedId || normalizedId.length > 128 || !/^[a-zA-Z0-9._-]+$/.test(normalizedId)) {
-    throw new Error("A valid transferId is required.");
-  }
-  return `${event.sender.id}:${normalizedId}`;
-}
+const desktopTransfers = createDesktopTransferRegistry();
 
 async function runDesktopTransfer(event, input, operation) {
-  const key = desktopTransferKey(event, input?.transferId);
-  if (activeDesktopTransfers.has(key)) throw new Error("transferId is already active.");
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  activeDesktopTransfers.set(key, controller);
-  event.sender.once("destroyed", abort);
-  try {
+  return desktopTransfers.run(event, input?.transferId, async (signal) => {
     // Both authorities come from app-owned state in userData; workspace-
     // writable configuration must never widen where a transfer may write.
     const [authorizedRoots, allowedUrlPrefixes] = await Promise.all([
@@ -1168,12 +1157,9 @@ async function runDesktopTransfer(event, input, operation) {
       // workspace root until they complete.
       stagingDir: path.join(app.getPath("userData"), "binary-transfers"),
       fetcher: electronNet.fetch,
-      signal: controller.signal,
+      signal,
     });
-  } finally {
-    event.sender.removeListener("destroyed", abort);
-    activeDesktopTransfers.delete(key);
-  }
+  });
 }
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
@@ -2252,6 +2238,23 @@ const desktopCommandHandlers = {
       if (!target) return "Path is required.";
       return shell.openPath(target);
   },
+  "__openWorkspaceFile": async (event, ...args) => {
+      // Chat links are renderer-derived text. Resolve them on disk here so only a real
+      // file inside the real workspace launches; anything else is revealed, never run.
+      const workspaceRoot = String(args[0] ?? "").trim();
+      const target = String(args[1] ?? "").trim();
+      const decision = await resolveWorkspaceFileLaunch(workspaceRoot, target);
+      if (decision.ok === true) {
+        const error = await shell.openPath(decision.path);
+        if (error && error.trim()) return { ok: false, error };
+        return { ok: true, action: "opened" };
+      }
+      if (decision.reason === "outside" && existsSync(target)) {
+        shell.showItemInFolder(target);
+        return { ok: true, action: "revealed" };
+      }
+      return { ok: false, error: decision.error };
+  },
   "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return "Path is required.";
@@ -2373,9 +2376,13 @@ const desktopCommandHandlers = {
       return results;
   },
   "__openWithApp": async (event, ...args) => {
-      const target = String(args[0] ?? "").trim();
+      const requested = String(args[0] ?? "").trim();
       const appPath = String(args[1] ?? "").trim();
-      if (!target || !appPath) return "Target and app path are required.";
+      const workspaceRoot = String(args[2] ?? "").trim();
+      if (!requested || !appPath) return "Target and app path are required.";
+      const decision = await resolveWorkspaceFileLaunch(workspaceRoot, requested);
+      if (decision.ok === false) return decision.error;
+      const target = decision.path;
       const platform = process.platform;
       try {
         if (platform === "darwin") {
@@ -2411,16 +2418,23 @@ const desktopCommandHandlers = {
         );
       }
       const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
-        ...requestInit,
-        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-      });
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Array.from(response.headers.entries()),
-        body: await response.text(),
+      const fetchResponse = async (callerSignal) => {
+        const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+        const signal = callerSignal && deadline ? AbortSignal.any([callerSignal, deadline]) : callerSignal ?? deadline;
+        const response = await fetchFiniteDesktopHttp(url, { ...requestInit, signal }, electronNet.fetch);
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Array.from(response.headers.entries()),
+          body: await response.text(),
+        };
       };
+      const method = (requestInit.method ?? "GET").toUpperCase();
+      const cancellable = ["GET", "PATCH"].includes(method)
+        || (method === "POST" && /\/(?:session\/[^/]+\/abort|permission\/[A-Za-z0-9_-]+\/reply)$/.test(new URL(url).pathname));
+      return cancellable && init.transferId
+        ? desktopTransfers.run(event, init.transferId, fetchResponse)
+        : fetchResponse(undefined);
   },
   "__uploadMultipart": async (event, ...args) => {
       return runDesktopTransfer(event, args[0] ?? {}, uploadMultipartFromBytes);
@@ -2429,10 +2443,7 @@ const desktopCommandHandlers = {
       return runDesktopTransfer(event, args[0] ?? {}, downloadBinaryToPath);
   },
   "__cancelTransfer": async (event, ...args) => {
-      const controller = activeDesktopTransfers.get(desktopTransferKey(event, args[0]));
-      if (!controller) return false;
-      controller.abort();
-      return true;
+      return desktopTransfers.cancel(event, args[0]);
   },
   "__homeDir": async (event, ...args) => {
       return os.homedir();

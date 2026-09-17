@@ -1,5 +1,8 @@
 import {
-  openworkSessionModelSchema,
+  openworkModelSelectorSchema,
+  openworkModelsListArgsSchema,
+  openworkSessionSetModelArgsSchema,
+  openworkSessionRebindModelArgsSchema,
   type OpenworkAffordanceArgument,
   type OpenworkAffordanceDescriptor,
   type OpenworkAffordanceEffects,
@@ -41,10 +44,7 @@ export const sessionReadArgsSchema = z.object({
   summary: z.boolean().optional().describe("When true, return only the first user message and the last assistant message plus session metadata."),
 });
 
-// Same contract agents read back as `model`; `variant` may be omitted on input.
-export const sessionModelArgSchema = openworkSessionModelSchema.extend({
-  variant: openworkSessionModelSchema.shape.variant.optional().describe("Reasoning effort variant (e.g. low, medium, high). Omit or null for the provider default."),
-});
+export const sessionModelArgSchema = openworkModelSelectorSchema;
 
 export const sessionCreateArgsSchema = z.object({
   sessions: z.array(z.object({
@@ -65,10 +65,13 @@ export const sessionSendArgsSchema = z.object({
 
 /** Argument schemas by affordance id; sessionContribution must advertise exactly these keys. */
 export const sessionAffordanceArgsSchemas = {
+  "models.list": openworkModelsListArgsSchema,
   "session.search": sessionSearchArgsSchema,
   "session.read": sessionReadArgsSchema,
   "session.create": sessionCreateArgsSchema,
   "session.send": sessionSendArgsSchema,
+  "session.set_model": openworkSessionSetModelArgsSchema,
+  "session.rebind_model": openworkSessionRebindModelArgsSchema,
 };
 
 export type ConnectSkillDescriptor = {
@@ -141,6 +144,15 @@ function sessionContribution(): OpenworkFeatureContribution {
     provider,
     affordances: [
       affordance({
+        id: "models.list",
+        kind: "query",
+        title: "List workspace models",
+        description: "Return effective available connected picker models with providerId/modelId, displayName, providerName and available:true. Requires an existing renderer host via the UI query bridge, including headless callers; never focuses or navigates. Assigned models not yet engine-connected are omitted.",
+        provider,
+        arguments: [argument("workspaceId", "string", true, "Workspace id or name whose available models to list.")],
+        effects: readEffects,
+      }),
+      affordance({
         id: "session.search",
         kind: "query",
         title: "Find sessions",
@@ -163,7 +175,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read messages from a session without opening it. The result also carries `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call.",
+        description: "Read messages from a session without opening it. The result also carries `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),
@@ -178,20 +190,30 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.create",
         kind: "command",
         title: "Create sessions",
-        description: "Create sessions and submit their first prompts without navigating away. Each `created` entry reports `accepted: true`: the engine accepted the asynchronous prompt request, not proof that inference started or succeeded. An unavailable model can fail afterward; check session.read and session.list_sessions before reporting progress. Pass `model` ({ providerId, modelId, variant }) at creation and on the first prompt; the bound model is not proof of availability. On request failure, `issues` contains indexed paths and any created sessionId; `result` preserves accepted entries and failures. Inspect those sessions before retrying to avoid duplicates.",
+        description: "Create sessions and submit their first prompts without navigating away. Each `created` entry reports `accepted: true`: the engine accepted the asynchronous prompt request, not proof that inference started or succeeded. An unavailable model can fail afterward; check session.read and session.list_sessions before reporting progress. Pass `model` with providerId/modelId or alias/displayName (exact case-insensitive picker name, optional providerId qualifier), plus variant for reasoning effort. models.list discovers available models through an existing renderer host, required for model selection even from headless callers; no focus or navigation. Omit model to use the engine default without a renderer catalog. All models resolve before creation; missing host, unavailable or ambiguous models are rejected without writes. Returned bindings round-trip by ids; displayName/providerName are decorations when ids are present, but alias plus modelId is invalid. Results include model ids and optional displayName/providerName, also returned by session.read and session.list_sessions. On request failure, `issues` contains indexed paths and any created sessionId; `result` preserves accepted entries and failures. A timeout is uncertain acceptance, never automatic retry. Inspect those sessions before retrying to avoid duplicates. Sidebar visibility is not guaranteed.",
         provider,
         arguments: [
-          argument("sessions", "array", true, "Array of { title (≤120 chars, longer is clipped), prompt (≤100000 chars), model? }. Each prompt is self-contained; model is { providerId, modelId, variant? (≤60 chars) }."),
+          argument("sessions", "array", true, "Array of { title (≤120 chars, longer is clipped), prompt (≤100000 chars), model? }. Each prompt is self-contained; model is { providerId, modelId, variant? (≤60 chars) } or { alias/displayName, providerId?, variant? (≤60 chars) }."),
           argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the requesting session's workspace."),
-          argument("model", "object", false, "Optional providerId, modelId and variant (reasoning effort, ≤60 chars) for every created session. Omit to use the engine default."),
+          argument("model", "object", false, "Optional providerId/modelId or alias/displayName (exact case-insensitive name, optional providerId qualifier) and variant (reasoning effort, ≤60 chars) for every created session. Omit to use the engine default."),
         ],
         effects: writeEffects,
+      }),
+      affordance({
+        id: "session.set_model", kind: "command", title: "Choose a session model", provider, effects: writeEffects,
+        description: "Save locally for next send, not an engine binding update. Provide model (models.list ids or alias/displayName and variant) or alias. dryRun previews without writing. No global default mutation or automatic send. You can choose another available model later; this does not restore an unavailable original binding. Requires a renderer host.",
+        arguments: [argument("sessionId", "string", true, "Session to repick."), argument("workspaceId", "string", false, "Exact workspace id; avoids unrelated workspace inventory reads."), argument("model", "object", false, "Available model selector and optional variant (≤60 chars)."), argument("alias", "string", false, "Exact model display name, instead of model."), argument("dryRun", "boolean", false, "Preview without saving.")],
+      }),
+      affordance({
+        id: "session.rebind_model", kind: "command", title: "Repick matching sessions", provider, effects: writeEffects,
+        description: "Preview with dryRun:true, show the returned session set and obtain confirmation, then submit its expectedSessionIds. Saves locally for next send on idle unarchived sessions in one workspace using the same unavailable exact from provider/model. Matches effective bindings: local override wins over engine. Never changes other models, archives, workspaces, global default or engine bindings. Requires a renderer host. You can choose another available model later; this does not restore unavailable original bindings.",
+        arguments: [argument("workspaceId", "string", true, "Exact workspace id."), argument("from", "object", true, "Exact providerId/modelId to replace."), argument("to", "object", true, "Available model selector and optional variant (≤60 chars)."), argument("expectedSessionIds", "array", false, "Required unless dryRun:true; exact confirmed preview IDs. Rejects changed matches."), argument("dryRun", "boolean", false, "Preview exact session set without saving.")],
       }),
       affordance({
         id: "session.send",
         kind: "command",
         title: "Send a prompt to a session",
-        description: "Append a prompt to an existing session by id without opening it. The message is written immediately; a session that is mid-turn handles it at its next step. Nothing on screen changes unless reveal is true. This is the way to talk to another session: composer.set_text and composer.send only reach the composer the person has focused.",
+        description: "Append a prompt to an existing session by id without opening it. Before writing, validate the local model override (otherwise engine binding) through the renderer's effective catalog. Missing host/catalog or stale models return model_unavailable issues with zero prompt writes; use models.list and session.set_model to recover. Success means accepted:true, not completed inference. A session that is mid-turn handles the message at its next step. Nothing on screen changes unless reveal is true. This is the way to talk to another session: composer.set_text and composer.send only reach the composer the person has focused.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id from session.search, session.read, or session.list_sessions."),

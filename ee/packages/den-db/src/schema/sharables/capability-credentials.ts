@@ -4,6 +4,7 @@ import {
   index,
   mysqlEnum,
   mysqlTable,
+  text,
   timestamp,
   uniqueIndex,
   varchar,
@@ -230,7 +231,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
-    scope: varchar("scope", { length: 1024 }),
+    scope: text("scope"),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
     /**
      * Transient PKCE code verifier, present only between connect/start and

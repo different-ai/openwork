@@ -15,6 +15,7 @@ import {
 } from "../src/app/lib/openwork-server";
 import { createOpenworkServerStore } from "../src/react-app/domains/connections/openwork-server-store";
 import { buildOpenworkHealthHeaders } from "../src/react-app/kernel/server-provider";
+import { resolveDefaultServerUrl } from "../src/react-app/shell/providers";
 import {
   isStaleStoredDesktopConnection,
   resolveOpenworkConnection,
@@ -447,6 +448,31 @@ describe("non-gateway connection modes", () => {
     expect(connection.source).toBe("same-origin");
   });
 
+  test("relative preview backend resolves only in the browser and preserves client credentials", async () => {
+    const keys = ["VITE_OPENWORK_URL", "VITE_OPENWORK_PORT", "VITE_OPENWORK_TOKEN", "VITE_OPENWORK_HOST_TOKEN", "VITE_OPENWORK_FORCE_ENV_SETTINGS"];
+    const previous = new Map(keys.map((key) => [key, process.env[key]]));
+    process.env.VITE_OPENWORK_URL = "/api/openwork";
+    process.env.VITE_OPENWORK_PORT = "443";
+    process.env.VITE_OPENWORK_TOKEN = "client-token";
+    delete process.env.VITE_OPENWORK_HOST_TOKEN;
+    process.env.VITE_OPENWORK_FORCE_ENV_SETTINGS = "1";
+    try {
+      for (const origin of ["https://first.example.test", "https://second.example.test"]) {
+        installWindow({ origin });
+        hydrateOpenworkServerSettingsFromEnv();
+        expect(readOpenworkServerSettings().urlOverride).toBe(`${origin}/api/openwork`);
+        expect(resolveDefaultServerUrl()).toBe(`${origin}/api/openwork/opencode`);
+        expect(new URL(`${resolveDefaultServerUrl()}/global/health`).href).toBe(`${origin}/api/openwork/opencode/global/health`);
+        const connection = await resolveOpenworkConnection();
+        expect(connection.normalizedBaseUrl).toBe(`${origin}/api/openwork`);
+        expect(connection.resolvedToken).toBe("client-token");
+        expect(readOpenworkServerSettings().hostToken).toBeUndefined();
+      }
+    } finally {
+      for (const [key, value] of previous) restoreEnv(key, value);
+    }
+  });
+
   test("force-env settings overwrite stale localStorage openwork-server credentials", () => {
     const previous = {
       url: process.env.VITE_OPENWORK_URL,
@@ -582,6 +608,27 @@ describe("non-gateway connection modes", () => {
     }
   });
 
+  test("exact relative Den build pin follows the browser origin without relaxing input validation", () => {
+    const previous = process.env.VITE_DEN_API_BASE_URL;
+    try {
+      process.env.VITE_DEN_API_BASE_URL = "/api/den";
+      for (const origin of ["https://first.example.test", "https://second.example.test"]) {
+        installWindow({ origin });
+        const settings = readDenSettings();
+        expect(settings.apiBaseUrl).toBe(`${origin}/api/den`);
+        expect(createDenClient(settings).baseUrls.apiBaseUrl).toBe(`${origin}/api/den`);
+        expect(createDenClient({ baseUrl: settings.baseUrl }).baseUrls.apiBaseUrl).toBe(`${origin}/api/den`);
+        expect(resolveDenBaseUrls({ baseUrl: settings.baseUrl, apiBaseUrl: "https://explicit.example.test" }).apiBaseUrl).toBe("https://explicit.example.test");
+      }
+      for (const value of ["//other.example.test/api/den", "/api/other", "not a URL", ""]) {
+        process.env.VITE_DEN_API_BASE_URL = value;
+        expect(resolveDenBaseUrls({ baseUrl: "https://den.example.test" }).apiBaseUrl).toBe("https://den.example.test/api/den");
+      }
+    } finally {
+      restoreEnv("VITE_DEN_API_BASE_URL", previous);
+    }
+  });
+
   test("loopback web auth uses desktop handoff instead of an unapprovable webAuth return URL", () => {
     installWindow({ origin: "http://127.0.0.1:5178" });
 
@@ -592,6 +639,45 @@ describe("non-gateway connection modes", () => {
     expect(authUrl.searchParams.get("desktopScheme")).toBe("openwork");
     expect(authUrl.searchParams.get("webAuth")).toBeNull();
     expect(authUrl.searchParams.get("webAuthReturn")).toBeNull();
+  });
+
+  test("HTTPS preview explicitly opts into manual handoff without including its signed origin", () => {
+    const previous = process.env.VITE_OPENWORK_FORCE_MANUAL_AUTH;
+    process.env.VITE_OPENWORK_FORCE_MANUAL_AUTH = "1";
+    installWindow({ origin: "https://signed-preview.example.test" });
+
+    try {
+      const modes: Array<"sign-in" | "sign-up"> = ["sign-in", "sign-up"];
+      for (const mode of modes) {
+        const authUrl = new URL(buildDenAuthUrl(readDenSettings().baseUrl, mode));
+        expect(authUrl.origin).toBe("https://app.openworklabs.com");
+        expect(authUrl.searchParams.get("mode")).toBe(mode);
+        expect(authUrl.searchParams.get("desktopAuth")).toBe("1");
+        expect(authUrl.searchParams.get("desktopScheme")).toBe("openwork");
+        expect(authUrl.searchParams.get("webAuth")).toBeNull();
+        expect(authUrl.searchParams.get("webAuthReturn")).toBeNull();
+        expect(authUrl.toString()).not.toContain("signed-preview");
+      }
+    } finally {
+      restoreEnv("VITE_OPENWORK_FORCE_MANUAL_AUTH", previous);
+    }
+  });
+
+  test("hosted HTTPS web keeps automatic return unless manual handoff is explicitly enabled", () => {
+    const previous = process.env.VITE_OPENWORK_FORCE_MANUAL_AUTH;
+    installWindow({ origin: "https://instance.example.com" });
+
+    try {
+      for (const flag of [undefined, "0"]) {
+        restoreEnv("VITE_OPENWORK_FORCE_MANUAL_AUTH", flag);
+        const authUrl = new URL(buildDenAuthUrl(readDenSettings().baseUrl, "sign-in"));
+        expect(authUrl.searchParams.get("desktopAuth")).toBeNull();
+        expect(authUrl.searchParams.get("webAuth")).toBe("1");
+        expect(authUrl.searchParams.get("webAuthReturn")).toBe("https://instance.example.com");
+      }
+    } finally {
+      restoreEnv("VITE_OPENWORK_FORCE_MANUAL_AUTH", previous);
+    }
   });
 
   test("force-env clears a stale stored Den base URL on web bootstrap init", async () => {

@@ -111,6 +111,13 @@ before running the new runtime. Do not deploy it against the old table names.
   own member-mode credentials, not access to shared credential administration.
 - `x-openwork-gateway-grant-id` is a selection hint for model requests, never
   permission by itself. It is reauthorized and is not forwarded upstream.
+- Desktop model configurations include `x-openwork-gateway-request-model` with
+  the wire model alias for diagnostics. If a body upload fails, the gateway
+  retains that requested alias and resolves its model from the caller's current
+  access rows. Parsed request models take precedence. The header never selects
+  or authorizes the actual request and is removed before forwarding upstream.
+  Request logs record whether the requested model came from the request or this
+  header in `metadata.requested_model_source`.
 - JSON model extraction also applies to embeddings and other supported native
   model operations without a usage parser. Conflicting body/path selectors,
   OpenRouter routing arrays/plugins and missing models fail before credential
@@ -150,3 +157,12 @@ Drizzle serialization only; no migration has been applied. Existing source fixtu
 under this app are updated. The separately owned `evals/specs/inference-gateway-*`
 journeys still need Gateway key, matrix seeding and renamed SQL/column updates
 before the next authorized verification run.
+
+### Usage breakdown deployment
+
+Apply Den DB migration `0098_gateway_uncountable_usage.sql` before deploying the
+Gateway or Den API changes that read and write uncountable-query categories.
+The nullable counters preserve missing-token outcomes through hourly and daily
+rollups. Older rows retain unknown categories; they are not backfilled with zeros.
+Publish the AI Gateway counting-usage docs alongside the dashboard update so its
+help link resolves.

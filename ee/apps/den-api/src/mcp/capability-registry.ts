@@ -57,6 +57,7 @@ import {
   type MarketplaceCapabilityObjectType,
 } from "./marketplace-capabilities.js"
 import {
+  connectionStatusMatch,
   executeNativeCapability,
   parseNativeCapabilityName,
   searchNativeCapabilities,
@@ -683,10 +684,6 @@ const remoteSessionSource: CapabilitySource = {
     return action ? { kind: "remoteSession", name, action } : null
   },
   search: async (ctx, query, limit) => {
-    // Remote sessions require an active membership and the organization's
-    // Cloud capability flag: a member of a flag-off org never discovers
-    // these capabilities. Worker provisioning state is checked at execute
-    // time and reported as an actionable needs-setup result.
     if (!ctx.sourceFilter.api || !ctx.member || !ctx.remoteSessionsEnabled) return []
     return searchRemoteSessionCapabilities(query, limit)
   },
@@ -842,3 +839,22 @@ export const CAPABILITY_REGISTRY = createCapabilityRegistry(CAPABILITY_SOURCES)
 export const searchCapabilityRegistry = CAPABILITY_REGISTRY.search
 export const executeCapability = CAPABILITY_REGISTRY.execute
 export const buildCapabilityToolTree = CAPABILITY_REGISTRY.buildToolTree
+
+export async function liveArtifactConnectionFailure(
+  context: CapabilityRegistryContext,
+  missing: readonly { capabilityName: string }[],
+) {
+  const ids = new Set(missing.flatMap((entry) => {
+    const parsed = parseNativeCapabilityName(entry.capabilityName)
+    return parsed ? [parsed.connectionId] : []
+  }))
+  if (!ids.size) return null
+  const namespace = await context.resolveNamespaceContext()
+  const connection = namespace.nativeProviderEntries.find((entry) => ids.has(entry.id) && !entry.connectedForMe)
+  if (!connection) return null
+  const status = connectionStatusMatch(connection, 1).connectionStatus
+  return status ? {
+    connectionStatus: status,
+    connectionCard: connectionActionPayloadFromStatus(status),
+  } : null
+}

@@ -895,7 +895,7 @@ function mentionAtSelection() {
   }
   if (!$isTextNode(node) || isComposerInlineTokenNode(node)) return null;
   const text = node.getTextContent();
-  const match = text.slice(0, end).match(/@([^\s@]*)$/);
+  const match = text.slice(0, end).match(/(?<!\S)@([^\s@]*)$/);
   if (!match) return null;
   const remaining = text.slice(end).match(/^[^\s@]*/)?.[0] ?? "";
   return { node, start: end - match[0].length, end: end + remaining.length, query: match[1] ?? "" };

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { openworkFeatureContributionSchema } from "@openwork/types/openwork-provider";
+import { labelOpenworkSessionModel, openworkCatalogModels, openworkModelSelectorSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
 
 import { buildOpenworkProviderContributions, sessionAffordanceArgsSchemas } from "./openwork-provider-adapters.js";
 
@@ -19,6 +20,51 @@ function stringMaxima(schema: unknown): number[] {
   return [];
 }
 
+describe("workspace model resolution", () => {
+  const catalog = openworkCatalogModels({
+    connected: ["managed", "local"],
+    all: [
+      { id: "managed", name: "Managed", models: { opaque: { name: "GPT-6 Luna" }, fallback: {} } },
+      { id: "local", name: "Local", models: { other: { name: "GPT-6 Luna" } } },
+      { id: "offline", name: "Offline", models: { hidden: { name: "Offline model" } } },
+    ],
+  });
+  test("lists connected models using picker names and id fallback", () => {
+    expect(catalog).toEqual([
+      { providerId: "managed", modelId: "opaque", displayName: "GPT-6 Luna", providerName: "Managed" },
+      { providerId: "managed", modelId: "fallback", displayName: "fallback", providerName: "Managed" },
+      { providerId: "local", modelId: "other", displayName: "GPT-6 Luna", providerName: "Local" },
+    ]);
+  });
+  test.each(["alias", "displayName"])("resolves %s case-insensitively with provider qualifier and preserves effort", (field) => {
+    const selector = openworkModelSelectorSchema.parse({ [field]: " gPt-6 lUnA ", providerId: "MANAGED", variant: "high" });
+    expect(resolveOpenworkModel(selector, catalog)).toEqual({ ...catalog[0], variant: "high" });
+  });
+  test("exact ids select a duplicate label without ambiguity", () => {
+    expect(resolveOpenworkModel({ providerId: "local", modelId: "other", variant: "default" }, catalog)).toEqual({ ...catalog[2], variant: null });
+  });
+  test("binding ids override display decorations and availability does not leak into bindings", () => {
+    const selector = openworkModelSelectorSchema.parse({ providerId: "local", modelId: "other", variant: "high", displayName: "Stale name", providerName: "Stale provider" });
+    expect(resolveOpenworkModel(selector, catalog.map((model) => ({ ...model, available: true })))).toEqual({ ...catalog[2], variant: "high" });
+  });
+  test.each(["GPT-6", "Luna", "Offline model", "opaque"])("does not fuzzily resolve %s or use model ids as names", (alias) => {
+    expect(() => resolveOpenworkModel({ alias }, catalog)).toThrow("Unavailable model");
+  });
+  test("rejects ambiguous labels and unavailable ids", () => {
+    expect(() => resolveOpenworkModel({ alias: "GPT-6 Luna" }, catalog)).toThrow("Ambiguous model");
+    expect(() => resolveOpenworkModel({ providerId: "managed", modelId: "absent" }, catalog)).toThrow("Unavailable model");
+  });
+  test.each([{}, { providerId: "managed" }, { modelId: "opaque" }, { alias: "" }, { alias: "GPT-6 Luna", displayName: "GPT-6 Luna" }, { alias: "GPT-6 Luna", modelId: "opaque", providerId: "managed" }])("rejects malformed selectors %j", (value) => {
+    expect(openworkModelSelectorSchema.safeParse(value).success).toBe(false);
+  });
+  test("labels known models without replacing bound ids, effort or unbound state", () => {
+    const model = { providerId: "managed", modelId: "opaque", variant: "low" };
+    expect(labelOpenworkSessionModel(model, catalog)).toEqual({ ...catalog[0], variant: "low" });
+    expect(labelOpenworkSessionModel(model, [])).toEqual(model);
+    expect(labelOpenworkSessionModel(null, catalog)).toBeNull();
+  });
+});
+
 describe("OpenWork provider adapters", () => {
   test("every session affordance advertises exactly the arguments its schema accepts", () => {
     const sessions = buildOpenworkProviderContributions([]).find((contribution) => contribution.featureId === "sessions");
@@ -36,6 +82,21 @@ describe("OpenWork provider adapters", () => {
         for (const maximum of stringMaxima(field)) expect(description).toContain(String(maximum));
       }
     }
+  });
+
+  test("bulk repick requires a confirmed set for mutations but allows an unconfirmed dry-run", () => {
+    const schema = sessionAffordanceArgsSchemas["session.rebind_model"];
+    const args = { workspaceId: "workspace_fixture", from: { providerId: "provider_fixture", modelId: "removed_fixture" }, to: { alias: "Available fixture" } };
+    for (const dryRun of [undefined, false]) {
+      const rejected = schema.safeParse({ ...args, dryRun });
+      expect(rejected.success).toBe(false);
+      if (rejected.success) throw new Error("Unconfirmed mutation was accepted");
+      expect(rejected.error.issues).toContainEqual(expect.objectContaining({ path: ["expectedSessionIds"] }));
+      expect(schema.safeParse({ ...args, dryRun, expectedSessionIds: ["session_fixture"] }).success).toBe(true);
+    }
+    expect(schema.safeParse({ ...args, dryRun: true }).success).toBe(true);
+    expect(schema.safeParse({ ...args, expectedSessionIds: [] }).success).toBe(true);
+    expect(schema.safeParse({ ...args, expectedSessionIds: null }).success).toBe(false);
   });
 
   test("the bound walker reaches nested and optional strings, including transformed inputs", () => {
@@ -90,6 +151,10 @@ describe("OpenWork provider adapters", () => {
     // openwork_context is the only place an agent learns the result shape.
     expect(read?.description).toContain("`model`");
     expect(read?.description).toContain("variant");
+    expect(read?.description).toContain("`lastError`");
+    expect(read?.description).toContain("fetched newest `count` messages");
+    expect(read?.description).toContain("start/summary inspect the whole transcript");
+    expect(read?.description).toContain("event-only failures");
     expect(create?.arguments.map((argument) => [argument.name, argument.type, argument.required])).toEqual([
       ["sessions", "array", true],
       ["workspaceId", "string", false],
@@ -101,6 +166,10 @@ describe("OpenWork provider adapters", () => {
     expect(create?.description).toContain("unavailable model can fail afterward");
     expect(create?.description).toContain("`issues`");
     expect(create?.description).toContain("before retrying to avoid duplicates");
+    expect(create?.description).toContain("existing renderer host");
+    expect(create?.description).toContain("without a renderer catalog");
+    expect(create?.description).toContain("Sidebar visibility is not guaranteed");
+    expect(affordances.find((entry) => entry.id === "models.list")?.description).toContain("including headless callers");
   });
 
   test("keeps known Connect skills direct and search available for unknown capabilities", () => {

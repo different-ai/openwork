@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle
 import {
   AuditEventTable,
   AuthUserTable,
+  CloudRuntimeInstanceTable,
   DaytonaSandboxTable,
   MemberTable,
   WorkerBundleTable,
@@ -32,6 +33,7 @@ import {
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
 import { resolveCloudRuntimeAccess } from "../../workers/worker-access.js"
 import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
+import { cloudRuntimeConfigured, endpointKindForProvider, isCloudRuntimeProviderId } from "../../workers/cloud-runtime.js"
 import { fetchPreviewNoRedirect } from "../../workers/preview-fetch.js"
 import {
   getOpenWorkWebRuntimeAccess,
@@ -147,13 +149,15 @@ const databaseCloudProvisioningStore: CloudProvisioningStore = {
 
 export function persistedWorkerInstanceUrl(provisioned: Pick<ProvisionedWorker, "provider" | "url">) {
   const lifecycleBaseUrl = env.apiPublicUrl ?? env.betterAuthUrl
-  return provisioned.provider === "daytona"
+  // Contract providers hand out expiring endpoints, so the durable instance URL
+  // is Den's lifecycle route rather than the endpoint itself.
+  return isCloudRuntimeProviderId(provisioned.provider)
     ? `${lifecycleBaseUrl.replace(/\/+$/, "")}/v1/cloud/instance`
     : provisioned.url
 }
 
 export function workerSandboxBackend(input: Pick<z.infer<typeof createWorkerSchema>, "destination" | "sandboxBackend">) {
-  if (input.destination === "cloud" && env.provisionerMode === "daytona") return CLOUD_INSTANCE_BACKEND
+  if (input.destination === "cloud" && cloudRuntimeConfigured()) return CLOUD_INSTANCE_BACKEND
   return input.sandboxBackend ?? null
 }
 
@@ -429,7 +433,9 @@ export function toInstanceResponse(instance: WorkerInstanceRow | null) {
   return {
     provider: instance.provider,
     region: instance.region,
-    url: instance.provider === "daytona" ? null : instance.url,
+    url: isCloudRuntimeProviderId(instance.provider) ? null : instance.url,
+    // Clients decide URL durability from this, never from the provider name.
+    endpointKind: endpointKindForProvider(instance.provider),
     status: instance.status,
     createdAt: instance.created_at,
     updatedAt: instance.updated_at,
@@ -698,6 +704,7 @@ export async function deleteWorkerCascade(worker: WorkerRow) {
 
   await db.transaction(async (tx) => {
     await tx.delete(WorkerTokenTable).where(eq(WorkerTokenTable.worker_id, worker.id))
+    await tx.delete(CloudRuntimeInstanceTable).where(eq(CloudRuntimeInstanceTable.worker_id, worker.id))
     await tx.delete(DaytonaSandboxTable).where(eq(DaytonaSandboxTable.worker_id, worker.id))
     await tx.delete(WorkerInstanceTable).where(eq(WorkerInstanceTable.worker_id, worker.id))
     await tx.delete(WorkerBundleTable).where(eq(WorkerBundleTable.worker_id, worker.id))

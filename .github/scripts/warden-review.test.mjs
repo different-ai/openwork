@@ -99,13 +99,27 @@ test("applies blocker and advisory policy across severity and confidence", () =>
     skill("confidentiality-review", [finding("CONF-MED", "medium", "high")]),
     skill("desktop-den-sync-review", [finding("SYNC-HIGH", "high"), finding("SYNC-MED", "medium")]),
     skill("spec-provenance-review", [finding("PROV-HIGH", "high")]),
+    skill("design-spec-review", [finding("DESIGN-MED", "medium"), finding("DESIGN-LOW", "low")]),
   ]), metadata);
   assert.equal(receipt.review_complete, true);
   assert.equal(receipt.blocking_count, 3);
   assert.equal(receipt.sync_advisory_count, 1);
+  assert.equal(receipt.verdict, "blocked");
   assert.deepEqual(receipt.findings.map((item) => item.disposition), [
-    "blocker", "blocker", "blocker", "advisory", "advisory",
+    "blocker", "blocker", "blocker", "advisory", "advisory", "advisory", "advisory",
   ]);
+});
+
+test("design-spec-review findings alone never block clearance", () => {
+  const receipt = prepareReceipt(raw([
+    skill("diff-security-review", []),
+    skill("confidentiality-review", []),
+    skill("design-spec-review", [finding("DESIGN-P2", "medium"), finding("DESIGN-V5", "low")]),
+  ]), metadata);
+  assert.equal(receipt.review_complete, true);
+  assert.equal(receipt.blocking_count, 0);
+  assert.equal(receipt.verdict, "clear");
+  assert.deepEqual(receipt.findings.map((item) => item.disposition), ["advisory", "advisory"]);
 });
 
 test("marks partial, error, unknown, and inconsistent reports incomplete", () => {

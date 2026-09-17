@@ -45,6 +45,10 @@ export function normalizeConnectedAccountScopes(value: unknown): string[] | null
   return parsed
 }
 
+export function parseGrantedOAuthScopes(scope: string | undefined): string[] | null {
+  return scope === undefined ? null : scope.split(" ").filter(Boolean)
+}
+
 function normalizeOrgOAuthClientRow(row: OrgOAuthClientRow): OrgOAuthClientRow {
   return { ...row, extra: normalizeOAuthClientExtra(row.extra) }
 }

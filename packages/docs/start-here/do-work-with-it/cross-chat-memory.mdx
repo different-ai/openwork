@@ -33,7 +33,7 @@ Reading a session (`session.search`, `session.read`) never changes what is on yo
 Agents address other sessions by id, and by default nothing on your screen changes. Showing you something is a separate, explicit step.
 
 - **Read**: `session.search` and `session.read` return transcripts without opening anything.
-- **Talk**: `session.send { sessionId, text }` appends a prompt to an existing session by id. The message is written immediately; if that session is in the middle of a turn, its run handles the new message at its next step (nothing is rejected or lost). `session.create` starts new sessions the same way.
+- **Talk**: `session.send { sessionId, text }` submits a prompt to an existing session by id after validating its effective model through a connected renderer host. Missing host/catalog or stale models return `model_unavailable` without writing a prompt. `session.create` creates sessions and submits their first prompts. Both report `accepted: true` only after the engine accepts the asynchronous HTTP request, not when inference starts or completes.
 - **Show**: `session.open` and `workbench.session.focus` are the only actions that move your pane. `session.send { reveal: true }` sends first and then opens that session for you.
 - **File**: `session.rename`, `session.pin`, and `session.archive` act by id and do not open the session (archiving the session you are looking at closes its tab).
 
@@ -53,9 +53,14 @@ Stopping a session is yours: use the Stop button in that conversation. When you 
 Every session is bound to a model, and agents can see and set it without opening the session or reading OpenWork's storage:
 
 - `session.list_sessions` entries and `session.read` results carry `model: { providerId, modelId, variant }`. `variant` is the reasoning effort you see as the behavior pill in the composer (for example `low`, `medium`, `high`); it is `null` when the provider default applies. Before a session has a model bound (no `model` at creation and no turn yet), `model` is `null`.
-- `session.create` accepts the same shape as `model`, either once for every session in the call or per entry. The model is applied when the session is created and again on its first turn, so the session runs at the requested effort from the start and reads back with that `model`. Sessions created without `model` use the engine default.
+- `session.create` accepts model ids or an exact case-insensitive `alias`/`displayName`, optionally qualified by `providerId`, with `variant` for effort. All batch selections resolve through `models.list` before any creation. Explicit model selection requires an existing renderer host even for headless callers; missing host, unavailable or ambiguous selections cause zero writes. Canonical ids go on both creation and the first prompt. Returned `displayName`/`providerName` are decorations; bindings round-trip by ids. Without any model selection, creation uses the engine default and does not require a renderer catalog.
+- `session.set_model` saves a local next-send model override for one session; it does not update the engine binding or send a prompt. `session.rebind_model` previews matching idle unarchived sessions in one workspace with `dryRun: true`, then requires confirmation of that exact session set to save overrides. Both require a renderer host and leave global defaults unchanged.
 
-Changing the model of an existing session by id is not available to agents yet; the composer's model picker does that for the session you have open.
+### Acceptance and partial failures
+
+A `session.create` receipt's `created` entries contain `accepted: true`, never `started: true`. Catalog preflight does not guarantee later availability or inference success. On HTTP failure or timeout, the failure envelope retains `result.created`, `result.failures`, `effects`, and indexed `issues` with any known created `sessionId`. Each create and prompt request has a 10-second timeout. A timed-out write may have reached the engine: inspect sessions before retrying; there is no automatic retry.
+
+Creation never focuses or opens a session. Its best-effort workspace reload is not proof of sidebar visibility. Use `session.read` to inspect transcripts and `session.list_sessions` for observed activity. `session.read.lastError` is a sanitized snapshot of the latest assistant error in the inspected window, not a live event feed: pre-assistant failures can remain invisible, and `null` does not prove successful inference.
 
 ## Current limits
 

@@ -24,7 +24,9 @@
     "./openwork-affordance": {
       "types": "./src/openwork-affordance.ts",
       "development": "./src/openwork-affordance.ts",
-      "default": "./src/openwork-affordance.ts"
+      "bun": "./src/openwork-affordance.ts",
+      "browser": "./src/openwork-affordance.ts",
+      "default": "./dist/openwork-affordance.js"
     },
     "./openwork-context": {
       "types": "./src/openwork-context.ts",

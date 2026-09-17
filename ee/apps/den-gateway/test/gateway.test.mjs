@@ -4,6 +4,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createGatewayApp } from "../src/app.ts"
 import { resolveGatewayBuildVersion } from "../src/env.ts"
+import {
+  buildMcpAppSandboxCsp,
+  MCP_APP_SANDBOX_PROXY_CSS,
+  MCP_APP_SANDBOX_PROXY_HTML,
+  MCP_APP_SANDBOX_PROXY_SCRIPT,
+  parseMcpAppSandboxCsp,
+} from "../../../../apps/server/src/mcp-app-sandbox.ts"
 
 const silentLogger = {
   log() {},
@@ -243,6 +250,123 @@ describe("den-gateway static UI", () => {
     expect(await index.text()).toContain("window.__OPENWORK_GATEWAY__ = {\"version\":1,\"build\":\"openwork-0.19.0\"}")
     await expect(health.json()).resolves.toEqual({ ok: true, service: "den-gateway", build: "openwork-0.19.0" })
     await expect(ready.json()).resolves.toEqual({ ok: true, service: "den-gateway", build: "openwork-0.19.0" })
+  })
+})
+
+describe("den-gateway MCP App sandbox", () => {
+  test("serves fixed public assets without resolving an instance, SPA injection, or token leakage", async () => {
+    const root = await makeWebRoot()
+    const upstream = startUpstream()
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
+    const gateway = startGateway({ webRoot: root, denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
+    const base = serverBase(gateway)
+    const assets = [
+      ["html", "text/html; charset=utf-8", MCP_APP_SANDBOX_PROXY_HTML],
+      ["js", "text/javascript; charset=utf-8", MCP_APP_SANDBOX_PROXY_SCRIPT],
+      ["css", "text/css; charset=utf-8", MCP_APP_SANDBOX_PROXY_CSS],
+    ]
+
+    for (const [extension, mime, expectedBody] of assets) {
+      for (const headers of [{}, { Authorization: "Bearer den-token", Cookie: "ow_session=cookie-secret", "X-OpenWork-Host-Token": "browser-host-token" }]) {
+        const response = await fetch(`${base}/mcp-apps/sandbox.${extension}?token=query-secret`, { headers })
+        const body = await response.text()
+        expect(response.status).toBe(200)
+        expect(response.headers.get("content-type")).toBe(mime)
+        expect(response.headers.get("cache-control")).toBe("no-store")
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+        expect(body).toBe(expectedBody)
+        expect(body).not.toContain("OpenWork App")
+        expect(body).not.toContain("__OPENWORK_GATEWAY__")
+        expect(body).not.toContain("__OPENWORK_BOOTSTRAP__")
+        const exposed = body + JSON.stringify(Object.fromEntries(response.headers))
+        for (const secret of ["den-token", "client-token", "host-token", "gateway-secret", "cookie-secret", "query-secret"]) {
+          expect(exposed).not.toContain(secret)
+        }
+        if (extension === "html") {
+          expect(response.headers.get("content-security-policy")).toBe(buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(null)))
+          expect(response.headers.get("content-security-policy")).toContain("connect-src 'none'")
+          expect(response.headers.get("referrer-policy")).toBe("strict-origin")
+        }
+      }
+      const head = await fetch(`${base}/mcp-apps/sandbox.${extension}`, { method: "HEAD" })
+      expect(head.status).toBe(200)
+      expect(head.headers.get("content-type")).toBe(mime)
+      expect(await head.text()).toBe("")
+    }
+    expect(denApi.observed.calls).toBe(0)
+    expect(upstream.observed.requests).toHaveLength(0)
+  })
+
+  test("uses the shared CSP parser and builder without reflecting unsafe query values", async () => {
+    let fetchCalls = 0
+    const gateway = startGateway({
+      webRoot: "",
+      fetchImpl: async () => {
+        fetchCalls += 1
+        throw new Error("Sandbox assets must not use upstream fetch")
+      },
+    })
+    const declarations = [
+      JSON.stringify({
+        connectDomains: ["https://api.example", "https://bad.example; script-src *", "https://user:query-secret@api.example"],
+        resourceDomains: ["https://cdn.example"],
+        frameDomains: ["https://frame.example"],
+        baseUriDomains: ["https://base.example"],
+      }),
+      "{invalid-json",
+      "null",
+      "x".repeat(8193),
+    ]
+    for (const declaration of declarations) {
+      const response = await fetch(`${serverBase(gateway)}/mcp-apps/sandbox.html?csp=${encodeURIComponent(declaration)}`)
+      const csp = response.headers.get("content-security-policy")
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe(MCP_APP_SANDBOX_PROXY_HTML)
+      expect(csp).toBe(buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(declaration)))
+      expect(csp).toContain("default-src 'none'")
+      expect(csp).toContain("object-src 'none'")
+      expect(csp).toContain("form-action 'none'")
+      expect(csp).not.toContain("bad.example")
+      expect(csp).not.toContain("query-secret")
+      if (declaration === declarations[0]) {
+        expect(csp).toContain("connect-src https://api.example")
+        expect(csp).toContain("script-src 'self' 'unsafe-inline' https://cdn.example")
+        expect(csp).toContain("frame-src 'self' https://frame.example")
+        expect(csp).toContain("base-uri https://base.example")
+      } else {
+        expect(csp).toContain("connect-src 'none'")
+      }
+    }
+    expect(fetchCalls).toBe(0)
+  })
+
+  test("never falls back to the SPA or filesystem for unknown sandbox assets or unsupported methods", async () => {
+    const root = await makeWebRoot()
+    await mkdir(join(root, "mcp-apps"))
+    await writeFile(join(root, "mcp-apps", "untrusted.html"), "untrusted sandbox asset")
+    const upstream = startUpstream()
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
+    const gateway = startGateway({ webRoot: root, denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
+    for (const [method, path] of [
+      ["GET", "/mcp-apps"],
+      ["GET", "/mcp-apps/"],
+      ["GET", "/mcp-apps/missing.js"],
+      ["GET", "/mcp-apps/untrusted.html"],
+      ["GET", "/mcp-apps/sandbox.html/extra"],
+      ["POST", "/mcp-apps/sandbox.html"],
+      ["POST", "/mcp-apps/sandbox.js"],
+      ["POST", "/mcp-apps/sandbox.css"],
+    ]) {
+      const response = await fetch(`${serverBase(gateway)}${path}`, {
+        method,
+        headers: { Authorization: "Bearer den-token", Accept: "text/html", "Sec-Fetch-Mode": "navigate" },
+      })
+      expect(response.status).toBe(404)
+      expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8")
+      await expect(response.json()).resolves.toEqual({ error: "not_found" })
+    }
+    expect(denApi.observed.calls).toBe(0)
+    expect(upstream.observed.requests).toHaveLength(0)
   })
 })
 

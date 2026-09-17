@@ -128,6 +128,14 @@ if (import.meta.main) await runRecipe(world);
     assert.ok(stageBAfterBoth);
     assert.equal(stageAAfterBoth.pid, stageA.pid);
     assert.equal(stageBAfterBoth.pid, stageB.pid);
+    assert.equal((await run(["up", fixturePath, "--detach", "--stage", "a"])).code, 0);
+    const changedStage = await run(["up", fixturePath, "--detach", "--stage", "a", "--", "--ref", "changed-stage-ref"]);
+    assert.equal(changedStage.code, 1);
+    assert.match(changedStage.lines.join("\n"), /invocation changed/);
+    assert.equal((await readScriptWorldSnapshot(stageAPath))?.pid, stageA.pid);
+    assert.equal((await readScriptWorldSnapshot(stageBPath))?.pid, stageB.pid);
+    assert.equal(isProcessAlive(stageA.pid), true);
+    assert.equal(isProcessAlive(stageB.pid), true);
     evidence.recordAssertionEvidence(
       "Staged launches have isolated receipts and runtimes",
       "Stages a and b launched with distinct receipt paths, live pids, and responding URLs; parsing both after both launches proved neither receipt overwrote the other.",

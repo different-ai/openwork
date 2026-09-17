@@ -1017,6 +1017,135 @@ describe("OpenCode v2 event translation", () => {
   });
 });
 
+describe("OpenCode v2 message pagination", () => {
+  test("transmits the opaque older cursor, caps native pages at 200, and does not infer exhaustion from filtered content", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    const cursor = "opaque+/=?%25&older";
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const url = new URL(request.url);
+      expect(url.pathname).toBe("/workspace/ws/opencode2/api/session/ses_pages/message");
+      expect(request.headers.get("Authorization")).toBe("Bearer page-token");
+      expect(url.searchParams.get("limit")).toBe("200");
+      expect(url.searchParams.has("before")).toBe(false);
+      expect(url.searchParams.has("order")).toBe(false);
+      if (requests.length === 1) {
+        expect(url.searchParams.has("cursor")).toBe(false);
+        return jsonResponse({ data: [{ id: "msg_system", type: "system", text: "Internal context" }], cursor: { next: cursor } });
+      }
+      expect(url.searchParams.get("cursor")).toBe(cursor);
+      return jsonResponse({ data: [], cursor: {} });
+    };
+    try {
+      const client = createClientV2("https://worker.example/workspace/ws/opencode2", undefined, { token: "page-token" });
+      const newest = await client.listMessagesPage({ sessionID: "ses_pages", limit: 300 });
+      expect(newest.data).toEqual([]);
+      expect(newest.pagination).toEqual({ nextCursor: cursor, limit: 200 });
+      const older = await client.listMessagesPage({ sessionID: "ses_pages", limit: 300, before: newest.pagination?.nextCursor ?? undefined });
+      expect(older.data).toEqual([]);
+      expect(older.pagination).toEqual({ before: cursor, nextCursor: null, limit: 200 });
+      expect(requests).toHaveLength(2);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("unbounded compatibility reads normalize descending pages chronologically while preserving native ties and skipping filtered content", async () => {
+    const originalFetch = globalThis.fetch;
+    const cursors: Array<string | null> = [];
+    const records = (ids: string[]) => ids.map((id) => ({ id, type: "user", text: id, time: { created: 7 } }));
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(new Request(input, init).url);
+      expect(url.searchParams.has("limit")).toBe(false);
+      const cursor = url.searchParams.get("cursor");
+      cursors.push(cursor);
+      if (cursor === null) return jsonResponse({ data: records(["b-last", "m-next"]), cursor: { next: "middle" } });
+      if (cursor === "middle") return jsonResponse({ data: [{ id: "hidden", type: "synthetic", text: "hidden" }], cursor: { next: "oldest" } });
+      if (cursor === "oldest") return jsonResponse({ data: records(["a-answer", "z-first"]), cursor: { next: "empty" } });
+      return jsonResponse({ data: [], cursor: {} });
+    };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", undefined, {});
+      const result = await client.listMessagesPage({ sessionID: "ses_pages" });
+      expect(result.data?.map(({ info }) => info.id)).toEqual(["z-first", "a-answer", "m-next", "b-last"]);
+      expect(result.pagination).toBeUndefined();
+      expect(cursors).toEqual([null, "middle", "oldest", "empty"]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("unbounded reads reject cycling cursors instead of publishing a partial history", async () => {
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    globalThis.fetch = async () => {
+      reads += 1;
+      return jsonResponse({ data: [{ id: `msg_${reads}`, type: "user", text: "page" }], cursor: { next: reads === 2 ? "b" : "a" } });
+    };
+    try {
+      const result = await createClientV2("http://opencode.test/opencode2", undefined, {}).listMessagesPage({ sessionID: "ses_pages" });
+      expect(result.data).toBeUndefined();
+      expect(result.error).toMatchObject({ message: expect.stringContaining("cursor did not advance") });
+      expect(reads).toBe(3);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("legacy responses retain their existing order without trustworthy pagination", async () => {
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    globalThis.fetch = async () => { reads += 1; return jsonResponse({ data: [
+      { id: "msg_2", type: "user", text: "newer", time: { created: 2 } },
+      { id: "msg_1", type: "user", text: "older", time: { created: 1 } },
+    ] }); };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", undefined, {});
+      for (const limit of [undefined, 24]) {
+        const result = await client.listMessagesPage({ sessionID: "ses_pages", limit });
+        expect(result.data?.map(({ info }) => info.id)).toEqual(["msg_2", "msg_1"]);
+        expect(result.pagination).toBeUndefined();
+      }
+      const older = await client.listMessagesPage({ sessionID: "ses_pages", limit: 24, before: "older" });
+      expect(older.data).toBeUndefined();
+      expect(older.error).toMatchObject({ name: "InvalidV2MessagePageResponse" });
+      expect(reads).toBe(3);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test.each([
+    { data: [], cursor: { next: 12 } },
+    { data: [], cursor: { next: "unexpected" } },
+    { data: [{ id: "msg_1", type: "user" }], cursor: {} },
+    { data: [], cursor: null },
+    { data: "invalid", cursor: {} },
+  ])("malformed native pages cannot imply exhaustion (%j)", async (payload) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse(payload);
+    try {
+      const result = await createClientV2("http://opencode.test/opencode2", undefined, {}).listMessagesPage({ sessionID: "ses_pages", limit: 24 });
+      expect(result.data).toBeUndefined();
+      expect(result.pagination).toBeUndefined();
+      expect(result.error).toMatchObject({ name: "InvalidV2MessagePageResponse" });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("cancellation after a page prevents another native read or partial publication", async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    const aborted = new Error("page read cancelled");
+    let reads = 0;
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      reads += 1;
+      controller.abort(aborted);
+      expect(request.signal.aborted).toBe(true);
+      return jsonResponse({ data: [{ id: "msg_1", type: "user" }], cursor: { next: "older" } });
+    };
+    try {
+      await expect(createClientV2("http://opencode.test/opencode2", undefined, {}).session.messages({ sessionID: "ses_pages" }, { signal: controller.signal }))
+        .rejects.toBe(aborted);
+      expect(reads).toBe(1);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});
+
 describe("OpenCode v2 client compatibility", () => {
   test.each([0, 1_788_548_737_221])("rejects archived=%i without reading, renaming, or deleting the session", async (archived) => {
     const originalFetch = globalThis.fetch;

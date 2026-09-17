@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import {
+  buildGatewayModelConfig,
   buildGatewayProviderConfig,
   buildProviderConfigSnapshot,
   isSupportedGatewayNpm,
@@ -229,4 +230,14 @@ test("private upstream exceptions belong to deployment configuration, not provid
     if (previous === undefined) delete process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS
     else process.env.INFERENCE_EGRESS_ALLOWED_ORIGINS = previous
   }
+})
+
+
+test("gateway models carry diagnostic selection headers while preserving safe SDK headers", () => {
+  const model = buildGatewayModelConfig({ id: "gwm_fixture", name: "Fixture model", config: {
+    headers: { "anthropic-beta": "safe-beta", authorization: "FAKE_SECRET", "x-openwork-gateway-request-model": "stale" },
+  } })
+  expect(model).toEqual({ id: "gwm_fixture", name: "Fixture model", headers: {
+    "anthropic-beta": "safe-beta", "x-openwork-gateway-request-model": "gwm_fixture",
+  } })
 })

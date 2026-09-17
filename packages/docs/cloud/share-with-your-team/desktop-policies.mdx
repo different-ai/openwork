@@ -20,6 +20,30 @@ Current desktop policy keys map to concrete product capabilities:
 
 Legacy desktop policies combine grants from the default policy and every assigned policy: any grant can allow a capability. Explicit Team Access blocks are applied afterward and take precedence over those grants. Restrict members by turning capabilities off in the default policy, then grant more to specific members or teams with assigned policies.
 
+## Approved websites
+
+Limit the built-in browser without turning off all built-in extensions:
+
+1. Open **Members > Teams > your team > Access** and expand **Browse websites**.
+2. Set **Website access** to **Approved sites only**, enter a complete site address, and choose **Add site** for each website.
+3. Choose **Review changes**, then **Save permissions**.
+
+In the general **Desktop policies** editor, the same setting is **Restrict browsing to approved sites** under **Commands & browser**, with one address per line.
+
+Approved websites are exact HTTP or HTTPS origins: the scheme, hostname, and port together. For example, `https://portal.example.com` permits pages on that origin, but not `http://portal.example.com`, `https://portal.example.com:8443`, or `https://docs.portal.example.com`. Default ports normalize to the same origin, so `https://portal.example.com:443` is equivalent to `https://portal.example.com`.
+
+- Add up to 100 complete site addresses per policy, without paths, sign-in credentials, queries, or fragments.
+- Add subdomains, sign-in sites, and resource sites separately. Wildcards do not grant access to subdomains.
+- Rules cover browser requests, including navigation, redirects, frames, and resources such as scripts and images. A resource from an unapproved origin is blocked even when the page itself is approved.
+- **Blocked**, or an empty approved-site list, denies all websites. Removing the final site does not turn restrictions off.
+- **All websites** removes this policy's approved-site restriction. It does not override restrictions from another applicable policy or the **Built-in Extensions** control.
+
+Unlike legacy boolean grants, approved-site restrictions **intersect** across the default policy and all matching member, team, and role policies. A site must appear in every applicable restricted list. A targeted policy can restrict browsing even when the default policy allows all websites. Policies without an approved-site list impose no additional origin restriction.
+
+The policy document stores these settings in `execution.browserOrigins`: an omitted field adds no origin restriction, while `[]` denies every website. The local policy service verifies managed browser requests independently of the desktop's cached display settings. If managed policy cannot be verified, requests are blocked; signing out does not clear retained managed restrictions into unrestricted browsing. This does not prevent genuinely unmanaged local use.
+
+Once approved-site policy has reached the managed engine, generated permissions block that engine's built-in `websearch` and `webfetch` tools. Changes can wait for an engine refresh; this is not a fresh Den check before every tool call and does not filter third-party MCP search or fetch traffic. **Upload files & submit forms** is a separate built-in-browser restriction: it blocks WebSocket connections, requests with upload data, and methods other than `GET`, `HEAD`, and `OPTIONS`. GET-based forms and other read URLs can still send data to approved sites. These controls are not device-wide data-loss prevention: allowed computer commands and third-party connections can use other network transports. Block computer commands too when members must not use that route.
+
 ## Restricted mode
 
 Every policy has a mode selector at the top of its editor:

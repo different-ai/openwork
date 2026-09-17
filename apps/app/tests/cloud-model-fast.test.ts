@@ -41,6 +41,52 @@ describe("catalog Fast runtime gate", () => {
     expect(raw).not.toHaveProperty("variants");
   });
 
+  test("pinned v1 suppresses inferred efforts outside an explicit catalog list for gateway aliases", () => {
+    const efforts = ["low", "medium", "high", "xhigh", "max"];
+    const serialized = buildCloudProviderConfig({ ...provider, models: [{
+      id: "gwm_synthetic", name: "Gateway witness", createdAt: null,
+      config: { reasoning: true, release_date: "2026-09-04", reasoning_options: [{ type: "effort", values: efforts }],
+        experimental: { modes: { fast } } },
+    }] });
+    const providers = { ipr_synthetic: { ...serialized } };
+    const before = JSON.stringify(providers);
+    const result = materializeLegacyFastProviders(providers);
+    expect(result).toMatchObject({ ipr_synthetic: { models: { gwm_synthetic: { variants: {
+      none: { disabled: true }, minimal: { disabled: true },
+      ...Object.fromEntries(efforts.map((effort) => [effort, { reasoningEffort: effort }])),
+      [FAST_DEFAULT_VARIANT]: { serviceTier: "priority" },
+      ...Object.fromEntries(efforts.map((effort) => [fastVariantId(effort), { reasoningEffort: effort, serviceTier: "priority" }])),
+    } } } } });
+    expect(JSON.stringify(result)).not.toContain(fastVariantId("none"));
+    expect(JSON.stringify(result)).not.toContain(fastVariantId("minimal"));
+    expect(JSON.stringify(providers)).toBe(before);
+    expect(materializeLegacyFastProviders(result)).toEqual(result);
+  });
+
+  test("pinned v1 keeps advertised none and explicit overrides, and does not restrict unknown effort lists", () => {
+    for (const efforts of [undefined, [], ["none", "low"], ["low"]]) {
+      const variants = catalogFastVariants({ ...config,
+        ...(efforts ? { reasoning_options: [{ type: "effort", values: efforts }] } : {}),
+        variants: { ...config.variants, minimal: { reasoningEffort: "low" }, low: { disabled: true } },
+      }, "@ai-sdk/openai");
+      const result = materializeLegacyFastProviders({ witness: { npm: "@ai-sdk/openai", models: { model: { variants } } } });
+      expect(result).toMatchObject({ witness: { models: { model: { variants: {
+        ...config.variants, minimal: { reasoningEffort: "low" }, low: { disabled: true },
+        [fastVariantId("minimal")]: { reasoningEffort: "low", serviceTier: "priority" },
+        ...(efforts?.includes("none") ? { none: { reasoningEffort: "none" },
+          [fastVariantId("none")]: { reasoningEffort: "none", serviceTier: "priority" } }
+          : efforts?.length ? { none: { disabled: true } } : {}),
+      } } } } });
+      if (!efforts?.length) expect(JSON.stringify(result)).not.toContain('"none"');
+      expect(JSON.stringify(result)).not.toContain(fastVariantId("low"));
+      expect(JSON.stringify(result)).not.toContain(fastVariantId("hidden"));
+    }
+    const invalid = { witness: { npm: "@ai-sdk/openai", models: { model: { variants: {
+      [CATALOG_FAST_VARIANT]: { disabled: true, openworkNativeFast: 1, reasoningEfforts: ["unsupported"] },
+    } } } } };
+    expect(materializeLegacyFastProviders(invalid)).toEqual(invalid);
+  });
+
   test("pinned v1 materialization preserves custom and disabled variants without mutating imports", () => {
     const serialized = buildCloudProviderConfig(provider);
     const providers = { lpr_synthetic: { ...serialized }, untouched: { npm: "@ai-sdk/openai-compatible", models: {} } };

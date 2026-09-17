@@ -16,6 +16,16 @@ Today, the supported path is the first-party `OpenWork Browser` extension.
 
 Then go back to the session view and ask OpenWork to open a website.
 
+## Allow control for a thread
+
+The browser panel asks **Allow browser control for this thread?** Choose **Allow for this thread** once to let that conversation navigate allowed websites, read pages, and scroll across its own tabs. You do not need to approve every page or scroll. Organization restrictions still apply.
+
+Clicks, typing, and keyboard input still ask **Allow browser action?** before they run, because they can submit information or change website data using your signed-in account. Review the target and text, then choose **Allow once** or **Deny**. Time spent reviewing does not use up the short page-observation window, but a changed page or target still requires a fresh observation. Browser operations remain time-limited. Keyboard automation requires a directly focused native field, button, or link; embedded and custom editors with unverifiable focus require you to take over.
+
+Choose **Take over** at any time to pause browser operations and revoke the grant. Sign in directly in the page, then choose **Resume browser**; the next browser operation asks for a fresh grant. Disabling browser control, canceling an in-flight browser operation, closing the thread's last browser tab, or restarting the desktop also clears it. The grant never transfers to another thread.
+
+Website tools (WebMCP) still require separate approval to run, and their results stay local until you choose **Share result**. Browser control does not grant access to your regular Chrome profile or other conversations' tabs.
+
 In the desktop browser toolbar, **Suspend** frees a tab's memory after a warning. This is manual, not a page snapshot: form input, scroll position, and page history are lost. **Reload** or selecting the suspended tab opens its saved URL again. Tabs opened or restored for browser work stay protected until `browser.release_tab` declares all running and queued work complete. Release does not suspend or invalidate the current target; there is no automatic reclamation. For later work, `browser.restore_tab` checks conversation ownership and returns a fresh protected handle to use.
 
 ## Keyboard shortcuts

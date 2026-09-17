@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { spyOn } from "bun:test"
+import { createDenDb } from "@openwork-ee/den-db"
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -13,7 +15,7 @@ import {
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_MIN_CLAIM_WINDOW_MS } from "@openwork/automations"
+import { AUTOMATION_MANUAL_CLAIM_WINDOW_MS, AUTOMATION_MIN_CLAIM_WINDOW_MS } from "@openwork/automations"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   automationDesktopRunnerAssignmentSchema,
@@ -150,9 +152,111 @@ test("desktop occurrences stay claimable through the recovery window with named 
   // The recovery window is one policy in @openwork/automations: the claim path
   // clamps it against the occurrence's own next due time, and the expiry path
   // records the cause an operator can act on instead of one generic wording.
-  assert.match(claim, /desktopClaimDeadline\(\{[\s\S]*nextDueAt,[\s\S]*\}\)/)
+  assert.match(claim, /computeAutomationClaimDeadline\(\{[\s\S]*trigger: input\.trigger,[\s\S]*nextDueAt,[\s\S]*\}\)/)
   assert.match(expire, /missedDesktopReason\(/)
-  assert.match(expire, /code: "runner_unavailable"/)
+  assert.match(expire, /"lease_lost" : "runner_unavailable"/)
+})
+
+test("desktop expiry mock driver preserves interrupted receipts and bounded recovery", async () => {
+  process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DB_MODE ??= "mysql"
+  process.env.DEN_DB_ENCRYPTION_KEY ??= "runner-recovery-test-encryption-key-123456789"
+  process.env.BETTER_AUTH_SECRET ??= "runner-recovery-test-secret-1234567890123"
+  process.env.BETTER_AUTH_URL ??= "http://127.0.0.1:8790"
+  process.env.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS = "1000"
+  const { db } = await import("../src/db.js")
+  const fixture = createDenDb({ mode: "planetscale", planetscale: {
+    host: "database.example.test", username: "fixture", password: "fixture",
+  } })
+  if (!("connection" in fixture.client)) throw new Error("Expected the fixture PlanetScale driver")
+  const replies: unknown[][][] = []
+  const queries: Array<{ statement: string; args: unknown[] }> = []
+  const execute = spyOn(fixture.client, "execute").mockImplementation(async (statement, args) => {
+    assert.ok(Array.isArray(args))
+    queries.push({ statement, args })
+    const rows = replies.shift()
+    if (!rows) throw new Error("Unexpected database query")
+    return { headers: [], types: {}, rows, fields: [], size: rows.length, statement, insertId: "0", rowsAffected: 1, time: 0 }
+  })
+  const select = spyOn(db, "select").mockImplementation(fixture.db.select.bind(fixture.db))
+  const update = spyOn(db, "update").mockImplementation(fixture.db.update.bind(fixture.db))
+  const now = Date.UTC(2026, 7, 18, 12)
+  const run: typeof AutomationRunTable.$inferSelect = {
+    id: createDenTypeId("automationRun"), automation_id: createDenTypeId("automation"),
+    revision_id: createDenTypeId("automationRevision"), trigger: "manual", scheduled_for: null,
+    idempotency_key: "manual:expiry", status: "running", execution_target: "desktop",
+    claim_deadline_at: new Date(now), lease_owner: "desktop:fixture", lease_expires_at: new Date(now - 1),
+    heartbeat_at: new Date(now - 60_000), attempt_count: 1, cloud_thread_id: createDenTypeId("automationThread"),
+    engine_kind: "openwork-desktop-runner-v1", engine_receipt: null, engine_sequence: 3,
+    engine_admitted_at: null, provider_id: "fixture", model_id: "fixture", model_variant: null,
+    started_at: new Date(now - 60_000), finished_at: null, error: null, result_summary: null,
+    codemode_receipt_id: null, validated_result: null, usage: { inputTokens: null, outputTokens: null, costMicros: null },
+    cancel_requested_at: null, mcp_token_hash: null, mcp_token_expires_at: null,
+    created_at: new Date(now - 180_000), updated_at: new Date(now - 60_000),
+  }
+  const automation: typeof AutomationTable.$inferSelect = {
+    id: run.automation_id, organization_id: createDenTypeId("organization"), owner_member_id: createDenTypeId("member"),
+    name: "Receipt fixture", state: "active", current_revision_id: run.revision_id, next_due_at: new Date(now + 1),
+    latest_run_at: run.created_at, needs_attention_reason: null, latest_successful_run_id: null,
+    latest_successful_result: null, archived_at: null, created_at: run.created_at, updated_at: run.created_at,
+  }
+  function driverRow(table: Record<string, unknown>, row: Record<string, unknown>): unknown[] {
+    return Object.entries(table).flatMap(([key, column]) => {
+      if (!(key in row) || typeof column !== "object" || column === null
+        || !("mapToDriverValue" in column) || typeof column.mapToDriverValue !== "function") return []
+      return [row[key] === null ? null : column.mapToDriverValue(row[key])]
+    })
+  }
+  try {
+    const { DenAutomationRepository } = await import("../src/automations/repository.js")
+    const repository = new DenAutomationRepository()
+    for (const deadline of [now, now + 60_000]) {
+      replies.push([driverRow(AutomationRunTable, { ...run, claim_deadline_at: new Date(deadline) })], [])
+      await repository.recoverExpiredLeases({ now, limit: 10 })
+      assert.match(queries.at(-1)!.statement, /`lease_owner` = \? and `automation_run`\.`lease_expires_at` < \?/)
+      assert.ok(queries.at(-1)!.args.includes("queued"))
+      assert.equal(replies.length, 0)
+    }
+    const interrupted = { code: "lease_lost", message: "Run interrupted — the desktop execution lease expired.", retryable: false }
+    for (const attempted of [{ attempt_count: 1, started_at: run.started_at }, { attempt_count: 1, started_at: null }, { attempt_count: 0, started_at: run.started_at }]) {
+      queries.length = 0
+      replies.push(
+        [[...driverRow(AutomationRunTable, { ...run, ...attempted, status: "queued", lease_owner: null, lease_expires_at: null }), ...driverRow(AutomationTable, automation)]],
+        [],
+        [["failed", JSON.stringify(interrupted)]],
+      )
+      assert.deepEqual(await repository.expireUnclaimedDesktop({ now, limit: 10 }), [run.id])
+      assert.equal(queries.length, 3, "attempted runs must not query availability or erase their interruption")
+      assert.match(queries[0].statement, /`status` = \?.*`execution_target` = \?.*`claim_deadline_at` <= \?/)
+      assert.deepEqual(queries[0].args, ["queued", "desktop", "2026-08-18 12:00:00.000", 10])
+      assert.match(queries[1].statement, /`status` = \? and `automation_run`\.`attempt_count` = \? and `automation_run`\.`claim_deadline_at` <= \?/)
+      assert.deepEqual(queries[1].args, [
+        "failed", "2026-08-18 12:00:00.000", JSON.stringify(interrupted), interrupted.message, "2026-08-18 12:00:00.000",
+        run.id, "queued", attempted.attempt_count, "2026-08-18 12:00:00.000",
+      ])
+      assert.equal(replies.length, 0)
+    }
+    queries.length = 0
+    const unavailable = { code: "runner_unavailable", message: "Missed — no desktop was connected.", retryable: false }
+    replies.push(
+      [[...driverRow(AutomationRunTable, { ...run, status: "queued", attempt_count: 0, started_at: null }), ...driverRow(AutomationTable, automation)]],
+      [], [], [], [["skipped", JSON.stringify(unavailable)]],
+    )
+    assert.deepEqual(await repository.expireUnclaimedDesktop({ now, limit: 10 }), [run.id])
+    assert.equal(queries.length, 5)
+    assert.ok(queries[3].args.includes(JSON.stringify(unavailable)))
+    replies.push([driverRow(AutomationRunTable, { ...run, attempt_count: 2 })], [])
+    await repository.recoverExpiredLeases({ now, limit: 10 })
+    assert.ok(queries.at(-1)!.args.includes(JSON.stringify(interrupted)))
+    assert.ok(queries.at(-1)!.args.includes("failed"))
+    replies.push([])
+    assert.deepEqual(await repository.expireUnclaimedDesktop({ now: now + 1, limit: 10 }), [])
+    assert.equal(replies.length, 0)
+  } finally {
+    select.mockRestore()
+    update.mockRestore()
+    execute.mockRestore()
+  }
 })
 
 test("desktop recovery deadlines hold, expire with exact causes, and never invoke a provider", async () => {
@@ -370,7 +474,7 @@ test("desktop recovery deadlines hold, expire with exact causes, and never invok
     })
 
     const manualAt = start + 40_000
-    const manualItem = await createAutomation("Manual floor", manualAt, manualAt + 24 * 60 * 60_000)
+    const manualItem = await createAutomation("Manual floor", manualAt, manualAt + 10_000)
     const manual = await repository.claim({
       automation: manualItem.automation,
       revision: manualItem.revision,
@@ -379,20 +483,66 @@ test("desktop recovery deadlines hold, expire with exact causes, and never invok
       nonce: "manual-floor",
       leaseOwner: "scheduler:test",
       leaseMs: 1_000,
-      claimDeadlineMs: AUTOMATION_MIN_CLAIM_WINDOW_MS,
+      claimDeadlineMs: AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
       now: manualAt,
     })
     assert.equal(manual.kind, "claimed")
     runIds.push(manual.run.id)
+    assert.deepEqual(await repository.discoverDesktopWork({
+      organizationId, ownerMemberId: memberId, now: manualAt + AUTOMATION_MIN_CLAIM_WINDOW_MS + 30_000, limit: 4,
+    }), [{ runId: manual.run.id, executionTarget: "desktop" }])
     assert.deepEqual(await repository.expireUnclaimedDesktop({
-      now: manualAt + AUTOMATION_MIN_CLAIM_WINDOW_MS - 1,
+      now: manualAt + AUTOMATION_MANUAL_CLAIM_WINDOW_MS - 1,
       limit: 10,
     }), [])
     assert.equal((await receipt(manual.run.id)).status, "queued")
     assert.deepEqual(await repository.expireUnclaimedDesktop({
-      now: manualAt + AUTOMATION_MIN_CLAIM_WINDOW_MS,
+      now: manualAt + AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
       limit: 10,
     }), [manual.run.id])
+    assert.equal((await receipt(manual.run.id)).error?.code, "runner_unavailable")
+    assert.equal(await repository.claimDesktop({
+      organizationId, ownerMemberId: memberId, leaseOwner, leaseMs: 60_000, runId: manual.run.id,
+      now: manualAt + AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
+    }), null)
+    for (const recoverInsideWindow of [false, true]) {
+      const attemptAt = manualAt + 300_000 + (recoverInsideWindow ? 300_000 : 0)
+      const item = await createAutomation("Interrupted receipt", attemptAt, attemptAt + 10_000)
+      const queued = await repository.claim({
+        automation: item.automation, revision: item.revision, trigger: "manual", scheduledFor: null,
+        nonce: `interrupted-${recoverInsideWindow}`, leaseOwner: "scheduler:test", leaseMs: 30_000,
+        claimDeadlineMs: AUTOMATION_MANUAL_CLAIM_WINDOW_MS, now: attemptAt,
+      })
+      runIds.push(queued.run.id)
+      const claimed = await repository.claimDesktop({
+        organizationId, ownerMemberId: memberId, leaseOwner, leaseMs: 30_000, runId: queued.run.id, now: attemptAt + 1_000,
+      })
+      assert.equal(claimed?.run.attemptCount, 1)
+      const recoverAt = attemptAt + (recoverInsideWindow ? 31_001 : AUTOMATION_MANUAL_CLAIM_WINDOW_MS)
+      await repository.recoverExpiredLeases({ now: recoverAt, limit: 10 })
+      assert.deepEqual(await repository.expireUnclaimedDesktop({ now: recoverAt, limit: 10 }), recoverInsideWindow ? [] : [queued.run.id])
+      if (recoverInsideWindow) {
+        assert.equal((await receipt(queued.run.id)).status, "queued")
+        const retried = await repository.claimDesktop({
+          organizationId, ownerMemberId: memberId, leaseOwner, leaseMs: 30_000, runId: queued.run.id, now: recoverAt + 1,
+        })
+        assert.equal(retried?.run.attemptCount, 2)
+        await assert.rejects(repository.complete({
+          runId: queued.run.id, leaseOwner, attempt: 1, status: "succeeded", resultSummary: "Stale completion",
+          usage: { inputTokens: null, outputTokens: null, costMicros: null }, error: null, now: recoverAt + 2,
+        }), /automation_run_complete_lease_lost/)
+        await repository.recoverExpiredLeases({ now: recoverAt + 30_002, limit: 10 })
+      }
+      const interrupted = await receipt(queued.run.id)
+      assert.equal(interrupted.status, "failed")
+      assert.equal(interrupted.error?.code, "lease_lost")
+      assert.equal(interrupted.resultSummary, "Run interrupted — the desktop execution lease expired.")
+      assert.equal(interrupted.attemptCount, recoverInsideWindow ? 2 : 1)
+      assert.deepEqual(await repository.expireUnclaimedDesktop({ now: attemptAt + 240_000, limit: 10 }), [])
+      assert.equal(await repository.claimDesktop({
+        organizationId, ownerMemberId: memberId, leaseOwner, leaseMs: 30_000, runId: queued.run.id, now: attemptAt + 240_000,
+      }), null)
+    }
     assert.equal(providerCompletionCalls, 0)
   } finally {
     globalThis.fetch = realFetch

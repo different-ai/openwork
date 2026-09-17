@@ -1,6 +1,7 @@
 import { expect } from "vitest"
-import { denFetch, evalIn } from "@openwork/behaviors"
-import { app, eventually, faultProxy, needs, server, test } from "@openwork/testkit"
+import { clickButton, clickText, denFetch, evalIn, go, waitForText } from "@openwork/behaviors"
+import { app, browserScript, eventually, faultProxy, needs, server, test } from "@openwork/testkit"
+import type { AutomationRun } from "@openwork/types/automations"
 
 // Registration is independent of local engine health. A transient mint failure
 // after reconnect must retry without another online event or a 30-minute wait.
@@ -58,6 +59,125 @@ test("desktop registration recovers from a transient Den outage without another 
   evidence.recordAssertionEvidence(
     "Registration recovers without another online event",
     "Den reported no desktop during the injected startup registration outage. After a single online event and one further HTTP 503, the desktop retried and Den reported it connected within 35 seconds.",
+    true,
+  )
+
+  const created = await denFetch(den.admin, "/v1/automations", {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({
+      name: "Registration recovery receipts",
+      instructions: "Summarize the project notes.",
+      schedule: { kind: "once", timezone: "UTC", at: Date.now() + 86_400_000 },
+      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
+    }),
+  })
+  expect(created.response.status).toBe(201)
+  const detail = record(created.body)
+  const automationId = record(detail.automation).id
+  const revisionId = record(detail.revision).id
+  if (typeof automationId !== "string" || typeof revisionId !== "string") {
+    throw new Error("Automation identity missing")
+  }
+  const occurredAt = Date.now() - 120_000
+  const missed: AutomationRun = {
+    id: "ui-witness-missed", automationId, revisionId, trigger: "scheduled",
+    scheduledFor: occurredAt, idempotencyKey: "ui-witness-missed", status: "skipped",
+    leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null, attemptCount: 0,
+    executionTarget: "desktop", executionThread: null,
+    providerId: "opencode", modelId: "big-pickle", modelVariant: null,
+    startedAt: null, finishedAt: occurredAt + 60_000,
+    error: { code: "runner_unavailable", message: "No desktop runner claimed this occurrence before its deadline.", retryable: false },
+    resultSummary: null, usage: { inputTokens: null, outputTokens: null, costMicros: null },
+    createdAt: occurredAt, updatedAt: occurredAt + 60_000,
+  }
+  const cases: { run: AutomationRun; title: string; variant: string }[] = [
+    { run: missed, title: "Run missed", variant: "default" },
+    {
+      run: { ...missed, id: "ui-witness-attempted", idempotencyKey: "ui-witness-attempted", attemptCount: 1 },
+      title: "Run interrupted", variant: "destructive",
+    },
+    {
+      run: { ...missed, id: "ui-witness-started", idempotencyKey: "ui-witness-started", startedAt: occurredAt },
+      title: "Run interrupted", variant: "destructive",
+    },
+    {
+      run: {
+        ...missed, id: "ui-witness-lease-lost", idempotencyKey: "ui-witness-lease-lost",
+        status: "failed", attemptCount: 1, startedAt: occurredAt,
+        error: { code: "lease_lost", message: "The execution lease expired after the run started.", retryable: false },
+      },
+      title: "Run interrupted", variant: "destructive",
+    },
+    {
+      run: {
+        ...missed, id: "ui-witness-execution-failed", idempotencyKey: "ui-witness-execution-failed",
+        status: "failed", attemptCount: 1, startedAt: occurredAt,
+        error: { code: "execution_failed", message: "The task failed while reading project notes.", retryable: false },
+      },
+      title: "execution_failed", variant: "destructive",
+    },
+  ]
+  const runsPath = `/api/den/v1/automations/${automationId}/runs`
+  await proxy.faults.status(runsPath, 200, {
+    times: 100, body: { items: cases.map(({ run }) => run), nextCursor: null },
+  })
+  for (const { run } of cases) {
+    await proxy.faults.status(`/api/den/v1/automation-runs/${run.id}`, 200, {
+      times: 100, body: { ...detail, run, events: [] },
+    })
+  }
+
+  await clickButton(desktop, "Automations")
+  await clickText(desktop, "Registration recovery receipts", { selector: "button" })
+  await waitForText(desktop, "Run history")
+  await go(desktop, `/automations?automation=${automationId}&run=${missed.id}`)
+  const guidance = "Keep OpenWork open, signed in, and your computer awake and connected for future runs."
+  for (const { run, title, variant } of cases) {
+    if (run.id !== missed.id) {
+      await go(desktop, `/automations?automation=${automationId}&run=${run.id}`)
+    }
+    const notice = await eventually(() => evalIn(desktop, browserScript((runId) => {
+      const alert = document.querySelector<HTMLElement>(`[data-automation-run-notice="${runId}"]`)
+      if (!alert || alert.getBoundingClientRect().height === 0) return null
+      return {
+        title: alert.querySelector<HTMLElement>('[data-slot="alert-title"]')?.innerText,
+        variant: alert.getAttribute("data-variant"),
+        text: alert.innerText,
+        destructive: alert.classList.contains("text-destructive"),
+        receiptText: alert.closest<HTMLElement>('[data-slot="card-content"]')?.innerText,
+        noticeIds: [...document.querySelectorAll("[data-automation-run-notice]")]
+          .map((element) => element.getAttribute("data-automation-run-notice")),
+        offlineWarning: Boolean(document.querySelector("[data-automation-runner-offline]")),
+      }
+    }, [run.id])), { within: 15_000, label: `visible UI receipt ${run.id}` })
+    expect(notice?.title).toBe(title)
+    expect(notice?.variant).toBe(variant)
+    expect(notice?.destructive).toBe(variant === "destructive")
+    expect(notice?.receiptText).toContain("— input · — output · —")
+    expect(notice?.noticeIds).toEqual([run.id])
+    expect(notice?.offlineWarning).toBe(false)
+    expect(notice?.text).toContain(run.error?.message)
+    expect(notice?.text).not.toMatch(/offline|asleep|closed|signed out/i)
+    if (run.id === missed.id) {
+      expect(notice?.text).toContain("This occurrence never started.")
+      expect(notice?.text).toContain(guidance)
+      expect(notice?.text).not.toContain("Run interrupted")
+    } else {
+      expect(notice?.text).not.toContain("Run missed")
+      expect(notice?.text).not.toContain("This occurrence never started.")
+      expect(notice?.text).not.toContain(guidance)
+    }
+  }
+  const receiptRequests = await proxy.requestLog()
+  for (const path of [runsPath, ...cases.map(({ run }) => `/api/den/v1/automation-runs/${run.id}`)]) {
+    expect(receiptRequests.some((request) => request.method === "GET"
+      && request.path.split("?")[0] === path && request.faulted && request.status === 200)).toBe(true)
+  }
+  expect(await presence()).toBe(true)
+  evidence.recordAssertionEvidence(
+    "UI witness: missed occurrences differ from interrupted and failed execution receipts",
+    "The real app opened a real Den Automation and rendered fault-proxy receipt fixtures, not scheduler-produced runs. Only the unattempted runner_unavailable receipt showed a default Run missed notice and future-run guidance. Attempt-count and start-time historical receipts and lease_lost were destructive Run interrupted notices; execution_failed retained its destructive error and message. No receipt inferred an offline cause or replaced the recovered desktop's connected presence. This is UI classification evidence, not backend scheduling or execution proof.",
     true,
   )
 })

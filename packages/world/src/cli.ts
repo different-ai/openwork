@@ -11,6 +11,8 @@ import { receiptName, resolveStage, sanitizeStage } from "./stage.ts";
 import { WorldStateStore } from "./store.ts";
 import {
   computeRecipeHash,
+  computeInvocationHash,
+  computeLocalSourceHash,
   downScriptWorld,
   isProcessAlive,
   launchScriptWorld,
@@ -30,6 +32,7 @@ export type WorldCommand =
       timeoutMs?: number;
       stage?: string;
       place?: "local" | "daytona";
+      env?: string[];
       plain?: true;
       args: string[];
     }
@@ -92,8 +95,18 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     let stage: string | undefined;
     let place: "local" | "daytona" | undefined;
     let plain = false;
+    const env: string[] = [];
     for (let index = 0; index < options.length; index += 1) {
       const option = options[index];
+      if (option === "--env") {
+        const key = options[index + 1];
+        if (!key || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || key.startsWith("OPENWORK_WORLD_") || /TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL|AUTHORIZATION|COOKIE/i.test(key)) {
+          return helpError("Use --env only for nonsecret configuration outside the reserved OPENWORK_WORLD_ namespace; credential-like key names are rejected.");
+        }
+        env.push(key);
+        index += 1;
+        continue;
+      }
       if (option === "--detach" && !detach) {
         detach = true;
         continue;
@@ -141,6 +154,7 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(stage === undefined ? {} : { stage }),
       ...(place === undefined ? {} : { place }),
+      ...(env.length === 0 ? {} : { env }),
       ...(plain ? { plain: true } : {}),
       args: scriptArgs,
     };
@@ -273,7 +287,7 @@ async function helpText(options: WorldCliOptions): Promise<string> {
   const discovered = await discoverWorlds(options.worldsDirectory);
   const sources = discovered.map((world) => displayWorldPath(world.path, options.cwd));
   return `Usage:
-  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [--plain] [-- <script args...>]
+  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [--env <KEY>]... [--plain] [-- <script args...>]
   pnpm world attach <name> [--stage <value>] [--plain]
   pnpm world outputs <name> [--stage <value>] [--reveal] [--json]
   pnpm world plan <script-path-or-name> [--stage <value>]
@@ -283,6 +297,7 @@ async function helpText(options: WorldCliOptions): Promise<string> {
   pnpm world help
 
 World scripts run in the foreground by default; use --detach for background lifecycle receipts.
+Use --env KEY only for nonsecret configuration whose value must match before reusing a running world. Never select credentials.
 Available world scripts: ${sources.join(", ") || "(none)"}`;
 }
 
@@ -290,10 +305,13 @@ type ScriptReceiptState =
   | { kind: "create" }
   | { kind: "running" | "changed" | "orphaned"; snapshot: NonNullable<Awaited<ReturnType<typeof readScriptWorldSnapshot>>> };
 
-async function classifyScriptReceipt(path: string, recipeHash: string): Promise<ScriptReceiptState> {
+export async function classifyScriptReceipt(path: string, recipeHash: string, invocationHash?: string, defaultInvocation = false): Promise<ScriptReceiptState> {
   const snapshot = await readScriptWorldSnapshot(path);
   if (!snapshot) return { kind: "create" };
   if (!isProcessAlive(snapshot.pid)) return { kind: "orphaned", snapshot };
+  if (invocationHash !== undefined && snapshot.invocationHash !== invocationHash
+    && !(snapshot.invocationHash === undefined && defaultInvocation && snapshot.recipeHash === recipeHash
+      && (snapshot.place === undefined || snapshot.place === "local"))) return { kind: "changed", snapshot };
   return snapshot.recipeHash === undefined || snapshot.recipeHash === recipeHash
     ? { kind: "running", snapshot }
     : { kind: "changed", snapshot };
@@ -474,18 +492,26 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const script = await resolveWorldScript(command.source, options);
       const stage = resolveStage(process.env, command.stage);
       const recipeHash = await computeRecipeHash(script.path);
+      const place = command.place ?? process.env.OPENWORK_WORLD_PLACE ?? "local";
+      if (place !== "local" && place !== "daytona") throw new Error("World placement must be local or daytona.");
+      const env: NodeJS.ProcessEnv = Object.fromEntries((command.env ?? []).map((key) => [key, process.env[key]]));
+       const sourceHash = place === "local" ? await computeLocalSourceHash(options.cwd) : undefined;
+       const invocationHash = computeInvocationHash(recipeHash, command.args, place, env, sourceHash);
       const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
       const stagedName = receiptName(script.name, stage);
       const snapshotPath = scriptWorldSnapshotPath(snapshotDirectory, stagedName);
       const worldLedgerPath = ledgerPath(snapshotDirectory, stagedName);
-      const state = await classifyScriptReceipt(snapshotPath, recipeHash);
+       const state = await classifyScriptReceipt(snapshotPath, recipeHash, invocationHash, place === "local" && command.args.length === 0 && Object.keys(env).length === 0);
       if (state.kind === "running") {
         printOutputs(state.snapshot, print);
         print(`World ${JSON.stringify(stagedName)} is already running (pid ${state.snapshot.pid}); adopted.`);
         return 0;
       }
       if (state.kind === "changed") {
-        print(`World ${JSON.stringify(stagedName)} is running but its recipe changed; run pnpm world down ${script.name}${stage ? ` --stage ${stage}` : ""} first.`);
+        const reason = state.snapshot.recipeHash !== undefined && state.snapshot.recipeHash !== recipeHash
+          ? "recipe changed"
+          : state.snapshot.invocationHash === undefined ? "invocation identity is missing" : "invocation changed";
+        print(`World ${JSON.stringify(stagedName)} is running but its ${reason}; run pnpm world down ${script.name}${stage ? ` --stage ${stage}` : ""} first.`);
         return 1;
       }
       if (state.kind === "orphaned") {
@@ -503,7 +529,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       view.header({
         name: stagedName,
         ...(stage === undefined ? {} : { stage }),
-        ...(command.place === undefined ? {} : { place: command.place }),
+        place,
         receipt: snapshotPath,
         ...(command.detach || mode === "tty" ? { log: logPath } : {}),
         preflight,
@@ -561,7 +587,9 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           ...(command.timeoutMs === undefined ? {} : { timeoutMs: command.timeoutMs }),
           ...(stage === undefined ? {} : { stage }),
           recipeHash,
-          ...(command.place === undefined ? {} : { place: command.place }),
+          invocationHash,
+          env,
+          place,
           print,
           foregroundLog: !command.detach && mode === "tty",
           onSpawn: (pid) => { childPid = pid; },
@@ -746,7 +774,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const state = await classifyScriptReceipt(snapshotPath, recipeHash);
       const labels = {
         create: "+ create",
-        running: "• running (attachable)",
+        running: state.kind === "running" && state.snapshot.invocationHash !== undefined ? "• running (invocation unverified)" : "• running (attachable)",
         changed: "~ stale (recipe changed)",
         orphaned: "- orphaned (stale receipt, will recreate)",
       };

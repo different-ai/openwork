@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { readdirSync, readFileSync } from "node:fs"
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
@@ -111,18 +112,18 @@ describe("local startup migration safety (offline)", () => {
     assert.throws(() => historyPrefix(plan, [...receipts, receipts[95]]), /exact hash\/timestamp prefix/)
   })
 
-  test("only consolidated 0097 receipts retain the final prefix without restamping", () => {
+  test("consolidated 0097 receipts retain their prefix without restamping", () => {
     const current = plan[96]
     assert.equal(current.tag, "0097_gateway_access_matrix")
     assert.equal(current.folderMillis, 1788895934602)
     assert.equal(current.hash, "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470")
     for (const created_at of [1788895934602, "1788895934602"]) {
       const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
-      const recorded = [...receipts.slice(0, 96), { hash: current.hash, created_at }]
+      const recorded: { hash: string; created_at: number | string }[] = [...receipts.slice(0, 96), { hash: current.hash, created_at }]
       const before = structuredClone(recorded)
       assert.equal(historyPrefix(plan, recorded), 97)
       assert.deepEqual(recorded, before)
-      assert.deepEqual(plan.slice(historyPrefix(plan, recorded)), [])
+      assert.equal(plan[historyPrefix(plan, recorded)]?.tag, "0098_gateway_uncountable_usage")
     }
   })
 
@@ -157,7 +158,7 @@ describe("local startup migration safety (offline)", () => {
   })
 
   test("consolidated 0097 receipts require schema parity and do not rerun source guards", async () => {
-    const receipts = plan.map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
+    const receipts = plan.slice(0, 97).map((entry) => ({ hash: entry.hash, created_at: entry.folderMillis }))
     const before = structuredClone(receipts)
     const shape = shapeAt("0097_")
     const healthy = fixture(shape, { receipts })
@@ -618,5 +619,71 @@ describe("Den DB migration readiness wiring", () => {
     assert.equal(snapshot.includes("Reading schema files"), false, "schema snapshot contains SQL only")
     assert.match(journal, /"entries"/)
     assert.match(journal, /"0040_rapid_lady_bullseye"/)
+    assert.doesNotMatch(runner, /drizzle-kit|tsx/)
+    for (const asset of ["0097_gateway_access_matrix.sql", "meta/0096_snapshot.json", "meta/0097_snapshot.json"]) {
+      assert.equal(readFileSync(path.join(packageDir, "dist/drizzle", asset), "utf8"), readFileSync(path.join(packageDir, "drizzle", asset), "utf8"))
+    }
+    const isolated = mkdtempSync(path.join(tmpdir(), "den-db-production-smoke-"))
+    try {
+      cpSync(path.join(packageDir, "dist"), path.join(isolated, "dist"), { recursive: true })
+      writeFileSync(path.join(isolated, "package.json"), JSON.stringify({ type: "module" }))
+      const manifest: { dependencies: Record<string, string> } = JSON.parse(readRepoFile("ee/packages/den-db/package.json"))
+      for (const dependency of Object.keys(manifest.dependencies)) {
+        const link = path.join(isolated, "node_modules", dependency)
+        mkdirSync(path.dirname(link), { recursive: true })
+        symlinkSync(realpathSync(path.join(packageDir, "node_modules", dependency)), link, "junction")
+      }
+      const smoke = spawnSync(process.execPath, ["--input-type=module", "-e", `
+        import assert from "node:assert/strict"
+        import { createRequire } from "node:module"
+        import { readMigrationFiles } from "drizzle-orm/migrator"
+        import { initializeDenDb, migrateWith0097Compatibility } from "./dist/scripts/bootstrap.js"
+        const require = createRequire(import.meta.url)
+        for (const dependency of ["tsx", "drizzle-kit/api"]) assert.throws(() => require.resolve(dependency))
+        const migrationsFolder = "./dist/drizzle"
+        const migrations = readMigrationFiles({ migrationsFolder })
+        const receipts = []
+        const statements = []
+        await initializeDenDb({
+          async query(sql, args = []) {
+            statements.push(sql)
+            if (sql === "show tables") return []
+            if (sql.startsWith("select max(created_at)")) return [{ latest: null }]
+            if (sql.startsWith("insert into")) receipts.push({ hash: args[0], created_at: args[1] })
+            return []
+          },
+          async close() {},
+        })
+        assert.ok(statements.some((sql) => sql.startsWith("CREATE TABLE")))
+        assert.equal(receipts.length, migrations.length)
+        assert.deepEqual(receipts[96], { hash: migrations[96].hash, created_at: migrations[96].folderMillis })
+        let ordinaryCalls = 0
+        const executor = { async query(sql) {
+          assert.ok(sql.startsWith("SELECT hash, created_at"))
+          return receipts
+        } }
+        await migrateWith0097Compatibility(executor, migrationsFolder, async () => { ordinaryCalls++ })
+        assert.equal(ordinaryCalls, 0)
+        receipts.length = 96
+        const reads = []
+        await assert.rejects(migrateWith0097Compatibility({ async query(sql) {
+          reads.push(sql)
+          if (sql.startsWith("SELECT hash, created_at")) return receipts
+          if (sql.includes("@@SESSION.default_storage_engine")) return [{ engine: "InnoDB", db: "synthetic_db" }]
+          if (sql === "SHOW GRANTS") return [{ grant: "GRANT ALL PRIVILEGES ON *.* TO 'migration'@'localhost'" }]
+          if (sql.includes("GET_LOCK")) return [{ acquired: 0 }]
+          throw new Error("unexpected packaged preflight query")
+        } }, migrationsFolder, async () => { ordinaryCalls++ }, undefined, { writersStoppedFor0097: true }), /owns this database/)
+        assert.ok(reads.some((sql) => sql.includes("GET_LOCK")))
+        assert.equal(ordinaryCalls, 0)
+      `], {
+        cwd: isolated,
+        encoding: "utf8",
+        env: { ...process.env, NODE_OPTIONS: "", NODE_PATH: "", OPENWORK_DEN_DB_ENV_PATH: "", DATABASE_ENV_FILE: "" },
+      })
+      assert.equal(smoke.status, 0, `Production-only bootstrap smoke failed\n${smoke.stdout}\n${smoke.stderr}`)
+    } finally {
+      rmSync(isolated, { recursive: true, force: true })
+    }
   })
 })

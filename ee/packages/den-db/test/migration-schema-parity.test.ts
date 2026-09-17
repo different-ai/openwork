@@ -6,9 +6,11 @@ import { dirname, join } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/mysql2"
 import { migrate } from "drizzle-orm/mysql2/migrator"
 import mysql from "mysql2/promise"
+import { ExternalMcpConnectionTable } from "../src/schema/sharables/capability-credentials.ts"
 import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
 import { ensureSchemaRepairs, type Executor } from "../src/schema-repairs.ts"
 import {
@@ -532,6 +534,69 @@ async function runRegressionInsert(connection: mysql.Connection) {
   }
 }
 
+const longOAuthScope = Array.from({ length: 128 }, (_, index) => `https://scope.example.test/resource/${index}/Read`).join(" ")
+
+async function runOAuthScopeRegressionInserts(connection: mysql.Connection) {
+  const db = drizzle(connection)
+  for (const scope of [null, "", longOAuthScope]) {
+    const id = createDenTypeId("externalMcpConnection")
+    await db.insert(ExternalMcpConnectionTable).values({
+      id,
+      organizationId: createDenTypeId("organization"),
+      createdByOrgMembershipId: createDenTypeId("member"),
+      name: "OAuth scope storage",
+      url: "https://mcp.example.test/mcp",
+      authType: "oauth",
+      scope,
+    })
+    const readScope = async () => (await db.select({ scope: ExternalMcpConnectionTable.scope })
+      .from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, id)))[0]?.scope
+    assert.equal(await readScope(), scope)
+    const replacement = `${longOAuthScope} records:read,records:write`
+    await db.update(ExternalMcpConnectionTable).set({ scope: replacement }).where(eq(ExternalMcpConnectionTable.id, id))
+    assert.equal(await readScope(), replacement)
+  }
+}
+
+test("external OAuth scope schema and generated migration retain nullable text", async () => {
+  assert.ok(longOAuthScope.length > 1024)
+  assert.equal(ExternalMcpConnectionTable.scope.getSQLType(), "text")
+  assert.equal(ExternalMcpConnectionTable.scope.notNull, false)
+  const sql = await readFile(join(migrationsFolder, "0100_external_mcp_scope_text.sql"), "utf8")
+  assert.equal(sql.trim(), "ALTER TABLE `external_mcp_connection` MODIFY COLUMN `scope` text;")
+})
+
+test("OAuth scope widening preserves legacy rows and accepts long Drizzle inserts and updates", { skip: !mysqlUrl, timeout: 120_000 }, async () => {
+  if (!mysqlUrl) return
+  const root = await mysql.createConnection(mysqlUrl)
+  const database = scratchDatabaseName()
+  let connection: mysql.Connection | undefined
+  try {
+    await root.query(`CREATE DATABASE ${quoteIdentifier(database)}`)
+    connection = await mysql.createConnection(databaseUrlFor(mysqlUrl, database))
+    const exported = splitSqlStatements(await exportCurrentSchemaSql())
+    const table = exported.find((statement) => createTableName(statement) === "external_mcp_connection")
+    assert.ok(table)
+    assert.match(table, /`scope` text/)
+    await connection.query(table.replace("`scope` text", "`scope` varchar(1024)"))
+    for (const [index, scope] of [null, "", "s".repeat(1024)].entries()) {
+      await connection.query(
+        "INSERT INTO `external_mcp_connection` (`id`, `organization_id`, `created_by_org_membership_id`, `name`, `url`, `auth_type`, `scope`) VALUES (?, 'org_legacy', 'mem_legacy', 'Legacy scope', 'https://mcp.example.test/mcp', 'oauth', ?)",
+        [`emc_legacy_${index}`, scope],
+      )
+    }
+    const before = await queryRecords(connection, "SELECT * FROM `external_mcp_connection` ORDER BY id")
+    await connection.query(await readFile(join(migrationsFolder, "0100_external_mcp_scope_text.sql"), "utf8"))
+    assert.deepEqual(await queryRecords(connection, "SELECT * FROM `external_mcp_connection` ORDER BY id"), before)
+    assert.ok((await schemaColumnLines(connection)).includes("external_mcp_connection.scope: text YES"))
+    await runOAuthScopeRegressionInserts(connection)
+  } finally {
+    await connection?.end().catch(() => {})
+    await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)}`).catch(() => {})
+    await root.end()
+  }
+})
+
 test("migrations replay to exported schema and config object version inserts", { skip: !mysqlUrl, timeout: 300_000 }, async () => {
   if (!mysqlUrl) return
 
@@ -566,11 +631,66 @@ test("migrations replay to exported schema and config object version inserts", {
 
     await assertSchemasMatch(exportedConnection, migratedConnection)
     await runRegressionInsert(migratedConnection)
+    await runOAuthScopeRegressionInserts(migratedConnection)
   } finally {
     await migratedConnection?.end().catch(() => {})
     await exportedConnection?.end().catch(() => {})
     await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(migratedDatabase)}`).catch(() => {})
     await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(exportedDatabase)}`).catch(() => {})
+    await root.end()
+  }
+})
+
+test("cloud runtime migration backfills Daytona instances and preserves rollback rows", { skip: !mysqlUrl, timeout: 120_000 }, async () => {
+  if (!mysqlUrl) return
+
+  const root = await mysql.createConnection(mysqlUrl)
+  const database = scratchDatabaseName()
+  let connection: mysql.Connection | undefined
+
+  try {
+    await root.query(`CREATE DATABASE ${quoteIdentifier(database)}`)
+    connection = await mysql.createConnection(databaseUrlFor(mysqlUrl, database))
+    const exported = splitSqlStatements(await exportCurrentSchemaSql())
+    const legacySchema = exported.filter((statement) =>
+      createTableName(statement) === "daytona_sandbox" || indexTableName(statement) === "daytona_sandbox",
+    )
+    assert.ok(legacySchema.length > 0, "legacy Daytona schema must exist during rollback window")
+    await applyStatements(connection, legacySchema)
+    for (const suffix of ["first", "second"]) {
+      await connection.query(
+        "INSERT INTO daytona_sandbox (id, worker_id, sandbox_id, workspace_volume_id, data_volume_id, signed_preview_url, signed_preview_url_expires_at, region) VALUES (?, ?, ?, ?, ?, ?, '2030-01-02 03:04:05.123', ?)",
+        [`dts_${suffix}`, `wkr_${suffix}`, `sandbox_${suffix}`, `workspace_${suffix}`, `data_${suffix}`, `https://${suffix}.example.test/runtime`, suffix === "first" ? "test-region" : null],
+      )
+    }
+    const before = await queryRecords(connection, "SELECT * FROM daytona_sandbox ORDER BY id")
+    const migrations = (await readdir(migrationsFolder)).filter((entry) => entry.endsWith("_cloud_runtime_instance.sql"))
+    assert.equal(migrations.length, 1, "exactly one neutral-instance migration must be registered")
+    const migration = await readFile(join(migrationsFolder, migrations[0]), "utf8")
+    await applyStatements(connection, splitSqlStatements(migration.replace(/--> statement-breakpoint/g, "")))
+
+    const after = await queryRecords(connection, "SELECT * FROM daytona_sandbox ORDER BY id")
+    assert.deepEqual(after, before, "migration must not alter the previous Den's rollback records")
+    const migrated = await queryRecords(connection,
+      "SELECT id, worker_id, provider_id, JSON_UNQUOTE(JSON_EXTRACT(provider_ref, '$.sandboxId')) AS sandbox_id, workspace_volume_id, data_volume_id, endpoint_url, endpoint_expires_at, endpoint_kind, region, created_at, updated_at FROM cloud_runtime_instance ORDER BY id",
+    )
+    assert.deepEqual(migrated, before.map((row) => ({
+      id: stringField(row, "id").replace(/^dts_/, "cri_"),
+      worker_id: row.worker_id,
+      provider_id: "daytona",
+      sandbox_id: row.sandbox_id,
+      workspace_volume_id: row.workspace_volume_id,
+      data_volume_id: row.data_volume_id,
+      endpoint_url: row.signed_preview_url,
+      endpoint_expires_at: row.signed_preview_url_expires_at,
+      endpoint_kind: "signed-expiring",
+      region: row.region,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    })))
+  } finally {
+    await connection?.end().catch(() => {})
+    await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)}`).catch(() => {})
     await root.end()
   }
 })

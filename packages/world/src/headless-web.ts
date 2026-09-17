@@ -28,6 +28,7 @@ import {
 import type { ChildProcess } from "node:child_process";
 import type { HeadlessRuntimeManifest, HeadlessWebState } from "./headless-web-helpers.ts";
 import { assertWorldName } from "./store.ts";
+import { headlessBrowserEnvironment } from "./headless-browser.ts";
 
 const DEFAULT_WEB_PORT = "5178";
 const DEFAULT_SERVER_PORT = "8778";
@@ -43,6 +44,7 @@ export interface HeadlessWebLaunchOptions {
   keepTokens?: boolean;
   rotateTokens?: boolean;
   env?: NodeJS.ProcessEnv;
+  browserHostSuffix?: string;
 }
 
 export interface HeadlessWebHandle {
@@ -654,13 +656,14 @@ async function writeRuntimeManifest(manifest: HeadlessRuntimeManifest): Promise<
 function startRuntimeSupervisor(
   manifest: HeadlessRuntimeManifest,
   repoRoot: string,
+  env: NodeJS.ProcessEnv,
 ): ChildProcess {
   return spawn(
     process.execPath,
     [join(repoRoot, "packages", "world", "bin", "headless-monitor.mjs"), manifest.runtimeManifestPath],
     {
       cwd: repoRoot,
-      env: process.env,
+      env,
       stdio: "ignore",
       detached: true,
     },
@@ -670,6 +673,7 @@ function startRuntimeSupervisor(
 async function ensureRuntimeSupervisor(
   manifest: HeadlessRuntimeManifest,
   repoRoot: string,
+  env: NodeJS.ProcessEnv,
 ): Promise<{ manifest: HeadlessRuntimeManifest; supervisor: ChildProcess | null }> {
   if (
     manifest.supervisorPid
@@ -677,7 +681,7 @@ async function ensureRuntimeSupervisor(
   ) {
     return { manifest, supervisor: null };
   }
-  const supervisor = startRuntimeSupervisor(manifest, repoRoot);
+  const supervisor = startRuntimeSupervisor(manifest, repoRoot, env);
   try {
     await waitForSpawn(supervisor, "headless supervisor");
     const supervised: HeadlessRuntimeManifest = {
@@ -698,6 +702,9 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
   }
   const repoRoot = resolve(options.repoRoot);
   const env = options.env ?? process.env;
+  if (options.browserHostSuffix && (options.state !== "isolated" || env.OPENWORK_PUBLIC_HOST)) {
+    throw new Error("External browser origins require isolated state and loopback runtime addresses.");
+  }
   assertWorldName(options.name);
   assertHeadlessLaunchSafety(options.state, env);
   const runtimePaths = resolveHeadlessWorldRuntimePaths(repoRoot, options.name);
@@ -725,7 +732,7 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
           },
         };
     await writeRuntimeManifest(adopted);
-    const supervised = await ensureRuntimeSupervisor(adopted, repoRoot);
+    const supervised = await ensureRuntimeSupervisor(adopted, repoRoot, env);
     supervised.supervisor?.unref();
     return {
       manifest: supervised.manifest,
@@ -772,11 +779,12 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
   const headlessLogPath = runtimePaths.headlessLogPath;
   const openworkUrl = `http://${clientHost}:${openworkPort}`;
   const webUrl = `http://${clientHost}:${webPort}`;
+  const browserEnv = headlessBrowserEnvironment({ browserHostSuffix: options.browserHostSuffix, openworkUrl });
   const denProxyEnabled = env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY === undefined
     ? true
     : readBool(env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY);
   const denTarget = denProxyEnabled ? normalizeDenTarget(env.OPENWORK_DEV_DEN_PROXY_TARGET) : null;
-  const denApiUrl = denTarget ? `${webUrl}/api/den` : null;
+  const denApiUrl = denTarget ? (options.browserHostSuffix ? "/api/den" : `${webUrl}/api/den`) : null;
   const clientConnection = resolveHeadlessClientConnection({
     state: options.state,
     env,
@@ -794,6 +802,7 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     VITE_OPENWORK_TOKEN: clientConnection.token,
     VITE_OPENWORK_FORCE_ENV_SETTINGS: "1",
     VITE_OPENWORK_DEPLOYMENT: env.VITE_OPENWORK_DEPLOYMENT ?? "web",
+    ...browserEnv,
     ...(denTarget && denApiUrl ? {
       OPENWORK_DEV_HEADLESS_DEN_TARGET: denTarget,
       VITE_DEN_API_BASE_URL: env.VITE_DEN_API_BASE_URL ?? denApiUrl,
@@ -872,7 +881,7 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     ]);
     await writeRuntimeManifest(manifest);
     await waitForHealthy(manifest);
-    const supervised = await ensureRuntimeSupervisor(manifest, repoRoot);
+    const supervised = await ensureRuntimeSupervisor(manifest, repoRoot, env);
     manifest = supervised.manifest;
     acquiredManifest = manifest;
     acquiredSupervisor = supervised.supervisor;

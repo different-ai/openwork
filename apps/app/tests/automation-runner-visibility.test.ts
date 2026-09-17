@@ -27,7 +27,8 @@ describe("Automation runner visibility", () => {
 
   test("a missed run shows the cause Den recorded", () => {
     const page = read("src/react-app/domains/automations/automations-page.tsx")
-    expect(page).toContain("run.error.message.trim() || \"Missed — desktop runner unavailable\"")
+    expect(page).toContain("automationRunNotice(selectedReceipt.run)")
+    expect(page).toContain("<AlertDescription>{runNotice.message}</AlertDescription>")
   })
 
   test("the full Automation list does not enter a fast polling window", () => {

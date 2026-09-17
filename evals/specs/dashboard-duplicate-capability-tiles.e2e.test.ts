@@ -123,4 +123,39 @@ test("an organization dashboard holds two tiles of the same MCP App capability w
       && afterSecondAdd[0].jql === firstArguments.jql
       && afterSecondAdd[1].jql === secondArguments.jql,
   );
+
+  const expectOrder = async (expected: PersistedElement[]) => {
+    const expectedState = {
+      persisted: expected,
+      displayed: expected.map((element) => `${element.toolName} · ${JSON.stringify({ jql: element.jql })}`),
+      disabledMoves: 2,
+    };
+    const state = await probe.eventually(async () => ({
+      persisted: await readElements(),
+      displayed: (await probe.dom("p")).elements.map((element) => element.text)
+        .filter((text) => text.startsWith(`${dashboardAppTool.name} · `)),
+      disabledMoves: (await probe.dom('button[aria-label^="Move "]:disabled')).elements.length,
+    }), {
+      within: 60_000,
+      intervalMs: 500,
+      label: "saved order matches the visible rows and only boundary moves are disabled",
+      until: (value) => JSON.stringify(value) === JSON.stringify(expectedState),
+    });
+    expect(state).toEqual(expectedState);
+  };
+
+  await step("move same-capability tiles down and preserve their inputs after reload", async () => {
+    await expectOrder(afterSecondAdd);
+    await user.click({ role: "button", label: `Move ${dashboardAppTool.title} down`, nth: 0 });
+    await expectOrder([...afterSecondAdd].reverse());
+    await user.reload();
+    await expectOrder([...afterSecondAdd].reverse());
+  });
+
+  await step("move the second tile up using the refreshed order", async () => {
+    await user.click({ role: "button", label: `Move ${dashboardAppTool.title} up`, nth: 1 });
+    await expectOrder(afterSecondAdd);
+    await user.reload();
+    await expectOrder(afterSecondAdd);
+  });
 });

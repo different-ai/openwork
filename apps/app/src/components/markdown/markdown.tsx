@@ -8,8 +8,10 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
+import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
 import { useOpenArtifactPath } from "@/lib/artifacts";
-import { openTargetFromUrl, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
@@ -29,8 +31,6 @@ import { enhanceNearViewport } from "./near-viewport";
 
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
-const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;
-const WORKSPACE_ID_PREFIX_PATTERN = /^workspace\/(?:ws_[^/]+|\d+|[0-9a-f-]{6,})\//i;
 const CODE_COPY_RESET_DELAY_MS = 2000;
 
 function localPathFromHref(href: string) {
@@ -60,42 +60,12 @@ function localPathFromHref(href: string) {
   return trimmed.split(/[?#]/)[0] ?? trimmed;
 }
 
-function normalizeFilePathForMatch(path: string) {
-  return path
-    .trim()
-    .replace(/[\\]+/g, "/")
-    .replace(/^\.\//, "")
-    .replace(WORKSPACES_PREFIX_PATTERN, "")
-    .replace(WORKSPACE_ID_PREFIX_PATTERN, "")
-    .replace(/[/]+$/, "")
-    .toLowerCase();
-}
-
-function filePathMatchesTarget(path: string, targetValue: string) {
-  const normalizedPath = normalizeFilePathForMatch(path);
-  const normalizedTarget = normalizeFilePathForMatch(targetValue);
-
-  return normalizedPath === normalizedTarget || normalizedPath.endsWith(`/${normalizedTarget}`);
-}
-
-function openTargetForHref(href: string, openTargets: OpenTarget[]) {
-  // A website in the transcript is a conversation target too. Let its owner
-  // open the built-in browser instead of Chromium spawning a separate window.
-  const urlTarget = openTargetFromUrl(href);
-  if (urlTarget) return urlTarget;
-  const path = localPathFromHref(href);
-
-  if (!path) {
-    return null;
-  }
-
-  return openTargets.find((target) => target.kind === "file" && filePathMatchesTarget(path, target.value)) ?? null;
-}
-
 type MarkdownBlockInnerProps = {
   className?: string;
   text: string;
   streaming?: boolean;
+  /** Opt in only for conversation prose, never tool output or artifact previews. */
+  sessionReferences?: boolean;
   highlightQuery?: string;
 } & Omit<
   React.ComponentProps<"div">,
@@ -115,6 +85,7 @@ function MarkdownBlockInner({
   className,
   text,
   streaming,
+  sessionReferences = false,
   highlightQuery,
   ...props
 }: MarkdownBlockInnerProps) {
@@ -129,8 +100,11 @@ function MarkdownBlockInner({
     videoCleanups.current.clear();
   }, [client, workspaceId, workspaceRoot]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
+  useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
-  const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
+  const references = useSessionReferencesMaybe();
+  const resolveReference = sessionReferences ? references?.resolve : undefined;
+  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer("chat", resolveReference), [resolveReference]);
   const streamedBlocks = useMemo(
     () => (streaming ? streamingRenderer.render(text) : null),
     [streaming, streamingRenderer, text],
@@ -139,10 +113,10 @@ function MarkdownBlockInner({
     if (!streaming) streamingRenderer.reset();
   }, [streaming, streamingRenderer]);
   const syncHtml = useMemo(
-    () => (streamedBlocks ? "" : renderMarkdownHtml(text)),
-    [streamedBlocks, text],
+    () => (streamedBlocks ? "" : renderMarkdownHtml(text, "chat", resolveReference)),
+    [streamedBlocks, text, resolveReference],
   );
-  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string; resolveReference: typeof resolveReference } | null>(null);
 
   const handleCodeBlockCopy = useCallback(async (button: HTMLButtonElement, code: string) => {
     try {
@@ -193,10 +167,10 @@ function MarkdownBlockInner({
   }, []);
 
   const candidate = useMemo<RenderedMarkdown>(() => {
-    if (!streaming && highlightedHtml?.text === text) return { kind: "document", html: highlightedHtml.html };
+    if (!streaming && highlightedHtml?.text === text && highlightedHtml.resolveReference === resolveReference) return { kind: "document", html: highlightedHtml.html };
     if (streamedBlocks) return { kind: "blocks", blocks: streamedBlocks };
     return { kind: "document", html: syncHtml };
-  }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text]);
+  }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text, resolveReference]);
   const rendered = useSelectionStableValue(rootRef, candidate);
   // Keep the innerHTML prop referentially stable too: a fresh wrapper object
   // can make an unrelated React render replace selected text nodes even when
@@ -220,8 +194,8 @@ function MarkdownBlockInner({
     if (!root || isEmpty || rendered.kind !== "document") return;
     let cancelled = false;
     const stopObserving = enhanceNearViewport([root], () => {
-      void renderHighlightedMarkdownHtml(text).then((html) => {
-        if (!cancelled && html.trim()) setHighlightedHtml({ text, html });
+      void renderHighlightedMarkdownHtml(text, "chat", resolveReference).then((html) => {
+        if (!cancelled && html.trim()) setHighlightedHtml({ text, html, resolveReference });
       }).catch(() => {
         if (!cancelled) setHighlightedHtml(null);
       });
@@ -230,7 +204,7 @@ function MarkdownBlockInner({
       cancelled = true;
       stopObserving();
     };
-  }, [isEmpty, rendered.kind, streaming, text]);
+  }, [isEmpty, rendered.kind, streaming, text, resolveReference]);
 
   useMermaidEnhancer(rootRef, rendered, !streaming);
 
@@ -286,8 +260,8 @@ function MarkdownBlockInner({
         showError();
         continue;
       }
-      const target = openTargetForHref(href, openTargets);
-      void client.downloadWorkspaceFile(workspaceId, target?.value ?? path).then((result) => {
+      const target = openTargetForHref(href, openTargets, workspaceRoot);
+      void client.downloadWorkspaceFile(workspaceId, target?.exists === true ? target.value : path).then((result) => {
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
@@ -311,8 +285,25 @@ function MarkdownBlockInner({
       if (event.target instanceof HTMLImageElement) sync();
     };
 
+    const handleSessionReference = (event: MouseEvent) => {
+      if (!sessionReferences || !(event.target instanceof Element)) return false;
+      const link = event.target.closest("a[data-openwork-session-reference]");
+      if (!(link instanceof HTMLAnchorElement) || !root.contains(link)) return false;
+      // Even a stale/selected reference must never reach a browser or a file
+      // target. Resolve and authorize again at activation, using its stable pair.
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.type !== "mousedown" && (event.button === 0 || event.button === 1)) {
+        const destination = link.dataset.openworkSessionReference ?? "";
+        const reference = resolveReference?.(destination);
+        if (reference && link.getAttribute("href") === destination) references?.openReference(reference);
+      }
+      return true;
+    };
+    const handleAuxClick = (event: MouseEvent) => { handleSessionReference(event); };
+    const handleMouseDown = (event: MouseEvent) => { if (event.button === 1) handleSessionReference(event); };
     const handleClick = (event: MouseEvent) => {
-      if (!(event.target instanceof Element)) return;
+      if (!(event.target instanceof Element) || handleSessionReference(event)) return;
 
       const copyButton = event.target.closest("[data-openwork-code-copy]");
       if (copyButton instanceof HTMLButtonElement) {
@@ -354,7 +345,7 @@ function MarkdownBlockInner({
         event.preventDefault();
         event.stopPropagation();
         const href = chevron.dataset.openworkLinkChevron ?? "";
-        const target = openTargetForHref(href, openTargets);
+        const target = openTargetForHref(href, openTargets, workspaceRoot);
         if (target) {
           setLinkMenu({ target, rect: chevron.getBoundingClientRect() });
         }
@@ -364,7 +355,7 @@ function MarkdownBlockInner({
       const link = event.target.closest("a[data-openwork-link-href]");
       if (link instanceof HTMLAnchorElement) {
         const href = link.dataset.openworkLinkHref ?? link.getAttribute("href") ?? "";
-        const target = openTargetForHref(href, openTargets);
+        const target = openTargetForHref(href, openTargets, workspaceRoot);
 
         if (target && onOpenTarget) {
           event.preventDefault();
@@ -383,6 +374,18 @@ function MarkdownBlockInner({
       setImagePreview({ src: image.src, alt: image.alt || "Image" });
     };
 
+    const handleContextMenu = (event: MouseEvent) => {
+      if (!(event.target instanceof Element) || !onOpenTarget) return;
+      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron]");
+      if (!(link instanceof HTMLElement)) return;
+      const href = link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
+      const target = openTargetForHref(href, openTargets, workspaceRoot);
+      if (target?.kind !== "file") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setLinkMenu({ target, rect: link.getBoundingClientRect() });
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       if (!(event.target instanceof HTMLElement) || !event.target.matches("[data-openwork-inline-code-path]")) return;
@@ -394,12 +397,18 @@ function MarkdownBlockInner({
 
     root.addEventListener("load", handleLoad, true);
     root.addEventListener("click", handleClick);
+    root.addEventListener("auxclick", handleAuxClick);
+    root.addEventListener("mousedown", handleMouseDown);
+    root.addEventListener("contextmenu", handleContextMenu);
     root.addEventListener("keydown", handleKeyDown);
 
     if (globalThis.ResizeObserver === undefined) {
       return () => {
         root.removeEventListener("load", handleLoad, true);
         root.removeEventListener("click", handleClick);
+        root.removeEventListener("auxclick", handleAuxClick);
+        root.removeEventListener("mousedown", handleMouseDown);
+        root.removeEventListener("contextmenu", handleContextMenu);
         root.removeEventListener("keydown", handleKeyDown);
       };
     }
@@ -411,9 +420,12 @@ function MarkdownBlockInner({
       observer.disconnect();
       root.removeEventListener("load", handleLoad, true);
       root.removeEventListener("click", handleClick);
+      root.removeEventListener("auxclick", handleAuxClick);
+      root.removeEventListener("mousedown", handleMouseDown);
+      root.removeEventListener("contextmenu", handleContextMenu);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCodeBlockCopy, onOpenTarget, openArtifactPath, openTargets, rendered]);
+  }, [handleCodeBlockCopy, onOpenTarget, openArtifactPath, openTargets, workspaceRoot, rendered, references, resolveReference, sessionReferences]);
 
   if (isEmpty) {
     return null;
@@ -442,6 +454,7 @@ function MarkdownBlockInner({
       )}
       {linkMenu && onOpenTarget ? (
         <LinkActionMenu
+          key={linkMenu.target.value}
           target={linkMenu.target}
           anchorRect={linkMenu.rect}
           onOpenTarget={onOpenTarget}

@@ -334,6 +334,71 @@ describe("tool part mapper", () => {
     });
   });
 
+  test.each([
+    { name: "repeated header with tied neighbor", headerCreated: 10, neighborCreated: 10 },
+    { name: "repeated header with untimestamped neighbor", headerCreated: 10, neighborCreated: undefined },
+    { name: "late header with tied neighbor", headerCreated: undefined, neighborCreated: 10 },
+    { name: "late header with untimestamped neighbor", headerCreated: undefined, neighborCreated: undefined },
+  ])("metadata preserves source neighbors: $name", ({ headerCreated, neighborCreated }) => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    const apply = (id: string, created: number | undefined) => __applySessionSyncEventForTest(syncInput, {
+      type: "message.updated", properties: { info: {
+        id, role: "assistant", sessionID: "session-a", ...(created === undefined ? {} : { time: { created } }),
+      } },
+    });
+    const ids = () => getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"))?.map((message) => message.id);
+    try {
+      apply("first", headerCreated);
+      apply("neighbor", neighborCreated);
+      apply("later", 20);
+      expect(ids()).toEqual(["first", "neighbor", "later"]);
+      apply("first", 10);
+      expect(ids()).toEqual(["first", "neighbor", "later"]);
+      apply("first", 30);
+      expect(ids()).toEqual(["neighbor", "later", "first"]);
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
+  test.each([false, true])("late user metadata orders the settled transcript without losing parts (part first: %s)", (partFirst) => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    const apply = (id: string, role: "user" | "assistant", created: number) => __applySessionSyncEventForTest(syncInput, {
+      type: "message.updated", properties: { info: { id, role, sessionID: "session-a", time: { created } } },
+    });
+    const transcript = () => getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a")) ?? [];
+    try {
+      apply("msg-a", "assistant", 20);
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: {
+        part: writeToolPart("running", { filePath: "package.json" }),
+      } });
+      const userPart = { type: "message.part.updated", properties: { part: {
+        id: "user-text", messageID: "late-user", sessionID: "session-a", type: "text", text: "Read this file",
+      } } };
+      if (partFirst) __applySessionSyncEventForTest(syncInput, userPart);
+      apply("late-user", "user", 10);
+      if (!partFirst) __applySessionSyncEventForTest(syncInput, userPart);
+      expect(transcript().map((message) => message.id)).toEqual(["late-user", "msg-a"]);
+      expect(transcript()[0]).toMatchObject({ role: "user", parts: [{ type: "text", text: "Read this file" }] });
+      expect(transcript()[1]?.parts).toMatchObject([{ type: "dynamic-tool", state: "input-streaming" }]);
+      apply("follow-up", "user", 30);
+      apply("late-user", "user", 10);
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: {
+        part: writeToolPart("completed", { filePath: "package.json" }),
+      } });
+      expect(transcript().map((message) => message.id)).toEqual(["late-user", "msg-a", "follow-up"]);
+      expect(transcript()[1]?.parts).toMatchObject([{ type: "dynamic-tool", state: "output-available" }]);
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
   test("session sync defers empty in-progress write tools until input arrives", () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);

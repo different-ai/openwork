@@ -227,6 +227,27 @@ What stays the same:
 
 Directly exposed connections appear in OpenCode as `openwork-direct-<name>-…`.
 
+### Use a connection in another MCP client
+
+On **Your Connections**, expand **Use in another app** beneath a directly
+exposed connection and copy its MCP URL. Admins can find the same section in
+that connection's edit dialog after saving direct exposure.
+
+Add the URL as a remote HTTP MCP server in your client, choose OAuth, and sign
+in to OpenWork. Use the URL shown in Den, not the provider's upstream URL or
+Den's internal `/api/den` proxy. A provider account may still need to be connected
+in OpenWork; existing organization access and tool policies continue to apply.
+
+Each URL serves one connection. This does not add its tools to the main
+`/mcp/agent` gateway catalog. Self-hosted deployments use their configured public
+API base URL.
+
+MCP Apps-capable clients can read the App HTML bound to available model-visible
+tools on directly exposed connections. Arbitrary resources and app-only helper
+tools remain unavailable to ordinary external clients, so initial App loading
+does not guarantee that every interactive App callback is supported. Rendering
+also depends on the external client's MCP Apps support.
+
 External provider tool calls require the caller's `mcp:write` scope even when
 the provider advertises `readOnlyHint: true`. Provider hints do not grant
 execution authority; discovery and connection-status probes remain available

@@ -26,6 +26,7 @@ export interface ScriptWorldSnapshot {
   outputMeta?: Record<string, OutputMeta>;
   stage?: string;
   recipeHash?: string;
+  invocationHash?: string;
   place?: string;
 }
 
@@ -68,6 +69,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
   assertWorldName(name);
   const stage = resolveStage(process.env);
   const recipeHash = process.env.OPENWORK_WORLD_RECIPE_HASH;
+  const invocationHash = process.env.OPENWORK_WORLD_INVOCATION_HASH;
   const place = process.env.OPENWORK_WORLD_PLACE;
   const stagedName = receiptName(name, stage);
 
@@ -82,7 +84,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
 
   const { values: outputs, meta: outputMeta } = normalizeOutputs(options.outputs ?? {});
   const hasOutputMeta = Object.keys(outputMeta).length > 0;
-  const version = stage !== undefined || recipeHash !== undefined || place !== undefined || hasOutputMeta ? 2 : 1;
+  const version = stage !== undefined || recipeHash !== undefined || invocationHash !== undefined || place !== undefined || hasOutputMeta ? 2 : 1;
   const snapshot: ScriptWorldSnapshot = {
     version,
     kind: "script",
@@ -94,6 +96,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
     ...(hasOutputMeta ? { outputMeta } : {}),
     ...(stage === undefined ? {} : { stage }),
     ...(recipeHash === undefined ? {} : { recipeHash }),
+    ...(invocationHash === undefined ? {} : { invocationHash }),
     ...(place === undefined ? {} : { place }),
   };
   await mkdir(dirname(snapshotPath), { recursive: true });

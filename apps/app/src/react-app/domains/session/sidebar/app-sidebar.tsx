@@ -115,9 +115,11 @@ import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
   MAX_SESSIONS_PREVIEW,
   buildGlobalArchivedSessions,
+  buildGlobalPinnedSessions,
   flattenSessionRows,
   formatSessionRelativeTime,
   getRootSessions,
+  groupSessionRows,
   isActiveWorkSessionStatus,
   isNeedsAttentionSessionStatus,
   isSessionArchived,
@@ -125,7 +127,7 @@ import {
   workspaceKindLabel,
   workspaceLabel,
 } from "./utils";
-import type { FlattenedSessionRow, GlobalArchivedSessionEntry, SessionListItem } from "./utils";
+import type { FlattenedSessionRow, GlobalArchivedSessionEntry, GlobalPinnedSessionEntry, SessionListItem } from "./utils";
 import {
   useSessionManagementStore,
   usePinnedSessionIds,
@@ -931,19 +933,10 @@ export function AppSidebar(props: AppSidebarProps) {
   const brandLogoUrl = useBrandLogoUrl();
   const brandAppName = useBrandAppName();
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
-  const pinnedSessions = React.useMemo(() => {
-    const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
-    for (const group of props.workspaceSessionGroups) {
-      const roots = getRootSessions(partitionArchivedSessions(group.sessions).active);
-      for (const session of roots) {
-        sessionsById.set(session.id, { group, sessionId: session.id });
-      }
-    }
-    return pinnedIds.flatMap((sessionId) => {
-      const entry = sessionsById.get(sessionId);
-      return entry ? [entry] : [];
-    });
-  }, [pinnedIds, props.workspaceSessionGroups]);
+  const pinnedSessions = React.useMemo(
+    () => buildGlobalPinnedSessions(props.workspaceSessionGroups, pinnedIds),
+    [pinnedIds, props.workspaceSessionGroups],
+  );
   const archivedSessions = React.useMemo(
     () => buildGlobalArchivedSessions(props.workspaceSessionGroups),
     [props.workspaceSessionGroups],
@@ -1146,11 +1139,6 @@ export function AppSidebar(props: AppSidebarProps) {
   );
 }
 
-type GlobalPinnedSessionEntry = {
-  group: WorkspaceSessionGroup;
-  sessionId: string;
-};
-
 function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
   return (
     <SidebarGroup data-global-pinned-sessions className="pb-0 pt-4">
@@ -1162,10 +1150,12 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
           <SidebarMenuItem>
             <SidebarMenuSub>
               {entries.map((entry) => (
-                <GlobalPinnedSessionTree
-                  key={`${entry.group.workspace.id}:${entry.sessionId}`}
-                  group={entry.group}
-                  sessionId={entry.sessionId}
+                <SessionMenuItem
+                  key={`${entry.group.workspace.id}:${entry.session.id}`}
+                  session={entry.session}
+                  workspaceId={entry.group.workspace.id}
+                  isPinned
+                  workspaceName={workspaceLabel(entry.group.workspace)}
                 />
               ))}
             </SidebarMenuSub>
@@ -1232,29 +1222,6 @@ function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntr
       workspaceName={workspaceLabel(group.workspace)}
     />
   );
-}
-
-function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry) {
-  const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
-  const pinnedIds = React.useMemo(() => new Set(pinnedIdList), [pinnedIdList]);
-  const rootIds = React.useMemo(() => new Set([sessionId]), [sessionId]);
-  const rows = React.useMemo(() => flattenSessionRows(
-    group.sessions,
-    1,
-    pinnedIds,
-    [],
-    { include: rootIds },
-  ), [group.sessions, pinnedIds, rootIds]);
-
-  return rows.map((row) => (
-    <SessionMenuItem
-      key={row.session.id}
-      session={row.session}
-      workspaceId={group.workspace.id}
-      isPinned={pinnedIds.has(row.session.id)}
-      workspaceName={workspaceLabel(group.workspace)}
-    />
-  ));
 }
 
 type WorkspaceReorderItemProps = {
@@ -1886,20 +1853,10 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, works
     }));
   }, []);
 
-  // Partition root rows into per-group buckets + ungrouped.
-  const rootRowsByGroup = new Map<string, FlattenedSessionRow[]>();
-  const ungroupedRows: FlattenedSessionRow[] = [];
-
-  for (const row of sessionRows) {
-    const groupId = assignments[row.session.id];
-    if (groupId && groups.some((g) => g.id === groupId)) {
-      const bucket = rootRowsByGroup.get(groupId) ?? [];
-      bucket.push(row);
-      rootRowsByGroup.set(groupId, bucket);
-    } else {
-      ungroupedRows.push(row);
-    }
-  }
+  const { groupIds, rootRowsByGroup, ungroupedRows } = React.useMemo(
+    () => groupSessionRows(sessionRows, groups, assignments),
+    [sessionRows, groups, assignments],
+  );
 
   const renderRow = (row: FlattenedSessionRow) => (
     <SessionMenuItem
@@ -1941,7 +1898,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, works
       <Reorder.Group
         as="div"
         axis="y"
-        values={groups.map((group) => group.id)}
+        values={groupIds}
         onReorder={(ids) => store.getState().reorderGroups(workspaceId, ids)}
         className="flex flex-col gap-0.5"
       >

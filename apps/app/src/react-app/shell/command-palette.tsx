@@ -116,7 +116,6 @@ export type CommandPaletteProps = {
   selectedModel?: ModelRef;
   selectedModelBehavior?: string | null;
   onSelectModel?: (model: ModelRef, behavior: string | null) => void;
-  selectedModelLabel?: string;
   /** Optional — open a URL in the user's browser. Falls back to window.open. */
   onOpenUrl?: (url: string) => void;
   /** Optional: current session servers/artifacts exposed through Cmd/Ctrl+K. */
@@ -276,9 +275,8 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(hasNestedModelPicker || props.onOpenModelPicker
       ? [{
           id: "models",
-          title: "Switch model",
+          title: "Models",
           detail: "Choose the LLM that runs your next prompts",
-          meta: props.selectedModelLabel ?? t("session.default_model"),
           searchText: "model models llm provider openai anthropic claude gpt gemini switch pick select default",
           group: ACTIONS_GROUP,
           action: () => {

@@ -791,6 +791,10 @@ describe("engine pool", () => {
     const fixture = await createFixture();
     const { pool, primary } = await createPool(fixture);
     const oldPort = portOf(primary.url);
+    // A lone primary forwards frames verbatim; nothing needs the parsed payload.
+    const lonePrimary = pool.connections().find((connection) => connection.role === "primary");
+    expect(pool.eventForwardMode(lonePrimary?.generationId ?? "")).toBe("forward");
+    expect(pool.eventForwardMode("gen_unknown")).toBe("drop");
     await fixture.setBusy(oldPort, ["ses_live"]);
     await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
 
@@ -802,6 +806,8 @@ describe("engine pool", () => {
     const draining = connections.find((connection) => connection.role === "draining");
     expect(current?.baseUrl).not.toBe(primary.url);
     expect(draining?.baseUrl).toBe(primary.url);
+    expect(pool.eventForwardMode(current?.generationId ?? "")).toBe("filter");
+    expect(pool.eventForwardMode(draining?.generationId ?? "")).toBe("filter");
 
     expect(pool.routeRequest("GET", "/session/ses_live/message")?.target.baseUrl).toBe(primary.url);
     expect(pool.routeRequest("POST", "/session/ses_live/prompt_async")?.target.baseUrl).toBe(primary.url);
@@ -824,6 +830,8 @@ describe("engine pool", () => {
     const remainingPrimaryUrl = pool.primaryUrl();
     if (!remainingPrimaryUrl) throw new Error("expected the primary engine to remain live");
     expect(pool.routeRequest("GET", "/session/ses_live/message")?.target.baseUrl).toBe(remainingPrimaryUrl);
+    // Once the drained generation and its pins are gone, verbatim forwarding resumes.
+    expect(pool.eventForwardMode(current?.generationId ?? "")).toBe("forward");
   });
 
   test("proxies owned sessions to the old engine and merges cross-generation reads", async () => {

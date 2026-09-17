@@ -11,7 +11,6 @@ import {
   SlidersHorizontal,
   Sparkles,
   Users,
-  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -145,9 +144,6 @@ export function buildDashboardNavSections({
           icon: Plug,
           badge: "MCPs",
         },
-        ...(capabilities.mcpConnections && access.isAdmin
-          ? [{ href: getToolTesterRoute(orgSlug), label: "Tool Tester", icon: Wrench }]
-          : []),
         ...(capabilities.orgManagedDashboards
           ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
           : []),
@@ -179,6 +175,9 @@ export function buildDashboardNavSections({
               { href: getSsoRoute(orgSlug), label: "SSO" },
               { href: getScimRoute(orgSlug), label: "SCIM" },
             ]
+          : []),
+        ...(capabilities.mcpConnections && access.isAdmin
+          ? [{ href: getToolTesterRoute(orgSlug), label: "Tool Tester" }]
           : []),
       ]
     : [];

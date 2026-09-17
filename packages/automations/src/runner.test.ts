@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { AUTOMATION_DESKTOP_RUNNER_PRESENCE_WINDOW_MS } from "@openwork/types/automations"
-import { desktopClaimDeadline, desktopRunnerConnected, missedDesktopRunMessage } from "./runner.js"
+import {
+  AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
+  computeAutomationClaimDeadline,
+  desktopClaimDeadline,
+  desktopRunnerConnected,
+  missedDesktopRunMessage,
+} from "./runner.js"
 
 const MINUTE = 60_000
 
@@ -28,6 +34,31 @@ describe("desktop runner recovery", () => {
       .toBe(now + MINUTE)
     expect(desktopClaimDeadline({ now, windowMs: 30_000, nextDueAt: now + 10_000 }))
       .toBe(now + 30_000)
+  })
+
+  test("manual claims keep a bounded poll grace window independent of the next occurrence", () => {
+    const now = Date.UTC(2026, 0, 5, 10)
+    expect(AUTOMATION_MANUAL_CLAIM_WINDOW_MS).toBe(3 * MINUTE)
+    for (const nextDueAt of [null, now - MINUTE, now + 10_000, now + 5 * MINUTE]) {
+      const deadline = computeAutomationClaimDeadline({
+        trigger: "manual", now, windowMs: AUTOMATION_MANUAL_CLAIM_WINDOW_MS, nextDueAt,
+      })
+      expect(deadline).toBe(now + 3 * MINUTE)
+      expect(deadline).toBeGreaterThan(now + MINUTE + 30_000)
+    }
+  })
+
+  test("scheduled and recovery claims retain configured windows, caps, and floors", () => {
+    const now = Date.UTC(2026, 0, 5, 10)
+    const triggers: Array<"scheduled" | "recovery"> = ["scheduled", "recovery"]
+    for (const trigger of triggers) {
+      for (const windowMs of [1_000, 30_000, 15 * MINUTE]) {
+        for (const nextDueAt of [null, now + 10_000, now + 5 * MINUTE, now + 24 * 60 * MINUTE]) {
+          expect(computeAutomationClaimDeadline({ trigger, now, windowMs, nextDueAt }))
+            .toBe(desktopClaimDeadline({ now, windowMs, nextDueAt }))
+        }
+      }
+    }
   })
 
   test("treats a recently seen desktop as connected", () => {

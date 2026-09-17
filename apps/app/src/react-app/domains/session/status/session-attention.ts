@@ -1,7 +1,7 @@
 import type { OpenworkSessionActivityInventory } from "@openwork/types/openwork-affordance";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
-import { t } from "../../../../i18n";
-import type { SessionActivityStatus, SessionWaitingKind } from "./session-activity-store";
+import { currentLocale, t } from "../../../../i18n";
+import type { SessionActivityStatus, SessionChildIds, SessionWaitingKind } from "./session-activity-store";
 
 type AttentionSession = {
   id: string;
@@ -79,6 +79,43 @@ export function selectSessionAttention(
     });
   }
   return attention;
+}
+
+type WorkspaceAttentionInputs = {
+  statuses?: Readonly<Record<string, SessionActivityStatus>>;
+  waiting?: Readonly<Record<string, SessionWaitingKind>>;
+  childIds?: SessionChildIds;
+  serverStatuses?: Readonly<Record<string, SessionActivityStatus>>;
+  serverWaiting?: Readonly<Record<string, SessionWaitingKind>>;
+  serverChildIds?: SessionChildIds;
+};
+
+export function createWorkspaceSessionAttentionSelector() {
+  const cache = new WeakMap<readonly AttentionSession[], {
+    inputs: WorkspaceAttentionInputs;
+    locale: ReturnType<typeof currentLocale>;
+    attention: Map<string, SessionAttention>;
+  }>();
+  return (sessions: readonly AttentionSession[], inputs: WorkspaceAttentionInputs) => {
+    const locale = currentLocale();
+    const previous = cache.get(sessions);
+    if (previous
+      && previous.locale === locale
+      && previous.inputs.statuses === inputs.statuses
+      && previous.inputs.waiting === inputs.waiting
+      && previous.inputs.childIds === inputs.childIds
+      && previous.inputs.serverStatuses === inputs.serverStatuses
+      && previous.inputs.serverWaiting === inputs.serverWaiting
+      && previous.inputs.serverChildIds === inputs.serverChildIds) return previous.attention;
+    const attention = selectSessionAttention(
+      sessions,
+      (id) => inputs.serverStatuses?.[id] ?? inputs.statuses?.[id],
+      (id) => inputs.serverWaiting?.[id] ?? inputs.waiting?.[id],
+      (id) => [...inputs.childIds?.[id] ?? [], ...inputs.serverChildIds?.[id] ?? []],
+    );
+    cache.set(sessions, { inputs, locale, attention });
+    return attention;
+  };
 }
 
 export function sessionAttentionSidebarStatus(attention: SessionAttention): SessionActivityStatus {

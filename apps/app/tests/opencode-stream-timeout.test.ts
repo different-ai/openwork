@@ -100,6 +100,115 @@ describe("OpenCode transport timeouts", () => {
     restoreGlobals();
   });
 
+  test.each(["web URL", "web Request", "desktop Request"])("preserves caller cancellation and the deadline on history GETs (%s)", async (transport) => {
+    jest.useFakeTimers();
+    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal, attempts } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const url = "http://127.0.0.1:8788/workspace/ws_test/opencode/session/ses_1/message";
+    for (const cause of ["preaborted", "caller", "deadline"]) {
+      const caller = new AbortController();
+      const reason = new DOMException("History read canceled", "AbortError");
+      if (cause === "preaborted") caller.abort(reason);
+      const before = attempts();
+      const result = (transport === "web URL"
+        ? fetchImpl(url, { signal: caller.signal })
+        : fetchImpl(new Request(url, { signal: caller.signal }))).catch((error: unknown) => error);
+      if (cause === "caller") caller.abort(reason);
+      if (cause === "deadline") jest.advanceTimersByTime(10_000);
+      const error = await result;
+      if (cause === "deadline") {
+        expect(error).toMatchObject({ message: "Request timed out." });
+        expect(caller.signal.aborted).toBe(false);
+      } else expect(error).toBe(reason);
+      expect(attempts() - before).toBe(cause === "preaborted" ? 0 : 1);
+      if (cause !== "preaborted") expect(observedSignal()?.aborted).toBe(true);
+    }
+  });
+
+  test("desktop history Request init overrides signal and headers without dropping authentication", async () => {
+    installWindow({ __OPENWORK_ELECTRON__: {} });
+    const { createDesktopFetch } = await import("../src/app/lib/opencode");
+    let seen: Request | undefined;
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (input: RequestInfo | URL, init?: RequestInit) => {
+        seen = new Request(input, init);
+        return new Response("[]");
+      },
+    });
+    const original = new AbortController();
+    const override = new AbortController();
+    const response = await createDesktopFetch({ mode: "openwork", token: "fixture-token" })(
+      new Request("http://127.0.0.1/session/ses_1/message", { signal: original.signal, headers: { "x-old": "old" } }),
+      { signal: override.signal, headers: { "x-new": "new" } },
+    );
+    expect(response.status).toBe(200);
+    expect(seen?.headers.get("Authorization")).toBe("Bearer fixture-token");
+    expect(seen?.headers.get("x-new")).toBe("new");
+    expect(seen?.headers.has("x-old")).toBe(false);
+    original.abort();
+    expect(seen?.signal.aborted).toBe(false);
+    override.abort();
+    expect(seen?.signal.aborted).toBe(true);
+  });
+
+  test.each(["caller", "deadline"])("remote history %s cancellation reaches main and survives IPC error wrapping", async (cause) => {
+    jest.useFakeTimers();
+    const calls: string[] = [];
+    let transferId: string | undefined;
+    let rejectFetch: ((error: Error) => void) | undefined;
+    installWindow({ __OPENWORK_ELECTRON__: {
+      invokeDesktop: (command: string, value: string, init?: { transferId?: string }) => {
+        calls.push(command);
+        if (command === "__cancelTransfer") {
+          expect(value).toBe(transferId);
+          rejectFetch?.(new Error("IPC fetch aborted"));
+          return Promise.resolve(true);
+        }
+        transferId = init?.transferId;
+        return new Promise((_resolve, reject) => { rejectFetch = reject; });
+      },
+    } });
+    const fetchImpl = createCapturedFetch();
+    const caller = new AbortController();
+    const reason = new DOMException("History read canceled", "AbortError");
+    const result = fetchImpl(new Request("https://worker.example/session/ses_1/message", { signal: caller.signal }))
+      .catch((error: unknown) => error);
+    expect(transferId).toBeString();
+    if (cause === "caller") caller.abort(reason);
+    else jest.advanceTimersByTime(10_000);
+    const error = await result;
+    if (cause === "caller") expect(error).toBe(reason);
+    else {
+      expect(error).toMatchObject({ message: "Request timed out." });
+      expect(caller.signal.aborted).toBe(false);
+    }
+    expect(calls).toEqual(["__fetch", "__cancelTransfer"]);
+  });
+
+  test("remote preaborted GETs do not enter IPC and POSTs do not gain read cancellation", async () => {
+    const { desktopFetch } = await import("../src/app/lib/desktop");
+    const calls: string[] = [];
+    installWindow({ __OPENWORK_ELECTRON__: {
+      invokeDesktop: async (command: string, _url: string, init?: { transferId?: string; body?: string }) => {
+        calls.push(command);
+        expect(init?.transferId).toBeUndefined();
+        expect(init?.body).toBe("{}");
+        return { status: 204, statusText: "No Content", headers: [], body: "" };
+      },
+    } });
+    const caller = new AbortController();
+    caller.abort();
+    await expect(desktopFetch(new Request("https://worker.example/session/ses_1/message", { signal: caller.signal })))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toEqual([]);
+    expect((await desktopFetch("https://worker.example/session/ses_1/prompt_async", {
+      method: "POST", signal: caller.signal, body: "{}",
+    })).status).toBe(204);
+    expect(calls).toEqual(["__fetch"]);
+  });
+
   test("does not transport-timeout web OpenCode event streams", async () => {
     installWindow(undefined);
     const { cancel, observedSignal } = installControllableFetch();
@@ -136,6 +245,74 @@ describe("OpenCode transport timeouts", () => {
       cancel();
     }
   }, 15_000);
+
+  test.each(["web URL", "web Request", "desktop Request"])("preserves caller cancellation on ordinary requests (%s)", async (transport) => {
+    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const controller = new AbortController();
+    const url = "http://127.0.0.1:8788/session/ses_archive";
+    const response = transport === "web URL"
+      ? fetchImpl(url, { signal: controller.signal })
+      : fetchImpl(new Request(url, { signal: controller.signal }));
+    const outcome = response.catch((error: unknown) => error);
+    const reason = new Error("Archive verification cancelled");
+    controller.abort(reason);
+    expect(observedSignal()?.aborted).toBe(true);
+    expect(await outcome).toBe(reason);
+  });
+
+  test.each(["web", "desktop"])("RequestInit.signal overrides Request.signal (%s)", async (transport) => {
+    installWindow(transport === "desktop" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const requestController = new AbortController();
+    const initController = new AbortController();
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/session/ses_archive", {
+      signal: requestController.signal,
+    }), { signal: initController.signal });
+    const outcome = response.catch((error: unknown) => error);
+    requestController.abort();
+    expect(observedSignal()?.aborted).toBe(false);
+    const reason = new Error("Cancelled through RequestInit");
+    initController.abort(reason);
+    expect(observedSignal()?.aborted).toBe(true);
+    expect(await outcome).toBe(reason);
+  });
+
+  test.each(["web", "desktop"])("RequestInit.signal=null disconnects the input Request signal (%s)", async (transport) => {
+    jest.useFakeTimers();
+    installWindow(transport === "desktop" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const controller = new AbortController();
+    const response = fetchImpl(new Request("http://127.0.0.1:8788/session/ses_archive", {
+      signal: controller.signal,
+    }), { signal: null });
+    const outcome = response.catch((error: unknown) => error);
+    controller.abort();
+    expect(observedSignal()?.aborted).toBe(false);
+    jest.advanceTimersByTime(10_000);
+    expect(await outcome).toMatchObject({ message: "Request timed out." });
+    expect(observedSignal()?.aborted).toBe(true);
+  });
+
+  test.each(["web URL", "web Request", "desktop Request"])("transport deadline aborts requests even with a caller signal (%s)", async (transport) => {
+    jest.useFakeTimers();
+    installWindow(transport === "desktop Request" ? { __OPENWORK_ELECTRON__: {} } : undefined);
+    const { observedSignal } = installControllableFetch();
+    const fetchImpl = createCapturedFetch();
+    const controller = new AbortController();
+    const url = "http://127.0.0.1:8788/session/ses_archive";
+    const response = transport === "web URL"
+      ? fetchImpl(url, { signal: controller.signal })
+      : fetchImpl(new Request(url, { signal: controller.signal }));
+    const outcome = response.catch((error: unknown) => error);
+    jest.advanceTimersByTime(10_000);
+    expect(await outcome).toMatchObject({ message: "Request timed out." });
+    expect(observedSignal()?.aborted).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
+  });
 
   test.each(["web URL", "web Request", "desktop Request"])("bounds prompt_async acceptance at 30 seconds without resending (%s)", async (transport) => {
     jest.useFakeTimers();

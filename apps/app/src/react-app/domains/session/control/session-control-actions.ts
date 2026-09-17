@@ -1,11 +1,20 @@
 /** @jsxImportSource react */
 import { useCallback, useMemo } from "react";
 
-import type { createClient } from "../../../../app/lib/opencode";
+import { createClient, unwrap } from "../../../../app/lib/opencode";
+import { openworkCatalogModels, openworkModelsListArgsSchema, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
+import { useDenAuth } from "../../cloud/den-auth-provider";
+import { filterEntitledModelOptions } from "../../connections/provider-auth/provider-policy";
+import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
+import { sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld } from "../../../../app/lib/opencode-interruption";
+import { getQueuedDrainState, hasPendingQueuedAdmission } from "../surface/queued-drain-machine";
+import { engineDirectory } from "../../../../app/lib/session-ownership";
+import { createSessionModelActions } from "./session-model-actions";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
@@ -82,6 +91,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     archiveSession,
   } = input;
   const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
+  const checkDesktopRestriction = useCheckDesktopRestriction();
+  const { isSignedIn } = useDenAuth();
 
   const createTaskControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.create_task",
@@ -99,10 +110,110 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   }), [canCreateTask, createTaskInWorkspace, selectedWorkspaceId]);
   useControlAction(createTaskControlAction);
 
+  const workspaceModels = useCallback(async (workspace: SessionControlWorkspace) => {
+    const endpoint = endpointForWorkspace(workspace);
+    if (!endpoint) throw new Error("Workspace runtime is not connected");
+    const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+    return openworkCatalogModels(unwrap(await client.provider.list({ directory: workspace.path })));
+  }, [endpointForWorkspace]);
+  const availableWorkspaceModels = useCallback(async (workspace: SessionControlWorkspace) => {
+    const options = (await workspaceModels(workspace)).map((model) => ({ ...model, providerID: model.providerId }));
+    return filterEntitledModelOptions(filterCloudManagedModelOptions(options, isSignedIn), {
+      restrictToCloud: checkDesktopRestriction({ restriction: "allowCustomProviders" }),
+      checkRestriction: checkDesktopRestriction,
+    }).map(({ providerID, ...model }) => ({ ...model, available: true }));
+  }, [workspaceModels, isSignedIn, checkDesktopRestriction]);
+  const modelActions = useMemo(() => createSessionModelActions({
+    workspaces,
+    catalog: availableWorkspaceModels,
+    directory: async (workspace) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) throw new Error("Workspace runtime is not connected");
+      const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+      return engineDirectory(client, workspace.path);
+    },
+    statuses: async (workspace) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) throw new Error("Workspace runtime is not connected");
+      const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+      return client.session.status({ directory: workspace.path });
+    },
+    held: (workspace, sessionId) => {
+      const endpoint = endpointForWorkspace(workspace);
+      return !endpoint || sessionWorkHeld(endpoint.opencodeBaseUrl, sessionId);
+    },
+    working: (workspace, sessionId) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) return true;
+      const activity = useSessionActivityStore.getState();
+      return sessionHasPendingSubmission(endpoint.opencodeBaseUrl, sessionId)
+        || sessionNeedsStop(endpoint.opencodeBaseUrl, sessionId)
+        || hasPendingQueuedAdmission(getQueuedDrainState(sessionId))
+        || [workspace.id, endpoint.workspaceId].some((workspaceId) => {
+          const record = activity.recordsByWorkspaceId[workspaceId]?.[sessionId];
+          const status = activity.getStatus(workspaceId, sessionId);
+          return record?.runActive || record?.compacting || Boolean(activity.waitingByWorkspaceId[workspaceId]?.[sessionId])
+            || status !== "idle" && status !== "error";
+        });
+    },
+    session: async (workspace, sessionId) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) throw new Error("Workspace runtime is not connected");
+      const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+      return unwrap(await client.session.get({ directory: workspace.path, sessionID: sessionId }));
+    },
+    sessions: async (workspace) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint) throw new Error("Workspace runtime is not connected");
+      const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+      const sessions = unwrap(await client.session.list({ directory: workspace.path, limit: 10_000 }));
+      if (sessions.length >= 10_000) throw new Error("Session inventory is incomplete; no selections changed.");
+      return sessions;
+    },
+  }), [workspaces, availableWorkspaceModels, endpointForWorkspace]);
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "session.set_model", label: "Choose a session model",
+    description: "Save a local model and variant for next send. No engine binding or global default changes. dryRun previews without saving. Working sessions are rejected. Choose another available model later; unavailable original bindings cannot be restored.",
+    effects: { data: "write", ui: "none", external: false }, sideEffect: "mutation",
+    args: [{ name: "sessionId", type: "string", required: true }, { name: "workspaceId", type: "string" }, { name: "model", type: "object" }, { name: "alias", type: "string" }, { name: "dryRun", type: "boolean" }],
+    execute: modelActions.setModel,
+  }), [modelActions]));
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "session.rebind_model", label: "Repick matching sessions",
+    description: "Save locally for next send on all idle unarchived sessions in this workspace matching the same unavailable from provider/model (local choice wins). Preview with dryRun, show the set and obtain confirmation, then pass expectedSessionIds. No engine binding or default changes. Choose another available model later; this is not restoration of unavailable bindings.",
+    effects: { data: "write", ui: "none", external: false }, sideEffect: "mutation",
+    args: [{ name: "workspaceId", type: "string", required: true }, { name: "from", type: "object", required: true }, { name: "to", type: "object", required: true }, { name: "expectedSessionIds", type: "array" }, { name: "dryRun", type: "boolean" }],
+    execute: modelActions.rebindModel,
+  }), [modelActions]));
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "session.model_preflight", label: "Check next-send model", kind: "query",
+    description: "Validate the local override, otherwise the supplied engine binding, against the effective workspace catalog. Does not send or change selection.",
+    effects: { data: "read", ui: "none", external: false }, sideEffect: "none",
+    args: [{ name: "workspaceId", type: "string", required: true }, { name: "sessionId", type: "string", required: true }, { name: "model", type: "object", required: true }],
+    execute: modelActions.preflight,
+  }), [modelActions]));
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "models.list",
+    label: "List workspace models",
+    description: "Effective available connected picker models with providerId/modelId, displayName, providerName and available:true. Requires an existing renderer host; reads any workspace without focus or navigation. Assigned models not yet engine-connected are omitted.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
+    sideEffect: "none",
+    args: [{ name: "workspaceId", type: "string", required: true, description: "Workspace id or display name." }],
+    execute: async (rawArgs) => {
+      const { workspaceId } = openworkModelsListArgsSchema.parse(rawArgs);
+      const matches = workspaces.filter((workspace) => workspace.id === workspaceId || workspaceLabel(workspace).toLowerCase() === workspaceId.toLowerCase());
+      const workspace = matches[0];
+      if (matches.length !== 1 || !workspace) throw new Error("Workspace is missing or ambiguous; pass its exact id.");
+      const models = await availableWorkspaceModels(workspace);
+      return { ok: true, workspaceId: workspace.id, models };
+    },
+  }), [availableWorkspaceModels, workspaces]));
+
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant, displayName?, providerName? }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
@@ -110,13 +221,20 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
     ],
-    execute: (args) => {
+    execute: async (args) => {
+      const query = stringArg(args, "workspaceId").toLowerCase();
+      const targets = workspaces.filter((workspace) => !query || workspace.id.toLowerCase() === query || workspaceLabel(workspace).toLowerCase() === query);
+      const modelCatalogByWorkspaceId: Record<string, OpenworkCatalogModel[]> = {};
+      await Promise.all(targets.map(async (workspace) => {
+        modelCatalogByWorkspaceId[workspace.id] = await workspaceModels(workspace).catch(() => []);
+      }));
       const activity = useSessionActivityStore.getState();
       const attentionByWorkspaceId = new Map<string, ReturnType<typeof selectSessionAttention>>();
       return listControlSessions(args, {
         workspaces,
         sessionsByWorkspaceId,
         pinnedIds,
+        modelCatalogByWorkspaceId,
         statusFor: activity.getStatus,
         attentionFor: (workspaceId, sessionId) => {
           let attention = attentionByWorkspaceId.get(workspaceId);
@@ -135,7 +253,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         },
       });
     },
-  }), [endpointForWorkspace, pinnedIds, sessionsByWorkspaceId, workspaces]);
+  }), [endpointForWorkspace, pinnedIds, sessionsByWorkspaceId, workspaceModels, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -311,6 +429,9 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         refuseWorking: helpers.bridged,
       });
       if (outcome.kind === "done") return { ok: true, sessionId, archived };
+      if (outcome.kind === "verification_failed" || outcome.kind === "archive_outcome_unknown") {
+        return { ok: false, code: outcome.kind, sessionId, error: outcome.message };
+      }
       if (outcome.kind === "target_working") {
         return { ok: false, code: outcome.kind, sessionId, title: outcome.title, error: `"${outcome.title}" is still working; it was not archived.`, hint: ARCHIVE_TARGET_WORKING_HINT };
       }
@@ -417,4 +538,5 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     },
   }), [resolveWorkspaceId]);
   useControlAction(groupListControlAction);
+  return { modelActions, availableWorkspaceModels };
 }

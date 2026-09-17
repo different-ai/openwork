@@ -1,0 +1,62 @@
+---
+title: "Counting usage"
+description: "How AI Gateway counts reported tokens, estimates cost, and handles queries without usage data."
+---
+
+AI Gateway's usage graph shows usage reported for requests sent through your organization's Gateway providers. OpenWork Models are tracked separately and are not included in this graph.
+
+## How tokens are counted
+
+Gateway reads token usage from the provider's response, including usage events in streamed responses. It records the provider's total token count, or derives a total from the available token fields for that provider's response format. It does not estimate missing tokens from the length of your prompt or the generated text.
+
+The graph adds the recorded token totals for the selected period and filters. Each request belongs to the UTC calendar day when it started. The default view covers the last 31 UTC calendar days, including today.
+
+- **Model** groups usage by the actual upstream provider and model, across configured provider instances.
+- **Person** groups usage by the organization member who made the request.
+- **Team** attributes each person's usage to their current teams. Someone in multiple teams contributes to each team, so team totals can exceed model or person totals. People without a team are omitted from the team view.
+
+Zero-token values do not add a bar to the token graph. A model or person with no positive token usage is omitted from its legend. A reported zero is still a known value; it is different from a response that supplies no token total.
+
+A request can report tokens before it fails or is canceled. Those reported tokens still count. Retrying creates another request, and any tokens reported by that retry also count.
+
+## Uncountable Items
+
+An **uncountable query** is a request for which Gateway has no total token count. These queries contribute no tokens to the graph. The note below the graph links to this page; expand **Uncountable query details** to see the number of requests in each category for the selected period and filters.
+
+These categories describe the outcome recorded by Gateway. They do not represent additional tokens, and a request belongs to only one category.
+
+### Provider errors
+
+The provider returned an error, or its response stream reported an error before Gateway received token usage. This can include provider-side limits, service errors, or errors partway through generation.
+
+If the provider reported tokens before the error, Gateway includes those tokens and the request is not uncountable.
+
+### Connection failures
+
+Gateway could not establish or complete the upstream connection and received no token total. For example, a network, TLS, or connection error may prevent a usable provider response from reaching Gateway.
+
+### Cancellations and interruptions
+
+The client canceled the query or disconnected before token usage arrived. This can happen when you stop a task or a connection drops. Requests left unfinished by a Gateway interruption are also classified here when historical summaries are created.
+
+A provider may send usage only near the end of a streamed response. Receiving some generated text does not guarantee that Gateway received the final usage information.
+
+### Rejected requests
+
+Gateway rejected the request before sending it to the provider. Examples include a request body that could not be read completely, an unsupported operation or payload, an unavailable credential, or a model the requester cannot access.
+
+These requests have no upstream token usage to count. Gateway retains the requested model when it is available, even if validation rejects the request or its body upload is interrupted.
+
+### Completed without reported usage
+
+Gateway recorded a successful response but could not obtain a total token count. The response may omit usage, use an unrecognized usage format, or end without a final usage event. A successful response status alone does not establish that all usage information was received.
+
+### Older records
+
+Some older summaries contain a total for missing usage but do not retain its full breakdown by outcome. The expanded details show **Unavailable** for categories that cannot be determined. Gateway does not guess the missing categories or reconstruct token totals from these counts.
+
+## How cost is counted
+
+The cost view adds known costs recorded for each request. Gateway uses a provider-reported cost when available; otherwise, it estimates cost from reported token usage and available model pricing.
+
+See [Token Costs](/ai-gateway/token-costs) for the calculation, missing-cost handling, and the limitations of these estimates.

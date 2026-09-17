@@ -21,6 +21,15 @@ describe("OAuth credential JSON normalization", () => {
     expect(normalization.normalizeConnectedAccountScopes(JSON.stringify(scopes))).toEqual(scopes)
   })
 
+  test("keeps unknown, empty, and opaque granted scopes distinct", () => {
+    expect(normalization.parseGrantedOAuthScopes(undefined)).toBeNull()
+    expect(normalization.parseGrantedOAuthScopes("")).toEqual([])
+    expect(normalization.parseGrantedOAuthScopes("   ")).toEqual([])
+    const scopes = ["Records.Read", "records.read", "tools:read,tools:write", "https://scope.example.test/read"]
+    expect(normalization.parseGrantedOAuthScopes(` ${scopes.join("  ")} `)).toEqual(scopes)
+    expect(normalization.parseGrantedOAuthScopes(scopes.join(" "))?.join(" ")).toBe(scopes.join(" "))
+  })
+
   test("rejects malformed or incorrectly shaped JSON", () => {
     expect(normalization.normalizeOAuthClientExtra("not-json")).toBeNull()
     expect(normalization.normalizeOAuthClientExtra("[]")).toBeNull()

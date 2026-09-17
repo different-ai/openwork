@@ -18,6 +18,7 @@ import {
 } from "../../scim-groups.js"
 import { authenticatedRoute, tokenRoute } from "../../middleware/index.js"
 import { appLogger } from "../../observability/logger.js"
+import { createScimDiagnosticsMiddleware, timeScimDiagnosticStage } from "../../observability/scim-diagnostics.js"
 import { emptyObjectSchema, emptyResponse, scimJsonResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
@@ -228,11 +229,12 @@ export async function syncScimMutationFromResponse(input: {
   const syncUserId = input.syncUserId ?? syncExternalIdentityFromScimUserId
 
   if (input.response.status === 204 && input.fallbackUserId) {
+    const fallbackUserId = input.fallbackUserId
     try {
-      const synced = await syncUserId({
+      const synced = await timeScimDiagnosticStage("den_mirror_ms", () => syncUserId({
         bearerToken: input.bearerToken,
-        userId: normalizeDenTypeId("user", input.fallbackUserId),
-      })
+        userId: normalizeDenTypeId("user", fallbackUserId),
+      }))
       if (!synced) {
         return failedScimSync("sync_user_id", "external identity sync returned false")
       }
@@ -248,10 +250,10 @@ export async function syncScimMutationFromResponse(input: {
   }
 
   try {
-    const synced = await syncResource({
+    const synced = await timeScimDiagnosticStage("den_mirror_ms", () => syncResource({
       bearerToken: input.bearerToken,
       resource: payload,
-    })
+    }))
     if (!synced) {
       return failedScimSync("sync_resource", "external identity sync returned false")
     }
@@ -263,6 +265,12 @@ export async function syncScimMutationFromResponse(input: {
 }
 
 export function registerScimAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  // Registered once before both these routes and the generic Better Auth GET
+  // fallback. next() owns dispatch; mutations must never be replayed here.
+  app.use("/api/auth/scim/v2/*", createScimDiagnosticsMiddleware({
+    resolveProvider: resolveScimProviderFromBearerToken,
+    logger,
+  }))
   const rejectManagementRoute = (c: {
     get: (key: "user") => AuthContextVariables["user"]
     json: (object: unknown, status?: number | { status: number }) => Response
@@ -720,7 +728,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         return scimError("User not found", 404)
       }
       const resource = { id: normalizedUserId, active: false }
-      const synced = await syncExternalIdentityFromScimResource({ bearerToken, resource })
+      const synced = await timeScimDiagnosticStage("den_mirror_ms", () => syncExternalIdentityFromScimResource({ bearerToken, resource }))
       if (!synced) {
         await recordScimFailureSafely(() =>
           recordScimSyncFailure({
@@ -741,7 +749,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       return new Response(null, { status: 204 })
     }
 
-    const response = await auth.handler(c.req.raw)
+    const response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(c.req.raw))
     if (!bearerToken) {
       return response
     }

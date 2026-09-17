@@ -3,9 +3,47 @@ import { describe, expect, test } from "bun:test";
 import {
   describeTaskCreateFailure,
   describeTaskCreateRetry,
+  startSidebarTask,
   TASK_CREATE_RETRY_DELAYS_MS,
   withTransientEngineRetry,
 } from "../src/react-app/shell/route-workspaces";
+
+describe("sidebar task creation", () => {
+  test("opens the main empty composer immediately without creating a side session", async () => {
+    const opened: string[] = [];
+    const pending = startSidebarTask({
+      workspaceId: "workspace-a",
+      hasWorkspaceError: false,
+      openEmptyComposer: (id) => { opened.push(id); },
+      createTask: async () => { throw new Error("must not wait for engine creation"); },
+      assignGroup: () => { throw new Error("must not assign a group"); },
+    });
+    expect(opened).toEqual(["workspace-a"]);
+    await pending;
+  });
+
+  for (const scenario of [
+    { groupId: "group-a", hasWorkspaceError: false, sessionId: "created" },
+    { groupId: undefined, hasWorkspaceError: true, sessionId: "created" },
+    { groupId: "group-a", hasWorkspaceError: true, sessionId: null },
+  ]) {
+    test(`creates in primary for ${JSON.stringify(scenario)}`, async () => {
+      const created: string[][] = [];
+      const assigned: string[][] = [];
+      await startSidebarTask({
+        workspaceId: "workspace-a",
+        groupId: scenario.groupId,
+        hasWorkspaceError: scenario.hasWorkspaceError,
+        openEmptyComposer: () => { throw new Error("must use engine creation"); },
+        createTask: async (...args) => { created.push(args); return scenario.sessionId; },
+        assignGroup: (...args) => { assigned.push(args); },
+      });
+      expect(created).toEqual([["workspace-a", "primary", "new_task"]]);
+      expect(assigned).toEqual(scenario.groupId && scenario.sessionId
+        ? [["workspace-a", scenario.sessionId, scenario.groupId]] : []);
+    });
+  }
+});
 
 // New task used to give up on the first 10 s timeout with a dead-end
 // "OpenCode unavailable" toast even though the engine was alive and merely

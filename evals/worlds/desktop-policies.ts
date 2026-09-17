@@ -6,7 +6,7 @@ import { configureProvider } from "./chat.ts";
 import type { Seed } from "@openwork/env";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isRecord, records } from "./library.ts";
+import { desktopWithExternalOpenCapture, isRecord, records } from "./library.ts";
 import { bootServer, stopChild } from "./openwork-server-cli.ts";
 
 /** Real app-web tools with the old policy HTTP service faulted and IPC severed.
@@ -163,7 +163,7 @@ export async function defaultPolicyEditorAndMemberDesktop(seed: Seed) {
   const policyId = String(policyBefore.id);
   const editorPath = `/dashboard/desktop-policies/${encodeURIComponent(policyId)}`;
 
-  const member = await seed.desktop({ den, as: "jordan" });
+  const { app: member, browserUrls } = await desktopWithExternalOpenCapture(seed, den, "jordan");
   const admin = await seed.web({
     den,
     signedInAs: den.admin,
@@ -174,7 +174,7 @@ export async function defaultPolicyEditorAndMemberDesktop(seed: Seed) {
     viewport: { width: 1440, height: 2100 },
   });
 
-  return { den, member, admin, policyId, editorPath };
+  return { den, member, admin, browserUrls, policyId, editorPath };
 }
 
 /** Two ordinary members share defaults that block Alpha updates. Jordan gets
@@ -277,10 +277,10 @@ export async function teamAccess(seed: Seed) {
   });
   if (!shared.response.ok) throw new Error(`Approved skill sharing failed: ${shared.text}`);
   const editorPath = `/dashboard/members/teams/${teamId}`;
-  const member = await seed.desktop({ den, as: "jordan", model: `${llmProvider.id}/mock-agent-workload-model` });
+  const { app: member, browserUrls } = await desktopWithExternalOpenCapture(seed, den, "jordan", `${llmProvider.id}/mock-agent-workload-model`);
   const control = await seed.desktop({ den, as: "casey", model: `${llmProvider.id}/mock-agent-workload-model` });
   const admin = await seed.web({ den, signedInAs: den.admin, startPath: editorPath, headless: true, viewport: { width: 1440, height: 2100 } });
-  return { den, member, control, admin, commandProofs, nonce, providerId: llmProvider.id, teamId, grantTeamId, controlTeamId,
+  return { den, member, control, admin, browserUrls, commandProofs, nonce, providerId: llmProvider.id, teamId, grantTeamId, controlTeamId,
     memberId: currentMember.id, controlMemberId: controlMember.id, editorPath, pluginId, pluginName, rawSourceText };
 }
 

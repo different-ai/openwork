@@ -155,6 +155,59 @@ test.skipIf(!runnable)(
       "Repeated rail clicks matched the pressed state and panel visibility; the primary chat remained mounted.",
       true,
     );
+    await control(app, "browser.open_url", { url: "about:blank", provider: "builtin" });
+    await waitFor(app, () => (
+      document.querySelector('aside button[aria-label="Browser"]')?.getAttribute("aria-pressed") === "true"
+      && document.querySelector('aside button[aria-label^="Files ("]')?.getAttribute("aria-pressed") === "false"
+    ), { timeoutMs: 15_000, label: "Browser selected without activating Files" });
+    const retainedBrowserTabs = await evalIn(app, () => document.querySelectorAll('[data-browser-shortcut-tab] button[aria-label^="Select tab:"]').length);
+    expect(retainedBrowserTabs).toBeGreaterThan(0);
+
+    // Switch content first, then close only the currently selected destination.
+    // Exercise Files with no documents before repeating with a real artifact.
+    for (const populated of [false, true]) {
+      if (populated) {
+        await control(app, "eval.markdown_primitive.seed_artifact", {});
+      }
+      for (const { destination, open } of [
+        ...(populated ? [{ destination: "Browser", open: true }] : []),
+        { destination: "Files", open: true },
+        { destination: "Files", open: false },
+        { destination: "Files", open: true },
+        { destination: "Browser", open: true },
+        { destination: "Browser", open: false },
+        { destination: "Browser", open: true },
+      ]) {
+        expect(await evalIn(app, browserScript((destination) => {
+          const selector = destination === "Files" ? 'aside button[aria-label^="Files ("]' : 'aside button[aria-label="Browser"]';
+          const button = document.querySelector<HTMLButtonElement>(selector);
+          if (!button) return false;
+          button.click();
+          return true;
+        }, [destination]))).toBe(true);
+        await waitFor(app, browserScript((destination, open, populated, sessionId, retainedBrowserTabs) => {
+          const files = document.querySelector('aside button[aria-label^="Files ("]');
+          const browser = document.querySelector('aside button[aria-label="Browser"]');
+          const panel = document.querySelector('[data-browser-shortcut-tab] button[aria-label^="Select tab:"]');
+          const visible = Boolean(panel && panel.getBoundingClientRect().width > 0);
+          const content = !open || (destination === "Browser"
+            ? Boolean(document.querySelector('button[aria-label="Reload page"]'))
+            : populated
+              ? Boolean([...document.querySelectorAll('h1')].find((heading) => heading.textContent === "Artifact Markdown Proof"))
+              : Boolean(document.querySelector('[aria-label="Panel destinations"]')));
+          return files?.getAttribute("aria-pressed") === String(open && destination === "Files")
+            && browser?.getAttribute("aria-pressed") === String(open && destination === "Browser")
+            && visible === open && content
+            && (!open || document.querySelectorAll('[data-browser-shortcut-tab] button[aria-label^="Select tab:"]').length === retainedBrowserTabs)
+            && Boolean(document.querySelector(`[data-session-surface-id="${sessionId}"]`));
+        }, [destination, open, populated, primary.sessionId, retainedBrowserTabs]), {
+          timeoutMs: 15_000,
+          label: `${destination} switches or toggles independently with ${populated ? "a document" : "no documents"}`,
+        });
+      }
+    }
+    // Leave the panel closed for the existing responsive-layout assertions.
+    await evalIn(app, () => document.querySelector<HTMLButtonElement>('aside button[aria-label="Browser"]')?.click());
     await openSessionInSplit(app, workspaceId, secondary.sessionId);
     await waitFor(app, browserScript((sessionId) => (Boolean(document.querySelector<HTMLElement>(
       `[data-workbench-pane="secondary"] [data-session-surface-id="${sessionId}"]`
@@ -325,7 +378,7 @@ test.skipIf(!runnable)(
     });
 
     const closedPanel = await evalIn(app, () => {
-      const close = document.querySelector<HTMLElement>('#narrow-session-pane-panel button[aria-label="Close panel"]');
+      const close = document.querySelector<HTMLElement>('#narrow-session-pane-panel button[aria-label="Close panel"], #narrow-session-pane-panel button[aria-label="Close artifact"]');
       if (!(close instanceof HTMLButtonElement)) return false;
       close.click();
       return true;

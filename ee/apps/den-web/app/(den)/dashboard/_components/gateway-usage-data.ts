@@ -18,6 +18,11 @@ const usageResponseSchema: z.ZodType<GatewayUsageResponse> = z.object({
     to: z.iso.date(),
     timezone: z.literal("UTC"),
     emptyReason: z.literal("no_teams").optional(),
+    requestCount: countSchema.optional(),
+    uncountableRequests: z.object({
+      ok: countSchema.nullable(), upstream_error: countSchema.nullable(), upstream_unreachable: countSchema.nullable(),
+      client_aborted: countSchema.nullable(), rejected: countSchema.nullable(),
+    }).optional(),
     totalTokens: countSchema,
     totalCostMicroUsd: countSchema,
     unreportedRequests: countSchema.nullable(),
@@ -70,6 +75,16 @@ export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, fil
       const daily = [...usage.daily].sort((a, b) => a.date.localeCompare(b.date));
       // Reject incomplete days or mismatched stacks rather than inventing zeros or totals.
       if (usage.groupBy !== groupBy || usage.days !== 31 || daily.length !== usage.days
+        || (usage.requestCount !== undefined && (
+          (usage.unreportedRequests !== null && usage.unreportedRequests > usage.requestCount)
+          || (usage.unpricedRequests !== null && usage.unpricedRequests > usage.requestCount)))
+        || (usage.uncountableRequests !== undefined && (() => {
+          const counts = Object.values(usage.uncountableRequests);
+          const known = counts.reduce((sum: number, count) => sum + (count ?? 0), 0);
+          return (usage.requestCount !== undefined && known > usage.requestCount)
+            || (usage.unreportedRequests !== null && (known > usage.unreportedRequests
+              || (counts.every((count) => count !== null) && known !== usage.unreportedRequests)));
+        })())
         || seriesIds.size !== usage.series.length
         || new Set(usage.filterOptions.map((option) => option.id)).size !== usage.filterOptions.length
         || daily[daily.length - 1]?.date !== usage.to

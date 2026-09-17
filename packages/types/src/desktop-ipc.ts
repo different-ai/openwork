@@ -299,6 +299,7 @@ export type NukeReceipt = {
 };
 
 export type DesktopFetchInit = {
+  transferId?: string;
   method?: string;
   headers?: Record<string, string>;
   body?: string;
@@ -314,6 +315,15 @@ export type DesktopFetchResult = {
   headers: [string, string][];
   body: string;
 };
+
+/**
+ * Outcome of opening a workspace file from chat. The host resolves the file on disk and
+ * only launches it when it is a real file inside the real workspace root; a file that
+ * resolves elsewhere is shown in its folder instead of being handed to an application.
+ */
+export type DesktopWorkspaceFileOpenResult =
+  | { ok: true; action: "opened" | "revealed" }
+  | { ok: false; error: string };
 
 export type DesktopMultipartUploadInput = {
   transferId: string;
@@ -581,6 +591,7 @@ export type DesktopCommandMap = {
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
   __openPath: { args: [target: string]; result: unknown };
+  __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __getFileIcon: { args: [target: string, size?: "small" | "normal" | "large"]; result: string | null };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
@@ -588,7 +599,7 @@ export type DesktopCommandMap = {
   __getBrandIconState: { args: []; result: BrandIconState };
   __evalRelaunch: { args: []; result: EvalRelaunchResult };
   __getApplicationsForFile: { args: [target: string]; result: { name: string; appPath: string; icon: string | null }[] };
-  __openWithApp: { args: [target: string, appPath: string]; result: unknown };
+  __openWithApp: { args: [target: string, appPath: string, workspaceRoot: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
   __uploadMultipart: { args: [input: DesktopMultipartUploadInput]; result: DesktopFetchResult };
   __downloadBinary: { args: [input: DesktopBinaryDownloadInput]; result: DesktopBinaryDownloadResult };

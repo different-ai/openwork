@@ -73,11 +73,12 @@ function trackHeightReads(data: readonly Group[]) {
   return () => reads.mock.calls.filter(([key]) => keys.has(key)).length
 }
 
-function fixture(initial = groups(), options: Partial<MessageListViewport> = {}, strict = false, fixedGeometry = false) {
+function fixture(initial = groups(), options: Partial<MessageListViewport> = {}, strict = false, fixedGeometry = false, viewportHeight = 200) {
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
   let data = initial
+  let messages = new Map(data.flatMap((group) => group.messages.map((message) => [message.id, message] as const)))
   let top = 0
   let width = options.viewportWidth ?? 600
   let sticky = false
@@ -93,7 +94,7 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   }
   const messageHeight = (node: Element) => {
     const id = node.getAttribute("data-message-id")
-    return data.flatMap((group) => group.messages).find((message) => message.id === id)?.height ?? 0
+    return id ? messages.get(id)?.height ?? 0 : 0
   }
   const height = (node: Element): number => {
     if (fixedGeometry) return node === container ? data.length * 248 : 240
@@ -115,18 +116,18 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   }
   const originalRect = HTMLElement.prototype.getBoundingClientRect
   spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    if (this === container) return new DOMRect(0, 40, width, 200)
+    if (this === container) return new DOMRect(0, 40, width, viewportHeight)
     if (fixedGeometry && container.contains(this)) return new DOMRect(0, 40, width, 240)
     if (container.contains(this)) return new DOMRect(0, 40 + contentTop(this) - container.scrollTop, width, height(this))
     return originalRect.call(this)
   })
   Object.defineProperties(container, {
     clientWidth: { get: () => width },
-    clientHeight: { get: () => 200 },
+    clientHeight: { get: () => viewportHeight },
     scrollHeight: { get: () => height(container) },
-    scrollTop: { get: () => Math.max(0, Math.min(top, height(container) - 200)), set: (value: number) => {
+    scrollTop: { get: () => Math.max(0, Math.min(top, height(container) - viewportHeight)), set: (value: number) => {
       writes.push(value)
-      top = Math.max(0, Math.min(value, height(container) - 200))
+      top = Math.max(0, Math.min(value, height(container) - viewportHeight))
     } },
   })
   const unmount = async () => {
@@ -138,12 +139,14 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   cleanups.push(unmount)
   return {
     container, ready, writes, rendered, key, ids, unmount,
-    async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode, groupKeyReplacements?: ReadonlyMap<string, string>) {
+    async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode, groupKeyReplacements?: ReadonlyMap<string, string>, priorityMessageId?: string) {
       data = next
+      messages = new Map([...messages, ...data.flatMap((group) => group.messages.map((message) => [message.id, message] as const))])
       viewport = { ...viewport, ...update }
       const list = <ProgressiveMessageList
         groups={data} viewport={viewport} getGroupKey={key} getMessageIds={ids}
         groupKeyReplacements={groupKeyReplacements}
+        priorityMessageId={priorityMessageId}
         renderGroup={(group, index) => {
           rendered.push(index)
           if (renderer) return renderer(group, index)
@@ -171,27 +174,24 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
 }
 
 describe("progressive whole-group rendering", () => {
-  test.each([false, true])("reuses height planning across batches and fully mounted content updates (history complete: %s)", async (historyComplete) => {
+  test.each([false, true])("keeps a bounded settled window and frozen offscreen estimates (history complete: %s)", async (historyComplete) => {
     const data = groups()
     const view = fixture(data, { anchorMessageId: "m40", historyComplete, scrollHeight: 40_000 })
-    const heightReads = trackHeightReads(data)
     await view.render()
-    const initialReads = heightReads()
-    expect(initialReads).toBeGreaterThan(0)
     const tail = view.message("m79")
     const anchor = view.message("m40")
     const prefix = view.placeholders.find((node) => node.dataset.threadPlaceholder === "history-prefix")?.style.height
     view.read("m40", -80)
-    // Measurements keep changing the shared cache, not the frozen height plan.
     await act(async () => view.resize())
-    for (let index = 8; index < data.length; index += 8) {
-      await batch()
-      expect(heightReads()).toBe(initialReads)
-      expect(view.mounted).toHaveLength(Math.min(index + 8, data.length))
-      expect(view.position("m40")).toBeCloseTo(-80, 1)
-      expect(view.message("m40")).toBe(anchor)
-      expect(view.message("m79")).toBe(tail)
-    }
+    await batch()
+    const mounted = view.mounted
+    const placeholders = view.placeholders.map((node) => node.style.height)
+    for (let index = 0; index < 10; index++) await batch()
+    expect(view.mounted).toEqual(mounted)
+    expect(mounted.length).toBeLessThanOrEqual(8)
+    expect(view.position("m40")).toBe(-80)
+    expect(view.message("m40")).toBe(anchor)
+    expect(view.message("m79")).toBe(tail)
     expect(view.complete).toBe(String(historyComplete))
     expect(frames.size).toBe(0)
     expect(view.placeholders.find((node) => node.dataset.threadPlaceholder === "history-prefix")?.style.height).toBe(prefix)
@@ -199,8 +199,8 @@ describe("progressive whole-group rendering", () => {
     next[79] = { ...next[79], messages: [...next[79].messages, { id: "live", height: 60 }] }
     view.writes.length = 0
     await view.render(next)
-    expect(heightReads()).toBe(initialReads)
     expect(view.writes).toEqual([])
+    expect(view.placeholders.map((node) => node.style.height)).toEqual(placeholders)
     expect(view.message("m79")).toBe(tail)
     expect(view.message("live")).toBeDefined()
   })
@@ -215,7 +215,7 @@ describe("progressive whole-group rendering", () => {
     let previousReads = heightReads()
     const tail = view.message("m19")
     view.read("m16", -50)
-    await view.render([prefix, ...data], { scrollHeight: 20 * 240 + 500 + 20 * 8 })
+    await view.render([prefix, ...data], { scrollHeight: 12 * 240 + 8 * 100 + 500 + 20 * 8 })
     expect(heightReads()).toBeGreaterThan(previousReads)
     expect(view.placeholders[0].style.height).toBe(`${500 + 12 * 240 + 12 * 8}px`)
     expect(view.position("m16")).toBeCloseTo(-50, 1)
@@ -230,6 +230,7 @@ describe("progressive whole-group rendering", () => {
     expect(heightReads()).toBeGreaterThan(previousReads)
     expect(view.placeholders[0].style.height).toBe(`${12 * 240 + 11 * 8}px`)
     expect(view.message("m19")).toBe(tail)
+    await batch()
     previousReads = heightReads()
     await batch()
     expect(heightReads()).toBe(previousReads)
@@ -264,6 +265,7 @@ describe("progressive whole-group rendering", () => {
     expect(view.placeholders).toHaveLength(1)
     expect(Number.parseFloat(view.placeholders[0].style.height)).toBeCloseTo(7_136, 1)
     expect(view.position("m16")).toBeCloseTo(-50, 1)
+    await batch()
     previousReads = heightReads()
     await batch()
     expect(heightReads()).toBe(previousReads)
@@ -289,14 +291,23 @@ describe("progressive whole-group rendering", () => {
   })
 
   for (const count of [80, 800, 1600]) {
-    test(`invokes renderGroup only ${count} times while backfilling ${count} groups`, async () => {
+    test(`bounds initial and deep-scroll DOM for ${count} groups and removes old nodes`, async () => {
       const data = groups(count)
-      const view = fixture(data, { anchorMessageId: `m${count - 1}` }, false, true)
+      const view = fixture(data, { anchorMessageId: `m${count - 1}` })
       await view.render()
       expect(view.rendered).toHaveLength(8)
-      for (let index = 8; index < count; index += 8) await batch()
-      expect(view.mounted).toHaveLength(count)
-      expect(view.rendered).toHaveLength(count)
+      const old = view.message(`m${count - 4}`)
+      const tail = view.message(`m${count - 1}`)
+      const middle = Math.floor(count / 2)
+      await act(async () => view.scroll(middle * 248 + 25))
+      await batch()
+      expect(view.mounted.length).toBeLessThanOrEqual(8)
+      expect(view.position(`m${middle}`)).toBe(-25)
+      expect(old.isConnected).toBe(false)
+      expect(view.message(`m${count - 1}`)).toBe(tail)
+      const settledRenders = view.rendered.length
+      for (let index = 0; index < 10; index++) await batch()
+      expect(view.rendered).toHaveLength(settledRenders)
       expect(view.key).toHaveBeenCalledTimes(count)
       expect(view.ids).toHaveBeenCalledTimes(count)
       expect(frames.size).toBe(0)
@@ -309,7 +320,7 @@ describe("progressive whole-group rendering", () => {
     function StatefulTool({ group, index, phase, last }: { group: Group; index: number; phase: string; last: boolean }) {
       const [expanded, setExpanded] = useState(false)
       useEffect(() => { mounts++; return () => { unmounts++ } }, [])
-      return <button data-message-id={group.messages[0].id} onClick={() => setExpanded(!expanded)}>
+      return <button data-message-id={group.messages[0].id} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         {`${group.messages.length}:${index}:${phase}:${last}:${expanded}`}
       </button>
     }
@@ -320,12 +331,13 @@ describe("progressive whole-group rendering", () => {
     await render("streaming")
     const tail = view.message("m79")
     await act(async () => tail.click())
+    view.read("m79", 0)
     await batch()
-    expect(view.rendered).toHaveLength(16)
+    expect(view.rendered.length).toBeLessThanOrEqual(8)
     expect(tail.textContent).toBe("1:79:streaming:true:true")
     view.rendered.length = 0
     await render("settled")
-    expect(view.rendered).toHaveLength(16)
+    expect(view.rendered).toHaveLength(view.mounted.length)
     expect(tail.textContent).toBe("1:79:settled:true:true")
     data = data.map((group) => group.id === "g79" ? { ...group, messages: [...group.messages, { id: "delta", height: 40 }] } : group)
     await render("streaming")
@@ -340,8 +352,105 @@ describe("progressive whole-group rendering", () => {
     await view.render(data, { revealAll: false }, renderer)
     expect(view.message("m79")).toBe(tail)
     expect(tail.textContent).toBe("2:80:settled:false:true")
-    expect(mounts).toBe(82)
-    expect(unmounts).toBe(0)
+    await batch()
+    expect(view.mounted.length).toBeLessThanOrEqual(10)
+    expect(mounts - unmounts).toBe(view.mounted.length)
+    expect(unmounts).toBeGreaterThan(0)
+    expect(view.message("m79")).toBe(tail)
+  })
+
+  test("fills a tall viewport with short groups without retaining previously visited windows", async () => {
+    const data = groups(1600)
+    for (const group of data) group.messages[0].height = 20
+    const view = fixture(data, {}, false, false, 1200)
+    await view.render()
+    for (const destination of [0, 80_000, 160_000, 240_000, 0]) {
+      await act(async () => view.scroll(destination))
+      for (let index = 0; index < 16 && frames.size; index++) await batch()
+      const bounds = view.container.getBoundingClientRect()
+      expect(view.mounted.length).toBeLessThan(90)
+      expect(view.placeholders.some((node) => {
+        const rect = node.getBoundingClientRect()
+        return rect.bottom > bounds.top && rect.top < bounds.bottom
+      })).toBe(false)
+      expect(frames.size).toBe(0)
+    }
+  })
+
+  test("default-open content does not pin every visited group", async () => {
+    const view = fixture(groups(1600), { anchorMessageId: "m800" })
+    await view.render(undefined, {}, (group) => <button data-message-id={group.messages[0].id} aria-expanded="true">Open by default</button>)
+    const previous = view.message("m800")
+    await act(async () => view.scroll(0))
+    await batch()
+    expect(view.mounted.length).toBeLessThanOrEqual(8)
+    expect(previous.isConnected).toBe(false)
+  })
+
+  test.each(["focus", "selection", "expanded", "collapsed", "portal"])("retains %s interaction offscreen and releases it when the interaction ends", async (interaction) => {
+    function Tool({ group }: { group: Group }) {
+      const [open, setOpen] = useState(interaction === "collapsed")
+      return <button data-message-id={group.messages[0].id} aria-expanded={open}
+        aria-controls={group.id === "g40" ? "tool-popup" : undefined} onClick={() => setOpen(!open)}>{String(open)}</button>
+    }
+    const view = fixture(groups(), { anchorMessageId: "m40" })
+    await view.render(undefined, {}, (group) => <Tool group={group} />)
+    const retained = view.message("m40")
+    const popup = document.createElement("button")
+    popup.id = "tool-popup"
+    document.body.append(popup)
+    cleanups.push(async () => { popup.remove(); document.getSelection()?.removeAllRanges() })
+    await act(async () => {
+      if (interaction === "focus") retained.focus()
+      if (interaction === "expanded" || interaction === "collapsed") retained.click()
+      if (interaction === "portal") popup.focus()
+      if (interaction === "selection") {
+        const range = document.createRange()
+        range.selectNodeContents(retained)
+        document.getSelection()?.addRange(range)
+        document.dispatchEvent(new Event("selectionchange"))
+      }
+      view.scroll(0)
+    })
+    await batch()
+    expect(view.message("m40")).toBe(retained)
+    expect(view.mounted.length).toBeLessThanOrEqual(9)
+    expect(view.mounted).not.toContain("g41")
+    if (interaction === "focus") expect(document.activeElement).toBe(retained)
+    if (interaction === "expanded") expect(retained.textContent).toBe("true")
+    if (interaction === "collapsed") expect(retained.textContent).toBe("false")
+    await act(async () => {
+      retained.blur()
+      popup.blur()
+      if (interaction === "expanded" || interaction === "collapsed") retained.click()
+      document.getSelection()?.removeAllRanges()
+      document.dispatchEvent(new Event("selectionchange"))
+    })
+    await batch()
+    expect(retained.isConnected).toBe(false)
+  })
+
+  test("replacement group identities preserve the wrapper and keyed interaction state", async () => {
+    function Tool({ group }: { group: Group }) {
+      const [open, setOpen] = useState(false)
+      return <button data-message-id={group.messages[0].id} aria-expanded={open} onClick={() => setOpen(!open)}>{String(open)}</button>
+    }
+    const data = groups()
+    const view = fixture(data, { anchorMessageId: "m40" })
+    const renderer = (group: Group) => <Tool key={group.id} group={group} />
+    await view.render(data, {}, renderer)
+    const retained = view.message("m40")
+    await act(async () => retained.click())
+    const next = data.map((group) => group.id === "g40" ? { ...group, id: "native", messages: [{ id: "native", height: 240 }] } : group)
+    view.read("m40", -80)
+    await view.render(next, {}, renderer, new Map([["native", "g40"]]))
+    expect(view.message("native")).toBe(retained)
+    expect(retained.textContent).toBe("true")
+    expect(view.position("native")).toBe(-80)
+    await batch()
+    expect(view.message("native")).toBe(retained)
+    await view.render(next, {}, renderer)
+    expect(view.message("native")).toBe(retained)
   })
 
   test("stable callbacks still update changed groups and indexes, and descendants receive context without remounting", async () => {
@@ -391,30 +500,64 @@ describe("progressive whole-group rendering", () => {
     expect(view.position("m40")).toBeCloseTo(offset, 1);
   });
 
-  test("mounts eight latest groups, yields a paint between bounded batches, then keeps the entire DOM", async () => {
+  test("mounts eight latest groups immediately then retains only the viewport and tail", async () => {
     const view = fixture()
     await view.render()
     expect(view.mounted).toEqual(["g72", "g73", "g74", "g75", "g76", "g77", "g78", "g79"])
     expect(view.rendered).toEqual([72, 73, 74, 75, 76, 77, 78, 79])
-    expect(view.complete).toBe("false")
+    expect(view.complete).toBe("true")
     expect(view.container.scrollHeight).toBe(80 * 240 + 79 * 8)
     expect(view.placeholders.every((node) => node.getAttribute("aria-hidden") === "true")).toBe(true)
     const tail = view.message("m79")
-    await act(async () => runFrame())
-    expect(view.mounted.length).toBe(8)
-    await act(async () => runFrame())
-    expect(view.mounted.length).toBe(16)
-    for (let i = 0; i < 8; i++) {
-      const before = view.mounted.length
-      await batch()
-      expect(view.mounted.length - before).toBeLessThanOrEqual(8)
-    }
-    expect(view.mounted.length).toBe(80)
+    view.read("m79")
+    await batch()
+    expect(view.mounted.length).toBeLessThanOrEqual(8)
     expect(view.complete).toBe("true")
-    expect(view.placeholders.length).toBe(0)
+    expect(view.placeholders.length).toBeGreaterThan(0)
     expect(view.message("m79")).toBe(tail)
-    expect(view.rendered).toHaveLength(80)
     expect(frames.size).toBe(0)
+  })
+
+  test("mounts the latest prompt and tail alongside a middle anchor before the first frame within eight groups", async () => {
+    const view = fixture(groups(), { anchorMessageId: "m40" })
+    await view.render(undefined, {}, undefined, undefined, "m78")
+    expect(view.mounted).toHaveLength(8)
+    expect(view.message("m40")).toBeDefined()
+    expect(view.message("m79")).toBeDefined()
+    expect(view.message("m78")).toBeDefined()
+    expect(frames.size).toBe(1)
+  })
+
+  test.each([false, true])("admits the latest prompt during middle-preview hydration and preserves the anchor (tail present: %s)", async (tailPresent) => {
+    const full = groups()
+    const preview = tailPresent ? [full[40], full[79]] : [full[40]]
+    const view = fixture(preview, {
+      anchorMessageId: "m40", historyComplete: false, scrollHeight: 19_832,
+      leadingHeight: 9_920, trailingHeight: tailPresent ? 9_416 : 9_664,
+    })
+    await view.render(undefined, {}, undefined, undefined, "m78")
+    const retained = preview.map((group) => view.message(group.messages[0].id))
+    view.read("m40", -80)
+    await view.render(full, { historyComplete: true }, undefined, undefined, "m78")
+    expect(view.position("m40")).toBeCloseTo(-80, 1)
+    for (const node of retained) expect(node.isConnected).toBe(true)
+    expect(view.message("m79")).toBeDefined()
+    expect(view.message("m78")).toBeDefined()
+  })
+
+  test("admits a changed priority inside a group with a stable tail without replacing mounted nodes", async () => {
+    const data = groups()
+    data[20].messages.push({ id: "latest-prompt", height: 60 })
+    const view = fixture(data, { anchorMessageId: "m40" })
+    await view.render(undefined, {}, undefined, undefined, "m40")
+    const retained = view.mounted.map((id) => view.message(`m${id?.slice(1)}`))
+    view.read("m40", -80)
+    await view.render(undefined, {}, undefined, undefined, "latest-prompt")
+    expect(view.position("m40")).toBeCloseTo(-80, 1)
+    for (const node of retained) expect(node.isConnected).toBe(true)
+    expect(view.message("m79")).toBeDefined()
+    expect(view.message("latest-prompt")).toBeDefined()
+    expect(view.mounted).toHaveLength(9)
   })
 
   test("prioritizes an anchor inside a whole group and renders live additions without waiting", async () => {
@@ -511,9 +654,9 @@ describe("progressive whole-group rendering", () => {
     await act(async () => runFrame())
     await act(async () => {
       runFrame()
-      view.read("m42", -90)
+      view.read("m41", -90)
     })
-    expect(view.position("m42")).toBe(-90)
+    expect(view.position("m41")).toBe(-90)
     expect(view.position("m40")).not.toBe(-25)
   })
 
@@ -521,9 +664,11 @@ describe("progressive whole-group rendering", () => {
     const view = fixture()
     await view.render()
     await act(async () => view.scroll(20 * 248 + 25))
+    await batch()
     expect(view.mounted).toContain("g20")
     expect(view.position("m20")).toBe(-25)
     await act(async () => view.scroll(0))
+    await batch()
     expect(view.mounted).toContain("g0")
     expect(view.position("m0")).toBe(0)
   })
@@ -542,6 +687,7 @@ describe("progressive whole-group rendering", () => {
     await act(async () => view.scroll(top))
     await view.render(full, { historyComplete: true })
     expect(view.container.scrollTop).toBeCloseTo(top, 1)
+    await batch()
     const destination = view.mounted.find((id) => {
       if (!id) return false
       const position = view.position(`m${id.slice(1)}`)
@@ -565,7 +711,9 @@ describe("progressive whole-group rendering", () => {
       view.scroll(20 * 248)
       runFrame()
     })
-    for (let index = 19; index < 27; index++) expect(view.mounted).toContain(`g${index}`)
+    for (let index = 19; index < 23; index++) expect(view.mounted).toContain(`g${index}`)
+    expect(view.mounted.length).toBeLessThanOrEqual(8)
+    expect(view.position("m20")).toBe(0)
   })
 
   test("fills at sticky bottom, but does not snap back after the user reads earlier content", async () => {
@@ -578,9 +726,14 @@ describe("progressive whole-group rendering", () => {
     await batch()
     expect(view.container.scrollTop).toBe(view.container.scrollHeight - 200)
     view.setSticky(false)
-    view.read("m75", -100)
+    await act(async () => view.scroll(view.container.scrollTop - 1_500))
     await batch()
-    expect(view.position("m75")).toBe(-100)
+    const reading = view.mounted.find((id) => id !== "g79" && view.position(`m${id?.slice(1)}`) <= 0)
+    if (!reading) throw new Error("Earlier window did not mount")
+    const messageId = `m${reading.slice(1)}`
+    view.read(messageId, -100)
+    await batch()
+    expect(view.position(messageId)).toBe(-100)
     expect(view.container.scrollTop).toBeLessThan(view.container.scrollHeight - 200)
   })
 
@@ -601,15 +754,23 @@ describe("progressive whole-group rendering", () => {
     expect(view.placeholders.map((node) => node.style.height)).toEqual(placeholderHeights)
   })
 
-  test("Find mounts everything immediately and closing Find never removes it", async () => {
+  test("Find reveals every message and closing it restores a bounded window at the found result", async () => {
     const view = fixture()
     await view.render()
+    view.read("m76", -50)
     await view.render(undefined, { revealAll: true })
+    expect(view.position("m76")).toBe(-50)
     expect(view.mounted.length).toBe(80)
     expect(view.complete).toBe("true")
     expect(frames.size).toBe(0)
+    const found = view.message("m20")
+    view.read("m20", -30)
     await view.render(undefined, { revealAll: false })
-    expect(view.mounted.length).toBe(80)
+    await batch()
+    expect(view.mounted.length).toBeLessThanOrEqual(8)
+    expect(view.position("m20")).toBe(-30)
+    expect(view.message("m20")).toBe(found)
+    expect(view.mounted).not.toContain("g76")
   })
 
   test("reserves the saved full extent for a partial tail and prioritizes its missing anchor when history arrives", async () => {
@@ -682,8 +843,9 @@ describe("progressive whole-group rendering", () => {
     await view.render()
     expect(view.mounted.length).toBe(8)
     await batch()
-    expect(view.mounted.length).toBe(16)
+    expect(view.mounted.length).toBeLessThanOrEqual(8)
     await act(async () => view.scroll(20 * 248))
+    await batch()
     expect(view.mounted).toContain("g20")
     await view.unmount()
     expect(frames.size).toBe(0)

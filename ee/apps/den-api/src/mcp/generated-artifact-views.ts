@@ -1,3 +1,4 @@
+import { artifactRunInputSchema } from "../artifact-runtime.js"
 import { createHash } from "node:crypto"
 import {
   RESOURCE_MIME_TYPE,
@@ -36,6 +37,8 @@ type LoadDataRequest = {
   expectedOutputSchemaDigest: string
   receiptId?: string
   maxAgeMs?: number
+  timeZone?: string
+  dataMode?: "live" | "snapshot"
 }
 
 function resourceMeta(csp: GeneratedArtifactViewCsp, digest: string): { ui: McpUiResourceMeta; resourceDigest: string } {
@@ -87,24 +90,27 @@ function registerRenderTool(input: {
   view: GeneratedArtifactView
   revision: GeneratedArtifactView["revisions"][number]
   preview: boolean
+  run?: boolean
   loadData: (request: LoadDataRequest) => Promise<WorkflowArtifactLoadResult>
 }): RegisteredTool {
-  const toolName = `${input.preview ? "preview" : "render"}_artifact_${input.view.id}`
+  const toolName = `${input.run ? "run" : input.preview ? "preview" : "render"}_artifact_${input.view.id}`
   return registerAppTool(
     input.server,
     toolName,
     {
       title: `${input.preview ? "Preview" : "Open"} ${input.view.title}`,
-      description: input.preview
+      description: input.view.dataMode === "live"
+        ? "Fetch current data by running the saved Workflow as the authenticated viewer. Optional timeZone is an IANA zone (default UTC). The server supplies input.runtime: now, today (YYYY-MM-DD), timeZone, dayStart and exclusive dayEnd (ISO instants). No other inputs or receipt overrides are accepted. Only current Den-authorized read-only capabilities may run."
+        : input.preview
         ? "Preview the newest saved custom view revision without changing the active revision."
         : "Render the Workflow's latest successful Artifact data with this Artifact's active custom view revision.",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
-        idempotentHint: true,
+        idempotentHint: input.view.dataMode !== "live",
         openWorldHint: false,
       },
-      inputSchema: z.object({
+      inputSchema: input.view.dataMode === "live" ? artifactRunInputSchema : z.object({
         receiptId: idSchema.optional().describe("Optional exact immutable Artifact data receipt. Defaults to the latest successful snapshot."),
         maxAgeMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional(),
       }),
@@ -118,26 +124,29 @@ function registerRenderTool(input: {
         },
       },
     },
-    async ({ receiptId, maxAgeMs }) => {
+    async (request: { timeZone?: string; receiptId?: string; maxAgeMs?: number }) => {
       const loaded = await input.loadData({
         configObjectId: input.view.configObjectId,
         expectedOutputSchemaDigest: input.revision.outputSchemaDigest,
-        receiptId,
-        maxAgeMs,
+        ...request,
+        dataMode: input.view.dataMode ?? "snapshot",
       })
       if (!loaded.ok) {
         return {
           isError: true,
-          content: [{ type: "text" as const, text: JSON.stringify({ error: loaded.error, message: loaded.message }) }],
+          ...(loaded.connectionCard ? { structuredContent: loaded.connectionCard } : {}),
+          content: [{ type: "text" as const, text: JSON.stringify(loaded) }],
         }
       }
       return {
         content: [{ type: "text" as const, text: workflowArtifactTextFallback(loaded) }],
         structuredContent: loaded.payload,
         _meta: {
-          artifactViewId: input.view.id,
+          ...(input.view.dataMode === "live" ? {} : {
+            artifactViewId: input.view.id,
+            viewRevisionId: input.revision.id,
+          }),
           appTitle: input.view.title,
-          viewRevisionId: input.revision.id,
           resourceDigest: input.revision.resourceDigest,
           resultDigest: loaded.payload.artifact.resultDigest,
         },
@@ -158,6 +167,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     description?: string
     reactSource: string
     cssSource?: string
+    dataMode?: "live" | "snapshot"
   }) => Promise<GeneratedArtifactView>
   activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
@@ -171,8 +181,9 @@ export function registerAgentGeneratedArtifactViews(input: {
     view: GeneratedArtifactView,
     revision: GeneratedArtifactView["revisions"][number] | undefined,
     preview: boolean,
+    run = false,
   ) => {
-    const key = `${preview ? "preview" : "render"}:${view.id}`
+    const key = `${run ? "run" : preview ? "preview" : "render"}:${view.id}`
     const current = registeredTools.get(key)
     if (current?.revisionId === revision?.id) return
     current?.registration.remove()
@@ -180,7 +191,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     if (!revision) return
     registeredTools.set(key, {
       revisionId: revision.id,
-      registration: registerRenderTool({ server: input.server, view, revision, preview, loadData: input.loadData }),
+      registration: registerRenderTool({ server: input.server, view, revision, preview, run, loadData: input.loadData }),
     })
   }
 
@@ -201,7 +212,8 @@ export function registerAgentGeneratedArtifactViews(input: {
     const newestRevision = readyRevisions[0]
     const previewRevision = newestRevision?.id !== view.activeRevisionId ? newestRevision : undefined
     syncTool(view, view.status === "active" ? activeRevision : undefined, false)
-    syncTool(view, previewRevision, true)
+    syncTool(view, view.status === "active" ? previewRevision : undefined, true)
+    syncTool(view, view.dataMode === "live" && view.status === "active" ? activeRevision ?? newestRevision : undefined, false, true)
   }
 
   for (const view of input.views) {
@@ -224,13 +236,14 @@ export function registerAgentGeneratedArtifactViews(input: {
       title: "Create or improve an app draft",
       description: [
         "Create or improve an in-app dashboard or artifact view of Workflow results. Call this Cloud MCP tool directly, not through search_capabilities or execute_capability. Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
-        "Prerequisites: the Workflow's current version must declare an explicit JSON Schema outputSchema and have a successful saved-Workflow run matching that schema. After saveWorkflow, run the saved version explicitly with its example inputs; execute_capability_script alone does not create its artifact snapshot. If the outputSchema is missing, test and create a new Workflow version with that schema before calling this tool.",
+        "Create the complete app in one request without asking the user about Workflow internals, naming, or runtime code. Reuse an existing app when editing. The current saved Workflow must declare outputSchema. New apps default to live: write the Workflow to read input.runtime.{now,today,timeZone,dayStart,dayEnd}, with an inputSchema accepting that object. Never hardcode creation dates or copy author example inputs. Live preview executes the saved version as the viewer. Snapshot mode is restricted to workflows without capability dependencies and receipts remain private to their caller.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
         "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app. Use one friendly name for the workflow and app. Only create an Automation when the user asks for a schedule. Generated views display, filter, and explore results; they do not submit approvals or other writes.",
         "OpenWork opens the artifact preview from a successful build automatically; no additional tool call is needed there. In other MCP clients, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
       ].join(" "),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: z.object({
+        dataMode: z.enum(["live", "snapshot"]).optional().describe("New views default to live. Existing view mode is immutable. Snapshot receipts remain caller-private."),
         artifactViewId: idSchema.optional().describe("Existing Artifact view to revise. Omit to create a new view."),
         configObjectId: idSchema.describe("Workflow whose current version has a non-null outputSchema and whose validated result data this view renders."),
         title: z.string().trim().min(1).max(255),
@@ -265,37 +278,48 @@ export function registerAgentGeneratedArtifactViews(input: {
           },
         )
       }
+      const displayToolName = `${view.status === "active" && view.activeRevisionId === revision.id ? "render" : "preview"}_artifact_${view.id}`
+      const liveInputInstruction = "Live tools run the saved Workflow as the authenticated viewer with optional timeZone (IANA zone, default UTC). The server supplies input.runtime.{now,today,timeZone,dayStart,dayEnd}. No other inputs or receipt overrides are accepted."
       // Model tool catalogs can stay fixed for the rest of a turn. Give the
       // host an exact preview reference without requiring the new tool first.
       const preview = await input.loadData({
         configObjectId: view.configObjectId,
         expectedOutputSchemaDigest: revision.outputSchemaDigest,
+        dataMode: view.dataMode ?? "snapshot",
       })
       if (!preview.ok) {
+        if (view.dataMode === "live") {
+          syncView(view)
+          input.notifyCatalogChanged()
+        }
         return errorToolResult(
           "artifact_view_preview_unavailable",
-          "The app draft compiled, but its preview has no compatible readable Workflow result. Run the current saved Workflow version explicitly with its example inputs using execute_capability, then retry save_artifact_view with the artifactViewId below. An ad-hoc execute_capability_script run is not a saved Workflow result. Do not schedule an Automation or report the preview ready yet.",
+          view.dataMode === "live"
+            ? `The app draft compiled, but its live preview failed. Resolve the reported Workflow or connection issue first, following the returned connection action when present. Then call ${displayToolName} to retry this revision's preview. ${liveInputInstruction} Do not rebuild or activate the draft just to retry data loading. Once the preview succeeds, let the user choose Save in OpenWork. Do not schedule an Automation or report the preview ready yet.`
+            : "The app draft compiled, but its preview has no compatible readable Workflow result. Run the current saved Workflow version explicitly with its example inputs using execute_capability, then retry save_artifact_view with the artifactViewId below. An ad-hoc execute_capability_script run is not a saved Workflow result. Do not schedule an Automation or report the preview ready yet.",
           {
             artifactViewId: view.id,
             viewRevisionId: revision.id,
             configObjectId: view.configObjectId,
             reason: preview.error,
             detail: preview.message,
+            ...(preview.connectionStatus ? { connectionStatus: preview.connectionStatus } : {}),
+            ...(preview.connectionCard ? { connectionCard: preview.connectionCard } : {}),
           },
         )
       }
       syncView(view)
       input.notifyCatalogChanged()
-      const displayInstruction = `Call ${view.status === "active" && view.activeRevisionId === revision.id
-        ? `render_artifact_${view.id}`
-        : `preview_artifact_${view.id}`} to display that revision.`
+      const displayInstruction = `Call ${displayToolName} to display that revision.` + (view.dataMode === "live"
+        ? ` The live launch tool is run_artifact_${view.id}; it opens the active revision when present, otherwise the newest draft. ${liveInputInstruction} Show the draft preview and let the user choose Save in OpenWork to keep it on their dashboard. Do not activate a draft merely because it built successfully.`
+        : "")
       return {
         content: [{ type: "text" as const, text: `Saved immutable view revision ${revision.id} at ${revision.resourceUri}. OpenWork opens the artifact preview automatically. In other MCP clients: ${displayInstruction}` }],
         structuredContent: { view },
         _meta: { "openwork/appDraft": {
           appId: view.id,
           revisionId: revision.id,
-          receiptId: preview.payload.artifact.receiptId,
+          ...(view.dataMode === "live" ? {} : { receiptId: preview.payload.artifact.receiptId }),
           title: view.title,
         } },
       }

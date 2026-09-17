@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { devOpenworkProxy } from "./dev-openwork-proxy";
+import { devDenProxy } from "./dev-den-proxy";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -67,6 +69,7 @@ const buildAppVersion =
 const buildSha = firstNonEmpty([
   process.env.VITE_OPENWORK_BUILD_SHA,
   process.env.OPENWORK_GIT_SHA,
+  process.env.VERCEL_GIT_COMMIT_SHA,
   process.env.GITHUB_SHA,
 ]) ?? readLocalGitSha();
 const shortBuildSha = buildSha ? buildSha.slice(0, 7) : "";
@@ -105,61 +108,68 @@ const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
 // pointed here via VITE_DEN_API_BASE_URL; sign-in still opens the real Den
 // web app. Inert unless the launcher sets the target env. No gateway marker:
 // that runtime implies a provisioned cloud instance, which local dev lacks.
-const headlessDenTarget = (process.env.OPENWORK_DEV_HEADLESS_DEN_TARGET ?? "").trim();
-
-export default defineConfig({
-  base: isElectronPackagedBuild ? "./" : "/",
-  define: {
-    ...Object.fromEntries(
-      Object.entries(migrationReleaseEnv).map(([k, v]) => [
-        `import.meta.env.${k}`,
-        JSON.stringify(v),
-      ]),
-    ),
-    "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
-    "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
-  },
-  plugins: [
-    {
-      name: "openwork-dev-server-id",
-      configureServer(server) {
-        server.middlewares.use("/__openwork_dev_server_id", (_req, res) => {
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ appRoot }));
-        });
+export default defineConfig(({ command, isPreview }) => {
+  const denProxy = devDenProxy(command === "serve" && !isPreview ? process.env : {});
+  const openworkProxy = devOpenworkProxy(command === "serve" && !isPreview ? process.env : {});
+  const headlessBrowserHostSuffix = Object.keys(openworkProxy).length > 0
+    ? process.env.OPENWORK_DEV_BROWSER_HOST_SUFFIX
+    : undefined;
+  if (headlessBrowserHostSuffix && !/^\.[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(headlessBrowserHostSuffix)) {
+    throw new Error("Invalid development browser host suffix.");
+  }
+  return {
+    base: isElectronPackagedBuild ? "./" : "/",
+    define: {
+      ...Object.fromEntries(
+        Object.entries(migrationReleaseEnv).map(([k, v]) => [
+          `import.meta.env.${k}`,
+          JSON.stringify(v),
+        ]),
+      ),
+      "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
+      "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
+    },
+    plugins: [
+      {
+        name: "openwork-dev-server-id",
+        configureServer(server) {
+          server.middlewares.use("/__openwork_dev_server_id", (_req, res) => {
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ appRoot }));
+          });
+        },
+      },
+      tailwindcss(),
+      react({
+        babel: {
+          plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
+        },
+      }),
+    ],
+    server: {
+      port: devPort,
+      strictPort: true,
+      ...(allowedHosts.size > 0 || headlessBrowserHostSuffix
+        ? { allowedHosts: [...allowedHosts, ...(headlessBrowserHostSuffix ? [headlessBrowserHostSuffix] : [])] }
+        : {}),
+      proxy: {
+        ...denProxy,
+        ...openworkProxy,
       },
     },
-    tailwindcss(),
-    react({
-      babel: {
-        plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
-      },
-    }),
-  ],
-  server: {
-    port: devPort,
-    strictPort: true,
-    ...(allowedHosts.size > 0 ? { allowedHosts: Array.from(allowedHosts) } : {}),
-    ...(headlessDenTarget
-      ? {
-          proxy: {
-            "/api/den": { target: headlessDenTarget, changeOrigin: true },
-          },
-        }
-      : {}),
-  },
-  build: {
-    target: "esnext",
-    rollupOptions: {
-      input: {
-        app: resolve(appRoot, "index.html"),
-        overlay: resolve(appRoot, "overlay.html"),
+    build: {
+      target: "esnext",
+      rollupOptions: {
+        input: {
+          app: resolve(appRoot, "index.html"),
+          overlay: resolve(appRoot, "overlay.html"),
+        },
       },
     },
-  },
-  resolve: {
-    alias: {
-      "@": resolve(appRoot, "src"),
+    resolve: {
+      alias: {
+        "@": resolve(appRoot, "src"),
+      },
     },
-  },
+  };
 });

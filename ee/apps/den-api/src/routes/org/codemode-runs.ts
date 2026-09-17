@@ -11,7 +11,6 @@ import { keysetCursorQuerySchema, nextCursorSchema } from "../../list-pagination
 import { orgMemberRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { memberHasRole } from "./shared.js"
 
 const listWorkflowRunsQuerySchema = z.object({
   cursor: keysetCursorQuerySchema.optional(),
@@ -61,11 +60,10 @@ export function registerOrgWorkflowRunRoutes<T extends { Variables: OrgRouteVari
       const entitlement = checkEntitlement(context.organization.metadata, "analytics")
       if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
       const member = context.currentMember
-      const isAdmin = member.isOwner || memberHasRole(member.role, "admin")
       const query = c.req.valid("query")
       const { items: rows, nextCursor } = await listWorkflowRuns(db, {
         organizationId: context.organization.id,
-        ...(isAdmin ? {} : { orgMembershipId: member.id }),
+        orgMembershipId: member.id,
         limit: query.limit,
         cursor: query.cursor,
       })

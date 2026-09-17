@@ -938,6 +938,7 @@ test("shared invalid_grant recovery cannot reuse the cleared in-memory refresh t
     connectionId: connection.id,
     accessToken: "stale-access-token",
     refreshToken: "revoked-refresh-token",
+    scope: "tools.read tools.write",
   })
   const connected = await getExternalMcpConnection({
     organizationId: seed.organizationId,
@@ -953,6 +954,22 @@ test("shared invalid_grant recovery cannot reuse the cleared in-memory refresh t
   )
 
   expect(await provider.tokens()).toMatchObject({ refresh_token: "revoked-refresh-token" })
+  await provider.saveTokens({ access_token: "scope-refresh", token_type: "Bearer" })
+  expect((await provider.tokens())?.scope).toBe("tools.read tools.write")
+  await provider.saveTokens({ access_token: "scope-narrowed", token_type: "Bearer", scope: "tools.read" })
+  expect((await provider.tokens())?.scope).toBe("tools.read")
+  await provider.saveTokens({ access_token: "scope-empty", token_type: "Bearer", scope: "" })
+  expect((await provider.tokens())?.scope).toBe("")
+  await provider.saveTokens({ access_token: "scope-still-empty", token_type: "Bearer" })
+  expect((await provider.tokens())?.scope).toBe("")
+  await provider.saveCodeVerifier("s".repeat(43))
+  const pending = await getExternalMcpConnection({ organizationId: seed.organizationId, connectionId: connection.id })
+  if (!pending) throw new Error("Expected the pending shared connection")
+  const callbackProvider = new ExternalMcpOAuthProvider(pending, `${redirectUriBase}/callback`, "signed-state",
+    undefined, new ExternalMcpDiagnosticTracker("req_shared_scope_callback"))
+  await callbackProvider.codeVerifier()
+  await callbackProvider.saveTokens({ access_token: "scope-new-grant", token_type: "Bearer" })
+  expect((await callbackProvider.tokens())?.scope).toBeUndefined()
   await provider.invalidateCredentials("tokens")
   expect(await provider.tokens()).toBeUndefined()
   expect(await getExternalMcpConnection({
@@ -992,6 +1009,18 @@ test("per-member OAuth reads JSON scopes returned as text by MySQL", async () =>
     access_token: "member-access-token",
     scope: "tools.read tools.write",
   })
+  await provider.saveTokens({ access_token: "scope-refresh", token_type: "Bearer" })
+  expect((await provider.tokens())?.scope).toBe("tools.read tools.write")
+  await provider.saveTokens({ access_token: "scope-narrowed", token_type: "Bearer", scope: "tools.read" })
+  expect((await provider.tokens())?.scope).toBe("tools.read")
+  await provider.saveTokens({ access_token: "scope-empty", token_type: "Bearer", scope: "" })
+  expect((await provider.tokens())?.scope).toBe("")
+  await provider.saveTokens({ access_token: "scope-still-empty", token_type: "Bearer" })
+  expect((await provider.tokens())?.scope).toBe("")
+  await provider.saveCodeVerifier("s".repeat(43))
+  await provider.codeVerifier()
+  await provider.saveTokens({ access_token: "scope-new-grant", token_type: "Bearer" })
+  expect((await provider.tokens())?.scope).toBeUndefined()
 })
 
 test("the 16-connection fanout reports incomplete coverage when the only match is connection 17", async () => {

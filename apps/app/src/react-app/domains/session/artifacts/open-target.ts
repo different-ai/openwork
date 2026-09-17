@@ -116,7 +116,7 @@ function extname(value: string) {
   return index >= 0 ? name.slice(index) : "";
 }
 
-function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPreview {
+export function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPreview {
   if (kind === "url") return "browser";
   const ext = extname(value);
   if ([".md", ".markdown", ".mdx", ".mmd"].includes(ext)) return "markdown";

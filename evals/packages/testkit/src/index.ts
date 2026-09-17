@@ -1,4 +1,7 @@
 export { browserScript } from "@openwork/cdp";
+export { attachSurface, evaluateOnSurface } from "@openwork/cdp";
+export { denFetch, signIn as signInDen } from "@openwork/behaviors";
+export { screenshot } from "@openwork/test-evidence";
 export type { BrowserEvaluation, BrowserScript } from "@openwork/cdp";
 export { control, createDesktopHandoffGrant, evalIn, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
 export { requestDenLoopback } from "@openwork/labs";
@@ -15,6 +18,7 @@ export { test } from "./fixture.ts";
 export * from "@openwork/env";
 export * from "./brief.ts";
 export * from "./daytona-witness.ts";
+export * from "./app-web-preview-witness.ts";
 export * from "./eventually.ts";
 export * from "./link.ts";
 export * from "./self-host.ts";

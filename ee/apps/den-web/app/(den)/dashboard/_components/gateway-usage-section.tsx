@@ -11,7 +11,9 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { formatUsageCost, StackedDailyChart } from "../_features/analytics/stacked-daily-chart";
+import { useSeriesColors } from "../_features/analytics/use-series-colors";
 import { useGatewayUsage } from "./gateway-usage-data";
+import { GatewayUsageCoverageNotice } from "./gateway-usage-coverage-notice";
 
 export function GatewayUsageSection({ orgId }: { orgId: string }) {
   const id = useId();
@@ -36,14 +38,18 @@ export function GatewayUsageSection({ orgId }: { orgId: string }) {
     ? (groupBy === "team" ? "Team cost · USD" : "Cost · USD")
     : (groupBy === "team" ? "Team-attributed tokens" : "Reported tokens");
   const chartSeries = usage
-    ? usage.series.filter((series) => !isCost || usage.daily.some((day) => typeof day.costValues[series.id] === "number"))
+    ? usage.series.filter((series) => usage.daily.some((day) => isCost
+      ? typeof day.costValues[series.id] === "number"
+      : (day.values[series.id] ?? 0) > 0))
     : [];
+  // Keep assignments in this mounted section while the chart reloads for filters.
+  const colors = useSeriesColors(usage?.series.map((series) => series.id) ?? [], `${orgId}:${groupBy}`);
   const chartDays = usage?.daily.map((day) => ({
     date: day.date,
     total: isCost
       ? (day.totalCostMicroUsd === 0 && Object.values(day.costValues).some((value) => value === null) ? null : day.totalCostMicroUsd)
       : day.totalTokens,
-    values: isCost ? day.costValues : day.values,
+    values: isCost ? day.costValues : Object.fromEntries(Object.entries(day.values).filter(([, value]) => value > 0)),
   }));
 
   return (
@@ -136,17 +142,11 @@ export function GatewayUsageSection({ orgId }: { orgId: string }) {
                 <p className="text-base font-medium text-gray-900">No teams yet</p>
                 <p className="max-w-md text-sm text-gray-500">Create a team to view usage grouped by team, or switch Group By to Model or Person.</p>
               </div>
-                : usage && chartDays ? <StackedDailyChart daily={chartDays} series={chartSeries} valueLabel={valueLabel} valueFormat={isCost ? "usd" : "tokens"} emptyLabel={isCost ? (unknownCost ? "Cost estimates are not available for these requests yet." : "No recorded cost in this period for the selected filters.") : filterIds.length ? "No reported tokens match these filters." : "No reported Gateway tokens in this period."} /> : null}
+                : usage && chartDays ? <StackedDailyChart daily={chartDays} series={chartSeries} colors={colors} valueLabel={valueLabel} valueFormat={isCost ? "usd" : "tokens"} emptyLabel={isCost ? (unknownCost ? "Cost estimates are not available for these requests yet." : "No recorded cost in this period for the selected filters.") : filterIds.length ? "No reported tokens match these filters." : "No reported Gateway tokens in this period."} /> : null}
         </div>
-        {usage && !noTeams && !isCost && hasMissing ? <DenNotice className="mt-5" tone="warning" message={missing === null ? "Some historical requests may not have reported token usage. These totals may be incomplete."
-            : `${missing?.toLocaleString()} ${groupBy === "team" ? "team-attributed " : ""}${missing === 1 ? "request did" : "requests did"} not report token usage. These totals include reported tokens only.`} /> : null}
+        {usage && !noTeams && !isCost ? <GatewayUsageCoverageNotice usage={usage} /> : null}
         {isCost ? <div role="note" className="mt-5 text-xs leading-5 text-gray-500">
-          <p>Costs are approximate based on publicly listed model prices when each request was recorded. They do not reflect any contract or discount agreements you may have. If no cost data is available for a model, it is not shown.</p>
-          {usage && !noTeams && hasMissing ? <p className="mt-1">
-            {missing === null
-              ? "Cost coverage is unknown for some historical requests."
-              : `${missing?.toLocaleString()} ${groupBy === "team" ? "team-attributed " : ""}${missing === 1 ? "request has" : "requests have"} no cost estimate.`} Cost includes known costs only; missing costs are not treated as free.
-          </p> : null}
+          <p>Costs are approximate based on publicly listed model prices when each request was recorded. <a href="https://openworklabs.com/docs/ai-gateway/token-costs" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-gray-900">Click here to see how costs are calculated</a></p>
         </div> : null}
       </DenCard>
     </section>

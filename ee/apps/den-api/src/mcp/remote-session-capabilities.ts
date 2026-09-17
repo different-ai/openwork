@@ -24,6 +24,7 @@ import {
   DEFAULT_TTL_MS,
   type RemoteSessionCommandStore,
 } from "../remote-sessions/commands.js"
+import { cloudRuntimeAvailable } from "../workers/cloud-runtime.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
 import { fetchPreviewNoRedirect, previewFetch } from "../workers/preview-fetch.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
@@ -248,20 +249,16 @@ function provisioningResult(): RemoteSessionRuntimeResult {
 }
 
 const CLOUD_NOT_AVAILABLE_MESSAGE =
-  "OpenWork Cloud is not available on this deployment, so remote sessions are unavailable."
+  "OpenWork Cloud is not available on this deployment; remote sessions targeting Cloud cannot run."
 
-/**
- * Whether the remote-session capabilities exist on this deployment at all.
- * When Den cannot host Cloud (self-hosted single-org mode or no Daytona
- * provisioner), the capabilities are hidden from search and execute reports
- * them as unknown. Organization entitlement is enforced at execution time by
- * the OpenWork Web access check, which returns a clear access-required error.
- */
+function cloudRemoteSessionsAvailable(): boolean {
+  return cloudHostingAvailable({ orgMode: env.orgMode }) && cloudRuntimeAvailable()
+}
+
 export function remoteSessionCapabilitiesEnabled(
   _organizationMetadata?: Record<string, unknown> | string | null | undefined,
 ): boolean {
-  if (env.provisionerMode !== "daytona" || !env.daytona.apiKey) return false
-  return cloudHostingAvailable({ orgMode: env.orgMode })
+  return env.automations.runtimeEnabled || cloudRemoteSessionsAvailable()
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -314,11 +311,7 @@ export async function resolveRemoteSessionWorkspace(
 async function defaultResolveRuntime(
   scope: { organizationId: DenTypeId<"organization">; userId: string; provisionIfMissing?: boolean },
 ): Promise<RemoteSessionRuntimeResult> {
-  // Defense in depth: the registry already hides these capabilities when the
-  // deployment cannot host Cloud, but the runtime re-checks so the runtime
-  // cannot execute against stale visibility. Organization entitlement was
-  // already confirmed by the OpenWork Web access check in executeRemoteSessionCapability.
-  if (!remoteSessionCapabilitiesEnabled()) {
+  if (!cloudRemoteSessionsAvailable()) {
     return { ok: false, error: "cloud_not_available", message: CLOUD_NOT_AVAILABLE_MESSAGE, retryable: false }
   }
 
@@ -556,7 +549,9 @@ export async function executeRemoteSessionCapability(
   if (input.action === "create") {
     const body = createBodySchema.parse(parsedBody.data)
     if (body.target === "desktop") {
-      const presence = await deps.desktopPresence({ organizationId: input.organizationId, userId: input.userId })
+      const presence = env.automations.runtimeEnabled
+        ? await deps.desktopPresence({ organizationId: input.organizationId, userId: input.userId })
+        : { connected: false, ownerMemberId: null }
       if (!presence.connected || !presence.ownerMemberId) {
         return errorResult({
           error: "desktop_offline",

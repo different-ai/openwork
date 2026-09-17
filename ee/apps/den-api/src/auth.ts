@@ -35,6 +35,7 @@ import {
 import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
+import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import {
@@ -1387,6 +1388,14 @@ export const auth = betterAuth({
       },
     }),
     scim({
+      linkExistingUsers: {
+        requireExistingOrgMembership: true,
+        shouldLinkUser: createScimExistingUserLinkCheck((where) => db
+          .select({ id: schema.MemberTable.id })
+          .from(schema.MemberTable)
+          .where(where)
+          .limit(1)),
+      },
       // Group names are metadata, never organization role assignments.
       mapGroupToRoles: () => [],
       storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,

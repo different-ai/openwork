@@ -4,18 +4,20 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, StrictMode, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { notifyManager, onlineManager, QueryClientProvider, skipToken, useQuery } from "@tanstack/react-query";
+import { focusManager, notifyManager, onlineManager, QueryClientProvider, skipToken, useQuery } from "@tanstack/react-query";
 import type { UIMessage } from "ai";
 import type { OpenworkSessionHistory } from "../src/app/lib/openwork-server";
-import { openingHistoryWindow, openingSessionHistoryOptions, prefetchOpeningSessionHistory, sessionHistoryIdentity, SessionHistoryBoundary, SessionHistoryStatus, useOpeningSessionHistory, useSessionPrefetchIntent, type OpeningHistoryWindow } from "../src/react-app/domains/session/surface/session-history";
+import { latestConfirmsFullHistory, openingHistoryWindow, openingSessionHistoryOptions, prefetchOpeningSessionHistory, sessionHistoryIdentity, SessionHistoryBoundary, SessionHistoryStatus, useOpeningSessionHistory, useSessionPrefetchIntent, type OpeningHistoryWindow } from "../src/react-app/domains/session/surface/session-history";
 import { resolveWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
-import { flushSessionScrollState, useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
+import { flushSessionScrollState, readPersistedSessionScrollState, sessionScrollKey, useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
-import { __applySessionSyncEventForTest, __createWorkspaceSessionSyncForTest, applySessionRevert, applySessionUnrevert, seedSessionState, snapshotKey, trackWorkspaceSessionSync, transcriptKey } from "../src/react-app/domains/session/sync/session-sync";
+import { __applySessionSyncEventForTest, __createWorkspaceSessionSyncForTest, applySessionRevert, applySessionUnrevert, seedSessionState, sessionMetadataKey, snapshotKey, trackWorkspaceSessionSync, transcriptKey } from "../src/react-app/domains/session/sync/session-sync";
 import type { OpencodeEvent } from "../src/app/types";
 import { deriveRenderedSessionMessages, type LatestSessionHistory } from "../src/react-app/domains/session/surface/session-render-state";
 import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
 import { resolveForkBoundaryId } from "../src/react-app/domains/session/sync/transcript-reconcile";
+import { resolveAdmissionOutcome } from "../src/react-app/domains/session/surface/session-admission-outcome";
+import { mergeSessionHistoryPages } from "../src/react-app/domains/session/surface/session-history-pages";
 
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -98,7 +100,10 @@ function fixture() {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
+  let historyPages: ReturnType<typeof useOpeningSessionHistory>["pages"] | undefined;
+  let findRequested = false;
   let ensureFullSnapshot: (() => Promise<OpenworkSessionHistory>) | undefined;
+  let readSendHistory: ReturnType<typeof useOpeningSessionHistory>["readSendHistory"] | undefined;
   let runWithFullSnapshot: ReturnType<typeof useOpeningSessionHistory>["runWithFullSnapshot"] | undefined;
   const reads: { owner: string; authToken?: string; window?: OpeningHistoryWindow; signal: AbortSignal; resolve: (snapshot: OpenworkSessionHistory) => void; reject: (error: Error) => void }[] = [];
   const latestReads: { owner: string; authToken?: string; signal: AbortSignal; resolve: (history: Pick<OpenworkSessionHistory, "session" | "messages">) => void; reject: (error: Error) => void }[] = [];
@@ -109,29 +114,37 @@ function fixture() {
     const readLatest = (signal: AbortSignal) => new Promise<Pick<OpenworkSessionHistory, "session" | "messages">>((resolve, reject) => {
       latestReads.push({ owner, authToken, signal, resolve, reject });
     });
-    return { owner: cacheOwner, sessionId: owner, authToken, snapshotQueryKey: snapshotKey("workspace", owner), transcriptQueryKey: transcriptKey("workspace", owner), readSnapshot, readLatest };
+    return { owner: cacheOwner, sessionId: owner, authToken, snapshotQueryKey: snapshotKey("workspace", owner), transcriptQueryKey: transcriptKey("workspace", owner),
+      metadataQueryKey: sessionMetadataKey({ workspaceId: "workspace", baseUrl: "https://history.example/opencode", openworkToken: authToken ?? "" }, owner), readSnapshot, readLatest };
   }
   function Harness({ options, onMount }: { options: ReturnType<typeof input>; onMount?: (ensure: () => Promise<OpenworkSessionHistory>) => void }) {
     const { sessionId: owner, owner: cacheOwner } = options;
     const key = options.snapshotQueryKey;
     const workspaceId = key[1];
     const opening = useOpeningSessionHistory(options);
+    historyPages = opening.pages;
     ensureFullSnapshot = opening.ensureFullSnapshot;
+    readSendHistory = opening.readSendHistory;
     runWithFullSnapshot = opening.runWithFullSnapshot;
     // The hero's one-step auto-send fires from a mount effect, before any read settled.
     useEffect(() => { onMount?.(opening.ensureFullSnapshot); }, [onMount, opening.ensureFullSnapshot]);
-    const full = useQuery({ queryKey: key, queryFn: ({ signal }) => opening.readFullSnapshot(signal), enabled: opening.backgroundReady, staleTime: 500, retry: false });
+    const full = useQuery({ queryKey: key, queryFn: ({ signal }) => opening.readFullSnapshot(signal), enabled: opening.backgroundReady || findRequested, staleTime: opening.fullCurrent ? Infinity : 500, retry: false });
     const current = full.data ?? opening.snapshot;
     useEffect(() => {
-      if (current) opening.seedSnapshot(current, () => seedSessionState(workspaceId, current, { preview: !full.data }));
-    }, [workspaceId, current, full.data, opening.seedSnapshot]);
+      if (current) opening.seedSnapshot(current, () => seedSessionState(workspaceId, current, { preview: !opening.complete }));
+    }, [workspaceId, current, opening.complete, opening.seedSnapshot]);
     const transcript = useQuery<UIMessage[]>({ queryKey: transcriptKey(workspaceId, owner), queryFn: skipToken });
-    const messages = deriveRenderedSessionMessages({ snapshot: current, transcriptState: transcript.data, historyComplete: Boolean(full.data), latestHistory: opening.latestHistory });
-    const pending = !current || (!full.data && Boolean(current.session.revert));
-    const failed = full.isError && !full.isFetching;
-    return <><span>Composer {owner}</span><input aria-label="Draft" /><div className="relative"><div data-thread-scroll><SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
-      <div>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.parts.map((part) => part.type === "text" ? part.text : part.type === "dynamic-tool" ? `${part.state}:${JSON.stringify({ input: part.input, output: "output" in part ? part.output : null })}` : "").join(" ")}</div>)}
-    </SessionHistoryBoundary></div><SessionHistoryStatus key={cacheOwner} complete={Boolean(full.data)} pending={pending} loading={full.isFetching && opening.partial} failed={failed} onRetry={() => full.refetch()} /></div></>;
+    const messages = opening.pageMessages ?? deriveRenderedSessionMessages({ snapshot: current, transcriptState: transcript.data, historyComplete: Boolean(full.data), latestHistory: opening.latestHistory });
+    const pending = !current || (!opening.complete && Boolean(current.session.revert));
+    const unanswered = opening.complete && resolveAdmissionOutcome({ messages, statusType: "idle", sending: false,
+      hasActiveQuestion: false, hasActivePermission: false, hasSessionError: false }) === "unresolved";
+    const failed = full.isError && !full.isFetching || opening.pages.failed;
+    return <><span>Composer {owner}</span><input aria-label="Draft" /><div className="flex min-h-0 flex-col">
+      <SessionHistoryStatus key={cacheOwner} complete={opening.complete} pending={pending} loading={full.isFetching && opening.partial || opening.pages.loading} failed={failed} onRetry={() => opening.pages.failed ? opening.pages.retry() : full.refetch()} />
+      <div className="relative min-h-0 flex-1"><div data-thread-scroll><SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
+        <div data-history-complete={opening.complete} data-admission-unresolved={unanswered}>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.parts.map((part) => part.type === "text" ? part.text : part.type === "dynamic-tool" ? `${part.state}:${JSON.stringify({ input: part.input, output: "output" in part ? part.output : null })}` : "").join(" ")}</div>)}
+      </SessionHistoryBoundary></div></div>
+    </div></>;
   }
   async function renderInput(options: ReturnType<typeof input>, mount: { strict?: boolean; onMount?: (ensure: () => Promise<OpenworkSessionHistory>) => void } = {}) {
     const tree = <QueryClientProvider client={client}><Harness options={options} onMount={mount.onMount} /></QueryClientProvider>;
@@ -140,6 +153,11 @@ function fixture() {
   cleanups.push(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
   return {
     reads, latestReads, host, client, input, renderInput,
+    get pages() {
+      if (!historyPages) throw new Error("History is not mounted");
+      return historyPages;
+    },
+    async find() { findRequested = true; await renderInput(input()); },
     startSharedRead(owner = "a") {
       const options = input(owner);
       void client.fetchQuery({ queryKey: options.snapshotQueryKey, queryFn: ({ signal }) => options.readSnapshot(signal), retry: false }).catch(() => undefined);
@@ -161,6 +179,10 @@ function fixture() {
       if (!ensureFullSnapshot) throw new Error("History is not mounted");
       return ensureFullSnapshot();
     },
+    readSendHistory(options?: { revealLatest?: boolean }) {
+      if (!readSendHistory) throw new Error("History is not mounted");
+      return readSendHistory(options);
+    },
     render(owner = "a", authToken?: string, cacheOwner = owner) { return renderInput(input(owner, authToken, cacheOwner)); },
     async resolve(index: number, title: string | OpenworkSessionHistory) {
       await act(async () => reads[index].resolve(typeof title === "string" ? snapshot(reads[index].owner, title) : title));
@@ -168,6 +190,454 @@ function fixture() {
     },
   };
 }
+
+function page(ids: string[], before: string | null, nextCursor: string | null, sessionId = "a") {
+  return { ...snapshot(sessionId, "Paged history", ids), pagination: { ...(before === null ? {} : { before }), nextCursor, limit: 24 } };
+}
+
+async function demand(view: ReturnType<typeof fixture>, direction: "older" | "newer" | "latest") {
+  let pending: Promise<void> = Promise.resolve();
+  await act(async () => { pending = view.pages.load(direction); });
+  return { settled: pending.catch(() => undefined) };
+}
+
+function visibleIds(view: ReturnType<typeof fixture>) {
+  return [...view.host.querySelectorAll("[data-message-id]")].map((message) => message.getAttribute("data-message-id"));
+}
+
+describe("native paged history", () => {
+  test("page aggregation touches each native ID once and preserves overlapping order with deduplication", () => {
+    const pages = Array.from({ length: 40 }, (_, index) => page(Array.from({ length: 24 }, (_, row) => `id-${index * 23 + row}`), `entry-${index}`, null));
+    let reads = 0;
+    for (const current of pages) for (const message of current.messages) {
+      const id = message.info.id;
+      Object.defineProperty(message.info, "id", { get: () => { reads++; return id; } });
+    }
+    const merged = mergeSessionHistoryPages(pages, () => true);
+    expect(reads).toBe(40 * 24);
+    expect(merged.messages.map((message) => message.info.id)).toEqual(Array.from({ length: 40 * 23 + 1 }, (_, index) => `id-${index}`));
+  });
+
+  test("saved-page provenance lookup reuses its index instead of scanning native rows on scroll", async () => {
+    const view = fixture();
+    const latest = page(fullWindow, null, "older");
+    await view.render();
+    await view.resolve(0, latest);
+    let reads = 0;
+    for (const message of latest.messages) {
+      const id = message.info.id;
+      Object.defineProperty(message.info, "id", { get: () => { reads++; return id; } });
+    }
+    for (let pass = 0; pass < 20; pass++) for (const id of fullWindow) expect(view.pages.pageForAnchor(id)?.before).toBeNull();
+    expect(reads).toBe(0);
+  });
+
+  test("sending from a restored middle window installs latest history and preserves concurrently arriving live rows", async () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 500, null, { messageId: "reading", offset: -20 });
+    store.setGeometry("a", { owner: "a", scrollHeight: 4000, viewportWidth: 600, before: 480, after: 2400, messageIds: ["reading"],
+      page: { before: "middle", limit: 24, lineage: [null, "middle"] } });
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render();
+    await view.resolve(0, page(["reading"], "middle", "older"));
+    let preparing: Promise<OpenworkSessionHistory["messages"]> = Promise.resolve([]);
+    await act(async () => { preparing = view.readSendHistory({ revealLatest: true }); });
+    expect(view.reads[1].window).toEqual({ limit: 24 });
+    for (const [id, role] of [["server-user", "user"], ["server-assistant", "assistant"]]) {
+      await event({ type: "message.updated", properties: { info: { id, sessionID: "a", role, time: { created: 100 } } } });
+    }
+    await view.resolve(1, page(["previous-tail"], null, "intervening"));
+    expect((await preparing).map((message) => message.info.id)).toEqual(["previous-tail"]);
+    expect(view.pages.hasNewer).toBe(false);
+    expect(visibleIds(view)).toEqual(["previous-tail", "server-user", "server-assistant"]);
+    await event({ type: "message.part.updated", properties: { part: {
+      id: "answer", sessionID: "a", messageID: "server-assistant", type: "text", text: "Still streaming", time: { start: 100 },
+    } } });
+    expect(view.host.textContent).toContain("Still streaming");
+    expect(view.latestReads).toHaveLength(0);
+    expect(view.reads.every((read) => read.window)).toBe(true);
+  });
+
+  test("warm page return revalidates a bounded page after text, tool and terminal corrections", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render();
+    await view.resolve(0, { ...historyTool("old-output"), pagination: { limit: 24, nextCursor: "older" } });
+    const corrected = historyTool("correct-output");
+    corrected.messages[1].parts[0] = { id: "part-active", sessionID: "a", messageID: "active", type: "text", text: "correct-text" };
+    for (const part of corrected.messages[1].parts) await event({ type: "message.part.updated", properties: { part } });
+    await act(async () => { void view.client.invalidateQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await view.resolve(1, { ...corrected, pagination: { limit: 24, nextCursor: "older" } });
+    expect(view.host.textContent).toContain("correct-output");
+    await view.render("b");
+    await view.render("a");
+    expect(view.reads[3].window).toEqual({ limit: 24 });
+    expect(view.host.textContent).not.toContain("old-output");
+    await view.resolve(3, { ...corrected, pagination: { limit: 24, nextCursor: "older" } });
+    expect(view.host.textContent).toContain("correct-output");
+    expect(view.host.textContent).toContain("correct-text");
+    expect(view.reads.every((read) => read.window)).toBe(true);
+  });
+
+  test("a saved newest-page anchor pushed out by appends is recovered through bounded older pages", async () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 500, null, { messageId: "saved-anchor", offset: -20 });
+    store.setGeometry("a", { owner: "a", scrollHeight: 1000, viewportWidth: 600, before: 0, after: 300, messageIds: ["saved-anchor"],
+      page: { before: null, limit: 24, lineage: [null] } });
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(fullWindow, null, "appended-boundary"));
+    expect(view.pages.anchorPending).toBe(true);
+    expect(view.reads[1].window).toEqual({ limit: 24, before: "appended-boundary" });
+    expect(useSessionScrollStore.getState().sessions.a).toMatchObject({ anchor: { messageId: "saved-anchor", offset: -20 } });
+    await view.resolve(1, page(["saved-anchor", "previous-tail"], "appended-boundary", "older"));
+    expect(view.pages.anchorPending).toBe(false);
+    expect(visibleIds(view)).toEqual(["saved-anchor", "previous-tail", ...fullWindow]);
+    expect(view.pages.pageForAnchor("saved-anchor")?.before).toBe("appended-boundary");
+    expect(view.reads).toHaveLength(2);
+    expect(view.client.getQueryData(snapshotKey("workspace", "a"))).toBeUndefined();
+  });
+
+  test("live session metadata activates the revert boundary without refreshing tool status", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render("a", "history-test");
+    await view.resolve(0, page(["visible", "boundary", "hidden"], null, "older"));
+    await event({ type: "session.updated", properties: { info: { id: "a", revert: { messageID: "boundary" } } } });
+    expect(visibleIds(view)).toEqual([]);
+    expect(view.reads).toHaveLength(1);
+    expect(view.latestReads).toHaveLength(0);
+    await paint();
+    await paint();
+    expect(view.reads[1].window).toBeUndefined();
+    await view.resolve(1, snapshot("a", "Reverted", ["oldest", "visible", "boundary", "hidden"], "boundary"));
+    expect(visibleIds(view)).toEqual(["oldest", "visible"]);
+  });
+
+  for (const boundary of ["token", "engine"]) test(`metadata from another ${boundary} cannot hide the current page`, async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    const input = view.input("a", boundary === "token" ? "different-token" : "history-test");
+    if (boundary === "engine") input.metadataQueryKey = sessionMetadataKey({ workspaceId: "workspace", baseUrl: "https://history.example/opencode2", openworkToken: "history-test" }, "a");
+    await view.renderInput(input);
+    await view.resolve(0, page(["visible", "boundary"], null, "older"));
+    await event({ type: "session.updated", properties: { info: { id: "a", revert: { messageID: "boundary" } } } });
+    expect(visibleIds(view)).toEqual(["visible", "boundary"]);
+    await paint();
+    await paint();
+    expect(view.reads).toHaveLength(1);
+  });
+
+  test("exhausted native coverage enables complete transcript and unanswered admission gates without a full-key placeholder", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["unanswered-user"], null, null));
+    expect(view.host.querySelector('[data-history-complete="true"]')).not.toBeNull();
+    expect(view.host.querySelector('[data-admission-unresolved="true"]')).not.toBeNull();
+    expect(view.client.getQueryData(snapshotKey("workspace", "a"))).toBeUndefined();
+    await paint();
+    await paint();
+    expect(view.reads).toHaveLength(1);
+  });
+
+  test("opens one bounded page and only loads older history on demand, with deduplication and explicit exhaustion", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(fullWindow, null, "older-entry"));
+    await paint();
+    await paint();
+    expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }]);
+    expect(view.client.getQueryData(snapshotKey("workspace", "a"))).toBeUndefined();
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    const pending = await demand(view, "older");
+    expect(view.reads[1].window).toEqual({ limit: 24, before: "older-entry" });
+    expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
+    await view.resolve(1, page(["first", fullWindow[0]], "older-entry", null));
+    await pending.settled;
+    expect(visibleIds(view)).toEqual(["first", ...fullWindow]);
+    expect(view.pages.hasOlder).toBe(false);
+    expect(view.pages.complete).toBe(true);
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    await demand(view, "older");
+    expect(view.reads).toHaveLength(2);
+    expect(view.client.getQueryData(snapshotKey("workspace", "a"))).toBeUndefined();
+  });
+
+  test("exactly N messages with nextCursor null are exhausted, not an invitation to fetch uncapped history", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(fullWindow, null, null));
+    await paint();
+    await paint();
+    expect(view.pages.complete).toBe(true);
+    await demand(view, "older");
+    expect(view.reads).toHaveLength(1);
+    expect(visibleIds(view)).toEqual(fullWindow);
+  });
+
+  test("persists the engine cursor and lineage, cold-reopens one page, then fills newer pages without splicing a live tail across a gap", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "middle-entry"));
+    const older = await demand(view, "older");
+    await view.resolve(1, page(["reading"], "middle-entry", "oldest-entry"));
+    await older.settled;
+    const provenance = view.pages.pageForAnchor("reading:steps");
+    expect(provenance).toEqual({ before: "middle-entry", limit: 24, lineage: [null, "middle-entry"] });
+    const store = useSessionScrollStore.getState();
+    const key = sessionScrollKey("a", "a");
+    store.setManualScroll(key, 500, null, { messageId: "reading", offset: -20 });
+    store.setGeometry(key, { owner: "a", scrollHeight: 4000, viewportWidth: 600, before: 480, after: 2400, messageIds: ["reading"], page: provenance });
+    flushSessionScrollState();
+    await cleanups.pop()?.();
+    useSessionScrollStore.setState({ sessions: readPersistedSessionScrollState() });
+    const reopened = fixture();
+    await reopened.render();
+    expect(reopened.reads[0].window).toEqual({ limit: 24, before: "middle-entry" });
+    await reopened.resolve(0, page(["reading"], "middle-entry", "oldest-entry"));
+    await act(async () => reopened.client.setQueryData<UIMessage[]>(transcriptKey("workspace", "a"), [
+      ...snapshotToUIMessages(snapshot("a", "", ["reading"])), { id: "live-tail", role: "assistant", parts: [] },
+    ]));
+    await settle();
+    expect(visibleIds(reopened)).toEqual(["reading"]);
+    const sendHistory = reopened.readSendHistory();
+    expect(reopened.latestReads).toHaveLength(1);
+    expect(reopened.reads).toHaveLength(1);
+    await reopened.resolveLatest(0, snapshot("a", "Latest for sending", ["live-tail"]));
+    expect((await sendHistory).map((message) => message.info.id)).toEqual(["live-tail"]);
+    expect(visibleIds(reopened)).toEqual(["reading"]);
+    const newer = await demand(reopened, "newer");
+    expect(reopened.reads[1].window).toEqual({ limit: 24 });
+    await reopened.resolve(1, page(["latest", "live-tail"], null, "middle-entry"));
+    await newer.settled;
+    expect(visibleIds(reopened)).toEqual(["reading", "latest", "live-tail"]);
+    expect(reopened.pages.hasNewer).toBe(false);
+    expect(reopened.reads.every((read) => read.window && !read.window.messageIds)).toBe(true);
+  });
+
+  test("deep reading positions retain a bounded lineage of engine-issued cursors instead of falling back to message IDs", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["newest"], null, "cursor-1"));
+    for (let index = 1; index <= 64; index++) {
+      const pending = await demand(view, "older");
+      await view.resolve(index, page([`message-${index}`], `cursor-${index}`, `cursor-${index + 1}`));
+      await pending.settled;
+    }
+    const position = view.pages.pageForAnchor("message-64");
+    expect(position?.before).toBe("cursor-64");
+    expect(position?.lineage).toEqual([null, ...Array.from({ length: 63 }, (_, index) => `cursor-${index + 2}`)]);
+    expect(view.reads.every((read) => read.window && !read.window.messageIds)).toBe(true);
+  });
+
+  test("a shifted newest page stays detached until demand fills its intervening cursor", async () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 500, null, { messageId: "reading", offset: 0 });
+    store.setGeometry("a", { owner: "a", scrollHeight: 4000, viewportWidth: 600, before: 480, after: 2400, messageIds: ["reading"],
+      page: { before: "middle", limit: 24, lineage: [null, "middle"] } });
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["reading"], "middle", "oldest"));
+    const newer = await demand(view, "newer");
+    await view.resolve(1, page(["newest"], null, "intervening"));
+    await newer.settled;
+    expect(visibleIds(view)).toEqual(["reading"]);
+    expect(view.reads).toHaveLength(2);
+    const bridge = await demand(view, "newer");
+    expect(view.reads[2].window).toEqual({ limit: 24, before: "intervening" });
+    await view.resolve(2, page(["between"], "intervening", "middle"));
+    await bridge.settled;
+    expect(visibleIds(view)).toEqual(["reading", "between", "newest"]);
+    expect(view.pages.pageForAnchor("reading")?.lineage).toEqual([null, "intervening", "middle"]);
+  });
+
+  test("failed and repeated cursors retain readable messages and only announce actual loads", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "older"));
+    const older = await demand(view, "older");
+    await view.resolve(1, page(["bad"], "older", "older"));
+    await older.settled;
+    await settle();
+    expect(visibleIds(view)).toEqual(["latest"]);
+    expect(view.host.querySelector('[role="alert"]')?.textContent).toContain("could not be loaded");
+    await act(async () => view.host.querySelector("button")?.click());
+    expect(view.reads[2].window).toEqual({ before: "older", limit: 24 });
+    await view.resolve(2, page(["first"], "older", null));
+    expect(visibleIds(view)).toEqual(["first", "latest"]);
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+  });
+
+  for (const change of ["session", "owner", "credential"]) test(`a late page is aborted and fenced after ${change} changes`, async () => {
+    const view = fixture();
+    await view.render("a", "initial");
+    await view.resolve(0, page(["original"], null, "older"));
+    const oldLoad = view.pages.load;
+    const pending = await demand(view, "older");
+    await view.render(change === "session" ? "b" : "a", change === "credential" ? "rotated" : "initial", change === "owner" ? "other-engine" : change === "session" ? "b" : "a");
+    expect(view.reads[1].signal.aborted).toBe(true);
+    await view.resolve(1, page(["late-old-page"], "older", null));
+    await pending.settled;
+    await view.resolve(2, page(["destination"], null, "destination-older", change === "session" ? "b" : "a"));
+    expect(visibleIds(view)).toEqual(["destination"]);
+    const count = view.reads.length;
+    await oldLoad("older");
+    expect(view.reads).toHaveLength(count);
+  });
+
+  test("deletion during the first read retries only the bounded page and rejects its stale response", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render();
+    await event({ type: "message.removed", properties: { sessionID: "a", messageID: "removed-before-open" } });
+    expect(view.reads[0].signal.aborted).toBe(true);
+    expect(view.reads[1].window).toEqual({ limit: 24 });
+    await view.resolve(0, page(["removed-before-open"], null, null));
+    expect(visibleIds(view)).toEqual([]);
+    await view.resolve(1, page(["kept"], null, "older"));
+    await paint();
+    await paint();
+    expect(visibleIds(view)).toEqual(["kept"]);
+    expect(view.reads).toHaveLength(2);
+  });
+
+  test("warm page reopen cannot reuse an opening snapshot invalidated by removal", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render();
+    await view.resolve(0, page(["kept", "removed"], null, "older"));
+    await event({ type: "message.removed", properties: { sessionID: "a", messageID: "removed" } });
+    await view.render("b");
+    await view.render("a");
+    expect(visibleIds(view)).not.toContain("removed");
+    expect(view.reads[2].window).toEqual({ limit: 24 });
+    await view.resolve(2, page(["kept"], null, "older"));
+    expect(visibleIds(view)).toEqual(["kept"]);
+    expect(view.reads.every((read) => read.window)).toBe(true);
+  });
+
+  test("an unseen removed message aborts an older read even before that message has entered the window", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "older"));
+    const pending = await demand(view, "older");
+    await event({ type: "message.removed", properties: { sessionID: "a", messageID: "unseen" } });
+    expect(view.reads[1].signal.aborted).toBe(true);
+    await view.resolve(1, page(["unseen"], "older", null));
+    await pending.settled;
+    expect(visibleIds(view)).toEqual(["latest"]);
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(view.reads).toHaveLength(2);
+  });
+
+  test("removal cancels a pending page and cannot be resurrected by cached pages or a bounded terminal refresh", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render();
+    await view.resolve(0, page(["keep", "remove"], null, "older"));
+    const older = await demand(view, "older");
+    await event({ type: "message.removed", properties: { sessionID: "a", messageID: "remove" } });
+    expect(view.reads[1].signal.aborted).toBe(true);
+    await view.resolve(1, page(["earlier", "remove"], "older", null));
+    await older.settled;
+    expect(visibleIds(view)).toEqual(["keep"]);
+    await act(async () => { void view.client.invalidateQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    expect(view.reads[2].window).toEqual({ limit: 24 });
+    await view.resolve(2, page(["keep", "remove", "terminal"], null, "older"));
+    expect(visibleIds(view)).toEqual(["keep", "terminal"]);
+    expect(view.reads.every((read) => read.window)).toBe(true);
+  });
+
+  test("bounded reconciliation preserves live tool corrections against a stale read and unrelated older-page hydration", async () => {
+    const view = fixture();
+    const event = sessionEvents();
+    await view.render();
+    await view.resolve(0, { ...historyTool("output-A"), pagination: { limit: 24, nextCursor: "older" } });
+    await act(async () => { void view.client.invalidateQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    const correction = historyTool("output-B", "corrected").messages[1].parts[1];
+    await event({ type: "message.part.updated", properties: { part: correction } });
+    await view.resolve(1, { ...historyTool("output-A"), pagination: { limit: 24, nextCursor: "older" } });
+    expect(view.host.textContent).toContain("output-B");
+    expect(view.host.textContent).not.toContain("output-A");
+    const older = await demand(view, "older");
+    await view.resolve(2, page(["earlier"], "older", null));
+    await older.settled;
+    expect(view.host.textContent).toContain("output-B");
+    expect(view.host.textContent).not.toContain("output-A");
+    await act(async () => { void view.client.invalidateQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await view.resolve(3, { ...historyTool("output-C", "corrected"), pagination: { limit: 24, nextCursor: "older" } });
+    expect(view.host.textContent).toContain("output-C");
+    expect(view.reads.every((read) => read.window)).toBe(true);
+  });
+
+  test("a disjoint terminal refresh preserves a manual window until the intervening page is demanded", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["reading"], null, "old"));
+    useSessionScrollStore.getState().setManualScroll(sessionScrollKey("a", "a"), 100, null, { messageId: "reading", offset: -20 });
+    await act(async () => { void view.client.invalidateQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await view.resolve(1, page(["newest"], null, "bridge"));
+    expect(visibleIds(view)).toEqual(["reading"]);
+    expect(view.pages.hasNewer).toBe(true);
+    expect(view.pages.pageForAnchor("reading")).toBeUndefined();
+    const pending = await demand(view, "newer");
+    expect(view.reads[2].window).toEqual({ limit: 24, before: "bridge" });
+    await view.resolve(2, page(["reading", "between"], "bridge", "old"));
+    await pending.settled;
+    expect(visibleIds(view)).toEqual(["reading", "between", "newest"]);
+    expect(view.pages.pageForAnchor("reading")?.before).toBe("bridge");
+  });
+
+  test("jumping to latest fetches one newest page without rendering the old middle window beside it", async () => {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll("a", 400, null, { messageId: "middle", offset: 0 });
+    store.setGeometry("a", { owner: "a", scrollHeight: 2000, viewportWidth: 600, before: 300, after: 800, messageIds: ["middle"],
+      page: { before: "middle-entry", limit: 24, lineage: [null, "middle-entry"] } });
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["middle"], "middle-entry", "older"));
+    const pending = await demand(view, "latest");
+    expect(view.reads[1].window).toEqual({ limit: 24 });
+    await view.resolve(1, page(["latest"], null, "intervening"));
+    await pending.settled;
+    expect(visibleIds(view)).toEqual(["latest"]);
+    expect(view.pages.hasNewer).toBe(false);
+    expect(view.pages.hasOlder).toBe(true);
+  });
+
+  test("Find and full operations demand complete history while sends retain the latest bounded reader", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["recent"], null, "older"));
+    await view.find();
+    expect(view.reads[1].window).toBeUndefined();
+    await view.resolve(1, snapshot("a", "Complete", ["find-older", "recent"]));
+    expect(visibleIds(view)).toEqual(["find-older", "recent"]);
+    const operation = mock();
+    const pending = view.runWithFullSnapshot(operation, { fresh: true });
+    expect(view.reads[2].window).toBeUndefined();
+    expect(operation).not.toHaveBeenCalled();
+    await view.resolve(2, snapshot("a", "Fresh", ["find-older", "recent", "new"]));
+    await pending;
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  test("reverted native pages remain hidden until the full ordering arrives", async () => {
+    const view = fixture();
+    await view.render();
+    const reverted = page(["hidden"], null, "older");
+    reverted.session.revert = { messageID: "boundary" };
+    await view.resolve(0, reverted);
+    expect(visibleIds(view)).toEqual([]);
+    await paint();
+    await paint();
+    expect(view.reads[1].window).toBeUndefined();
+    await view.resolve(1, snapshot("a", "Reverted", ["visible", "boundary", "hidden"], "boundary"));
+    expect(visibleIds(view)).toEqual(["visible"]);
+  });
+});
 
 describe("opening a thread", () => {
   test("preview and full history become readable without an activity snapshot", async () => {
@@ -403,7 +873,7 @@ describe("opening a thread", () => {
     expect(cancel).toHaveBeenCalledTimes(2);
   });
 
-  test("partial, failed, retrying, and complete history status stays outside the reader's scroll geometry", async () => {
+  test("partial, failed, retrying, and complete history status reserves a row above the reader", async () => {
     const view = fixture();
     await view.render();
     await view.resolve(0, snapshot("a", "Reading preview", [...fullWindow, "anchor"]));
@@ -419,7 +889,9 @@ describe("opening a thread", () => {
       const element = view.host.querySelector("[data-thread-history-status]");
       if (status === null) expect(element).toBeNull();
       else {
-        expect(element?.className).toContain("absolute");
+        expect(element?.classList.contains("absolute")).toBe(false);
+        expect(element?.classList.contains("shrink-0")).toBe(true);
+        expect(element?.nextElementSibling).toBe(scroller.parentElement);
         expect(element?.textContent).toContain(status);
       }
     };
@@ -428,15 +900,21 @@ describe("opening a thread", () => {
     await paint();
     await paint();
     checkGeometry("Loading earlier messages…");
+    const loadingStatus = view.host.querySelector("[data-thread-history-status]");
     await act(async () => view.reads[1].reject(new Error("Full read unavailable")));
     await settle();
     checkGeometry("could not be loaded");
+    expect(view.host.querySelector('[data-thread-history-status] [role="status"]')).toBeNull();
+    expect(view.host.querySelectorAll("[data-thread-history-status]")).toHaveLength(1);
     await act(async () => view.host.querySelector("button")?.click());
     checkGeometry("Retrying…");
     await view.resolve(2, snapshot("a", "Full history", ["before", ...fullWindow, "anchor", "after"]));
     expect(scroller.scrollTop).toBe(800);
     expect(scroller.querySelector('[data-message-id="anchor"]')).toBe(anchor);
     expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    expect(loadingStatus?.isConnected).toBe(false);
+    await view.render();
+    checkGeometry(null);
   });
 
   test("branching at a singleton preview waits for the next native message in complete history", async () => {
@@ -614,6 +1092,28 @@ describe("opening a thread", () => {
     expect(view.reads).toHaveLength(2);
   });
 
+  test("a send reads the current turn from cached complete history or one bounded newest read, never the uncapped read", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, "Reading preview");
+    // Cold thread: the preview may be an older saved region and the uncapped
+    // read is still in flight. The send takes the bounded newest read instead.
+    const pending = view.readSendHistory();
+    expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }]);
+    expect(view.latestReads).toHaveLength(1);
+    await view.resolveLatest(0, snapshot("a", "Newest turn", ["older", "current"]));
+    expect((await pending).map(({ info }) => info.id)).toEqual(["older", "current"]);
+    // A newest read that belongs to another thread is refused, never sent with.
+    const foreign = view.readSendHistory().then(() => "sent", (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    await view.resolveLatest(1, snapshot("b", "Other thread", ["x"]));
+    expect(await foreign).toBe("Conversation history belongs to another session.");
+    // Warm thread: cached complete history answers without any read.
+    view.client.setQueryData(snapshotKey("workspace", "a"), snapshot("a", "Complete", ["1", "2", "3"]));
+    expect((await view.readSendHistory()).map(({ info }) => info.id)).toEqual(["1", "2", "3"]);
+    expect(view.latestReads).toHaveLength(2);
+    expect(view.reads.filter((read) => read.window === undefined)).toHaveLength(0);
+  });
+
   test("a send started from a mount effect survives StrictMode dropping and re-adding the reader mid-read", async () => {
     // Development builds run every mount effect twice (StrictMode simulates an
     // unmount). The hero's auto-send starts the uncapped read in the first pass;
@@ -654,13 +1154,32 @@ describe("opening a thread", () => {
     expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }, undefined]);
     expect(view.host.querySelector('[role="status"]')?.textContent).toBe("Loading earlier messages…");
     expect(view.host.querySelector('[data-thread-scroll] [data-thread-history-status]')).toBeNull();
-    expect(view.host.querySelector('[data-thread-history-status]')?.className).toContain("absolute");
+    expect(view.host.querySelector('[data-thread-history-status]')?.classList.contains("absolute")).toBe(false);
+    expect(view.host.querySelector('[data-thread-history-status]')?.classList.contains("shrink-0")).toBe(true);
     expect(view.host.textContent).toContain("Latest messages");
     await view.resolve(1, "Complete history");
     expect(view.host.textContent).toContain("Complete history");
     expect(view.host.querySelector('[role="status"]')).toBeNull();
     await act(async () => { jest.advanceTimersByTime(150); });
     expect(view.host.querySelector('[data-thread-loading-visual]')).toBeNull();
+  });
+
+  test("an empty preview and completed empty read leave no history status or loading node", async () => {
+    const view = fixture();
+    await view.render();
+    const loading = view.host.querySelector("[data-thread-loading]");
+    expect(loading).not.toBeNull();
+    await view.resolve(0, snapshot("a", "Empty conversation"));
+    expect(loading?.isConnected).toBe(false);
+    await paint();
+    await paint();
+    expect(view.reads.map((read) => read.window)).toEqual([{ limit: 24 }, undefined]);
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    await view.resolve(1, snapshot("a", "Empty conversation"));
+    expect(view.client.getQueryState(snapshotKey("workspace", "a"))).toMatchObject({ status: "success", fetchStatus: "idle" });
+    await view.render();
+    expect(view.host.querySelectorAll("[data-message-id], [data-thread-loading], [data-thread-history-status]")).toHaveLength(0);
+    expect(view.reads).toHaveLength(2);
   });
 
   test("a short preview never announces earlier messages, and a reverted read does not stay announced", async () => {
@@ -747,6 +1266,90 @@ describe("opening a thread", () => {
     await view.resolveLatest(0, snapshot("a", "Fresh", ["tail"]));
     expect(view.host.textContent).toContain("tail");
     expect(view.reads.map((read) => read.window)).toEqual([undefined]);
+  });
+
+  test("a warm return whose newest window matches the cached tail keeps complete history without an uncapped re-read", async () => {
+    const view = fixture();
+    const ids = ["first", "second", ...fullWindow];
+    const cached = snapshot("a", "Cached history", ids);
+    const key = snapshotKey("workspace", "a");
+    const tail = (history: OpenworkSessionHistory) => ({ session: history.session, messages: history.messages.slice(-24) });
+    const refocus = async () => {
+      await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
+      await settle();
+    };
+    // Every fresh newest read re-judges the cache; drive one without touching the full query.
+    const rejudge = async () => {
+      await act(async () => { void view.client.refetchQueries({ queryKey: ["react-session-latest", ...key] }); });
+      await settle();
+    };
+    // Backdated well past the default freshness window: without confirmation this would refetch.
+    view.client.setQueryData(key, cached, { updatedAt: Date.now() - 60_000 });
+    await view.render();
+    expect(view.latestReads).toHaveLength(1);
+    expect(view.reads).toHaveLength(0);
+    await view.resolveLatest(0, tail(cached));
+    await paint();
+    await settle();
+    expect(view.reads).toHaveLength(0);
+    expect(view.client.getQueryData(key)).toBe(cached);
+    expect(visibleIds(view)).toEqual(ids);
+    expect(view.host.querySelector("[data-thread-loading]")).toBeNull();
+    expect(view.host.querySelector("[data-thread-history-status]")).toBeNull();
+    // Confirmed history stays current through focus changes.
+    await refocus();
+    expect(view.reads).toHaveLength(0);
+    // A cache object the newest read never judged returns to the default policy.
+    const replaced = snapshot("a", "Cached history", [...ids, "appended"]);
+    await act(async () => { view.client.setQueryData(key, replaced, { updatedAt: Date.now() - 60_000 }); });
+    await settle();
+    await refocus();
+    expect(view.reads).toHaveLength(1);
+    expect(view.reads[0].window).toBeUndefined();
+    await view.resolve(0, replaced);
+    expect(visibleIds(view)).toEqual([...ids, "appended"]);
+    await act(async () => { view.client.setQueryData(key, replaced, { updatedAt: Date.now() - 60_000 }); });
+    // A fresh newest read that matches the replacement confirms it again.
+    await rejudge();
+    expect(view.latestReads).toHaveLength(2);
+    await view.resolveLatest(1, tail(replaced));
+    await paint();
+    await settle();
+    await refocus();
+    expect(view.reads).toHaveLength(1);
+    // Same length as "appended": content changes count even when size does not.
+    const changed = snapshot("a", "Cached history", [...ids, "appended"]);
+    changed.messages.at(-1)!.parts[0] = { ...changed.messages.at(-1)!.parts[0], type: "text", text: "appendix" };
+    await rejudge();
+    expect(view.latestReads).toHaveLength(3);
+    await view.resolveLatest(2, tail(changed));
+    await paint();
+    await settle();
+    expect(view.reads).toHaveLength(2);
+    expect(view.reads[1].window).toBeUndefined();
+  });
+
+  test("latestConfirmsFullHistory accepts only an identical tail and compares inline images by size", () => {
+    const ids = ["older", ...fullWindow];
+    const full = snapshot("a", "Images", ids);
+    const image = (bytes: number) => ({ id: "image", sessionID: "a", messageID: "w23", type: "file" as const, mime: "image/png", url: `data:image/png;base64,${"A".repeat(bytes)}` });
+    full.messages.at(-1)!.parts.push(image(4_000));
+    const latest = (mutate: (copy: OpenworkSessionHistory) => void = () => {}) => {
+      const copy = structuredClone(full);
+      mutate(copy);
+      return { session: copy.session, messages: copy.messages.slice(-24) };
+    };
+    expect(latestConfirmsFullHistory(full, latest())).toBe(true);
+    expect(latestConfirmsFullHistory(full, latest((copy) => { copy.messages.at(-1)!.parts[1] = image(4_001); }))).toBe(false);
+    expect(latestConfirmsFullHistory(full, latest((copy) => { copy.messages.at(-1)!.parts.pop(); }))).toBe(false);
+    expect(latestConfirmsFullHistory(full, latest((copy) => { copy.session.time.updated = 2; }))).toBe(false);
+    expect(latestConfirmsFullHistory(full, latest((copy) => { copy.session.revert = { messageID: "w20" }; }))).toBe(false);
+    expect(latestConfirmsFullHistory(full, latest((copy) => { copy.messages.at(-1)!.info.id = "replacement"; }))).toBe(false);
+    expect(latestConfirmsFullHistory(full, { session: full.session, messages: full.messages.slice(-24, -1) })).toBe(false);
+    const short = snapshot("a", "Short", ["only"]);
+    expect(latestConfirmsFullHistory(short, { session: short.session, messages: short.messages })).toBe(true);
+    expect(latestConfirmsFullHistory(snapshot("a", "Grown", ["only", "more"]), { session: short.session, messages: short.messages })).toBe(false);
+    expect(latestConfirmsFullHistory({ ...full, pagination: { nextCursor: "older", limit: 24 } }, latest())).toBe(false);
   });
 
   test("a selected warm return shows a persisted tail before a held full read without replacing complete history", async () => {

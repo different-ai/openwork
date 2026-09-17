@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getMcpIdentityKey, parseMcpServersFromContent } from "../src/app/mcp";
+import { getMcpIdentityKey, normalizeMcpServerCommand, parseMcpServersFromContent } from "../src/app/mcp";
 import type { McpServerEntry, McpStatusMap } from "../src/app/types";
 import {
   createMcpStatusSynchronizer,
@@ -178,5 +178,16 @@ describe("local MCP entries from opencode.json", () => {
   test("an empty string command is dropped rather than spawned", () => {
     const [entry] = parseMcpServersFromContent(JSON.stringify({ mcp: { blank: { type: "local", command: "  " } } }));
     expect(entry?.config.command).toBeUndefined();
+  });
+
+  test("entries relayed by the OpenWork server get the same fold before readers touch command", () => {
+    // The server passes opencode.json entries through verbatim, so a
+    // Claude-style string command reaches the app unless the boundary folds it.
+    const relayed: McpServerEntry["config"] = JSON.parse(JSON.stringify({ type: "local", command: "python3", args: ["-m", "http.server", "8321"], enabled: false }));
+    expect(normalizeMcpServerCommand(relayed).command).toEqual(["python3", "-m", "http.server", "8321"]);
+    const list: McpServerEntry["config"] = { type: "local", command: ["npx", "-y", "server"], enabled: true };
+    expect(normalizeMcpServerCommand(list)).toBe(list);
+    const remote: McpServerEntry["config"] = { type: "remote", url: "https://mcp.example.test/sse" };
+    expect(normalizeMcpServerCommand(remote)).toBe(remote);
   });
 });

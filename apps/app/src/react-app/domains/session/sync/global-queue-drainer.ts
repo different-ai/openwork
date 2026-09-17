@@ -24,12 +24,13 @@ import {
   nextObservationProbeAt,
   subscribeQueuedDrain,
 } from "../surface/queued-drain-machine";
-import { getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
+import { sessionCommandModelFields, sessionModelSelectionFromEngine, getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
 import { draftToParts } from "./draft-parts";
 import { buildOpenworkSessionSystemContext } from "./env-context";
 import {
   clearQueuedSendContext,
   getQueuedSendContext,
+  preflightQueuedSessionModel,
   subscribeQueuedSendContext,
   type QueuedSendContext,
 } from "./queued-send-context";
@@ -57,6 +58,7 @@ let unsubscribeContexts: (() => void) | null = null;
 
 function sameContext(left: QueuedSendContext, right: QueuedSendContext) {
   return left.workspaceId === right.workspaceId
+    && left.rendererWorkspaceId === right.rendererWorkspaceId
     && left.workspaceRoot === right.workspaceRoot
     && left.opencodeBaseUrl === right.opencodeBaseUrl
     && left.openworkToken === right.openworkToken
@@ -105,8 +107,9 @@ async function performQueuedDraftSend(
   if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
 
   const sessionModelSelection = getSessionModelSelection(sessionId);
-  const sendModel = sessionModelSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
-  const sendVariant = sessionModelSelection ? sessionModelSelection.variant : context.variant;
+  const engineSelection = sessionModelSelectionFromEngine(session);
+  let sendModel = sessionModelSelection?.model ?? engineSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
+  let sendVariant = sessionModelSelection ? sessionModelSelection.variant : engineSelection ? engineSelection.variant : context.variant;
   const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
   const opencodeClient = createEngineClient(
     context.opencodeBaseUrl,
@@ -119,12 +122,21 @@ async function performQueuedDraftSend(
     return "sent";
   }
 
+  const preflight = await preflightQueuedSessionModel(context, sessionId,
+    sendModel ? { providerId: sendModel.providerID, modelId: sendModel.modelID, variant: sendVariant ?? null } : null,
+    async (request) => window.__openworkControl?.query(request),
+  );
+  sendModel = preflight ? { providerID: preflight.providerId, modelID: preflight.modelId } : null;
+  sendVariant = preflight ? preflight.variant : null;
+  assertQueuedSendCurrent(sessionId, generation);
+
   if (draft.command) {
     const result = await sendSessionCommand(context.opencodeBaseUrl, opencodeClient, {
       sessionID: sessionId,
       messageID: draft.messageId,
       command: draft.command.name,
       arguments: draft.command.arguments,
+      ...sessionCommandModelFields(sendModel, sendVariant),
     });
     if (result.error) throw new Error(serializeSDKError(result.error));
     return "sent";
@@ -148,7 +160,7 @@ async function performQueuedDraftSend(
     parts,
     model: sendModel ?? undefined,
     agent: context.agent ?? undefined,
-    ...(sendVariant ? { variant: sendVariant } : {}),
+    variant: sendVariant ?? "default",
     system,
   });
   if (result.error) {
@@ -156,7 +168,7 @@ async function performQueuedDraftSend(
     throw new Error(serializeSDKError(result.error));
   }
   assertQueuedSendCurrent(sessionId, generation);
-  if (sendModel) {
+  if (sendModel && getSessionModelSelection(sessionId) === sessionModelSelection) {
     useSessionModelStore.getState().setModel(sessionId, sendModel, sendVariant ?? null);
   }
   return "sent";

@@ -14,6 +14,7 @@ const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 let organizationMetadata: Record<string, unknown> | null = null
 let selectCount = 0
+let recordedRows: unknown[] = []
 let registerAgentMcpRoutes: typeof import("../src/mcp/agent.js")["registerAgentMcpRoutes"]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -24,9 +25,10 @@ function installMocks() {
   mock.module("../src/db.js", () => ({
     db: {
       insert: () => ({
-        values: () => ({
-          execute: () => Promise.resolve(),
-        }),
+        values: (row: unknown) => {
+          recordedRows.push(row)
+          return { execute: () => Promise.resolve() }
+        },
       }),
       select: () => ({
         from: () => ({
@@ -138,6 +140,7 @@ beforeAll(async () => {
 beforeEach(() => {
   organizationMetadata = null
   selectCount = 0
+  recordedRows = []
 })
 
 afterAll(() => {
@@ -229,4 +232,60 @@ test("makes the Workflow save operation discoverable through the standard capabi
     arguments: { query: "save Workflow to Plugin" },
   })
   expect(firstText(payload)).toContain("saveWorkflow")
+})
+
+test("advertises authoring modes, contracts and exact discovered invocation guidance", async () => {
+  const tools = resultRecord(await rpc(buildApp(), "tools/list")).tools
+  if (!Array.isArray(tools)) throw new Error("Missing tools")
+  const tool = tools.find((item) => isRecord(item) && item.name === "execute_capability_script")
+  if (!isRecord(tool) || !isRecord(tool.inputSchema) || !isRecord(tool.inputSchema.properties)) throw new Error("Missing input schema")
+  expect(Object.keys(tool.inputSchema.properties)).toEqual(["code", "mode", "input", "timeZone", "inputSchema", "outputSchema"])
+  expect(tool.description).toContain("exact scriptPath")
+  expect(tool.description).toContain("wrapped in query")
+  expect(tool.description).toContain("outputSchema")
+})
+
+test("returns receipt metadata without changing legacy text or persisting raw artifact data", async () => {
+  const payload = await rpc(buildApp(), "tools/call", {
+    name: "execute_capability_script",
+    arguments: { code: "return input", input: { privateValue: "private-test-value" }, outputSchema: { type: "object" } },
+  })
+  expect(JSON.parse(firstText(payload))).toEqual({ privateValue: "private-test-value" })
+  const result = resultRecord(payload)
+  if (!isRecord(result.structuredContent)) throw new Error("Missing structured content")
+  expect(result.structuredContent).toMatchObject({
+    value: { privateValue: "private-test-value" },
+    metadata: { receiptId: expect.any(String), mode: "adhoc", executionType: "authoring-test", verification: "schema",
+      executedAt: expect.any(String), fetchedAt: expect.any(String), retention: { available: false, canSaveByReceipt: false } },
+  })
+  expect(result.content).toHaveLength(2)
+  const receipt = recordedRows.find((row) => isRecord(row) && row.source === "adhoc")
+  expect(receipt).toMatchObject({ status: "succeeded", script_input: null, script_input_digest: expect.stringMatching(/^sha256:/),
+    output_schema_digest: expect.stringMatching(/^sha256:/), result_markdown: null, renderer_version: null })
+  expect(JSON.stringify(receipt)).not.toContain("private-test-value")
+})
+
+test("MCP live mode exposes only generated runtime with UTC default", async () => {
+  const payload = await rpc(buildApp(), "tools/call", {
+    name: "execute_capability_script", arguments: { mode: "live", code: "return input" },
+  })
+  const value: unknown = JSON.parse(firstText(payload))
+  if (!isRecord(value) || !isRecord(value.runtime)) throw new Error("Missing runtime")
+  expect(Object.keys(value)).toEqual(["runtime"])
+  expect(Object.keys(value.runtime).sort()).toEqual(["dayEnd", "dayStart", "now", "timeZone", "today"])
+  expect(value.runtime.timeZone).toBe("UTC")
+  expect(recordedRows.some((row) => isRecord(row) && row.source === "authoring:live")).toBe(true)
+})
+
+test("MCP rejects forged live input, invalid time zones, and invalid contracts", async () => {
+  for (const args of [
+    { mode: "live", input: null }, { mode: "live", input: { runtime: { today: "forged" } } },
+    { mode: "live", timeZone: "Not/A_Zone" }, { timeZone: "UTC" },
+    { inputSchema: { type: "string" } }, { outputSchema: { type: "string" } },
+  ]) {
+    const payload = await rpc(buildApp(), "tools/call", {
+      name: "execute_capability_script", arguments: { code: "return 2", ...args },
+    })
+    expect(resultRecord(payload).isError).toBe(true)
+  }
 })

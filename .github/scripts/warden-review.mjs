@@ -9,9 +9,11 @@ const KNOWN_SKILLS = [
   "confidentiality-review",
   "spec-provenance-review",
   "desktop-den-sync-review",
+  "design-spec-review",
 ];
 const MANDATORY_SKILLS = KNOWN_SKILLS.slice(0, 2);
 const SECURITY_SKILLS = new Set(MANDATORY_SKILLS);
+const ADVISORY_SKILLS = new Set(["spec-provenance-review", "design-spec-review"]);
 const SEVERITIES = new Set(["high", "medium", "low"]);
 const CONFIDENCES = new Set(["high", "medium", "low"]);
 const SUMMARY_MARKER = "<!-- openwork:warden-review-summary:v1 -->";
@@ -187,7 +189,7 @@ function disposition(skill, severity) {
   if (skill === "desktop-den-sync-review") {
     return severity === "medium" || severity === "low" ? "advisory" : "blocker";
   }
-  return skill === "spec-provenance-review" ? "advisory" : "needs-recheck";
+  return ADVISORY_SKILLS.has(skill) ? "advisory" : "needs-recheck";
 }
 
 function signature(finding) {

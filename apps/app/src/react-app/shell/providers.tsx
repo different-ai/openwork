@@ -23,7 +23,7 @@ import { startDebugLogger, stopDebugLogger } from "./debug-logger";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
 
-function resolveDefaultServerUrl(): string {
+export function resolveDefaultServerUrl(): string {
   if (isDesktopRuntime()) return "http://127.0.0.1:4096";
 
   const openworkUrl =
@@ -31,7 +31,10 @@ function resolveDefaultServerUrl(): string {
       ? import.meta.env.VITE_OPENWORK_URL.trim()
       : "";
   if (openworkUrl) {
-    return `${openworkUrl.replace(/\/+$/, "")}/opencode`;
+    const baseUrl = openworkUrl === "/api/openwork" && typeof window !== "undefined"
+      ? new URL(openworkUrl, window.location.origin).href
+      : openworkUrl;
+    return `${baseUrl.replace(/\/+$/, "")}/opencode`;
   }
 
   if (isWebDeployment() && import.meta.env.PROD && typeof window !== "undefined") {

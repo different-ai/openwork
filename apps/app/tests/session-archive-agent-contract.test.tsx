@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -10,14 +10,24 @@ import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
 
+// Model catalog actions share this registry but are not exercised by archive.
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false }));
+mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({ useDenAuth: () => ({ isSignedIn: false }) }));
+
 // The archive hook talks to a real (fake) engine over HTTP; happy-dom's fetch
 // polyfill cannot parse Bun.serve responses, so keep the runtime's fetch.
 const nativeFetch = globalThis.fetch;
 const NativeResponse = globalThis.Response;
+const NativeRequest = globalThis.Request;
+const NativeAbortController = globalThis.AbortController;
+const NativeAbortSignal = globalThis.AbortSignal;
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
 Object.defineProperty(globalThis, "fetch", { configurable: true, value: nativeFetch });
 Object.defineProperty(window, "fetch", { configurable: true, value: nativeFetch });
+Object.defineProperty(globalThis, "Request", { configurable: true, value: NativeRequest });
+Object.defineProperty(globalThis, "AbortController", { configurable: true, value: NativeAbortController });
+Object.defineProperty(globalThis, "AbortSignal", { configurable: true, value: NativeAbortSignal });
 // Base UI picks its layout-effect shim at module load, so the app must be
 // imported after the DOM exists or the dialog portal never mounts.
 const [
@@ -33,12 +43,17 @@ const [
   import("../src/react-app/domains/session/sidebar/use-session-archive"),
   import("../src/react-app/shell/control/control-provider"),
 ]);
+const { createClient } = await import("../src/app/lib/opencode");
+const { sessionWorkHeld } = await import("../src/app/lib/opencode-interruption");
+const { useSessionControlActions } = await import("../src/react-app/domains/session/control/session-control-actions");
+const { useSessionManagementStore } = await import("../src/react-app/domains/session/sidebar/session-management-store");
 const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 const cleanups: (() => Promise<void> | void)[] = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  jest.useRealTimers();
 });
 afterAll(async () => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
@@ -134,8 +149,10 @@ describe("control bridge contract: channel and structured codes", () => {
       sideEffect: "mutation",
       execute: (_args, helpers) => { seen.push(helpers.bridged); return { ok: true }; },
     });
-    expect(await api.command({ id: "test.channel", origin: { sessionId: "ses_requester" } })).toMatchObject({ ok: true });
-    expect(await api.execute("test.channel")).toMatchObject({ ok: true });
+    await act(async () => {
+      expect(await api.command({ id: "test.channel", origin: { sessionId: "ses_requester" } })).toMatchObject({ ok: true });
+      expect(await api.execute("test.channel")).toMatchObject({ ok: true });
+    });
     expect(seen).toEqual([true, false]);
   });
 
@@ -146,13 +163,15 @@ describe("control bridge contract: channel and structured codes", () => {
       sideEffect: "mutation",
       execute: () => ({ ok: false, code: "target_working", error: "Busy elsewhere.", hint: "Stop it first." }),
     });
-    expect(await api.command({ id: "test.coded", origin: { sessionId: "ses_requester" } })).toMatchObject({
-      ok: false,
-      code: "target_working",
-      error: "Busy elsewhere.",
-      hint: "Stop it first.",
+    await act(async () => {
+      expect(await api.command({ id: "test.coded", origin: { sessionId: "ses_requester" } })).toMatchObject({
+        ok: false,
+        code: "target_working",
+        error: "Busy elsewhere.",
+        hint: "Stop it first.",
+      });
+      expect(await api.execute("test.coded")).toMatchObject({ ok: false, code: "target_working", hint: "Stop it first." });
     });
-    expect(await api.execute("test.coded")).toMatchObject({ ok: false, code: "target_working", hint: "Stop it first." });
   });
 
   test("unknown codes fall back to failed so the schema stays closed", async () => {
@@ -162,20 +181,20 @@ describe("control bridge contract: channel and structured codes", () => {
       sideEffect: "mutation",
       execute: () => ({ ok: false, code: "made_up", error: "Nope." }),
     });
-    expect(await api.command({ id: "test.odd" })).toMatchObject({ ok: false, code: "failed", error: "Nope." });
+    await act(async () => {
+      expect(await api.command({ id: "test.odd" })).toMatchObject({ ok: false, code: "failed", error: "Nope." });
+    });
   });
 });
 
 describe("archiving a working session: the warning goes back through the request's channel", () => {
   const directory = "/tmp/archive-contract";
-  type Engine = { baseUrl: string; busy: Set<string>; children: Record<string, string[]>; requests: string[] };
+  type Engine = { baseUrl: string; busy: Set<string>; children: Record<string, string[]>; requests: string[]; respond: (request: Request) => Response };
 
   function startEngine(): Engine {
-    const engine: Engine = { baseUrl: "", busy: new Set(), children: {}, requests: [] };
-    const server = Bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      fetch(request) {
+    const engine: Engine = {
+      baseUrl: "", busy: new Set(), children: {}, requests: [],
+      respond(request) {
         const url = new URL(request.url);
         engine.requests.push(url.pathname);
         if (url.pathname === "/path") return NativeResponse.json({ directory });
@@ -198,7 +217,8 @@ describe("archiving a working session: the warning goes back through the request
         }
         return NativeResponse.json({ message: "not found" }, { status: 404 });
       },
-    });
+    };
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: engine.respond });
     engine.baseUrl = `http://127.0.0.1:${server.port}`;
     cleanups.push(() => server.stop(true));
     return engine;
@@ -208,7 +228,10 @@ describe("archiving a working session: the warning goes back through the request
     return { id, slug: id, projectID: "prj", directory, title, version: "1", time: { created: 1, updated } };
   }
 
-  async function mountArchive(engine: Engine, sessions: RouteSession[]) {
+  async function mountArchive(engine: Engine, sessions: RouteSession[], hooks: {
+    reloadWorkspaceSessions?: () => Promise<unknown>;
+    onArchivedChange?: (workspaceId: string, sessionId: string, archived: boolean) => void;
+  } = {}) {
     const workspace: RouteWorkspace = {
       id: "ws", name: "Client A / Production", displayNameResolved: "Client A / Production", path: directory, preset: "starter", workspaceType: "local",
     };
@@ -234,16 +257,46 @@ describe("archiving a working session: the warning goes back through the request
         selectedSessionId: null,
         draftScope: null,
         navigateToWorkspaceSession: () => undefined,
-        reloadWorkspaceSessions: async () => undefined,
-        onArchivedChange: () => undefined,
+        reloadWorkspaceSessions: hooks.reloadWorkspaceSessions ?? (async () => undefined),
+        onArchivedChange: hooks.onArchivedChange ?? (() => undefined),
+      });
+      useSessionControlActions({
+        workspaces: [workspace], sessionsByWorkspaceId: { ws: sessions }, selectedWorkspaceId: "ws",
+        selectedWorkspaceRoot: directory, selectedSessionId: null, canCreateTask: false,
+        openworkClient: endpoint.client, opencodeClient: createClient(engine.baseUrl),
+        endpointForWorkspace: () => endpoint, navigateToSession: () => {}, navigateToSessionRoot: () => {},
+        createTaskInWorkspace: () => null, openModelPicker: () => {}, refreshRouteState: () => {},
+        archiveSession: archive.archiveSession,
       });
       useEffect(() => { archiveSession = archive.archiveSession; });
       return archive.archiveDialog;
     }
-    await act(async () => root.render(<MemoryRouter><Harness /></MemoryRouter>));
-    cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
+    await act(async () => root.render(<MemoryRouter><OpenworkControlProvider><Harness /></OpenworkControlProvider></MemoryRouter>));
+    const unmount = async () => { await act(async () => root.unmount()); host.remove(); };
+    cleanups.push(unmount);
     if (!archiveSession) throw new Error("archive hook did not mount");
-    return archiveSession;
+    return Object.assign(archiveSession, { unmount });
+  }
+
+  function stubFetch(engine: Engine, intercept: (request: Request, requests: Request[]) => Response | Promise<Response> | undefined = () => undefined) {
+    const requests: Request[] = [];
+    const fetch = spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Promise.resolve(intercept(request, requests) ?? engine.respond(request));
+    });
+    const undo = spyOn(toast, "undo").mockImplementation(() => "");
+    cleanups.push(() => { fetch.mockRestore(); undo.mockRestore(); });
+    return requests;
+  }
+
+  async function flush() {
+    await act(async () => { for (let index = 0; index < 200; index += 1) await Promise.resolve(); });
+  }
+
+  async function advance(ms: number) {
+    await act(async () => { jest.advanceTimersByTime(ms); });
+    await flush();
   }
 
   const errors = spyOn(toast, "error").mockImplementation(() => "");
@@ -278,6 +331,250 @@ describe("archiving a working session: the warning goes back through the request
     }
     expect(engine.requests.filter((path) => path === "/session/status")).toEqual([]);
     expect(engine.requests.some((path) => path.endsWith("/abort"))).toBe(false);
+  });
+
+  test.each(["tree", "messages", "recheck", "status", "tree_recheck", "patch"])("bounds a non-cooperating %s, releases holds, and never archives from late preflight", async (stage) => {
+    const engine = startEngine();
+    const late = Promise.withResolvers<Response>();
+    const changes: boolean[] = [];
+    const archive = await mountArchive(engine, [session("ses_target", "Archive target", 2)], {
+      onArchivedChange: (_workspaceId, _sessionId, archived) => { changes.push(archived); },
+    });
+    let blocked: Request | undefined;
+    const requests = stubFetch(engine, (request, seen) => {
+      if (blocked) return undefined;
+      const path = new URL(request.url).pathname;
+      const messageReads = seen.filter(item => new URL(item.url).pathname.endsWith("/message")).length;
+      const matchingReads = seen.filter(item => new URL(item.url).pathname === path && item.method === "GET").length;
+      if ((stage === "tree" && path === "/session/ses_target" && request.method === "GET")
+        || (stage === "messages" && path.endsWith("/message"))
+        || (stage === "recheck" && path.endsWith("/message") && messageReads === 2)
+        || (stage === "status" && path === "/session/status" && matchingReads === 2)
+        || (stage === "tree_recheck" && path === "/session/ses_target" && matchingReads === 2)
+        || (stage === "patch" && request.method === "PATCH")) {
+        blocked = request;
+        return late.promise;
+      }
+    });
+    jest.useFakeTimers();
+    let outcome: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true, { refuseWorking: true }).then(value => { outcome = value; });
+    await flush();
+    expect(blocked).toBeDefined();
+    expect(sessionWorkHeld(engine.baseUrl, "ses_target")).toBe(stage !== "tree" && stage !== "messages");
+    await advance(3_499);
+    expect(outcome).toBeUndefined();
+    await advance(1);
+    expect(outcome).toMatchObject({ kind: stage === "patch" ? "archive_outcome_unknown" : "verification_failed", message: expect.stringContaining("timed out") });
+    expect(blocked?.signal.aborted).toBe(true);
+    expect(sessionWorkHeld(engine.baseUrl, "ses_target")).toBe(false);
+    if (!blocked) throw new Error("Missing stalled request");
+    late.resolve(engine.respond(blocked));
+    await flush();
+    expect(requests.filter(request => request.method === "PATCH")).toHaveLength(stage === "patch" ? 1 : 0);
+    expect(changes).toEqual([]);
+    engine.busy.add("ses_target");
+    let retry: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true, { refuseWorking: true }).then(value => { retry = value; });
+    await flush();
+    expect(retry?.kind).toBe("target_working");
+  });
+
+  test("bounds a stalled preflight response body without a late PATCH", async () => {
+    const engine = startEngine();
+    const archive = await mountArchive(engine, [session("ses_target", "Archive target", 2)]);
+    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const requests = stubFetch(engine, request => {
+      if (new URL(request.url).pathname.endsWith("/message")) return new NativeResponse(new ReadableStream<Uint8Array>({
+        start(controller) { body = controller; },
+      }), { headers: { "Content-Type": "application/json" } });
+    });
+    jest.useFakeTimers();
+    let outcome: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true, { refuseWorking: true }).then(value => { outcome = value; });
+    await flush();
+    expect(body).toBeDefined();
+    await advance(3_500);
+    expect(outcome?.kind).toBe("verification_failed");
+    body?.enqueue(new TextEncoder().encode("[]"));
+    body?.close();
+    await flush();
+    expect(requests.some(request => request.method === "PATCH")).toBe(false);
+    expect(sessionWorkHeld(engine.baseUrl, "ses_target")).toBe(false);
+  });
+
+  test("the human path remains bounded at its existing 15-second budget", async () => {
+    const engine = startEngine();
+    const archive = await mountArchive(engine, [session("ses_target", "Archive target", 2)]);
+    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const requests = stubFetch(engine, request => new URL(request.url).pathname.endsWith("/message")
+      ? new NativeResponse(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }), {
+        headers: { "Content-Type": "application/json" },
+      }) : undefined);
+    jest.useFakeTimers();
+    let outcome: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true).then(value => { outcome = value; });
+    await flush();
+    await advance(14_999);
+    expect(outcome).toBeUndefined();
+    await advance(1);
+    expect(outcome?.kind).toBe("verification_failed");
+    expect(requests.some(request => request.method === "PATCH")).toBe(false);
+    body?.enqueue(new TextEncoder().encode("[]"));
+    body?.close();
+    await flush();
+  });
+
+  test.each(["cancel", "unmount"])("%s settles a stalled archive and prevents a late PATCH", async (action) => {
+    const engine = startEngine();
+    const archive = await mountArchive(engine, [session("ses_target", "Archive target", 2)]);
+    const late = Promise.withResolvers<Response>();
+    const requests = stubFetch(engine, request => new URL(request.url).pathname.endsWith("/message") ? late.promise : undefined);
+    const controller = new AbortController();
+    let outcome: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true, { refuseWorking: true, signal: controller.signal }).then(value => { outcome = value; });
+    await flush();
+    if (action === "cancel") controller.abort(new Error("Caller cancelled verification"));
+    else await archive.unmount();
+    await flush();
+    expect(outcome?.kind).toBe("verification_failed");
+    expect(requests.find(request => new URL(request.url).pathname.endsWith("/message"))?.signal.aborted).toBe(true);
+    late.resolve(NativeResponse.json([]));
+    await flush();
+    expect(requests.some(request => request.method === "PATCH")).toBe(false);
+  });
+
+  test("unmount after PATCH dispatch reports unknown rather than cancellation", async () => {
+    const engine = startEngine();
+    const changes: boolean[] = [];
+    const archive = await mountArchive(engine, [session("ses_target", "Archive target", 2)], {
+      onArchivedChange: (_workspaceId, _sessionId, archived) => { changes.push(archived); },
+    });
+    const late = Promise.withResolvers<Response>();
+    const requests = stubFetch(engine, request => request.method === "PATCH" ? late.promise : undefined);
+    let outcome: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true, { refuseWorking: true }).then(value => { outcome = value; });
+    await flush();
+    const patch = requests.find(request => request.method === "PATCH");
+    expect(patch).toBeDefined();
+    await archive.unmount();
+    await flush();
+    expect(outcome?.kind).toBe("archive_outcome_unknown");
+    expect(patch?.signal.aborted).toBe(true);
+    expect(sessionWorkHeld(engine.baseUrl, "ses_target")).toBe(false);
+    late.resolve(NativeResponse.json(session("ses_target", "Archive target", 2)));
+    await flush();
+    expect(changes).toEqual([]);
+    expect(requests.filter(request => request.method === "PATCH")).toHaveLength(1);
+  });
+
+  test("confirmed human archive releases Stop and reports an unknown PATCH without claiming not archived", async () => {
+    const engine = startEngine();
+    engine.busy.add("ses_target");
+    const archive = await mountArchive(engine, [session("ses_target", "Archive target", 2)]);
+    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const requests = stubFetch(engine, request => request.method === "PATCH"
+      ? new NativeResponse(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }), {
+        headers: { "Content-Type": "application/json" },
+      }) : undefined);
+    let outcome: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true).then(value => { outcome = value; });
+    await until(() => dialog() !== null, "human confirmation");
+    const confirm = [...document.querySelectorAll("button")].find(button => button.textContent?.trim() === "Stop and archive");
+    if (!confirm) throw new Error("Missing Stop and archive");
+    jest.useFakeTimers();
+    await act(async () => { confirm.click(); });
+    await flush();
+    expect(body).toBeDefined();
+    expect(outcome).toBeUndefined();
+    expect(sessionWorkHeld(engine.baseUrl, "ses_target")).toBe(true);
+    await advance(15_000);
+    expect(outcome?.kind).toBe("archive_outcome_unknown");
+    expect(dialogText()).toContain("Archive outcome is unknown");
+    expect(dialogText()).not.toContain("has not been archived");
+    expect(document.querySelector('button[disabled]')).toBeNull();
+    expect(sessionWorkHeld(engine.baseUrl, "ses_target")).toBe(false);
+    body?.enqueue(new TextEncoder().encode(JSON.stringify(session("ses_target", "Archive target", 2))));
+    body?.close();
+    await flush();
+    expect(requests.filter(request => request.method === "PATCH")).toHaveLength(1);
+  });
+
+  test.each(["cache", "reload"])("a known successful PATCH reconciles locally even when %s never settles", async (stage) => {
+    const engine = startEngine();
+    const reload = Promise.withResolvers<void>();
+    if (stage === "cache") {
+      const sync = await import("../src/react-app/domains/session/sync/session-sync");
+      const apply = spyOn(sync, "applySessionArchived").mockImplementation(() => reload.promise);
+      cleanups.push(() => { apply.mockRestore(); });
+    }
+    const changes: boolean[] = [];
+    const archive = await mountArchive(engine, [session("ses_target", "Archive target", 2)], {
+      reloadWorkspaceSessions: () => reload.promise,
+      onArchivedChange: (_workspaceId, _sessionId, archived) => { changes.push(archived); },
+    });
+    const requests = stubFetch(engine);
+    await act(async () => { useSessionManagementStore.getState().togglePin("ses_target"); });
+    cleanups.push(async () => { await act(async () => {
+      if (useSessionManagementStore.getState().pinnedIds.includes("ses_target")) useSessionManagementStore.getState().togglePin("ses_target");
+    }); });
+    jest.useFakeTimers();
+    let outcome: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true, { refuseWorking: true }).then(value => { outcome = value; });
+    await flush();
+    expect(outcome?.kind).toBe(stage === "cache" ? undefined : "done");
+    expect(changes).toEqual([true]);
+    expect(requests.filter(request => request.method === "PATCH")).toHaveLength(1);
+    expect(useSessionManagementStore.getState().pinnedIds).toContain("ses_target");
+    await advance(3_500);
+    expect(outcome?.kind).toBe("done");
+    expect(sessionWorkHeld(engine.baseUrl, "ses_target")).toBe(false);
+    engine.busy.add("ses_target");
+    let retry: ArchiveSessionOutcome | undefined;
+    void archive("ses_target", true, { refuseWorking: true }).then(value => { retry = value; });
+    await flush();
+    expect(retry?.kind).toBe("target_working");
+    reload.resolve();
+    await flush();
+    expect(changes).toEqual([true]);
+  });
+
+  test("a stalled bridged archive returns its real deadline error before five seconds including choreography", async () => {
+    const engine = startEngine();
+    await mountArchive(engine, [session("ses_target", "Archive target", 2)]);
+    const late = Promise.withResolvers<Response>();
+    const requests = stubFetch(engine, request => new URL(request.url).pathname.endsWith("/message") ? late.promise : undefined);
+    const api = window.__openworkControl;
+    if (!api) throw new Error("control API was not published");
+    const started = performance.now();
+    let result: unknown;
+    await act(async () => { result = await api.command({ id: "session.archive", args: { sessionId: "ses_target", archived: true } }); });
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(result).toMatchObject({ ok: false, code: "verification_failed", error: "Archive operation timed out before it could be confirmed." });
+    late.resolve(NativeResponse.json([]));
+    await flush();
+    expect(requests.some(request => request.method === "PATCH")).toBe(false);
+  }, 7_000);
+
+  test.each(["preflight", "patch"])("the real archive control action preserves the %s error through bridge choreography", async (stage) => {
+    const engine = startEngine();
+    await mountArchive(engine, [session("ses_target", "Archive target", 2)]);
+    stubFetch(engine, request => {
+      if ((stage === "preflight" && new URL(request.url).pathname.endsWith("/message"))
+        || (stage === "patch" && request.method === "PATCH")) {
+        return NativeResponse.json({ message: "Engine unavailable for archive" }, { status: 503 });
+      }
+    });
+    const api = window.__openworkControl;
+    if (!api) throw new Error("control API was not published");
+    const start = Date.now();
+    let result: unknown;
+    await act(async () => { result = await api.command({ id: "session.archive", args: { sessionId: "ses_target", archived: true } }); });
+    expect(Date.now() - start).toBeLessThan(5_000);
+    if (!result || typeof result !== "object" || !("error" in result) || typeof result.error !== "string") throw new Error("Missing archive failure");
+    expect(result.error).toContain("Engine unavailable for archive");
+    if (stage === "patch") expect(result.error).toContain("outcome is unknown");
+    expect(result).toMatchObject({ ok: false, code: stage === "patch" ? "archive_outcome_unknown" : "verification_failed" });
   });
 
   test("the person's own archive of a working session keeps a simple confirmation: title, one question, two buttons", async () => {

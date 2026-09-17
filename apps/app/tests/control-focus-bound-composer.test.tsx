@@ -11,6 +11,9 @@ import {
   type OpenworkControlAPI,
   type OpenworkControlAction,
 } from "../src/react-app/shell/control/control-provider";
+import { handleUiControlRequest } from "../src/react-app/shell/control/use-ui-control-mailbox";
+import { createSessionModelActions } from "../src/react-app/domains/session/control/session-model-actions";
+import { useSessionModelStore } from "../src/react-app/domains/session/surface/session-model-store";
 
 /**
  * Why acting on another session used to move the person's pane.
@@ -54,6 +57,11 @@ function ComposerSurface({ surface, controlTarget }: { surface: Surface; control
   }), [surface]);
   useControlAction(controlTarget ? setText : null);
   useControlAction(controlTarget ? send : null);
+  return null;
+}
+
+function RegisteredAction({ action }: { action: OpenworkControlAction }) {
+  useControlAction(action);
   return null;
 }
 
@@ -127,6 +135,69 @@ test("composer.* follow the focused pane: a focus change between set_text and se
   expect(sent).toMatchObject({ ok: true });
   expect(a.sent).toEqual([]);
   expect(b.sent).toEqual([""]);
+});
+
+test("mailbox metadata reaches helpers after choreography without trusting args or cancelling generic commands", async () => {
+  const observations: Array<{ args: unknown; requestCreatedAt: number | undefined; bridged: boolean }> = [];
+  const action: OpenworkControlAction = {
+    id: "fixture.metadata",
+    label: "Observe internal metadata",
+    execute: (args, helpers) => {
+      observations.push({ args, requestCreatedAt: helpers.requestCreatedAt, bridged: helpers.bridged });
+      return true;
+    },
+  };
+  await act(async () => {
+    root.render(<MemoryRouter><OpenworkControlProvider><RegisteredAction action={action} /></OpenworkControlProvider></MemoryRouter>);
+  });
+  const createdAt = Date.now() - 6_000;
+  const args = { createdAt: Date.now(), requestCreatedAt: Date.now() };
+  const input = { id: action.id, args, createdAt: Date.now(), requestCreatedAt: Date.now() };
+  const result = await act(async () => handleUiControlRequest({ id: "fixture-mailbox", kind: "command", input, createdAt }, api()));
+  expect(result).toMatchObject({ ok: true });
+  expect(observations).toEqual([{ args, requestCreatedAt: createdAt, bridged: true }]);
+  expect(observations[0]?.args).toBe(args);
+  expect(await act(async () => api().command(input))).toMatchObject({ ok: true });
+  expect(observations[1]).toEqual({ args, requestCreatedAt: undefined, bridged: true });
+  expect(await act(async () => api().execute(action.id, args))).toMatchObject({ ok: true });
+  expect(observations[2]).toEqual({ args, requestCreatedAt: undefined, bridged: false });
+  expect(await act(async () => api().command(input, { createdAt: Date.now() + 60_000 }))).toMatchObject({ ok: true });
+  expect(observations[3]?.requestCreatedAt).toBeNaN();
+});
+
+test("expired mailbox commands reach real model handlers without persisting a selection", async () => {
+  const replacement = { providerId: "fixture", modelId: "replacement", displayName: "Replacement", providerName: "Fixture" };
+  let reads = 0;
+  const actions = createSessionModelActions({
+    workspaces: [{ id: "fixture-workspace", path: "/fixture" }],
+    catalog: async () => { reads += 1; return [replacement]; },
+    directory: async () => { reads += 1; return "/fixture"; },
+    statuses: async () => { reads += 1; return { data: {}, response: { status: 200 } }; },
+    sessions: async () => { reads += 1; return [{ id: "fixture-session", directory: "/fixture", model: { providerID: "fixture", id: "removed" } }]; },
+  });
+  const before = useSessionModelStore.getState().bySessionId;
+  const stored = window.localStorage.getItem("openwork.sessionModels.v1");
+  const registered: OpenworkControlAction[] = [
+    { id: "session.set_model", label: "Set model", execute: actions.setModel },
+    { id: "session.rebind_model", label: "Rebind model", execute: actions.rebindModel },
+  ];
+  for (const action of registered) {
+    await act(async () => {
+      root.render(<MemoryRouter><OpenworkControlProvider><RegisteredAction action={action} /></OpenworkControlProvider></MemoryRouter>);
+    });
+    const result = await act(async () => handleUiControlRequest({
+      id: "expired-model-command", kind: "command", createdAt: Date.now() - 6_000,
+      input: { id: action.id, args: {
+        workspaceId: "fixture-workspace", sessionId: "fixture-session", model: replacement,
+        from: { providerId: "fixture", modelId: "removed" }, to: replacement, expectedSessionIds: ["fixture-session"],
+        requestCreatedAt: Date.now(), createdAt: Date.now(),
+      } },
+    }, api()));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("timed out") });
+    expect(reads).toBe(0);
+    expect(useSessionModelStore.getState().bySessionId).toBe(before);
+    expect(window.localStorage.getItem("openwork.sessionModels.v1")).toBe(stored);
+  }
 });
 
 test("effects.ui is descriptive metadata: nothing in dispatch reads it, so only the action body decides what moves", async () => {

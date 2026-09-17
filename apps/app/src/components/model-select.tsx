@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
+import { FAST_DEFAULT_VARIANT } from "@openwork/types/cloud-model-fast";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Settings2, Star } from "lucide-react";
 
 import type { ModelBehaviorOption, ModelOption, ModelRef } from "@/app/types";
 import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection, getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
+import { Switch } from "@/components/ui/switch";
 import {
   Popover,
   PopoverContent,
@@ -238,6 +240,7 @@ export function ModelSelect({
   const [search, setSearch] = React.useState("");
   const [thinkingFor, setThinkingFor] = React.useState<ModelOption | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const fastModeId = React.useId();
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const favorites = useModelCollectionsStore((state) => state.favorites);
@@ -327,11 +330,15 @@ export function ModelSelect({
     return [...quickGroups, ...groupByProvider(modelOptions)];
   }, [favoriteOptions, modelOptions, recentOptions]);
   const selectedThinkingOptions = selectedOption ? thinkingOptionsFor(selectedOption) : [];
+  const selectedControls = getModelBehaviorControls(selectedThinkingOptions, behaviorValue);
   const effectiveBehaviorLabel = selectedOption?.behaviorLabel ?? behaviorLabel ?? "Default";
+  const effortLabel = selectedControls.options.find((option) => option.value === behaviorValue)?.label ?? effectiveBehaviorLabel;
+  const triggerBehaviorLabel = selectedOption?.behaviorValue === FAST_DEFAULT_VARIANT ? "Fast" : effectiveBehaviorLabel;
   const currentFavorite = favoriteOptions.find((option) => isSameModel(value, option)) ?? favoriteOptions[0] ?? null;
   const nextFavorite = nextFavoriteModel(favorites, value);
   const showBehavior = !hideValue
     && selectedThinkingOptions.length > 0
+    && (selectedOption ? selectedOption.behaviorValue != null : behaviorValue != null)
     && Boolean(effectiveBehaviorLabel);
 
   const applyModel = (option: ModelOption, behavior?: string | null) => {
@@ -369,7 +376,6 @@ export function ModelSelect({
       onBehaviorChange?.(option.value);
       setThinkingFor(null);
       setPane("root");
-      onOpenChange(false);
       return;
     }
     applyModel(thinkingFor, option.value);
@@ -428,7 +434,7 @@ export function ModelSelect({
                 : (selectedOption?.title ?? value.modelID ?? "Select model")}
             </span>
             {showBehavior ? (
-              <span className="shrink-0 text-gray-9">· {effectiveBehaviorLabel}</span>
+              <span className="shrink-0 text-gray-9">· {triggerBehaviorLabel}</span>
             ) : null}
           </span>
           <ChevronDown className="h-3 w-3" />
@@ -454,15 +460,29 @@ export function ModelSelect({
                 setPane("effort");
               }}
             >
-              <span className="min-w-0 flex-1 font-medium text-foreground">{getModelBehaviorControls(selectedThinkingOptions, behaviorValue).hasFast ? "Effort and speed" : "Effort"}</span>
+              <span className="min-w-0 flex-1 font-medium text-foreground">Effort</span>
               <span className="max-w-24 truncate text-muted-foreground">
-                {selectedThinkingOptions.length > 0 ? effectiveBehaviorLabel : "Unavailable"}
+                {selectedThinkingOptions.length > 0 ? effortLabel : "Unavailable"}
               </span>
               <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">
                 {shortcutLabel}
               </kbd>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
             </button>
+            {selectedControls.hasFast ? (
+              <div className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-accent" title={FAST_PRICING_WARNING}>
+                <label htmlFor={fastModeId} className="min-w-0 flex-1 cursor-pointer font-medium text-foreground">Fast mode</label>
+                <Switch
+                  id={fastModeId}
+                  size="sm"
+                  checked={selectedControls.fast}
+                  disabled={!onBehaviorChange || selectedControls.toggleValue === undefined}
+                  onCheckedChange={() => {
+                    if (selectedControls.toggleValue !== undefined) onBehaviorChange?.(selectedControls.toggleValue);
+                  }}
+                />
+              </div>
+            ) : null}
             <button
               type="button"
               disabled={favoriteOptions.length === 0}
@@ -542,21 +562,8 @@ export function ModelSelect({
               </span>
             </button>
             <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
-              {getModelBehaviorSelection(thinkingOptions, thinkingValue).description}
+              {getModelBehaviorSelection(thinkingOptions, thinkingControls.fast ? thinkingControls.toggleValue ?? null : thinkingValue).description}
             </p>
-            {thinkingControls.hasFast ? (
-              <div className="border-b border-border px-3 pb-2">
-                <button type="button" aria-pressed={thinkingControls.fast}
-                  disabled={thinkingControls.toggleValue === undefined}
-                  className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-accent disabled:opacity-50"
-                  onClick={() => {
-                    if (thinkingControls.toggleValue !== undefined) applyThinking({ value: thinkingControls.toggleValue, label: "Fast", description: FAST_PRICING_WARNING });
-                  }}>
-                  <span>Fast</span><span>{thinkingControls.fast ? "On" : "Off"}</span>
-                </button>
-                <p className="text-xs text-muted-foreground">{FAST_PRICING_WARNING}</p>
-              </div>
-            ) : null}
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
               {thinkingControls.options.map((option) => {
                 const selected = option.value === thinkingValue;

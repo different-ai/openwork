@@ -6,8 +6,11 @@ import { createClientV2, isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "./openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "./workspace-endpoint";
 
-type NativeSessionEndpoint = Pick<ResolvedWorkspaceEndpoint, "opencodeBaseUrl" | "token">;
+type NativeSessionEndpoint = Pick<ResolvedWorkspaceEndpoint, "opencodeBaseUrl" | "token"> & { desktopTransport?: "main" };
 type RequestOptions = { signal?: AbortSignal };
+type MessageReadOptions = RequestOptions & { limit?: number; before?: string };
+type HistoryReadOptions = MessageReadOptions & { messageIds?: readonly string[] };
+type MessageReadResult = FieldsResult<Array<{ info: Message; parts: Part[] }>> & Pick<OpenworkSessionHistory, "pagination">;
 
 export type NativeSessionSnapshotTarget = {
   owner: string;
@@ -17,7 +20,7 @@ export type NativeSessionSnapshotTarget = {
 
 export type NativeSessionOperations = {
   get: (sessionId: string, options?: RequestOptions) => Promise<FieldsResult<Session>>;
-  messages: (sessionId: string, limit: number | undefined, options?: RequestOptions) => Promise<FieldsResult<Array<{ info: Message; parts: Part[] }>>>;
+  messages: (sessionId: string, limit: number | undefined, options?: RequestOptions & { before?: string }) => Promise<MessageReadResult>;
   message?: (sessionId: string, messageId: string, options?: RequestOptions) => Promise<FieldsResult<{ info: Message; parts: Part[] }>>;
   todo: (sessionId: string, options?: RequestOptions) => Promise<FieldsResult<Todo[]>>;
   status: (options?: RequestOptions) => Promise<FieldsResult<Record<string, SessionStatus>>>;
@@ -58,12 +61,33 @@ function readOwnedSnapshotTarget(
 }
 
 function createNativeOperations(endpoint: NativeSessionEndpoint): NativeSessionOperations {
-  const client = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
+  const v2 = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
     ? createClientV2(endpoint.opencodeBaseUrl, undefined, { token: endpoint.token })
-    : createClient(endpoint.opencodeBaseUrl, undefined, { mode: "openwork", token: endpoint.token });
+    : undefined;
+  const client = v2 ?? createClient(endpoint.opencodeBaseUrl, undefined, { mode: "openwork", token: endpoint.token },
+    endpoint.desktopTransport ? { desktopTransport: endpoint.desktopTransport } : undefined);
   return {
     get: (sessionId, options) => client.session.get({ sessionID: sessionId }, options),
-    messages: (sessionId, limit, options) => client.session.messages({ sessionID: sessionId, limit }, options),
+    messages: async (sessionId, limit, options) => {
+      const parameters = { sessionID: sessionId, limit, before: options?.before };
+      const result = await client.session.messages(parameters, options);
+      if (result.data === undefined || limit === undefined || !Number.isInteger(limit) || limit <= 0) return result;
+      if (v2) {
+        const pagination = "pagination" in result ? result.pagination : undefined;
+        if (pagination === undefined) return result;
+        if (!pagination || typeof pagination !== "object"
+          || !("limit" in pagination) || typeof pagination.limit !== "number"
+          || !("nextCursor" in pagination) || (pagination.nextCursor !== null && typeof pagination.nextCursor !== "string")) {
+          throw new Error("Invalid session history pagination metadata.");
+        }
+        return { ...result, pagination: { before: options?.before, nextCursor: pagination.nextCursor, limit: pagination.limit } };
+      }
+      const nextCursor = result.response.headers.get("X-Next-Cursor");
+      if (nextCursor !== null && nextCursor === options?.before) {
+        throw new Error("Session history pagination cursor did not advance.");
+      }
+      return { ...result, pagination: { before: options?.before, nextCursor, limit } };
+    },
     message: (sessionId, messageId, options) => client.session.message({ sessionID: sessionId, messageID: messageId }, options),
     todo: (sessionId, options) => client.session.todo({ sessionID: sessionId }, options),
     status: (options) => client.session.status(undefined, options),
@@ -80,10 +104,13 @@ function unwrapSessionResult<T>(result: FieldsResult<T>, notFoundCode?: string):
     return unwrap(result);
   } catch (error) {
     if (error instanceof Error) {
-      Object.assign(error, { status: result.response.status });
+      // A transport failure (timeout, refused connection) settles without a
+      // response; keep its own message rather than replacing it with a TypeError.
+      const status = result.response?.status;
+      if (status !== undefined) Object.assign(error, { status });
       const code = result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string"
         ? result.error.code
-        : result.response.status === 404
+        : status === 404
           ? notFoundCode
           : undefined;
       if (code) Object.assign(error, { code });
@@ -102,24 +129,38 @@ export async function getNativeSession(
   return unwrapSessionResult(result, "session_not_found");
 }
 
+function validateMessageRead(options?: MessageReadOptions) {
+  options?.signal?.throwIfAborted();
+  if (options?.before !== undefined && (options.limit === undefined || !Number.isInteger(options.limit) || options.limit <= 0)) {
+    throw new Error("A session history cursor requires a positive integer limit.");
+  }
+}
+
 export async function getNativeSessionMessages(
   endpoint: NativeSessionEndpoint,
   sessionId: string,
-  options?: RequestOptions & { limit?: number },
+  options?: MessageReadOptions,
   dependencies?: NativeSessionDependencies,
 ) {
+  validateMessageRead(options);
   const result = await sessionOperations(endpoint, dependencies).messages(sessionId, options?.limit, options);
+  options?.signal?.throwIfAborted();
   return unwrapSessionResult(result, "session_not_found");
 }
 
 async function readNativeSessionHistory(
   operations: NativeSessionOperations,
   sessionId: string,
-  options?: RequestOptions & { limit?: number; messageIds?: readonly string[] },
-): Promise<Pick<OpenworkSessionSnapshot, "session" | "messages">> {
+  options?: HistoryReadOptions,
+): Promise<OpenworkSessionHistory> {
+  if (options?.messageIds === undefined) validateMessageRead(options);
+  let pagination: OpenworkSessionHistory["pagination"];
   const readMessages = async () => {
     if (options?.messageIds === undefined) {
-      return unwrapSessionResult(await operations.messages(sessionId, options?.limit, options), "session_not_found");
+      const result = await operations.messages(sessionId, options?.limit, options);
+      const messages = unwrapSessionResult(result, "session_not_found");
+      if (options?.limit !== undefined && Number.isInteger(options.limit) && options.limit > 0) pagination = result.pagination;
+      return messages;
     }
     // Saved IDs already follow the visible timeline, not lexical ID order.
     const ids = [...new Set(options.messageIds)].slice(0, 24);
@@ -151,13 +192,13 @@ async function readNativeSessionHistory(
     || record.parts.some((part) => part.sessionID !== sessionId || part.messageID !== record.info.id))) {
     throw new Error("Could not verify the session history owner.");
   }
-  return { session, messages };
+  return { session, messages, ...(pagination ? { pagination } : {}) };
 }
 
 export async function composeNativeSessionHistory(
   endpoint: NativeSessionEndpoint,
   sessionId: string,
-  options?: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  options?: HistoryReadOptions,
   dependencies?: NativeSessionDependencies,
 ): Promise<OpenworkSessionHistory> {
   return readNativeSessionHistory(sessionOperations(endpoint, dependencies), sessionId, options);
@@ -166,7 +207,7 @@ export async function composeNativeSessionHistory(
 export async function composeNativeSessionSnapshot(
   endpoint: NativeSessionEndpoint,
   sessionId: string,
-  options?: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  options?: HistoryReadOptions,
   dependencies?: NativeSessionDependencies,
 ): Promise<OpenworkSessionSnapshot> {
   const operations = sessionOperations(endpoint, dependencies);
@@ -183,9 +224,9 @@ export async function composeNativeSessionSnapshot(
 async function readOwnedNativeSessionWithRetry<T>(
   expectedOwner: string,
   readCurrentTarget: () => NativeSessionSnapshotTarget,
-  options: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  options: HistoryReadOptions,
   dependencies: NativeSessionDependencies | undefined,
-  read: (endpoint: NativeSessionEndpoint, sessionId: string, readOptions: RequestOptions & { limit?: number; messageIds?: readonly string[] }, dependencies?: NativeSessionDependencies) => Promise<T>,
+  read: (endpoint: NativeSessionEndpoint, sessionId: string, readOptions: HistoryReadOptions, dependencies?: NativeSessionDependencies) => Promise<T>,
 ): Promise<T> {
   const signal = options.signal ?? new AbortController().signal;
   const waitForRetry = dependencies?.waitForSnapshotRetry ?? waitForSnapshotRetry;
@@ -217,7 +258,7 @@ async function readOwnedNativeSessionWithRetry<T>(
 export function composeNativeSessionHistoryWithRetry(
   expectedOwner: string,
   readCurrentTarget: () => NativeSessionSnapshotTarget,
-  options: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  options: HistoryReadOptions,
   dependencies?: NativeSessionDependencies,
 ) {
   return readOwnedNativeSessionWithRetry(expectedOwner, readCurrentTarget, options, dependencies, composeNativeSessionHistory);
@@ -226,7 +267,7 @@ export function composeNativeSessionHistoryWithRetry(
 export function composeNativeSessionSnapshotWithRetry(
   expectedOwner: string,
   readCurrentTarget: () => NativeSessionSnapshotTarget,
-  options: RequestOptions & { limit?: number; messageIds?: readonly string[] },
+  options: HistoryReadOptions,
   dependencies?: NativeSessionDependencies,
 ) {
   return readOwnedNativeSessionWithRetry(expectedOwner, readCurrentTarget, options, dependencies, composeNativeSessionSnapshot);

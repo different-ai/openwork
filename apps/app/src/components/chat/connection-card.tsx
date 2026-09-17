@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { ChatToolReconnectAction } from "@/components/tools/error-attribution"
 import { useChatToolReconnect } from "@/components/tools/use-chat-tool-reconnect"
-import { useMessageList } from "./message-list-provider"
+import type { ChatToolReconnectCallbacks } from "@/components/tools/use-chat-tool-reconnect"
+import { useOptionalMessageList } from "./message-list-provider"
 
 const ACTION_OWNER = {
   member: "You",
@@ -19,15 +20,17 @@ const ACTION_OWNER = {
 }
 
 /** Uses the desktop's signed-in account; credentials never enter an MCP App. */
-export function ConnectionCard({ part, action, connection }: {
+export function ConnectionCard({ part, action, connection, callbacks }: {
+  callbacks?: ChatToolReconnectCallbacks
   part: DynamicToolUIPart
   action: ChatToolReconnectAction | null
   connection: ConnectionActionPayload | null
 }) {
-  const { onMcpReconnect, onMcpReopenAuthorization, connectorIdentities } = useMessageList()
+  const context = useOptionalMessageList()
+  const connectorIdentities = context?.connectorIdentities ?? []
   const { reconnectState, reconnectError, handleReconnect } = useChatToolReconnect(part, {
-    onReconnect: onMcpReconnect,
-    onReopenAuthorization: onMcpReopenAuthorization,
+    onReconnect: callbacks?.onReconnect ?? context?.onMcpReconnect,
+    onReopenAuthorization: callbacks?.onReopenAuthorization ?? context?.onMcpReopenAuthorization,
   }, action ?? undefined)
   const [failedIcon, setFailedIcon] = useState<string | null>(null)
   const identity = connection ?? action

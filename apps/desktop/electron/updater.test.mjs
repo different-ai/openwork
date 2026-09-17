@@ -83,7 +83,7 @@ function fakeUpdaterHarness({ version, platform, manualNativeStaging }) {
 /**
  * @param {{ version: string, platform?: string, manualNativeStaging?: boolean, nativeStagingTimeoutMs?: number, assertActivation?: () => void }} options
  */
-async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativeStaging = false, nativeStagingTimeoutMs, assertActivation }) {
+async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativeStaging = false, nativeStagingTimeoutMs, assertActivation }, { arch = process.arch, runningUnderARM64Translation = false } = {}) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "openwork-updater-test-"));
   const handlers = new Map();
   const harness = fakeUpdaterHarness({ version, platform, manualNativeStaging });
@@ -100,12 +100,14 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativ
     app: {
       isPackaged: true,
       getVersion: () => "0.17.0",
+      runningUnderARM64Translation,
       getPath: (key) => path.join(tempDir, key),
     },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     getMainWindow: () => null,
     loadAutoUpdater: async () => ({ autoUpdater: harness.updater }),
     platform,
+    arch,
     nativeStagingTimeoutMs,
     shipItDefaultsDomain: "test.openwork.ShipIt",
     writeDefaults: async (args) => { defaultsWrites.push(args); },
@@ -647,6 +649,240 @@ describe("downloaded update lifecycle", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+});
+
+describe("metadata-only updater checks", () => {
+  it("metadata check leaves the staged version installable", async () => {
+    const { tempDir, handlers, updater, nativeUpdater, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1", platform: "darwin",
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      const nativeFeed = nativeUpdater.getFeedURL();
+      const autoInstall = updater.autoInstallOnAppQuit;
+      updater.checkForUpdates = async () => ({ updateInfo: { version: "0.17.2" } });
+      const result = await check(null, "stable", undefined, { preserveStaged: true });
+      assert.equal(result.available, true);
+      assert.equal(result.latestVersion, "0.17.2");
+      assert.equal(result.stagedVersion, "0.17.1");
+      assert.equal(updater.autoInstallOnAppQuit, autoInstall);
+      assert.equal(nativeUpdater.getFeedURL(), nativeFeed);
+      assert.equal(updater.squirrelDownloadedUpdate, true);
+      assert.deepEqual(calls, ["download", "nativeCheck"]);
+      assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), { ok: true });
+      assert.deepEqual(calls, ["download", "nativeCheck", "quitAndInstall"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains the newer target for a later explicit download", async () => {
+    const { tempDir, handlers, updater, downloadFeeds, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1", platform: "darwin",
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      const download = handlers.get("openwork:updater:download");
+      assert.deepEqual(await download(), { ok: true });
+      updater.checkForUpdates = async () => ({ updateInfo: { version: "0.17.2" } });
+      assert.equal((await check(null, "stable", "0.17.2", { preserveStaged: true })).stagedVersion, "0.17.1");
+      updater.checkForUpdates = async () => { throw new Error("must use the selected update"); };
+      assert.deepEqual(await download(), { ok: true });
+      assert.equal(downloadFeeds.at(-1).url, targetedStableUpdaterFeed("0.17.0", "0.17.2"));
+      assert.deepEqual(calls, ["download", "nativeCheck", "download", "nativeCheck"]);
+      updater.checkForUpdates = async () => ({ updateInfo: { version: "0.17.2" } });
+      assert.equal((await check(null, "stable", undefined, { preserveStaged: true })).stagedVersion, "0.17.2");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  for (const outcome of ["equal", "no-update", "error"]) {
+    it(`preserves the staged version on ${outcome}`, async () => {
+      const { tempDir, handlers, updater, nativeUpdater, calls } = await registerFakeUpdaterIpc({
+        version: "0.17.1", platform: "darwin",
+      });
+      try {
+        assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+        const nativeFeed = nativeUpdater.getFeedURL();
+        updater.checkForUpdates = async () => {
+          if (outcome === "error") throw new Error("offline");
+          return { updateInfo: { version: outcome === "equal" ? "0.17.1" : "0.17.0" } };
+        };
+        for (const autoInstall of [true, false]) {
+          updater.autoInstallOnAppQuit = autoInstall;
+          const result = await handlers.get("openwork:updater:check")(null, "stable", undefined, { preserveStaged: true });
+          assert.equal(result.available, outcome === "equal");
+          assert.equal(result.stagedVersion, "0.17.1");
+          assert.equal(result.totalBytes, null);
+          if (outcome === "error") assert.equal(result.reason, "offline");
+          assert.equal(updater.autoInstallOnAppQuit, autoInstall);
+          assert.equal(nativeUpdater.getFeedURL(), nativeFeed);
+        }
+        assert.deepEqual(calls, ["download", "nativeCheck"]);
+        assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), { ok: true });
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const options of [undefined, { preserveStaged: false }]) {
+    it(`ordinary check B still invalidates stage A (${options ? "false" : "omitted"})`, async () => {
+      const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
+        version: "0.17.1", platform: "darwin",
+      });
+      try {
+        assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+        updater.checkForUpdates = async () => ({ updateInfo: { version: "0.17.2" } });
+        const result = await handlers.get("openwork:updater:check")(null, "stable", undefined, options);
+        assert.equal(result.available, true);
+        assert.equal(Object.hasOwn(result, "stagedVersion"), false);
+        assert.equal(updater.autoInstallOnAppQuit, false);
+        const recheck = await handlers.get("openwork:updater:check")(null, "stable", undefined, { preserveStaged: true });
+        assert.equal(recheck.stagedVersion, null);
+        assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), {
+          ok: false, reason: "update-not-downloaded",
+        });
+        assert.deepEqual(calls, ["download", "nativeCheck"]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("does not create a stage or revive one invalidated by setChannel", async () => {
+    const { tempDir, handlers, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1", platform: "darwin",
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      assert.equal((await check(null, "stable", undefined, { preserveStaged: true })).stagedVersion, null);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      await handlers.get("openwork:updater:setChannel")(null, "stable");
+      assert.equal((await check(null, "stable", undefined, { preserveStaged: true })).stagedVersion, null);
+      assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), {
+        ok: false, reason: "update-not-downloaded",
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects cross-channel metadata checks without changing the staged update", { skip: process.platform !== "darwin" }, async () => {
+    const { tempDir, handlers, updater, nativeUpdater, feeds, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1", platform: "darwin",
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      const download = handlers.get("openwork:updater:download");
+      await check(null, "stable", "0.17.1");
+      assert.deepEqual(await download(), { ok: true });
+      const nativeFeed = nativeUpdater.getFeedURL();
+      const originalFeeds = [...feeds];
+      updater.checkForUpdates = async () => { throw new Error("must not check the mismatched channel"); };
+      for (const autoInstall of [true, false]) {
+        updater.autoInstallOnAppQuit = autoInstall;
+        const result = await check(null, "alpha", undefined, { preserveStaged: true });
+        assert.equal(result.available, false);
+        assert.equal(result.reason, "Cannot check a different channel while preserving a staged update.");
+        assert.equal(result.stagedVersion, "0.17.1");
+        assert.equal(result.totalBytes, null);
+        assert.equal(updater.autoInstallOnAppQuit, autoInstall);
+        assert.equal(nativeUpdater.getFeedURL(), nativeFeed);
+        assert.equal(updater.squirrelDownloadedUpdate, true);
+        assert.deepEqual(feeds, originalFeeds);
+      }
+      assert.deepEqual(calls, ["download", "nativeCheck"]);
+      assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), { ok: true });
+      assert.deepEqual(calls, ["download", "nativeCheck", "quitAndInstall"]);
+      assert.deepEqual(await download(), { ok: true });
+      assert.equal(feeds.at(-1).url, targetedStableUpdaterFeed("0.17.0", "0.17.1"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("Alpha metadata check 2962 to 2966 leaves Alpha 2962 installable", { skip: process.platform !== "darwin" }, async () => {
+    const { tempDir, handlers, updater, nativeUpdater, calls, downloadFeeds } = await registerFakeUpdaterIpc({
+      version: "0.18.0-alpha.2962", platform: "darwin",
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      assert.equal((await check(null, "alpha")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(downloadFeeds.at(-1).url, "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest");
+      const nativeFeed = nativeUpdater.getFeedURL();
+      const autoInstall = updater.autoInstallOnAppQuit;
+      updater.checkForUpdates = async () => ({ updateInfo: { version: "0.18.0-alpha.2966" } });
+      const result = await check(null, "alpha", undefined, { preserveStaged: true });
+      assert.equal(result.available, true);
+      assert.equal(result.channel, "alpha");
+      assert.equal(result.latestVersion, "0.18.0-alpha.2966");
+      assert.equal(result.stagedVersion, "0.18.0-alpha.2962");
+      assert.equal(updater.autoInstallOnAppQuit, autoInstall);
+      assert.equal(nativeUpdater.getFeedURL(), nativeFeed);
+      assert.equal(updater.squirrelDownloadedUpdate, true);
+      assert.deepEqual(calls, ["download", "nativeCheck"]);
+      assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), { ok: true });
+      assert.deepEqual(calls, ["download", "nativeCheck", "quitAndInstall"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("updater artifact metadata size", () => {
+  const files = [
+    { url: "openwork-mac-x64-0.17.1.dmg", size: 900 },
+    { url: "openwork-mac-arm64-0.17.1.dmg", size: 800 },
+    { url: "openwork-mac-x64-0.17.1.zip", size: 700 },
+    { url: "openwork-mac-arm64-0.17.1.zip", size: 600 },
+  ];
+  for (const { arm64, runningUnderARM64Translation, totalBytes } of [
+    { arm64: true, runningUnderARM64Translation: false, totalBytes: 600 },
+    { arm64: false, runningUnderARM64Translation: false, totalBytes: 700 },
+    { arm64: false, runningUnderARM64Translation: true, totalBytes: 600 },
+  ]) {
+    const arch = arm64 ? "arm64" : "x64";
+    it(`selects the ZIP size for ${arch}, translated=${runningUnderARM64Translation}`, async () => {
+      const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
+        version: "0.17.1", platform: "darwin",
+      }, { arch, runningUnderARM64Translation });
+      try {
+        updater.checkForUpdates = async () => ({ updateInfo: { version: "0.17.1", files } });
+        const result = await handlers.get("openwork:updater:check")(null, "stable", undefined, { preserveStaged: true });
+        assert.equal(result.totalBytes, totalBytes);
+        assert.equal(result.stagedVersion, null);
+        assert.deepEqual(calls, []);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const [name, artifacts, totalBytes] of [
+    ["DMG only", files.slice(0, 2), null],
+    ["universal ZIP", [{ url: "openwork-universal.zip", size: 500 }], 500],
+    ["x64 fallback on ARM", [files[2]], 700],
+    ["missing size", [{ url: "openwork-arm64.zip" }], null],
+    ["invalid size", [{ url: "openwork-arm64.zip", size: -1 }], null],
+    ["string size", [{ url: "openwork-arm64.zip", size: "500" }], null],
+  ]) {
+    it(`handles ${name}`, async () => {
+      const { tempDir, handlers, updater } = await registerFakeUpdaterIpc({
+        version: "0.17.1", platform: "darwin",
+      }, { arch: "arm64" });
+      try {
+        updater.checkForUpdates = async () => ({ updateInfo: { version: "0.17.1", files: artifacts } });
+        assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).totalBytes, totalBytes);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+  }
 });
 
 describe("macOS native staging", () => {

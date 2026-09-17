@@ -1,3 +1,5 @@
+import { liveArtifactConnectionFailure } from "../../mcp/capability-registry.js"
+import { artifactRunInputSchema } from "../../artifact-runtime.js"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -63,10 +65,13 @@ const saveSchema = z.object({
   pluginId: z.string().trim().min(1).max(160).optional().describe("Existing OpenWork Connect Plugin that will contain and share this Workflow. Omit to use the member's private My Workflows Plugin."),
   name: z.string().trim().min(1).max(255),
   description: z.string().trim().max(4_000).optional(),
-  code: z.string().min(1).max(200_000),
-  currentInput: z.unknown().optional(),
+  code: z.string().min(1).max(200_000).optional().describe("Exact tested source. Required without receiptId; if both are supplied it must byte-match the retained source."),
+  receiptId: z.string().min(1).max(160).optional().describe("Successful authoring receipt from this caller within 15 minutes. Encrypted source retention is shared across replicas when Redis is configured, otherwise process-local. If unavailable, retest or omit receiptId and supply the exact source."),
+  currentInput: z.unknown().optional().describe("Must match the tested input when receiptId is supplied. Forbidden for live authoring receipts."),
   inputSchema: z.unknown().optional(),
   outputSchema: z.unknown().optional().describe("Optional JSON Schema for the value returned by this Workflow."),
+}).refine((value) => value.code !== undefined || value.receiptId !== undefined, {
+  message: "Provide code or receiptId.",
 })
 const savedSchema = z.object({
   pluginId: z.string(),
@@ -80,9 +85,22 @@ const runSchema = z.object({
   pluginId: z.string().min(1).max(160),
   configObjectVersionId: z.string().min(1).max(160),
   input: z.unknown().optional(),
+  mode: z.enum(["adhoc", "live"]).default("adhoc"),
+  timeZone: artifactRunInputSchema.shape.timeZone,
+}).superRefine((value, context) => {
+  if (value.mode === "live" && Object.hasOwn(value, "input")) {
+    context.addIssue({ code: "custom", path: ["input"], message: "Live runs generate input.runtime; omit caller input." })
+  }
+  if (value.mode !== "live" && value.timeZone !== undefined) {
+    context.addIssue({ code: "custom", path: ["timeZone"], message: "timeZone is only supported in live mode." })
+  }
 })
 const runResultSchema = z.object({
   status: z.literal("succeeded"),
+  executionType: z.literal("saved-workflow"),
+  mode: z.enum(["adhoc", "live"]),
+  fetchedAt: z.string().datetime(),
+  timeZone: z.string().optional(),
   value: z.unknown(),
   markdown: z.string(),
   receiptId: z.string().nullable(),
@@ -152,6 +170,21 @@ function routeFailure(error: unknown) {
         message: "Test the draft first, then immediately create the version using that successful test's receiptId and the exact unchanged name, description, code, exampleInput, inputSchema, outputSchema, and requiredCapabilities. Do not reuse an older receipt or alter any draft field between the two calls.",
       },
     } as const
+  }
+  if (message === "workflow_source_contains_secret") {
+    return { status: 400, body: { error: message, message: "Source cannot be retained or saved because it may contain a literal credential. Remove credentials and retest." } } as const
+  }
+  if (message === "workflow_authoring_receipt_required") {
+    return {
+      status: 400,
+      body: {
+        error: message,
+        message: "A matching successful authoring receipt and its retained source are required. Source retention lasts at most 15 minutes and is shared across replicas when Redis is configured, otherwise process-local. Configured storage failures do not fall back locally. Retest and use the new receiptId with unchanged source, input, and schemas, or omit receiptId and supply the exact tested source.",
+      },
+    } as const
+  }
+  if (message === "workflow_live_current_input_forbidden") {
+    return { status: 400, body: { error: message, message: "Omit currentInput for a live authoring receipt. Validation uses the retained server-generated runtime, which is not saved as example input." } } as const
   }
   if (message === "workflow_recent_receipt_required") {
     return {
@@ -227,7 +260,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     })
     const buildTools = () => buildCapabilityToolTree(capabilityContext)
     const actorContext = { organizationContext: context, memberTeams: teams, session: c.get("session") }
-    return { context, member, actorContext, buildTools }
+    return { context, member, actorContext, buildTools, describeUnavailable: (missing: readonly { capabilityName: string }[]) => liveArtifactConnectionFailure(capabilityContext, missing) }
   }
 
   app.get(
@@ -249,7 +282,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     describeRoute({
       operationId: saveWorkflowOperationId,
       tags: ["Workflows"], summary: "Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin",
-      description: "Turns the caller's most recent successful execute_capability_script run into a reusable Workflow: code must match that run byte-for-byte and the run must be less than 15 minutes old (400 workflow_recent_receipt_required), and the tool calls the run made become the Workflow's requiredCapabilities (400 workflow_capability_unavailable when one is no longer in the caller's tool tree). Omit pluginId to save into the member's private My Workflows Plugin, created on first use; passing pluginId requires editor access to that Plugin. Saving a name that already exists in the Plugin adds a new immutable version to that Workflow, which requires manager access to it.",
+      description: "Saves a successful authoring run as a reusable Workflow. Supply code or receiptId, or both with byte-identical source. Explicit receiptId requires a successful run from this caller in this organization within 15 minutes, retained source (encrypted shared storage when Redis is configured; process-local otherwise), and exactly matching tested input and schema digests; missing retention fails closed (400 workflow_authoring_receipt_required). Live receipts forbid currentInput, validate with their server-generated runtime, and never save runtime day bounds as example input. Without receiptId, the existing byte-exact recent successful code lookup applies (400 workflow_recent_receipt_required). Literal credentials in source are rejected, not sanitized. The run's tool calls become requiredCapabilities and must still be available. Saving creates no artifact snapshot linkage. Omit pluginId for the private My Workflows Plugin; a chosen Plugin requires editor access. Replacing a same-name Workflow requires manager access.",
       responses: {
         201: jsonResponse("Workflow saved.", savedSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
@@ -267,7 +300,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
           ownerMemberId: context.currentMember.id,
           workflow: {
             ...body,
-            ...(body.currentInput === undefined ? {} : { currentInput: normalizeToolBody(body.currentInput) }),
+            ...(body.receiptId !== undefined || body.currentInput === undefined ? {} : { currentInput: normalizeToolBody(body.currentInput) }),
           },
           buildTools,
           context: actorContext,
@@ -360,18 +393,19 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/apps/:appId",
     describeRoute({
       tags: ["Apps"], summary: "Open an app or an exact draft preview",
-      description: "Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. The data comes from the Workflow's latest successful snapshot, or from the snapshot named by receiptId. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.",
+      description: "Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. Live apps execute the current saved Workflow as the caller with optional IANA timeZone (UTC by default); receiptId is forbidden for live apps. Legacy snapshots use only the caller's receipts. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.",
       responses: {
         200: jsonResponse("App preview returned.", savedAppDetailSchema),
       },
     }),
     orgMemberRoute(),
-    queryValidator(z.object({ revisionId: z.string().trim().min(1).max(160).optional(), receiptId: z.string().trim().min(1).max(160).optional() })),
+    queryValidator(artifactRunInputSchema.extend({ revisionId: z.string().trim().min(1).max(160).optional(), receiptId: z.string().trim().min(1).max(160).optional() })),
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
       try {
-        const { actorContext } = await contextFor(c)
-        return c.json(await getSavedApp({ context: actorContext, appId: c.req.param("appId"), ...c.req.valid("query") }))
+        const { actorContext, buildTools, describeUnavailable } = await contextFor(c)
+        c.header("Cache-Control", "private, no-store")
+        return c.json(await getSavedApp({ context: actorContext, buildTools, describeUnavailable, appId: c.req.param("appId"), ...c.req.valid("query") }))
       } catch (error) {
         const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)
@@ -662,7 +696,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/run",
     describeRoute({
       tags: ["Workflows"], summary: "Run an exact Workflow version",
-      description: "Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.",
+      description: "Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live app, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. After receipt-backed saveWorkflow, run this saved version in live mode before save_artifact_view; authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.",
       responses: {
         200: jsonResponse("Workflow executed.", runResultSchema),
         400: jsonResponse("Execution rejected.", invalidRequestSchema),
@@ -681,7 +715,8 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         configObjectId: params.data.configObjectId,
         configObjectVersionId: body.configObjectVersionId,
         body: body.input,
-          validateScriptOutput: true,
+        ...(body.mode === "live" ? { liveRuntime: { timeZone: body.timeZone } } : {}),
+        validateScriptOutput: true,
         buildTools,
       })
       if (!result.ok) return c.json({ error: result.error, message: result.message }, 400)
@@ -691,6 +726,10 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       const canonical = result.result.canonicalResult ?? JSON.stringify(result.result.value)
       return c.json({
         status: "succeeded" as const,
+        executionType: "saved-workflow" as const,
+        mode: body.mode,
+        fetchedAt: new Date().toISOString(),
+        ...(body.mode === "live" ? { timeZone: body.timeZone ?? "UTC" } : {}),
         value: result.result.value,
         markdown: result.result.markdown ?? `\`\`\`json\n${canonical}\n\`\`\``,
         receiptId: result.result.receiptId,

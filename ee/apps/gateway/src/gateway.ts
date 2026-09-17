@@ -6,7 +6,8 @@ import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
-import { GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
+import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
@@ -221,6 +222,18 @@ function materializeAuth(credential: UsableCredential, provider: GatewayProvider
   }
 }
 
+function isInlineResponseItem(item: JsonObject) {
+  if (item.type === "function_call") return typeof item.call_id === "string" && typeof item.name === "string" && typeof item.arguments === "string"
+  if (typeof item.id !== "string" || !item.id) return false
+  if (item.type === "message") return item.role === "assistant" && Array.isArray(item.content) && item.content.length > 0
+    && item.content.every((part) => isJsonObject(part) && (
+      (part.type === "output_text" && typeof part.text === "string")
+      || (part.type === "refusal" && typeof part.refusal === "string")
+    ))
+  return item.type === "reasoning" && typeof item.encrypted_content === "string" && item.encrypted_content.trim().length > 0
+    && Array.isArray(item.summary) && item.summary.every((part) => isJsonObject(part) && part.type === "summary_text" && typeof part.text === "string")
+}
+
 function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, providerId: string): "resource" | "model" | null {
   // Grants cover models, not ownership of provider-side state. Walk protocol
   // envelopes, never interpret user text or client function schemas/arguments.
@@ -243,7 +256,7 @@ function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, pro
       if (key === "prompt" && isJsonObject(child)) return "resource" // Saved OpenAI prompt templates.
       if (key === "audio" && isJsonObject(child) && Object.hasOwn(child, "id")) return "resource"
       if (key === "input" && Array.isArray(child) && child.some((item) => isJsonObject(item) && Object.hasOwn(item, "id")
-        && !(item.type === "function_call" && typeof item.call_id === "string" && typeof item.name === "string" && typeof item.arguments === "string"))) return "resource"
+        && !isInlineResponseItem(item))) return "resource"
       if (key === "tool_choice" && isJsonObject(child) && (typeof child.type !== "string" || !["auto", "none", "required", "any", "tool", "function", "custom", "allowed_tools"].includes(child.type))) return "resource"
       if (key === "tools") {
         if (!Array.isArray(child)) return "resource"
@@ -285,11 +298,15 @@ function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, pro
   return null
 }
 
-async function prepareRequest(request: Request, upstream: ResolvedUpstream, providerId: string, rest: string): Promise<PreparedRequest | { error: Response; errorCode: string }> {
+async function prepareRequest(request: Request, upstream: ResolvedUpstream, providerId: string, rest: string): Promise<PreparedRequest | { error: Response; errorCode: string; requestedModel: string | null; stream: boolean }> {
   const url = new URL(upstream.url)
-  const invalid = (status: number, code: string, message: string) => ({ error: gatewayError(status, code, message), errorCode: code })
+  let requestedModel: string | null = null
+  let stream = false
+  const invalid = (status: number, code: string, message: string) => ({ error: gatewayError(status, code, message), errorCode: code, requestedModel, stream })
   let pathModel: string | null
   try { pathModel = requestedModelFromPath(url.pathname) } catch { return invalid(400, "invalid_model_path", "Invalid model path encoding.") }
+  requestedModel = pathModel
+  stream = isStreamingPath(upstream.protocol, url.pathname)
   // No account/file management, deferred inference, or arbitrary provider RPCs.
   // GET models is generated locally before reaching this upstream-only path.
   const operation = stripApiVersionPrefix(rest)
@@ -321,7 +338,7 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
   try { bytes = await readBoundedBody(request) } catch (error) {
     const limited = error instanceof RequestBodyLimitError
     const code = limited ? "request_too_large" : "request_body_failed"
-    return { error: gatewayError(limited ? 413 : 400, code, "Could not read the request body within gateway limits."), errorCode: code }
+    return invalid(limited ? 413 : 400, code, "Could not read the request body within gateway limits.")
   }
   let json: unknown = null
   if (bytes.length && isJsonContentType(request.headers.get("content-type"))) {
@@ -334,14 +351,16 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
   if (!isJsonObject(json)) {
     return invalid(415, "unsupported_media_type", "Model invocation bodies must be JSON objects; multipart and file uploads are not supported.")
   }
+  // Capture request identity before payload policy checks can reject it.
+  if (typeof json.model === "string" && json.model.length > 0 && json.model.length <= 255) requestedModel = json.model
+  stream = json.stream === true || stream
   const unsupported = unsupportedGatewayPayload(json, upstream.family, providerId)
   if (unsupported === "model") return invalid(400, "unsupported_model_selection", "Alternate or nested model selection is not supported.")
   if (unsupported === "resource") return invalid(400, "unsupported_gateway_resource", "Provider-stored resources and hosted tools are not supported: Gateway model grants do not establish resource ownership. Send inline content and client-executed tools instead.")
   if (Object.hasOwn(json, "model") && (typeof json.model !== "string" || !json.model)) return invalid(400, "model_required", "model must be a nonempty string.")
   if (pathModel && typeof json.model === "string" && json.model !== pathModel) return invalid(400, "conflicting_model_selection", "Body and path must select the same model.")
-  const requestedModel = typeof json.model === "string" ? json.model : pathModel
+  requestedModel = typeof json.model === "string" ? json.model : pathModel
   if (!requestedModel) return invalid(400, "model_required", "This operation requires a configured model.")
-  const stream = json.stream === true || isStreamingPath(upstream.protocol, url.pathname)
   return { body: bytes, json, pathModel, requestedModel, stream, url }
 }
 
@@ -391,7 +410,7 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
 function buildUpstreamHeaders(request: Request, family: ProtocolFamily, openworkRequestId: string) {
   const headers = new Headers()
   request.headers.forEach((value, name) => {
-    if (name.toLowerCase() !== GATEWAY_GRANT_HEADER && isAllowedRequestHeader(family, name)) headers.set(name, value)
+    if (name.toLowerCase() !== GATEWAY_GRANT_HEADER && name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER && isAllowedRequestHeader(family, name)) headers.set(name, value)
   })
   headers.set("x-openwork-request-id", openworkRequestId)
   return headers
@@ -577,6 +596,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
     const resolved = resolveUpstream(provider, catalog, rest, requestUrl.search)
     let selection: GatewayGrantSelection | null = null
+    const headerModel = c.req.header(GATEWAY_REQUEST_MODEL_HEADER)
+    const modelHint = parseGatewayModelAlias(headerModel) ? headerModel ?? null : null
     const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter: dependencies.reporter, now: dependencies.now })
     const startRecorder = (state: {
       protocol: GatewayRequestProtocol
@@ -586,6 +607,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       credentialId?: GatewayCredential["id"] | null
       requestBytes?: number | null
     }) => {
+      const requestedModel = state.requestedModel ?? modelHint
+      // Resolve a known requested model for diagnostics only. The body still
+      // independently selects and authorizes the actual upstream request below.
+      const requestedSelection = requestedModel === null ? null : selectGatewayGrant(accessRows, requestedModel, c.req.header(GATEWAY_GRANT_HEADER) ?? null)
+      const loggedSelection = selection ?? (requestedSelection?.kind === "selected" ? requestedSelection.selection : null)
       recorder.start({
         identity,
         openworkRequestId,
@@ -595,14 +621,15 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         upstreamHost: state.url?.hostname ?? "",
         upstreamPath: state.url?.pathname ?? `/${rest}`,
         method,
-        requestedModel: state.requestedModel,
-        upstreamModel: selection?.upstreamModel ?? null,
+        requestedModel,
+        ...(requestedModel !== null ? { requestedModelSource: state.requestedModel !== null ? "request" : "header" } : {}),
+        upstreamModel: loggedSelection?.upstreamModel ?? null,
         stream: state.stream,
         gatewayProviderId: provider.id,
         gatewayProviderCredentialId: state.credentialId ?? null,
-        modelGroupId: selection?.row.group.id ?? null,
-        credentialSetId: selection?.row.credentialSet.id ?? null,
-        accessGrantId: selection?.row.grant.id ?? null,
+        modelGroupId: loggedSelection?.row.group.id ?? null,
+        credentialSetId: loggedSelection?.row.credentialSet.id ?? null,
+        accessGrantId: loggedSelection?.row.grant.id ?? null,
         requestBytes: state.requestBytes,
         startedAt,
       })
@@ -648,7 +675,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     const prepared = await prepareRequest(c.req.raw, resolved, provider.provider_id, rest)
     if ("error" in prepared) {
-      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false })
+      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: prepared.requestedModel, stream: prepared.stream })
       return reject(prepared.error, prepared.errorCode, "Unsupported or invalid gateway request")
     }
     const selected = selectGatewayGrant(accessRows, prepared.requestedModel, c.req.header(GATEWAY_GRANT_HEADER) ?? null)

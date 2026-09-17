@@ -52,7 +52,8 @@ function reusedChart(name, args, canonical = false) {
   if (!canonical) {
     values = values.replace(/^gateway: \{\}\r?\n/m, "")
       .replace(/^    gatewayPublicBaseUrl:.*\r?\n/m, "")
-      .replace(/^    database(?:Host|Username|Password):.*\r?\n/gm, "");
+      .replace(/^    database(?:Host|Username|Password):.*\r?\n/gm, "")
+      .replace(/^  writersStoppedFor0097:.*\r?\n/m, "");
   }
   writeFileSync(path.join(destination, "values.yaml"), values);
   const snapshotTemplate = path.join(destination, "templates", "saved-values.yaml");
@@ -88,7 +89,7 @@ function migrationEnv(yaml, secret = {}) {
   const env = {};
   let name;
   for (const line of yaml.split("\n")) {
-    const entry = line.match(/^            - name: ([A-Z_]+)$/);
+    const entry = line.match(/^            - name: ([A-Z_][A-Z0-9_]*)$/);
     if (entry) name = entry[1];
     const value = line.match(/^              value: (".*")$/);
     if (value && name) env[name] = JSON.parse(value[1]);
@@ -167,6 +168,28 @@ try {
       const env = migrationEnv(output, { "tcp-url": url, encryption: "fixture-encryption" });
       assert.equal(bootstrapConfig(env).database, "production_db");
     });
+  }
+  test("0097-writer-acknowledgement-is-default-off-and-scoped-to-migration-job", () => {
+    for (const args of [created, [...created, "--set", "migrations.writersStoppedFor0097=false"]]) {
+      const output = render(chart, args);
+      assert.ok(!output.includes("DEN_DB_0097_WRITERS_STOPPED"));
+    }
+    const before = migrationEnv(render(chart, created));
+    const after = migrationEnv(render(chart, [...created, "--set", "migrations.writersStoppedFor0097=true"]));
+    assert.equal(after.DEN_DB_0097_WRITERS_STOPPED, "1");
+    delete after.DEN_DB_0097_WRITERS_STOPPED;
+    assert.deepEqual(after, before);
+    const all = render(chart, ["--set", "migrations.writersStoppedFor0097=true"]);
+    assert.equal((all.match(/- name: DEN_DB_0097_WRITERS_STOPPED/g) ?? []).length, 1);
+  });
+  test("0097-acknowledgement-missing-from-reused-old-values-remains-off", () => {
+    assert.ok(old);
+    assert.ok(!readFileSync(path.join(old, "values.yaml"), "utf8").includes("writersStoppedFor0097"));
+    assert.ok(!render(old, created).includes("DEN_DB_0097_WRITERS_STOPPED"));
+    assert.equal(migrationEnv(render(old, [...created, "--set", "migrations.writersStoppedFor0097=true"])).DEN_DB_0097_WRITERS_STOPPED, "1");
+  });
+  for (const value of ['"true"', '"false"', '"1"', "1", "{}", "[]"]) {
+    test(`0097-acknowledgement-rejects-nonboolean-${value}`, () => render(chart, [...created, "--set-json", `migrations.writersStoppedFor0097=${value}`], "writersStoppedFor0097 must be a boolean"));
   }
   test("legacy-local-tcp-url-still-supported", () => {
     const output = render(chart, [...created, "--set-string", "secret.values.databaseUrl=mysql://fixture:fixture@127.0.0.1/local_db"]);

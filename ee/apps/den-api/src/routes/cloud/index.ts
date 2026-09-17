@@ -16,9 +16,22 @@ import {
   openWorkWebAccessRequiredPayload,
   type OpenWorkWebRuntimeAccessResolver,
 } from "../../openwork-web-runtime-access.js"
-import { currentDaytonaSandboxName, flushWorkerCheckpointOnDaytona, getDaytonaSandboxRecord, inspectDaytonaSandbox, refreshDaytonaSignedPreview, stopWorkerOnDaytona } from "../../workers/daytona.js"
 import { CLOUD_INSTANCE_BACKEND, CLOUD_INSTANCE_NAME } from "../../workers/cloud-constants.js"
+import { currentInstanceName } from "@openwork-ee/cloud-runtime/orchestrator"
+import {
+  cloudRuntimeAvailable,
+  cloudRuntimeOrchestratorConfig,
+  cloudRuntimeStore,
+  currentCloudImageVersion,
+  getCloudRuntime,
+  type CloudRuntimeAvailabilityOptions,
+} from "../../workers/cloud-runtime.js"
 import { recoverClaimedCloudWorker as defaultRecoverCloudWorker, wakeCloudWorker as defaultWakeCloudWorker } from "../../workers/cloud-lifecycle.js"
+import {
+  hasActiveCloudAutomationRun as defaultHasActiveCloudAutomationRun,
+  resolveCloudWorkerInterruptibility,
+  type ProbeCloudWorkerActivity,
+} from "../../workers/cloud-activity.js"
 import {
   probeCloudRuntimeSignedPreview,
   resolveCloudRuntimeAccess,
@@ -39,14 +52,12 @@ import {
 import type { OrgRouteVariables } from "../org/shared.js"
 import { continueCloudProvisioning, token } from "../workers/shared.js"
 
-type CloudRouteOptions = {
+type CloudRouteOptions = CloudRuntimeAvailabilityOptions & {
   memberRoute?: MiddlewareHandler<{ Variables: OrgRouteVariables }>
   orgMode?: DenOrgMode
-  provisionerMode?: "stub" | "render" | "daytona"
-  daytonaApiKey?: string
   gatewayKey?: string
   continueProvisioning?: typeof continueCloudProvisioning
-  refreshSignedPreview?: typeof refreshDaytonaSignedPreview
+  refreshSignedPreview?: RefreshSignedPreview
   cloudWorkerStore?: CloudWorkerStore
   ensureCloudWorker?: EnsureCloudWorker
   getSandboxRecord?: GetSandboxRecord
@@ -56,6 +67,10 @@ type CloudRouteOptions = {
   recoverCloudWorker?: WakeCloudWorker
   flushWorkerCheckpoint?: FlushWorkerCheckpoint
   stopCloudWorker?: StopCloudWorker
+  probeActivity?: ProbeCloudWorkerActivity
+  hasActiveAutomationRun?: HasActiveAutomationRun
+  unreachableGraceMs?: number
+  unreachableMisses?: number
   materializeProviders?: typeof materializeCloudWorkerProviders
   getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   now?: () => number
@@ -90,7 +105,7 @@ type CloudGatewayInstanceResponse = CloudInstanceResponse & {
 }
 type CloudInstanceUpdateResponse =
   | { ok: true; status: "update_requested" }
-  | { ok: false; error: "already_current" | "flush_failed" }
+  | { ok: false; error: "already_current" | "flush_failed" | "busy" | "activity_unknown" }
 type CloudWorkerStore = CloudRuntimeStore & {
   getCloudWorker: (input: { orgId: OrgId; userId: UserId }) => Promise<CloudWorker | null>
   insertCloudWorkerWithTokens: (input: {
@@ -112,11 +127,13 @@ type EnsureCloudWorker = (input: {
   store: CloudWorkerStore
 }) => Promise<CloudWorker>
 type GetSandboxRecord = (workerId: CloudWorker["id"]) => Promise<CloudSandboxRecord | null>
+type RefreshSignedPreview = (workerId: CloudWorker["id"]) => Promise<CloudSandboxRecord | null>
 type InspectSandbox = (workerId: CloudWorker["id"]) => Promise<CloudSandboxInspection>
 type ProbeSignedPreview = typeof probeCloudRuntimeSignedPreview
 type WakeCloudWorker = (workerId: CloudWorker["id"]) => Promise<void>
 type FlushWorkerCheckpoint = (workerId: CloudWorker["id"]) => Promise<boolean>
 type StopCloudWorker = (workerId: CloudWorker["id"]) => Promise<unknown>
+type HasActiveAutomationRun = (workerId: CloudWorker["id"]) => Promise<boolean>
 
 type UpdateResultRecord = {
   rowsAffected?: unknown
@@ -137,6 +154,13 @@ const cloudInstanceResponseSchema = z.object({
   }).optional(),
 }).meta({ ref: "CloudInstanceResponse" })
 
+const cloudInstanceUpdateRequestSchema = z.object({
+  // Web shells published before deferrals only understand already_current and
+  // flush_failed and reject anything else as an invalid payload. New shells opt
+  // in here to receive busy / activity_unknown when the sandbox cannot be stopped.
+  acceptsDeferral: z.boolean().optional(),
+})
+
 const cloudInstanceUpdateResponseSchema = z.union([
   z.object({
     ok: z.literal(true),
@@ -144,7 +168,7 @@ const cloudInstanceUpdateResponseSchema = z.union([
   }),
   z.object({
     ok: z.literal(false),
-    error: z.enum(["already_current", "flush_failed"]),
+    error: z.enum(["already_current", "flush_failed", "busy", "activity_unknown"]),
   }),
 ]).meta({ ref: "CloudInstanceUpdateResponse" })
 
@@ -176,7 +200,6 @@ function cloudNotFound() {
 }
 
 const logger = appLogger.child({ component: "cloud_routes" })
-const cloudWorkerNameMaxLength = 255
 const gatewayKeyHeader = "X-OpenWork-Gateway-Key"
 const ensureCloudWorkerInFlight = new Map<string, Promise<CloudWorker>>()
 
@@ -213,38 +236,6 @@ function changedRows(result: unknown): number | null {
 function hasChangedRows(result: unknown) {
   const rows = changedRows(result)
   return rows !== null && rows > 0
-}
-
-function truncateForWorkerName(value: string) {
-  return Array.from(value).slice(0, cloudWorkerNameMaxLength).join("").trim()
-}
-
-function emailLocalPart(email: string | null | undefined) {
-  const trimmed = email?.trim() ?? ""
-  if (!trimmed) {
-    return null
-  }
-
-  return trimmed.split("@")[0]?.trim() || trimmed
-}
-
-function displayNameForCloudWorker(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: CloudRouteUser) {
-  const member = payload.members.find((entry) => entry.userId === payload.currentMember.userId) ?? null
-  const memberName = member?.user.name.trim()
-  if (memberName) {
-    return memberName
-  }
-
-  const userName = user.name?.trim()
-  if (userName) {
-    return userName
-  }
-
-  return emailLocalPart(member?.user.email) ?? emailLocalPart(user.email) ?? "member"
-}
-
-function cloudWorkerName(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: CloudRouteUser) {
-  return truncateForWorkerName(`${CLOUD_INSTANCE_NAME} — ${displayNameForCloudWorker(payload, user)}`)
 }
 
 function ensureKey(orgId: OrgId, userId: UserId) {
@@ -348,17 +339,13 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
   },
 }
 
-function hasDaytonaProvisioner(options: CloudRouteOptions) {
-  const apiKey = options.daytonaApiKey !== undefined ? options.daytonaApiKey : env.daytona.apiKey
-  return (options.provisionerMode ?? env.provisionerMode) === "daytona" && Boolean(apiKey?.trim())
-}
-
 // Deployment-level availability only. The single-org and no-provisioner 404s
 // are unchanged from the retired per-organization rollout gate, which also
 // returned false outside multi_org; organization entitlement is the separate
 // Web access check on each execution route.
 function cloudAvailable(payload: NonNullable<OrgRouteVariables["organizationContext"]>, options: CloudRouteOptions) {
-  return cloudHostingAvailable({ orgMode: options.orgMode ?? env.orgMode }) && hasDaytonaProvisioner(options)
+  return cloudHostingAvailable({ orgMode: options.orgMode ?? env.orgMode })
+    && cloudRuntimeAvailable({ provisionerMode: options.provisionerMode, daytonaApiKey: options.daytonaApiKey })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -502,32 +489,35 @@ export function ensureMemberCloudWorker(input: { orgId: OrgId; createdByUserId: 
   })
 }
 
-function workerNeedsUserRequestedUpdate(worker: CloudWorker) {
-  const snapshot = env.daytona.snapshot
-  return Boolean(snapshot && (worker.image_version ?? null) !== snapshot)
+type CurrentImageVersion = () => string | null
+
+function workerNeedsUserRequestedUpdate(worker: CloudWorker, imageVersion: string | null) {
+  return Boolean(imageVersion && (worker.image_version ?? null) !== imageVersion)
 }
 
-function isRunningSandboxState(state: string | null) {
-  const normalized = state?.toLowerCase() ?? ""
-  return normalized === "running" || normalized === "started"
+function isRunningSandboxState(inspection: CloudSandboxInspection) {
+  return inspection?.state === "running"
 }
 
-function isStoppedSandboxState(state: string | null) {
-  return state?.toLowerCase() === "stopped"
+function isStoppedSandboxState(inspection: CloudSandboxInspection) {
+  return inspection?.state === "stopped"
 }
 
-function cloudInstanceName(worker: CloudWorker, sandbox: CloudSandboxRecord | null) {
-  if (!sandbox) return null
-  const storedName = sandbox.sandbox_id?.trim() ?? ""
+function cloudInstanceName(worker: CloudWorker, sandbox: CloudSandboxRecord | null, imageVersion: string | null) {
+  if (!sandbox?.sandbox) return null
+  const storedName = sandbox.sandbox.ref.sandboxId?.trim() ?? ""
   if (storedName) return storedName
-  if ("sandbox_id" in sandbox) {
-    return currentDaytonaSandboxName({ workerId: worker.id, name: worker.name })
-  }
-  return null
+  return currentInstanceName(cloudRuntimeOrchestratorConfig().instanceNamePrefix, { workerId: worker.id, name: worker.name }, imageVersion)
 }
 
-function memberCloudInstanceResponse(worker: CloudWorker, instance: CloudRuntimeState, sandbox: CloudSandboxRecord | null): CloudInstanceMemberResponse {
-  const instanceName = cloudInstanceName(worker, sandbox)
+function memberCloudInstanceResponse(
+  worker: CloudWorker,
+  instance: CloudRuntimeState,
+  sandbox: CloudSandboxRecord | null,
+  currentImageVersion: CurrentImageVersion,
+): CloudInstanceMemberResponse {
+  const latestVersion = currentImageVersion()
+  const instanceName = cloudInstanceName(worker, sandbox, latestVersion)
   const failure = instance.status === "ready"
     ? null
     : instance.failure ?? cloudStartupFailureFromWorker(worker)
@@ -536,7 +526,7 @@ function memberCloudInstanceResponse(worker: CloudWorker, instance: CloudRuntime
     url: instance.url,
     imageVersion: worker.image_version ?? null,
     ...(instanceName ? { instanceName } : {}),
-    latestVersion: env.daytona.snapshot ?? null,
+    latestVersion,
     ...(failure ? { failure: publicCloudStartupFailure(failure) } : {}),
   }
 }
@@ -545,7 +535,7 @@ async function resolveCloudInstanceForMember(input: {
   payload: NonNullable<OrgRouteVariables["organizationContext"]>
   user: CloudRouteUser
   continueProvisioning: typeof continueCloudProvisioning
-  refreshSignedPreview: typeof refreshDaytonaSignedPreview
+  refreshSignedPreview: RefreshSignedPreview
   store: CloudWorkerStore
   ensureWorker: EnsureCloudWorker
   getSandboxRecord: GetSandboxRecord
@@ -554,12 +544,16 @@ async function resolveCloudInstanceForMember(input: {
   startWake: (workerId: CloudWorker["id"]) => void
   startRecovery: (workerId: CloudWorker["id"]) => void
   now: () => number
+  currentImageVersion: CurrentImageVersion
   forceFailedRecovery?: boolean
+  probeActivity?: ProbeCloudWorkerActivity
+  unreachableGraceMs?: number
+  unreachableMisses?: number
 }) {
   const worker = await input.ensureWorker({
     orgId: input.payload.organization.id,
     createdByUserId: input.user.id,
-    name: cloudWorkerName(input.payload, input.user),
+    name: CLOUD_INSTANCE_NAME,
     continueProvisioning: input.continueProvisioning,
     store: input.store,
   })
@@ -575,7 +569,11 @@ async function resolveCloudInstanceForMember(input: {
     startRecovery: input.startRecovery,
     store: input.store,
     now: input.now,
+    currentImageVersion: input.currentImageVersion,
     forceFailedRecovery: input.forceFailedRecovery,
+    probeActivity: input.probeActivity,
+    unreachableGraceMs: input.unreachableGraceMs,
+    unreachableMisses: input.unreachableMisses,
   })
 
   return { worker, instance }
@@ -583,35 +581,75 @@ async function resolveCloudInstanceForMember(input: {
 
 async function requestCloudInstanceUpdate(input: {
   worker: CloudWorker | null
+  store: CloudWorkerStore
   getSandboxRecord: GetSandboxRecord
+  refreshSignedPreview: RefreshSignedPreview
   inspectSandbox: InspectSandbox
   flushWorkerCheckpoint: FlushWorkerCheckpoint
   stopCloudWorker: StopCloudWorker
+  probeActivity?: ProbeCloudWorkerActivity
+  hasActiveAutomationRun: HasActiveAutomationRun
+  currentImageVersion: CurrentImageVersion
+  now: () => number
+  acceptsDeferral: boolean
 }): Promise<CloudInstanceUpdateResponse> {
   if (!input.worker) {
     return { ok: true, status: "update_requested" }
   }
+  const worker = input.worker
 
-  if (!workerNeedsUserRequestedUpdate(input.worker)) {
+  if (!workerNeedsUserRequestedUpdate(worker, input.currentImageVersion())) {
     return { ok: false, error: "already_current" }
   }
 
-  const sandbox = await input.getSandboxRecord(input.worker.id)
+  const sandbox = await input.getSandboxRecord(worker.id)
   if (!sandbox) {
     return { ok: true, status: "update_requested" }
   }
 
   let inspection: CloudSandboxInspection = null
   try {
-    inspection = await input.inspectSandbox(input.worker.id)
+    inspection = await input.inspectSandbox(worker.id)
   } catch (error) {
-    logger.warn("cloud update failed to inspect sandbox", { worker_id: input.worker.id, error })
+    logger.warn("cloud update failed to inspect sandbox", { worker_id: worker.id, error })
     return { ok: false, error: "flush_failed" }
   }
 
-  const state = inspection?.state ?? null
-  if (isStoppedSandboxState(state) || !isRunningSandboxState(state)) {
+  if (isStoppedSandboxState(inspection) || !isRunningSandboxState(inspection)) {
     return { ok: true, status: "update_requested" }
+  }
+
+  // The browser only knows about its own tab. Ask the instance itself, and the
+  // Automation ledger, before stopping a sandbox that may be mid-task for
+  // another tab, device, remote session, or scheduled run.
+  const interruptibility = await resolveCloudWorkerInterruptibility({
+    workerId: worker.id,
+    trigger: "update",
+    hasActiveAutomationRun: input.hasActiveAutomationRun,
+    probeActivity: input.probeActivity,
+    instance: async () => {
+      const hostToken = (await input.store.getActiveTokens(worker.id)).find((entry) => entry.scope === "host")?.token ?? null
+      if (!hostToken) return null
+      const endpoint = sandbox.endpointExpiresAt.getTime() > input.now()
+        ? sandbox
+        : await input.refreshSignedPreview(worker.id).catch(() => null)
+      return endpoint ? { url: endpoint.endpointUrl, hostToken } : null
+    },
+  })
+  if (interruptibility.verdict !== "interruptible") {
+    const deferral = interruptibility.verdict === "busy" ? "busy" : "activity_unknown"
+    if (input.acceptsDeferral) return { ok: false, error: deferral }
+    // A shell built before deferrals treats busy / activity_unknown as an invalid
+    // payload and shows a failure. Inside its contract, already_current is the one
+    // answer that leaves the update pending quietly: the pill keeps offering it, the
+    // shell tries again on the next version or when the person clicks Update now,
+    // and the stale sandbox still recycles on its next idle stop.
+    logger.info("cloud update deferred for a client without deferral support", {
+      worker_id: worker.id,
+      deferral,
+      reason: interruptibility.reason,
+    })
+    return { ok: false, error: "already_current" }
   }
 
   const flushed = await input.flushWorkerCheckpoint(input.worker.id).catch((error) => {
@@ -630,7 +668,7 @@ async function resolveCloudInstanceForGateway(input: {
   payload: NonNullable<OrgRouteVariables["organizationContext"]>
   user: CloudRouteUser
   continueProvisioning: typeof continueCloudProvisioning
-  refreshSignedPreview: typeof refreshDaytonaSignedPreview
+  refreshSignedPreview: RefreshSignedPreview
   store: CloudWorkerStore
   ensureWorker: EnsureCloudWorker
   getSandboxRecord: GetSandboxRecord
@@ -640,6 +678,10 @@ async function resolveCloudInstanceForGateway(input: {
   startRecovery: (workerId: CloudWorker["id"]) => void
   materializeProviders: typeof materializeCloudWorkerProviders
   now: () => number
+  currentImageVersion: CurrentImageVersion
+  probeActivity?: ProbeCloudWorkerActivity
+  unreachableGraceMs?: number
+  unreachableMisses?: number
 }): Promise<CloudGatewayInstanceResponse> {
   const resolved = await resolveCloudRuntimeAccess({
     organizationId: input.payload.organization.id,
@@ -648,7 +690,7 @@ async function resolveCloudInstanceForGateway(input: {
     loadWorker: async () => input.ensureWorker({
       orgId: input.payload.organization.id,
       createdByUserId: input.user.id,
-      name: cloudWorkerName(input.payload, input.user),
+      name: CLOUD_INSTANCE_NAME,
       continueProvisioning: input.continueProvisioning,
       store: input.store,
     }),
@@ -660,6 +702,10 @@ async function resolveCloudInstanceForGateway(input: {
     startRecovery: input.startRecovery,
     store: input.store,
     now: input.now,
+    currentImageVersion: input.currentImageVersion,
+    probeActivity: input.probeActivity,
+    unreachableGraceMs: input.unreachableGraceMs,
+    unreachableMisses: input.unreachableMisses,
   })
   if (resolved.status !== "ready") {
     const status = resolved.status === "missing" ? "failed" : resolved.status
@@ -716,18 +762,20 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
   const getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
   const continueProvisioning: typeof continueCloudProvisioning = options.continueProvisioning
     ?? ((input, continueOptions = {}) => continueCloudProvisioning(input, { ...continueOptions, materializeProviders }))
-  const refreshSignedPreview = options.refreshSignedPreview ?? refreshDaytonaSignedPreview
+  const refreshSignedPreview = options.refreshSignedPreview ?? ((workerId) => getCloudRuntime().refreshEndpoint(workerId))
   const store = options.cloudWorkerStore ?? databaseCloudWorkerStore
   const ensureWorker = options.ensureCloudWorker ?? ensureCloudWorker
-  const getSandboxRecord = options.getSandboxRecord ?? getDaytonaSandboxRecord
-  const inspectSandbox = options.inspectSandbox ?? inspectDaytonaSandbox
+  const getSandboxRecord = options.getSandboxRecord ?? ((workerId) => cloudRuntimeStore().get(workerId))
+  const inspectSandbox = options.inspectSandbox ?? ((workerId) => getCloudRuntime().inspect(workerId))
   const signedPreviewProbe = options.probeSignedPreview ?? probeCloudRuntimeSignedPreview
   const wakeCloudWorker = options.wakeCloudWorker ?? defaultWakeCloudWorker
   const recoverCloudWorker = options.recoverCloudWorker
     ?? (options.wakeCloudWorker ? options.wakeCloudWorker : defaultRecoverCloudWorker)
-  const flushWorkerCheckpoint = options.flushWorkerCheckpoint ?? flushWorkerCheckpointOnDaytona
-  const stopCloudWorker = options.stopCloudWorker ?? stopWorkerOnDaytona
+  const flushWorkerCheckpoint = options.flushWorkerCheckpoint ?? ((workerId) => getCloudRuntime().flushCheckpoint(workerId))
+  const stopCloudWorker = options.stopCloudWorker ?? ((workerId) => getCloudRuntime().stop(workerId))
+  const hasActiveAutomationRun = options.hasActiveAutomationRun ?? defaultHasActiveCloudAutomationRun
   const now = options.now ?? Date.now
+  const currentImageVersion: CurrentImageVersion = () => currentCloudImageVersion({ provisionerMode: options.provisionerMode })
   const gatewayKey = options.gatewayKey !== undefined ? options.gatewayKey : env.gatewayKey
   const wakingWorkers = new Set<CloudWorker["id"]>()
 
@@ -798,10 +846,14 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         startWake,
         startRecovery,
         now,
+        currentImageVersion,
+        probeActivity: options.probeActivity,
+        unreachableGraceMs: options.unreachableGraceMs,
+        unreachableMisses: options.unreachableMisses,
       })
 
       const sandbox = await getSandboxRecord(resolved.worker.id)
-      return c.json(memberCloudInstanceResponse(resolved.worker, resolved.instance, sandbox))
+      return c.json(memberCloudInstanceResponse(resolved.worker, resolved.instance, sandbox, currentImageVersion))
     },
   )
 
@@ -848,11 +900,15 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         startWake,
         startRecovery,
         now,
+        currentImageVersion,
         forceFailedRecovery: true,
+        probeActivity: options.probeActivity,
+        unreachableGraceMs: options.unreachableGraceMs,
+        unreachableMisses: options.unreachableMisses,
       })
 
       const sandbox = await getSandboxRecord(resolved.worker.id)
-      return c.json(memberCloudInstanceResponse(resolved.worker, resolved.instance, sandbox))
+      return c.json(memberCloudInstanceResponse(resolved.worker, resolved.instance, sandbox, currentImageVersion))
     },
   )
 
@@ -861,7 +917,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     describeRoute({
       tags: ["Cloud"],
       summary: "Request an update for the active organization's Cloud instance",
-      description: "Flushes a running Cloud workspace checkpoint and stops the sandbox so the next resolve can recycle it onto the latest snapshot.",
+      description: "Flushes a running Cloud workspace checkpoint and stops the sandbox so the next resolve can recycle it onto the latest snapshot. A sandbox that is mid-task is left running; clients that send { acceptsDeferral: true } learn why (busy or activity_unknown), older clients receive already_current.",
       responses: {
         200: jsonResponse("Cloud instance update request handled.", cloudInstanceUpdateResponseSchema),
         401: jsonResponse("The caller must be signed in to update Cloud.", unauthorizedSchema),
@@ -886,13 +942,21 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json(cloudNotFound(), 404)
       }
 
+      const requestBody = cloudInstanceUpdateRequestSchema.safeParse(await c.req.json().catch(() => ({})))
       const worker = await getCloudWorker(payload.organization.id, user.id, store)
       const result = await requestCloudInstanceUpdate({
         worker,
+        store,
         getSandboxRecord,
+        refreshSignedPreview,
         inspectSandbox,
         flushWorkerCheckpoint,
         stopCloudWorker,
+        probeActivity: options.probeActivity,
+        hasActiveAutomationRun,
+        currentImageVersion,
+        now,
+        acceptsDeferral: requestBody.success && requestBody.data.acceptsDeferral === true,
       })
 
       return c.json(result)
@@ -950,6 +1014,10 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         startRecovery,
         materializeProviders,
         now,
+        currentImageVersion,
+        probeActivity: options.probeActivity,
+        unreachableGraceMs: options.unreachableGraceMs,
+        unreachableMisses: options.unreachableMisses,
       })
 
       return c.json(instance)

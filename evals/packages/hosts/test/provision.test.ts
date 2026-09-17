@@ -217,6 +217,30 @@ test("source provisioning failures delete newly owned sandboxes but never borrow
   }
 });
 
+test("private web provisioning omits public exposure and records ownership before source preparation", async () => {
+  const { exec, calls } = desktopFake();
+  let owned = "";
+  const result = await provisionWebSandbox({ ref: SOURCE_SHA, name: "app-web", private: true, exec, log: () => undefined,
+    onCreated: async (sandbox) => {
+      owned = sandbox;
+      assert(calls.some((call) => call.args[0] === "create"));
+      assert(!calls.some((call) => call.args[3]?.includes("git fetch")));
+    },
+  });
+  assert.equal(owned, result.sandbox);
+  assert(!calls.find((call) => call.args[0] === "create")?.args.includes("--public"));
+  await assert.rejects(provisionWebSandbox({ ref: SOURCE_SHA, name: "app-web", private: true, reuse: "other", exec }), /cannot reuse/);
+});
+
+test("private web ownership callback failure deletes the newly created sandbox", async () => {
+  const { exec, calls } = desktopFake();
+  await assert.rejects(provisionWebSandbox({ ref: SOURCE_SHA, name: "app-web", private: true, exec, log: () => undefined,
+    onCreated: async () => { throw new Error("ownership failed"); },
+  }), /ownership failed/);
+  assert(calls.some((call) => call.args[0] === "delete"));
+  assert(!calls.some((call) => call.args[3]?.includes("git fetch")));
+});
+
 test("source allocation gates never delete a sandbox before creation is attempted", async () => {
   for (const provision of [provisionDesktopSandbox, provisionWebSandbox]) {
     for (const options of [{ snapshot: "missing-snapshot" }, { autoStopMinutes: -1 }]) {

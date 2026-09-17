@@ -30,6 +30,21 @@ test("Den Web never treats Daytona list or detail URLs as durable connections", 
   expect(getWorkersList({ workers: [{ ...worker, instance: daytonaInstance }] })[0]?.instanceUrl).toBeNull();
 })
 
+test("Den Web decides durability from endpointKind before falling back to the provider name", () => {
+  const worker = { id: "worker-1", name: "Cloud", status: "healthy" };
+  const expiringUnknownHost = { provider: "fly", endpointKind: "signed-expiring", status: "healthy", url: "https://expiring.example.test" };
+  const stableUnknownHost = { provider: "fly", endpointKind: "stable", status: "healthy", url: "https://stable.example.test" };
+  const legacyDaytona = { provider: "daytona", status: "healthy", url: "https://legacy.preview.example.test" };
+
+  expect(getWorker({ worker, instance: expiringUnknownHost, tokens: {} })?.instanceUrl).toBeNull();
+  expect(getWorker({ worker, instance: expiringUnknownHost, tokens: {} })?.expiringEndpoint).toBe(true);
+  expect(getWorkerConnectionTargets(getWorker({ worker, instance: expiringUnknownHost, tokens: {} })).webUrl).toBeNull();
+  expect(getWorker({ worker, instance: stableUnknownHost, tokens: {} })?.instanceUrl).toBe("https://stable.example.test");
+  expect(getWorker({ worker, instance: stableUnknownHost, tokens: {} })?.expiringEndpoint).toBe(false);
+  expect(getWorkersList({ workers: [{ ...worker, instance: stableUnknownHost }] })[0]?.instanceUrl).toBe("https://stable.example.test");
+  expect(getWorker({ worker, instance: legacyDaytona, tokens: {} })?.expiringEndpoint).toBe(true);
+});
+
 test("Den Web keeps durable URLs and separates stable connections from direct previews", () => {
   const worker = { id: "worker-1", name: "Remote", status: "healthy" };
   const renderInstance = { provider: "render", status: "healthy", url: "https://durable.render.example.test" };

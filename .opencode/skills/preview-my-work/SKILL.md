@@ -1,6 +1,6 @@
 ---
 name: preview-my-work
-description: Boot, reopen, update, or reset an isolated OpenWork PR preview inside Codex. Use Den in the in-app browser or the real Linux Electron app streamed through Daytona noVNC for hands-on testing.
+description: Boot, reopen, update, or reset OpenWork PR previews. Discover script worlds, use configurable app-web locally or through a private Daytona browser URL, or choose isolated Den/Electron presets for hands-on testing.
 ---
 
 # Preview my work
@@ -11,11 +11,21 @@ world or an existing test sandbox. Run from the requested worktree.
 
 ## Choose a preview
 
+- Discover the actual primitives first: `pnpm world help`, `pnpm world list`,
+  then inspect the requested script in `worlds/` and its options in `worlds/lib/`.
+  A preset's restrictions are not restrictions of the generic world CLI.
+  For another composition, inspect `packages/world/src/index.ts` and
+  `evals/packages/env/src/index.ts` before declaring it unsupported; reuse the
+  existing provisioning, runtime launch and hold primitives, not another framework.
+- `app-web`: configurable source app plus the existing isolated headless server,
+  locally or on an owned private Daytona sandbox. This is not Den's web UI and
+  not the Cloud-off `seed.appWeb` test fixture. No Den or activation is seeded.
 - `preview-den`: signup, team administration, onboarding, connectors, policies.
 - `preview-desktop`: real Electron plus its own Den; workspaces, chat and native
   app interactions. This is Linux Electron, not a macOS/Windows parity check.
 
-Choose `--scenario fresh` for signup/first use, `team` for an owner with Notion
+For the isolated `preview-den`/`preview-desktop` presets, choose `--scenario fresh`
+for signup/first use, `team` for an owner with Notion
 and Linear available (individual accounts remain unconnected), `restricted`
 for that team with the API's canonical restricted policy values, or `workspace`
 for a signed-in desktop workspace without pre-added tools. Fresh desktop creates
@@ -30,6 +40,82 @@ versions are not supported. The installer resolves the exact `v<x.y.z>` GitHub
 release asset and verifies its API-published SHA-256 digest before extraction.
 
 ## Start and open
+
+For the configurable app-web script, use a reviewed full pushed SHA on Daytona:
+
+```sh
+pnpm world up app-web --place local --stage pr-1234
+pnpm world up app-web --place daytona --stage pr-1234 --detach --timeout 600000 -- --ref <full-pushed-sha>
+pnpm world outputs app-web --stage pr-1234 --reveal
+pnpm world down app-web --stage pr-1234
+```
+
+An existing Den proxy is an explicit, nonsecret environment selection, not a
+`--cloud` mode. Set values in the caller and select each key with repeatable
+generic `--env KEY` **before** the script-argument separator:
+
+```sh
+OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY=1 \
+OPENWORK_DEV_DEN_PROXY_TARGET=https://app.openworklabs.com \
+pnpm world up app-web --place daytona --stage pr-1234 --detach --timeout 600000 \
+  --env OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY --env OPENWORK_DEV_DEN_PROXY_TARGET \
+  -- --ref <full-pushed-sha>
+```
+
+Without those selections app-web ignores ambient proxy settings and stays
+Cloud-off. Only these two app keys are accepted; the target must be a nonsecret
+HTTP(S) origin, selected together with an enabled proxy. Remote app-web initially
+allows only `https://app.openworklabs.com`; other targets fail before provisioning.
+Local app-web allows custom HTTP(S) origins, including loopback. Direct script
+execution without the CLI selection marker stays Cloud-off.
+Generic invocation identity fingerprints the selected nonsecret values
+before adoption; changing a key, value, placement or script argument requires a
+new stage or explicit down. Never pass provider credentials, host/client tokens,
+personal profiles, or shared secrets volumes. There is no `--cloud` flag.
+The CLI rejects credential-like environment key names. Local invocation identity
+also hashes Git HEAD, status, tracked diffs and untracked file names/content;
+source changes require a new stage or down before up, across local worlds.
+
+The app-web `webUrl` is a secret, port-bound signed hostname. Reveal it only in a
+private terminal and open it directly; never put it in evidence or PR text.
+Loopback `runtimeWebUrl`/`runtimeOpenworkUrl` are process diagnostics, not human
+browser links. Source SHA and placement are explicit outputs. Private HTTP,
+assets and WebSocket access must pass the launch checks; failures delete the
+owned sandbox, never fall back to public exposure. The source dev proxy preserves
+client bearer auth and never injects host auth. Builds and production preview
+servers do not enable this proxy. Checked-out source receives only the non-secret
+preview host suffix for Vite allowedHosts, never the signed origin. HMR derives
+its host and protocol from the browser location; `/api/openwork` resolves against
+that same origin in the browser. Signed URLs stay in the trusted launcher,
+witness and private outputs.
+
+Do not claim sign-in is verified. Production handoff rules are unchanged and
+arbitrary preview-origin auto-return is not approved. The existing app sign-in
+surface has **Paste sign-in code**; if the existing Den flow supplies a one-time
+code, paste it directly there. Do not fabricate activation/bootstrap state.
+App-web defaults to two hours from readiness; optionally pass `--lifetime <10-1430>`
+after `--`. Its signed URL is issued by the trusted launcher before runtime launch, with the
+lifetime plus a ten-minute startup buffer (within Daytona's 24-hour maximum).
+Startup exceeding that buffer fails closed. `expires` is the authoritative world
+deadline from readiness; `previewExpires` is the conservative URL deadline from
+issuance. The URL credential can outlive the world timer, but sandbox deletion
+invalidates access. World expiry or `down` tears
+down the owned runtime and sandbox while the owning driver is running. Always
+explicitly stop when finished. Abrupt driver crashes can leave a sandbox behind:
+ledger ownership is not authenticated, so no Daytona ledger reaper is registered.
+Manual cleanup must independently verify ownership before deleting a sandbox.
+The preset update helper below
+does not update app-web; use a new stage on the next reviewed SHA instead.
+
+Daytona documents signed hosts as `{port}-{token}.{proxyDomain}`, not sandbox-ID
+hosts (https://www.daytona.io/docs/en/preview/). The launcher checks structured
+private sandbox info (matching ID, `public: false`) and its `toolboxProxyUrl`
+(`https://{proxyDomain}/toolbox`) before
+issuing the signed URL; unsupported info formats fail closed. It rejects standard
+sandbox UUID hosts and mismatched domains. The opaque signed token cannot prove
+sandbox identity by hostname alone; issuance is scoped to the verified sandbox ID.
+
+The following scenario/ref and update instructions concern the isolated presets.
 
 Use a unique stage such as `pr-1234` to keep previews separate. First inspect
 `pnpm world list` and `pnpm world outputs <world> --stage <stage> --json`.
@@ -129,10 +215,12 @@ that cleanup. Use only the exact `denSandbox` and `desktopSandbox` IDs recorded
 in the owner-only outputs to inspect or remove leftovers; never delete by broad
 name patterns.
 
-`world up` adopts an already-running stage before it evaluates new script
-arguments. Inspect its recorded scenario, Den ref, release version,
-distribution, and digest first. If any requested value differs, use a new stage
-or explicitly stop/reset the existing one; never treat adoption as an update.
+`world up` compares recipe and invocation identity before adopting a live stage.
+Script arguments, placement, and explicitly selected environment values must
+match. Still inspect recorded scenario, Den ref, release version, distribution,
+and digest: implicit preset defaults such as a moving remote dev ref are not a
+request to update an existing world. Use a new stage or explicitly down/reset;
+never treat adoption as an update.
 
 Report the preview link, tested ref/scenario, expiry, and any actual limitation.
 Keep infrastructure IDs and startup logs out of the user-facing walkthrough.

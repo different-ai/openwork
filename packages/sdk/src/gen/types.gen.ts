@@ -191,7 +191,7 @@ export type CloudInstanceUpdateResponse =
     }
   | {
       ok: false;
-      error: "already_current" | "flush_failed";
+      error: "already_current" | "flush_failed" | "busy" | "activity_unknown";
     };
 
 export type CloudGatewayInstanceResponse = {
@@ -4170,6 +4170,10 @@ export type WorkerInstance = {
   provider: string;
   region: string | null;
   url: string | null;
+  /**
+   * How the instance endpoint behaves. Anything other than stable means only Den's lifecycle route is durable.
+   */
+  endpointKind: "signed-expiring" | "stable" | "den-tunnel";
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -7461,7 +7465,17 @@ export type SaveWorkflowData = {
     pluginId?: string;
     name: string;
     description?: string;
-    code: string;
+    /**
+     * Exact tested source. Required without receiptId; if both are supplied it must byte-match the retained source.
+     */
+    code?: string;
+    /**
+     * Successful authoring receipt from this caller within 15 minutes. Encrypted source retention is shared across replicas when Redis is configured, otherwise process-local. If unavailable, retest or omit receiptId and supply the exact source.
+     */
+    receiptId?: string;
+    /**
+     * Must match the tested input when receiptId is supplied. Forbidden for live authoring receipts.
+     */
     currentInput?: unknown;
     inputSchema?: unknown;
     /**
@@ -7815,6 +7829,7 @@ export type GetV1WorkflowsByConfigObjectIdResponses = {
           };
     };
     views: Array<{
+      dataMode?: "live" | "snapshot";
       id: string;
       configObjectId: string;
       title: string;
@@ -7874,6 +7889,7 @@ export type GetV1AppsResponses = {
     sharingEnabled: boolean;
     items: Array<{
       view: {
+        dataMode?: "live" | "snapshot";
         id: string;
         configObjectId: string;
         title: string;
@@ -7961,6 +7977,7 @@ export type GetV1AppsByAppIdData = {
     appId: string;
   };
   query?: {
+    timeZone?: string;
     revisionId?: string;
     receiptId?: string;
   };
@@ -7973,6 +7990,7 @@ export type GetV1AppsByAppIdResponses = {
    */
   200: {
     view: {
+      dataMode?: "live" | "snapshot";
       id: string;
       configObjectId: string;
       title: string;
@@ -8078,6 +8096,9 @@ export type GetV1AppsByAppIdResponses = {
       data: unknown;
     } | null;
     previewNotice: string | null;
+    runError?: {
+      [key: string]: unknown;
+    };
   };
 };
 
@@ -8125,6 +8146,7 @@ export type PostV1AppsByAppIdSaveResponses = {
    * App saved.
    */
   200: {
+    dataMode?: "live" | "snapshot";
     id: string;
     configObjectId: string;
     title: string;
@@ -8199,6 +8221,7 @@ export type GetV1WorkflowsByConfigObjectIdViewsResponses = {
    */
   200: {
     items: Array<{
+      dataMode?: "live" | "snapshot";
       id: string;
       configObjectId: string;
       title: string;
@@ -8275,6 +8298,7 @@ export type PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResp
    * Artifact view activated.
    */
   200: {
+    dataMode?: "live" | "snapshot";
     id: string;
     configObjectId: string;
     title: string;
@@ -8349,6 +8373,7 @@ export type PostV1ArtifactViewsByArtifactViewIdRetireResponses = {
    * Artifact view retired.
    */
   200: {
+    dataMode?: "live" | "snapshot";
     id: string;
     configObjectId: string;
     title: string;
@@ -8941,6 +8966,8 @@ export type PostV1WorkflowsByConfigObjectIdRunData = {
     pluginId: string;
     configObjectVersionId: string;
     input?: unknown;
+    mode?: "adhoc" | "live";
+    timeZone?: string;
   };
   path: {
     configObjectId: string;
@@ -8965,6 +8992,10 @@ export type PostV1WorkflowsByConfigObjectIdRunResponses = {
    */
   200: {
     status: "succeeded";
+    executionType: "saved-workflow";
+    mode: "adhoc" | "live";
+    fetchedAt: string;
+    timeZone?: string;
     value: unknown;
     markdown: string;
     receiptId: string | null;
@@ -12235,6 +12266,14 @@ export type GetV1InferenceProvidersUsageResponses = {
       to: string;
       timezone: "UTC";
       emptyReason?: "no_teams";
+      requestCount: number;
+      uncountableRequests: {
+        ok: number | null;
+        upstream_error: number | null;
+        upstream_unreachable: number | null;
+        client_aborted: number | null;
+        rejected: number | null;
+      };
       totalTokens: number;
       unreportedRequests: number | null;
       totalCostMicroUsd: number;

@@ -87,11 +87,12 @@ function capabilityMatch(
     hasBody: hasJsonRequestBody(operation.operation),
     ...(bodySchema === undefined ? {} : { bodySchema }),
     ...(querySchema === undefined ? {} : { querySchema }),
+    ...(operation.outputSchema === undefined ? {} : { outputSchema: operation.outputSchema }),
     ...(scriptNamespace ? { scriptPath: codemodeScriptPath(scriptNamespace, operation.name) } : {}),
   }
 }
 
-function connectionStatusMatch(
+export function connectionStatusMatch(
   connection: NativeProviderConnectionEntry,
   score: number,
 ): NativeCapabilityMatch {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { AutomationClaimResult, AutomationListItem } from "@openwork/automations"
-import { AUTOMATION_MIN_CLAIM_WINDOW_MS, desktopRunnerConnected } from "@openwork/automations"
+import { AUTOMATION_MANUAL_CLAIM_WINDOW_MS, desktopRunnerConnected } from "@openwork/automations"
 import type {
   AutomationDesktopRunnerCapability,
   AutomationDesktopRunnerPresence,
@@ -271,10 +271,7 @@ export class AutomationService {
       nonce: randomUUID(),
       leaseOwner: schedulerOwner,
       leaseMs: env.automations.leaseMs,
-      // Someone is watching this one. The recovery window exists for occurrences
-      // that come due while nobody is at the machine; a manual run should say
-      // what happened promptly instead of sitting queued for minutes.
-      claimDeadlineMs: AUTOMATION_MIN_CLAIM_WINDOW_MS,
+      claimDeadlineMs: AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
       now: Date.now(),
     })
     if (claim.kind === "claimed" && claim.run.executionTarget === "cloud") {

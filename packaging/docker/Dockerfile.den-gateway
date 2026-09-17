@@ -44,6 +44,7 @@ COPY packages/browser-logins /app/packages/browser-logins
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts
 COPY ee/apps/den-gateway /app/ee/apps/den-gateway
+COPY apps/server/src/mcp-app-sandbox.ts /app/apps/server/src/mcp-app-sandbox.ts
 COPY apps/app /app/apps/app
 
 RUN pnpm --dir /app/packages/types run build

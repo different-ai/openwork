@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 
 import type { UiState } from "../src/react-app/shell/ui-state-store";
+import type { BrowserPanelTab } from "../src/react-app/domains/session/panel/panel-tab-store";
 
 const PERSISTED_UI_STATE_KEY = "openwork:ui-state:v1";
 const originalWindow = globalThis.window;
@@ -181,6 +182,53 @@ describe("ui state store", () => {
     expect(reopened.sidePanelState.ses_preserve).toBe("panel");
     expect(usePanelTabStore.getState().sessions.ses_preserve?.activeTabId).toBe("file:report.md");
     usePanelTabStore.getState().clearSession("ses_preserve");
+  });
+
+  test("keeps the Files empty state selected without closing retained browser tabs", async () => {
+    const sessionId = "ses_files_browser";
+    const browser: BrowserPanelTab = {
+      id: "browser-retained",
+      type: "browser",
+      label: "Example",
+      url: "https://example.com",
+      favicon: null,
+      status: "ready",
+      canGoBack: false,
+      canGoForward: false,
+      ownerSessionId: sessionId,
+      siteToolCount: 0,
+      siteTools: [],
+      siteToolActivity: [],
+    };
+    const panel = usePanelTabStore.getState();
+    panel.syncBrowserTabs(sessionId, [browser], browser.id);
+    expect(usePanelTabStore.getState().sessions[sessionId]?.activeTabId).toBe(browser.id);
+    panel.openTab("ses_other", { id: "other", type: "artifact", label: "Other", preview: "text" });
+    const otherSession = usePanelTabStore.getState().sessions.ses_other;
+
+    panel.selectTab(sessionId, null);
+    panel.syncBrowserTabs(sessionId, [{ ...browser, label: "Updated" }], browser.id);
+    panel.syncTranscriptArtifacts(sessionId, []);
+    panel.syncArtifactTargets(sessionId, []);
+    expect(usePanelTabStore.getState().sessions[sessionId]).toEqual({
+      tabs: [{ ...browser, label: "Updated" }],
+      activeTabId: null,
+    });
+
+    useUiStateStore.getState().setSidePanelState(sessionId, "panel");
+    useUiStateStore.getState().toggleSidePanelState(sessionId, "panel");
+    useUiStateStore.getState().toggleSidePanelState(sessionId, "panel");
+    expect(useUiStateStore.getState().sidePanelState[sessionId]).toBe("panel");
+    expect(usePanelTabStore.getState().sessions[sessionId]?.activeTabId).toBeNull();
+    expect(usePanelTabStore.getState().sessions.ses_other).toBe(otherSession);
+    await usePanelTabStore.persist.rehydrate();
+    expect(usePanelTabStore.getState().sessions[sessionId]?.activeTabId).toBeNull();
+
+    panel.selectTab(sessionId, browser.id);
+    expect(usePanelTabStore.getState().sessions[sessionId]?.activeTabId).toBe(browser.id);
+    expect(usePanelTabStore.getState().sessions[sessionId]?.tabs).toHaveLength(1);
+    panel.clearSession(sessionId);
+    panel.clearSession("ses_other");
   });
 
   test("preserves workspace-tree artifact tabs when transcript artifacts resync", () => {

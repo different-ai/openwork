@@ -207,7 +207,8 @@ describe("Gateway usage", () => {
     expect(usage).toContain('onClick={() => setMetric("tokens")}');
     expect(usage).toContain('onClick={() => setMetric("cost")}');
     expect(usage).toContain('aria-pressed={isCost}');
-    expect(usage).toContain("Cost includes known costs only; missing costs are not treated as free.");
+    expect(usage).toContain("Click here to see how costs are calculated");
+    expect(usage).toContain("https://openworklabs.com/docs/ai-gateway/token-costs");
     expect(usage).toContain('unknownCost ? "Unknown" : formatUsageCost(usage.totalCostMicroUsd)');
     expect(usage).toContain('valueFormat={isCost ? "usd" : "tokens"}');
     expect(usage).toContain("Gateway providers only. OpenWork Models not included.");

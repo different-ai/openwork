@@ -1,3 +1,6 @@
+import { artifactFreshness } from "./workflow-artifacts.js"
+import type { BuiltCodemodeTools } from "./mcp/codemode-tools.js"
+import { executeLiveArtifactWorkflow } from "./workflows.js"
 import type { SavedAppDetail, SavedAppSummary } from "@openwork/types/workflows"
 import { getArtifactView, getGeneratedArtifactViewRevision, listArtifactViews, loadArtifactViewRevision } from "./artifact-views.js"
 import { getWorkflowDetail, getWorkflowSnapshot } from "./workflows.js"
@@ -71,24 +74,42 @@ export async function getSavedApp(input: {
   appId: string
   revisionId?: string
   receiptId?: string
+  timeZone?: string
+  describeUnavailable?: Parameters<typeof executeLiveArtifactWorkflow>[0]["describeUnavailable"]
+  buildTools?: () => Promise<BuiltCodemodeTools>
 }): Promise<SavedAppDetail> {
   // The exact-revision path also restores a draft from its original conversation.
   const view = input.revisionId
     ? (await getGeneratedArtifactViewRevision({ context: input.context, artifactViewId: input.appId, revisionId: input.revisionId })).view
     : await getArtifactView({ context: input.context, artifactViewId: input.appId })
-  if (!view) throw new Error("artifact_view_not_found")
+  if (!view || (view.dataMode === "live" && view.status !== "active")) throw new Error("artifact_view_not_found")
   const workflow = await getWorkflowDetail({ context: input.context, configObjectId: view.configObjectId })
   const revisionId = input.revisionId ?? view.activeRevisionId
   const revision = view.revisions.find((entry) => entry.id === revisionId) ?? null
   const placements = await db.select().from(DashboardAppTable).where(and(dashboardScope(input.context),
     eq(DashboardAppTable.artifact_view_id, normalizeDenTypeId("artifactView", view.id)))).limit(1)
   const base = { view, workflowTitle: workflow.title, canManage: workflow.canManage, onDashboard: placements.length > 0, revision }
-  if (!revision || revision.buildStatus !== "ready") {
+  if (!revision || revision.buildStatus !== "ready" || revision.retiredAt) {
     return { ...base, html: null, payload: null, previewNotice: "This app is still being prepared. Ask OpenWork to finish its preview." }
   }
   const { revision: stored } = await loadArtifactViewRevision({ context: input.context, artifactViewId: view.id, revisionId: revision.id })
-  const snapshot = input.receiptId
-    ? await getWorkflowSnapshot({ context: input.context, configObjectId: view.configObjectId, receiptId: input.receiptId })
+  let receiptId = input.receiptId
+  if (view.dataMode === "live") {
+    if (receiptId) throw new Error("artifact_view_live_receipt_override_denied")
+    if (!input.buildTools) throw new Error("artifact_view_live_execution_unavailable")
+    const execution = await executeLiveArtifactWorkflow({
+      context: input.context, configObjectId: view.configObjectId,
+      expectedOutputSchemaDigest: revision.outputSchemaDigest,
+      timeZone: input.timeZone, buildTools: input.buildTools, describeUnavailable: input.describeUnavailable,
+    })
+    if (!execution.ok) {
+      return { ...base, html: null, payload: null, previewNotice: execution.message, runError: execution }
+    }
+    if (!execution.receiptId) throw new Error("workflow_receipt_unavailable")
+    receiptId = execution.receiptId
+  }
+  const snapshot = receiptId
+    ? await getWorkflowSnapshot({ context: input.context, configObjectId: view.configObjectId, receiptId })
     : workflow.latestSuccessfulSnapshot
   if (!snapshot || snapshot.status !== "succeeded" || snapshot.contentDeletedAt || !snapshot.resultDigest || !snapshot.rendererVersion) {
     return { ...base, html: null, payload: null, previewNotice: "Run the workflow to give this app a result to display." }
@@ -114,7 +135,11 @@ export async function getSavedApp(input: {
         generatedAt: snapshot.finishedAt,
         resultDigest: snapshot.resultDigest,
         rendererVersion: snapshot.rendererVersion,
-        freshness: workflow.freshness,
+        freshness: artifactFreshness({
+          latestFinishedAt: new Date(snapshot.finishedAt), latestStatus: snapshot.status,
+          latestSuccessfulFinishedAt: new Date(snapshot.finishedAt),
+          latestSuccessfulReceiptId: snapshot.receiptId, maxAgeMs: 24 * 60 * 60_000,
+        }),
       },
       data: snapshot.value,
     },

@@ -1,0 +1,58 @@
+---
+title: "Token Costs"
+description: "How AI Gateway estimates costs per request, adds them to your usage totals, and handles pricing limitations."
+---
+
+Costs are approximate based on publicly listed model prices when each request was recorded. They are indicators of usage, not a guaranteed bill or an exact account of what your provider will charge.
+
+## From tokens to a request cost
+
+The model provider responds with token consumption for the request, including **input tokens** consumed and **output tokens** generated. For streamed responses, this usage information may arrive near the end of the stream.
+
+Gateway uses these reported counts to calculate a cost for each request or prompt sent to the provider:
+
+1. Identify the upstream provider and model used for the request.
+2. Read the input and output token consumption reported in the response.
+3. Apply the model's input and output rates from the pricing catalog available when the request is recorded.
+4. Store the resulting cost with that request.
+
+For a basic request with no cache or other separately priced token categories:
+
+```text
+Estimated request cost in USD =
+  (input tokens × input price per million tokens
+   + output tokens × output price per million tokens) / 1,000,000
+```
+
+Where supported by the reported usage and available pricing, Gateway also accounts for cached input, cache writes, separately reported reasoning tokens, and context-length pricing tiers. It handles token categories according to the provider's response format to avoid counting the same tokens twice.
+
+Some providers return a cost directly. When a usable provider-reported cost is present, Gateway records that value instead of calculating a catalog estimate.
+
+## From request costs to chart totals
+
+Gateway adds the recorded costs for individual requests to produce the totals in the graph. The selected date range, filters, and grouping determine which requests contribute. Requests are assigned to the UTC calendar day when they started.
+
+One message or task in the desktop app can trigger multiple model requests, such as successive tool-use steps or retries. Each request with a known cost contributes separately to the total.
+
+Amounts are stored with more precision than the two decimal places shown in the chart. Gateway sums the stored amounts before rounding the displayed total, so adding individually rounded amounts may give a slightly different result. A very small known cost can display as **$0.00** after rounding.
+
+Stored estimates are not recalculated when model prices in the catalog change. Team grouping follows current team membership, so a person in multiple teams contributes to each team. See [Counting usage](/ai-gateway/counting-usage) for grouping and token-counting details.
+
+## When cost is unavailable
+
+A request may have no cost estimate if the provider does not report the required input and output usage, or if Gateway cannot find usable pricing for the provider and model. Errors, cancellations, interruptions, and rejected requests can also leave usage unavailable. See [Uncountable Items](/ai-gateway/counting-usage#uncountable-items) for these cases.
+
+The cost graph includes known costs only. Missing estimates are excluded rather than treated as free, and a model with no available cost data is not shown in the cost view. A provider-reported cost may still be available even when a token total is missing.
+
+If a request fails or is canceled after enough usage has been reported to calculate a cost, that known cost still contributes to the total.
+
+## Accuracy and limitations
+
+We cannot guarantee the accuracy of cost estimates or the completeness, accuracy, or freshness of the pricing information. Use these figures as **indicators only** when comparing activity and understanding usage trends.
+
+- Public catalog prices may be outdated or may not capture every provider-specific billing rule or additional charge.
+- Estimates do not reflect any contract pricing, negotiated discounts, credits, or other billing agreements you may have.
+- Missing or incomplete provider usage can leave the graph with only part of the activity that was billed.
+- Even a provider-reported cost may differ from the final invoice after billing adjustments.
+
+Use your provider's billing records and invoices to establish actual charges.

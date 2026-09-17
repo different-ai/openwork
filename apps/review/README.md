@@ -32,8 +32,17 @@ Create a project with root directory `apps/review`, enable source files outside
 that directory, and connect a **private** Vercel Blob store. Configure
 `BLOB_READ_WRITE_TOKEN` for the Preview environment. Enable **Vercel Authentication**
 under Deployment Protection with **Standard Protection** (or All Deployments).
-Deploy with `vercel deploy --target preview` and use that protected preview URL
-for `OPENWORK_REVIEW_URL`.
+Deploy with `vercel deploy --target preview`, then give the deployment a stable
+alias and use that alias for `OPENWORK_REVIEW_URL`:
+
+```sh
+vercel alias set <deployment-url> openwork-review-<team>.vercel.app
+```
+
+Never use a deployment URL (`<project>-<hash>-<team>.vercel.app`) for
+`OPENWORK_REVIEW_URL`: it is an immutable snapshot, so every report link would
+keep opening the app version from that one deploy. Aliases on `*.vercel.app`
+stay under Standard Protection; do not alias a production custom domain.
 
 Teammates open the PR's report link using their existing Vercel account with
 access to this project. There is no app password. Vercel authenticates requests
@@ -48,8 +57,15 @@ and image routes must return Vercel's authentication response. An authenticated
 request (or `vercel curl` for verification) must reach the app with no Basic
 authorization header. See [Vercel Authentication](https://vercel.com/docs/deployment-protection/methods-to-protect-deployments/vercel-authentication).
 
-The app only rebuilds when it or its dependencies change. Report publication
-uploads data to the existing app; it never creates a deployment.
+The **Review app deploy** workflow redeploys the app whenever `apps/review`,
+`packages/review`, or the lockfile changes on the default branch (or on manual
+dispatch) and moves the alias named by `OPENWORK_REVIEW_URL` to the new
+deployment, then checks that the alias still answers anonymous requests with
+Vercel Authentication. It needs repository variables
+`OPENWORK_REVIEW_VERCEL_ORG_ID` and `OPENWORK_REVIEW_VERCEL_PROJECT_ID` (from
+`.vercel/project.json` after `vercel link`) and the `VERCEL_TOKEN` secret.
+Report publication uploads data to the existing app; it never creates a
+deployment.
 
 Set `OPENWORK_REVIEW_URL` and `BLOB_READ_WRITE_TOKEN` in the publishing
 environment. The existing command publishes a compact link when configured:

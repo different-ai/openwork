@@ -7,10 +7,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import type { FieldsResult } from "../src/app/lib/opencode";
-import type { NativeSessionOperations, NativeSessionSnapshotTarget } from "../src/app/lib/opencode-session-native";
+import { composeNativeSessionHistoryWithRetry, type NativeSessionOperations, type NativeSessionSnapshotTarget } from "../src/app/lib/opencode-session-native";
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import type { Platform } from "../src/react-app/kernel/platform";
 
+const composeWithRetry = composeNativeSessionHistoryWithRetry;
 const workspaceId = "workspace-snapshot-owner-flip";
 const sessionId = "ses_snapshot_owner_flip";
 const v1BaseUrl = "http://127.0.0.1:1/opencode";
@@ -93,7 +94,8 @@ async function waitFor(predicate: () => boolean, label: string) {
 // Reload of a v2 session: the surface mounts under the v1 URL before the chat
 // routing status resolves, the first owned read 404s on v1 and waits to retry,
 // and the routing flip changes the owner while that read is still in flight.
-test("a session snapshot read that loses its owner mid-flight is re-read under the new owner", async () => {
+for (const outcome of ["preview", "complete", "empty", "error"]) test(`a session snapshot read that loses its owner mid-flight is re-read under the new owner (${outcome})`, async () => {
+  const interruptFullRead = outcome !== "preview";
   const require = createRequire(import.meta.url);
   // Bun's isolated test loader cycles Lexical's ESM entries; use their real CJS entries before the app imports the editor.
   for (const moduleId of [
@@ -145,18 +147,41 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
   const readEndpoints: string[] = [];
   const historyWindows: Array<number | undefined> = [];
   const readLimits: (number | undefined)[] = [];
+  const readSignals: (AbortSignal | undefined)[] = [];
   let releaseRetry: (() => void) | null = null;
+  let releaseFullRead: (() => void) | null = null;
+  let failFullRead = outcome === "error";
   const snapshot = createSnapshot();
+  if (outcome === "empty") snapshot.messages = [];
+  else if (interruptFullRead) {
+    const message = snapshot.messages[0];
+    snapshot.messages = Array.from({ length: 25 }, (_, index) => {
+      const id = `msg_history_${index}`;
+      return {
+        info: { ...message.info, id },
+        parts: message.parts.map((part) => ({ ...part, id: `part_history_${index}`, messageID: id })),
+      };
+    });
+  }
   const operationsFor = (endpoint: { opencodeBaseUrl: string }): NativeSessionOperations => {
     readEndpoints.push(endpoint.opencodeBaseUrl);
     const v2 = endpoint.opencodeBaseUrl === v2BaseUrl;
+    const readable = v2 || (interruptFullRead && readLimits.at(-1) === 24);
     return {
-      get: async () => (v2 ? ok(snapshot.session) : notFound()),
+      get: async () => (readable ? ok(snapshot.session) : notFound()),
       messages: async (_sessionId, limit) => {
         historyWindows.push(limit);
-        return v2 ? ok(snapshot.messages) : notFound();
+        if (!readable) return notFound();
+        if (v2 && limit === undefined) {
+          await new Promise<void>((resolve) => { releaseFullRead = resolve; });
+          if (failFullRead) {
+            failFullRead = false;
+            throw new Error("Full history unavailable");
+          }
+        }
+        return ok(limit === undefined ? snapshot.messages : snapshot.messages.slice(-limit));
       },
-      todo: async () => (v2 ? ok(snapshot.todos) : notFound()),
+      todo: async () => (readable ? ok(snapshot.todos) : notFound()),
       status: async () => ok({}),
       delete: async () => ok(true),
     };
@@ -166,8 +191,6 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
   const taskSuggestions = await import("../src/components/chat/task-suggestions");
   mock.module("@/components/chat/task-suggestions", () => ({ ...taskSuggestions, TaskSuggestions: () => null }));
   mock.module("../src/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
-  // Bind the real implementation first: mocking rewires the loaded module's live bindings.
-  const composeWithRetry = sessionNative.composeNativeSessionHistoryWithRetry;
   mock.module("@/app/lib/opencode-session-native", () => ({
     ...sessionNative,
     composeNativeSessionHistoryWithRetry: (
@@ -176,10 +199,15 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
       options: { signal?: AbortSignal; limit?: number },
     ) => {
       readLimits.push(options.limit);
+      readSignals.push(options.signal);
       return composeWithRetry(expectedOwner, readCurrentTarget, options, {
         createOperations: operationsFor,
         // The first (v1) read parks here until the test flips the owner.
         waitForSnapshotRetry: (_delayMs, signal) => new Promise<void>((resolve, reject) => {
+          if (readCurrentTarget().endpoint.opencodeBaseUrl === v2BaseUrl) {
+            reject(new Error("Full history unavailable"));
+            return;
+          }
           signal.addEventListener("abort", () => reject(signal.reason), { once: true });
           releaseRetry = resolve;
         }),
@@ -187,10 +215,11 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
     },
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
-  const { snapshotKey } = await import("../src/react-app/domains/session/sync/session-sync");
+  const { snapshotKey, statusKey } = await import("../src/react-app/domains/session/sync/session-sync");
   const queryClient = getReactQueryClient();
   queryClient.clear();
   const key = snapshotKey(workspaceId, sessionId);
+  if (interruptFullRead && outcome !== "empty") queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "busy" });
   const client = createOpenworkServerClient({ baseUrl: "http://127.0.0.1:1", token: "test-token" });
   const container = document.createElement("div");
   document.body.append(container);
@@ -246,25 +275,63 @@ test("a session snapshot read that loses its owner mid-flight is re-read under t
   try {
     await act(async () => root.render(surface(v1BaseUrl)));
     await waitFor(() => releaseRetry !== null, "the v1 read to 404 and park before its retry");
-    expect(readEndpoints).toEqual([v1BaseUrl]);
+    expect(readEndpoints).toEqual(interruptFullRead ? [v1BaseUrl, v1BaseUrl] : [v1BaseUrl]);
+    const previousStatus = container.querySelector("[data-thread-history-status]");
+    if (interruptFullRead && outcome !== "empty") {
+      expect(previousStatus?.textContent).toContain("Loading earlier messages…");
+      expect(previousStatus?.nextElementSibling?.querySelector("[data-thread-scroll]")).not.toBeNull();
+      expect(container.querySelector("[data-thread-scroll] [data-thread-history-status]")).toBeNull();
+    } else expect(previousStatus).toBeNull();
 
     // Routing status resolves: the same session is now owned by /opencode2.
     await act(async () => root.render(surface(v2BaseUrl)));
-    await act(async () => { releaseRetry?.(); });
+    if (!interruptFullRead) await act(async () => { releaseRetry?.(); });
+    if (previousStatus) expect(previousStatus.isConnected).toBe(false);
+    await waitFor(() => releaseFullRead !== null, "the new owner's uncapped read");
+    expect(readSignals[interruptFullRead ? 1 : 0]?.aborted).toBe(true);
+    const currentStatus = container.querySelector("[data-thread-history-status]");
+    if (interruptFullRead && outcome !== "empty") expect(currentStatus?.textContent).toContain("Loading earlier messages…");
+    else expect(currentStatus).toBeNull();
+    const expectedReads = interruptFullRead ? [24, undefined, 24, undefined] : [24, 24, undefined];
+    expect(readLimits).toEqual(expectedReads);
+    await act(async () => { releaseFullRead?.(); releaseFullRead = null; });
 
-    await waitFor(() => container.textContent?.includes(transcriptText) === true
-      && queryClient.getQueryState(key)?.status === "success", "the full transcript read under the v2 owner");
-    expect(queryClient.getQueryState(key)?.status).toBe("success");
-    expect(queryClient.getQueryState(key)?.error).toBeNull();
+    if (outcome === "error") {
+      await waitFor(() => queryClient.getQueryState(key)?.status === "error"
+        && container.querySelector('[data-thread-history-status] [role="alert"]') !== null, "the failed full read and retry UI");
+      expect(queryClient.getQueryState(key)?.fetchStatus).toBe("idle");
+      expect(container.querySelector('[data-thread-history-status] [role="status"]')).toBeNull();
+      expect(container.querySelector('[data-thread-history-status] [role="alert"]')?.textContent).toContain("The rest of this conversation could not be loaded.");
+      expect(container.textContent).toContain(transcriptText);
+      expect(container.querySelectorAll("[data-thread-history-status]")).toHaveLength(1);
+      await act(async () => container.querySelector<HTMLButtonElement>("[data-thread-history-status] button")?.click());
+      await waitFor(() => releaseFullRead !== null, "the explicit retry read");
+      expect(container.querySelector<HTMLButtonElement>("[data-thread-history-status] button")?.disabled).toBe(true);
+      expectedReads.push(undefined);
+      await act(async () => { releaseFullRead?.(); releaseFullRead = null; });
+    }
+
+    await waitFor(() => queryClient.getQueryState(key)?.status === "success"
+      && container.querySelectorAll("[data-thread-history-status]").length === 0, "full history completion and status cleanup");
+    expect(queryClient.getQueryState(key)).toMatchObject({ status: "success", fetchStatus: "idle", error: null });
     expect(container.textContent).not.toContain("owner changed");
     // The new owner's preview paints before its separate uncapped history read.
     // The abandoned owner must never retry or populate either result.
-    expect(readEndpoints).toEqual([v1BaseUrl, v2BaseUrl, v2BaseUrl]);
-    expect(historyWindows).toEqual([24, 24, undefined]);
-    expect(readLimits).toEqual([24, 24, undefined]);
+    expect(readEndpoints).toEqual(expectedReads.map((_, index) => index < (interruptFullRead ? 2 : 1) ? v1BaseUrl : v2BaseUrl));
+    expect(historyWindows).toEqual(expectedReads);
+    expect(readLimits).toEqual(expectedReads);
     const cached = queryClient.getQueryData<OpenworkSessionHistory>(key);
     expect(cached?.status).toBeUndefined();
     expect(cached?.todos).toBeUndefined();
+    expect(cached?.messages).toHaveLength(outcome === "empty" ? 0 : snapshot.messages.length);
+    expect(container.querySelector("[data-thread-loading]")).toBeNull();
+    if (outcome === "empty") expect(container.textContent).not.toContain(transcriptText);
+    else expect(container.textContent).toContain(transcriptText);
+    if (currentStatus) expect(currentStatus.isConnected).toBe(false);
+    if (interruptFullRead && outcome !== "empty") expect(queryClient.getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
+    await act(async () => root.render(surface(v2BaseUrl)));
+    expect(container.querySelectorAll("[data-thread-history-status]")).toHaveLength(0);
+    expect(readLimits).toEqual(expectedReads);
   } finally {
     await act(async () => root.unmount());
     useComposerStateStore.setState({ sessions: {}, queuedDrafts: {}, history: {} });

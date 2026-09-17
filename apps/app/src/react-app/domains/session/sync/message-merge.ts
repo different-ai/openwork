@@ -145,6 +145,28 @@ function mergeMissingMessagesByChronology(messages: UIMessage[], missing: UIMess
   return sortFullyTimestampedMessages(messages);
 }
 
+export function upsertMessageByChronology(messages: UIMessage[], message: UIMessage) {
+  const sourceIndex = messages.findIndex((existing) => existing.id === message.id);
+  const result = messages.filter((existing) => existing.id !== message.id);
+  if (sourceIndex === -1) return mergeMissingMessagesByChronology(result, [message], messages);
+
+  let insertionIndex = sourceIndex;
+  const created = messageCreated(message);
+  if (created !== null) {
+    for (let index = 0; index < result.length; index += 1) {
+      const existingCreated = messageCreated(result[index]);
+      if (existingCreated === null) continue;
+      if (existingCreated < created) insertionIndex = Math.max(insertionIndex, index + 1);
+      if (existingCreated > created) {
+        insertionIndex = Math.min(insertionIndex, index);
+        break;
+      }
+    }
+  }
+  result.splice(insertionIndex, 0, message);
+  return result;
+}
+
 export function messageListContainsAll(container: UIMessage[], required: UIMessage[]) {
   if (required.length === 0) return true;
   const ids = new Set(container.map((message) => message.id));

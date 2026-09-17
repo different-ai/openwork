@@ -5,6 +5,7 @@ import type { CreateAutomation } from "@openwork/types/automations";
 import type { AutomationProviderCatalog, AutomationModelOption } from "../src/react-app/domains/automations/automation-model-options";
 import type { ModelOption } from "../src/app/types";
 import { fastVariantId } from "@openwork/types/cloud-model-fast";
+import type { OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 
 // Base UI detects DOM support when its module loads.
 GlobalRegistrator.register({ url: "http://localhost" });
@@ -135,6 +136,7 @@ for (const surface of ["compact", "full"]) {
     let behaviorOptions = [...standard, ...standard.map((option) => ({ ...option, value: fastVariantId(option.value), label: `${option.label} + Fast` }))];
     let value: string | null = "high";
     const changes: Array<string | null> = [];
+    const openChanges: boolean[] = [];
     const selected: unknown[] = [];
     const queryClient = new QueryClient();
     const host = document.createElement("div");
@@ -146,7 +148,7 @@ for (const surface of ["compact", "full"]) {
         behaviorTitle: "Effort", behaviorLabel: "Default", behaviorDescription: "", behaviorValue: null, behaviorOptions }];
       const picker = surface === "compact" ? createElement(ModelSelect, {
         open: true, value: current, fallbackOptions: options, behaviorValue: value,
-        onOpenChange: () => undefined, onChange: (model) => selected.push(model), onBehaviorChange: change,
+        onOpenChange: (open) => openChanges.push(open), onChange: (model) => selected.push(model), onBehaviorChange: change,
       }) : createElement(ModelPickerModal, {
         open: true, options, current, currentBehaviorValue: value, target: "session", query: "", setQuery: () => undefined,
         onSelect: (model) => selected.push(model), onBehaviorChange: (_model, next) => change(next),
@@ -166,8 +168,22 @@ for (const surface of ["compact", "full"]) {
     try {
       await act(async () => render());
       for (const label of ["Fast", "Low", "Fast", "CustomExact", "Fast", "Default", "Fast"]) {
+        if (surface === "compact" && label === "Fast") {
+          const menu = document.querySelector('[data-slot="model-select-root"]');
+          const toggle = menu?.querySelector<HTMLButtonElement>('[role="switch"]');
+          if (!toggle) throw new Error("Missing main-menu Fast mode switch");
+          expect(toggle.closest('[title]')?.getAttribute("title")).toContain("higher pricing");
+          const wasChecked = toggle.getAttribute("aria-checked") === "true";
+          await act(async () => toggle.click());
+          expect(toggle.getAttribute("aria-checked")).toBe(String(!wasChecked));
+          expect(document.querySelector('[data-slot="model-select-root"]')).not.toBeNull();
+          const effort = Array.from(menu?.querySelectorAll("button") ?? []).find((entry) => entry.textContent?.includes("Effort"));
+          expect(effort?.textContent).not.toContain("Fast");
+          continue;
+        }
         await openSettings();
-        expect(settings()?.textContent).toContain("higher pricing");
+        if (surface === "full") expect(settings()?.textContent).toContain("higher pricing");
+        else expect(settings()?.querySelector('[role="switch"]')).toBeNull();
         const button = Array.from(settings()?.querySelectorAll<HTMLButtonElement>("button") ?? [])
           .find((entry) => label === "Fast" ? entry.textContent?.startsWith("Fast") : entry.textContent === label);
         if (!button) throw new Error(`Missing ${surface} ${label} control`);
@@ -176,9 +192,14 @@ for (const surface of ["compact", "full"]) {
       expect(changes).toEqual([fastVariantId("high"), fastVariantId("low"), "low", "CustomExact",
         fastVariantId("CustomExact"), fastVariantId(null), null]);
       expect(selected).toEqual([]);
+      expect(openChanges).toEqual([]);
       behaviorOptions = standard;
       value = "high";
       await act(async () => render());
+      if (surface === "compact") {
+        expect(document.querySelector('[data-slot="model-select-root"] [role="switch"]')).toBeNull();
+        expect(document.querySelector('[data-slot="model-select-root"]')?.textContent).not.toContain("Fast mode");
+      }
       await openSettings();
       expect(settings()?.textContent).not.toContain("Fast");
       expect(settings()?.textContent).not.toContain("higher pricing");
@@ -355,6 +376,98 @@ test("long picker labels retain full hover text and select the complete model ID
     authSpy.mockRestore();
   }
 });
+
+for (const failure of ["inventory", "held peer", "pending inventory", "held current session", "inventory refetch"]) {
+  test(`replacement picker validates this session independently of ${failure}`, async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const { UnavailableModelRepick } = await import("../src/react-app/domains/session/modals/unavailable-model-repick");
+    const { createSessionModelActions } = await import("../src/react-app/domains/session/control/session-model-actions");
+    const { getSessionModelSelection, useSessionModelStore } = await import("../src/react-app/domains/session/surface/session-model-store");
+    const { t } = await import("../src/i18n");
+    const model: OpenworkCatalogModel = { providerId: "fixture", modelId: "available", displayName: "Available model", providerName: "Fixture", available: true, variants: [] };
+    const from = { providerId: "fixture", modelId: "removed", variant: null, displayName: "Removed model" };
+    const sessions = ["repick-current", "repick-peer"].map((id) => ({ id, title: id, directory: "/fixture", time: { archived: 0 }, model: { providerID: "fixture", id: "removed" } }));
+    const before = useSessionModelStore.getState().bySessionId;
+    const stored = localStorage.getItem("openwork.sessionModels.v1");
+    let finishInventory: (value: typeof sessions) => void = () => undefined;
+    const pendingInventory = new Promise<typeof sessions>((resolve) => { finishInventory = resolve; });
+    let inventoryFailed = failure === "inventory";
+    const actions = createSessionModelActions({
+      workspaces: [{ id: "fixture", path: "/fixture" }],
+      catalog: async () => [model], directory: async () => "/fixture", session: async () => sessions[0], statuses: async () => ({ data: {}, response: { status: 200 } }),
+      sessions: async () => {
+        if (inventoryFailed) throw new Error("Inventory unavailable");
+        if (failure === "pending inventory") return pendingInventory;
+        return sessions;
+      },
+      held: (_workspace, id) => failure === "held peer" ? id === "repick-peer" : failure === "held current session" && id === "repick-current",
+    });
+    const singleSpy = spyOn(actions, "setModel");
+    const bulkSpy = spyOn(actions, "rebindModel");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); }); };
+    try {
+      await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient, children:
+        createElement(UnavailableModelRepick, { sessionId: "repick-current", workspaceId: "fixture", from, workspaceDefault: null,
+          loadModels: async () => [model], loadRemovedModels: async () => [], modelActions: actions, onClose: () => undefined }) })));
+      for (let attempt = 0; attempt < 20 && !document.querySelector('[role="alert"]') && failure !== "pending inventory" && failure !== "inventory refetch"; attempt += 1) await flush();
+      await flush();
+      if (failure === "inventory refetch") {
+        const all = document.querySelectorAll<HTMLElement>('[role="radio"]')[1];
+        if (!all) throw new Error("Missing bulk scope");
+        expect(all.getAttribute("aria-disabled")).not.toBe("true");
+        await act(async () => all.click());
+        expect(document.body.textContent).toContain("All 2 matching sessions");
+        inventoryFailed = true;
+        await act(async () => { await queryClient.invalidateQueries({ queryKey: ["model-repick-preview"] }); });
+        await flush();
+        const bulkConfirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Save for 2 sessions");
+        expect(bulkConfirm?.disabled).toBe(true);
+        expect(all.getAttribute("aria-disabled")).toBe("true");
+        expect(document.querySelector('[role="dialog"] li')).toBeNull();
+        await act(async () => document.querySelector<HTMLElement>('[role="radio"]')?.click());
+      }
+      expect(document.querySelector('[data-slot="dialog-title"]')?.textContent).toBe("Removed model is no longer available");
+      const radios = Array.from(document.querySelectorAll<HTMLElement>('[role="radio"]'));
+      expect(radios[0]?.getAttribute("aria-checked")).toBe("true");
+      expect(radios[1]?.getAttribute("aria-disabled")).toBe("true");
+      const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Save for 1 session");
+      if (!confirm) throw new Error("Missing single-session save");
+      expect(confirm.disabled).toBe(failure === "held current session");
+      expect(singleSpy.mock.calls).toHaveLength(1);
+      expect(singleSpy.mock.calls[0][0]).toMatchObject({ sessionId: "repick-current", workspaceId: "fixture", dryRun: true });
+      expect(bulkSpy.mock.calls).toHaveLength(failure === "inventory refetch" ? 2 : 1);
+      expect(bulkSpy.mock.calls[0][0]).toMatchObject({ dryRun: true });
+      expect(useSessionModelStore.getState().bySessionId).toEqual(before);
+      if (failure !== "pending inventory") expect(document.body.textContent).toContain(t("models.repick_bulk_failed"));
+      if (failure === "held current session") {
+        expect(document.body.textContent).toContain(t("models.repick_single_failed"));
+      } else {
+        await act(async () => confirm.click());
+        await flush();
+        expect(document.querySelector('[role="status"]')?.textContent).toBe(t("models.repick_saved"));
+        expect(singleSpy.mock.calls).toHaveLength(2);
+        expect(singleSpy.mock.calls[1][0]).toEqual({ sessionId: "repick-current", workspaceId: "fixture", model: { ...model, variant: null } });
+        expect(bulkSpy.mock.calls).toHaveLength(failure === "inventory refetch" ? 2 : 1);
+        expect(getSessionModelSelection("repick-current")).toEqual({ model: { providerID: "fixture", modelID: "available" }, variant: null });
+        expect(getSessionModelSelection("repick-peer")).toBe(before["repick-peer"] ?? null);
+      }
+      expect(t("models.repick_confirm", { count: 2 })).toBe("Save for 2 sessions");
+      expect(t("models.repick_confirm", { count: 2, lng: "fr" })).toBe("Save for 2 sessions");
+    } finally {
+      finishInventory(sessions);
+      await flush();
+      await act(async () => root.unmount());
+      host.remove(); queryClient.clear(); singleSpy.mockRestore(); bulkSpy.mockRestore();
+      useSessionModelStore.setState({ bySessionId: before });
+      if (stored === null) localStorage.removeItem("openwork.sessionModels.v1");
+      else localStorage.setItem("openwork.sessionModels.v1", stored);
+    }
+  });
+}
 
 describe("model picker provider badges", () => {
   const importedCloudProviders = {

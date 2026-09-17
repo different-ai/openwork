@@ -75,6 +75,22 @@ if (process.isMainFrame) {
   installBrowserShortcutFocusTracking(window, (tabId) => {
     ipcRenderer.send("openwork:browser:shortcut-focus", tabId);
   });
+  window.addEventListener("click", (event) => {
+    if (!event.isTrusted || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+    if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
+    if (!/^(https?:)?\/\//i.test(anchor.getAttribute("href") ?? "")) return;
+    let url;
+    try { url = new URL(anchor.href); } catch { return; }
+    if (!["http:", "https:"].includes(url.protocol)) return;
+    if (url.origin === location.origin && url.pathname === location.pathname && url.search === location.search) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ipcRenderer.send("openwork:browser:linkClick", {
+      url: url.href,
+      sessionId: anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null,
+    });
+  }, { capture: true });
 }
 
 // Selected text and ordinary editors use Chromium's native context-menu event.
@@ -92,6 +108,12 @@ window.addEventListener("contextmenu", (event) => {
     return;
   }
   if (composedEditor) return;
+  // Preserve Chromium's image hit-test and pixel clipboard operation, including
+  // linked images. Do not let surrounding message/link menus swallow it.
+  if (eventPath.some((node) => node instanceof HTMLImageElement)) {
+    event.stopImmediatePropagation();
+    return;
+  }
   const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
   if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
   const href = anchor.getAttribute("href") ?? "";
@@ -190,8 +212,8 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     setChannel(channel) {
       return ipcRenderer.invoke("openwork:updater:setChannel", channel);
     },
-    check(channel, targetVersion) {
-      return ipcRenderer.invoke("openwork:updater:check", channel, targetVersion);
+    check(channel, targetVersion, options) {
+      return ipcRenderer.invoke("openwork:updater:check", channel, targetVersion, options);
     },
     download() {
       return ipcRenderer.invoke("openwork:updater:download");

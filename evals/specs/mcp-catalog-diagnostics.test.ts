@@ -5,6 +5,7 @@ import { expect } from "vitest";
 import { needs, test } from "@openwork/testkit";
 import { startCatalogWitness } from "../packages/labs/src/mock-mcp-catalog.ts";
 import { bootServer, isRecord, stopChild } from "../worlds/openwork-server-cli.ts";
+import { seedSyntheticPreactivatedDen } from "../packages/env/src/app-web-bootstrap.ts";
 
 // Operators can distinguish catalog failures and local App-host provisioning in
 // the real server's responses. Quick-add catalog specs exercise Den/UI, not this API.
@@ -20,15 +21,18 @@ test("catalog reconciliation attributes failures without leaking private auth or
   const headers = { authorization: `Bearer ${clientToken}`, "content-type": "application/json" };
   const config = { type: "remote", url: `${witness.url}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: memberAuthorization } };
   const index = (servers: unknown[]) => JSON.stringify({ schemaVersion: "openwork.connect/mcp-servers/1", servers });
-  async function boot(name: string, devMode: string) {
+  async function boot(name: string, devMode: string, syntheticPreactivatedDenOrigin?: string) {
     const home = join(root, name);
     const workspace = join(home, "workspace");
     await mkdir(workspace, { recursive: true });
+    await mkdir(join(home, "config", "openwork"), { recursive: true });
+    const bootstrapEnv = await seedSyntheticPreactivatedDen(home, syntheticPreactivatedDenOrigin);
     const server = bootServer({
       ...inherited, HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"),
       XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
       OPENWORK_RUNTIME_DB: join(home, "runtime.sqlite"), OPENWORK_DEV_MODE: devMode,
       OPENWORK_OPENCODE_BASE_URL: witness.url, OPENWORK_MANAGE_OPENCODE: "0",
+      ...bootstrapEnv,
     }, clientToken, workspace, () => {});
     children.push(server.child);
     const base = await server.listening;
@@ -139,6 +143,12 @@ test("catalog reconciliation attributes failures without leaking private auth or
     await expectResolveError(untrustedEndpoint, "connect_catalog_untrusted_origin");
     expect(witness.requests.filter((entry) => entry.privateAuth)).toHaveLength(privateRequestsBefore);
     evidence.recordAssertionEvidence("Unactivated origin cannot receive private App-host credentials", "An isolated non-development server reports untrusted_origin for the same unactivated origin; private request count does not increase. Reconciliation responses omit both bearer credentials.", true);
+    const mismatchedEndpoint = await boot("preactivated-synthetic-mismatch", "0", "https://different-synthetic-den.example");
+    const beforeMismatch = witness.requests.filter((entry) => entry.privateAuth).length;
+    expect(await reconcile(mismatchedEndpoint, privateAuthorization)).toMatchObject({ connectCatalogDiagnostic: "untrusted_origin", appHostAuthorizationReady: null });
+    await expectResolveError(mismatchedEndpoint, "connect_catalog_untrusted_origin");
+    expect(witness.requests.filter((entry) => entry.privateAuth)).toHaveLength(beforeMismatch);
+    evidence.recordAssertionEvidence("Synthetic preactivation does not trust a different origin", "The unchanged production catalog guard rejected an origin different from the synthetic installation's initial activation; neither reconciliation nor App resolve dispatched a private-auth request.", true);
     evidence.recordAssertionEvidence("App resolve retains catalog failure attribution", "Real resolve HTTP errors distinguish missing private authorization, untrusted origin, invalid catalog/proxy and unavailable discovery from server_unavailable after successful empty discovery; no response exposes bearer credentials.", true);
   } finally {
     for (const child of children) await stopChild(child);

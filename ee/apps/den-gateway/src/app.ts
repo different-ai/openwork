@@ -4,6 +4,13 @@ import { readFile, realpath, stat } from "node:fs/promises"
 import { extname, resolve, sep } from "node:path"
 import { createJsonStdoutLogger, type JsonObject, type JsonStdoutLogger } from "@openwork-ee/utils/observability"
 import { Hono } from "hono"
+import {
+  buildMcpAppSandboxCsp,
+  MCP_APP_SANDBOX_PROXY_CSS,
+  MCP_APP_SANDBOX_PROXY_HTML,
+  MCP_APP_SANDBOX_PROXY_SCRIPT,
+  parseMcpAppSandboxCsp,
+} from "../../../../apps/server/src/mcp-app-sandbox.js"
 import { env } from "./env.js"
 import { createInstanceFetch, fetchWithConnectRetry, type FetchLike } from "./instance-fetch.js"
 
@@ -701,6 +708,24 @@ export function createGatewayApp(options: GatewayAppOptions = {}) {
 
   app.get("/__gw/health", (c) => c.json({ ok: true, service: "den-gateway", ...(config.buildVersion ? { build: config.buildVersion } : {}) }))
   app.get("/__gw/ready", (c) => c.json({ ok: true, service: "den-gateway", ...(config.buildVersion ? { build: config.buildVersion } : {}) }))
+
+  app.get("/mcp-apps/sandbox.html", (c) => new Response(MCP_APP_SANDBOX_PROXY_HTML, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(c.req.query("csp") ?? null)),
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "strict-origin",
+      "X-Content-Type-Options": "nosniff",
+    },
+  }))
+  app.get("/mcp-apps/sandbox.js", () => new Response(MCP_APP_SANDBOX_PROXY_SCRIPT, {
+    headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  }))
+  app.get("/mcp-apps/sandbox.css", () => new Response(MCP_APP_SANDBOX_PROXY_CSS, {
+    headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  }))
+  app.all("/mcp-apps", () => notFoundResponse())
+  app.all("/mcp-apps/*", () => notFoundResponse())
 
   app.all(denApiRoutePrefix, (c) => proxyToDenApi({ config, request: c.req.raw }))
   app.all(`${denApiRoutePrefix}/*`, (c) => proxyToDenApi({ config, request: c.req.raw }))

@@ -34,7 +34,7 @@ test("selected browser logins stay synced until the user pauses or forgets them"
   ];
   const store = await world.seedLoginStore("chosen", sourceCookies("login-v1-fixture"));
   const opening = world.openLoginWitnessTab("sync");
-  await user.click({ role: "button", label: "Allow origin in this tab" });
+  await user.click({ role: "button", label: "Allow for this thread" });
   const tab = await opening;
   expect(await world.readLoginWitness(tab)).toBe("signed-out");
 
@@ -78,7 +78,7 @@ test("selected browser logins stay synced until the user pauses or forgets them"
     await world.showSession(world.session.sessionId);
     const opening = world.openLoginWitnessTabAs("background-sync", backgroundSession.sessionId);
     await user.click({ text: backgroundSession.title });
-    await user.click({ role: "button", label: "Allow origin in this tab" });
+    await user.click({ role: "button", label: "Allow for this thread" });
     const backgroundTab = await opening;
     expect(backgroundTab.visible).toBe(true);
     await world.showSession(world.session.sessionId);

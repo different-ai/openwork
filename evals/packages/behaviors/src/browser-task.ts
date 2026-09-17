@@ -30,6 +30,7 @@ export interface BrowserTaskReply {
   outcome?: string;
   trust?: string;
   image?: { data: string };
+  scroll?: { x: number; y: number };
   tools?: Array<{ toolId: string; name: string; origin: string }>;
   elements?: Array<{ ref: string; name: string }>;
   result?: unknown;
@@ -56,6 +57,13 @@ function string(value: unknown): string {
 
 export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
   if (!record(value) || typeof value.ok !== "boolean") throw new Error("The browser returned no result.");
+  let scroll: BrowserTaskReply["scroll"];
+  if (value.scroll !== undefined) {
+    const position = value.scroll;
+    if (!record(position) || typeof position.x !== "number" || !Number.isFinite(position.x)
+      || typeof position.y !== "number" || !Number.isFinite(position.y)) throw new Error("Invalid browser scroll position.");
+    scroll = { x: position.x, y: position.y };
+  }
   return {
     // Retain unknown fields so disclosure assertions cannot hide a leaked payload.
     ...value,
@@ -71,6 +79,7 @@ export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
     ...(typeof value.outcome === "string" ? { outcome: value.outcome } : {}),
     ...(typeof value.trust === "string" ? { trust: value.trust } : {}),
     ...(record(value.image) ? { image: { data: string(value.image.data) } } : {}),
+    ...(scroll ? { scroll: { x: scroll.x, y: scroll.y } } : {}),
     ...(Array.isArray(value.tools) ? { tools: value.tools.map((tool: unknown) => {
       if (!record(tool)) throw new Error("Invalid website tool.");
       return { toolId: string(tool.toolId), name: string(tool.name), origin: string(tool.origin) };

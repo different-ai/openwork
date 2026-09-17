@@ -27,6 +27,7 @@ import {
 } from "../../../app/lib/desktop";
 import { toSessionTransportDirectory } from "../../../app/lib/session-scope";
 import {
+  normalizeMcpServerCommand,
   normalizeMcpSlug,
   parseMcpServersFromContent,
   removeMcpFromConfig,
@@ -393,7 +394,9 @@ export function createConnectionsStore(options: {
     }
     const next = response.items.map((entry) => ({
       name: entry.name,
-      config: entry.config as McpServerEntry["config"],
+      // The server relays opencode.json entries verbatim; fold a Claude-style
+      // string command into one list before any reader touches it.
+      config: normalizeMcpServerCommand(entry.config as McpServerEntry["config"]),
       source: entry.source,
       managedOAuth: entry.managedOAuth,
     }));
@@ -543,9 +546,10 @@ export function createConnectionsStore(options: {
           mcpLastUpdatedAt: Date.now(),
           mcpStatuses: projectedStatuses,
           managedOAuthAvailable: serverResult.managedOAuthAvailable,
+          // The Library's own empty state explains an empty server list.
           mcpStatus: failedNames
             ? `Some MCPs could not be registered with the engine: ${failedNames}. They may appear disconnected — try reloading the engine.`
-            : serverResult.next.length ? null : "No MCP servers configured yet.",
+            : null,
         }));
         void healUnhealthyMcpEntries(serverResult.next, projectedStatuses, refreshToken);
         return;
@@ -670,7 +674,7 @@ export function createConnectionsStore(options: {
         mcpServers: next,
         mcpLastUpdatedAt: Date.now(),
         mcpStatuses: projectedStatuses,
-        mcpStatus: next.length ? null : "No MCP servers configured yet.",
+        mcpStatus: null,
       }));
       void healUnhealthyMcpEntries(next, projectedStatuses, refreshToken);
     } catch (error) {
@@ -1333,7 +1337,7 @@ export function createConnectionsStore(options: {
 
     if (disposed) return;
     // Only clear the reloading banner if it's still ours. refreshMcpServers
-    // may have already replaced it with a real message (e.g. "No MCP servers").
+    // may have already replaced it with a real message (e.g. a registration failure).
     if (snapshot.mcpStatus === t("mcp.reloading_status")) {
       setStateField("mcpStatus", null);
     }

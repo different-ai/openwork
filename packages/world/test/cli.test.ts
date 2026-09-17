@@ -230,7 +230,7 @@ test("preflight failures warn without blocking up and do not affect attach or pl
       print: (line) => planLines.push(line),
       progress: () => {},
     }), 0);
-    assert.equal(planLines[0], "• running (attachable)");
+    assert.equal(planLines[0], "• running (invocation unverified)");
     assert.equal(checks, 1, "plan does not run preflight");
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(unhandledRejections, []);

@@ -41,6 +41,7 @@ export type ProviderCapabilities = {
 
 export type SandboxState =
   | "creating"
+  | "starting"
   | "running"
   | "stopping"
   | "stopped"
@@ -106,14 +107,14 @@ export type SandboxSpec = {
 
 export type SandboxHandle = {
   ref: SandboxRef
+  name?: string
   state: SandboxState
   region: string | null
   /** When `state` was last read from the host; the orchestrator caches on it. */
   observedAt: number
 }
 
-export type ExecSpec = {
-  command: string
+export type ExecSpec = ({ command: string; script?: never } | { script: string; command?: never }) & {
   /** Return once the process is started instead of waiting for exit. */
   detach: boolean
   timeoutMs: number
@@ -164,6 +165,8 @@ export interface SandboxProvider {
   /** Throws `conflict` when `idempotencyKey` already names a live instance. */
   create(spec: SandboxSpec, opts: ProviderTimeout): Promise<SandboxHandle>
   find(query: SandboxQuery): Promise<SandboxHandle | null>
+  /** All discoverable instances matching every supplied filter, across all pages. */
+  list(query: SandboxQuery): Promise<SandboxHandle[]>
   /** `null` for a missing instance; never throws `not_found`. */
   get(ref: SandboxRef): Promise<SandboxHandle | null>
   /** One state refresh. Must be cheap; the orchestrator decides how often. */

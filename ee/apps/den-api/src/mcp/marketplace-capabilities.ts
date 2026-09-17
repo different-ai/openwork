@@ -32,6 +32,7 @@ import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
 import { type BuiltCodemodeTools } from "./codemode-tools.js"
 import { executeWorkflow } from "./workflow-service.js"
+import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
 import { scoreText, tokenize } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
@@ -1550,7 +1551,12 @@ export async function executeMarketplaceCapability(input: {
   pluginId: string
   redirectUriBase?: string
   validateScriptOutput?: boolean
+  liveRuntime?: { timeZone?: string }
 }): Promise<MarketplaceCapabilityExecuteResult> {
+  const liveRuntime = input.liveRuntime === undefined ? undefined : artifactRunInputSchema.safeParse(input.liveRuntime)
+  if (liveRuntime && (!liveRuntime.success || input.body !== undefined)) {
+    return { ok: false, error: "invalid_capability_arguments", message: "Live runs accept only timeZone, never caller input.", issues: [], sameArgumentsRetryable: false, retry: { action: "correct_arguments", searchRequired: false } }
+  }
   if (input.enabled === false) {
     return { ok: false, error: "unknown_capability", message: "No such capability." }
   }
@@ -1607,8 +1613,9 @@ export async function executeMarketplaceCapability(input: {
       automationRunId: input.automationRunId,
       normalizedPayloadJson: version.normalizedPayloadJson,
       code: version.rawSourceText ?? "",
-      scriptInput: input.body,
-      validateOutput: input.validateScriptOutput === true,
+      scriptInput: liveRuntime?.success ? { runtime: artifactRuntime(liveRuntime.data.timeZone) } : input.body,
+      readOnly: liveRuntime?.success === true,
+      validateOutput: liveRuntime?.success === true || input.validateScriptOutput === true,
       buildTools: input.buildTools ?? (async () => ({ tools: {}, manifest: [] })),
     })
     if (!execution.ok && execution.error === "unsupported") {

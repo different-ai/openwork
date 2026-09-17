@@ -5,12 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { main, isProcessAlive, readScriptWorldSnapshot } from "@openwork/world";
-import { denFetch, signIn } from "@openwork/behaviors";
-import { attachSurface, evaluateOnSurface } from "@openwork/cdp";
-import { screenshot } from "@openwork/test-evidence";
+import { main, isProcessAlive, readLedger, readScriptWorldSnapshot } from "@openwork/world";
 import {
+  attachSurface,
+  evaluateOnSurface,
+  denFetch,
+  signInDen,
+  screenshot,
   eventually,
+  appWebPreviewWitness,
   needs,
   readDenClientState,
   readPublishedDesktopSandboxWitness,
@@ -21,6 +24,125 @@ import {
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../..", import.meta.url));
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+
+test("app-web CLI exposes a private human browser URL and down deletes only its owned stage", { timeout: 1_500_000 }, async ({ evidence }) => {
+  needs({ placement: "daytona" });
+  const ref = process.env.OPENWORK_EVAL_REF;
+  assert.match(ref ?? "", /^[a-f0-9]{40}$/);
+  if (!ref) throw new Error("Reviewed pushed source SHA is required.");
+  const snapshots = await mkdtemp(join(tmpdir(), "openwork-app-web-preview-proof-"));
+  const selected = ["OPENWORK_WORLD_SNAPSHOT_DIR", "OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY", "OPENWORK_DEV_DEN_PROXY_TARGET"];
+  const previous = new Map(selected.map((key) => [key, process.env[key]]));
+  const restorePooled = withoutPooledSlotEnv();
+  const stage = `app-web-${Date.now()}`;
+  const controlStage = `${stage}-control`;
+  process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
+  process.env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY = "0";
+  const cli = async (args: string[]): Promise<number> => {
+    try {
+      await exec(process.execPath, [join(root, "evals/bin/world.mjs"), ...args], { cwd: root, timeout: 660000, maxBuffer: 8 * 1024 * 1024 });
+      return 0;
+    } catch (error) {
+      if (record(error) && typeof error.code === "number") return error.code;
+      throw new Error("app-web CLI failed; raw private output withheld.");
+    }
+  };
+  const up = (value: string) => cli(["up", "app-web", "--stage", value, "--place", "daytona", "--detach", "--timeout", "600000",
+    "--env", "OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY", "--", "--ref", ref]);
+  const down = (value: string) => cli(["down", "app-web", "--stage", value]);
+  const snapshot = async (value: string) => {
+    const receipt = await readScriptWorldSnapshot(join(snapshots, `app-web--${value}.json`));
+    if (!receipt) throw new Error("app-web did not publish a private readiness receipt.");
+    return receipt;
+  };
+  let cleanupFailed = false;
+  try {
+    assert.equal(await up(stage), 0);
+    const app = await snapshot(stage);
+    assert.equal(app.outputs.placement, "daytona");
+    assert.equal(app.outputs.sourceSha, ref);
+    assert.equal(app.outputMeta?.webUrl?.secret, true);
+    const loopback = (value: string): boolean => {
+      try { return new URL(value).hostname === "127.0.0.1"; } catch { return false; }
+    };
+    assert.equal(loopback(app.outputs.runtimeWebUrl), true);
+    assert.equal(loopback(app.outputs.runtimeOpenworkUrl), true);
+    assert.equal(await up(stage), 0);
+    assert.equal((await snapshot(stage)).pid, app.pid);
+    process.env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY = "false";
+    assert.equal(await up(stage), 1);
+    assert.equal((await snapshot(stage)).pid, app.pid);
+    process.env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY = "0";
+    evidence.recordAssertionEvidence("app-web uses the real CLI with exact source and invocation identity",
+      "Daytona placement and pushed SHA match; the human URL is secret while process URLs remain loopback. Identical up adopts; changed selected Den configuration is rejected without replacing the process.", true);
+    {
+      await using witness = await appWebPreviewWitness({ sandboxId: app.outputs.sandboxId, browserOrigin: app.outputs.webUrl });
+      await eventually(async () => {
+        const state = await witness.read();
+        return state.rendered && state.sameOriginBackend && state.authenticated === 200 && state.hasWorkspace && state.webSocket;
+      }, { within: 90000, intervalMs: 1000, label: "private external browser renders and reaches its authenticated backend" });
+      const state = await witness.read();
+      assert.equal(state.externalHttps, true);
+      assert.equal(state.html, 200);
+      assert.equal(state.htmlHasVite, true);
+      assert.equal(state.asset, 200);
+      assert.equal(state.webSocket, true);
+      assert.equal(state.sourceOriginFree, true);
+      assert.equal(state.relativeBackend, true);
+      assert.equal(state.health, 200);
+      assert.equal(state.tokenPresent, true);
+      assert.equal(state.hostTokenPresent, false);
+      assert.equal(state.authenticated, 200);
+      assert.equal([401, 403].includes(state.unauthenticated), true);
+      assert.equal([401, 403].includes(state.hostOnly), true);
+      assert.equal(state.screenshotSafe, true, "Sensitive browser details must not enter screenshot evidence.");
+      await screenshot(witness.surface);
+      evidence.recordAssertionEvidence("The private human URL serves real app UI, assets, client-authenticated backend and WebSockets",
+        "An external HTTPS navigation renders app controls. Served app/HMR source contains no signed hostname and the backend env URL is relative. Signed HTML/assets/HMR and backend checks pass; unsigned HTTP/assets/WebSockets are denied. Client bearer access reads a workspace but neither anonymous nor client access grants host privileges. Production browser endpoints are blocked and the Den proxy is disabled; no Cloud sign-in is claimed.", true);
+    }
+    assert.equal(await up(controlStage), 0);
+    const control = await snapshot(controlStage);
+    assert.notEqual(app.outputs.sandboxId, control.outputs.sandboxId);
+    assert.equal(await down(stage), 0);
+    await eventually(async () => !(await daytonaSandboxIdentities()).includes(app.outputs.sandboxId), {
+      within: 120000, intervalMs: 2000, label: "app-web owned sandbox is deleted",
+    });
+    await eventually(async () => {
+      try {
+        const response = await fetch(app.outputs.webUrl, { headers: { "X-Daytona-Skip-Preview-Warning": "true" }, signal: AbortSignal.timeout(10000) });
+        return !response.ok || !(await response.text()).includes("/@vite/client");
+      } catch { return true; }
+    }, { within: 60000, intervalMs: 1000, label: "deleted app-web human URL no longer serves the app" });
+    assert.equal(await readScriptWorldSnapshot(join(snapshots, `app-web--${stage}.json`)), undefined);
+    assert.equal((await snapshot(controlStage)).pid, control.pid);
+    assert.equal((await daytonaSandboxIdentities()).includes(control.outputs.sandboxId), true);
+    {
+      await using witness = await appWebPreviewWitness({ sandboxId: control.outputs.sandboxId, browserOrigin: control.outputs.webUrl });
+      await eventually(async () => (await witness.read()).authenticated === 200, { within: 90000, intervalMs: 1000, label: "separate app-web stage remains usable" });
+    }
+    assert.equal(await down(controlStage), 0);
+    await eventually(async () => !(await daytonaSandboxIdentities()).includes(control.outputs.sandboxId), {
+      within: 120000, intervalMs: 2000, label: "control app-web sandbox is deleted",
+    });
+    evidence.recordAssertionEvidence("app-web down is ownership-scoped and removes its sandbox",
+      "Down removes the first receipt and sandbox while the separately created stage remains listed and client-authenticated through its human URL. Stopping that control stage then deletes its own sandbox too.", true);
+  } finally {
+    for (const value of [stage, controlStage]) {
+      try {
+        const receipt = await readScriptWorldSnapshot(join(snapshots, `app-web--${value}.json`));
+        const ledger = await readLedger(join(snapshots, `app-web--${value}.ledger.jsonl`));
+        if ((receipt || ledger.length > 0) && await down(value) !== 0) cleanupFailed = true;
+      } catch { cleanupFailed = true; }
+    }
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    restorePooled();
+    if (!cleanupFailed) await rm(snapshots, { recursive: true, force: true });
+    else throw new Error("app-web cleanup failed; ownership receipts retained for explicit cleanup.");
+  }
+});
 
 // The pooled lane exports its worker's shared Den/desktop sandboxes for a spec's
 // own seeds. Preview worlds refuse to run on borrowed infrastructure, so hide
@@ -149,7 +271,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     assert.equal((await fetch(desktop.outputs.preview)).status, 200);
     assert.match(await rfbHandshake(desktop.outputs.preview), /^RFB 003\./);
     const ref = { apiUrl: desktop.outputs.denApi, webUrl: desktop.outputs.denWeb };
-    const session = await signIn(ref, { email: desktop.outputs.email, password: desktop.outputs.password });
+    const session = await signInDen(ref, { email: desktop.outputs.email, password: desktop.outputs.password });
     const headers = { authorization: `Bearer ${session.token}` };
     const connections = await denFetch(ref, "/v1/mcp-connections?scope=manageable", { headers });
     assert.equal(connections.response.status, 200);

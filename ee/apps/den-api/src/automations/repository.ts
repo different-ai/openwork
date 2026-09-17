@@ -4,7 +4,7 @@ import {
   AUTOMATION_MAXIMUM_ATTEMPTS,
   automationOccurrenceIdentity,
   automationRevisionDigest,
-  desktopClaimDeadline,
+  computeAutomationClaimDeadline,
   missedDesktopRunMessage,
   nextAutomationOccurrence,
 } from "@openwork/automations"
@@ -47,6 +47,7 @@ type DesktopClaim = { automation: Automation; revision: AutomationRevision; run:
 
 const logger = appLogger.child({ component: "automation_repository" })
 const emptyUsage: AutomationUsage = { inputTokens: null, outputTokens: null, costMicros: null }
+const interruptedDesktopRunMessage = "Run interrupted — the desktop execution lease expired."
 
 const normalizeAutomationId = (value: string) => normalizeDenTypeId("automation", value)
 const normalizeRevisionId = (value: string) => normalizeDenTypeId("automationRevision", value)
@@ -462,7 +463,8 @@ export class DenAutomationRepository implements AutomationRepository {
       const nextDueAt = input.trigger === "manual"
         ? input.automation.nextDueAt
         : nextAutomationOccurrence(input.revision.schedule, input.scheduledFor ?? input.now)
-      const claimDeadlineAt = desktopClaimDeadline({
+      const claimDeadlineAt = computeAutomationClaimDeadline({
+        trigger: input.trigger,
         now: input.now,
         windowMs: input.claimDeadlineMs ?? input.leaseMs,
         nextDueAt,
@@ -841,7 +843,12 @@ export class DenAutomationRepository implements AutomationRepository {
         mcp_token_hash: null,
         mcp_token_expires_at: null,
         engine_sequence: retry ? 0 : run.engine_sequence,
-        error: retry ? null : { code: "lease_lost", message: "The execution lease expired.", retryable: false },
+        error: retry ? null : {
+          code: "lease_lost",
+          message: run.execution_target === "desktop" ? interruptedDesktopRunMessage : "The execution lease expired.",
+          retryable: false,
+        },
+        ...(!retry && run.execution_target === "desktop" ? { result_summary: interruptedDesktopRunMessage } : {}),
         finished_at: retry ? null : new Date(input.now),
         updated_at: new Date(input.now),
       }).where(and(
@@ -1225,25 +1232,33 @@ export class DenAutomationRepository implements AutomationRepository {
       )).orderBy(asc(AutomationRunTable.claim_deadline_at)).limit(input.limit)
     const expired: string[] = []
     for (const { run, automation } of rows) {
-      const message = await this.missedDesktopReason({
+      const attempted = run.attempt_count > 0 || run.started_at !== null
+      const status = attempted ? "failed" : "skipped"
+      const code = attempted ? "lease_lost" : "runner_unavailable"
+      const message = attempted ? interruptedDesktopRunMessage : await this.missedDesktopReason({
         organizationId: automation.organization_id,
         ownerMemberId: automation.owner_member_id,
         now: input.now,
       })
       await db.update(AutomationRunTable).set({
-        status: "skipped",
+        status,
         error: {
-          code: "runner_unavailable",
+          code,
           message,
           retryable: false,
         },
         result_summary: message,
         finished_at: new Date(input.now),
         updated_at: new Date(input.now),
-      }).where(and(eq(AutomationRunTable.id, run.id), eq(AutomationRunTable.status, "queued")))
+      }).where(and(
+        eq(AutomationRunTable.id, run.id),
+        eq(AutomationRunTable.status, "queued"),
+        eq(AutomationRunTable.attempt_count, run.attempt_count),
+        lte(AutomationRunTable.claim_deadline_at, new Date(input.now)),
+      ))
       const confirmed = await db.select({ status: AutomationRunTable.status, error: AutomationRunTable.error })
         .from(AutomationRunTable).where(eq(AutomationRunTable.id, run.id)).limit(1)
-      if (confirmed[0]?.status === "skipped" && confirmed[0].error?.code === "runner_unavailable") {
+      if (confirmed[0]?.status === status && confirmed[0].error?.code === code) {
         expired.push(run.id)
       }
     }

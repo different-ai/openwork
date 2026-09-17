@@ -21,6 +21,7 @@ interface ProgressiveMessageListProps<T> {
   getGroupKey: (group: T) => string
   getMessageIds: (group: T) => readonly string[]
   groupKeyReplacements?: ReadonlyMap<string, string>
+  priorityMessageId?: string
   renderGroup: (group: T, index: number) => React.ReactNode
   viewport?: MessageListViewport
   className?: string
@@ -28,7 +29,8 @@ interface ProgressiveMessageListProps<T> {
   children?: React.ReactNode
 }
 
-const BATCH_SIZE = 8
+const INITIAL_GROUPS = 8
+const OVERSCAN_PX = 480
 const GROUP_GAP = 8
 const ESTIMATED_HEIGHT = 240
 const MAX_CACHED_VIEWPORTS = 12
@@ -37,6 +39,7 @@ const MAX_CACHED_GROUPS = 2048
 const heightCache = new Map<string, Map<string, number>>()
 
 type MountState = {
+  identities: ReadonlyMap<string, string>
   mounted: ReadonlySet<string>
   initialized: boolean
   anchorPending: boolean
@@ -59,12 +62,12 @@ type ReadingPosition = {
 function addNearby(keys: readonly string[], mounted: ReadonlySet<string>, center: number) {
   const next = new Set(mounted)
   let added = 0
-  for (let distance = 0; distance < keys.length && added < BATCH_SIZE; distance++) {
+  for (let distance = 0; distance < keys.length && added < INITIAL_GROUPS; distance++) {
     for (const index of distance === 0 ? [center] : [center - distance, center + distance]) {
       const key = keys[index]
       if (key !== undefined && !next.has(key)) {
         next.add(key)
-        if (++added === BATCH_SIZE) break
+        if (++added === INITIAL_GROUPS) break
       }
     }
   }
@@ -83,18 +86,20 @@ function sameKeys(a: readonly string[], b: readonly string[]) {
   return a === b || (a.length === b.length && a.every((key, index) => key === b[index]))
 }
 
-/** Whole groups mount once, then stay mounted. The key cancels work on a session switch. */
 export function ProgressiveMessageList<T>(props: ProgressiveMessageListProps<T>) {
-  const { groups, getGroupKey, getMessageIds } = props
+  const { groups, getGroupKey, getMessageIds, priorityMessageId } = props
   const keys = React.useMemo(() => groups.map(getGroupKey), [groups, getGroupKey])
   const anchorMessageId = props.viewport?.anchorMessageId
   const anchorIndex = React.useMemo(() => anchorMessageId
     ? groups.findIndex((group) => getMessageIds(group).includes(anchorMessageId))
     : -1, [groups, getMessageIds, anchorMessageId])
-  return <ProgressiveGroups key={props.viewport?.sessionKey ?? "eager"} {...props} keys={keys} anchorIndex={anchorIndex} />
+  const priorityIndex = React.useMemo(() => priorityMessageId
+    ? groups.findIndex((group) => getMessageIds(group).includes(priorityMessageId))
+    : -1, [groups, getMessageIds, priorityMessageId])
+  return <ProgressiveGroups key={props.viewport?.sessionKey ?? "eager"} {...props} keys={keys} anchorIndex={anchorIndex} priorityIndex={priorityIndex} />
 }
 
-type PreparedGroupsProps<T> = ProgressiveMessageListProps<T> & { keys: string[]; anchorIndex: number }
+type PreparedGroupsProps<T> = ProgressiveMessageListProps<T> & { keys: string[]; anchorIndex: number; priorityIndex: number }
 
 // Internal mount batches reuse settled output. Parent callback changes must
 // invalidate it too: the callback captures streaming, last-step and other props.
@@ -104,7 +109,8 @@ class RenderedGroup<T> extends React.PureComponent<{
   renderGroup: ProgressiveMessageListProps<T>["renderGroup"]
 }> {
   render() {
-    return this.props.renderGroup(this.props.group, this.props.index)
+    const content = this.props.renderGroup(this.props.group, this.props.index)
+    return React.isValidElement(content) ? React.cloneElement(content, { key: "content" }) : content
   }
 }
 
@@ -112,6 +118,7 @@ class RenderedGroup<T> extends React.PureComponent<{
 // since a batch was queued. An effect's previous-commit anchor would snap readers back.
 class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, MountState> {
   state: MountState = {
+    identities: new Map(),
     mounted: new Set(),
     initialized: false,
     anchorPending: Boolean(this.props.viewport?.anchorMessageId),
@@ -119,38 +126,61 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
   }
 
   static getDerivedStateFromProps<T>(props: PreparedGroupsProps<T>, state: MountState): MountState | null {
-    const { keys, anchorIndex } = props
+    const { keys, anchorIndex, priorityIndex } = props
     if (!keys.length) return null
+    let identities = state.identities
     const replacements = [...(props.groupKeyReplacements ?? [])]
       .filter(([key, previous]) => state.mounted.has(previous) && !state.mounted.has(key) && keys.includes(key))
-      .map(([key]) => key)
-    let mounted = replacements.length ? new Set([...state.mounted, ...replacements]) : state.mounted
+    if (replacements.length) {
+      const next = new Map(identities)
+      for (const [key, previous] of replacements) {
+        next.set(`group:${key}`, next.get(`group:${previous}`) ?? previous)
+        next.delete(`group:${previous}`)
+      }
+      identities = next
+    }
+    let mounted = replacements.length ? new Set([...state.mounted, ...replacements.map(([key]) => key)]) : state.mounted
     const last = keys[keys.length - 1]
+    const immediate = priorityIndex >= 0 ? [keys[priorityIndex], last] : [last]
     if (!props.viewport || props.viewport.revealAll) {
       if (keys.every((key) => state.mounted.has(key))) return null
       mounted = new Set(keys)
-    } else if (!state.initialized || (anchorIndex >= 0 && (state.anchorPending || !mounted.has(keys[anchorIndex])))) {
-      // Include the live tail without allowing the first mount to exceed eight groups.
+    } else if (!state.initialized || (anchorIndex >= 0 && (state.anchorPending
+      || !mounted.has(keys[anchorIndex]) && [...mounted].some((key) => !keys.includes(key))))) {
       const estimatedIndex = props.viewport.scrollTop !== undefined && props.viewport.scrollHeight
         ? Math.min(keys.length - 1, Math.floor(keys.length * props.viewport.scrollTop / props.viewport.scrollHeight)) : keys.length - 1
       const nearby = addNearby(keys, mounted, anchorIndex >= 0 ? anchorIndex : estimatedIndex)
-      if (!nearby.has(last)) {
-        const furthest = [...nearby].at(-1)
-        if (furthest && !mounted.has(furthest)) nearby.delete(furthest)
-        nearby.add(last)
+      for (const key of immediate) {
+        if (nearby.has(key)) continue
+        const furthest = [...nearby].findLast((candidate) => !mounted.has(candidate)
+          && candidate !== keys[anchorIndex] && !immediate.includes(candidate))
+        if (furthest !== undefined) nearby.delete(furthest)
+        nearby.add(key)
       }
       mounted = nearby
-    } else if (!mounted.has(last)) {
-      mounted = new Set([...mounted, last])
+    } else if (immediate.some((key) => !mounted.has(key))) {
+      mounted = new Set([...mounted, ...immediate])
     } else if (mounted === state.mounted) return null
-    return { ...state, mounted, initialized: true, anchorPending: state.anchorPending && anchorIndex < 0 && !props.viewport?.historyComplete }
+    return { ...state, identities, mounted, initialized: true, anchorPending: state.anchorPending && anchorIndex < 0 && !props.viewport?.historyComplete }
   }
 
   private nodes = new Map<string, HTMLDivElement>()
+  private nodeRefs = new Map<string, React.RefCallback<HTMLDivElement>>()
+
+  private groupRef(key: string) {
+    let ref = this.nodeRefs.get(key)
+    if (!ref) {
+      ref = (node) => this.trackNode(node)
+      this.nodeRefs.set(key, ref)
+    }
+    return ref
+  }
   private plan: Plan = { keys: [], heights: [], segments: [], complete: false }
   private committed = this.plan
   private container: HTMLDivElement | null = null
   private observer: ResizeObserver | null = null
+  private interactions: MutationObserver | null = null
+  private interacted = new WeakMap<HTMLElement, Map<Element, string>>()
   private frame: number | null = null
   private active = false
   private estimates = new Map<string, number>()
@@ -172,6 +202,14 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
     heightCache.set(cacheKey, cache)
     cache.delete(key)
     cache.set(key, height)
+    if (width === this.state.width && this.estimates.get(key) !== height) {
+      this.estimates.set(key, height)
+      const index = this.heightPlan?.keys.indexOf(key) ?? -1
+      if (this.heightPlan && index >= 0) {
+        this.heightPlan.totalHeight += height - this.heightPlan.heights[index]
+        this.heightPlan.heights[index] = height
+      }
+    }
     if (cache.size > MAX_CACHED_GROUPS) {
       const oldest = cache.keys().next().value
       if (oldest !== undefined) cache.delete(oldest)
@@ -195,6 +233,7 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
     return () => {
       this.observer?.unobserve(node)
       this.nodes.delete(key)
+      if (group !== null) this.nodeRefs.delete(key)
     }
   }
 
@@ -202,9 +241,22 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
     const container = this.props.viewport?.scrollRef.current
     if (!container || this.container === container) return
     this.container?.removeEventListener("scroll", this.handleScroll)
+    this.container?.removeEventListener("click", this.handleInteraction, true)
+    this.container?.removeEventListener("keydown", this.handleInteraction, true)
     this.observer?.disconnect()
+    this.interactions?.disconnect()
     this.container = container
     container.addEventListener("scroll", this.handleScroll, { passive: true })
+    container.addEventListener("click", this.handleInteraction, true)
+    container.addEventListener("keydown", this.handleInteraction, true)
+    document.addEventListener("selectionchange", this.handleScroll)
+    document.addEventListener("focusin", this.handleScroll)
+    document.addEventListener("focusout", this.handleScroll)
+    this.interactions = new MutationObserver(this.handleScroll)
+    this.interactions.observe(container, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ["aria-expanded", "aria-controls", "data-state", "open"],
+    })
     this.observer = new ResizeObserver((entries) => {
       if (!this.active) return
       const width = container.clientWidth
@@ -212,8 +264,8 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
         this.setState({ width })
         return
       }
-      // Native browser anchoring owns image/markdown reflow. Only remember sizes.
       for (const entry of entries) if (entry.target instanceof HTMLElement) this.measure(entry.target)
+      this.schedule()
     })
     this.observer.observe(container)
     for (const node of this.nodes.values()) {
@@ -250,37 +302,82 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
     return Math.max(0, plan.keys.length - 1)
   }
 
-  private handleScroll = () => {
-    if (!this.active || this.committed.complete) return
-    const index = this.visibleIndex(this.committed)
-    // Jumping into a spacer should not wait behind the history queue.
-    const nearby = this.committed.keys.slice(Math.max(0, index - 1), index + BATCH_SIZE - 1)
-    if (nearby.some((key) => !this.state.mounted.has(key))) {
-      this.setState((state) => ({ mounted: new Set([...state.mounted, ...nearby]) }))
+  private disclosureState(node: Element) {
+    return node.getAttribute("aria-expanded") ?? node.getAttribute("data-state") ?? String(node.hasAttribute("open"))
+  }
+
+  private interactive(node: HTMLElement) {
+    const focused = document.activeElement
+    if (focused && node.contains(focused)) return true
+    const initial = this.interacted.get(node)
+    if (initial) {
+      for (const control of node.querySelectorAll('[aria-expanded], [data-state="open"], [data-state="closed"], details, dialog')) {
+        const state = this.disclosureState(control)
+        if (initial.has(control) ? initial.get(control) !== state : state === "true" || state === "open") return true
+      }
+    }
+    if (focused && [...node.querySelectorAll("[aria-controls]")].some((trigger) =>
+      trigger.getAttribute("aria-controls")?.split(/\s+/).some((id) => document.getElementById(id)?.contains(focused)))) return true
+    const selection = document.getSelection()
+    if (!selection || selection.isCollapsed) return false
+    for (let index = 0; index < selection.rangeCount; index++) {
+      if (selection.getRangeAt(index).intersectsNode(node)) return true
+    }
+    return false
+  }
+
+  private windowKeys() {
+    const next = new Set<string>()
+    const bounds = this.container?.getBoundingClientRect()
+    if (!bounds) return next
+    const { keys, heights, segments } = this.committed
+    for (const segment of segments) {
+      const node = this.nodes.get(segment.key)
+      if (!node || segment.end <= segment.start) continue
+      const rect = node.getBoundingClientRect()
+      if (!segment.placeholder && this.interactive(node)) next.add(keys[segment.start])
+      if (rect.bottom < bounds.top - OVERSCAN_PX || rect.top > bounds.bottom + OVERSCAN_PX) continue
+      let top = rect.top
+      for (let index = segment.start; index < segment.end; index++) {
+        const height = segment.placeholder ? heights[index] : rect.height
+        if (top + height >= bounds.top - OVERSCAN_PX && top <= bounds.bottom + OVERSCAN_PX) next.add(keys[index])
+        top += height + GROUP_GAP
+        if (top > bounds.bottom + OVERSCAN_PX) break
+      }
+    }
+    const last = keys.at(-1)
+    if (last !== undefined) next.add(last)
+    const priority = keys[this.props.priorityIndex]
+    if (priority !== undefined) next.add(priority)
+    return next
+  }
+
+  private handleInteraction = (event: Event) => {
+    const group = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-thread-group]") : null
+    if (group && !this.interacted.has(group)) {
+      this.interacted.set(group, new Map([...group.querySelectorAll('[aria-expanded], [data-state="open"], [data-state="closed"], details, dialog')]
+        .map((control) => [control, this.disclosureState(control)])))
     }
   }
 
+  private handleScroll = () => { this.schedule() }
+
   private schedule() {
-    const pending = this.committed.keys.some((key) => !this.state.mounted.has(key))
-    if (!pending && this.frame !== null) {
+    if (this.props.viewport?.revealAll && this.frame !== null) {
       window.cancelAnimationFrame(this.frame)
       this.frame = null
     }
-    if (!this.active || this.frame !== null || !this.props.viewport) return
-    if (!pending && this.container) return
-    // Two frames guarantee a paint opportunity between expensive group batches.
+    if (!this.active || this.frame !== null || !this.props.viewport || this.props.viewport.revealAll) return
     this.frame = window.requestAnimationFrame(() => {
-      this.frame = window.requestAnimationFrame(() => {
-        this.frame = null
-        if (!this.active) return
-        this.connectViewport()
-        const { keys } = this.committed
-        const index = this.visibleIndex(this.committed)
-        this.setState((state) => {
-          const next = addNearby(keys, state.mounted, index)
-          return next.size !== state.mounted.size ? { mounted: next } : null
-        })
-      })
+      this.frame = null
+      if (!this.active) return
+      this.connectViewport()
+      if (!this.container) return
+      for (const node of this.nodes.values()) this.measure(node)
+      const mounted = this.windowKeys()
+      if (mounted.size !== this.state.mounted.size || [...mounted].some((key) => !this.state.mounted.has(key))) {
+        this.setState({ mounted })
+      }
     })
   }
 
@@ -362,9 +459,16 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
     if (this.frame !== null) window.cancelAnimationFrame(this.frame)
     this.frame = null
     this.container?.removeEventListener("scroll", this.handleScroll)
+    this.container?.removeEventListener("click", this.handleInteraction, true)
+    this.container?.removeEventListener("keydown", this.handleInteraction, true)
+    document.removeEventListener("selectionchange", this.handleScroll)
+    document.removeEventListener("focusin", this.handleScroll)
+    document.removeEventListener("focusout", this.handleScroll)
     this.container = null
     this.observer?.disconnect()
     this.observer = null
+    this.interactions?.disconnect()
+    this.interactions = null
   }
 
   render() {
@@ -417,13 +521,13 @@ class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, Mount
       }
     }
     if (trailing > 0) segments.push({ key: "history-suffix", start: keys.length, end: keys.length, height: trailing, placeholder: true })
-    this.plan = { keys, heights, segments, complete: (viewport?.historyComplete ?? true) && segments.every((segment) => !segment.placeholder) }
-    return <div className={`flex flex-col gap-2 ${className ?? ""}`} data-thread-history-complete={this.plan.complete}>
+    this.plan = { keys, heights, segments, complete: viewport?.historyComplete ?? true }
+    return <div className={`flex flex-col gap-2 ${className ?? ""}`} data-thread-history-complete={this.plan.complete} data-thread-virtualized={Boolean(viewport)}>
       {header}
       {segments.map((segment) => segment.placeholder
         ? <div key={segment.key} ref={this.trackNode} data-thread-placeholder={segment.key} aria-hidden="true"
             style={{ height: segment.height, flexShrink: 0, overflowAnchor: "none" }} />
-        : <div key={segment.key} ref={this.trackNode} data-thread-group={keys[segment.start]} className="min-w-0 shrink-0 empty:hidden">
+        : <div key={`group:${this.state.identities.get(segment.key) ?? keys[segment.start]}`} ref={this.groupRef(segment.key)} data-thread-group={keys[segment.start]} className="min-w-0 shrink-0 empty:hidden">
             <RenderedGroup group={groups[segment.start]} index={segment.start} renderGroup={renderGroup} />
           </div>)}
       {children}

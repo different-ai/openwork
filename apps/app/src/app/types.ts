@@ -186,6 +186,7 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 export const SETTINGS_TAB_VALUES = [
   "general",
   "ai",
+  "ollama",
   "preferences",
   "permissions",
   "cloud-account",

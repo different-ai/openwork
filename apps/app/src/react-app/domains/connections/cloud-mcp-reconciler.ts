@@ -45,6 +45,10 @@ export type CloudMcpClient = {
     workspaceId: string,
     payload: OpenworkCloudMcpReconcilePayload,
   ) => Promise<OpenworkCloudMcpHealth>;
+  refreshOpenworkCloudMcpCatalog?: (
+    workspaceId: string,
+    providerModel?: OpenworkCloudMcpProviderModelContext,
+  ) => Promise<OpenworkCloudMcpHealth>;
   refreshOpenworkCloudMcpEngine?: (
     workspaceId: string,
     payload?: { provider?: string; model?: string; trigger?: string },
@@ -321,6 +325,17 @@ function needsAppHostAuthorizationRepair(health: OpenworkCloudMcpHealth, scope: 
   return elapsed < 0 || elapsed >= APP_HOST_AUTHORIZATION_RETRY_MS;
 }
 
+async function refreshHealthyCloudCatalog(
+  input: CloudMcpReconcilerInput,
+  scope: CloudMcpScope,
+  result: CloudMcpOperationResult,
+): Promise<CloudMcpOperationResult> {
+  if (result.health?.appHostAuthorizationReady !== true || !input.client.refreshOpenworkCloudMcpCatalog) return result;
+  const health = await input.client.refreshOpenworkCloudMcpCatalog(scope.workspaceId, input.context.providerModel);
+  const refreshed = health.connectCatalogDiagnostic === "ready" || health.connectCatalogDiagnostic === "empty";
+  return { ...result, health, status: !health.usable ? "failed" : refreshed ? "repaired" : "unchanged" };
+}
+
 async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<CloudMcpOperationResult> {
   const now = input.now ?? Date.now();
   let appHostOnlyHealth: OpenworkCloudMcpHealth | null = null;
@@ -328,7 +343,7 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     const healthResult = await probeHealth(input, scope, { writeFreshnessMarker: true });
     if (healthResult.health?.appHostAuthorizationReady === true) clearCloudMcpUnhealthyRemintAttempt(scope);
     if (healthResult.health?.usable && !needsAppHostAuthorizationRepair(healthResult.health, scope, now)) {
-      return { ...healthResult, status: "unchanged" };
+      return refreshHealthyCloudCatalog(input, scope, { ...healthResult, status: "unchanged" });
     }
     if (healthResult.health?.usable) appHostOnlyHealth = healthResult.health;
   }
@@ -341,7 +356,7 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
   })) {
     const health = await input.client.getOpenworkCloudMcpHealth(scope.workspaceId, input.context.providerModel);
     if (health.usable && !needsAppHostAuthorizationRepair(health, scope, now)) {
-      return { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false };
+      return refreshHealthyCloudCatalog(input, scope, { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false });
     }
     appHostOnlyHealth = health.usable ? health : null;
   }
