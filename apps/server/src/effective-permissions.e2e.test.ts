@@ -110,12 +110,14 @@ describe("effective permissions route", () => {
 
     const policyService = managedDesktopPolicy(config);
     const policyHeaders = { authorization: `Bearer ${policyService.evaluationToken}`, "Content-Type": "application/json" };
-    const evaluate = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${server.port}/managed-policy/evaluate`, {
-      method: "POST", headers, body: JSON.stringify({ action: "shell", input: { command: "echo hello" } }),
+    const evaluate = (headers: Record<string, string>, action = "shell") => fetch(`http://127.0.0.1:${server.port}/managed-policy/evaluate`, {
+      method: "POST", headers, body: JSON.stringify({ action, input: action === "shell" ? { command: "echo hello" } : { url: "https://example.com" } }),
     });
     expect((await evaluate({})).status).toBe(401);
     expect((await evaluate({ authorization: "Bearer invalid-policy-token" })).status).toBe(401);
-    expect((await evaluate(policyHeaders)).status).toBe(200);
+    const unmanagedEvaluation = await evaluate(policyHeaders);
+    expect(unmanagedEvaluation.status).toBe(200);
+    expect(await unmanagedEvaluation.json()).toEqual({ allowed: true, authority: "unmanaged" });
     expect((await evaluate({ authorization: `Bearer ${CLIENT_TOKEN}` })).status).toBe(200);
     for (const [method, path] of [
       ["GET", "/workspaces"],
@@ -131,6 +133,9 @@ describe("effective permissions route", () => {
     const den = Bun.serve({ port: 0, fetch: () => Response.json({ allowControlSettings: false, execution: { commands: "deny" } }) });
     stops.push(() => den.stop(true));
     await policyService.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, token: "test-den-token", orgId: "test-org" });
+    const managedEvaluation = await evaluate(policyHeaders, "browser");
+    expect(managedEvaluation.status).toBe(200);
+    expect(await managedEvaluation.json()).toEqual({ allowed: true, authority: "managed" });
     const denied = await evaluate(policyHeaders);
     expect(denied.status).toBe(403);
     expect(await denied.json()).toMatchObject({ code: "organization_policy_denied" });

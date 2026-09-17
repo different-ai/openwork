@@ -2123,4 +2123,11 @@ export default {
   "session_management.empty_group": "No sessions",
   "session_management.ungrouped": "Ungrouped",
   "session_management.archived_label": "Archived",
+  "link_policy.sign_in_message": "Sign in to verify your organization’s link policy",
+  "link_policy.blocked_message": "This link is blocked by your organization’s policy",
+  "link_policy.service_unavailable_message": "OpenWork couldn’t reach its link-policy service",
+  "link_policy.default_browser_unavailable": "OpenWork couldn’t open this link in your default browser",
+  "link_policy.sign_in": "Sign in",
+  "link_policy.cancel": "Cancel",
+  "link_policy.retry": "Retry",
 } as const;

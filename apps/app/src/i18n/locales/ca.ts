@@ -1182,4 +1182,11 @@ export default {
   "settings.runtime_config_no_removed_keys": "No OpenWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "link_policy.sign_in_message": "Inicieu la sessió per verificar la política d’enllaços de la vostra organització",
+  "link_policy.blocked_message": "Aquest enllaç està bloquejat per la política de la vostra organització",
+  "link_policy.service_unavailable_message": "OpenWork no ha pogut contactar amb el servei de política d’enllaços",
+  "link_policy.default_browser_unavailable": "OpenWork no ha pogut obrir aquest enllaç al navegador predeterminat",
+  "link_policy.sign_in": "Inicia la sessió",
+  "link_policy.cancel": "Cancel·la",
+  "link_policy.retry": "Torna-ho a provar",
 } as const;

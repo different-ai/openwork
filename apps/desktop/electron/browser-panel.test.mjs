@@ -30,7 +30,8 @@ ipcRenderer.send = (channel, ...args) => { preloadCalls.push({ channel, args });
 ipcRenderer.sendSync = () => null;
 export const app = { on() {} };
 export const clipboard = { writeText(url) { effects.push({ type: "copy", url }); } };
-export const dialog = { async showMessageBox(_window, options) { effects.push({ type: "dialog" }); return { response: await controls.confirm(options) }; } };
+export const dialogOptions = [];
+export const dialog = { async showMessageBox(_window, options) { dialogOptions.push(options); effects.push({ type: "dialog" }); return { response: await controls.confirm(options) }; } };
 export const requestHooks = [];
 export const browserSession = new EventEmitter();
 browserSession.webRequest = { onBeforeRequest(_filter, listener) { requestHooks.push(listener); } };
@@ -197,8 +198,9 @@ export function load(url, context, next) {
 
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
+const { LINK_POLICY_LOCALES, linkPolicyMessages } = await import("./link-policy-dialogs.mjs");
 // @ts-expect-error The registered test-only Electron stub exports its witnesses.
-const { createdViews, effects, controls, browserSession, navigation, requestHooks, exposed, webFrame, preloadCalls, ipcRenderer, menuTemplates } = await import("electron");
+const { createdViews, effects, controls, browserSession, navigation, requestHooks, exposed, webFrame, preloadCalls, ipcRenderer, menuTemplates, dialogOptions } = await import("electron");
 const { createApplicationMenu } = await import("./app-menu.mjs");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
@@ -208,8 +210,13 @@ const RESET_SEQUENCE = [
   { method: "Emulation.clearDeviceMetricsOverride", params: undefined },
 ];
 
+/**
+ * @param {(request: { url?: string, method?: string, hasUpload?: boolean, external?: boolean }) => Promise<unknown>} [checkPolicy]
+ * @param {number} [remoteDebugPort]
+ */
 function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) {
   effects.length = 0;
+  dialogOptions.length = 0;
   controls.focusedContents = null;
   controls.confirm = async () => 0;
   controls.beforeLoad = async () => {};
@@ -253,7 +260,11 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
   };
   const panel = createBrowserPanel({
     getWindow: () => mainWindow, remoteDebugPort, onDeepLink: () => {},
-    checkPolicy: async (request) => { policies.push(request); await checkPolicy(request); },
+    checkPolicy: async (request) => {
+      policies.push(request);
+      return (await checkPolicy(request)) ?? { authority: "managed" };
+    },
+    openSignIn: async () => { effects.push({ type: "sign-in" }); },
     showNativeContextMenu: (request) => new Promise((resolve, reject) => {
       menus.push({ request, choose: resolve, fail: reject, closed: false });
     }),
@@ -386,6 +397,28 @@ test("toolbar and menu Close share browser focus, while chat and other windows r
   close.click(null, mainWindow);
   assert.equal(mainWindow.destroyed, true, "outside browser context native Close is unchanged");
   panel.destroy();
+});
+
+test("the native settings affordance restores the app and targets Cloud Account for policy sign-in", async () => {
+  const calls = [];
+  const host = {
+    isMinimized: () => true,
+    restore: () => calls.push("restore"),
+    show: () => calls.push("show"),
+    focus: () => calls.push("focus"),
+    webContents: { send: (channel, payload) => calls.push({ channel, payload }) },
+  };
+  const applicationMenu = createApplicationMenu({
+    appName: "OpenWork", docsUrl: "https://example.com/docs", getWindow: async () => host,
+    closeBrowserTab: () => false,
+  });
+
+  await applicationMenu.openSettings("cloud-account");
+
+  assert.deepEqual(calls, [
+    "restore", "show", "focus",
+    { channel: "openwork:native-menu:open-settings", payload: "cloud-account" },
+  ]);
 });
 
 test("browser shortcut ownership rejects background input, forged focus, hidden panels, and conversation changes", async () => {
@@ -706,7 +739,7 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
     return event.defaultPrevented;
   };
   assert.equal(click(), true);
-  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A" }] }]);
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, locale: "en", sessionId: "A" }] }]);
   assert.equal(exposed.__OPENWORK_ELECTRON__.browser.linkClick, undefined);
   for (const overrides of [{ isTrusted: false }, { button: 1 }, { button: 2 }, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }]) {
     assert.equal(click(overrides), false);
@@ -715,6 +748,18 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
     assert.equal(click({}, Object.assign(new Anchor(), change)), false);
   }
   assert.equal(preloadCalls.length, 1);
+});
+
+test("preload forwards the native Cloud Account target through the existing settings event", async (t) => {
+  await loadPreload(t);
+  let target = null;
+  window.addEventListener("openwork:native-menu:open-settings", (event) => {
+    target = event instanceof CustomEvent ? event.detail : null;
+  });
+
+  ipcRenderer.emit("openwork:native-menu:open-settings", {}, "cloud-account");
+
+  assert.equal(target, "cloud-account");
 });
 
 test("browser manager construction before app readiness defers session hooks until the first tab", async (t) => {
@@ -1490,7 +1535,7 @@ test("link menus reject untrusted senders, subframes, unsafe URLs and invalid po
 });
 
 test("the built-in choice retains the captured owner when focus changes before policy completes", async () => {
-  /** @type {(() => void) | undefined} */
+  /** @type {((value: unknown) => void) | undefined} */
   let allow;
   const { openLinkMenu, invoke, policies } = createPanel(() => new Promise((resolve) => { allow = resolve; }));
   invoke("openwork:browser:setVisibleSession", "B");
@@ -1501,7 +1546,7 @@ test("the built-in choice retains the captured owner when focus changes before p
   assert.deepEqual(invoke("openwork:browser:state").tabs, [], "navigation waits for policy");
   invoke("openwork:browser:setVisibleSession", "C");
   assert.ok(allow, "the pending policy check exposes its completion");
-  allow();
+  allow(undefined);
   await flush();
 
   const state = invoke("openwork:browser:state");
@@ -1977,10 +2022,143 @@ test("human link clicks open without control state but later agent reads require
   }
 });
 
+test("an unmanaged primary HTTPS link opens only the default browser without a dialog", async () => {
+  const { invoke, views, policies } = createPanel(async () => ({ authority: "unmanaged" }));
+  invoke("openwork:browser:linkClick", LINK);
+  await flush();
+  await flush();
+
+  assert.deepEqual(policies, [{ url: LINK.url, external: false }]);
+  assert.deepEqual(effects, [{ type: "external", url: LINK.url }]);
+  assert.deepEqual(dialogOptions, []);
+  assert.deepEqual(views(), []);
+});
+
+test("link policy dialogs cover every supported locale with three distinct states", () => {
+  assert.deepEqual(LINK_POLICY_LOCALES, ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru"]);
+  for (const locale of LINK_POLICY_LOCALES) {
+    const messages = linkPolicyMessages(locale);
+    assert.equal(new Set([messages.signInPolicy, messages.blockedPolicy, messages.policyServiceUnavailable]).size, 3, locale);
+    for (const value of Object.values(messages)) assert.ok(typeof value === "string" && value.length > 0, locale);
+  }
+  assert.equal(linkPolicyMessages("en").signInPolicy, "Sign in to verify your organization’s link policy");
+  assert.equal(linkPolicyMessages("en").blockedPolicy, "This link is blocked by your organization’s policy");
+  assert.equal(linkPolicyMessages("en").policyServiceUnavailable, "OpenWork couldn’t reach its link-policy service");
+  assert.equal(linkPolicyMessages("fr-CA").retry, "Réessayer");
+  assert.equal(linkPolicyMessages("unknown").cancel, "Cancel");
+});
+
+test("retained policy without identity offers Sign in and routes through the supported account affordance", async () => {
+  const error = Object.assign(new Error("internal"), { code: "policy_sign_in_required" });
+  const { invoke, views, policies } = createPanel(async () => { throw error; });
+  controls.confirm = async () => 0;
+  invoke("openwork:browser:linkClick", LINK);
+  await flush();
+
+  assert.deepEqual(policies, [{ url: LINK.url, external: false }]);
+  assert.deepEqual(effects, [{ type: "dialog" }, { type: "sign-in" }]);
+  assert.deepEqual(dialogOptions, [{
+    type: "warning", buttons: ["Sign in", "Cancel"], defaultId: 0, cancelId: 1, noLink: true,
+    message: "Sign in to verify your organization’s link policy",
+  }]);
+  assert.deepEqual(views(), []);
+});
+
+test("a genuine organization denial shows only the blocked-policy state and launches nothing", async () => {
+  const error = Object.assign(new Error("internal"), { code: "organization_policy_denied" });
+  const { invoke, views } = createPanel(async () => { throw error; });
+  invoke("openwork:browser:linkClick", { ...LINK, locale: "es" });
+  await flush();
+
+  assert.deepEqual(effects, [{ type: "dialog" }]);
+  assert.deepEqual(dialogOptions, [{
+    type: "error", buttons: ["Cancelar"], defaultId: 0, cancelId: 0, noLink: true,
+    message: "Este enlace está bloqueado por la política de tu organización",
+  }]);
+  assert.deepEqual(views(), []);
+});
+
+test("a primary link policy outage offers Retry and Cancel without launching anything", async () => {
+  const error = Object.assign(new Error("internal"), { code: "policy_unavailable" });
+  const { invoke, views, policies } = createPanel(async () => { throw error; });
+  controls.confirm = async () => 1;
+  invoke("openwork:browser:linkClick", LINK);
+  await flush();
+
+  assert.deepEqual(policies, [{ url: LINK.url, external: false }]);
+  assert.deepEqual(effects, [{ type: "dialog" }]);
+  assert.deepEqual(dialogOptions, [{
+    type: "warning", buttons: ["Retry", "Cancel"], defaultId: 0, cancelId: 1, noLink: true,
+    message: "OpenWork couldn’t reach its link-policy service",
+  }]);
+  assert.deepEqual(views(), []);
+});
+
+test("identity races and malformed successful responses use the outage state and stay fail closed", async () => {
+  for (const mode of ["identity-race", "malformed"]) {
+    const error = Object.assign(new Error("internal"), { code: "policy_identity_changed" });
+    const { invoke, views } = createPanel(async () => {
+      if (mode === "identity-race") throw error;
+      return { authority: "unexpected" };
+    });
+    controls.confirm = async () => 1;
+    invoke("openwork:browser:linkClick", LINK);
+    await flush();
+
+    assert.deepEqual(effects, [{ type: "dialog" }], mode);
+    assert.equal(dialogOptions[0].message, "OpenWork couldn’t reach its link-policy service", mode);
+    assert.deepEqual(views(), [], mode);
+  }
+});
+
+test("Retry performs one fresh policy evaluation before restoring managed built-in routing", async () => {
+  const error = Object.assign(new Error("internal"), { code: "policy_unavailable" });
+  let evaluations = 0;
+  const { invoke, views, policies } = createPanel(async () => {
+    evaluations += 1;
+    if (evaluations === 1) throw error;
+    return { authority: "managed" };
+  });
+  controls.confirm = async () => 0;
+  invoke("openwork:browser:linkClick", LINK);
+  await flush();
+  await flush();
+
+  assert.equal(evaluations, 3);
+  assert.deepEqual(policies, [
+    { url: LINK.url, external: false },
+    { url: LINK.url, external: false },
+    { url: LINK.url, method: "GET", hasUpload: false },
+  ]);
+  assert.deepEqual(effects, [{ type: "dialog" }]);
+  assert.equal(views().length, 1);
+  assert.deepEqual(views()[0].webContents.destinations, [LINK.url]);
+});
+
+test("Retry is bounded after a second policy outage and never launches a browser", async () => {
+  const error = Object.assign(new Error("internal"), { code: "policy_unavailable" });
+  const { invoke, views, policies } = createPanel(async () => { throw error; });
+  controls.confirm = async () => 0;
+  invoke("openwork:browser:linkClick", LINK);
+  await flush();
+
+  assert.deepEqual(policies, [
+    { url: LINK.url, external: false },
+    { url: LINK.url, external: false },
+  ]);
+  assert.deepEqual(effects, [{ type: "dialog" }, { type: "dialog" }]);
+  assert.deepEqual(dialogOptions.map(({ buttons }) => buttons), [["Retry", "Cancel"], ["Cancel"]]);
+  assert.deepEqual(dialogOptions.map(({ message }) => message), [
+    "OpenWork couldn’t reach its link-policy service",
+    "OpenWork couldn’t reach its link-policy service",
+  ]);
+  assert.deepEqual(views(), []);
+});
+
 test("human link routing rejects other senders, unsafe URLs, denied policy and stale source documents", async () => {
   const held = gate();
   const { invoke, emit, mainContents, views, policies } = createPanel(async ({ url }) => {
-    if (url === LINK.url) throw new Error("managed denial");
+    if (url === LINK.url) throw Object.assign(new Error("managed denial"), { code: "organization_policy_denied" });
     await held.promise;
   });
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");

@@ -1287,4 +1287,11 @@ export default {
   "extensions.subtitle": "Навыки, подключения и инструменты, которые может использовать ваш агент.",
   "extensions.open_in_den": "Открыть в Den",
   "extensions.title": "Библиотека",
+  "link_policy.sign_in_message": "Войдите, чтобы проверить политику ссылок вашей организации",
+  "link_policy.blocked_message": "Эта ссылка заблокирована политикой вашей организации",
+  "link_policy.service_unavailable_message": "OpenWork не удалось связаться со службой политики ссылок",
+  "link_policy.default_browser_unavailable": "OpenWork не удалось открыть эту ссылку в браузере по умолчанию",
+  "link_policy.sign_in": "Войти",
+  "link_policy.cancel": "Отмена",
+  "link_policy.retry": "Повторить",
 } as const;

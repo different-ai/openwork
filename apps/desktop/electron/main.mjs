@@ -1112,8 +1112,8 @@ browserPanel = createBrowserPanel({
   remoteDebugPort,
   getWindow: () => mainWindow,
   onDeepLink: (urls) => queueDeepLinks(urls),
+  openSignIn: () => applicationMenu.openSettings("cloud-account"),
   checkPolicy: async (input) => {
-    let code = "policy_unavailable";
     try {
       const server = await runtimeManager.openworkServerInfo();
       if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("Policy service unavailable");
@@ -1123,13 +1123,19 @@ browserPanel = createBrowserPanel({
         headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ action: input.external ? "browser_external" : "browser", input }), signal: AbortSignal.timeout(15_000),
       });
-      if (response.ok) return;
-      const payload = await response.json();
-      if (payload?.code === "organization_policy_denied" || payload?.code === "policy_unavailable") code = payload.code;
-    } catch { /* Fail closed without exposing transport or response details. */ }
-    throw Object.assign(new Error(code === "organization_policy_denied"
-      ? "Your organization's policy blocked this browser request."
-      : "Your organization's policy could not be verified."), { code });
+      const payload = await response.json().catch(() => null);
+      if (response.ok && payload?.allowed === true && ["managed", "unmanaged"].includes(payload.authority)) {
+        return { authority: payload.authority };
+      }
+      const code = ["organization_policy_denied", "policy_sign_in_required", "policy_unavailable", "policy_identity_changed"].includes(payload?.code)
+        ? payload.code
+        : "policy_unavailable";
+      throw Object.assign(new Error(code), { code });
+    } catch (error) {
+      if (["organization_policy_denied", "policy_sign_in_required", "policy_unavailable", "policy_identity_changed"].includes(error?.code)) throw error;
+      // Unknown local readiness is not proof that this desktop is unmanaged.
+      throw Object.assign(new Error("policy_unavailable"), { code: "policy_unavailable" });
+    }
   },
 });
 

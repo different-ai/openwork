@@ -52,7 +52,7 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
     externalFetch.mockReset().mockImplementation(async () => Response.json(policy));
     parse.mockReset().mockImplementation(() => policy);
     read.mockReset().mockImplementation(async () => ({}));
-    write.mockClear();
+    write.mockReset().mockImplementation(async () => ({ changed: false }));
     service = managedDesktopPolicy({ ...config });
   });
   afterEach(() => { release.resolve(); });
@@ -66,7 +66,7 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
     if (install) await service.setSession(session);
     persisted.resolve({});
     if (install) expect(await result).toMatchObject({ code: "policy_identity_changed", status: 409 });
-    else expect(await result).toBeUndefined();
+    else expect(await result).toBe("unmanaged");
     expect(read).toHaveBeenCalledTimes(1);
     expect(externalFetch).toHaveBeenCalledTimes(install ? 1 : 0);
     expect(write).toHaveBeenCalledTimes(install ? 1 : 0);
@@ -74,9 +74,35 @@ if (process.env.OPENWORK_MANAGED_POLICY_TEST_CHILD !== "1") {
 
   test("no-session browser evaluation keeps retained managed policy fail closed", async () => {
     read.mockResolvedValue({ managedPolicy: policy });
-    await expect(service.assert("browser", { url: "https://unapproved.example" })).rejects.toMatchObject({ code: "policy_unavailable", status: 403 });
+    await expect(service.assert("browser", { url: "https://unapproved.example" })).rejects.toMatchObject({
+      code: "policy_sign_in_required", status: 403,
+    });
     expect(externalFetch).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
+  });
+
+  test("sign-out retains the last managed policy and cannot become unmanaged", async () => {
+    let persisted: { managedPolicy?: typeof policy } = {};
+    read.mockImplementation(async () => persisted);
+    write.mockImplementation(async () => {
+      persisted = { managedPolicy: policy };
+      return { changed: true };
+    });
+
+    await service.setSession(session);
+    await service.clearSession();
+
+    await expect(service.assert("browser", { url: "https://approved.example" })).rejects.toMatchObject({
+      code: "policy_sign_in_required", status: 403,
+    });
+    expect(persisted.managedPolicy).toEqual(policy);
+    expect(externalFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("a verified managed identity returns managed authority after policy evaluation", async () => {
+    await service.setSession(session);
+    expect(await service.assert("browser", { url: "https://approved.example" })).toBe("managed");
+    expect(externalFetch).toHaveBeenCalledTimes(2);
   });
 
   test("503 waits for the explicit 200ms release before the second read succeeds", async () => {

@@ -3,6 +3,7 @@ import { control, readBrowserTabMetrics } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { browserScriptValue, runBrowserHost } from "../packages/env/src/browser-task.ts";
 
 export const CAPTURE_VIEWPORT = { width: 1440, height: 900 };
 
@@ -605,6 +606,51 @@ export async function transcriptLinkWorld(seed: Seed) {
     /** What the OS does when the user clicks away from or escapes the open popup. */
     async dismissMenu(): Promise<boolean> {
       return await evaluate(app.client, () => (window.__OPENWORK_ELECTRON__.contextMenu.dismiss()), { awaitPromise: true }) === true;
+    },
+  };
+}
+
+/** Fresh signed-out desktop with no retained policy and one valid HTTPS transcript link. */
+export async function unmanagedPrimaryLinkWorld(seed: Seed) {
+  const world = await createBuiltinBrowserWorld(seed, {
+    OPENWORK_DEV_MODE: "1",
+    OPENWORK_EVAL_CAPTURE_EXTERNAL_OPENS: "1",
+  });
+  const { app, workspace, session } = world;
+  const profileDir = app.handle.profileDir;
+  if (!profileDir) throw new Error("The unmanaged link fixture did not expose its profile directory.");
+  const linkUrl = "https://example.com/";
+  await seed.evalIn(app, browserScript(async (workspaceId, sessionId, url) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    const response = await fetch(String(info.baseUrl).replace(/\/+$/, "")
+      + "/workspace/" + encodeURIComponent(workspaceId)
+      + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ noReply: true, parts: [{ type: "text", text: "Open this page: " + url }] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error("Primary-link transcript seed failed: " + response.status);
+  }, [workspace.workspaceId, session.sessionId, linkUrl]), { awaitPromise: true, timeoutMs: 35_000 });
+  await world.showSession(session.sessionId);
+
+  return {
+    ...world,
+    linkUrl,
+    async externalOpens(): Promise<string[]> {
+      const text = await runBrowserHost(app, `
+        const { readFile } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const path = join(${browserScriptValue(profileDir)}, "electron-userdata", "openwork-eval-external-opens.jsonl");
+        try { return await readFile(path, "utf8"); }
+        catch (error) { if (error.code === "ENOENT") return ""; throw error; }
+      `);
+      if (typeof text !== "string") throw new Error("External-open capture returned invalid content.");
+      return text ? text.trimEnd().split("\n").map((line) => {
+        const value: unknown = JSON.parse(line);
+        if (typeof value !== "string") throw new Error("External-open capture contained a non-string URL.");
+        return value;
+      }) : [];
     },
   };
 }

@@ -1167,4 +1167,11 @@ export default {
   "settings.runtime_config_no_removed_keys": "No OpenWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "link_policy.sign_in_message": "Đăng nhập để xác minh chính sách liên kết của tổ chức",
+  "link_policy.blocked_message": "Liên kết này bị chính sách của tổ chức chặn",
+  "link_policy.service_unavailable_message": "OpenWork không thể kết nối tới dịch vụ chính sách liên kết",
+  "link_policy.default_browser_unavailable": "OpenWork không thể mở liên kết này trong trình duyệt mặc định",
+  "link_policy.sign_in": "Đăng nhập",
+  "link_policy.cancel": "Hủy",
+  "link_policy.retry": "Thử lại",
 } as const;

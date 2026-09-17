@@ -16,6 +16,8 @@ import { listInstalledBrowsers } from "./installed-browsers.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
+import { openExternalUrl } from "./open-external.mjs";
+import { linkPolicyMessages } from "./link-policy-dialogs.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -42,7 +44,7 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, openSignIn, showNativeContextMenu, closeNativeContextMenu }) {
   let browserSessionHooksInstalled = false;
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
@@ -517,6 +519,65 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   async function handleMenuChoice(request, itemId, isCurrent) {
     const tab = getBrowserTab(request.tabId);
+
+    if (request.source === "link" && itemId === "open-primary") {
+      const messages = linkPolicyMessages(request.locale);
+      let retries = 0;
+      while (isCurrent()) {
+        let decision;
+        try {
+          decision = await checkPolicy?.({ url: request.url, external: false });
+          if (!decision || !["managed", "unmanaged"].includes(decision.authority)) {
+            throw Object.assign(new Error("OpenWork could not verify whether this link is managed. Retry when the local service is ready."), { code: "policy_unavailable" });
+          }
+        } catch (error) {
+          if (!isCurrent()) return;
+          if (error?.code === "policy_sign_in_required") {
+            const { response } = await dialog.showMessageBox(window(), {
+              type: "warning", buttons: [messages.signIn, messages.cancel], defaultId: 0, cancelId: 1, noLink: true,
+              message: messages.signInPolicy,
+            });
+            if (response === 0 && isCurrent()) await openSignIn?.();
+            return;
+          }
+          if (error?.code === "organization_policy_denied") {
+            await dialog.showMessageBox(window(), {
+              type: "error", buttons: [messages.cancel], defaultId: 0, cancelId: 0, noLink: true,
+              message: messages.blockedPolicy,
+            });
+            return;
+          }
+          if (retries >= 1) {
+            await dialog.showMessageBox(window(), {
+              type: "warning", buttons: [messages.cancel], defaultId: 0, cancelId: 0, noLink: true,
+              message: messages.policyServiceUnavailable,
+            });
+            return;
+          }
+          const { response } = await dialog.showMessageBox(window(), {
+            type: "warning", buttons: [messages.retry, messages.cancel], defaultId: 0, cancelId: 1, noLink: true,
+            message: messages.policyServiceUnavailable,
+          });
+          if (response !== 0 || !isCurrent()) return;
+          retries += 1;
+          continue;
+        }
+        if (!isCurrent()) return;
+        if (decision.authority === "managed" || new URL(request.url).protocol !== "https:") {
+          createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
+          return;
+        }
+        const opened = await openExternalUrl(request.url);
+        if (!opened.ok && isCurrent()) {
+          await dialog.showMessageBox(window(), {
+            type: "error", buttons: [messages.cancel], defaultId: 0, cancelId: 0, noLink: true,
+            message: messages.defaultBrowserUnavailable,
+          });
+        }
+        return;
+      }
+      return;
+    }
 
     if ((request.source === "link" && itemId !== "copy-url") || (request.source === "page" && itemId === "open-new-tab")) {
       try {
@@ -1602,7 +1663,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       };
       contents.on("did-start-navigation", invalidate);
       runDetachedTask("open clicked browser link", () => handleMenuChoice(
-        { source: "link", url, ownerSessionId }, "open-builtin",
+        { source: "link", url, locale: payload.locale, ownerSessionId }, "open-primary",
         () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
           && contents.mainFrame === sourceFrame,
       ).finally(() => contents.removeListener("did-start-navigation", invalidate)));

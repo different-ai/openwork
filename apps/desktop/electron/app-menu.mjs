@@ -15,12 +15,12 @@ export function createApplicationMenu({ appName, docsUrl, getWindow, closeBrowse
   let applicationMenuVisible = process.platform === "darwin";
   let currentAppName = appName;
 
-  async function openSettingsFromNativeMenu() {
+  async function openSettingsFromNativeMenu(tab = "general") {
     const win = await getWindow();
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
-    win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT);
+    win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT, tab);
   }
 
   async function checkForUpdatesFromNativeMenu() {
@@ -247,5 +247,5 @@ export function createApplicationMenu({ appName, docsUrl, getWindow, closeBrowse
     return currentAppName;
   }
 
-  return { install, applyVisibility, setVisible, setAppName };
+  return { install, applyVisibility, setVisible, setAppName, openSettings: openSettingsFromNativeMenu };
 }

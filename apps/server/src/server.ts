@@ -1089,7 +1089,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   try {
     if (config.resumeInterruptedTasks && !config.readOnly) {
       taskRecovery = await createTaskRecovery(config, async (request) => serverOptions.fetch(request),
-        () => managedDesktopPolicy(config).assert("sync"));
+        async () => { await managedDesktopPolicy(config).assert("sync"); });
       setTaskRecovery(config, taskRecovery);
     }
     server = await serve({
@@ -3084,8 +3084,8 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const action = managedPolicyActionSchema.safeParse(body.action);
     if (!action.success || !isRecord(body.input)) throw new ApiError(400, "invalid_payload", "A supported policy action and input are required");
-    await managedDesktopPolicy(config).assert(action.data, body.input);
-    return jsonResponse({ allowed: true });
+    const authority = await managedDesktopPolicy(config).assert(action.data, body.input);
+    return jsonResponse({ allowed: true, authority });
   });
 
   addRoute(routes, "GET", "/cloud-provider-sync/status", "client", async () => {

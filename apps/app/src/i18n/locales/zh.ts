@@ -1170,4 +1170,11 @@ export default {
   "settings.runtime_config_no_removed_keys": "No OpenWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "link_policy.sign_in_message": "登录以验证贵组织的链接策略",
+  "link_policy.blocked_message": "此链接已被贵组织的策略阻止",
+  "link_policy.service_unavailable_message": "OpenWork 无法连接到链接策略服务",
+  "link_policy.default_browser_unavailable": "OpenWork 无法在默认浏览器中打开此链接",
+  "link_policy.sign_in": "登录",
+  "link_policy.cancel": "取消",
+  "link_policy.retry": "重试",
 } as const;

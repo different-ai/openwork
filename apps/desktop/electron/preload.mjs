@@ -88,6 +88,7 @@ if (process.isMainFrame) {
     event.stopImmediatePropagation();
     ipcRenderer.send("openwork:browser:linkClick", {
       url: url.href,
+      locale: typeof document === "undefined" ? "en" : document.documentElement.lang,
       sessionId: anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null,
     });
   }, { capture: true });
@@ -368,9 +369,9 @@ ipcRenderer.on(NATIVE_DEEP_LINK_EVENT, (_event, urls) => {
   window.dispatchEvent(new CustomEvent(NATIVE_DEEP_LINK_EVENT, { detail: urls }));
 });
 
-ipcRenderer.on(NATIVE_MENU_OPEN_SETTINGS_EVENT, () => {
+ipcRenderer.on(NATIVE_MENU_OPEN_SETTINGS_EVENT, (_event, tab) => {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event(NATIVE_MENU_OPEN_SETTINGS_EVENT));
+  window.dispatchEvent(new CustomEvent(NATIVE_MENU_OPEN_SETTINGS_EVENT, { detail: tab }));
 });
 
 ipcRenderer.on(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT, () => {

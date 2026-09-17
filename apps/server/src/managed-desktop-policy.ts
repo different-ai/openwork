@@ -34,6 +34,7 @@ const RETRYABLE_TRANSPORT_CODES = new Set([
   "UND_ERR_SOCKET",
 ]);
 type DenRetryReason = "http_transient" | "transport_temporary" | "transport_timeout";
+export type ManagedPolicyAuthority = "managed" | "unmanaged";
 
 function transientTransportReason(error: unknown): DenRetryReason | null {
   const visited = new Set<object>();
@@ -156,7 +157,7 @@ class ManagedDesktopPolicy {
       const persisted = await readGlobalRuntimeOpencodeConfig(this.config);
       // A local-only read cannot grant access after a managed identity arrives.
       this.identityChanged(generation);
-      if (persisted.managedPolicy) throw new ApiError(403, "policy_unavailable", "Sign in to verify your organization's policy before continuing.");
+      if (persisted.managedPolicy) throw new ApiError(403, "policy_sign_in_required", "Sign-in is required for the retained managed policy.");
       return null;
     }
     let policy: DesktopConfig;
@@ -164,7 +165,7 @@ class ManagedDesktopPolicy {
       policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
     } catch (error) {
       if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
-      throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
+      throw new ApiError(403, "policy_unavailable", "The managed policy service is unavailable.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
     const result = await writeManagedDesktopPolicy(this.config, policy);
@@ -211,9 +212,9 @@ class ManagedDesktopPolicy {
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
     if ("providerID" in model) await this.assert("model", model);
   }
-  async assert(action: ManagedPolicyAction, input: Record<string, unknown> = {}): Promise<void> {
+  async assert(action: ManagedPolicyAction, input: Record<string, unknown> = {}): Promise<ManagedPolicyAuthority> {
     const policy = await this.current();
-    if (!policy) return;
+    if (!policy) return "unmanaged";
     const denial = policyDenial(policy, action, input);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
     if (action === "model" && policy.allowCustomProviders === false && input.providerID !== "opencode") {
@@ -253,5 +254,6 @@ class ManagedDesktopPolicy {
         throw new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.");
       }
     }
+    return "managed";
   }
 }

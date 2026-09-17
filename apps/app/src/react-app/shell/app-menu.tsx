@@ -20,7 +20,10 @@ export function AppMenuProvider({ children }: { children: ReactNode }) {
       const target = settingsNavigationFromPathname(pathname, tab);
       navigate(target.to, { state: target.state });
     };
-    const openSettings = () => openSettingsTab("general");
+    const openSettings = (event: Event) => {
+      const tab = event instanceof CustomEvent && event.detail === "cloud-account" ? "cloud-account" : "general";
+      openSettingsTab(tab);
+    };
     const checkUpdates = () => {
       useUpdateCheckRequestStore.getState().requestUpdateCheck();
       openSettingsTab("updates");

@@ -1166,4 +1166,11 @@ export default {
   "settings.runtime_config_no_removed_keys": "No OpenWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "link_policy.sign_in_message": "組織のリンクポリシーを確認するにはサインインしてください",
+  "link_policy.blocked_message": "このリンクは組織のポリシーによってブロックされています",
+  "link_policy.service_unavailable_message": "OpenWork はリンクポリシーサービスに接続できませんでした",
+  "link_policy.default_browser_unavailable": "OpenWork はデフォルトのブラウザでこのリンクを開けませんでした",
+  "link_policy.sign_in": "サインイン",
+  "link_policy.cancel": "キャンセル",
+  "link_policy.retry": "再試行",
 } as const;
