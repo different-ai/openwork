@@ -79,6 +79,7 @@ export type BuildDashboardNavSectionsInput = {
   access: DenOrgAccessFlags;
   capabilities: DenOrgCapabilities;
   gatewayAccess: ReturnType<typeof getGatewayDashboardAccess>;
+  modelRoutingEnabled?: boolean;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
 };
@@ -88,12 +89,16 @@ export function buildDashboardNavSections({
   access,
   capabilities,
   gatewayAccess,
+  modelRoutingEnabled = false,
   orgMode,
   runtimeConfigLoaded,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
+    ...(modelRoutingEnabled && orgSlug && !access.isAdmin
+      ? [{ href: "/dashboard/gateway-routing", label: "Model routing", icon: SlidersHorizontal }]
+      : []),
     {
       href: orgSlug ? getOrgDashboardRoute(orgSlug) : "#",
       label: "Dashboard",
@@ -125,6 +130,7 @@ export function buildDashboardNavSections({
         icon: Sparkles,
         badge: "Providers",
         children: [
+          ...(modelRoutingEnabled ? [{ href: "/dashboard/gateway-routing", label: "Model routing" }] : []),
           ...((gatewayAccess === "enabled" || gatewayAccess === "unavailable") && capabilities.gatewayDashboard === true
             ? [{ href: getGatewayProvidersRoute(orgSlug), label: "Gateway", badge: "New" }]
             : []),

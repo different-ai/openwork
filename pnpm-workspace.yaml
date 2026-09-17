@@ -1,5 +1,10 @@
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
+  # Jev evaluation uses this reviewed experimental Gateway SDK contract.
+  - "ai@7.0.105"
+  - "@ai-sdk/gateway@4.0.85"
+  - "@ai-sdk/provider@4.0.17"
+  - "@ai-sdk/provider-utils@5.0.43"
   - "lru.min@1.1.5"
   - "@opencode-ai/sdk"
   - "acorn"

@@ -154,6 +154,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       access,
       capabilities,
       gatewayAccess,
+      modelRoutingEnabled: orgContext?.organization.id === activeOrg?.id && orgContext?.deploymentCapabilities.aiGateway === true,
       orgMode: runtimeConfig.orgMode,
       runtimeConfigLoaded,
     });
@@ -166,6 +167,8 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
     activeOrg?.slug,
     capabilities,
     gatewayAccess,
+    orgContext,
+    activeOrg?.id,
     runtimeConfig.orgMode,
     runtimeConfigLoaded,
   ]);

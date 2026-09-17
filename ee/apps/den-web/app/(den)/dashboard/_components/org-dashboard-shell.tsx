@@ -224,6 +224,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname === dashboardRoot) {
     return "Home";
   }
+  if (pathname === `${dashboardRoot}/gateway-routing`) {
+    return "Model routing";
+  }
   if (pathname.startsWith(getAnalyticsRoute(orgSlug))) {
     return "Analytics";
   }
@@ -448,6 +451,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       gatewayDashboard: orgContext?.capabilities.gatewayDashboard === true,
     },
     gatewayAccess,
+    modelRoutingEnabled: orgContext?.organization.id === activeOrg?.id && orgContext?.deploymentCapabilities.aiGateway === true,
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
   });

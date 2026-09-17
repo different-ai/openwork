@@ -114,6 +114,7 @@ export const idTypesMapNameToPrefix = {
   gatewayModelGroup: "gmg",
   gatewayModelGroupModel: "gmm",
   gatewayCredentialSet: "gcs",
+  gatewayRouter: "gwr",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

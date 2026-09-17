@@ -45,6 +45,15 @@ function buildFor(
 }
 
 describe("dashboard navigation index", () => {
+  test("enabled model routing is available to members without exposing provider administration", () => {
+    const navigation = (modelRoutingEnabled: boolean) => flattenNavigationForSearch(buildDashboardNavSections({
+      orgSlug: "example", access: getOrgAccessFlags("member", false), capabilities: baseCapabilities,
+      gatewayAccess: "denied", orgMode: "multi_org", runtimeConfigLoaded: true, modelRoutingEnabled,
+    }));
+    expect(navigation(true).some(entry => entry.href === "/dashboard/gateway-routing")).toBe(true);
+    expect(navigation(true).some(entry => entry.href === "/dashboard/gateway-providers")).toBe(false);
+    expect(navigation(false).some(entry => entry.href === "/dashboard/gateway-routing")).toBe(false);
+  });
   test.each([false, true])("Gateway opt-in %s without deployment support changes only Gateway navigation and search", (gatewayDashboard) => {
     const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard });
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "Models");

@@ -14,6 +14,7 @@
     "test:posthog": "bun test tests/posthog-client.test.ts tests/posthog-proxy.test.ts tests/posthog-routing.test.ts && bun test tests/posthog-sdk.test.ts",
     "test:observability": "bun test tests/observability-config.test.ts app/api/_lib/upstream-proxy.test.mjs app/api/_lib/upstream-proxy-lifecycle.test.mjs app/api/_lib/upstream-proxy-scim-failure.test.mjs",
     "test:gateway-usage": "bun test --conditions development tests/gateway-usage.test.tsx",
+    "test:gateway-routing": "bun test --conditions development tests/gateway-routing.test.tsx tests/dashboard-navigation.test.ts",
     "test:scim-proxy": "bun test app/api/_lib/upstream-proxy-scim-failure.test.mjs"
   },
   "dependencies": {

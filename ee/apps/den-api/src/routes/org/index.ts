@@ -17,6 +17,7 @@ import { registerOrgInvitationRoutes } from "./invitations.js"
 import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
 import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceProviderRoutes } from "./inference-providers.js"
+import { registerOrgGatewayRouterRoutes } from "./gateway-routers.js"
 import { registerOrgInferenceRoutes } from "./inference.js"
 import { registerModelsAnalyticsRoutes } from "./models-analytics.js"
 import { registerModelsAnalyticsExportRoutes } from "../../models-analytics-export.js"
@@ -78,6 +79,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgInstallLinkRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgInferenceProviderRoutes(app)
+  registerOrgGatewayRouterRoutes(app)
   registerOrgMemberRoutes(app)
   registerOAuthProviderRoutes(app)
   registerGoogleWorkspaceRoutes(app)

@@ -59,6 +59,70 @@ No deployment or migration execution is performed by this source batch. Coordina
 the schema/writer cutover described in `ee/packages/den-db/drizzle/0097_gateway_access_matrix.md`
 before running the new runtime. Do not deploy it against the old table names.
 
+## Jev prompt routers
+
+Members can create private routers at `/dashboard/gateway-routing`. Each router
+has 2–12 prompt categories, a currently accessible Gateway model per category,
+an explicit fallback category, and a minimum selection probability. Routers are
+scoped to their author and organization; saving one grants no model access.
+
+Apply migration `0102_gateway_routers.sql` before deploying these routes. Set
+`JEV_AI_GATEWAY_API_KEY` on the Gateway process (not Den Web). The evaluator uses
+AI Gateway's `typesafe-ai/jev`, not the direct TypeSafe endpoint. In the linked
+development repository, secrets can be injected without printing them:
+
+```sh
+infisical run --env dev --recursive --silent -- pnpm dev:den:gateway
+```
+
+The control API is `/v1/gateway-routers`: list/create, `/targets` for usable
+OpenAI-compatible model aliases, and `/:routerId` for read/update/delete. PUT
+requires the saved `revision`; conflicts return 409. An owner can disable a
+router even if one of its saved targets is no longer available.
+
+Call `POST /api/v1/routers/:routerId/chat/completions` using an existing `ow_gw_`
+Gateway key and an OpenAI chat-completions JSON body, for example:
+
+```json
+{"model":"auto","messages":[{"role":"user","content":"Explain TypeScript generics"}],"stream":true}
+```
+
+The optional body `model` is replaced with the selected authorized model alias;
+response model names remain the actual upstream names. This first version does
+not translate Anthropic/Google-native requests or route embeddings/Responses API
+calls. The current model protocol, credentials, grants and key are checked before
+dispatch; classifier output never supplies an upstream URL or arbitrary model.
+
+Only the latest user message's text (up to 16,000 characters) and configured
+category descriptions are sent to Jev. System prompts, tool results and image
+bytes are not classification inputs. The complete original conversation still
+goes to the selected completion model. Router authors acknowledge this prompt
+sharing in the editor. Jev is a semantic selector, not an authorization boundary.
+
+Low probability, no match or a five-second classification timeout uses the
+explicit fallback **only if it remains authorized**. Missing classifier credentials,
+invalid output, access revocation, configuration changes and cancellation do not
+silently select another target. A saved router is not a live verification claim.
+
+`x-openwork-router-id`, `x-openwork-router-route-id`,
+`x-openwork-router-revision`, `x-openwork-router-fallback`, and evaluation status /
+duration headers explain dispatch without exposing prompts. Completion usage
+retains normal Gateway accounting. Jev evaluation is charged to the operator's
+AI Gateway account separately; its tokens are not added to completion usage.
+
+Focused verification:
+
+```sh
+pnpm evals:pr specs/gateway-router-member.test.ts
+pnpm evals:e2e gateway-routing
+pnpm --filter @openwork-ee/den-web test:gateway-routing
+```
+
+The API E2E uses disposable MySQL and real Den/Gateway processes with controlled
+Jev/provider boundaries. The browser journey requires the tested product source
+to be available in the runner's chosen placement; do not accept another revision
+as proof of this change. UI follows DESIGN.md P3/P4/P5/P9, S2 and C1/C3.
+
 ## Matrix Routing
 
 - Provider summaries/details and the management `/models` response expose

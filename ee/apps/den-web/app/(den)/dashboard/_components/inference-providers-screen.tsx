@@ -110,6 +110,7 @@ export function InferenceProvidersScreen() {
       colors={["#F1F5FF", "#1D4ED8", "#60A5FA", "#A7F3D0"]}
     >
       {orgId ? <GatewayUsageSection key={orgId} orgId={orgId} /> : null}
+      <Link href="/dashboard/gateway-routing" className={buttonVariants({ variant: "secondary" })}>Model routing</Link>
 
       <section aria-labelledby="gateway-providers-heading">
         <h2 id="gateway-providers-heading" className="mb-4 text-lg font-semibold tracking-tight text-gray-950">Providers</h2>

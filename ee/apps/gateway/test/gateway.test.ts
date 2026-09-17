@@ -5,6 +5,9 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
 import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import type { GatewayCredential, GatewayProvider } from "../src/gateway.js"
+import type { GatewayDependencies } from "../src/gateway.js"
+import type { GatewayRouter } from "../src/router-store.js"
+import { createJevEvaluator } from "../src/router-evaluator.js"
 import type { InferenceReporter } from "../src/inference-reporting.js"
 import type { MintGcpAccessToken } from "../src/credentials/gcp-service-account.js"
 import type { RefreshGoogleOauthToken } from "../src/credentials/google-oauth-refresh.js"
@@ -56,6 +59,7 @@ type UpstreamRequest = {
 }
 
 type TestServerOptions = {
+  gateway?: Partial<GatewayDependencies>
   provider?: Partial<GatewayProvider> | null
   credentialSet?: Partial<GatewayAccessRow["credentialSet"]>
   accessRows?: GatewayAccessRow[]
@@ -224,6 +228,7 @@ function createTestServer(options: TestServerOptions = {}) {
         credentialLookups.push(input)
         return options.loadProviderCredential ? options.loadProviderCredential(input) : credentialRow
       },
+      ...options.gateway,
     },
   })
 
@@ -260,6 +265,175 @@ async function assertRejectedBeforeCredentials(fixture: ReturnType<typeof create
 }
 
 const openAiChatUsageEvent = 'data: {"id":"chatcmpl-1","model":"gpt-4o-2024","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":6}}}\n\n'
+
+function routerFixture(overrides: Partial<GatewayDependencies> = {}) {
+  const seed = createTestServer()
+  const rows = seed.accessRows.filter((row) => row.model?.model_id === "gpt-4o" || row.model?.model_id === "gpt-5")
+  const router: GatewayRouter = {
+    id: createDenTypeId("gatewayRouter"), organizationId, orgMembershipId: memberId,
+    name: "Test router", status: "active", revision: 1, fallbackRouteId: "route-0", minConfidence: 0.8,
+    routes: rows.map((row, index) => {
+      assert.ok(row.model)
+      return { id: `route-${index}`, description: index ? "Complex reasoning" : "Simple questions", inferenceProviderId: providerId,
+        model: createGatewayModelAlias({ modelGroupId: row.group.id, credentialSetId: row.credentialSet.id, gatewayProviderModelId: row.model.id }) }
+    }),
+  }
+  const options: TestServerOptions = { accessRows: rows, gateway: {
+    loadGatewayRouter: async () => structuredClone(router),
+    classifyRoute: async () => ({ type: "choice", choice: "route-1", probabilities: { "route-1": 0.95 } }),
+    ...overrides,
+  } }
+  const server = createTestServer(options)
+  const request = (signal?: AbortSignal, body: unknown = { messages: [{ role: "user", content: "Question" }] }) => new Request(`http://openwork.test/api/v1/routers/${router.id}/chat/completions`, {
+    method: "POST", headers: { authorization: `Bearer ${gatewayKey}`, "content-type": "application/json" }, body: JSON.stringify(body), signal,
+  })
+  return { ...server, router, request, options }
+}
+
+test("router selects either saved target and preserves stream bytes and completion-only usage", async () => {
+  for (const id of ["route-0", "route-1"]) {
+    const stream = `${openAiChatUsageEvent}data: [DONE]\n\n`
+    const fixture = routerFixture({
+      classifyRoute: async ({ text, routes }) => {
+        assert.equal(text, "Question")
+        assert.equal(routes.length, 2)
+        return { type: "choice", choice: id, probabilities: { [id]: 0.95 } }
+      },
+      fetch: async (_url, init) => {
+        const body = parseJsonObject(readInitBody(init?.body))
+        assert.equal(body.model, id === "route-0" ? "gpt-4o" : "gpt-5")
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } })
+      },
+    })
+    const response = await fixture.app.fetch(fixture.request(undefined, { stream: true, messages: [{ role: "user", content: "Question" }] }))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("x-openwork-router-route-id"), id)
+    assert.equal(await response.text(), stream)
+    const log = await waitForRows(fixture.logRows)
+    assert.equal(log.total_tokens, 30)
+    assert.doesNotMatch(JSON.stringify(log), /Question/)
+  }
+})
+
+test("router falls back only for low confidence, no match, or evaluator timeout", async () => {
+  for (const reason of ["low_confidence", "no_match", "timeout"]) {
+    const fixture = routerFixture({ routerEvaluationTimeoutMs: 5, classifyRoute: async () => {
+      if (reason === "timeout") return new Promise(() => {})
+      return reason === "no_match" ? { type: "choice", choice: "__fallback__", probabilities: { __fallback__: 0.9 } }
+        : { type: "choice", choice: "route-1", probabilities: { "route-1": 0.3 } }
+    } })
+    const response = await fixture.app.fetch(fixture.request())
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("x-openwork-router-route-id"), "route-0")
+    assert.equal(response.headers.get("x-openwork-router-fallback"), reason)
+    assert.equal(fixture.upstreamRequests.length, 1)
+    await response.text()
+  }
+})
+
+test("router missing evaluator key and malformed answers never dispatch", async () => {
+  const answers = [
+    { type: "choice", choice: "https://attacker.test", probabilities: {} },
+    { type: "choice", choice: "route-1", probabilities: { "route-1": NaN } },
+    { type: "choice", choice: "route-1", probabilities: { "route-1": 1.1 } },
+    { type: "choice", choice: "route-1", probabilities: { "route-1": 0.9, unknown: 0.1 } },
+    { type: "choice", choice: "route-1" },
+    { type: "boolean", probability: 1 },
+  ]
+  for (const answer of answers) {
+    const fixture = routerFixture({ classifyRoute: async () => answer })
+    assert.equal((await fixture.app.fetch(fixture.request())).status, 502)
+    assert.equal(fixture.upstreamRequests.length, 0)
+  }
+  const fixture = routerFixture({ classifyRoute: createJevEvaluator(undefined) })
+  const response = await fixture.app.fetch(fixture.request())
+  assert.equal(response.status, 503)
+  assert.match(await response.text(), /JEV_AI_GATEWAY_API_KEY/)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("router owner, organization, disabled and missing checks are indistinguishable", async () => {
+  for (const change of ["owner", "org", "disabled"]) {
+    const fixture = routerFixture()
+    if (change === "owner") fixture.router.orgMembershipId = "om_other"
+    if (change === "org") fixture.router.organizationId = "org_other"
+    if (change === "disabled") fixture.router.status = "disabled"
+    const response = await fixture.app.fetch(fixture.request())
+    assert.equal(response.status, 404)
+    assert.equal(fixture.upstreamRequests.length, 0)
+  }
+  const missing = routerFixture({ loadGatewayRouter: async () => null })
+  assert.equal((await missing.app.fetch(missing.request())).status, 404)
+})
+
+test("router rechecks key/model access and configuration after classification with no fallback", async () => {
+  for (const change of ["model", "key", "revision", "disabled"]) {
+    let revoked = false
+    const fixture = routerFixture({ classifyRoute: async () => {
+      revoked = true
+      if (change === "revision") fixture.router.revision++
+      if (change === "disabled") fixture.router.status = "disabled"
+      return { type: "choice", choice: "route-1", probabilities: { "route-1": 1 } }
+    }, loadGatewayAccess: async () => revoked && ["model", "key"].includes(change) ? [] : fixture.accessRows })
+    const response = await fixture.app.fetch(fixture.request())
+    assert.ok([403, 404, 409].includes(response.status))
+    assert.equal(fixture.upstreamRequests.length, 0)
+    await response.text()
+  }
+})
+
+test("router abort cancels classifier and prevents model egress", async () => {
+  const abort = new AbortController()
+  let cancelled = false
+  const fixture = routerFixture({ classifyRoute: async ({ signal }) => {
+    signal.addEventListener("abort", () => { cancelled = true }, { once: true })
+    abort.abort()
+    return new Promise(() => {})
+  } })
+  assert.equal((await fixture.app.fetch(fixture.request(abort.signal))).status, 499)
+  assert.equal(cancelled, true)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("router intersects saved targets with access before evaluation and never substitutes an unauthorized fallback", async () => {
+  let evaluated = false
+  const fixture = routerFixture({
+    loadGatewayAccess: async () => fixture.accessRows.filter((row) => row.model?.model_id === "gpt-5"),
+    classifyRoute: async ({ routes }) => {
+      evaluated = true
+      assert.deepEqual(routes.map((route) => route.id), ["route-1"])
+      return { type: "choice", choice: "route-1", probabilities: { "route-1": 0.2 } }
+    },
+  })
+  assert.equal((await fixture.app.fetch(fixture.request())).status, 403)
+  assert.equal(evaluated, true)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("router rejects unsupported protocol, malformed payload and grant selectors before evaluation", async () => {
+  const classifyRoute = async () => { assert.fail("classification must not run") }
+  const unsupported = routerFixture({ classifyRoute, loadGatewayProvider: async () => provider({ provider_id: "anthropic" }) })
+  assert.equal((await unsupported.app.fetch(unsupported.request())).status, 403)
+  const fixture = routerFixture({ classifyRoute })
+  for (const body of [{ input: "text" }, { messages: "text" }, { messages: [{ role: "user", content: [{ type: "text", text: 42 }] }] },
+    { messages: [{ role: "user", content: "text" }], models: ["arbitrary"] }]) {
+    assert.equal((await fixture.app.fetch(fixture.request(undefined, body))).status, 400)
+  }
+  const request = fixture.request()
+  request.headers.set("x-openwork-gateway-grant-id", "invalid")
+  assert.equal((await fixture.app.fetch(request)).status, 403)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("router credential revocation during classification does not dispatch or fall back", async () => {
+  let revoked = false
+  const fixture = routerFixture({ classifyRoute: async () => {
+    revoked = true
+    return { type: "choice", choice: "route-1", probabilities: { "route-1": 1 } }
+  }, loadProviderCredential: async () => revoked ? null : credential() })
+  assert.equal((await fixture.app.fetch(fixture.request())).status, 502)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
 
 test("trusted catalog key maps route Cognitive Services, Alibaba and Moonshot; stored env injection never chooses a secret", async () => {
   for (const [providerName, field] of [["azure-cognitive-services", "AZURE_COGNITIVE_SERVICES_API_KEY"], ["alibaba", "DASHSCOPE_API_KEY"], ["moonshotai", "MOONSHOT_API_KEY"]]) {

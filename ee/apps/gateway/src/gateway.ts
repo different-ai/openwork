@@ -56,6 +56,10 @@ import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usag
 import { createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage } from "./usage/openai-responses.js"
 import { createJsonBodyUsageParser, emptyUsage } from "./usage/shared.js"
 import type { ParsedUsage, UsageParser } from "./usage/shared.js"
+import { createJevEvaluator, evaluateRoute, latestUserText, RouterEvaluationError } from "./router-evaluator.js"
+import type { ClassifyRoute } from "./router-evaluator.js"
+import { loadGatewayRouterFromDb } from "./router-store.js"
+import type { LoadGatewayRouter } from "./router-store.js"
 
 export type { GatewayCredential, GatewayProvider } from "./provider-credentials.js"
 
@@ -79,6 +83,9 @@ export type GatewayDependencies = {
   mintGcpAccessToken: MintGcpAccessToken
   catalog: ProviderCatalog
   now: () => Date
+  loadGatewayRouter: LoadGatewayRouter
+  classifyRoute: ClassifyRoute
+  routerEvaluationTimeoutMs: number
 }
 
 export type GatewayRouteDependencies =
@@ -561,12 +568,17 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
+    loadGatewayRouter: input.loadGatewayRouter ?? loadGatewayRouterFromDb,
+    classifyRoute: input.classifyRoute ?? createJevEvaluator(env.jevAiGatewayApiKey),
+    routerEvaluationTimeoutMs: input.routerEvaluationTimeoutMs ?? 5000,
   }
 
-  async function handleGatewayRequest(c: Context<GatewayEnv>) {
+  async function handleGatewayRequest(c: Context<GatewayEnv>, routed?: {
+    inferenceProviderId: string; request: Request; selection: GatewayGrantSelection; beforeEgress: () => Promise<Response | null>
+  }) {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
-    const inferenceProviderId = c.req.param("inferenceProviderId")
+    const inferenceProviderId = routed?.inferenceProviderId ?? c.req.param("inferenceProviderId")
     if (!inferenceProviderId) {
       return gatewayError(404, "provider_not_found", "Missing inference provider id.")
     }
@@ -582,7 +594,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     const catalog = dependencies.catalog.getCatalogProvider(provider.provider_id)
-    const rest = restOfPath(requestUrl.pathname, inferenceProviderId)
+    const rest = routed ? "chat/completions" : restOfPath(requestUrl.pathname, inferenceProviderId)
     const scope = { ...identity, gatewayProviderId: provider.id }
     const accessRows = await dependencies.loadGatewayAccess(scope)
     if (method === "GET" && /^(?:v1(?:beta|alpha)?\/)?models\/?$/.test(rest)) {
@@ -673,7 +685,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       )
     }
 
-    const prepared = await prepareRequest(c.req.raw, resolved, provider.provider_id, rest)
+    const prepared = await prepareRequest(routed?.request ?? c.req.raw, resolved, provider.provider_id, rest)
     if ("error" in prepared) {
       startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: prepared.requestedModel, stream: prepared.stream })
       return reject(prepared.error, prepared.errorCode, "Unsupported or invalid gateway request")
@@ -685,6 +697,9 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(403, selected.code, "No current grant authorizes this model and selection."), selected.code, "Gateway model access denied")
     }
     selection = selected.selection
+    if (routed && (resolved.protocol !== "openai_chat" || !sameGatewaySelection(routed.selection, selection))) {
+      return gatewayError(403, "gateway_selection_revoked", "The selected Gateway access is no longer available.")
+    }
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
 
     const credential = await resolveUpstreamCredential({
@@ -773,6 +788,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     // Recheck after accounting awaits. Never reselect or materialize a fallback.
+    if (routed) {
+      const rejected = await routed.beforeEgress()
+      if (rejected) return reject(rejected, "router_changed", "Router changed before dispatch")
+    }
     const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope), prepared.requestedModel, selection.row.grant.id)
     if (currentSelection.kind !== "selected" || !sameGatewaySelection(selection, currentSelection.selection)) {
       return reject(gatewayError(403, "gateway_selection_revoked", "The selected Gateway access is no longer available."), "gateway_selection_revoked", "Gateway selection revoked")
@@ -829,6 +848,90 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
   }
 
-  api.all(`${gatewayPathPrefix}/:inferenceProviderId`, handleGatewayRequest)
-  api.all(`${gatewayPathPrefix}/:inferenceProviderId/*`, handleGatewayRequest)
+  api.post("/api/v1/routers/:routerId/chat/completions", async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    const routerId = c.req.param("routerId")
+    const scope = { routerId, organizationId: identity.organizationId, orgMembershipId: identity.orgMembershipId }
+    const router = await dependencies.loadGatewayRouter(scope)
+    const owned = (value: Awaited<ReturnType<LoadGatewayRouter>>) => value?.id === routerId && value.status === "active"
+      && value.organizationId === identity.organizationId && value.orgMembershipId === identity.orgMembershipId
+    const missing = () => gatewayError(404, "router_not_found", "Router not found.")
+    if (!router || !owned(router)) return missing()
+    if (["openai-organization", "openai-project", "x-amzn-bedrock-guardrailidentifier", "x-amzn-bedrock-guardrailversion"].some((name) => c.req.raw.headers.has(name))) {
+      return gatewayError(400, "unsupported_gateway_resource", "Caller-selected provider resources are not supported.")
+    }
+    if (new URL(c.req.url).search || c.req.header(GATEWAY_REQUEST_MODEL_HEADER)) return gatewayError(400, "unsupported_router_payload", "Router requests cannot select models through query parameters or headers.")
+    // Reuse the existing payload policy and bounded reader before sending text to Jev.
+    const validationRequest = c.req.raw
+    let body: unknown
+    try {
+      if (!isJsonContentType(validationRequest.headers.get("content-type"))) return gatewayError(415, "unsupported_media_type", "Use an OpenAI chat JSON body.")
+      body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(validationRequest)))
+    } catch (error) {
+      return gatewayError(error instanceof RequestBodyLimitError ? 413 : 400, "invalid_router_body", "Invalid or oversized JSON request body.")
+    }
+    if (!isJsonObject(body) || (body.stream !== undefined && typeof body.stream !== "boolean")
+      || (body.model !== undefined && (typeof body.model !== "string" || !body.model))
+      || ["input", "prompt", "anthropic_version"].some((key) => Object.hasOwn(body, key))
+      || unsupportedGatewayPayload(body, "openai", "openai")) return gatewayError(400, "unsupported_router_payload", "Use inline OpenAI chat messages without alternate model selection or hosted resources.")
+    const text = latestUserText(body.messages)
+    if (!text) return gatewayError(400, "router_user_text_required", "Provide a latest user message containing text.")
+    const candidates: { route: typeof router.routes[number]; selection: GatewayGrantSelection }[] = []
+    for (const route of router.routes) {
+      if (!parseGatewayModelAlias(route.model)) continue
+      const provider = await dependencies.loadGatewayProvider({ inferenceProviderId: route.inferenceProviderId, organizationId: identity.organizationId })
+      if (!provider) continue
+      if (unsupportedGatewayPayload(body, "openai", provider.provider_id)) return gatewayError(400, "unsupported_router_payload", "Alternate provider model selection is not supported.")
+      const resolved = resolveUpstream(provider, dependencies.catalog.getCatalogProvider(provider.provider_id), "chat/completions", "")
+      if ("error" in resolved || resolved.protocol !== "openai_chat") continue
+      const selected = selectGatewayGrant(await dependencies.loadGatewayAccess({ ...identity, gatewayProviderId: provider.id }), route.model, c.req.header(GATEWAY_GRANT_HEADER) ?? null)
+      if (selected.kind === "selected") candidates.push({ route, selection: selected.selection })
+    }
+    if (!candidates.length) return gatewayError(403, "router_targets_unavailable", "No currently authorized OpenAI chat targets are available.")
+    const started = Date.now()
+    const observeEvaluation = (status: string, fallback: string | null) => {
+      // Never log evaluator input, output, errors, SDK responses, or request bodies.
+      console.info("[gateway] router evaluation", { openworkRequestId: c.get("openworkRequestId"), routerId,
+        revision: router.revision, durationMs: Date.now() - started, status, fallback })
+    }
+    let result: Awaited<ReturnType<typeof evaluateRoute>>
+    try {
+      result = await evaluateRoute({ text, routes: candidates.map(({ route }) => route), signal: c.req.raw.signal,
+        classify: dependencies.classifyRoute, minConfidence: router.minConfidence, timeoutMs: dependencies.routerEvaluationTimeoutMs })
+    } catch (error) {
+      const code = error instanceof RouterEvaluationError ? error.code : "router_evaluator_failed"
+      observeEvaluation(code, null)
+      const response = gatewayError(error instanceof RouterEvaluationError ? error.status : 502, code,
+        code === "router_evaluator_not_configured" ? "Ask the Gateway administrator to configure JEV_AI_GATEWAY_API_KEY." : "Router evaluation failed; no model was dispatched.")
+      response.headers.set("x-openwork-router-evaluation-ms", String(Date.now() - started))
+      response.headers.set("x-openwork-router-evaluation-status", code)
+      return response
+    }
+    const chosenId = result.fallback ? router.fallbackRouteId : result.routeId
+    const evaluationMs = Date.now() - started
+    observeEvaluation("completed", result.fallback)
+    const chosen = candidates.find(({ route }) => route.id === chosenId)
+    if (!chosen) return gatewayError(403, "router_target_unavailable", "The selected route or configured fallback is not currently authorized.")
+    const beforeEgress = async () => {
+      const current = await dependencies.loadGatewayRouter(scope)
+      if (!current || !owned(current)) return missing()
+      if (current.revision !== router.revision) return gatewayError(409, "router_changed", "Router changed before dispatch. Retry the request.")
+      return null
+    }
+    const rejected = await beforeEgress()
+    if (rejected) return rejected
+    if (c.req.raw.signal.aborted) return gatewayError(499, "router_request_aborted", "Request aborted.")
+    const response = await handleGatewayRequest(c, { inferenceProviderId: chosen.route.inferenceProviderId, selection: chosen.selection, beforeEgress,
+      request: new Request(c.req.url, { method: "POST", headers: c.req.raw.headers, signal: c.req.raw.signal, body: JSON.stringify({ ...body, model: chosen.route.model }) }) })
+    response.headers.set("x-openwork-router-id", router.id)
+    response.headers.set("x-openwork-router-route-id", chosen.route.id)
+    response.headers.set("x-openwork-router-revision", String(router.revision))
+    response.headers.set("x-openwork-router-fallback", result.fallback ?? "none")
+    response.headers.set("x-openwork-router-evaluation-ms", String(evaluationMs))
+    response.headers.set("x-openwork-router-evaluation-status", "completed")
+    return response
+  })
+  api.all(`${gatewayPathPrefix}/:inferenceProviderId`, (c) => handleGatewayRequest(c))
+  api.all(`${gatewayPathPrefix}/:inferenceProviderId/*`, (c) => handleGatewayRequest(c))
 }

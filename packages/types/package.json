@@ -93,6 +93,11 @@
       "development": "./src/den/deployment-capabilities.ts",
       "default": "./src/den/deployment-capabilities.ts"
     },
+    "./den/gateway-router": {
+      "types": "./src/den/gateway-router.ts",
+      "development": "./src/den/gateway-router.ts",
+      "default": "./src/den/gateway-router.ts"
+    },
     "./den/gateway": {
       "types": "./src/den/gateway.ts",
       "development": "./src/den/gateway.ts",

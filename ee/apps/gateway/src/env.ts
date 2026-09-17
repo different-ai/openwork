@@ -18,6 +18,7 @@ const EnvSchema = z
     GATEWAY_STREAM_IDLE_MS: z.number().int().min(1000).max(900000),
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
+    JEV_AI_GATEWAY_API_KEY: z.string().optional(),
     GATEWAY_ADMIN_TOKEN: z.string().optional(),
     GATEWAY_UPSTREAM_TIMEOUT_MS: z.number().int().min(1000).max(24 * 60 * 60_000),
     GATEWAY_WEBHOOK_SECRET: z.string().optional(),
@@ -130,6 +131,7 @@ const planetscale: PlanetScaleCredentials | null =
     : null;
 
 export const env = {
+  jevAiGatewayApiKey: optionalString(parsed.JEV_AI_GATEWAY_API_KEY),
   gatewayEnabled: gatewayDeployment.enabled,
   upstreamTimeoutMs: parsed.GATEWAY_UPSTREAM_TIMEOUT_MS,
   port: parsed.PORT,

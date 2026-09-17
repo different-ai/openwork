@@ -52,7 +52,7 @@ if (env.corsOrigins.length > 0) {
         "X-Openwork-Gateway-Grant-Id",
       ],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      exposeHeaders: ["X-OpenWork-Request-Id", "Retry-After"],
+      exposeHeaders: ["X-OpenWork-Request-Id", "Retry-After", "X-OpenWork-Router-Id", "X-OpenWork-Router-Route-Id", "X-OpenWork-Router-Revision", "X-OpenWork-Router-Fallback", "X-OpenWork-Router-Evaluation-Ms", "X-OpenWork-Router-Evaluation-Status"],
       maxAge: 600,
     }),
   );
