@@ -16,6 +16,7 @@ import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import {
   getComposerQueuedDrafts,
+  getNextComposerQueuedDraft,
   useComposerStateStore,
 } from "../surface/composer-state-store";
 import {
@@ -381,9 +382,7 @@ async function attemptDrain(sessionId: string) {
   if (!watched || watched.sendInFlight) return;
   const context = getQueuedSendContext(sessionId);
   if (!context) return;
-  const items = getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId).filter((item) =>
-    !item.steer || (item.steer.owner === context.owner && item.steer.generation === getQueuedSendGeneration(sessionId)));
-  const nextItem = items.find((item) => item.steer) ?? items[0];
+  const nextItem = getNextComposerQueuedDraft(useComposerStateStore.getState(), sessionId, context.owner, getQueuedSendGeneration(sessionId));
   if (!nextItem || hasComposerAutoSend(sessionId)
     || (context.owner && hasComposerAutoSend(sessionId, context.owner))) return;
   if (!nextItem.steer && watched.lastObservedStatus?.type !== "idle") return;
