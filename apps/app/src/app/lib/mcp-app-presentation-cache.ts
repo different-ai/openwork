@@ -67,6 +67,7 @@ export function scheduleCachedMcpAppDiscovery(
   origin: McpAppOrigin, toolName: string, launch: OpenworkMcpAppLaunchReference | null, manual: boolean,
   receive: (app: OpenworkMcpAppResource | null) => void, fail: (cause: unknown) => void,
   preview: (app: OpenworkMcpAppResource) => void,
+  credentialRevision = 0,
   scope = mcpAppPresentationScope(origin),
 ) {
   let cancelled = false;
@@ -80,7 +81,7 @@ export function scheduleCachedMcpAppDiscovery(
     settled = true;
     if (launch) void cache.then(store => store?.remove(launch)).catch(() => undefined);
     fail(cause);
-  });
+  }, credentialRevision);
   if (launch) void cache.then(async store => {
     const app = await store?.read(launch);
     if (app && !cancelled && !settled) preview(app);
