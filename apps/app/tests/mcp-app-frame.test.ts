@@ -309,6 +309,7 @@ describe("MCP App retry ownership", () => {
       expect(host.container.querySelector("iframe")).toBeNull()
       const retry = host.container.querySelector<HTMLButtonElement>("button")
       expect(retry?.textContent).toBe("Retry")
+      expect(retry?.getAttribute("data-slot")).toBe("button")
       await act(async () => retry?.click())
       expect(host.frame(0)).not.toBe(original)
       expect(host.srcAssignments).toHaveLength(2)

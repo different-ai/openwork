@@ -22,6 +22,7 @@ import {
 import { useMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { t } from "@/i18n"
 import {
   formatMcpAppDiagnostic,
@@ -281,7 +282,7 @@ export function McpAppDiagnosticNotice({ error, notice, onRetry }: { error: McpA
         <p className="mt-1">The connection was not ready. Retry, or check the connection under Settings &gt; Library.</p>
       ) : null}
       {onRetry ? (
-        <button type="button" className="mt-1 underline underline-offset-2" onClick={onRetry}>{t("common.retry")}</button>
+        <Button type="button" variant="link" size="xs" className="mt-1 px-0" onClick={onRetry}>{t("common.retry")}</Button>
       ) : null}
       <details className="mt-1">
         <summary className="cursor-pointer select-none">Technical details ({error.code})</summary>
