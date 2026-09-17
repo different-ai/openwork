@@ -773,6 +773,36 @@ export function AdvancedWorkspaceRunModeSection() {
   );
 }
 
+export function AdvancedUnavailableModelRepickSection() {
+  const { unavailableModelRepickEnabled, toggleUnavailableModelRepick } = useFeatureFlagsPreferences();
+  const restricted = useDesktopRestriction("allowControlSettings");
+  return (
+    <LayoutSection id="advanced-model-repick">
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.unavailable_model_repick_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.unavailable_model_repick_description")}</LayoutSectionDescription>
+      </LayoutSectionHeader>
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>{t("settings.unavailable_model_repick_toggle")}</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            {t("settings.unavailable_model_repick_toggle_description")}
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch
+              data-testid="unavailable-model-repick-flag"
+              aria-label={t("settings.unavailable_model_repick_toggle")}
+              checked={unavailableModelRepickEnabled}
+              disabled={restricted || !isDesktopRuntime()}
+              onCheckedChange={toggleUnavailableModelRepick}
+            />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
+
 interface AdvancedFeatureFlagsSectionProps {
   busy: boolean;
   microsandboxCreateSandboxEnabled: boolean;

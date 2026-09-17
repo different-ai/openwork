@@ -469,6 +469,73 @@ for (const failure of ["inventory", "held peer", "pending inventory", "held curr
   });
 }
 
+test("changed bulk membership stays blocked when its refreshed scope cannot load", async () => {
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const { UnavailableModelRepick } = await import("../src/react-app/domains/session/modals/unavailable-model-repick");
+  const { createSessionModelActions } = await import("../src/react-app/domains/session/control/session-model-actions");
+  const { useSessionModelStore } = await import("../src/react-app/domains/session/surface/session-model-store");
+  const { t } = await import("../src/i18n");
+  const model: OpenworkCatalogModel = { providerId: "fixture", modelId: "available", displayName: "Available model", providerName: "Fixture", available: true, variants: [] };
+  const from = { providerId: "fixture", modelId: "removed", variant: null, displayName: "Removed model" };
+  const sessions = ["repick-current", "repick-peer"].map((id) => ({ id, title: id, directory: "/fixture", time: { archived: 0 }, model: { providerID: "fixture", id: "removed" } }));
+  const before = useSessionModelStore.getState().bySessionId;
+  const stored = localStorage.getItem("openwork.sessionModels.v1");
+  let membershipChanged = false;
+  let changedInventoryRead = false;
+  const actions = createSessionModelActions({
+    workspaces: [{ id: "fixture", path: "/fixture" }],
+    catalog: async () => [model],
+    directory: async () => "/fixture",
+    session: async () => sessions[0],
+    statuses: async () => ({ data: {}, response: { status: 200 } }),
+    sessions: async () => {
+      if (!membershipChanged) return sessions;
+      if (!changedInventoryRead) {
+        changedInventoryRead = true;
+        return sessions;
+      }
+      throw new Error("Refreshed inventory unavailable");
+    },
+  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); }); };
+  try {
+    await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient, children:
+      createElement(UnavailableModelRepick, { sessionId: "repick-current", workspaceId: "fixture", from, workspaceDefault: null,
+        loadModels: async () => [model], loadRemovedModels: async () => [], modelActions: actions, onClose: () => undefined }) })));
+    let all: HTMLElement | undefined;
+    for (let attempt = 0; attempt < 20 && (!all || all.getAttribute("aria-disabled") === "true"); attempt += 1) {
+      await flush();
+      all = document.querySelectorAll<HTMLElement>('[role="radio"]')[1];
+    }
+    if (!all) throw new Error("Missing ready bulk scope");
+    await act(async () => all.click());
+    await flush();
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Save for 2 sessions");
+    if (!confirm) throw new Error("Missing ready bulk confirmation");
+    sessions.push({ id: "repick-new", title: "repick-new", directory: "/fixture", time: { archived: 0 }, model: { providerID: "fixture", id: "removed" } });
+    membershipChanged = true;
+    await act(async () => confirm?.click());
+    for (let attempt = 0; attempt < 20 && !document.body.textContent?.includes(t("models.repick_targets_refresh_failed")); attempt += 1) await flush();
+    expect(document.body.textContent).toContain(t("models.repick_targets_refresh_failed"));
+    expect(document.body.textContent).toContain(t("models.repick_bulk_failed"));
+    expect(document.body.textContent).not.toContain("Matching sessions changed from 2 to 3");
+    expect(all.getAttribute("aria-disabled")).toBe("true");
+    expect(confirm.disabled).toBe(true);
+    expect(useSessionModelStore.getState().bySessionId).toEqual(before);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    queryClient.clear();
+    useSessionModelStore.setState({ bySessionId: before });
+    if (stored === null) localStorage.removeItem("openwork.sessionModels.v1");
+    else localStorage.setItem("openwork.sessionModels.v1", stored);
+  }
+});
+
 describe("model picker provider badges", () => {
   const importedCloudProviders = {
     ipr_gateway: { providerId: "ipr_gateway", source: "openwork_gateway" },

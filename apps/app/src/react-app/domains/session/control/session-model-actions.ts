@@ -21,6 +21,18 @@ export type SessionModelWorkspace = { id: string; path: string };
 
 type ModelRead = <T>(operation: () => Promise<T>) => Promise<T>;
 
+export class SessionModelTargetSetChangedError extends Error {
+  readonly code = "model_repick_target_set_changed";
+
+  constructor(
+    readonly expectedSessionIds: string[],
+    readonly currentSessionIds: string[],
+  ) {
+    super("Matching sessions changed. Preview again before confirming.");
+    this.name = "SessionModelTargetSetChangedError";
+  }
+}
+
 function mutationDeadline(now: () => number, requestCreatedAt?: number) {
   const startedAt = now();
   const expired = () => new Error("Model repick timed out; no selections changed. Preview again before confirming.");
@@ -137,7 +149,7 @@ export function createSessionModelActions<Workspace extends SessionModelWorkspac
         throw new Error("Session selection or archive state changed; preview again before confirming.");
       }
       if (args.expectedSessionIds && (args.expectedSessionIds.length !== sessions.length || sessions.some((session) => !args.expectedSessionIds?.includes(session.id)))) {
-        throw new Error("Matching sessions changed. Preview again before confirming.");
+        throw new SessionModelTargetSetChangedError(args.expectedSessionIds, sessions.map((session) => session.id));
       }
       return save(workspace.id, sessions, model, args.dryRun === true, checkDeadline);
     },

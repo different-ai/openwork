@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { spec, type Seed, type Target } from "@openwork/testkit";
+import { browserScript, spec, type Seed, type Target } from "@openwork/testkit";
 
 async function repickComposer(seed: Seed) {
   const app = await seed.desktop({ name: "session-model-repick" });
@@ -32,17 +32,221 @@ function string(value: unknown): string {
   return value;
 }
 
+test("unavailable composer uses the ordinary model picker unless scoped repick is opted in", async ({ world, user, agent, probe, evidence }) => {
+  const target = world.sessions[0];
+  if (!target) throw new Error("Missing isolated target session");
+  await agent.run("session.open", { sessionId: target.sessionId });
+  await user.see("composer", { editable: true });
+  const seeded = record(await agent.run("eval.model_not_available.seed", { scope: "both" }));
+  const unavailable = record(seeded.unavailableModel);
+  const available = record(seeded.availableModel);
+  const initialPreferences = record(await probe.storage("openwork.preferences"));
+  expect(record(initialPreferences.featureFlags).unavailableModelRepick).not.toBe(true);
+
+  await user.click({ role: "button", label: "Change model" });
+  await user.see({ role: "heading", label: "Models" });
+  await user.notSee({ text: /is no longer available$/ });
+  await user.screenshot();
+  await user.click({ text: string(available.providerName) });
+  await user.click({ text: string(available.title) });
+
+  const selections = record(await probe.storage("openwork.sessionModels.v1"));
+  expect(record(selections[target.sessionId]).model).toEqual({
+    providerID: string(available.providerID),
+    modelID: string(available.modelID),
+  });
+  expect(record(selections[target.sessionId]).model).not.toEqual(unavailable);
+  expect(await probe.storage("openwork.preferences")).toEqual(initialPreferences);
+  evidence.recordAssertionEvidence(
+    "Unavailable sessions use the established picker by default",
+    "A stale session opened the ordinary model picker with its existing unavailable-model guidance. Choosing its real catalog option replaced only that session's local selection; the experimental scoped dialog never appeared and preferences stayed unchanged.",
+    true,
+  );
+});
+
+test("opted-in scoped repick reproduces confirm-time failure for a busy target and an offline runtime", async ({ world, user, agent, probe, evidence }) => {
+  const [busy, offline] = world.sessions;
+  if (!busy || !offline) throw new Error("Missing isolated failure fixtures");
+  await user.click({ testId: "account-status-menu" });
+  await user.click("Settings");
+  await user.click("Advanced");
+  await user.click({ testId: "unavailable-model-repick-flag" });
+  await user.click("Back to app");
+
+  const fault = async (mode: "gate" | "offline" | "restore") => {
+    await probe.eval(browserScript((inputMode) => {
+      const key = "__openworkRepickOriginalFetch";
+      const modeKey = "__openworkRepickStatusMode";
+      if (inputMode === "restore") {
+        const saved = Reflect.get(window, key);
+        if (typeof saved === "function") Reflect.set(window, "fetch", saved);
+        Reflect.deleteProperty(window, key);
+        Reflect.deleteProperty(window, modeKey);
+        return;
+      }
+      if (inputMode === "offline") {
+        Reflect.set(window, modeKey, "offline");
+        return;
+      }
+      const original = window.fetch.bind(window);
+      Reflect.set(window, key, original);
+      Reflect.set(window, modeKey, "pass");
+      window.fetch = (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/session/status")) {
+          return new Promise<Response>((resolve, reject) => window.setTimeout(() => {
+            if (Reflect.get(window, modeKey) === "offline") reject(new Error("Fixture workspace runtime offline"));
+            else resolve(original(input, init));
+          }, 1_000));
+        }
+        return original(input, init);
+      };
+    }, [mode]));
+  };
+  const seed = async (sessionId: string) => {
+    await agent.run("session.open", { sessionId });
+    await user.see("composer", { editable: true });
+    const result = record(await agent.run("eval.model_not_available.seed", { scope: "both" }));
+    if (await probe.has("Eval Unavailable Model A is no longer available") || await probe.has("Eval Unavailable Model B is no longer available")) {
+      await user.click({ role: "button", label: "Close" });
+    }
+    return result;
+  };
+
+  const busySeed = await seed(busy.sessionId);
+  const busyAvailable = record(busySeed.availableModel);
+  const busySelections = await probe.storage("openwork.sessionModels.v1");
+  await agent.run("session.model_picker.open");
+  await user.see({ text: /^Eval Unavailable Model [AB] is no longer available$/ });
+  await user.click({ role: "combobox", label: "Models" });
+  await user.click({ role: "option", label: `${string(busyAvailable.title)} (${string(busyAvailable.providerName)})` });
+  await user.see({ role: "button", label: "Save for 1 session" });
+  await fault("gate");
+  await user.click({ role: "button", label: "Save for 1 session" });
+  await agent.run("eval.session_sidebar.seed_active");
+  await user.see("Could not save this selection. Check the refreshed models, then try again.");
+  expect(await probe.storage("openwork.sessionModels.v1")).toEqual(busySelections);
+  await user.screenshot();
+  await fault("restore");
+  await user.click({ role: "button", label: "Close" });
+  await user.notSee({ text: /^Eval Unavailable Model [AB] is no longer available$/ });
+
+  const offlineSeed = await seed(offline.sessionId);
+  const offlineAvailable = record(offlineSeed.availableModel);
+  const offlineSelections = await probe.storage("openwork.sessionModels.v1");
+  await agent.run("session.model_picker.open");
+  await user.see({ text: /^Eval Unavailable Model [AB] is no longer available$/ });
+  await user.click({ role: "combobox", label: "Models" });
+  await user.click({ role: "option", label: `${string(offlineAvailable.title)} (${string(offlineAvailable.providerName)})` });
+  await user.see({ role: "button", label: "Save for 1 session" });
+  await fault("gate");
+  await user.click({ role: "button", label: "Save for 1 session" });
+  await fault("offline");
+  await user.see("Could not save this selection. Check the refreshed models, then try again.");
+  expect(await probe.storage("openwork.sessionModels.v1")).toEqual(offlineSelections);
+  await user.screenshot();
+  await fault("restore");
+  evidence.recordAssertionEvidence(
+    "Opted-in scoped replacement fails closed when busy or offline state begins after preview",
+    "Both targets first reached an enabled Save action. A synthetic busy activity state and an offline authoritative-status request then began before confirmation; each reproduced the generic save failure and changed no local session selection.",
+    true,
+  );
+});
+
+test("bulk repick refreshes and requires reconfirmation when matching membership grows", async ({ world, user, agent, probe, evidence }) => {
+  const [target, peer, newlyMatching] = world.sessions;
+  if (!target || !peer || !newlyMatching) throw new Error("Missing isolated target-set fixtures");
+  await user.click({ testId: "account-status-menu" });
+  await user.click("Settings");
+  await user.click("Advanced");
+  await user.click({ testId: "unavailable-model-repick-flag" });
+  await user.click("Back to app");
+
+  const dismissRepick = async () => {
+    if (await probe.has("Eval Unavailable Model A is no longer available") || await probe.has("Eval Unavailable Model B is no longer available")) {
+      await user.click({ role: "button", label: "Close" });
+    }
+  };
+  const seed = async (sessionId: string) => {
+    await dismissRepick();
+    await agent.run("session.open", { sessionId });
+    await user.see("composer", { editable: true });
+    const result = record(await agent.run("eval.model_not_available.seed", { scope: "both" }));
+    await dismissRepick();
+    return result;
+  };
+
+  const targetSeed = await seed(target.sessionId);
+  const unavailable = record(targetSeed.unavailableModel);
+  const available = record(targetSeed.availableModel);
+  for (const session of [peer, newlyMatching]) {
+    let result = await seed(session.sessionId);
+    if (record(result.unavailableModel).modelID !== unavailable.modelID) result = await seed(session.sessionId);
+    expect(result.unavailableModel).toEqual(unavailable);
+  }
+  await agent.run("session.archive", { sessionId: newlyMatching.sessionId, archived: true });
+  await agent.run("session.open", { sessionId: target.sessionId });
+  await agent.run("session.model_picker.open");
+  await user.click({ role: "combobox", label: "Models" });
+  await user.click({ role: "option", label: `${string(available.title)} (${string(available.providerName)})` });
+  await user.click({ text: "All 2 matching sessions in this workspace (unarchived)" });
+  await user.see({ role: "button", label: "Save for 2 sessions" });
+  const before = await probe.storage("openwork.sessionModels.v1");
+
+  await agent.run("session.archive", { sessionId: newlyMatching.sessionId, archived: false });
+  await user.click({ role: "button", label: "Save for 2 sessions" });
+  await user.see("Matching sessions changed from 2 to 3. Review the refreshed list, then confirm again.");
+  await user.notSee("Could not save this selection. Check the refreshed models, then try again.");
+  await user.see("All 3 matching sessions in this workspace (unarchived)");
+  await user.see({ role: "button", label: "Save for 3 sessions" });
+  expect((await probe.dom('[role="dialog"] li')).elements.map((element) => element.text).sort()).toEqual(
+    [target.title, peer.title, newlyMatching.title].sort(),
+  );
+  expect(await probe.storage("openwork.sessionModels.v1")).toEqual(before);
+  await user.screenshot();
+
+  await user.click({ role: "button", label: "Save for 3 sessions" });
+  await user.see({ text: /Saved for next send/ });
+  const replacement = { providerID: string(available.providerID), modelID: string(available.modelID) };
+  const selections = record(await probe.storage("openwork.sessionModels.v1"));
+  for (const session of [target, peer, newlyMatching]) {
+    expect(record(selections[session.sessionId])).toEqual({ model: replacement, variant: null });
+  }
+  await user.screenshot();
+  evidence.recordAssertionEvidence(
+    "Changed bulk membership refreshes without silently adding targets",
+    "The confirmed set grew from two to three after preview. The first save wrote nothing, displayed the refreshed three-session scope and required a second explicit confirmation before applying the local next-send choice to all three.",
+    true,
+  );
+});
+
 test("unavailable composer repick defaults to this session, previews all, and saves only confirmed local scope without sending", async ({ world, user, agent, probe, step, evidence }) => {
   const [target, peer, archived, unrelated] = world.sessions;
   if (!target || !peer || !archived || !unrelated) throw new Error("Missing isolated session fixtures");
-  const missing = { providerID: "eval-unavailable-provider", modelID: "eval-unavailable-model-a" };
+  const missing = { providerID: "lpr_eval-unavailable-provider", modelID: "eval-unavailable-model-a" };
   const owners = [
     ...world.sessions.map((session) => ({ ...session, workspaceId: world.workspace.workspaceId })),
     { ...world.otherSession, workspaceId: world.otherWorkspace.workspaceId },
   ];
   const repickTitle = { text: /^Eval Unavailable Model [AB] is no longer available$/ };
+  await user.click({ testId: "account-status-menu" });
+  await user.click("Settings");
+  await user.click("Advanced");
+  await user.see({ testId: "unavailable-model-repick-flag", label: "Show scoped replacement dialog" });
+  await user.screenshot();
+  await user.click({ testId: "unavailable-model-repick-flag" });
+  expect(await probe.eventually(() => probe.storage("openwork.preferences", (value) => (
+    typeof value === "object" && value !== null
+      && typeof Reflect.get(value, "featureFlags") === "object"
+      && Reflect.get(Reflect.get(value, "featureFlags"), "unavailableModelRepick") === true
+  )), { within: 5_000, label: "scoped replacement flag enabled" })).toBe(true);
+  await user.click("Back to app");
   const dismissRepick = async () => {
-    if (await probe.has("Eval Unavailable Model A is no longer available") || await probe.has("Eval Unavailable Model B is no longer available")) await user.click({ role: "button", label: "Close" });
+    if (await probe.has("Eval Unavailable Model A is no longer available") || await probe.has("Eval Unavailable Model B is no longer available")) {
+      await user.click({ role: "button", label: "Close" });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await user.notSee(repickTitle);
+    }
   };
   const open = async (sessionId: string) => {
     await dismissRepick();
@@ -110,6 +314,7 @@ test("unavailable composer repick defaults to this session, previews all, and sa
     sessions: initialFacts.map((fact) => ({ sessionId: fact.sessionId, directory: record(fact.session).directory })),
   }), true);
   const choose = async () => {
+    await user.click({ role: "button", label: "Change model" });
     await user.see(repickTitle);
     await user.click({ role: "combobox", label: "Models" });
     await user.click({ role: "option", label: `${string(available.title)} (${string(available.providerName)})` });
@@ -127,13 +332,13 @@ test("unavailable composer repick defaults to this session, previews all, and sa
   await step("opening unavailable session and previewing scopes never changes selection or sends", async () => {
     await open(peer.sessionId);
     await open(target.sessionId);
-    await user.reload();
+    await agent.run("session.model_picker.open");
     await user.see(repickTitle);
-    await dismissRepick();
     await user.see("composer", { text: draft });
     await user.screenshot();
-    await user.reload();
-    await choose();
+    await user.click({ role: "combobox", label: "Models" });
+    await user.click({ role: "option", label: `${string(available.title)} (${string(available.providerName)})` });
+    await user.see({ role: "combobox", label: "Models" }, { text: string(available.title) });
     await user.see(confirm(1));
     expect((await probe.dom('[role="dialog"] label:has([role="radio"][aria-checked="true"])')).elements.map((element) => element.text)).toEqual(["This session only"]);
     expect(await probe.storage("openwork.sessionModels.v1")).toEqual(initialSelections);

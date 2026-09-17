@@ -361,7 +361,7 @@ function focusPromptSoon() {
   [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
 }
 
-const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
+const EVAL_UNAVAILABLE_PROVIDER_ID = "lpr_eval-unavailable-provider";
 
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
   return {
@@ -2678,8 +2678,9 @@ export function SessionRoute() {
   });
 
   const [repickTarget, setRepickTarget] = useState<{ sessionId: string; workspaceId: string; from: OpenworkSessionModel } | null>(null);
+  const unavailableModelRepickEnabled = local.prefs.featureFlags?.unavailableModelRepick === true;
   useEffect(() => {
-    if (!modelPicker.open || !modelPickerSessionId || repickTarget) return;
+    if (!unavailableModelRepickEnabled || !modelPicker.open || !modelPickerSessionId || repickTarget) return;
     const selection = modelPickerSelection ?? engineModelSelection(modelPickerSessionId);
     if (!selection || resolveModelAvailability(selection.model).status !== "unavailable") return;
     const workspace = workspaces.find((entry) => sessionsByWorkspaceId[entry.id]?.some((session) => session.id === modelPickerSessionId));
@@ -2688,7 +2689,7 @@ export function SessionRoute() {
       providerId: selection.model.providerID, modelId: selection.model.modelID, variant: selection.variant,
       displayName: providerCatalog[selection.model.providerID]?.[selection.model.modelID]?.name || resolveModelDisplayName(selection.model.modelID),
     } });
-  }, [modelPicker.open, modelPickerSessionId, modelPickerSelection, engineModelSelection, repickTarget, resolveModelAvailability, workspaces, sessionsByWorkspaceId, providerCatalog]);
+  }, [unavailableModelRepickEnabled, modelPicker.open, modelPickerSessionId, modelPickerSelection, engineModelSelection, repickTarget, resolveModelAvailability, workspaces, sessionsByWorkspaceId, providerCatalog]);
 
   const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
@@ -3993,7 +3994,7 @@ export function SessionRoute() {
       fetchMessages={sessionSearchFetcher}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
-    {repickTarget && <UnavailableModelRepick
+    {unavailableModelRepickEnabled && repickTarget && <UnavailableModelRepick
       key={`${repickTarget.workspaceId}:${repickTarget.sessionId}`}
       {...repickTarget}
       workspaceDefault={local.prefs.defaultModel ? { providerId: local.prefs.defaultModel.providerID, modelId: local.prefs.defaultModel.modelID, variant: null } : null}
@@ -4012,7 +4013,7 @@ export function SessionRoute() {
       onClose={() => { setRepickTarget(null); setModelPickerSessionId(null); modelPicker.setOpen(false); }}
     />}
     <ModelPickerModal
-      open={modelPicker.open && !repickTarget}
+      open={modelPicker.open && (!unavailableModelRepickEnabled || !repickTarget)}
       options={modelPicker.options}
       organizationModelsEmpty={organizationModelsEmpty}
       organizationModelsSettingsUrl={organizationModelsSettingsUrl}

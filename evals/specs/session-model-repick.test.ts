@@ -3,15 +3,15 @@ import { afterEach, expect, vi } from "vitest";
 import { test } from "@openwork/testkit";
 import { openworkModelSessionSchema, openworkSessionModelSchema, suggestOpenworkReplacement } from "@openwork/types/openwork-affordance";
 import { OpenWorkExtensionsPreview } from "../../apps/server/src/opencode-plugins/openwork-extensions-preview";
-import { createSessionModelActions } from "../../apps/app/src/react-app/domains/session/control/session-model-actions";
+import { createSessionModelActions, SessionModelTargetSetChangedError } from "../../apps/app/src/react-app/domains/session/control/session-model-actions";
 import { preflightQueuedSessionModel } from "../../apps/app/src/react-app/domains/session/sync/queued-send-context";
 import { createClient } from "../../apps/app/src/app/lib/opencode";
 import { sendSessionCommand } from "../../apps/app/src/app/lib/opencode-interruption";
 import { effectiveSessionModelSelection, sessionCommandModelFields, useSessionModelStore } from "../../apps/app/src/react-app/domains/session/surface/session-model-store";
 
-const old = { providerId: "provider_fixture", modelId: "removed_fixture", variant: "high", displayName: "Fixture Previous", providerName: "Fixture Family" };
-const replacement = { providerId: "provider_fixture", modelId: "available_fixture", displayName: "Fixture Next", providerName: "Fixture Family" };
-const alternate = { providerId: "alternate_fixture", modelId: "alternate_model", displayName: "Fixture Alternate", providerName: "Alternate Family" };
+const old = { providerId: "lpr_fixture", modelId: "removed_fixture", variant: "high", displayName: "Fixture Previous", providerName: "Fixture Family" };
+const replacement = { providerId: "lpr_fixture", modelId: "available_fixture", displayName: "Fixture Next", providerName: "Fixture Family" };
+const alternate = { providerId: "lpr_alternate_fixture", modelId: "alternate_model", displayName: "Fixture Alternate", providerName: "Alternate Family" };
 const workspaces = [{ id: "workspace_fixture_one", path: "/synthetic/one", name: "One" }, { id: "workspace_fixture_two", path: "/synthetic/two", name: "Two" }];
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -121,7 +121,7 @@ async function fixture(now?: () => number) {
   };
 }
 
-test("repick previews effective bindings, saves only confirmed scope, and preserves engine/default identities", async ({ evidence }) => {
+test("retired lpr bindings repick to a valid lpr catalog model only for confirmed scope", async ({ evidence }) => {
   const f = await fixture();
   const before = JSON.stringify(f.sessions);
   const initial = await f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: replacement, dryRun: true });
@@ -145,7 +145,7 @@ test("repick previews effective bindings, saves only confirmed scope, and preser
   expect(JSON.parse(f.storage.get("openwork.sessionModels.v1") ?? "{}")).toEqual(useSessionModelStore.getState().bySessionId);
   expect(JSON.stringify(f.sessions)).toBe(before);
   expect(f.writes()).toEqual([]);
-  evidence.recordAssertionEvidence("This-session and opt-in all-session scope use effective local-first bindings", "Dry-run wrote nothing; one and three choices persisted atomically with variants. Archives, other workspace, unrelated override, engine records and defaults were unchanged.", true);
+  evidence.recordAssertionEvidence("Retired lpr bindings accept a valid lpr catalog replacement for confirmed scope", "Dry-run wrote nothing; one and three lpr choices persisted atomically with variants. Archives, other workspace, unrelated override, engine records and defaults were unchanged.", true);
 });
 
 test("headless stale sends write zero prompts; an explicit repick applies canonical ids and variant on next send", async ({ evidence }) => {
@@ -188,6 +188,26 @@ test("invalid targets, changed previews and unavailable replacements cannot part
   expect(f.storageWrites).toEqual([]);
   expect(f.writes()).toEqual([]);
   evidence.recordAssertionEvidence("Invalid repicks cannot partially save", "Archived targets, unavailable replacements, missing workspaces and changed preview sets all rejected; neither local storage nor engine writes occurred.", f.storageWrites.length === 0 && f.writes().length === 0);
+});
+
+test("changed bulk membership reports exact confirmed and refreshed target ids without saving", async ({ evidence }) => {
+  const f = await fixture();
+  const preview = await f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: replacement, dryRun: true });
+  const expectedSessionIds = preview.sessions.map((entry) => entry.sessionId);
+  f.sessions.push(session("session_new_match"));
+  let caught: unknown;
+  try {
+    await f.actions.rebindModel({ workspaceId: workspaces[0]?.id, from: old, to: replacement, expectedSessionIds });
+  } catch (cause) {
+    caught = cause;
+  }
+  expect(caught).toBeInstanceOf(SessionModelTargetSetChangedError);
+  if (!(caught instanceof SessionModelTargetSetChangedError)) throw new Error("Expected target-set drift error");
+  expect(caught.expectedSessionIds).toEqual(["session_this", "session_other", "session_restored"]);
+  expect(caught.currentSessionIds).toEqual(["session_this", "session_other", "session_restored", "session_new_match"]);
+  expect(f.storageWrites).toEqual([]);
+  expect(useSessionModelStore.getState().bySessionId).toEqual({});
+  evidence.recordAssertionEvidence("Changed bulk membership is a distinct no-write failure", "The action reported the exact three confirmed ids and four refreshed ids; no local model selection was persisted.", true);
 });
 
 test("bulk mutations fail closed without confirmation while dry-runs remain read-only", async ({ evidence }) => {
