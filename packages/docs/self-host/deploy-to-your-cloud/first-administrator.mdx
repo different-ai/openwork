@@ -42,7 +42,7 @@ Then open `http://localhost:3005/setup` and continue with [Complete setup](#comp
 1. Wait until Den web, Den API, and the migration Job are healthy.
 2. Open `/setup` on the Den web hostname.
 3. Enter the configured administrator email and the one-time setup code.
-4. Choose the administrator's name and password.
+4. Choose the administrator's name and a password of 8–32 characters containing uppercase and lowercase letters, a number, and a special character, then confirm the password. Use **Show passwords** to check your entries, and save the password in a password manager. The server also rejects weak signup passwords and, when enabled, passwords found in breaches.
 5. Confirm that OpenWork signs the administrator in and opens the singleton organization.
 
 The setup flow uses the existing Better Auth password and session protections. Successful setup creates the first account, creates or claims the singleton organization, grants the configured owner and platform-admin roles, and makes setup unavailable because the deployment now has a user.
@@ -57,7 +57,35 @@ After setup:
 - the administrator can sign out and use normal password sign-in;
 - restarting or scaling Den API does not re-enable setup.
 
-If the deployment already contains a user, bootstrap remains unavailable even if its setup Secret still exists. Rotating or restoring the Secret does not reopen setup unless an operator deliberately changes the database outside OpenWork.
+If the deployment already contains a user, bootstrap remains unavailable even if its setup Secret still exists. Rotating or restoring the Secret does not reopen setup or change an existing password. Do not delete accounts or deployment data to reopen setup.
+
+## Recover a forgotten administrator password
+
+The existing recovery path is an email reset link for the administrator's account. It requires working transactional email and access to that mailbox; the one-time setup code is not a recovery code.
+
+### Configure email delivery
+
+On Den API, configure `EMAIL_FROM` and `SMTP_HOST`, with `SMTP_PORT` (default `587`), `SMTP_SECURE` (default `false`), and `SMTP_USER` / `SMTP_PASS` if your relay requires authentication. Use your mail provider's port and TLS settings. SMTP takes precedence when `SMTP_HOST` is set. Alternatively, configure `EMAIL_FROM` and `RESEND_API_KEY` with no SMTP host.
+
+For Helm, use `secret.create: false` and `secret.existingSecret` to reference your deployment's precreated Secret, preserving its existing database and authentication entries. Add the email entries using their standard environment-variable names above. The chart's defaults map `secret.keys.emailFrom`, `smtpHost`, `smtpPort`, `smtpUser`, `smtpPass`, and `smtpSecure` to those names; `secret.values` has the matching fields for chart-managed Secrets. Keep credentials out of committed values files. Den API imports the Secret as environment variables, so roll out new Den API pods after updating an externally managed Secret.
+
+Keep `config.public.webOrigin` set to the browser-accessible HTTPS Den web origin (or `DEN_BASE_URL` outside Helm). The reset email must lead back to this deployment. Production recovery requires real delivery: development mode's logged emails are not a production recovery mechanism.
+
+### Reset and verify
+
+1. Open the Den web sign-in page at `https://<your-den-web-host>/?mode=sign-in`.
+2. Enter the administrator's email and continue to the password step if prompted. Select **Forgot password?**, then **Send reset link**.
+3. Open the link delivered to that mailbox. Reset links expire after one hour; request a new one if the link is invalid or expired.
+4. Enter and confirm a new password of 8–32 characters containing uppercase and lowercase letters, a number, and a special character, then select **Reset password**.
+5. Return to sign-in and verify the new password. A successful reset revokes the account's existing sessions.
+
+The request screen deliberately gives a generic response whether or not the account exists. That message is not proof of delivery: if no email arrives, verify the configured address, mail relay delivery, and Den API email errors, then request a new link. Keep reset links private.
+
+### Recovery boundaries
+
+This release has no supported operator password-reset CLI or documented direct-database password-reset procedure. `DEN_FIRST_ADMIN_*` variables are not supported configuration. The actual bootstrap variables, `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE` and `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE_FILE`, only authorize initial setup on a deployment with no users; owner/admin email allowlists do not replace account passwords.
+
+If email delivery or mailbox access cannot be restored, contact your deployment support owner for a reviewed recovery plan. Do not treat a database edit, a changed bootstrap Secret, or an enabled public-signup flag as a supported password reset.
 
 ## Configure SSO next
 

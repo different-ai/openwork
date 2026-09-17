@@ -24,6 +24,8 @@ export default function SetupPage() {
   const [setupCode, setSetupCode] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPasswords, setShowPasswords] = useState(false);
   const [grant, setGrant] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +75,14 @@ export default function SetupPage() {
 
   async function submitAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (password.length < 8) {
+      setError("Use at least 8 characters for your password.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match. Re-enter your confirmation password.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -192,15 +202,44 @@ export default function SetupPage() {
               />
             </div>
             <div className="grid gap-2">
-              <label className="den-label" htmlFor="setup-password">Password</label>
+              <div className="flex items-center justify-between gap-3">
+                <label className="den-label" htmlFor="setup-password">Password</label>
+                <button
+                  type="button"
+                  className="text-sm font-medium text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
+                  aria-controls="setup-password setup-confirm-password"
+                  aria-pressed={showPasswords}
+                  onClick={() => setShowPasswords((visible) => !visible)}
+                >
+                  {showPasswords ? "Hide passwords" : "Show passwords"}
+                </button>
+              </div>
               <input
                 id="setup-password"
                 name="password"
-                type="password"
+                type={showPasswords ? "text" : "password"}
                 autoComplete="new-password"
+                minLength={8}
+                aria-describedby="setup-password-hint"
                 className="den-input"
                 value={password}
                 onChange={(event) => setPassword(event.currentTarget.value)}
+                required
+              />
+              <p id="setup-password-hint" className="m-0 text-xs leading-5 text-[var(--dls-text-secondary)]">
+                Use 8–32 characters with uppercase and lowercase letters, a number, and a special character. Save it in a password manager.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <label className="den-label" htmlFor="setup-confirm-password">Confirm password</label>
+              <input
+                id="setup-confirm-password"
+                name="confirmPassword"
+                type={showPasswords ? "text" : "password"}
+                autoComplete="new-password"
+                className="den-input"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.currentTarget.value)}
                 required
               />
             </div>
