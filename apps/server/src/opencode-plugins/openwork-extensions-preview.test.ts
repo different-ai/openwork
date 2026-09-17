@@ -3,11 +3,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { openworkCatalogModels, openworkEngineProviderCatalogSchema, openworkSessionActivityInventorySchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
+import type { ToolPart } from "@opencode-ai/sdk/v2";
+import { redactSensitiveText, isSensitiveCredentialKey, redactedResponseBodyExcerpt } from "@openwork/enterprise-mcp-client";
+import { OPENWORK_SESSION_DETAIL_LIMITS, openworkSessionActivityResultSchema, openworkSessionPartPageSchema, openworkSessionToolProjectionSchema, openworkCatalogModels, openworkEngineProviderCatalogSchema, openworkSessionActivityInventorySchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
 import { sessionActivityFrom } from "./session-activity.js";
+import { redactSecretPatterns, secretPatterns } from "./secret-patterns.js";
 import {
   OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
@@ -22,6 +25,32 @@ const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 const originalUiControlDiscovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY;
 const stops: Array<() => void> = [];
+
+const synthetic = (length: number) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789".repeat(8).slice(0, length);
+const syntheticJwt = [
+  Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+  Buffer.from(JSON.stringify({ sub: "synthetic-user", iat: 1234567890 })).toString("base64url"),
+  synthetic(43),
+].join(".");
+const secretRuleFixtures = [
+  ["aws-access-token", "AKIA" + "BCDEFGHIJKLM2345", "[redacted:aws-access-token]"],
+  ["private-key", `-----BEGIN PRIVATE KEY-----\n${synthetic(128)}\n-----END PRIVATE KEY-----`, "[redacted:private-key]"],
+  ["github-pat", "ghp_" + synthetic(36), "[redacted:github-pat]"],
+  ["github-oauth", "gho_" + synthetic(36), "[redacted:github-oauth]"],
+  ["github-app-token", "ghu_" + synthetic(36), "[redacted:github-app-token]"],
+  ["github-fine-grained-pat", "github_pat_" + synthetic(82), "[redacted:github-fine-grained-pat]"],
+  ["slack-bot-token", "xoxb-" + "123456789012-234567890123-" + synthetic(24), "[redacted:slack-bot-token]"],
+  ["slack-user-token", "xoxp-" + "123456789012-234567890123-345678901234-" + synthetic(32), "[redacted:slack-user-token]"],
+  ["slack-webhook-url", "https://hooks.slack.com/services/" + synthetic(44), "[redacted:slack-webhook-url]"],
+  ["stripe-access-token", "sk_test_" + synthetic(32), "[redacted:stripe-access-token]"],
+  ["openai-api-key", `sk-${synthetic(20)}T3BlbkFJ${synthetic(20)}`, "[redacted:openai-api-key]"],
+  ["anthropic-api-key", `sk-ant-api03-${synthetic(93)}AA`, "[redacted:anthropic-api-key]"],
+  ["gcp-api-key", "AIza" + synthetic(35), "[redacted:gcp-api-key]"],
+  ["npm-access-token", "npm_" + synthetic(36), "[redacted:npm-access-token]"],
+  ["gitlab-pat", "glpat-" + synthetic(20), "[redacted:gitlab-pat]"],
+  ["jwt", syntheticJwt, "[redacted:jwt]"],
+  ["generic-api-key", `custom_api_key = "${synthetic(48)}"`, 'custom_api_key = "[redacted:generic-api-key]"'],
+];
 
 const searchResultSchema = z.object({
   ok: z.literal(true),
@@ -57,6 +86,13 @@ const readResultSchema = z.object({
     text: z.string(),
   }).passthrough()),
 }).passthrough();
+
+const activityResultSchema = openworkSessionActivityResultSchema;
+const detailReadResultSchema = readResultSchema.extend({
+  messages: z.array(z.object({ id: z.string(), text: z.string(), tools: z.array(openworkSessionToolProjectionSchema).optional(), reasoning: z.string().max(2000).optional(), reasoningTruncated: z.boolean().optional() })),
+  partPage: openworkSessionPartPageSchema,
+  history: z.object({ limit: z.number(), nextBefore: z.string().nullable(), complete: z.boolean() }),
+});
 
 const createResultSchema = z.object({
   ok: z.boolean(),
@@ -134,18 +170,28 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExten
   return output.system.join("\n");
 }
 
+function completedTool(callId: string, input: Record<string, unknown>, output: string, start = 310, end = start + 1): ToolPart {
+  return {
+    id: `part_${callId}`, sessionID: "ses_alpha", messageID: "msg_tools", type: "tool", tool: "openwork_execute", callID: callId,
+    state: { status: "completed", input, output, title: "Execute", metadata: {}, time: { start, end } },
+  };
+}
+
 function startFakeOpenWorkServer(options: {
   failPromptText?: string;
   failCreateTitle?: string;
   rejectModelId?: string;
   failSessionListWorkspaceId?: string;
+  failMessages?: boolean;
+  messages?: unknown[];
+  pagedMessages?: boolean;
+  repeatedCursor?: boolean;
   activityResponses?: Record<string, unknown>;
   failedActivityPaths?: string[];
   providerCatalogByWorkspace?: Record<string, unknown>;
   failProviderCatalog?: boolean;
   hostCatalogResponse?: unknown;
   policyDenied?: boolean;
-  messages?: Array<{ info: { id: string; role: string; error?: unknown }; parts: Array<{ type: string; text?: string }> }>;
 } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
   const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
@@ -316,9 +362,17 @@ function startFakeOpenWorkServer(options: {
       }
 
       if (url.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message") {
+        if (options.failMessages) return Response.json({ message: "Unavailable" }, { status: 503 });
         if (options.messages) {
-          const limit = url.searchParams.get("limit");
-          return Response.json(limit === null ? options.messages : options.messages.slice(-Number(limit)));
+            const limit = url.searchParams.get("limit");
+            if (options.pagedMessages && limit !== null) {
+              if (url.searchParams.has("cursor")) return Response.json({ error: "Unsupported cursor" }, { status: 400 });
+              const end = Number(url.searchParams.get("before") ?? options.messages.length);
+              const start = Math.max(0, end - Number(limit));
+              const cursor = options.repeatedCursor ? url.searchParams.get("before") ?? "100" : start > 0 ? String(start) : null;
+              return Response.json(options.messages.slice(start, end), { headers: cursor === null ? {} : { "X-Next-Cursor": cursor } });
+            }
+            return Response.json(limit === null ? options.messages : options.messages.slice(-Number(limit)));
         }
         return Response.json([
           {
@@ -540,6 +594,488 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(parsed.result.sessionId).toBe("ses_archive");
     expect(parsed.result.messages.at(-1)?.text).toContain("archive importer");
+  });
+
+  test("session.read default bytes stay identical for an ordinary transcript", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_archive", count: 2, ...args } });
+    const expected = JSON.stringify({
+      ok: true, id: "session.read", result: {
+        ok: true, workspaceId: "ws_2", workspace: "Archive", sessionId: "ses_archive", title: "Archive decisions",
+        createdAt: 10, updatedAt: 100, archived: true, parentId: null, status: "idle", working: false,
+        descendantActivity: { busy: 0, waiting: 0, unknown: 0 }, inventoryComplete: true, lastError: null, model: null,
+        from: "end", returned: 1, requested: 2,
+        messages: [{ index: 1, id: "msg_latest", role: "assistant", createdAt: 102, text: "We decided to ship the archive importer first." }],
+      }, effects: { data: "read", ui: "none", external: false },
+    }, null, 2);
+    expect(await read({})).toBe(expected);
+    expect(await read({ parts: ["text"] })).toBe(expected);
+  });
+
+  test("session.read exposes SDK tool states, reasoning, caps and post-redaction truncation only on opt-in", async () => {
+    const secret = 'token="quoted private value" grant=\'grant private value\' code="code private value" secret="secret private value" key="key private value" https://name:password@host.test/path?hidden=query-private Bearer bearer-private';
+    const failed: ToolPart = {
+      ...completedTool("call_error", {}, ""),
+      state: { status: "error", input: { secret: "object-private" }, error: `${secret} ${"e".repeat(2100)}`, time: { start: 312, end: 313 } },
+    };
+    startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_tools", role: "assistant", time: { created: 300 } }, parts: [
+        completedTool("call_long", { nested: { authorization: "nested-private", value: secret }, long: "i".repeat(2100) }, `${secret} ${"o".repeat(2100)}`),
+        failed,
+        completedTool("call_short", { token: "s".repeat(3000) }, JSON.stringify({ nested: { password: 'escaped-"private', text: secret } })),
+        { ...completedTool("call_pending", {}, ""), state: { status: "pending", input: {}, raw: "" } },
+        { ...completedTool("call_running", {}, ""), state: { status: "running", input: {}, time: { start: 315 } } },
+      ] },
+      { info: { id: "msg_reasoning", role: "assistant" }, parts: [{ type: "reasoning", text: "Compare the options." }] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", ...args } });
+    expect(affordanceResultSchema("session.read", readResultSchema).parse(JSON.parse(await read({}))).result.messages).toEqual([]);
+    const raw = await read({ parts: ["tool", "reasoning"] });
+    const messages = affordanceResultSchema("session.read", z.object({ messages: z.array(z.object({
+      text: z.string(), reasoning: z.string(), tools: z.array(z.object({
+        type: z.literal("tool"), tool: z.string(), callId: z.string(), status: z.string(), input: z.string().max(2000), output: z.string().max(2000), error: z.string().max(2000), truncated: z.literal(true).optional(),
+      }).strict()),
+    }).passthrough()) })).parse(JSON.parse(raw)).result.messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].tools.map((tool) => tool.status)).toEqual(["completed", "error", "completed", "pending", "running"]);
+    expect(messages[0].tools[0]).toMatchObject({ callId: "call_long", tool: "openwork_execute", truncated: true, error: "null" });
+    expect(messages[0].tools[0].input).toHaveLength(2000);
+    expect(messages[0].tools[0].output).toHaveLength(2000);
+    expect(messages[0].tools[1].error).toHaveLength(2000);
+    expect(messages[0].tools[1].truncated).toBe(true);
+    expect(messages[0].tools[2].truncated).toBeUndefined();
+    expect(messages[0].tools[2].input).toBe('{"token":"[redacted]"}');
+    expect(messages[1].reasoning).toBe("Compare the options.");
+    for (const leak of ["private", "name:", "password@", "hidden=", "s".repeat(100)]) expect(raw).not.toContain(leak);
+    expect(raw).toContain("[redacted]");
+    const capped = affordanceResultSchema("session.read", readResultSchema).parse(JSON.parse(await read({ parts: ["tool", "reasoning"], count: 1 })));
+    expect(capped.result.messages).toHaveLength(1);
+    expect(capped.result.messages[0].id).toBe("msg_reasoning");
+  });
+
+  test("Gitleaks table has one fixture per pinned rule and labels only the generic rule heuristic", () => {
+    expect(secretPatterns.map((rule) => rule.id).sort()).toEqual(secretRuleFixtures.map(([id]) => id).sort());
+    expect(secretPatterns.filter((rule) => rule.precision === "heuristic").map((rule) => rule.id)).toEqual(["generic-api-key"]);
+    expect(secretPatterns.at(-1)?.id).toBe("generic-api-key");
+  });
+
+  test.each(secretRuleFixtures)("Gitleaks helper redacts %s without deleting surrounding text", (_id, source, redacted) => {
+    expect(redactSecretPatterns(source)).toBe(redacted);
+    expect(redactSecretPatterns(`before ${source} after`)).toBe(`before ${redacted} after`);
+    expect(redactSecretPatterns(redacted)).toBe(redacted);
+    expect(redactSecretPatterns(`${source}\n${source}`)).toBe(`${redacted}\n${redacted}`);
+  });
+
+  test("Gitleaks entropy gates captured secrets without legacy assignment overrides", () => {
+    const low = `custom_api_key = "${"A".repeat(48)}"`;
+    const high = `custom_api_key = "${synthetic(48)}"`;
+    const rule = secretPatterns.find((entry) => entry.id === "generic-api-key");
+    if (!rule) throw new Error("Missing generic-api-key rule");
+    expect(rule.entropy).toBe(3.5);
+    expect(low.match(rule.regex)).not.toBeNull();
+    expect(redactSecretPatterns(low)).toBe(low);
+    expect(redactSecretPatterns(high)).toBe('custom_api_key = "[redacted:generic-api-key]"');
+    expect(redactSecretPatterns("AKIA" + "A".repeat(16))).toBe("AKIA" + "A".repeat(16));
+    expect(redactSecretPatterns("ghp_" + "A".repeat(36))).toBe("ghp_" + "A".repeat(36));
+    expect(redactSecretPatterns(synthetic(120))).toBe(synthetic(120));
+    const highEntropyContext = `${synthetic(45)}_api_key = "${"A".repeat(10)}"`;
+    expect([...highEntropyContext.matchAll(rule.regex)][0]?.[1]).toBe("A".repeat(10));
+    expect(redactSecretPatterns(highEntropyContext)).toBe(highEntropyContext);
+    for (const source of [`sk-${synthetic(24)}`, `ghr_${synthetic(36)}`, `xoxa-${synthetic(32)}`, `ow_mcp_at_${synthetic(32)}`]) {
+      expect(redactSecretPatterns(source)).toBe(source);
+    }
+  });
+
+  test.each([
+    ...["ASIA", "ABIA", "ACCA", "A3TA"].map((prefix) => [prefix + "BCDEFGHIJKLM2345", "[redacted:aws-access-token]"]),
+    ["ghs_" + synthetic(36), "[redacted:github-app-token]"],
+    ...["proj", "svcacct", "admin"].flatMap((kind) => [58, 74].map((length) => [`sk-${kind}-${synthetic(length)}T3BlbkFJ${synthetic(length)}`, "[redacted:openai-api-key]"])),
+    ["NPM_" + synthetic(36), "[redacted:npm-access-token]"],
+    ["xoxe-123456789012-234567890123-345678901234-" + synthetic(32), "[redacted:slack-user-token]"],
+    [`-----BEGIN RSA PRIVATE KEY-----\n${synthetic(128)}`, "[redacted:private-key]"],
+    [`-----BEGIN PRIVATE KEY BLOCK-----\n${synthetic(128)}\n-----END PRIVATE KEY BLOCK-----`, "[redacted:private-key]"],
+  ])("Gitleaks pinned alternates and PEM fail-closed behavior: %s", (source, redacted) => {
+    expect(redactSecretPatterns(source)).toBe(redacted);
+  });
+
+  test.each([
+    ...secretRuleFixtures,
+    ["typed assignment", "token=AKIA" + "BCDEFGHIJKLM2345", "token=[redacted:aws-access-token]"],
+    ["typed quoted assignment", `log "token":"ghp_${synthetic(36)}"`, 'log "token":"[redacted:github-pat]"'],
+    ["legacy assignment", 'token="synthetic \\"quoted\\" private value"', "token=[redacted]"],
+    ["marker with residual value", 'token="[redacted:openai-api-key] synthetic-private-value"', "token=[redacted]"],
+  ])("session credentials redact %s across tool read, nested input, search and activity", async (_name, source, redacted) => {
+    const input = { nested: [{ value: source }, JSON.stringify({ detail: source })] };
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant" }, parts: [
+      completedTool("call_value", input, source),
+      { ...completedTool("call_error", {}, ""), state: { status: "error", input: {}, error: source, time: { start: 312, end: 313 } } },
+      completedTool("call_json", {}, JSON.stringify({ ok: false, error: { detail: source } })),
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", parts: ["tool"] } });
+    const tools = affordanceResultSchema("session.read", z.object({ messages: z.array(z.object({ tools: z.array(z.object({ input: z.string(), output: z.string(), error: z.string() })) })) })).parse(JSON.parse(raw)).result.messages[0].tools;
+    expect(tools[0].output).toBe(JSON.stringify(redacted));
+    expect(tools[0].input).toBe(JSON.stringify({ nested: [{ value: redacted }, JSON.stringify({ detail: redacted })] }));
+    expect(tools[1].error).toBe(JSON.stringify(redacted));
+    expect(tools[2].output).toBe(JSON.stringify(JSON.stringify({ ok: false, error: { detail: redacted } })));
+    const activity = affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } }))).result;
+    expect(activity.errors.list.map((failure) => failure.message)).toEqual(["Tool execution failed", "Tool reported a failed outcome"]);
+    expect(JSON.stringify(activity)).not.toContain(source);
+    const search = async (query: string) => affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { workspaceId: "ws_1", query, in: ["tool"], match: "phrase" } }))).result;
+    expect((await search(JSON.stringify(source).slice(1, -1))).results).toEqual([]);
+    expect((await search(JSON.stringify(redacted).slice(1, -1))).results.length).toBeGreaterThan(0);
+  });
+
+  test("session credentials redact before JSON encoding and caps without hiding SHA1, UUID or base64 images", async () => {
+    const secret = `sk-proj-${synthetic(74)}T3BlbkFJ${synthetic(74)}`;
+    const pem = `-----BEGIN PRIVATE KEY-----\n${"synthetic-body".repeat(200)}`;
+    const prefix = `${"x".repeat(1953)}${"\n".repeat(10)} `;
+    const sha = "0123456789abcdef".repeat(2) + "01234567";
+    const uuid = ["12345678", "1234", "4123", "8123", "123456789012"].join("-");
+    const image = "data:image/png;base64," + Buffer.from("synthetic-image-bytes".repeat(6)).toString("base64");
+    const neutral = `commit ${sha} request ${uuid} ${image}`;
+    expect(redactSecretPatterns(neutral)).toBe(neutral);
+    expect(prefix.length).toBe(1964);
+    expect(JSON.stringify(prefix).length - 1).toBe(1975);
+    expect(JSON.stringify(prefix + secret).slice(0, 2000)).toContain(secret.slice(0, 20));
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant" }, parts: [
+      completedTool("call_cap", {}, prefix + secret + " after " + "z".repeat(100)),
+      completedTool("call_pem", {}, prefix + pem),
+      completedTool("call_neutral", { value: neutral }, neutral),
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", parts: ["tool"] } });
+    const tools = affordanceResultSchema("session.read", z.object({ messages: z.array(z.object({ tools: z.array(z.object({ output: z.string(), truncated: z.boolean().optional() })) })) })).parse(JSON.parse(raw)).result.messages[0].tools;
+    expect(tools[0].output).toBe(JSON.stringify(prefix + "[redacted:openai-api-key] after " + "z".repeat(100)).slice(0, 2000));
+    expect(tools[0].output).toContain("[redacted:openai-api-key]");
+    expect(tools[0].truncated).toBe(true);
+    expect(tools[1].output).toBe(JSON.stringify(prefix + "[redacted:private-key]").slice(0, 2000));
+    expect(tools[1].output).not.toContain("-----BEGIN");
+    expect(tools[2].output).toBe(JSON.stringify(neutral));
+    expect(raw).not.toContain(secret.slice(0, 20));
+    expect(raw).not.toContain("synthetic-body");
+    for (const query of [sha, uuid, image]) {
+      const searched = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { workspaceId: "ws_1", query, in: ["tool"], match: "phrase" } }))).result;
+      expect(searched.results.length).toBeGreaterThan(0);
+    }
+  });
+
+  test.each(["input-only-needle", "beyond-cap-needle", "error-only-needle"])("session.search finds %s in tools without leaking secrets", async (query) => {
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant" }, parts: [
+      completedTool("call_search", { target: "input-only-needle", token: "input-private" }, `${"x".repeat(2200)} token="output private" beyond-cap-needle`),
+      { ...completedTool("call_error", {}, ""), state: { status: "error", input: {}, error: 'error-only-needle Bearer error-private', time: { start: 312, end: 313 } } },
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const search = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.search", args: { query, ...args } });
+    expect(affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await search({}))).result.results).toEqual([]);
+    const raw = await search({ in: ["tool"] });
+    const result = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(raw)).result.results[0];
+    expect(result).toMatchObject({ kind: "tool", tool: "openwork_execute", callId: query === "error-only-needle" ? "call_error" : "call_search", status: query === "error-only-needle" ? "error" : "completed", snippet: { match: query } });
+    expect(raw).not.toContain("private");
+    expect(affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await search({ in: ["tool"], query: "input-private" }))).result.results).toEqual([]);
+  });
+
+  test("summary skips only sole text immediately before a tool; normal reads retain it", async () => {
+    const tool = completedTool("call_thinking", {}, "done");
+    startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_user", role: "user" }, parts: [{ type: "text", text: "Investigate." }] },
+      { info: { id: "msg_reply", role: "assistant" }, parts: [{ type: "text", text: "This is the reply." }] },
+      { info: { id: "msg_thinking", role: "assistant" }, parts: [{ type: "step-start" }, { type: "text", text: "This is also a reply in plain language." }, tool, { type: "step-finish" }] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const read = (args: Record<string, unknown>) => plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", ...args } });
+    const summary = affordanceResultSchema("session.read", z.object({ lastAssistant: z.object({ id: z.string() }) })).parse(JSON.parse(await read({ summary: true })));
+    expect(summary.result.lastAssistant.id).toBe("msg_reply");
+    expect(await read({})).toContain("This is also a reply in plain language.");
+  });
+
+  test.each([
+    [{ type: "text", text: "Before" }, completedTool("call", {}, ""), { type: "text", text: "After" }],
+    [{ type: "text", text: "Thinking is a normal word." }, { type: "step-finish" }],
+    [completedTool("call", {}, ""), { type: "text", text: "After the tool" }],
+  ])("summary keeps an assistant outside the conservative structural pattern", async (...parts) => {
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_reply", role: "assistant" }, parts }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", summary: true } });
+    expect(affordanceResultSchema("session.read", z.object({ lastAssistant: z.object({ id: z.string() }) })).parse(JSON.parse(raw)).result.lastAssistant.id).toBe("msg_reply");
+  });
+
+  test.each(["error", "completed"])("session.activity counts three session.create calls and one %s failure", async (status) => {
+    const failing = completedTool("call_bad", { id: "session.create" }, JSON.stringify({ ok: false, error: "too_big: prompt exceeds 100000 characters" }), 330, 331);
+    if (status === "error") failing.state = { status: "error", input: { id: "session.create" }, error: "too_big: prompt exceeds 100000 characters", time: { start: 330, end: 331 } };
+    const fake = startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_user", role: "user", time: { created: 100 } }, parts: [{ type: "text", text: "Create three sessions." }] },
+      { info: { id: "msg_tools", role: "assistant", time: { created: 300 } }, parts: [
+        completedTool("call_1", { id: "session.create" }, '{"ok":true}', 310, 311),
+        completedTool("call_2", { id: "session.create" }, '{"ok":true}', 320, 321), failing,
+      ] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    expect(affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(raw)).result).toMatchObject({
+      sessionId: "ses_alpha", workspaceId: "ws_1",
+      toolCalls: { total: 3, byTool: { openwork_execute: 3 }, byAffordanceId: { "session.create": 3 } },
+      errors: { total: 1, list: [{ callId: "call_bad", tool: "openwork_execute", affordanceId: "session.create", message: status === "error" ? "Tool execution failed" : "Tool reported a failed outcome", at: 331 }] },
+      firstAt: 100, lastAt: 331, messages: { user: 1, assistant: 1 },
+    });
+    expect(fake.uiControlRequests).toHaveLength(0);
+    expect(fake.requests.find((request) => request.pathname.endsWith("/message"))?.search).toBe("?limit=100");
+  });
+
+  test("session.activity deduplicates calls, groups only OpenWork input.id, and redacts bounded failures", async () => {
+    const bad = completedTool("call_bad", { id: "session.read" }, JSON.stringify({ ok: true, result: { ok: false, error: { reason: `Bearer bearer-private token="quoted private" https://user:pass-private@host.test/path?secret=private ${"x".repeat(600)}`, nested: { password: "nested-private" } } } }), 200, 250);
+    bad.tool = "openwork_query";
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_tools", role: "assistant", time: { created: 100 } }, parts: [
+      { ...bad, state: { status: "running", input: { id: "session.read" }, time: { start: 200 } } },
+      bad,
+      { ...completedTool("call_external", { id: "not.an.affordance" }, 'ordinary text containing "ok":false', 260, 270), tool: "external_tool" },
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    const result = affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(raw)).result;
+    expect(result.toolCalls).toEqual({ total: 2, byTool: { openwork_query: 1, other: 1 }, byAffordanceId: { "session.read": 1 } });
+    expect(result.errors.total).toBe(1);
+    expect(result.errors.list).toHaveLength(1);
+    expect(result.errors.list[0]).toMatchObject({ callId: "call_bad", affordanceId: "session.read", at: 250 });
+    expect(result.errors.list[0]).toMatchObject({ code: "failed_outcome", message: "Tool reported a failed outcome" });
+    expect(raw).not.toContain("private");
+  });
+
+  test("session.activity since is inclusive and uses tool end/start independently of message creation", async () => {
+    startFakeOpenWorkServer({ messages: [
+      { info: { id: "msg_zero", role: "user", time: { created: 0 } }, parts: [] },
+      { info: { id: "msg_tools", role: "assistant", time: { created: 100 } }, parts: [
+        completedTool("call_early", {}, "ok", 150, 200),
+        completedTool("call_boundary", {}, '{"ok":false,"message":"boundary failure"}', 210, 300),
+        { ...completedTool("call_running", {}, ""), state: { status: "running", input: {}, time: { start: 400 } } },
+        { ...completedTool("call_pending", {}, ""), state: { status: "pending", input: {}, raw: "" } },
+      ] },
+      { info: { id: "msg_undated", role: "assistant" }, parts: [{ ...completedTool("call_undated", {}, ""), state: { status: "pending", input: {}, raw: "" } }] },
+    ] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const activity = async (args: Record<string, unknown>) => affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha", ...args } }))).result;
+    const result = await activity({ since: 300 });
+    expect(result).toEqual(await activity({ since: "1970-01-01T00:00:00.300Z" }));
+    expect(result).toMatchObject({ toolCalls: { total: 2 }, errors: { total: 1 }, firstAt: 300, lastAt: 400, messages: { user: 0, assistant: 0 } });
+    expect(await activity({ since: 301 })).toMatchObject({ toolCalls: { total: 1 }, errors: { total: 0 }, firstAt: 400, lastAt: 400 });
+    expect(await activity({ since: 0 })).toMatchObject({ toolCalls: { total: 4 }, firstAt: 0, messages: { user: 1, assistant: 1 } });
+    expect(await activity({})).toMatchObject({ toolCalls: { total: 5 }, firstAt: 0, messages: { user: 1, assistant: 2 } });
+    expect(await activity({ since: 999 })).toMatchObject({ toolCalls: { total: 0, byTool: {}, byAffordanceId: {} }, errors: { total: 0, list: [] }, firstAt: null, lastAt: null, messages: { user: 0, assistant: 0 } });
+  });
+
+  test("session.activity returns honest zero counts for an empty session", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_beta" } });
+    expect(affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(raw)).result).toMatchObject({
+      toolCalls: { total: 0, byTool: {}, byAffordanceId: {} }, errors: { total: 0, list: [] }, firstAt: null, lastAt: null, messages: { user: 0, assistant: 0 },
+    });
+  });
+
+  test.each([
+    { sessionId: "ses_foreign" },
+    { sessionId: "ses_alpha", workspaceId: "Archive" },
+    { sessionId: "ses_alpha", workspaceId: "missing" },
+    { sessionId: "ses_missing" },
+  ])("session.activity refuses missing or foreign workspaces and sessions", async (args) => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args });
+    expect(z.object({ ok: z.literal(false), error: z.string() }).parse(JSON.parse(raw)).error).toMatch(/not found|No workspace/);
+    expect(fake.requests.filter((request) => request.pathname.endsWith("/message"))).toHaveLength(0);
+    expect(raw).not.toContain("toolCalls");
+  });
+
+  test("session.activity refuses a failed transcript read rather than reporting zero", async () => {
+    startFakeOpenWorkServer({ failMessages: true });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    expect(z.object({ ok: z.literal(false) }).parse(JSON.parse(raw)).ok).toBe(false);
+    expect(raw).not.toContain("toolCalls");
+  });
+
+  test("session.activity validates since before I/O", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+    const output = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha", since: "invalid" } });
+    expect(argumentErrorSchema.parse(JSON.parse(output)).issues.map((issue) => issue.path)).toEqual(["since"]);
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  test.each(["AWS_SECRET_ACCESS_KEY", "SecretAccessKey", "SessionToken", "AWS_SESSION_TOKEN", "awsSecretAccessKey", "aws.secret.access.key", "code_verifier", "codeVerifier", "pkce_verifier", "client_assertion", "clientAssertion", "jwt_assertion", "saml_assertion", "SAMLResponse", "access_token_value", "client_secret_value", "SecretAccessKeyValue", "code_verifier_value", "custom_token_payload", "signing_key_material", "auth", "credential", "credentials", "authentication", "oauth", "oauth2", "creds", "passphrase", "pwd", "tokens", "secrets", "passwords", "passphrases", "cookies", "assertions", "grants", "bearer", "jwt"])("credential key %s is redacted in nested tool objects and JSON strings before search", async (key) => {
+    const secret = "opaque7";
+    const benign = { monkey: "useful", statusCode: 422, exitCode: 1, tokenCount: 3, client_assertion_type: "jwt-bearer", code_challenge: "public-challenge", code_challenge_method: "S256", assertionCount: 2, codeVerifierLength: 43, access_token_value_count: 2, client_secret_value_type: "string", code_verifier_value_length: 43, signing_key_method: "RSA", primary_key_value: "row-7", tokenizer_value: "word" };
+    const payload = { nested: { [key]: secret }, encoded: JSON.stringify({ nested: [{ [key]: secret }] }), ...benign };
+    const expected = { nested: { [key]: "[redacted]" }, encoded: JSON.stringify({ nested: [{ [key]: "[redacted]" }] }), ...benign };
+    const rawJson = "log " + JSON.stringify({ nested: [{ [key]: secret }], ...benign });
+    const rawExpected = "log " + JSON.stringify({ nested: [{ [key]: "[redacted]" }], ...benign });
+    const container = { nested: { [key]: { opaque: secret, entries: [secret, { text: "quoted } bracket ]" }] } } };
+    const containerExpected = { nested: { [key]: "[redacted]" } };
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_credentials", role: "assistant" }, parts: [
+      completedTool("call_credentials", payload, JSON.stringify(payload)),
+      { ...completedTool("call_error", payload, ""), state: { status: "error", input: payload, error: JSON.stringify(payload), time: { start: 310, end: 311 } } },
+      completedTool("call_raw", { diagnostic: rawJson }, rawJson),
+      completedTool("call_container", container, "log " + JSON.stringify(container)),
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", parts: ["tool"] } });
+    const read = affordanceResultSchema("session.read", detailReadResultSchema).parse(JSON.parse(raw)).result;
+    const tools = read.messages.flatMap((message) => message.tools ?? []);
+    expect(tools[0].input).toBe(JSON.stringify(expected));
+    expect(tools[0].output).toBe(JSON.stringify(JSON.stringify(expected)));
+    expect(tools[1].error).toBe(JSON.stringify(JSON.stringify(expected)));
+    expect(tools[2].input).toBe(JSON.stringify({ diagnostic: rawExpected }));
+    expect(tools[2].output).toBe(JSON.stringify(rawExpected));
+    expect(tools[3].input).toBe(JSON.stringify(containerExpected));
+    expect(tools[3].output).toBe(JSON.stringify("log " + JSON.stringify(containerExpected)));
+    expect(raw).not.toContain(secret);
+    const search = async (query: string) => affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query, in: ["tool"] } }))).result;
+    expect((await search(secret)).results).toEqual([]);
+    expect((await search("useful")).results).toHaveLength(1);
+  });
+
+  test("shared selective redaction preserves controls without weakening legacy error excerpts", () => {
+    for (const source of ["password=short", "passwd=short", 'password="short secret"', "Authorization: Basic c2hvcnQ=", "Bearer short"]) {
+      const clean = redactSensitiveText(source);
+      expect(clean).not.toContain("short");
+      expect(clean).not.toContain("c2hvcnQ");
+      expect(redactSensitiveText(clean)).toBe(clean);
+    }
+    for (const key of ["monkey", "statusCode", "exitCode", "tokenCount"]) expect(isSensitiveCredentialKey(key)).toBe(false);
+    for (const key of ["password", "api_key", "accessToken", "authorization-code"]) expect(isSensitiveCredentialKey(key)).toBe(true);
+    const control = "0123456789abcdef".repeat(4);
+    expect(redactSensitiveText(control)).toBe(control);
+    expect(redactedResponseBodyExcerpt(control)).toBe("[redacted]");
+    expect(redactSensitiveText('token="[redacted:openai-api-key] residual-private"')).not.toContain("residual-private");
+    expect(redactSensitiveText("token=[redacted:openai-api-key]")).toBe("token=[redacted:openai-api-key]");
+  });
+
+  test("activity omits arbitrary prompts and groups untrusted IDs while tool opt-in retains safe details", async () => {
+    const prompt = "PROMPT_CANARY_private_investigation";
+    const secret = "password=fixture7";
+    const badId = "token=identifier-private";
+    const benign = { monkey: "useful", statusCode: 422, exitCode: 1, tokenCount: 3 };
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_safe", role: "assistant" }, parts: [
+      completedTool("call_safe", { id: "session.create", prompt, ...benign, password: "fixture7", api_key: "short", access_token: "short", authorization_code: "short", nested: { value: secret } }, JSON.stringify({ ok: false, code: "too_big", prompt })),
+      completedTool(badId, { id: badId }, JSON.stringify({ ok: false, error: { request: { prompt } } })),
+      { ...completedTool("x".repeat(200), {}, ""), tool: badId, state: { status: "error", input: {}, error: `${prompt} ${secret}`, time: { start: 310, end: 311 } } },
+      completedTool("call_echo", {}, JSON.stringify({ ok: false, message: prompt, code: prompt })),
+    ] }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    const activity = affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(raw)).result;
+    for (const value of [prompt, "fixture7", "identifier-private", "Alpha planning"]) expect(raw).not.toContain(value);
+    expect(activity.toolCalls).toEqual({ total: 4, byTool: { openwork_execute: 3, other: 1 }, byAffordanceId: { "session.create": 1, unknown: 2 } });
+    expect(activity.errors.list.map(({ code, message }) => ({ code, message }))).toEqual([
+      { code: "too_big", message: "Tool input exceeded a size limit" },
+      { code: "failed_outcome", message: "Tool reported a failed outcome" },
+      { code: "tool_error", message: "Tool execution failed" },
+      { code: "failed_outcome", message: "Tool reported a failed outcome" },
+    ]);
+    expect(activity.errors.list.slice(1, 3).map((error) => error.callId)).toEqual(["[redacted-id]", "[redacted-id]"]);
+    const readRaw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", parts: ["tool"] } });
+    const read = affordanceResultSchema("session.read", detailReadResultSchema).parse(JSON.parse(readRaw)).result;
+    const tool = read.messages[0].tools?.[0];
+    expect(JSON.parse(tool?.input ?? "null")).toMatchObject({ ...benign, prompt, password: "[redacted]", api_key: "[redacted]", access_token: "[redacted]", authorization_code: "[redacted]", nested: { value: "password=[redacted]" } });
+    expect(tool?.output).toContain(prompt);
+    expect(readRaw).not.toContain("fixture7");
+    expect(readRaw).not.toContain("identifier-private");
+    for (const query of ["fixture7", "identifier-private"]) {
+      const search = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query, in: ["tool"] } }))).result;
+      expect(search.results).toEqual([]);
+    }
+    const control = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "useful", in: ["tool"] } }))).result;
+    expect(control.results).toHaveLength(1);
+  });
+
+  test("1301 tool parts have bounded read continuation and honest activity/error windows", async () => {
+    const parts = Array.from({ length: 1301 }, (_, index) => completedTool(`call_${index}`, { id: "session.read" }, '{"ok":false}'));
+    const fake = startFakeOpenWorkServer({ messages: [{ info: { id: "msg_large", role: "assistant" }, parts }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const ids: string[] = [];
+    for (let offset = 0; offset < parts.length; offset += 100) {
+      const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", count: 1, parts: ["tool"], partOffset: offset } });
+      const result = affordanceResultSchema("session.read", detailReadResultSchema).parse(JSON.parse(raw)).result;
+      const tools = result.messages.flatMap((message) => message.tools ?? []);
+      ids.push(...tools.map((tool) => tool.callId));
+      expect(tools.length).toBeLessThanOrEqual(100);
+      expect(raw.length).toBeLessThan(700000);
+      expect(result.partPage.nextOffset).toBe(offset + 100 < parts.length ? offset + 100 : null);
+    }
+    expect(ids).toEqual(parts.map((part) => part.callID));
+    const activity = async (args: Record<string, unknown>) => affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha", ...args } }))).result;
+    const first = await activity({});
+    expect(first.toolCalls.total).toBe(1000);
+    expect(first.scope).toMatchObject({ complete: false, truncated: true, scannedParts: 1000, next: { partOffset: 1000 } });
+    expect(first.errors).toMatchObject({ total: 1000, truncated: true, nextOffset: 50 });
+    expect(first.errors.list).toHaveLength(50);
+    const errors = await activity({ errorOffset: first.errors.nextOffset });
+    expect(errors.errors.list[0]?.callId).toBe("call_50");
+    expect(errors.toolCalls).toEqual(first.toolCalls);
+    const last = await activity(first.scope.next ?? {});
+    expect(last.toolCalls.total).toBe(301);
+    expect(last.scope).toMatchObject({ complete: false, scannedParts: 301, next: null });
+    expect(last.errors.list[0]?.callId).toBe("call_1000");
+    expect(fake.requests.filter((request) => request.pathname.endsWith("/message")).every((request) => request.search === "?limit=1" || request.search === "?limit=100")).toBe(true);
+  });
+
+  test("reasoning has part and character caps without altering default text", async () => {
+    const parts = [{ type: "text", text: "Visible default" }, ...Array.from({ length: 1301 }, () => ({ type: "reasoning", text: `password=fixture7 ${"r".repeat(2200)}` }))];
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_reason", role: "assistant" }, parts }] });
+    const plugin = await OpenWorkExtensionsPreview();
+    const raw = await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha", parts: ["reasoning"] } });
+    const result = affordanceResultSchema("session.read", detailReadResultSchema).parse(JSON.parse(raw)).result;
+    expect(result.partPage).toMatchObject({ returned: 100, nextOffset: 100, truncated: true });
+    expect(result.messages[0]).toMatchObject({ reasoningTruncated: true });
+    expect(result.messages[0].reasoning).toHaveLength(2000);
+    expect(raw).not.toContain("fixture7");
+    const normal = affordanceResultSchema("session.read", readResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha" } }))).result;
+    expect(normal.messages[0]).toMatchObject({ text: "Visible default" });
+    expect(normal).not.toHaveProperty("partPage");
+    expect(normal.messages[0]).not.toHaveProperty("reasoning");
+  });
+
+  test("activity follows native before headers over 1301 messages and refuses repeated cursors", async () => {
+    const messages = Array.from({ length: 1301 }, (_, index) => ({ info: { id: `msg_${index}`, role: "assistant" }, parts: [completedTool(`call_${index}`, {}, "ok")] }));
+    const fake = startFakeOpenWorkServer({ messages, pagedMessages: true });
+    const plugin = await OpenWorkExtensionsPreview();
+    let args: Record<string, unknown> = {};
+    let observed = 0;
+    for (let page = 0; page < 14; page += 1) {
+      const result = affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha", ...args } }))).result;
+      observed += result.toolCalls.total;
+      expect(result.scope.complete).toBe(false);
+      expect(result.scope.scannedMessages).toBeLessThanOrEqual(100);
+      if (page === 13) expect(result.scope.next).toBeNull();
+      else expect(result.scope.next).not.toBeNull();
+      args = result.scope.next ?? {};
+    }
+    expect(observed).toBe(1301);
+    const requests = fake.requests.filter((request) => request.pathname.endsWith("/message"));
+    expect(requests).toHaveLength(14);
+    expect(requests[1].search).toBe("?limit=100&before=1201");
+    expect(requests.every((request) => !request.search.includes("cursor="))).toBe(true);
+    startFakeOpenWorkServer({ messages, pagedMessages: true, repeatedCursor: true });
+    const refused = JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha", before: "100" } }));
+    expect(refused).toMatchObject({ ok: false });
+  });
+
+  test("missing cursor, oversized outcomes and oversized HTTP bodies cannot claim complete activity", async () => {
+    const plugin = await OpenWorkExtensionsPreview();
+    startFakeOpenWorkServer({ messages: Array.from({ length: 100 }, (_, index) => ({ info: { id: `msg_${index}`, role: "assistant" }, parts: [] })) });
+    const query = () => plugin.tool.openwork_query.execute({ id: "session.activity", args: { sessionId: "ses_alpha" } });
+    const limited = affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(await query())).result;
+    expect(limited.scope).toMatchObject({ complete: false, truncated: true, next: null });
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_large", role: "assistant" }, parts: [completedTool("call_large", {}, JSON.stringify({ ok: false, prompt: "p".repeat(OPENWORK_SESSION_DETAIL_LIMITS.outcomeChars) }))] }] });
+    const unknown = affordanceResultSchema("session.activity", activityResultSchema).parse(JSON.parse(await query())).result;
+    expect(unknown.scope).toMatchObject({ complete: false, uninspectedOutputs: 1 });
+    expect(unknown.toolCalls.total).toBe(1);
+    startFakeOpenWorkServer({ messages: [{ info: { id: "msg_huge", role: "assistant" }, parts: [completedTool("call_huge", {}, "x".repeat(OPENWORK_SESSION_DETAIL_LIMITS.responseBytes))] }] });
+    const refused = JSON.parse(await query());
+    expect(refused).toMatchObject({ ok: false });
+    expect(JSON.stringify(refused)).not.toContain("toolCalls");
   });
 
   test("session.read reports live status and working so agents can check before archiving", async () => {

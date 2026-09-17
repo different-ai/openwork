@@ -213,6 +213,88 @@ export function resolveOpenworkModel(selector: z.infer<typeof openworkModelSelec
     variant: selector.variant && selector.variant !== "default" ? selector.variant : null }
 }
 
+export const OPENWORK_SESSION_DETAIL_LIMITS = {
+  fieldChars: 2000,
+  identifierChars: 128,
+  readParts: 100,
+  activityMessages: 100,
+  activityParts: 1000,
+  activityErrors: 50,
+  outcomeChars: 64000,
+  responseBytes: 8 * 1024 * 1024,
+}
+
+export const openworkSessionDetailPageArgsSchema = z.object({
+  before: z.string().min(1).max(512).regex(/^[A-Za-z0-9_=-]+$/).optional(),
+  partOffset: z.number().int().nonnegative().max(1000000).optional(),
+})
+
+export const openworkSessionToolProjectionSchema = z.object({
+  type: z.literal("tool"),
+  tool: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars),
+  callId: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars),
+  status: z.enum(["pending", "running", "completed", "error"]),
+  input: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.fieldChars),
+  output: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.fieldChars),
+  error: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.fieldChars),
+  truncated: z.literal(true).optional(),
+})
+
+export const openworkSessionPartPageSchema = z.object({
+  offset: z.number().int().nonnegative(),
+  limit: z.literal(OPENWORK_SESSION_DETAIL_LIMITS.readParts),
+  returned: z.number().int().nonnegative().max(OPENWORK_SESSION_DETAIL_LIMITS.readParts),
+  nextOffset: z.number().int().nonnegative().nullable(),
+  truncated: z.boolean(),
+})
+
+export const openworkSessionToolFailureCodeSchema = z.enum(["tool_error", "failed_outcome", "too_big", "invalid-args", "unavailable", "model_unavailable", "conflict"])
+
+export const OPENWORK_SESSION_TOOL_FAILURE_LABELS: Record<z.infer<typeof openworkSessionToolFailureCodeSchema>, string> = {
+  tool_error: "Tool execution failed",
+  failed_outcome: "Tool reported a failed outcome",
+  too_big: "Tool input exceeded a size limit",
+  "invalid-args": "Tool arguments were rejected",
+  unavailable: "Requested action is unavailable",
+  model_unavailable: "Requested model is unavailable",
+  conflict: "Requested action conflicted with current state",
+}
+
+export const openworkSessionActivityResultSchema = z.object({
+  ok: z.literal(true),
+  sessionId: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars),
+  workspaceId: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars),
+  toolCalls: z.object({
+    total: z.number().int().nonnegative(),
+    byTool: z.record(z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars), z.number().int().nonnegative()),
+    byAffordanceId: z.record(z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars), z.number().int().nonnegative()),
+  }),
+  errors: z.object({
+    total: z.number().int().nonnegative(),
+    list: z.array(z.object({
+      callId: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars),
+      tool: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars),
+      affordanceId: z.string().max(OPENWORK_SESSION_DETAIL_LIMITS.identifierChars).optional(),
+      code: openworkSessionToolFailureCodeSchema,
+      message: z.string().max(300),
+      at: z.number().nullable(),
+    }).strict().refine((failure) => failure.message === OPENWORK_SESSION_TOOL_FAILURE_LABELS[failure.code], "Activity failures require a fixed label matching their code")).max(OPENWORK_SESSION_DETAIL_LIMITS.activityErrors),
+    truncated: z.boolean(),
+    nextOffset: z.number().int().nonnegative().nullable(),
+  }),
+  firstAt: z.number().nullable(),
+  lastAt: z.number().nullable(),
+  messages: z.object({ user: z.number().int().nonnegative(), assistant: z.number().int().nonnegative() }),
+  scope: z.object({
+    complete: z.boolean(),
+    truncated: z.boolean(),
+    scannedMessages: z.number().int().nonnegative().max(OPENWORK_SESSION_DETAIL_LIMITS.activityMessages),
+    scannedParts: z.number().int().nonnegative().max(OPENWORK_SESSION_DETAIL_LIMITS.activityParts),
+    uninspectedOutputs: z.number().int().nonnegative(),
+    next: openworkSessionDetailPageArgsSchema.required({ partOffset: true }).nullable(),
+  }),
+}).strict()
+
 export const openworkSessionActivityInventorySchema = z.object({
   working: z.boolean(),
   descendantActivity: z.object({

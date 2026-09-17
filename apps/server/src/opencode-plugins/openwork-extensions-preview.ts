@@ -1,13 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ApiError } from "../errors.js";
-import { redactedResponseBodyExcerpt } from "@openwork/enterprise-mcp-client";
+import { redactedResponseBodyExcerpt, redactSensitiveText, isSensitiveCredentialKey } from "@openwork/enterprise-mcp-client";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
+import { redactSecretPatterns } from "./secret-patterns.js";
 import { visualizationSchema } from "@openwork/types/visualization";
 import {
+  OPENWORK_SESSION_DETAIL_LIMITS,
+  OPENWORK_SESSION_TOOL_FAILURE_LABELS,
+  openworkSessionDetailPageArgsSchema,
+  openworkSessionActivityResultSchema,
+  openworkSessionToolFailureCodeSchema,
   openworkSessionModelSchema,
   openworkSessionModelPreflightResultSchema,
   openworkAffordanceResultSchema,
@@ -35,6 +41,7 @@ import {
 } from "./openwork-extensions-preview-steering.js";
 import {
   buildOpenworkProviderContributions,
+  sessionActivityArgsSchema,
   sessionCreateArgsSchema,
   sessionReadArgsSchema,
   sessionSearchArgsSchema,
@@ -131,6 +138,15 @@ const sessionPartSchema = z.object({
   text: z.string().optional(),
   synthetic: z.boolean().optional(),
   ignored: z.boolean().optional(),
+  tool: z.string().optional(),
+  callID: z.string().optional(),
+  state: z.object({
+    status: z.enum(["pending", "running", "completed", "error"]),
+    input: z.record(z.string(), z.unknown()),
+    output: z.string().optional(),
+    error: z.string().optional(),
+    time: z.object({ start: z.number(), end: z.number().optional() }).optional(),
+  }).optional(),
 }).passthrough();
 
 const sessionMessageSchema = z.object({
@@ -184,7 +200,10 @@ type SessionSearchResult = {
   updatedAt: number;
   archived: boolean;
   parentId: string | null;
-  kind: "title" | "message";
+  kind: "title" | "message" | "tool";
+  tool?: string;
+  callId?: string;
+  status?: string;
   /** The whole query text appeared contiguously (not just every term). */
   phrase: boolean;
   snippet: SessionSearchSnippet;
@@ -438,6 +457,13 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
       affordanceReadEffects,
     );
   }
+  if (request.id === "session.activity") {
+    return affordanceResult(
+      request.id,
+      await readOpenWorkSessionActivity(request.args ?? {}),
+      affordanceReadEffects,
+    );
+  }
   if (request.id === "extension.actions") {
     const args = listActionsArgsSchema.parse(request.args ?? {});
     const query = args.extensionId ? `?extensionId=${encodeURIComponent(args.extensionId)}` : "";
@@ -598,6 +624,49 @@ function messageText(message: SessionMessage): string {
   return parts.join("\n\n");
 }
 
+function redactSessionText(text: string): string {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (isRecord(parsed) || Array.isArray(parsed)) return JSON.stringify(redactSessionValue(parsed));
+  } catch {}
+  return redactSensitiveText(redactSecretPatterns(text));
+}
+
+function redactSessionValue(value: unknown): unknown {
+  if (typeof value === "string") return redactSessionText(value);
+  if (Array.isArray(value)) return value.map(redactSessionValue);
+  if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, nested]) => [
+    redactSessionText(key),
+    isSensitiveCredentialKey(key) ? "[redacted]" : redactSessionValue(nested),
+  ]));
+  return value ?? null;
+}
+
+function sessionIdentifier(value: string): string {
+  if (value.length > OPENWORK_SESSION_DETAIL_LIMITS.identifierChars || !/^[A-Za-z0-9_.:-]+$/.test(value)) return "[redacted-id]";
+  return redactSessionText(value) === value ? value : "[redacted-id]";
+}
+
+const activityToolNames = new Set(["openwork_execute", "openwork_query", "openwork_context", "bash", "read", "write", "edit", "glob", "grep", "task", "question", "webfetch", "skill", "todowrite"]);
+const activityAffordanceIds = new Set(buildOpenworkProviderContributions([]).flatMap((entry) => entry.affordances.map((affordance) => affordance.id)));
+
+function sessionToolParts(message: SessionMessage) {
+  return message.parts.flatMap((part) => part.type === "tool" && part.tool && part.callID && part.state
+    ? [{ tool: part.tool, callId: part.callID, state: part.state }]
+    : []);
+}
+
+function sessionToolFields(state: NonNullable<z.infer<typeof sessionPartSchema>["state"]>): string[] {
+  return [state.input, state.output, state.error].map((value) => JSON.stringify(redactSessionValue(value)));
+}
+
+function isPreToolText(message: SessionMessage): boolean {
+  const textParts = message.parts.filter((part) => part.type === "text");
+  if (textParts.length !== 1) return false;
+  const index = message.parts.indexOf(textParts[0]);
+  return message.parts[index + 1]?.type === "tool";
+}
+
 type TextMatch = { index: number; length: number; phrase: boolean };
 
 function findTextMatch(text: string, queryLower: string, mode: SessionSearchMatchMode): TextMatch | null {
@@ -637,12 +706,31 @@ function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, q
   };
 }
 
-function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
+function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode, parts: SessionSearchArgs["in"]): SessionSearchResult | null {
   let fallback: SessionSearchResult | null = null;
   for (const [index, message] of messages.entries()) {
     const role = message.info.role;
     if (role !== "user" && role !== "assistant") continue;
-    const text = messageText(message);
+    if (parts.includes("tool")) {
+      for (const part of sessionToolParts(message)) {
+        const text = sessionToolFields(part.state).join("\n\n");
+        const match = findTextMatch(text, queryLower, mode);
+        if (!match || fallback) continue;
+        fallback = {
+          ...sessionMetadata(workspace, session),
+          kind: "tool",
+          tool: sessionIdentifier(part.tool),
+          callId: sessionIdentifier(part.callId),
+          status: part.state.status,
+          phrase: match.phrase,
+          role,
+          messageId: message.info.id,
+          messageIndex: index,
+          snippet: buildSessionSnippet(text, match.index, match.length),
+        };
+      }
+    }
+    const text = parts.includes("text") ? messageText(message) : "";
     if (!text) continue;
     const match = findTextMatch(text, queryLower, mode);
     if (!match) continue;
@@ -769,6 +857,39 @@ async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: stri
   );
 }
 
+async function readSessionMessagePage(workspace: OpenWorkWorkspace, sessionId: string, limit: number, before?: string) {
+  const { url, token } = requireOpenWorkServer();
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (before !== undefined) query.set("before", before);
+  const response = await fetch(`${url}/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}/message?${query}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok || !response.body) throw new Error("Session history page unavailable");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let body = "";
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > OPENWORK_SESSION_DETAIL_LIMITS.responseBytes) throw new Error("Session history page exceeds the byte limit");
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    body += decoder.decode();
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  const messages = z.array(sessionMessageSchema).max(limit).parse(JSON.parse(body));
+  const cursor = response.headers.get("X-Next-Cursor");
+  const nextBefore = cursor === null ? null : openworkSessionDetailPageArgsSchema.shape.before.unwrap().parse(cursor);
+  if (nextBefore !== null && nextBefore === before) throw new Error("Session history cursor did not advance");
+  return { messages, history: { limit, nextBefore, complete: before === undefined && nextBefore === null && messages.length < limit } };
+}
+
 async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (item: T) => Promise<void>): Promise<void> {
   let index = 0;
   const worker = async () => {
@@ -813,7 +934,7 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
 
   // Title phase: every filtered root session, one list call per workspace.
   for (const { workspace, session } of sessions.slice(scanLimit)) {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+    const titleMatch = args.in.includes("text") ? titleSearchResult(workspace, session, queryLower, mode) : null;
     if (!titleMatch) continue;
     titleMatched.add(session.id);
     matches.push(titleMatch);
@@ -822,11 +943,11 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   // Transcript phase: only the scanLimit newest sessions are read. A message
   // match wins the snippet, but the title match still owns the rank.
   await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session }) => {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+    const titleMatch = args.in.includes("text") ? titleSearchResult(workspace, session, queryLower, mode) : null;
     if (titleMatch) titleMatched.add(session.id);
     try {
       const messages = await readSessionMessages(workspace, session.id, messageLimit);
-      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode);
+      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode, args.in);
       if (messageMatch) matches.push(messageMatch);
       else if (titleMatch) matches.push(titleMatch);
     } catch {
@@ -872,18 +993,50 @@ function lastAssistantError(messages: SessionMessage[]): { code: string; message
   return { code: "UnknownError", message: "The assistant reported an error; provider details are omitted" };
 }
 
-type ReadableMessage = { index: number; id: string; role: string; createdAt: number | null; text: string };
-
-function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
-  return messages
-    .map((message, index) => ({
+function readableMessages(messages: SessionMessage[], parts: z.infer<typeof sessionReadArgsSchema>["parts"], offset = 0) {
+  let eligible = 0;
+  let returned = 0;
+  let clipped = false;
+  const limit = OPENWORK_SESSION_DETAIL_LIMITS.readParts;
+  const fieldLimit = OPENWORK_SESSION_DETAIL_LIMITS.fieldChars;
+  const readable = messages.map((message, index) => {
+    const selected = message.parts.filter((part) => {
+      const requested = (parts.includes("tool") && part.type === "tool" && part.tool && part.callID && part.state)
+        || (parts.includes("reasoning") && part.type === "reasoning" && !part.synthetic && !part.ignored && part.text?.trim());
+      if (!requested) return false;
+      const position = eligible++;
+      if (position < offset || returned >= limit) return false;
+      returned += 1;
+      return true;
+    });
+    const reasoning = selected.filter((part) => part.type === "reasoning")
+      .map((part) => redactSessionText(part.text?.trim() ?? "")).join("\n\n");
+    if (reasoning.length > fieldLimit) clipped = true;
+    return {
       index,
       id: message.info.id,
       role: message.info.role,
       createdAt: message.info.time?.created ?? null,
-      text: messageText(message),
-    }))
-    .filter((message) => message.text.trim().length > 0);
+      text: parts.includes("text") ? messageText(message) : "",
+      ...(parts.includes("tool") ? { tools: sessionToolParts({ ...message, parts: selected }).map((part) => {
+        const fields = sessionToolFields(part.state);
+        const truncated = fields.some((field) => field.length > fieldLimit);
+        if (truncated) clipped = true;
+        return {
+          type: "tool",
+          tool: sessionIdentifier(part.tool),
+          callId: sessionIdentifier(part.callId),
+          status: part.state.status,
+          input: fields[0].slice(0, fieldLimit),
+          output: fields[1].slice(0, fieldLimit),
+          error: fields[2].slice(0, fieldLimit),
+          ...(truncated ? { truncated: true } : {}),
+        };
+      }) } : {}),
+      ...(parts.includes("reasoning") ? { reasoning: reasoning.slice(0, fieldLimit), ...(reasoning.length > fieldLimit ? { reasoningTruncated: true } : {}) } : {}),
+    };
+  }).filter((message) => message.text.trim().length > 0 || message.tools?.length || message.reasoning);
+  return { readable, partPage: { offset, limit, returned, nextOffset: eligible > offset + returned ? offset + returned : null, truncated: clipped || eligible > offset + returned } };
 }
 
 async function readWorkspaceModels(workspace: OpenWorkWorkspace): Promise<OpenworkCatalogModel[]> {
@@ -899,6 +1052,8 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   const count = args.count ?? 30;
   const from = args.from ?? "end";
   const summary = args.summary ?? false;
+  const details = args.parts.includes("tool") || args.parts.includes("reasoning");
+  if (!details && (args.before !== undefined || args.partOffset !== undefined)) return { ok: false, error: "before and partOffset require tool or reasoning parts" };
   const workspaces = filterWorkspaces(await listOpenWorkWorkspaces(), args.workspaceId);
   if (!workspaces.length) {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
@@ -909,17 +1064,20 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
       const session = await readWorkspaceSession(workspace, args.sessionId);
       // Reading from the start or summarizing needs the whole transcript.
       const needsFullTranscript = summary || from === "start";
-      const [messages, activity, catalog] = await Promise.all([
-        readSessionMessages(workspace, args.sessionId, needsFullTranscript ? undefined : count),
+      const [page, activity, catalog] = await Promise.all([
+        details ? readSessionMessagePage(workspace, args.sessionId, count, args.before)
+          : readSessionMessages(workspace, args.sessionId, needsFullTranscript ? undefined : count).then((messages) => ({ messages, history: null })),
         readSessionActivity(workspace, session),
         readWorkspaceModels(workspace).catch(() => []),
       ]);
+      const messages = page.messages;
       const lastError = lastAssistantError(messages);
-      const readable = readableMessages(messages);
+      const { readable, partPage } = readableMessages(messages, args.parts, args.partOffset);
       const metadata = {
         ...sessionMetadata(workspace, session),
         ...activity,
         lastError,
+        ...(details ? { history: page.history, partPage } : {}),
       };
       if (summary) {
         return {
@@ -928,7 +1086,7 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
           model: labelOpenworkSessionModel(sessionModelOf(session), catalog),
           totalMessages: readable.length,
           firstUser: readable.find((message) => message.role === "user") ?? null,
-          lastAssistant: [...readable].reverse().find((message) => message.role === "assistant") ?? null,
+          lastAssistant: [...readable].reverse().find((message) => message.role === "assistant" && messageText(messages[message.index]) && !isPreToolText(messages[message.index])) ?? null,
         };
       }
       const window = from === "start" ? readable.slice(0, count) : readable.slice(-count);
@@ -970,6 +1128,116 @@ async function locateOpenWorkSession(
     }
   }
   return { error: `Session ${sessionId} was not found in matching OpenWork workspaces` };
+}
+
+function sessionToolFailure(state: NonNullable<z.infer<typeof sessionPartSchema>["state"]>) {
+  if (state.status === "error") return { code: openworkSessionToolFailureCodeSchema.enum.tool_error, message: OPENWORK_SESSION_TOOL_FAILURE_LABELS.tool_error };
+  if (state.status !== "completed" || state.output === undefined) return null;
+  if (state.output.length > OPENWORK_SESSION_DETAIL_LIMITS.outcomeChars) return "uninspected";
+  try {
+    const output: unknown = JSON.parse(state.output);
+    if (!isRecord(output)) return null;
+    const failure = output.ok === false ? output : isRecord(output.result) && output.result.ok === false ? output.result : null;
+    if (!failure) return null;
+    const parsed = openworkSessionToolFailureCodeSchema.safeParse(failure.code);
+    const code = parsed.success ? parsed.data : openworkSessionToolFailureCodeSchema.enum.failed_outcome;
+    return { code, message: OPENWORK_SESSION_TOOL_FAILURE_LABELS[code] };
+  } catch {}
+  return null;
+}
+
+async function readOpenWorkSessionActivity(rawArgs: unknown): Promise<object> {
+  const parsed = sessionActivityArgsSchema.safeParse(rawArgs);
+  if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
+  const args = parsed.data;
+  const located = await locateOpenWorkSession(args.sessionId, args.workspaceId);
+  if ("error" in located) return { ok: false, error: located.error };
+  const { workspace, session } = located;
+  let page: Awaited<ReturnType<typeof readSessionMessagePage>>;
+  try {
+    page = await readSessionMessagePage(workspace, args.sessionId, OPENWORK_SESSION_DETAIL_LIMITS.activityMessages, args.before);
+  } catch {
+    return { ok: false, error: "Session activity page unavailable or exceeds its size limit" };
+  }
+  const transcript = page.messages;
+  const offset = args.partOffset ?? 0;
+  let position = 0;
+  let scannedParts = 0;
+  let scannedMessages = 0;
+  const since = args.since === undefined ? undefined : sessionTimestampMs(args.since);
+  const included = (at: number | null) => since === undefined || (at !== null && at >= since);
+  const messages = { user: 0, assistant: 0 };
+  let firstAt: number | null = null;
+  let lastAt: number | null = null;
+  const recordTime = (at: number | null) => {
+    if (at === null || !included(at)) return;
+    firstAt = firstAt === null ? at : Math.min(firstAt, at);
+    lastAt = lastAt === null ? at : Math.max(lastAt, at);
+  };
+  const calls = new Map<string, { part: ReturnType<typeof sessionToolParts>[number]; createdAt: number | null }>();
+  for (const message of transcript) {
+    const at = message.info.time?.created ?? null;
+    const role = message.info.role;
+    const start = position;
+    position += message.parts.length;
+    if (position < offset || (position === offset && message.parts.length > 0) || scannedParts >= OPENWORK_SESSION_DETAIL_LIMITS.activityParts) continue;
+    scannedMessages += 1;
+    if (start >= offset && included(at) && (role === "user" || role === "assistant")) {
+      messages[role] += 1;
+      recordTime(at);
+    }
+    const selected = message.parts.slice(Math.max(0, offset - start), Math.max(0, offset - start) + OPENWORK_SESSION_DETAIL_LIMITS.activityParts - scannedParts);
+    scannedParts += selected.length;
+    for (const part of sessionToolParts({ ...message, parts: selected })) calls.set(part.callId, { part, createdAt: at });
+  }
+  const byTool = new Map<string, number>();
+  const byAffordanceId = new Map<string, number>();
+  const errors: z.infer<typeof openworkSessionActivityResultSchema>["errors"]["list"] = [];
+  let total = 0;
+  let errorTotal = 0;
+  let uninspectedOutputs = 0;
+  const errorOffset = args.errorOffset ?? 0;
+  for (const { part, createdAt } of calls.values()) {
+    const at = part.state.time?.end ?? part.state.time?.start ?? createdAt;
+    if (!included(at)) continue;
+    total += 1;
+    recordTime(part.state.time?.start ?? createdAt);
+    recordTime(at);
+    const tool = activityToolNames.has(part.tool) ? part.tool : "other";
+    byTool.set(tool, (byTool.get(tool) ?? 0) + 1);
+    const id = part.state.input.id;
+    const affordanceId = (part.tool === "openwork_execute" || part.tool === "openwork_query")
+      ? typeof id === "string" && activityAffordanceIds.has(id) ? id : "unknown" : undefined;
+    if (affordanceId !== undefined) byAffordanceId.set(affordanceId, (byAffordanceId.get(affordanceId) ?? 0) + 1);
+    const failure = sessionToolFailure(part.state);
+    if (failure === "uninspected") { uninspectedOutputs += 1; continue; }
+    if (failure === null) continue;
+    errorTotal += 1;
+    if (errorTotal <= errorOffset || errors.length >= OPENWORK_SESSION_DETAIL_LIMITS.activityErrors) continue;
+    errors.push({
+      callId: sessionIdentifier(part.callId),
+      tool,
+      ...(affordanceId === undefined ? {} : { affordanceId }),
+      ...failure,
+      at,
+    });
+  }
+  const moreParts = position > offset + scannedParts;
+  const complete = page.history.complete && offset === 0 && !moreParts && uninspectedOutputs === 0;
+  const next = moreParts ? { ...(args.before === undefined ? {} : { before: args.before }), partOffset: offset + scannedParts }
+    : page.history.nextBefore === null ? null : { before: page.history.nextBefore, partOffset: 0 };
+  return openworkSessionActivityResultSchema.parse({
+    ok: true,
+    sessionId: sessionIdentifier(session.id),
+    workspaceId: sessionIdentifier(workspace.id),
+    toolCalls: { total, byTool: Object.fromEntries(byTool), byAffordanceId: Object.fromEntries(byAffordanceId) },
+    errors: { total: errorTotal, list: errors, truncated: errorOffset > 0 || errorTotal > errors.length,
+      nextOffset: errorTotal > errorOffset + errors.length ? errorOffset + errors.length : null },
+    firstAt,
+    lastAt,
+    messages,
+    scope: { complete, truncated: !complete, scannedMessages, scannedParts, uninspectedOutputs, next },
+  });
 }
 
 let lastSendMessageStamp = 0;

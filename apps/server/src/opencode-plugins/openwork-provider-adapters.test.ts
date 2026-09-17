@@ -1,22 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { openworkFeatureContributionSchema } from "@openwork/types/openwork-provider";
-import { labelOpenworkSessionModel, openworkCatalogModels, openworkModelSelectorSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
+import { OPENWORK_SESSION_DETAIL_LIMITS, openworkSessionDetailPageArgsSchema, openworkSessionActivityResultSchema, openworkSessionToolProjectionSchema, labelOpenworkSessionModel, openworkCatalogModels, openworkModelSelectorSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
 
 import { buildOpenworkProviderContributions, sessionAffordanceArgsSchemas } from "./openwork-provider-adapters.js";
 
-function stringMaxima(schema: unknown): number[] {
+function advertisedValues(schema: unknown): string[] {
   if (schema instanceof z.ZodString) {
     return (schema._def.checks ?? []).flatMap((check) => {
       const def = check._zod.def;
-      return def.check === "max_length" && "maximum" in def && typeof def.maximum === "number" ? [def.maximum] : [];
+      return def.check === "max_length" && "maximum" in def && typeof def.maximum === "number" ? [String(def.maximum)] : [];
     });
   }
-  if (schema instanceof z.ZodObject) return Object.values(schema.shape).flatMap(stringMaxima);
-  if (schema instanceof z.ZodArray) return stringMaxima(schema.element);
-  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault) return stringMaxima(schema.unwrap());
-  if (schema instanceof z.ZodPipe) return stringMaxima(schema.in);
-  if (schema instanceof z.ZodUnion) return schema.options.flatMap(stringMaxima);
+  if (schema instanceof z.ZodEnum) return schema.options.map(String);
+  if (schema instanceof z.ZodDefault) {
+    const value: unknown = schema._def.defaultValue;
+    return [...advertisedValues(schema.unwrap()), ...(Array.isArray(value) ? value.map(String) : [String(value)])];
+  }
+  if (schema instanceof z.ZodObject) return Object.values(schema.shape).flatMap(advertisedValues);
+  if (schema instanceof z.ZodArray) return advertisedValues(schema.element);
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) return advertisedValues(schema.unwrap());
+  if (schema instanceof z.ZodPipe) return advertisedValues(schema.in);
+  if (schema instanceof z.ZodUnion) return schema.options.flatMap(advertisedValues);
   return [];
 }
 
@@ -79,7 +84,7 @@ describe("OpenWork provider adapters", () => {
       expect({ id, advertised }).toEqual({ id, advertised: Object.keys(schema.shape).sort() });
       for (const [name, field] of Object.entries(schema.shape)) {
         const description = affordances.find((affordance) => affordance.id === id)?.arguments.find((argument) => argument.name === name)?.description;
-        for (const maximum of stringMaxima(field)) expect(description).toContain(String(maximum));
+        for (const maximum of advertisedValues(field)) expect(description).toContain(String(maximum));
       }
     }
   });
@@ -100,10 +105,51 @@ describe("OpenWork provider adapters", () => {
   });
 
   test("the bound walker reaches nested and optional strings, including transformed inputs", () => {
-    expect(stringMaxima(sessionAffordanceArgsSchemas["session.create"].shape.sessions)).toEqual([100_000, 60]);
-    expect(stringMaxima(z.object({ entries: z.array(z.object({ label: z.string().max(17).transform((value) => value).optional() })) }))).toEqual([17]);
+    expect(advertisedValues(sessionAffordanceArgsSchemas["session.create"].shape.sessions)).toEqual(["100000", "60"]);
+    expect(advertisedValues(z.object({ entries: z.array(z.object({ label: z.string().max(17).transform((value) => value).optional() })) }))).toEqual(["17"]);
+    expect(advertisedValues(z.object({ entries: z.array(z.enum(["text", "tool", "reasoning"])).default(["text"]) }))).toEqual(["text", "tool", "reasoning", "text"]);
+    expect(advertisedValues(z.union([z.enum(["start", "end"]).nullable(), z.boolean().default(false)]))).toEqual(["start", "end", "false"]);
     const create = buildOpenworkProviderContributions([]).flatMap((entry) => entry.affordances).find((entry) => entry.id === "session.create");
     expect(create?.arguments.find((argument) => argument.name === "sessions")?.description).toContain("title (≤120 chars, longer is clipped)");
+  });
+
+  test("detail contracts share cursor schemas and advertise numeric bounds and partial scope", () => {
+    const affordances = buildOpenworkProviderContributions([]).flatMap((entry) => entry.affordances);
+    const read = affordances.find((entry) => entry.id === "session.read");
+    const activity = affordances.find((entry) => entry.id === "session.activity");
+    for (const id of ["session.read", "session.activity"]) {
+      const schema = id === "session.read" ? sessionAffordanceArgsSchemas["session.read"] : sessionAffordanceArgsSchemas["session.activity"];
+      for (const [name, field] of Object.entries(openworkSessionDetailPageArgsSchema.shape)) {
+        expect(schema.shape[name === "before" ? "before" : "partOffset"]).toBe(field);
+        const argument = affordances.find((entry) => entry.id === id)?.arguments.find((entry) => entry.name === name);
+        expect(argument).toMatchObject({ type: name === "before" ? "string" : "number", required: false });
+        expect(argument?.description).toContain(name === "before" ? "512" : "1000000");
+      }
+      expect(schema.safeParse({ sessionId: "ses_fixture", before: "x".repeat(513) }).success).toBe(false);
+      expect(schema.safeParse({ sessionId: "ses_fixture", partOffset: 1000001 }).success).toBe(false);
+      expect(schema.safeParse({ sessionId: "ses_fixture", partOffset: -1 }).success).toBe(false);
+    }
+    const parts = read?.arguments.find((argument) => argument.name === "parts")?.description;
+    for (const value of [OPENWORK_SESSION_DETAIL_LIMITS.fieldChars, OPENWORK_SESSION_DETAIL_LIMITS.identifierChars, OPENWORK_SESSION_DETAIL_LIMITS.readParts]) expect(parts).toContain(String(value));
+    for (const value of [OPENWORK_SESSION_DETAIL_LIMITS.activityMessages, OPENWORK_SESSION_DETAIL_LIMITS.activityParts, OPENWORK_SESSION_DETAIL_LIMITS.activityErrors, OPENWORK_SESSION_DETAIL_LIMITS.outcomeChars, OPENWORK_SESSION_DETAIL_LIMITS.responseBytes]) expect(activity?.description).toContain(String(value));
+    for (const value of ["fixed labels", "scope.complete", "NOT full-session", "other/unknown", "uninspected"]) expect(activity?.description).toContain(value);
+    const tool = { type: "tool", tool: "bash", callId: "call_fixture", status: "completed", input: "null", output: "x".repeat(2000), error: "null" };
+    expect(openworkSessionToolProjectionSchema.safeParse(tool).success).toBe(true);
+    expect(openworkSessionToolProjectionSchema.safeParse({ ...tool, output: "x".repeat(2001) }).success).toBe(false);
+    expect(openworkSessionToolProjectionSchema.safeParse({ ...tool, callId: "x".repeat(129) }).success).toBe(false);
+    expect(openworkSessionActivityResultSchema.shape.errors.shape.list.safeParse(Array.from({ length: 51 }, () => ({ callId: "call", tool: "bash", code: "tool_error", message: "Tool execution failed", at: null }))).success).toBe(false);
+    const failure = { callId: "call", tool: "bash", code: "tool_error", message: "Tool execution failed", at: null };
+    expect(openworkSessionActivityResultSchema.shape.errors.shape.list.safeParse([failure]).success).toBe(true);
+    expect(openworkSessionActivityResultSchema.shape.errors.shape.list.safeParse([{ ...failure, message: "PROMPT_CANARY" }]).success).toBe(false);
+    expect(openworkSessionActivityResultSchema.shape.errors.shape.list.safeParse([{ ...failure, code: "failed_outcome" }]).success).toBe(false);
+  });
+
+  test("activity advertises its query, error cap and timestamp semantics", () => {
+    const activity = buildOpenworkProviderContributions([]).flatMap((entry) => entry.affordances).find((entry) => entry.id === "session.activity");
+    expect(activity).toMatchObject({ kind: "query", effects: { data: "read", ui: "none", external: false }, executor: { kind: "openwork" } });
+    for (const value of ["300", "byAffordanceId", "ok: false", "firstAt", "lastAt", "scope.complete", "callId"]) expect(activity?.description).toContain(value);
+    const since = activity?.arguments.find((argument) => argument.name === "since")?.description;
+    for (const value of ["Inclusive", "ISO-8601", "end, then start", "Undated"]) expect(since).toContain(value);
   });
 
   test("normalizes sessions and extensions into semantic contributions", () => {

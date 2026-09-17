@@ -16,3 +16,10 @@ path = "ee/**"
 precedence = "closest"
 SPDX-FileCopyrightText = "2026-present Different AI, Inc."
 SPDX-License-Identifier = "LicenseRef-OpenWork-EE"
+
+# Vendored rules retain the upstream notice distributed in LICENSES/MIT.txt.
+[[annotations]]
+path = "apps/server/src/opencode-plugins/secret-patterns.ts"
+precedence = "override"
+SPDX-FileCopyrightText = "2019 The gitleaks project (original copyright notice in LICENSES/MIT.txt)"
+SPDX-License-Identifier = "MIT"
