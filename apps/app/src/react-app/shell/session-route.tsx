@@ -2635,11 +2635,12 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
-  const { archiveSession, archiveDialog } = useSessionArchive({
+  const { archiveSession, stopSession, archiveDialog } = useSessionArchive({
     workspaces,
     sessionsByWorkspaceId,
     endpointForWorkspace,
     selectedWorkspaceId,
+    routeWorkspaceId,
     selectedSessionId,
     navigateToWorkspaceSession,
     reloadWorkspaceSessions,
@@ -2675,6 +2676,7 @@ export function SessionRoute() {
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
     archiveSession,
+    stopSession,
   });
 
   const [repickTarget, setRepickTarget] = useState<{ sessionId: string; workspaceId: string; from: OpenworkSessionModel } | null>(null);

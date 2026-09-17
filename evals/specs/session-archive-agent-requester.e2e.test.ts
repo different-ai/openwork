@@ -13,7 +13,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-test("agents see which sessions are working, and an agent's archive of a working session is refused through its own channel while the person keeps a simple confirmation", async ({ world, user, agent, probe, step }) => {
+test("agents see which sessions are working, an agent's archive of a working session is refused through its own channel while the person keeps a simple confirmation, and session.stop is attributed", async ({ world, user, agent, probe, step }) => {
   const { a1, a2, b1 } = world;
   const routeA = `#/workspace/${a1.workspaceId}/session/${a1.sessionId}`;
   const aborts = async () => (await world.facts()).requests.filter(request => request.action === "abort");
@@ -24,6 +24,7 @@ test("agents see which sessions are working, and an agent's archive of a working
     return { ...response, elapsedMs: Date.now() - startedAt };
   };
   const archiveVia = (origin: string, target: string) => bridged({ id: "session.archive", args: { sessionId: target, archived: true }, origin: { sessionId: origin } });
+  const stopVia = (origin: string, target: string) => bridged({ id: "session.stop", args: { sessionId: target }, origin: { sessionId: origin } });
 
   await step("two independent real tasks run while A remains visible", async () => {
     for (const [index, target] of [b1, a1].entries()) {
@@ -59,8 +60,9 @@ test("agents see which sessions are working, and an agent's archive of a working
     expect(describe("session.list_sessions")).toContain("`working`");
     expect(describe("session.archive")).toContain("target_working");
     expect(describe("session.archive")).toContain("self_archive_while_working");
-    // session.stop is not part of this change; the hint sends the agent back to the person.
-    expect(actions.some(entry => isRecord(entry) && entry.id === "session.stop")).toBe(false);
+    expect(describe("session.stop")).toContain("without confirmation");
+    expect(describe("session.stop")).toContain("pinned");
+    expect(describe("session.stop")).toContain("person-focused");
   });
 
   await step("an agent archiving another working session is refused with target_working: no dialog, no stop, no 5 s stall", async () => {
@@ -72,7 +74,7 @@ test("agents see which sessions are working, and an agent's archive of a working
       id: "session.archive",
       code: "target_working",
       error: expect.stringContaining(b1.title),
-      hint: expect.stringContaining("ask them to stop it in the app"),
+      hint: expect.stringContaining("call session.stop"),
     });
     // The old path stalled on a human dialog until the mailbox gave up after 5 s.
     expect(result.elapsedMs).toBeLessThan(5_000);
@@ -121,5 +123,74 @@ test("agents see which sessions are working, and an agent's archive of a working
     await probe.eventually(() => session(a2.sessionId), { within: 30_000, label: "idle neighbor is archived", until: entry => entry?.archived === true });
     expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
     expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+  });
+
+  await step("a pinned background session refuses the agent-issued stop without confirmation or interruption", async () => {
+    expect(await agent.run("session.pin", { sessionId: b1.sessionId })).toMatchObject({ ok: true, sessionId: b1.sessionId, pinned: true });
+    const before = await aborts();
+    const result = await stopVia(a1.sessionId, b1.sessionId);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ ok: false, id: "session.stop", code: "pinned", error: expect.stringContaining(b1.title) });
+    expect(await aborts()).toEqual(before);
+    expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    expect(await probe.hash()).toBe(routeA);
+    await user.screenshot();
+    expect(await agent.run("session.pin", { sessionId: b1.sessionId })).toMatchObject({ ok: true, sessionId: b1.sessionId, pinned: false });
+  });
+
+  await step("the authoritative focused route refuses another session's stop request", async () => {
+    const before = await aborts();
+    const result = await stopVia(a2.sessionId, a1.sessionId);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ ok: false, id: "session.stop", code: "focused", error: expect.stringContaining(a1.title) });
+    expect(await aborts()).toEqual(before);
+    expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    expect(await probe.hash()).toBe(routeA);
+    await user.screenshot();
+  });
+
+  await step("an agent stops a live background session by id: its run ends, nothing navigates, and the toast names target and requester", async () => {
+    expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    const result = await stopVia(a1.sessionId, b1.sessionId);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ ok: true, id: "session.stop", result: { ok: true, sessionId: b1.sessionId, title: b1.title, stopped: true } });
+    await user.notSee({ text: "This session is still working" });
+    await probe.eventually(() => session(b1.sessionId), { within: 30_000, label: "B's run ends", until: entry => entry?.status === "idle" });
+    expect(await session(b1.sessionId)).toMatchObject({ archived: false, status: "idle" });
+    expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    const stops = await aborts();
+    expect(stops.length).toBeGreaterThan(0);
+    expect(stops.every(request => request.sessionId === b1.sessionId)).toBe(true);
+    expect(await probe.hash()).toBe(routeA);
+
+    const attribution = `Requested by The agent in "${a1.title}" ${a1.sessionId}`;
+    await user.see({ text: `Session stopped: ${b1.title}` });
+    await user.see({ text: attribution });
+    await user.screenshot();
+    const persisted = await probe.storage("openwork:notifications:v1");
+    const entries = isRecord(persisted) && isRecord(persisted.state) && Array.isArray(persisted.state.notifications) ? persisted.state.notifications : [];
+    expect(entries).toContainEqual(expect.objectContaining({
+      kind: "system",
+      title: `Session stopped: ${b1.title}`,
+      body: attribution,
+      action: { type: "open-session", workspaceId: b1.workspaceId, sessionId: b1.sessionId },
+      actionLabel: "View",
+    }));
+    const notification = entries.find(entry => isRecord(entry) && entry.title === `Session stopped: ${b1.title}`);
+    if (!isRecord(notification) || typeof notification.id !== "string") throw new Error("Stop notification was not persisted");
+    expect((await stopVia(a1.sessionId, b1.sessionId)).body).toMatchObject({ ok: false, code: "not_running" });
+    expect((await stopVia(a1.sessionId, "ses_does_not_exist")).body).toMatchObject({ ok: false, code: "not_found" });
+    await user.click({ role: "button", label: "Notifications (1)" });
+    await user.see({ text: attribution });
+    await user.see({ testId: `notification-action-${notification.id}` });
+    await user.screenshot();
+    await user.click({ testId: `notification-action-${notification.id}` });
+    await probe.eventually(() => probe.hash(), {
+      within: 10_000,
+      label: "notification View opens the stopped target",
+      until: hash => hash === `#/workspace/${b1.workspaceId}/session/${b1.sessionId}`,
+    });
+    expect(await session(a1.sessionId)).toMatchObject({ archived: false, status: "busy" });
+    await user.notSee({ text: "This session is still working" });
   });
 });

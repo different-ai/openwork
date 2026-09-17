@@ -35,18 +35,20 @@ Agents address other sessions by id, and by default nothing on your screen chang
 - **Read**: `session.search` and `session.read` return transcripts without opening anything.
 - **Talk**: `session.send { sessionId, text }` submits a prompt to an existing session by id after validating its effective model through a connected renderer host. Missing host/catalog or stale models return `model_unavailable` without writing a prompt. `session.create` creates sessions and submits their first prompts. Both report `accepted: true` only after the engine accepts the asynchronous HTTP request, not when inference starts or completes.
 - **Show**: `session.open` and `workbench.session.focus` are the only actions that move your pane. `session.send { reveal: true }` sends first and then opens that session for you.
+- **Stop**: `session.stop { sessionId }` stops background work only when you asked. It never opens or archives the target.
 - **File**: `session.rename`, `session.pin`, and `session.archive` act by id and do not open the session (archiving the session you are looking at closes its tab).
 
 `composer.set_text`, `composer.send`, and `composer.stop` are different: they type into, send from, or stop whichever composer *you* currently have focused. They are for "type this for me here", never for reaching another session — if you switch panes while the agent is typing, the text goes to the pane you switched to. Agents are told to use `session.send` instead.
 
-## How agents manage other sessions
+## Stopping and archiving other sessions
 
-An agent can start sessions (`session.create`) and file idle ones away (`session.archive`). The rule is check status, then archive, and a warning always goes back through the channel the request came from: you get a dialog, an agent gets a structured result in its own conversation.
+An agent can start sessions (`session.create`), stop authorized background work (`session.stop`), and file idle sessions away (`session.archive`). The rule is check status, stop only when you asked, then archive. Refusals go back through the requesting conversation as structured results, never as confirmation dialogs.
 
 1. **Check status.** `session.list_sessions` and `session.read` return `status` and a `working` boolean for every session. `working` is true while a turn, delegated task, permission request, or question is still open.
-2. **Archive once it is idle.** Archiving a session with `working: false` completes immediately and preserves its context. If an agent tries to archive a session that is still working, nothing happens in the app: the agent receives `target_working` with the advice to ask you to stop it in the app if you want it closed, or to leave it running. A session that tries to archive itself, or its parent, from inside its own turn receives `self_archive_while_working`: it should finish the turn so its conclusions can be reviewed; the reviewer archives. Restoring an archived session never restarts stopped work.
+2. **Stop only protected background work.** `session.stop` uses the resolved loaded session id and live engine checks. It runs without a confirmation prompt only when the request carries the bridge-authenticated requesting session, the target is not pinned, and the target is not the conversation in your focused route or pane. A focused session may stop itself. Otherwise it returns `unattributed`, `not_found`, `pinned`, `focused`, or `not_running` without interrupting anything. A successful stop names the requester in both a toast and the notification center; **View** always opens the stopped target.
+3. **Archive once it is idle.** Archiving a session with `working: false` completes immediately and preserves its context. If an agent tries to archive a session that is still working, nothing happens in the app: the agent receives `target_working` with the advice to call `session.stop` only if you asked to stop it, or to leave it running. A session that tries to archive itself, or its parent, from inside its own turn receives `self_archive_while_working`: it should finish the turn so its conclusions can be reviewed; the reviewer archives. Restoring an archived session never restarts stopped work.
 
-Stopping a session is yours: use the Stop button in that conversation. When you archive a working session yourself, from the sidebar, OpenWork asks a short confirmation naming the session ("Stop the current task and archive?") with **Keep session open** and **Stop and archive**.
+The Stop button in a conversation remains the direct person-controlled path. When you archive a working session yourself, from the sidebar, OpenWork asks a short confirmation naming the session ("Stop the current task and archive?") with **Keep session open** and **Stop and archive**.
 
 ### Model and reasoning effort
 

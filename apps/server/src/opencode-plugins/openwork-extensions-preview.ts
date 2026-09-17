@@ -512,9 +512,11 @@ async function executeOpenworkAffordance(
     : unavailableAffordance(request.id, "OpenWork UI command returned an invalid response.");
 }
 
-function affordanceOrigin(context: OpenCodeContext): { origin?: { sessionId: string; workspaceId?: string } } {
+function affordanceOrigin(context: OpenCodeContext): { origin: { sessionId: string; workspaceId?: string } | undefined } {
   const sessionId = context.sessionID?.trim();
-  if (!sessionId) return {};
+  // Always overwrite model-supplied origin. Without a runtime session there is
+  // no attributable requester, so protected UI actions must see no origin.
+  if (!sessionId) return { origin: undefined };
   const workspaceId = (context.workspaceId ?? context.workspaceID)?.trim();
   return { origin: { sessionId, ...(workspaceId ? { workspaceId } : {}) } };
 }

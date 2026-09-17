@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
-import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
+import type { ArchiveSessionOptions, ArchiveSessionOutcome, StopSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
 
@@ -47,12 +47,20 @@ const { createClient } = await import("../src/app/lib/opencode");
 const { sessionWorkHeld } = await import("../src/app/lib/opencode-interruption");
 const { useSessionControlActions } = await import("../src/react-app/domains/session/control/session-control-actions");
 const { useSessionManagementStore } = await import("../src/react-app/domains/session/sidebar/session-management-store");
+const { useWorkbenchStore } = await import("../src/react-app/domains/session/chat/workbench-store");
+const { useNotificationStore } = await import("../src/react-app/kernel/notification-store");
 const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 const cleanups: (() => Promise<void> | void)[] = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  for (const sessionId of [...useSessionManagementStore.getState().pinnedIds]) {
+    useSessionManagementStore.getState().togglePin(sessionId);
+  }
+  useNotificationStore.getState().clearAll();
+  useWorkbenchStore.getState().setSplit(null);
+  useWorkbenchStore.getState().focusPane("primary");
   jest.useRealTimers();
 });
 afterAll(async () => {
@@ -231,6 +239,8 @@ describe("archiving a working session: the warning goes back through the request
   async function mountArchive(engine: Engine, sessions: RouteSession[], hooks: {
     reloadWorkspaceSessions?: () => Promise<unknown>;
     onArchivedChange?: (workspaceId: string, sessionId: string, archived: boolean) => void;
+    selectedSessionId?: string | null;
+    routeWorkspaceId?: string;
   } = {}) {
     const workspace: RouteWorkspace = {
       id: "ws", name: "Client A / Production", displayNameResolved: "Client A / Production", path: directory, preset: "starter", workspaceType: "local",
@@ -248,13 +258,15 @@ describe("archiving a working session: the warning goes back through the request
     document.body.append(host);
     const root = createRoot(host);
     let archiveSession: ((sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>) | null = null;
+    let stopSession: ((sessionId: string, options?: ArchiveSessionOptions) => Promise<StopSessionOutcome>) | null = null;
     function Harness() {
       const archive = useSessionArchive({
         workspaces: [workspace],
         sessionsByWorkspaceId: { ws: sessions },
         endpointForWorkspace: () => endpoint,
         selectedWorkspaceId: "ws",
-        selectedSessionId: null,
+        routeWorkspaceId: hooks.routeWorkspaceId ?? "ws",
+        selectedSessionId: hooks.selectedSessionId ?? null,
         draftScope: null,
         navigateToWorkspaceSession: () => undefined,
         reloadWorkspaceSessions: hooks.reloadWorkspaceSessions ?? (async () => undefined),
@@ -267,15 +279,16 @@ describe("archiving a working session: the warning goes back through the request
         endpointForWorkspace: () => endpoint, navigateToSession: () => {}, navigateToSessionRoot: () => {},
         createTaskInWorkspace: () => null, openModelPicker: () => {}, refreshRouteState: () => {},
         archiveSession: archive.archiveSession,
+        stopSession: archive.stopSession,
       });
-      useEffect(() => { archiveSession = archive.archiveSession; });
+      useEffect(() => { archiveSession = archive.archiveSession; stopSession = archive.stopSession; });
       return archive.archiveDialog;
     }
     await act(async () => root.render(<MemoryRouter><OpenworkControlProvider><Harness /></OpenworkControlProvider></MemoryRouter>));
     const unmount = async () => { await act(async () => root.unmount()); host.remove(); };
     cleanups.push(unmount);
-    if (!archiveSession) throw new Error("archive hook did not mount");
-    return Object.assign(archiveSession, { unmount });
+    if (!archiveSession || !stopSession) throw new Error("archive hook did not mount");
+    return Object.assign(archiveSession, { stop: stopSession, unmount });
   }
 
   function stubFetch(engine: Engine, intercept: (request: Request, requests: Request[]) => Response | Promise<Response> | undefined = () => undefined) {
@@ -600,5 +613,95 @@ describe("archiving a working session: the warning goes back through the request
     await until(() => outcome !== null, "cancel to resolve");
     expect(outcome).toEqual({ kind: "cancelled" });
     expect(engine.requests.some((path) => path.endsWith("/abort"))).toBe(false);
+  });
+
+  test("session.stop returns every protected structured refusal without aborting", async () => {
+    const engine = startEngine();
+    engine.busy.add("ses_pinned").add("ses_focused");
+    await mountArchive(engine, [
+      session("ses_requester", "Requester", 5),
+      session("ses_pinned", "Pinned work", 4),
+      session("ses_focused", "Focused work", 3),
+      session("ses_idle", "Idle work", 2),
+    ], { selectedSessionId: "ses_focused" });
+    useSessionManagementStore.getState().togglePin("ses_pinned");
+    const api = window.__openworkControl;
+    if (!api) throw new Error("control API was not published");
+    const stop = (sessionId: string, requester?: string) => api.command({
+      id: "session.stop",
+      args: { sessionId },
+      ...(requester === undefined ? {} : { origin: { sessionId: requester } }),
+    });
+
+    expect(await stop("ses_pinned")).toMatchObject({ ok: false, code: "unattributed" });
+    expect(await stop("ses_missing", "ses_requester")).toMatchObject({ ok: false, code: "not_found" });
+    expect(await stop("ses_pinned", "ses_requester")).toMatchObject({ ok: false, code: "pinned" });
+    expect(await stop("ses_focused", "ses_requester")).toMatchObject({ ok: false, code: "focused" });
+    expect(await stop("ses_idle", "ses_requester")).toMatchObject({ ok: false, code: "not_running" });
+    expect(engine.requests.some((path) => path.endsWith("/abort"))).toBe(false);
+    expect(engine.busy).toEqual(new Set(["ses_pinned", "ses_focused"]));
+  });
+
+  test("session.stop allows a live background target and attributes View to that target", async () => {
+    const engine = startEngine();
+    engine.busy.add("ses_target");
+    await mountArchive(engine, [
+      session("ses_requester", "Ops audit", 3),
+      session("ses_target", "Payroll import", 2),
+    ], { selectedSessionId: "ses_requester" });
+    const api = window.__openworkControl;
+    if (!api) throw new Error("control API was not published");
+
+    const result = await api.command({
+      id: "session.stop",
+      args: { sessionId: "ses_target" },
+      origin: { sessionId: "ses_requester" },
+    });
+
+    expect(result).toMatchObject({ ok: true, result: {
+      ok: true, sessionId: "ses_target", title: "Payroll import", stopped: true,
+    } });
+    expect(engine.busy.size).toBe(0);
+    expect(engine.requests).toContain("/session/ses_target/abort");
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({
+      title: "Session stopped: Payroll import",
+      body: 'Requested by The agent in "Ops audit" ses_requester',
+      action: { type: "open-session", workspaceId: "ws", sessionId: "ses_target" },
+      actionLabel: "View",
+    }));
+  });
+
+  test("the focused target may stop itself, but a focused secondary pane refuses another requester", async () => {
+    const selfEngine = startEngine();
+    selfEngine.busy.add("ses_self");
+    await mountArchive(selfEngine, [session("ses_self", "Self", 2)], { selectedSessionId: "ses_self" });
+    const firstApi = window.__openworkControl;
+    if (!firstApi) throw new Error("control API was not published");
+    expect(await firstApi.command({
+      id: "session.stop", args: { sessionId: "ses_self" }, origin: { sessionId: "ses_self" },
+    })).toMatchObject({ ok: true, result: { ok: true, stopped: true } });
+
+    await cleanups.pop()?.();
+    const paneEngine = startEngine();
+    paneEngine.busy.add("ses_secondary");
+    const sessions = [session("ses_primary", "Primary", 3), session("ses_secondary", "Secondary", 2)];
+    await mountArchive(paneEngine, sessions, { selectedSessionId: "ses_primary" });
+    const workbench = useWorkbenchStore.getState();
+    workbench.sync({
+      workspaceId: "ws",
+      primarySessionId: "ses_primary",
+      sessions: sessions.map((entry) => ({ workspaceId: "ws", sessionId: entry.id, title: entry.title })),
+      sessionsKnown: true,
+    });
+    workbench.openTab({ workspaceId: "ws", sessionId: "ses_secondary", title: "Secondary" });
+    workbench.setSplit({ workspaceId: "ws", sessionId: "ses_secondary" });
+    workbench.focusPane("secondary");
+    const secondApi = window.__openworkControl;
+    if (!secondApi) throw new Error("control API was not published");
+    expect(await secondApi.command({
+      id: "session.stop", args: { sessionId: "ses_secondary" }, origin: { sessionId: "ses_primary" },
+    })).toMatchObject({ ok: false, code: "focused" });
+    expect(paneEngine.busy).toEqual(new Set(["ses_secondary"]));
+    expect(paneEngine.requests.some((path) => path.endsWith("/abort"))).toBe(false);
   });
 });

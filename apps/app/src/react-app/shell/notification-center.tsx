@@ -25,6 +25,7 @@ import { useControlAction, type OpenworkControlAction } from "./control/control-
 import { openNotificationCenterEvent } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
+import { workspaceSessionRoute } from "./workspace-routes";
 
 const SEVERITY_ICONS: Record<NotificationSeverity, LucideIcon> = {
   info: Info,
@@ -123,6 +124,8 @@ export function NotificationBell({ variant = "icon" }: { variant?: "icon" | "sid
         navigate("/extensions");
       } else if (action.type === "install-marketplace-plugin") {
         navigate("/extensions");
+      } else if (action.type === "open-session") {
+        navigate(workspaceSessionRoute(action.workspaceId, action.sessionId));
       }
     },
     [markAllRead, navigate, reloadCoordinator],
@@ -249,7 +252,12 @@ function NotificationRow({
         ) : null}
         {notification.action && notification.actionLabel ? (
           <div className="mt-1.5">
-            <Button variant="outline" size="sm" onClick={() => onAction(notification)}>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid={`notification-action-${notification.id}`}
+              onClick={() => onAction(notification)}
+            >
               {notification.actionLabel}
             </Button>
           </div>

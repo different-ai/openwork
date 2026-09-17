@@ -112,6 +112,7 @@ async function mountCatalogActions(extraProviders: Array<{ id: string; name: str
       canCreateTask: false, openworkClient: client, opencodeClient: null, endpointForWorkspace,
       navigateToSession: () => { throw new Error("Must not navigate"); }, navigateToSessionRoot: () => { throw new Error("Must not navigate"); }, createTaskInWorkspace: () => null,
       openModelPicker: () => { throw new Error("Must not open picker"); }, refreshRouteState: () => {}, archiveSession: async () => ({ kind: "done" }),
+      stopSession: async (sessionId) => ({ ok: false, code: "not_running", sessionId, error: "Fixture is idle" }),
     });
     return null;
   }

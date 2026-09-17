@@ -277,7 +277,7 @@ test.each([
         workspaceId, baseUrl: "http://127.0.0.1:1", token: "test-token", isRemote: true,
         client, mountedBaseUrl: "http://127.0.0.1:1", opencodeBaseUrl: "http://127.0.0.1:1/opencode",
       }),
-      selectedWorkspaceId: routeWorkspaceId, selectedSessionId: sessionId, draftScope: "local",
+      selectedWorkspaceId: routeWorkspaceId, routeWorkspaceId, selectedSessionId: sessionId, draftScope: "local",
       navigateToWorkspaceSession: () => { throw new Error("Shared Restore must not navigate"); },
       reloadWorkspaceSessions: async () => {},
       onArchivedChange: (workspace, id, value) => {

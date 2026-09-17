@@ -15,10 +15,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
+import { notifyEvent } from "@/react-app/shell/notifications";
 import type { RouteSession, RouteWorkspace } from "@/react-app/shell/route-workspaces";
 import { readLastSessionFor, writeLastSessionFor } from "@/react-app/shell/session-memory";
 import { workspaceSessionRoute } from "@/react-app/shell/workspace-routes";
-import { useWorkbenchStore } from "../chat/workbench-store";
+import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
+import { useSessionManagementStore } from "./session-management-store";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import { getComposerQueuedDrafts, useComposerStateStore } from "../surface/composer-state-store";
 import { composerAutoSendScopeKey, consumeComposerAutoSend, hasComposerAutoSend } from "../surface/composer-auto-send";
@@ -48,11 +50,32 @@ export type ArchiveSessionOptions = {
   refuseWorking?: boolean;
 };
 
+export type StopSessionRefusalCode = "pinned" | "focused" | "unattributed" | "not_found" | "not_running";
+
+/** `session.stop`: the Stop button for an authorized loaded session, without archiving or navigating. */
+export type StopSessionOutcome =
+  | { ok: true; sessionId: string; title: string; stopped: true }
+  | { ok: false; code: StopSessionRefusalCode | "failed"; sessionId: string; error: string };
+
+type ArchiveRun = ArchiveSessionOptions & { stopOnly?: (outcome: StopSessionOutcome) => void };
+
+type StopTargetResolution = ArchiveTarget | { code: "not_found" | "failed"; error: string };
+
+function requesterLabel(requestedBy: ArchiveRequester, sessionId: string): string {
+  if (requestedBy.sessionId === sessionId) return t("session_management.archive_requested_by_self");
+  const who = requestedBy.title
+    ? t("session_management.archive_requested_by_agent", { title: requestedBy.title })
+    : t("session_management.archive_requested_by_agent_untitled");
+  return `${who} ${requestedBy.sessionId}`;
+}
+
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
   sessionsByWorkspaceId: Record<string, RouteSession[]>;
   endpointForWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
   selectedWorkspaceId: string;
+  /** Workspace id from the URL. Empty on the legacy route; never replace it with remembered selection for focus checks. */
+  routeWorkspaceId: string;
   selectedSessionId: string | null;
   draftScope: string | null;
   navigateToWorkspaceSession: (workspaceId: string, sessionId: string | null, options?: { replace: boolean }) => void;
@@ -140,9 +163,43 @@ export function useSessionArchive(input: {
     });
   }
 
-  async function archive(target: ArchiveTarget, confirmed: boolean, request?: ArchiveSessionOptions) {
-    if (busy.current) return;
+  /** Stopped on an agent's request: say who asked and keep View bound to the stopped target. */
+  function announceStop(target: ArchiveTarget) {
+    if (!target.requestedBy) throw new Error("Stop requester attribution is missing.");
+    const title = t("session_management.session_stopped", { title: target.title });
+    const body = t("session_management.stopped_requested_by", {
+      requester: requesterLabel(target.requestedBy, target.sessionId),
+    });
+    const view = () => {
+      if (mounted.current) current.current.input.navigateToWorkspaceSession(target.workspace.id, target.sessionId);
+    };
+    toast(<span title={title}>{title}</span>, {
+      id: `session-stop:${target.sessionId}`,
+      description: body,
+      action: { label: t("common.view"), onClick: view },
+    });
+    notifyEvent({
+      kind: "system",
+      severity: "info",
+      title,
+      body,
+      action: { type: "open-session", workspaceId: target.workspace.id, sessionId: target.sessionId },
+      actionLabel: t("common.view"),
+    });
+  }
+
+  async function archive(target: ArchiveTarget, confirmed: boolean, request?: ArchiveRun) {
+    if (busy.current) {
+      request?.stopOnly?.({
+        ok: false,
+        code: "failed",
+        sessionId: target.sessionId,
+        error: "Another stop or archive is still in progress. Try again in a moment.",
+      });
+      return;
+    }
     busy.current = true;
+    const stopOnly = request?.stopOnly;
     const refusal = (kind: "target_working" | "self_archive_while_working"): ArchiveSessionOutcome =>
       ({ kind, sessionId: target.sessionId, title: target.title });
     const askUser = () => {
@@ -211,13 +268,14 @@ export function useSessionArchive(input: {
       // Native Stop reaches the root immediately, concurrent with discovery.
       // Archive also accounts for older/background subtasks that would be hidden.
       let rootStop: Promise<void> | undefined;
-      if (confirmed) {
-        if (mounted.current) { setStopping(true); setError(null); }
+      const beginStop = () => {
+        if (mounted.current && !stopOnly) { setStopping(true); setError(null); }
         hold(sessionId);
         cancelLocal(sessionId);
         rootStop = stop(sessionId);
         void rootStop.catch(() => {});
-      }
+      };
+      if (confirmed && !stopOnly) beginStop();
       const ids = await bounded(readTree());
       // The requester is running by construction (it is issuing this call), so
       // archiving itself or an ancestor would stop its own turn mid-conclusion.
@@ -261,6 +319,18 @@ export function useSessionArchive(input: {
               useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[id]?.compacting);
         });
       };
+      if (stopOnly) {
+        // Engine reads, pending admissions and local queues are authoritative;
+        // a stale idle sidebar record must not hide background work.
+        const active = (await bounded(readWorking())).length > 0
+          || ids.some(id => localWork(id) || sessionHasPendingSubmission(baseUrl, id)
+            || getQueuedDrainState(id).phase.kind === "sending");
+        if (!active) {
+          stopOnly({ ok: false, code: "not_running", sessionId, error: `"${target.title}" is not running.` });
+          return;
+        }
+        beginStop();
+      }
       if (!confirmed && (await bounded(readWorking())).length > 0) {
         askUser();
         return;
@@ -284,6 +354,11 @@ export function useSessionArchive(input: {
       if ((await bounded(readTree())).some(id => !ids.includes(id))) throw new Error("A new subtask appeared. Try again to include it.");
       checkDeadline();
       for (const id of ids) cancelLocal(id);
+      if (stopOnly) {
+        announceStop(target);
+        stopOnly({ ok: true, sessionId, title: target.title, stopped: true });
+        return;
+      }
       checkDeadline();
       patchDispatched = true;
       await bounded(setSessionArchived(client, sessionId, true, workspace.path, options));
@@ -303,6 +378,10 @@ export function useSessionArchive(input: {
       if (mounted.current) await bounded(current.current.input.reloadWorkspaceSessions(workspace.id));
     } catch (error) {
       const cause = error instanceof Error ? error.message : String(error);
+      if (stopOnly) {
+        stopOnly({ ok: false, code: "failed", sessionId, error: `The session has not been stopped. ${cause}` });
+        return;
+      }
       const message = patchDispatched && !archived
         ? `Archive outcome is unknown. The request may have been applied; check the session before retrying. ${cause}`
         : cause;
@@ -336,6 +415,8 @@ export function useSessionArchive(input: {
     return null;
   }
 
+  // Keep archive target resolution on its existing route behavior. Stop uses
+  // a separate live resolver for its security gates.
   function resolveTarget(sessionId: string, options?: ArchiveSessionOptions): ArchiveTarget | { error: string } {
     const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
     if (!workspace) return { error: "Session was not found in the current session list" };
@@ -346,6 +427,74 @@ export function useSessionArchive(input: {
     const requester = options?.requester?.sessionId.trim();
     const requestedBy = requester ? { sessionId: requester, title: sessionTitle(requester) } : null;
     return { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
+  }
+
+  function loadedSession(sessionId: string, workspaceId?: string): { workspace: RouteWorkspace; session: RouteSession } | null {
+    const now = current.current.input;
+    for (const workspace of now.workspaces) {
+      if (workspaceId && workspace.id !== workspaceId) continue;
+      const session = now.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId);
+      if (session) return { workspace, session };
+    }
+    return null;
+  }
+
+  function resolveStopTarget(sessionId: string, options?: ArchiveSessionOptions): StopTargetResolution {
+    const loaded = loadedSession(sessionId);
+    if (!loaded) return { code: "not_found", error: "Session was not found in the current session list" };
+    const endpoint = current.current.input.endpointForWorkspace(loaded.workspace);
+    if (!endpoint) return { code: "failed", error: "The session's workspace is not connected." };
+    if (isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) return { code: "failed", error: V2_SESSION_ARCHIVE_UNAVAILABLE };
+    const title = loaded.session.title?.trim() || t("session.default_title");
+    const requester = options?.requester?.sessionId.trim();
+    const requesterSession = requester ? loadedSession(requester) : null;
+    const requestedBy = requester ? {
+      sessionId: requester,
+      title: requesterSession ? requesterSession.session.title?.trim() || t("session.default_title") : null,
+    } : null;
+    return { workspace: loaded.workspace, endpoint, sessionId: loaded.session.id, title,
+      draftScope: current.current.input.draftScope, requestedBy };
+  }
+
+  function focusedSession(): { workspaceId: string; sessionId: string } | null {
+    const now = current.current.input;
+    const routeSessionId = now.selectedSessionId?.trim();
+    if (!routeSessionId) return null;
+    const route = loadedSession(routeSessionId, now.routeWorkspaceId.trim() || undefined);
+    if (!route) return null;
+    const routeTarget = { workspaceId: route.workspace.id, sessionId: route.session.id };
+    const workbench = useWorkbenchStore.getState();
+    // The URL owns the primary pane. Only trust the secondary focus when its
+    // primary owner still matches that authoritative route.
+    if (workbench.focusedPane !== "secondary" || !workbench.secondary
+      || !isSameWorkbenchSession(workbench.primary, routeTarget)) return routeTarget;
+    const secondary = loadedSession(workbench.secondary.sessionId, workbench.secondary.workspaceId);
+    return secondary ? { workspaceId: secondary.workspace.id, sessionId: secondary.session.id } : routeTarget;
+  }
+
+  function stopSession(sessionId: string, options?: ArchiveSessionOptions): Promise<StopSessionOutcome> {
+    const requester = options?.requester?.sessionId.trim();
+    if (!requester) {
+      return Promise.resolve({ ok: false, code: "unattributed", sessionId,
+        error: "session.stop requires the requesting agent's session id." });
+    }
+    const target = resolveStopTarget(sessionId, options);
+    if ("error" in target) {
+      return Promise.resolve({ ok: false, code: target.code, sessionId, error: target.error });
+    }
+    if (useSessionManagementStore.getState().pinnedIds.includes(target.sessionId)) {
+      return Promise.resolve({ ok: false, code: "pinned", sessionId: target.sessionId,
+        error: `"${target.title}" is pinned and was not stopped.` });
+    }
+    const focused = focusedSession();
+    if (focused && isSameWorkbenchSession(focused, { workspaceId: target.workspace.id, sessionId: target.sessionId })
+      && requester !== target.sessionId) {
+      return Promise.resolve({ ok: false, code: "focused", sessionId: target.sessionId,
+        error: `"${target.title}" is the person's focused conversation and was not stopped.` });
+    }
+    return new Promise<StopSessionOutcome>(resolve => {
+      void archive(target, true, { ...options, stopOnly: resolve });
+    });
   }
 
   async function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
@@ -364,6 +513,7 @@ export function useSessionArchive(input: {
 
   return {
     archiveSession,
+    stopSession,
     archiveDialog: (
       <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(settle("cancelled")); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">

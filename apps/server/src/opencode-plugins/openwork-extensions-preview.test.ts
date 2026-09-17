@@ -1453,6 +1453,27 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     ]);
   });
 
+  test("removes a spoofed origin when the runtime has no requesting conversation", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await plugin.tool.openwork_execute.execute({
+      id: "session.open",
+      args: { sessionId: "ses_alpha" },
+      origin: { sessionId: "ses_spoofed" },
+    }, {});
+
+    expect(fake.uiControlRequests).toEqual([
+      {
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: { id: "session.open", args: { sessionId: "ses_alpha" } },
+        },
+      },
+    ]);
+  });
+
   test("session.send appends a prompt to an existing session by id without touching the UI", async () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });

@@ -257,8 +257,8 @@ const openworkAffordanceSuccessSchema = z.object({
  * Structured outcomes an action can report so the agent can decide instead of
  * retrying a transport-looking error. Warnings travel back through the channel
  * the request came from: an agent never gets a dialog, it gets one of these.
- * - `target_working`: the target session is still working; ask the person to
- *   stop it if they want it closed, otherwise leave it running.
+ * - `target_working`: the target session is still working; stop it first
+ *   (session.stop) if the person wants it closed, otherwise leave it running.
  * - `self_archive_while_working`: a session asked to archive itself (or its
  *   parent) from inside its own running turn; finish the turn, the reviewer
  *   archives.
@@ -266,6 +266,9 @@ const openworkAffordanceSuccessSchema = z.object({
  *   mutation was sent by this attempt.
  * - `archive_outcome_unknown`: the archive mutation was sent but its outcome
  *   could not be confirmed; read the session before considering another attempt.
+ * - `pinned`, `focused`, `unattributed`, `not_found`, `not_running`: session.stop
+ *   refused before interruption because its protected target/requester contract
+ *   was not satisfied.
  */
 export const openworkAffordanceFailureCodeSchema = z.enum([
   "unavailable",
@@ -277,6 +280,11 @@ export const openworkAffordanceFailureCodeSchema = z.enum([
   "self_archive_while_working",
   "verification_failed",
   "archive_outcome_unknown",
+  "pinned",
+  "focused",
+  "unattributed",
+  "not_found",
+  "not_running",
 ])
 export type OpenworkAffordanceFailureCode = z.infer<typeof openworkAffordanceFailureCodeSchema>
 
