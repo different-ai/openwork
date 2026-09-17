@@ -374,13 +374,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const current = prepareVoiceSubmission();
     const hasContent = current.draft.trim().length > 0 || current.attachments.length > 0;
-    if (!hasContent) return;
-    if (current.submissionPreparing) return;
-    // A new Enter after Stop is fresh work, not a follow-up to the interrupted
-    // turn. The immediate send path fences admission on the shared interruption
-    // promise; dropping Enter here silently leaves the person's draft unsent.
+    if (!hasContent || props.disabled) return;
+    // Starting a turn must not block queueing or steering its follow-ups.
+    // A fresh immediate send still waits for submission preparation.
     if (current.stopping) {
-      void current.onSend();
+      if (!current.submissionPreparing) void current.onSend();
       return;
     }
     if (current.busy && !current.editing) {
@@ -388,8 +386,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       else void current.onQueue();
       return;
     }
+    if (current.submissionPreparing) return;
     void current.onSend();
-  }, [props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+  }, [props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
 

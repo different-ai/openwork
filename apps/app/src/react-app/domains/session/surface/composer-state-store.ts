@@ -8,6 +8,7 @@ import type { ComposerMentionKind } from "./composer/mention-encoding";
 export type QueuedComposerItem = {
   id: string;
   draft: ComposerDraft;
+  steer?: { owner: string; generation: number; agent: string | null };
 };
 
 export type ComposerPastePart = {
@@ -59,7 +60,7 @@ export type ComposerStateStore = {
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
-  appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => void;
+  appendQueuedDraft: (sessionId: string, draft: ComposerDraft, steer?: QueuedComposerItem["steer"]) => void;
   removeQueuedDraft: (sessionId: string, id: string) => void;
   updateQueuedDraft: (sessionId: string, id: string, draft: ComposerDraft) => void;
   reorderQueuedDrafts: (sessionId: string, ids: string[]) => void;
@@ -203,9 +204,10 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     if (current.pasteParts === pasteParts) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
   }),
-  appendQueuedDraft: (sessionId, draft) => set((state) => {
+  appendQueuedDraft: (sessionId, draft, steer) => set((state) => {
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
-    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...current, createQueuedItem(draft)] } };
+    const item = createQueuedItem(draft);
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...current, steer ? { ...item, steer } : item] } };
   }),
   removeQueuedDraft: (sessionId, id) => set((state) => {
     const current = state.queuedDrafts[sessionId];
@@ -251,7 +253,7 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   prependQueuedDrafts: (sessionId, items) => set((state) => {
     if (items.length === 0) return state;
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
-    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...items.map((item) => createQueuedItem(item.draft, item.id)), ...current] } };
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...items.map((item) => ({ ...item, ...createQueuedItem(item.draft, item.id) })), ...current] } };
   }),
   clearSession: (sessionId) => set((state) => {
     if (!state.sessions[sessionId]) return state;
