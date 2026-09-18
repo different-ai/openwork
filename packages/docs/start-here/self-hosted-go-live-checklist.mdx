@@ -1,0 +1,55 @@
+---
+title: "Self-hosted go-live checklist"
+description: "Acceptance checks for TLS, DNS, health, MCP transport, and real desktop machines before a self-hosted Den goes live."
+---
+
+Browsers can mask TLS misconfigurations by fetching missing intermediates or using cached state. The OpenWork agent engine validates TLS strictly, like any backend runtime, so these checks catch the non-browser failures that browser sign-in and model tests cannot.
+
+## Check 1 — TLS chain completeness
+
+Replace `HOST` with your Den hostname:
+
+```bash
+echo | openssl s_client -connect HOST:443 -servername HOST -showcerts 2>/dev/null | grep -c "BEGIN CERT"
+```
+
+The result must be `2` or higher: at least the leaf certificate plus its intermediate.
+
+If the result is `1`, non-browser clients fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE` even while browsers work. Fix the TLS terminator so it serves the full chain:
+
+- nginx: set `ssl_certificate fullchain.pem`.
+- Kubernetes TLS Secret: use `kubectl create secret tls <name> --cert=fullchain.pem --key=privkey.pem`; never use `cert.pem`.
+- F5 or NetScaler: attach the chain in the SSL profile.
+
+## Check 2 — Health endpoint
+
+```bash
+curl -sSi https://HOST/api/den/health
+```
+
+Expect HTTP `200`.
+
+## Check 3 — MCP endpoint from a non-browser client
+
+```bash
+curl -sSi -X POST https://HOST/api/den/mcp/agent \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"golive-check","version":"1.0.0"}}}'
+```
+
+Expect an HTTP response (`200` or `401` are both acceptable for this transport check), never a TLS error.
+
+## Check 4 — Acceptance on real machines
+
+Before go-live, install OpenWork on one macOS machine and one Windows machine from the customer-managed network. Sign in to the self-hosted deployment, enable developer mode, and run the agent diagnostic. Require both `engine-mcp-sync` and `cloud-tool-catalog` to pass.
+
+macOS is the strict canary because Macs never cache intermediates. Windows can mask a broken chain if the intermediate was cached in the OS store.
+
+## Check 5 — DNS
+
+The hostname must resolve through standard system resolvers on the VPN, not only inside browsers. Validate DNS from the same machine and account that will run OpenWork.
+
+## After fixing anything
+
+After fixing any item above, fully restart the desktop app. The engine re-attempts a failed MCP connection only on restart or repair.
