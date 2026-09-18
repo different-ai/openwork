@@ -14,7 +14,15 @@ declare global {
 }
 
 /** Explicit selection, not model-initiated discovery. No Den or Electron. */
-export async function selectedSkillsWeb(seed: Seed) {
+export function selectedSkillsWeb(seed: Seed) {
+  return selectedSkills(seed, "allow");
+}
+
+export function deniedSelectedSkillsWeb(seed: Seed) {
+  return selectedSkills(seed, "deny");
+}
+
+async function selectedSkills(seed: Seed, permission: "allow" | "deny") {
   const engine = resolveEvalEngine();
   const skillName = "selected-briefing";
   const skillBody = "When preparing a briefing, include the exact phrase AMBER_BODY_ONLY_7391. Keep the briefing concise.";
@@ -23,6 +31,7 @@ export async function selectedSkillsWeb(seed: Seed) {
   const workspacePath = seed.tmpPath("selected-skills");
   const skillDirectory = join(workspacePath, ".opencode", "skills", skillName);
   await mkdir(skillDirectory, { recursive: true });
+  await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({ permission: { skill: permission } })}\n`);
   await writeFile(join(skillDirectory, "SKILL.md"), `---\nname: ${skillName}\ndescription: Prepare a concise briefing.\n---\n${skillBody}\n`);
   const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
     promptMarker: prompt, latestUserTurn: true, finalReply: reply,
@@ -72,7 +81,16 @@ export async function selectedSkillsWeb(seed: Seed) {
         const request = new Request(input instanceof Request ? input.clone() : input, init);
         const pathname = new URL(request.url).pathname;
         if (request.method === "POST" && /\/(?:prompt|prompt_async|permission)$/.test(pathname)) {
-          window.__selectedSkillPrompts?.push({ kind: pathname.endsWith("/permission") ? "permission" : "prompt", body: await request.clone().json() });
+          const entry: { kind: string; body: unknown; status?: number; response?: unknown } = {
+            kind: pathname.endsWith("/permission") ? "permission" : "prompt", body: await request.clone().json(),
+          };
+          window.__selectedSkillPrompts?.push(entry);
+          const response = await original(input, init);
+          if (entry.kind === "permission") {
+            entry.status = response.status;
+            entry.response = await response.clone().json();
+          }
+          return response;
         }
         return original(input, init);
       };
@@ -81,7 +99,6 @@ export async function selectedSkillsWeb(seed: Seed) {
     const providerId = "selected-skill-witness";
     const modelId = "briefing-model";
     await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-      permission: { skill: "allow" },
       provider: { [providerId]: {
         npm: "@ai-sdk/openai-compatible", name: "Selected skill witness",
         options: { baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: "synthetic-skill-key" },
@@ -107,7 +124,7 @@ export async function selectedSkillsWeb(seed: Seed) {
       nativeRequests: async () => {
         const entries = await seed.evalIn(app, () => window.__selectedSkillPrompts ?? []);
         return entries.flatMap((entry) => isRecord(entry) && (entry.kind === "permission" || entry.kind === "prompt")
-          ? [{ kind: entry.kind, body: entry.body }] : []);
+          ? [{ kind: entry.kind, body: entry.body, status: entry.status, response: entry.response }] : []);
       },
       providerRequests: () => providerRequests,
       modelRequests: () => witness.agentRequests({ promptMarker: prompt }),

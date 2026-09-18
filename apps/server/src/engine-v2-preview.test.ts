@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,8 @@ import {
 } from "./engine-v2-preview.js";
 import type { ServerConfig } from "./types.js";
 import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
+import { createManagedOpencodeV2Server } from "./managed-opencode-v2.js";
+import constants from "../../../constants.json" with { type: "json" };
 
 test("v2 app guidance fits the native entry limit and uses the current native tools", () => {
   for (const connected of [true, false]) {
@@ -242,3 +244,113 @@ test("null or empty native endpoint overrides cannot bypass catalog origin valid
     expect(result.specs).toEqual([]);
   }
 });
+
+test.skipIf(!process.env.OPENWORK_EVAL_OPENCODE2_BIN)("native workspace skill rules reach agents and permission decisions without crossing locations", async () => {
+  const binary = process.env.OPENWORK_EVAL_OPENCODE2_BIN;
+  if (!binary) throw new Error("A pre-cached native v2 binary is required");
+  const root = await mkdtemp(join(tmpdir(), "openwork-native-skill-permissions-"));
+  const cwd = process.cwd();
+  const home = join(root, "home");
+  const directories = { deny: join(root, "denied"), allow: join(root, "allowed") };
+  const env = {
+    HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_CACHE_HOME: join(home, "cache"),
+    XDG_DATA_HOME: join(home, "data"), XDG_STATE_HOME: join(home, "state"), XDG_RUNTIME_DIR: join(home, "run"),
+    OPENCODE_CONFIG: join(root, "fixture.json"),
+  };
+  let modelRequests = 0;
+  const witness = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    if (new URL(request.url).pathname === "/catalog/api.json") return Response.json({});
+    modelRequests++;
+    return new Response("Unexpected model request", { status: 503 });
+  } });
+  let native: Awaited<ReturnType<typeof createManagedOpencodeV2Server>> | undefined;
+  const record = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const entries = (value: unknown): Record<string, unknown>[] => {
+    if (!record(value) || !Array.isArray(value.data) || !value.data.every(record)) throw new Error("Invalid native list");
+    return value.data;
+  };
+  try {
+    await Promise.all([root, ...Object.values(directories), ...Object.values(env).filter((path) => path !== env.OPENCODE_CONFIG)]
+      .map((path) => mkdir(path, { recursive: true })));
+    await writeFile(env.OPENCODE_CONFIG, "{}\n");
+    const skillName = "selected-briefing";
+    for (const [effect, directory] of Object.entries(directories)) {
+      await writeFile(join(directory, "opencode.json"), JSON.stringify({ permission: { skill: effect } }));
+      const skillDirectory = join(directory, ".opencode", "skills", skillName);
+      await mkdir(skillDirectory, { recursive: true });
+      await writeFile(join(skillDirectory, "SKILL.md"), `---\nname: ${skillName}\ndescription: Prepare a concise briefing.\n---\nSynthetic briefing instructions.\n`);
+    }
+    process.chdir(root);
+    const engine = await createManagedOpencodeV2Server({
+      bin: binary, rootDir: join(root, "native"), bootTimeoutMs: 15_000,
+      env: { ...env, OPENCODE_MODELS_URL: `http://127.0.0.1:${witness.port}/catalog` },
+      permissions: async () => [],
+    });
+    native = engine;
+    process.chdir(cwd);
+    expect((await engine.health()).version).toBe(constants.opencodeV2Version);
+    await engine.setProviders([{
+      id: "permission-witness", name: "Permission witness", apiKey: "synthetic-key",
+      baseUrl: `http://127.0.0.1:${witness.port}/model/v1`, models: [{ id: "permission-model", name: "Permission model" }],
+    }]);
+    const readRules = async (directory: string) => {
+      const result = await engine.fetchJson("/api/agent", { directory, timeoutMs: 5_000 });
+      expect(result.status).toBe(200);
+      return entries(result.json).map((agent) => ({ id: agent.id, permissions: Array.isArray(agent.permissions)
+        ? agent.permissions.filter(record).filter((rule) => rule.action === "skill") : [] }));
+    };
+    const waitForRules = async (directory: string, expected: { action: string; resource: string; effect: string }[]) => {
+      const deadline = Date.now() + 10_000;
+      let agents = await readRules(directory);
+      const ready = () => agents.length > 0 && agents.every((agent) => agent.permissions.length === expected.length
+        && agent.permissions.every((rule, index) => rule.action === expected[index].action
+          && rule.resource === expected[index].resource && rule.effect === expected[index].effect));
+      while (!ready() && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        agents = await readRules(directory);
+      }
+      expect(agents.length).toBeGreaterThan(0);
+      for (const agent of agents) expect(agent.permissions).toEqual(expected);
+    };
+    const sessions: Record<string, { id: string; directory: string; skillId: string }> = {};
+    const checkPermission = async (effect: string, session: { id: string; directory: string; skillId: string }) => {
+      const result = await engine.fetchJson(`/api/session/${session.id}/permission`, {
+        method: "POST", directory: session.directory, timeoutMs: 5_000,
+        body: { action: "skill", resources: [session.skillId], save: [session.skillId] },
+      });
+      expect(result.status).toBe(200);
+      expect(result.json).toMatchObject({ data: { effect } });
+    };
+    for (const [effect, directory] of Object.entries(directories)) {
+      const expected = [{ action: "skill", resource: "*", effect }];
+      const config = await engine.fetchJson("/api/config", { directory, timeoutMs: 5_000 });
+      expect(config.status).toBe(200);
+      expect(config.json).toContainEqual(expect.objectContaining({ path: join(directory, "opencode.json"), info: { permissions: expected } }));
+      await waitForRules(directory, expected);
+      const catalog = await engine.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
+      expect(catalog.status).toBe(200);
+      const skill = entries(catalog.json).find((entry) => entry.name === skillName);
+      if (typeof skill?.id !== "string") throw new Error("Native skill missing");
+      const created = await engine.fetchJson("/api/session", { method: "POST", directory, timeoutMs: 5_000,
+        body: { location: { directory }, model: { providerID: "permission-witness", id: "permission-model" }, title: `${effect} skill` } });
+      expect(created.status).toBe(200);
+      if (!record(created.json) || !record(created.json.data) || typeof created.json.data.id !== "string") throw new Error("Native session missing");
+      const session = { id: created.json.data.id, directory, skillId: skill.id };
+      sessions[effect] = session;
+      await checkPermission(effect, session);
+    }
+    await writeFile(join(directories.deny, "opencode.json"), JSON.stringify({ permission: { skill: { "*": "deny", "selected-*": "ask" } } }));
+    const expected = [{ action: "skill", resource: "*", effect: "deny" }, { action: "skill", resource: "selected-*", effect: "ask" }];
+    await waitForRules(directories.deny, expected);
+    await checkPermission("ask", sessions.deny);
+    await waitForRules(directories.allow, [{ action: "skill", resource: "*", effect: "allow" }]);
+    await checkPermission("allow", sessions.allow);
+    expect(modelRequests).toBe(0);
+  } finally {
+    process.chdir(cwd);
+    await native?.close();
+    await witness.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
