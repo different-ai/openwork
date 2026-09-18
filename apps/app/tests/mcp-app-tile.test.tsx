@@ -14,6 +14,7 @@ import { DASHBOARD_AUTO_REFRESH_INTERVAL_MS, readDashboardTileCache, writeDashbo
 import { flushDashboardTileCacheStorage, resetDashboardTileCacheMemory } from "../src/app/lib/dashboard-cache-storage";
 import * as launchScheduler from "../src/react-app/domains/dashboard/dashboard-launch-scheduler";
 import * as tileGeometry from "../src/react-app/domains/dashboard/use-dashboard-tile-geometry";
+import { markCloudCredentialRefreshed } from "../src/react-app/domains/connections/cloud-credential-revision";
 
 let sandboxView: McpAppSandboxViewProps | undefined;
 let automaticallyReady = true;
@@ -170,6 +171,118 @@ async function refreshCompactTile(container: HTMLElement) {
   const item = await compactRefreshItem(container);
   await act(async () => item.click());
 }
+
+const credentialScope = { serverBaseUrl: "http://fixture.invalid", workspaceId: "fixture" };
+
+test.each([false, true])("recovers a Cloud tile on matching credential refresh (installation before failure: %j)", async early => {
+  const pending = Promise.withResolvers<OpenworkMcpAppResource | null>();
+  const fixture = continuityFixture({
+    entry: { connectionId: "emc_fixture" },
+    resolve: async index => index === 1 ? pending.promise : continuityResource(index),
+  });
+  const host = await mountContinuityTile(fixture);
+  const reject = () => pending.reject(new OpenworkServerError(401, "mcp_auth_required", "This App's connection needs authentication."));
+  try {
+    if (!early) await act(async () => { reject(); });
+    expect(host.container.querySelector("[data-sandbox-view]")).toBeNull();
+    expect(fixture.resolutions).toHaveLength(1);
+    expect(fixture.calls).toHaveLength(0);
+    await act(async () => {
+      markCloudCredentialRefreshed({ ...credentialScope, workspaceId: "other-workspace" });
+      markCloudCredentialRefreshed({ ...credentialScope, serverBaseUrl: "http://other.invalid" });
+    });
+    expect(fixture.resolutions).toHaveLength(1);
+    await act(async () => { markCloudCredentialRefreshed(credentialScope); });
+    if (early) {
+      expect(fixture.resolutions).toHaveLength(1);
+      await act(async () => { reject(); });
+    }
+    expect(fixture.resolutions).toHaveLength(2);
+    expect(fixture.calls).toHaveLength(1);
+    expect(fixture.calls[0].request.arguments).toEqual({ query: "saved" });
+    expect(fixture.calls[0].request.approved).toBeUndefined();
+    expect(host.container.querySelector("[data-sandbox-view]")).not.toBeNull();
+    await act(async () => { markCloudCredentialRefreshed(credentialScope); });
+    expect(fixture.resolutions).toHaveLength(2);
+    expect(fixture.calls).toHaveLength(1);
+  } finally { await host.dispose(); }
+});
+
+test.each(["access-denied", "local-provider", "provider-result", "unmounted", "workspace-changed", "requires-approval", "approved-launch", "manual-launch"])("credential refresh leaves %s tiles alone", async scenario => {
+  const fixture = continuityFixture({
+    entry: {
+      connectionId: scenario === "local-provider" ? undefined : "emc_fixture",
+      requiresApproval: scenario === "requires-approval",
+      launchApproved: scenario === "approved-launch",
+      autoLaunch: scenario !== "manual-launch",
+    },
+    resolve: async index => {
+      if (scenario === "provider-result") return continuityResource(index);
+      throw new OpenworkServerError(scenario === "access-denied" ? 403 : 401,
+        scenario === "access-denied" ? "mcp_access_denied" : "mcp_auth_required", "This view is unavailable.");
+    },
+    call: async () => ({ isError: true, content: [{ type: "text", text: "Provider domain error" }] }),
+  });
+  const host = await mountContinuityTile(fixture);
+  try {
+    if (scenario === "requires-approval" || scenario === "approved-launch" || scenario === "manual-launch") {
+      const run = host.container.querySelector<HTMLButtonElement>('button[aria-label="Run Fixture"]');
+      if (!run) throw new Error("Missing manual Run button");
+      await act(async () => run.click());
+    }
+    expect(fixture.resolutions).toHaveLength(1);
+    const calls = fixture.calls.length;
+    if (scenario === "unmounted") await host.dispose();
+    if (scenario === "workspace-changed") await host.render({ workspaceId: "other-workspace" });
+    await act(async () => { markCloudCredentialRefreshed(credentialScope); });
+    expect(fixture.resolutions).toHaveLength(1);
+    expect(fixture.calls).toHaveLength(calls);
+  } finally { await host.dispose(); }
+});
+
+test("credential refresh does not replay a tile after the live server requires approval", async () => {
+  const fixture = continuityFixture({
+    entry: { connectionId: "emc_fixture" },
+    call: async (_request, index) => {
+      if (index <= 2) throw new OpenworkServerError(403, "tool_requires_approval", "Run this app manually.");
+      throw new OpenworkServerError(401, "mcp_auth_required", "Sign in to this connection.");
+    },
+  });
+  const host = await mountContinuityTile(fixture);
+  try {
+    expect(fixture.calls).toHaveLength(1);
+    const run = host.container.querySelector<HTMLButtonElement>('button[aria-label="Run Fixture"]');
+    if (!run) throw new Error("Missing manual Run button");
+    await act(async () => run.click());
+    expect(fixture.calls).toHaveLength(3);
+    expect(fixture.calls[2].request.approved).toBe(true);
+    await act(async () => { markCloudCredentialRefreshed(credentialScope); });
+    expect(fixture.calls).toHaveLength(3);
+    expect(fixture.resolutions).toHaveLength(2);
+  } finally { await host.dispose(); }
+});
+
+test("a Cloud tile drops rejected saved authority and relaunches after credential refresh", async () => {
+  const fixture = continuityFixture({
+    entry: { connectionId: "emc_fixture" },
+    call: async (_request, index) => {
+      if (index === 2) throw new OpenworkServerError(401, "mcp_auth_required", "Sign in to this connection.");
+      return { content: [{ type: "text", text: "Recovered result" }] };
+    },
+  });
+  const host = await mountContinuityTile(fixture);
+  try {
+    await refreshCompactTile(host.container);
+    expect(host.container.querySelector("[data-sandbox-view]")).toBeNull();
+    expect(readDashboardTileCache("continuity-scope", fixture.entry.id)).toBeNull();
+    expect(fixture.released).toEqual(["continuity-1"]);
+    await act(async () => { markCloudCredentialRefreshed(credentialScope); });
+    expect(fixture.resolutions).toHaveLength(2);
+    expect(fixture.calls).toHaveLength(3);
+    expect(host.container.querySelector("[data-sandbox-view]")).not.toBeNull();
+    expect(fixture.calls[2].request.launchId).toBe("continuity-2");
+  } finally { await host.dispose(); }
+});
 
 test("live generated actions share refresh state without remounting the menu or resetting the launch on rerender", async () => {
   const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");

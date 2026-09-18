@@ -34,11 +34,13 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
     manual: boolean,
     receive: (app: OpenworkMcpAppResource | null) => void,
     fail: (error: unknown) => void,
+    credentialRevision = 0,
   ): () => void {
     let scopes = clients.get(origin.client)
     if (!scopes) { scopes = new Map(); clients.set(origin.client, scopes) }
     // Client objects capture endpoint/auth at construction. Never merge clients by URL.
-    const key = mcpAppDiscoverySignature([origin.workspaceId, origin.sessionId, origin.engine, origin.readOnly, toolName, launch])
+    // Cloud credentials can be replaced behind the same local-server client.
+    const key = mcpAppDiscoverySignature([origin.workspaceId, origin.sessionId, origin.engine, origin.readOnly, toolName, launch, credentialRevision])
     const queuedScopes = new Set([...queue].map(job => job.scope))
     for (const [key, scope] of scopes) {
       if (!scope.busy && !queuedScopes.has(scope)
