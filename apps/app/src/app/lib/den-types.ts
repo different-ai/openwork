@@ -105,6 +105,11 @@ export type DenPluginCloudReadinessConnection = {
   serverName?: string;
   credentialMode?: "shared" | "per_member";
   connectedForMe?: boolean;
+  authType?: "oauth" | "apikey" | "none";
+  requiredAuthType?: "oauth" | "apikey" | "none";
+  authTypeMismatch?: boolean;
+  oauthClientRequired?: boolean;
+  oauthClientConfigured?: boolean;
 };
 
 export type DenPluginCloudReadiness = {

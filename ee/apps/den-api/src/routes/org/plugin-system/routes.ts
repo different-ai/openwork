@@ -764,7 +764,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Get plugin",
-      description: "Returns one plugin detail when the caller can view it.",
+      description: "Returns one plugin detail when the caller can view it, with current member-scoped cloud readiness when Connect is enabled. Standalone plugins do not require marketplace membership.",
       responses: {
         200: jsonResponse("Plugin returned successfully.", pluginDetailResponseSchema),
         400: jsonResponse("The plugin path parameters were invalid.", invalidRequestSchema),
@@ -775,7 +775,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     async (c: OrgContext) => {
       try {
         const params = validParam<any>(c)
-        return c.json({ item: await getPluginDetail(actorContext(c), params.pluginId) })
+        return c.json({ item: await getPluginDetail(actorContext(c), params.pluginId, { includeCloudReadiness: true }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }

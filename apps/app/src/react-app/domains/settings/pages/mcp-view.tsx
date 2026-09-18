@@ -115,10 +115,14 @@ import {
   type LibraryCommandItem,
 } from "../library";
 import { AddLibraryItemModal } from "./add-library-item-modal";
+import { LibraryConnectionSetup } from "./library-connection-setup";
+import { PluginConnectionSetup } from "./plugin-connection-setup";
+import { DenReauthNotice } from "../../cloud/den-reauth-notice";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { DenClient } from "../../../../app/lib/den";
 import { LibraryAddControl } from "./library-add-control";
 import { libraryConnectorCues } from "../library-connector-cues";
 import {
-  denAddUrl,
   openInDenLibraryUrl,
   shouldShowOpenInDenAction,
   type DenLibraryTarget,
@@ -399,6 +403,10 @@ export function McpView(props: McpViewProps) {
   const [layout, setLayout] = useState<ExtensionLayout>(readExtensionLayout);
   const [claudeImportOpen, setClaudeImportOpen] = useState(false);
   const [addAuthorableKind, setAddAuthorableKind] = useState<LibraryAuthorableKind | null>(null);
+  const [connectionSetup, setConnectionSetup] = useState<{ client: DenClient; organizationId: string; principalId: string; connectionId?: string } | null>(null);
+  const [setupVerification, setSetupVerification] = useState<{ client: DenClient; retry: (client: DenClient) => Promise<void> } | null>(null);
+  const [verifiedSetup, setVerifiedSetup] = useState<{ owner: DenClient; client: DenClient; commit: () => void } | null>(null);
+  const [setupRefreshKey, setSetupRefreshKey] = useState(0);
   const [connectorPresets, setConnectorPresets] = useState<DenExternalMcpPreset[]>([]);
   const [, setExtensionStateVersion] = useState(0);
 
@@ -531,6 +539,65 @@ export function McpView(props: McpViewProps) {
   const canManageCloudConnections = denAuth.isSignedIn
     && identity?.organizationId === activeOrganizationId
     && isConnectAdminRole(organizationRole.data);
+  const openConnectionSetup = (connectionId?: string) => {
+    if (!identity || identity.organizationId !== activeOrganizationId || !denAuth.isSignedIn) return;
+    setConnectionSetup({ client: cloudSession.client, organizationId: activeOrganizationId, principalId: identity.principalId, connectionId });
+  };
+  const setupClient = verifiedSetup?.owner === cloudSession.client ? verifiedSetup.client : cloudSession.client;
+  const finishSetup = () => {
+    setConnectionSetup(null);
+    if (verifiedSetup?.owner === cloudSession.client) verifiedSetup.commit();
+    setVerifiedSetup(null);
+  };
+  const refreshLibrarySetup = async () => {
+    setSetupRefreshKey((current) => current + 1);
+    await props.onLibraryListsRefresh?.();
+    await props.onRefresh?.();
+  };
+  const requestSetupVerification = (retry: (client: DenClient) => Promise<void>) => {
+    setSetupVerification({ client: cloudSession.client, retry });
+  };
+  const pluginSetup = (pluginId: string) => identity && denAuth.isSignedIn ? (
+    <PluginConnectionSetup
+      key={`${cloudSession.baseUrl}:${identity.principalId}:${activeOrganizationId}:${pluginId}`}
+      pluginId={pluginId}
+      client={setupClient}
+      refreshKey={setupRefreshKey}
+      organizationId={activeOrganizationId}
+      canManage={canManageCloudConnections}
+      onConfigureConnection={openConnectionSetup}
+      onConnect={(connectionId) => openConnectionSetup(connectionId)}
+      onChanged={refreshLibrarySetup}
+      onReauthenticate={requestSetupVerification}
+    />
+  ) : null;
+  const setupDialogs = <>
+    {connectionSetup && connectionSetup.client === cloudSession.client && connectionSetup.organizationId === activeOrganizationId && connectionSetup.principalId === identity?.principalId && denAuth.isSignedIn ? (
+      <LibraryConnectionSetup
+        {...connectionSetup}
+        client={setupClient}
+        canManage={canManageCloudConnections}
+        onClose={finishSetup}
+        onChanged={refreshLibrarySetup}
+        onReauthenticate={requestSetupVerification}
+      />
+    ) : null}
+    {setupVerification && setupVerification.client === cloudSession.client && denAuth.isSignedIn ? (
+      <Dialog open onOpenChange={(open) => { if (!open) setSetupVerification(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Confirm Library setup</DialogTitle></DialogHeader>
+          <DenReauthNotice purpose="library" onCancel={() => setSetupVerification(null)} onVerified={async (client, commitSession) => {
+            // Keep the verified transport without replacing the owning session mid-form.
+            // Persist after the setup/detail closes, so metadata loads and rejected saves
+            // retain their fields and next-step controls.
+            await setupVerification.retry(client);
+            setVerifiedSetup({ owner: setupVerification.client, client, commit: commitSession });
+            setSetupVerification(null);
+          }} />
+        </DialogContent>
+      </Dialog>
+    ) : null}
+  </>;
   const libraryAddOptions = {
     cloudSignedIn: libraryCloudSignedIn && Boolean(activeOrganizationId) && denAuth.status !== "unavailable",
     allowManageExtensions: props.allowManageExtensions,
@@ -571,9 +638,8 @@ export function McpView(props: McpViewProps) {
       setAddMcpModalOpen(true);
       return;
     }
-    if (action.type === "den-url") {
-      const url = denAddUrl(denBaseUrl, action.kind);
-      if (url) void openDesktopUrl(url);
+    if (action.type === "connection-setup") {
+      openConnectionSetup();
       return;
     }
     setAddAuthorableKind(action.kind);
@@ -621,6 +687,7 @@ export function McpView(props: McpViewProps) {
   };
 
   const closeDetail = () => {
+    finishSetup();
     setDetailTarget(null);
     setPendingPlugin(null);
     setDetailSkillContent(null);
@@ -1138,7 +1205,12 @@ export function McpView(props: McpViewProps) {
               : []),
           ]}
           showEnablementCard
-          configSlot={openInDenAction({ id: detailConnectMcp.id ?? detailConnectMcp.name })}
+          configSlot={(() => {
+            const owner = installedPlugins.find((plugin) => plugin.files.some((file) =>
+              file.configObjectId === detailConnectMcp.id || file.path === `mcp:${detailConnectMcp.name}`,
+            ));
+            return owner ? pluginSetup(owner.pluginId) : <Button variant="outline" onClick={() => openConnectionSetup()}>Set up connection</Button>;
+          })()}
         />
       ) : null}
 
@@ -1219,7 +1291,7 @@ export function McpView(props: McpViewProps) {
                 onOpen: () => openPluginFile(detailPlugin, file),
               };
             })}
-            configSlot={openInDenAction({ id: `marketplace:installed:${detailPlugin.pluginId}`, pluginId: detailPlugin.pluginId })}
+            configSlot={pluginSetup(detailPlugin.pluginId)}
             onUninstall={props.removeCloudPlugin ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
@@ -1254,7 +1326,7 @@ export function McpView(props: McpViewProps) {
                 ? [{ label: t("extensions.detail_fact_collection"), value: file.marketplaceName }]
                 : []),
             ]}
-            configSlot={openInDenAction({ id: `marketplace:installed:${plugin.pluginId}`, pluginId: plugin.pluginId })}
+            configSlot={kind === "mcp" ? pluginSetup(plugin.pluginId) : openInDenAction({ id: `marketplace:installed:${plugin.pluginId}`, pluginId: plugin.pluginId })}
           />
         );
       })() : null}
@@ -1303,7 +1375,7 @@ export function McpView(props: McpViewProps) {
                   <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">Shared by your organization</span>
                   <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{connection.credentialMode === "shared" ? "Org account" : "Your account"}</span>
                 </div>
-                {openInDenAction({ id: detailOrgMcpItem.id })}
+                <Button variant="outline" className="w-fit" onClick={() => openConnectionSetup(connection.id)}>{canManageCloudConnections ? "Configure connection" : "Connection setup"}</Button>
               </div>
             )}
           />
@@ -1381,7 +1453,7 @@ export function McpView(props: McpViewProps) {
 
   if (useRoutedDetail && props.detailId) {
     if (activeTarget) {
-      return detailPanels;
+      return <>{detailPanels}{setupDialogs}</>;
     }
     return (
       <div className="flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
@@ -1580,6 +1652,7 @@ export function McpView(props: McpViewProps) {
       ) : null}
 
       {detailPanels}
+      {setupDialogs}
     </section>
   );
 }

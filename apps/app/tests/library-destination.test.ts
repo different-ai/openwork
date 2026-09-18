@@ -27,7 +27,6 @@ import {
   waitForListedLibraryPlugin,
   slugifyLibraryItemName,
 } from "../src/react-app/domains/settings/library";
-import { denAddUrl } from "../src/react-app/domains/settings/open-in-den";
 
 describe("library destination", () => {
   test("composer Configure opens the matching Library filter except for providers", () => {
@@ -136,12 +135,12 @@ describe("library destination", () => {
     expect(slugifyLibraryItemName("  ", "agent")).toBe("agent");
   });
 
-  test("Library Add creates on Den when signed in", () => {
+  test("signed-in Library Add opens cloud authoring or in-app connection setup", () => {
     const signedIn = { cloudSignedIn: true, allowManageExtensions: true, canManageCloudConnections: true };
     expect(libraryAddAction("skill", signedIn)).toEqual({ type: "den-modal", kind: "skill" });
     expect(libraryAddAction("plugin", signedIn)).toEqual({ type: "den-modal", kind: "plugin" });
-    expect(libraryAddAction("mcp", signedIn)).toEqual({ type: "den-url", kind: "connection" });
-    expect(libraryAddAction("connection", signedIn)).toEqual({ type: "den-url", kind: "connection" });
+    expect(libraryAddAction("mcp", signedIn)).toEqual({ type: "connection-setup" });
+    expect(libraryAddAction("connection", signedIn)).toEqual({ type: "connection-setup" });
   });
 
   test("Library Add is unavailable when signed out", () => {
@@ -163,22 +162,21 @@ describe("library destination", () => {
     const restricted = { cloudSignedIn: true, allowManageExtensions: false, canManageCloudConnections: true };
 
     expect(libraryAddAction("workspace-mcp", restricted)).toBeNull();
-    expect(libraryAddAction("mcp", restricted)).toEqual({ type: "den-url", kind: "connection" });
+    expect(libraryAddAction("mcp", restricted)).toEqual({ type: "connection-setup" });
   });
 
   test("members browse granted MCPs without admin creation or a local-policy bypass", () => {
     for (const allowManageExtensions of [true, false]) {
       const member = { cloudSignedIn: true, allowManageExtensions, canManageCloudConnections: false };
       const action = libraryAddAction("mcp", member);
-      expect(action).toEqual({ type: "den-url", kind: "mcp" });
-      if (action?.type !== "den-url") throw new Error("Expected member navigation, not authoring");
-      expect(denAddUrl("https://den.example", action.kind)).toBe("https://den.example/dashboard/your-connections");
+      expect(action).toEqual({ type: "connection-setup" });
+      expect(action).toEqual(libraryAddAction("mcp", { ...member, canManageCloudConnections: true }));
       expect(libraryAddAction("connection", member)).toEqual(action);
       expect(libraryAddAction("workspace-mcp", member)).toEqual(allowManageExtensions ? { type: "workspace-mcp" } : null);
       expect(libraryAddAction("skill", member)).toEqual({ type: "den-modal", kind: "skill" });
       expect(libraryAddAction("plugin", member)).toEqual({ type: "den-modal", kind: "plugin" });
     }
-    expect(libraryAddAction("mcp", { cloudSignedIn: true, allowManageExtensions: false })).toEqual({ type: "den-url", kind: "mcp" });
+    expect(libraryAddAction("mcp", { cloudSignedIn: true, allowManageExtensions: false })).toEqual({ type: "connection-setup" });
   });
 
   test("signed-in Library Add posts a Den plugin bundle", () => {

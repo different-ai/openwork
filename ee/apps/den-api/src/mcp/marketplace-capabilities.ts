@@ -1191,7 +1191,6 @@ async function marketplacePluginMcpRequirementStatuses(input: {
 }
 
 async function resolveMcpReadinessConnections(input: {
-  allConnections: ExternalMcpConnectionRow[]
   connections: UsableExternalMcpConnection[]
   dependencies: MarketplaceMcpDependency[]
   member: McpMemberIdentity
@@ -1209,7 +1208,7 @@ async function resolveMcpReadinessConnections(input: {
     const binding = bindings.get(requirementKey(dependency))
     const explicitConnectionId = binding?.externalMcpConnectionId ?? dependency.externalMcpConnectionId
     const matched = explicitConnectionId
-      ? input.allConnections.find((connection) => connection.id === explicitConnectionId && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
+      ? input.connections.find((connection) => connection.id === explicitConnectionId && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
       : dependency.url
         ? input.connections.find((connection) => comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(dependency.url))
         : null
@@ -1320,8 +1319,6 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
     orgMembershipId: input.member.orgMembershipId,
     teamIds: input.member.teamIds,
   })
-  const allConnections = (await listExternalMcpConnections(input.organizationId))
-    .filter((connection) => connection.kind === "external_mcp")
   const desktopManifestPluginIds = new Set(input.desktopManifestPluginIds ?? [])
 
   for (const pluginId of pluginIds) {
@@ -1355,7 +1352,7 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
       const version = latestVersions.get(object.id)
       return version ? mcpDependenciesForObject({ object, version }) : []
     })
-    const connections = await resolveMcpReadinessConnections({ allConnections, connections: usableConnections, dependencies, member: input.member, organizationId: input.organizationId })
+    const connections = await resolveMcpReadinessConnections({ connections: usableConnections, dependencies, member: input.member, organizationId: input.organizationId })
     const state = connections.some((connection) => connection.id === null
       || connection.authTypeMismatch === true
       || (connection.oauthClientRequired === true && connection.oauthClientConfigured === false)

@@ -445,8 +445,41 @@ export async function desktopWithExternalOpenCapture(seed: Seed, den: Den, ident
 }
 
 export async function libraryConnectorDiscovery(seed: Seed) {
-  const den = await seed.den({ org: { name: `Library connector discovery ${Date.now()}`, admin: { name: "Library Connector Admin" } } });
+  const den = await seed.den({
+    org: {
+      name: `Library connector discovery ${Date.now()}`,
+      admin: { name: "Library Connector Admin" },
+      members: { member: { name: "Library Connector Member" } },
+    },
+    mocks: { connector: seed.mock({ allowUnauthenticatedMcp: true }) },
+  });
   const organizationId = await activeOrganizationId(seed, den.admin);
+  const headers = { "x-openwork-org-id": organizationId };
+  const member = den.members.member;
+  if (!member) throw new Error("The Library fixture has no ordinary member.");
+  const adminOrg = await seed.api(den.admin, "/v1/org", { headers });
+  const memberOrg = await seed.api(member, "/v1/org", { headers });
+  const ownerMemberId = stringField(isRecord(adminOrg.body) ? adminOrg.body.currentMember : null, "id");
+  const memberId = stringField(isRecord(memberOrg.body) ? memberOrg.body.currentMember : null, "id");
+  if (!adminOrg.response.ok || !memberOrg.response.ok || !ownerMemberId || !memberId || ownerMemberId === memberId) {
+    throw new Error("Could not resolve distinct Library owner and ordinary member memberships.");
+  }
+  const memberConnectionName = "Member available connection";
+  const availableConnection = await seed.api(den.admin, "/v1/mcp-connections", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: memberConnectionName,
+      url: den.mocks.connector.mcpUrl,
+      authType: "oauth",
+      credentialMode: "per_member",
+      access: { orgWide: false, memberIds: [memberId], teamIds: [] },
+    }),
+  });
+  const memberConnectionId = stringField(availableConnection.body, "id");
+  if (availableConnection.response.status !== 200 || !memberConnectionId) {
+    throw new Error(`Could not seed the member's available connection: HTTP ${availableConnection.response.status}`);
+  }
   const { app, browserUrls } = await desktopWithExternalOpenCapture(seed, den, "admin");
   // Keep repository-local skills out of this empty Library fixture.
   const workspace = await seed.workspace(app, seed.tmpPath("library-connector-discovery"), { create: true });
@@ -462,7 +495,11 @@ export async function libraryConnectorDiscovery(seed: Seed) {
     location.hash = "#/workspace/" + workspaceId + "/settings/general";
     return true;
   }, [workspace.workspaceId]));
-  return { app, browserUrls, workspaceId: workspace.workspaceId, organizationId, denWebUrl: den.ref.webUrl };
+  return {
+    app, browserUrls, workspaceId: workspace.workspaceId, organizationId, denWebUrl: den.ref.webUrl,
+    admin: den.admin, member, ownerMemberId, memberId, memberConnectionId, memberConnectionName,
+    connector: den.mocks.connector, mockUrl: den.mocks.connector.mcpUrl,
+  };
 }
 
 export async function librarySessionRestore(seed: Seed) {

@@ -3036,8 +3036,70 @@ export type PluginArchPluginMutationResponse = {
   item: PluginArchPlugin;
 };
 
+export type PluginArchPluginCloudReadiness = {
+  state: "ready" | "needs_signin" | "needs_admin_setup" | "desktop_only" | "not_synced";
+  hasInstructional: boolean;
+  connections: Array<{
+    authType?: "oauth" | "apikey" | "none";
+    authTypeMismatch?: boolean;
+    /**
+     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+     */
+    configObjectId: string;
+    id: string | null;
+    name: string;
+    serverName: string;
+    url: string;
+    credentialMode?: "shared" | "per_member";
+    connectedForMe?: boolean;
+    oauthClientConfigured?: boolean;
+    oauthClientRequired?: boolean;
+    requiredAuthType?: "oauth" | "apikey" | "none";
+  }>;
+};
+
 export type PluginArchPluginDetailResponse = {
-  item: PluginArchPlugin;
+  item: {
+    /**
+     * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    /**
+     * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+     */
+    organizationId: string;
+    name: string;
+    description: string | null;
+    sourceRepositoryUrl: string | null;
+    sourceFormat:
+      | "agent-plugin"
+      | "openwork-builtin"
+      | "openwork-extension-manifest"
+      | "claude-plugin"
+      | "opencode-plugin"
+      | "mcp-directory"
+      | "manual"
+      | null;
+    sourceSchemaVersion: string | null;
+    status: "active" | "inactive" | "deleted" | "archived";
+    /**
+     * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+     */
+    createdByOrgMembershipId: string;
+    createdAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+    memberCount?: number;
+    marketplaces?: Array<{
+      /**
+       * Den TypeID with 'mkt_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+    }>;
+    extension?: PluginArchExtensionProjection | null;
+    cloudReadiness?: PluginArchPluginCloudReadiness;
+  };
 };
 
 export type PluginArchPluginMcpRequirementConfigureResponse = {
@@ -3557,28 +3619,6 @@ export type PluginArchMarketplacePluginMembership = {
 export type PluginArchMarketplacePluginListResponse = {
   items: Array<PluginArchMarketplacePluginMembership>;
   nextCursor: string | null;
-};
-
-export type PluginArchPluginCloudReadiness = {
-  state: "ready" | "needs_signin" | "needs_admin_setup" | "desktop_only" | "not_synced";
-  hasInstructional: boolean;
-  connections: Array<{
-    authType?: "oauth" | "apikey" | "none";
-    authTypeMismatch?: boolean;
-    /**
-     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
-     */
-    configObjectId: string;
-    id: string | null;
-    name: string;
-    serverName: string;
-    url: string;
-    credentialMode?: "shared" | "per_member";
-    connectedForMe?: boolean;
-    oauthClientConfigured?: boolean;
-    oauthClientRequired?: boolean;
-    requiredAuthType?: "oauth" | "apikey" | "none";
-  }>;
 };
 
 export type PluginArchMarketplaceResolvedResponse = {
