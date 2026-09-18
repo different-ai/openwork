@@ -389,7 +389,6 @@ export async function readUsageStatus(
       canRequestReset:
         policy.allowRequestReset &&
         bucket.baseAllowanceMicroUsd > 0 &&
-        !bucket.extensionUsed &&
         bucket.usedMicroUsd >= allowanceMicroUsd &&
         requestStatus !== "pending",
       resetRequestStatus: requestStatus,
