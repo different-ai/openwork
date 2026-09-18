@@ -366,6 +366,7 @@ function McpAppTileContent({
     const userInitiated = userInitiatedNonceRef.current === nonce;
     const memberApproved = launchApprovedRef.current;
     const requiresApproval = entry.requiresApproval === true;
+    let canRetryCredentials = !manualLaunch && !requiresApproval && !memberApproved;
     const launchIsApproved = dashboardTileLaunchIsApproved(entry.organizationAutoLaunch === true, memberApproved);
     const isCurrent = () => lifetime.current.active && !attempt.controller.signal.aborted && launchRef.current === attempt && retiredNonceRef.current !== nonce;
     const assertActive = () => {
@@ -461,6 +462,7 @@ function McpAppTileContent({
           } catch (cause) {
             assertActive();
             if (!(cause instanceof OpenworkServerError) || cause.code !== "tool_requires_approval") throw cause;
+            canRetryCredentials = false;
             approvalWasRequired = true;
             if (!userInitiated || fallbackEndpoint) return { phase: "idle", revokeAutoLaunch: true };
             if (!endpointIsActive(endpoint)) throw new Error("This artifact launch has closed or changed. Run the tile again.");
@@ -564,7 +566,7 @@ function McpAppTileContent({
       }
       updateRefresh("failed");
       if (cause instanceof OpenworkServerError && cause.code === "mcp_auth_required"
-        && (entry.connectionId || entry.serverName === "openwork-cloud") && !requiresApproval && !memberApproved) {
+        && (entry.connectionId || entry.serverName === "openwork-cloud") && canRetryCredentials) {
         const candidates = attempt.endpoint ? [attempt.endpoint] : attempt.candidates;
         const stopCredentialRetry = onCloudCredentialRefreshed(
           candidates.map(endpoint => ({ serverBaseUrl: endpoint.client.baseUrl, workspaceId: endpoint.workspaceId })),
