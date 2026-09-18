@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { DenStatusScreen } from "../../../components/den-status-screen";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl, requestJson } from "../../(den)/_lib/den-flow";
 
@@ -12,6 +12,7 @@ export default function OrganizationSsoSignInPage() {
   const [error, setError] = useState<string | null>(null);
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const startRequests = useRef(new Map<string, ReturnType<typeof requestJson>>());
   const orgSlug = typeof params?.orgSlug === "string" ? params.orgSlug : "";
 
   const callbackURL = useMemo(() => searchParams.get("callbackURL") || getSocialCallbackUrl(), [searchParams]);
@@ -25,19 +26,28 @@ export default function OrganizationSsoSignInPage() {
 
     void (async () => {
       try {
-        const { response, payload } = await requestJson("/api/auth/sign-in/sso", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            organizationSlug: orgSlug,
-            callbackURL,
-            errorCallbackURL,
-            loginHint,
-          }),
-        });
+        // React StrictMode runs this effect twice in dev. A second sign-in/sso
+        // call overwrites the OAuth state cookie and the callback then fails
+        // with state_mismatch, so both runs share one request.
+        const requestKey = JSON.stringify([orgSlug, callbackURL, errorCallbackURL, loginHint, attempt]);
+        let startRequest = startRequests.current.get(requestKey);
+        if (!startRequest) {
+          startRequest = requestJson("/api/auth/sign-in/sso", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              organizationSlug: orgSlug,
+              callbackURL,
+              errorCallbackURL,
+              loginHint,
+            }),
+          });
+          startRequests.current.set(requestKey, startRequest);
+        }
+        const { response, payload } = await startRequest;
 
         if (!response.ok) {
           throw new Error(
