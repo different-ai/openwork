@@ -10,7 +10,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getGatewayProviderRoute, getGatewayProvidersRoute } from "../../_lib/den-org";
+import { getGatewayProviderRoutes, type GatewayProviderRouteContext } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteInferenceProvider, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
 import { getRequiredSettingKeys, getSettingLabel, isSupportedGatewayNpm } from "./inference-provider-request";
@@ -22,7 +22,13 @@ import { GatewayModelUniverse } from "./inference-provider-model-universe";
 
 const SECTION_CLASS = "mb-8 border-b border-gray-200 pb-8";
 
-export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferenceProviderId?: string }) {
+export function InferenceProviderEditorScreen({ inferenceProviderId, routeContext = "gateway-providers", embedded = false }: {
+  inferenceProviderId?: string;
+  routeContext?: GatewayProviderRouteContext;
+  embedded?: boolean;
+}) {
+  const routes = getGatewayProviderRoutes(routeContext);
+  const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
   const { orgId, orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const { provider, busy, error, reload } = useInferenceProvider(orgId, inferenceProviderId ?? null);
@@ -98,7 +104,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
             ...(provider && JSON.stringify(settings) === JSON.stringify(provider.settings) ? {} : { settings }),
           },
         });
-        router.push(getGatewayProviderRoute(orgSlug, saved.id));
+        router.push(routes.detail(orgSlug, saved.id));
         router.refresh();
       });
     } catch (cause) {
@@ -114,7 +120,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
       await runReauthableAction("delete-inference-provider", async () => {
         await deleteInferenceProvider(provider.id);
         setConfirmDelete(false);
-        router.push(getGatewayProvidersRoute(orgSlug));
+        router.push(routes.list(orgSlug));
         router.refresh();
       });
     } catch (cause) {
@@ -122,12 +128,12 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
     } finally { setSaving(false); }
   }
 
-  if (inferenceProviderId && !provider) return <div className="p-8">{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
-  const backHref = provider ? getGatewayProviderRoute(orgSlug, provider.id) : getGatewayProvidersRoute(orgSlug);
+  if (inferenceProviderId && !provider) return <div className={embedded ? undefined : "p-8"}>{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
+  const backHref = provider ? routes.detail(orgSlug, provider.id) : routes.list(orgSlug);
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
+    <div className={embedded ? undefined : "mx-auto max-w-[1180px] px-6 py-8 md:px-8"}>
       <Link href={backHref} className="text-sm text-gray-500">Back</Link>
-      <h1 className="my-6 text-3xl font-semibold">{provider ? `Edit ${provider.name}` : "Add an AI Gateway provider"}</h1>
+      <Heading className={embedded ? "my-4 text-lg font-semibold tracking-tight" : "my-6 text-3xl font-semibold"}>{provider ? `Edit ${provider.name}` : "Add an AI Gateway provider"}</Heading>
       <p className="mb-8 text-gray-500">Choose the model universe first, then create model groups, upstream keys and access groups. Administrators are not automatically granted model access.</p>
       {saveError ? <DenNotice tone="error" message={saveError} className="mb-6" /> : null}
       {catalogError ? <DenNotice tone="error" message={catalogError} className="mb-6" /> : null}

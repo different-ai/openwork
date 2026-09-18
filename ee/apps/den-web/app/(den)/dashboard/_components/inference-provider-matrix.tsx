@@ -1,27 +1,27 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Dialog } from "@base-ui/react/dialog";
-import type { GatewayAccessGrant, GatewayAudience, GatewayCredentialSet, GatewayCredentialSetWrite, GatewayModelGroup } from "@openwork/types/den/gateway";
+import type { GatewayCredentialSet, GatewayCredentialSetWrite, GatewayModelGroup } from "@openwork/types/den/gateway";
 import { DenBadge } from "../../_components/ui/badge";
-import { DenButton } from "../../_components/ui/button";
-import { DenCombobox } from "../../_components/ui/combobox";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
+import { getAiGatewayRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, saveGatewayResource } from "./inference-provider-data";
 import { isGoogleVertexNpm, supportsMemberCredentialMode, type DenInferenceProviderDetails } from "./inference-provider-request";
 import { formatProviderTimestamp, getProviderEnvNames, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
-import { ProviderAccessPicker, ProviderModelPicker, type ProviderAccessValue } from "./llm-provider-pickers";
+import { ProviderModelPicker } from "./llm-provider-pickers";
 
 type Editor =
   | { resource: "model-groups"; id: string | null; name: string; description: string; modelIds: string[]; active: boolean }
-  | { resource: "credential-sets"; id: string | null; name: string; credentialMode: "org" | "member"; active: boolean; oauthClientId: string; oauthClientSecret: string; hasOauthClientSecret: boolean; configured: boolean; secret: string; apiKeys: Record<string, string> }
-  | { resource: "access-grants"; id: string | null; modelGroupId: string; credentialSetId: string; access: ProviderAccessValue };
+  | { resource: "credential-sets"; id: string | null; name: string; credentialMode: "org" | "member"; active: boolean; oauthClientId: string; oauthClientSecret: string; hasOauthClientSecret: boolean; configured: boolean; secret: string; apiKeys: Record<string, string> };
 
 const SECTION_CLASS = "mb-8 border-b border-gray-200 pb-8";
 
@@ -31,7 +31,7 @@ function modelGroupName(name: string) {
 }
 
 export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferenceProviderDetails; reload: () => Promise<void> }) {
-  const { orgId, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
+  const { orgId, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const [editor, setEditor] = useState<Editor | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,39 +66,11 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
     // Secret fields are write-only, always blank when opening an existing set.
     setEditor({ resource: "credential-sets", id: set?.id ?? null, name: set?.name ?? "", credentialMode: set?.credentialMode ?? "org", active: !set || set.status === "active", oauthClientId: set?.oauthClientId ?? "", oauthClientSecret: "", hasOauthClientSecret: set?.hasOauthClientSecret ?? false, configured: set?.configured ?? false, secret: "", apiKeys: {} });
   }
-  function editGrant(grant?: GatewayAccessGrant) {
-    setError(null);
-    setEditor({ resource: "access-grants", id: grant?.id ?? null, modelGroupId: grant?.modelGroupId ?? "", credentialSetId: grant?.credentialSetId ?? "", access: {
-      allMembers: grant?.audience.type === "organization",
-      teamIds: grant?.audience.type === "team" ? [grant.audience.teamId] : [],
-      memberIds: grant?.audience.type === "member" ? [grant.audience.memberId] : [],
-    } });
-  }
-  function audienceName(audience: GatewayAudience) {
-    if (audience.type === "organization") return `Everyone in ${orgContext?.organization.name ?? "this organization"}`;
-    if (audience.type === "team") return orgContext?.teams.find((team) => team.id === audience.teamId)?.name ?? `Unavailable team (${audience.teamId})`;
-    const member = orgContext?.members.find((item) => item.id === audience.memberId);
-    return member ? `${member.user.name} (${member.user.email})` : `Unavailable member (${audience.memberId})`;
-  }
   async function save() {
     if (!editor) return;
     setError(null);
-    if (editor.resource !== "access-grants" && !editor.name.trim()) return setError("Name is required.");
+    if (!editor.name.trim()) return setError("Name is required.");
     if (editor.resource === "model-groups" && (!editor.modelIds.length || editor.modelIds.some((id) => !provider.catalogModels.some((model) => model.id === id)))) return setError("Select at least one model from the saved model universe.");
-    let audience: GatewayAudience | null = null;
-    if (editor.resource === "access-grants") {
-      const { access } = editor;
-      if (Number(access.allMembers) + access.teamIds.length + access.memberIds.length !== 1) return setError("Choose exactly one audience: organization, team or person.");
-      if (!provider.modelGroups.some((group) => group.id === editor.modelGroupId) || !provider.credentialSets.some((set) => set.id === editor.credentialSetId)) return setError("Choose a model group and a credential set.");
-      if (access.allMembers) audience = { type: "organization" };
-      else if (access.teamIds[0]) {
-        if (!orgContext?.teams.some((team) => team.id === access.teamIds[0])) return setError("Choose a team in the current organization.");
-        audience = { type: "team", teamId: access.teamIds[0] };
-      } else if (access.memberIds[0]) {
-        if (!orgContext?.members.some((member) => member.id === access.memberIds[0])) return setError("Choose a person in the current organization.");
-        audience = { type: "member", memberId: access.memberIds[0] };
-      }
-    }
     if (editor.resource === "credential-sets") {
       if (!catalog) return setError("Wait for the provider's credential field definitions to load before saving.");
       if (editor.credentialMode === "member" && (!supportsMemberCredentialMode(provider.providerId) || !editor.oauthClientId.trim() || (!editor.oauthClientSecret.trim() && !editor.hasOauthClientSecret))) return setError("Member sign-in requires a supported provider and an OAuth client ID and secret.");
@@ -121,7 +93,6 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
     try {
       await runReauthableAction("save-gateway-matrix", async () => {
         if (editor.resource === "model-groups") await saveGatewayResource(provider.id, editor.id, { resource: editor.resource, body: { name: editor.name.trim(), description: editor.description.trim() || null, modelIds: editor.modelIds, status: editor.active ? "active" : "disabled" } });
-        if (editor.resource === "access-grants" && audience) await saveGatewayResource(provider.id, editor.id, { resource: editor.resource, body: { audience, modelGroupId: editor.modelGroupId, credentialSetId: editor.credentialSetId } });
         if (editor.resource === "credential-sets") {
           const body: GatewayCredentialSetWrite = { name: editor.name.trim(), credentialMode: editor.credentialMode, status: editor.active ? "active" : "disabled" };
           if (editor.credentialMode === "member") {
@@ -164,30 +135,11 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
     </div> },
   ];
 
-  // Presentation only: each audience keeps its original grant ID and actions.
-  const accessGroups = new Map<string, { modelGroupId: string; credentialSetId: string; grants: GatewayAccessGrant[] }>();
-  for (const grant of provider.accessGrants) {
-    const key = JSON.stringify([grant.modelGroupId, grant.credentialSetId]);
-    const group = accessGroups.get(key);
-    if (group) group.grants.push(grant);
-    else accessGroups.set(key, { modelGroupId: grant.modelGroupId, credentialSetId: grant.credentialSetId, grants: [grant] });
-  }
-  const accessColumns: readonly DenTableColumn<GatewayAccessGrant>[] = [
-    { key: "type", header: "Direct audience", render: (grant) => grant.audience.type === "organization" ? "Organization-wide" : grant.audience.type === "team" ? "Team" : "Person" },
-    { key: "audience", header: "Who has access", render: (grant) => <span className="break-words">{audienceName(grant.audience)}</span> },
-    { key: "actions", header: "Actions", render: (grant) => (
-      <div className="flex gap-2">
-        <DenButton size="sm" disabled={busy} variant="secondary" aria-label={`Edit rule for ${audienceName(grant.audience)}`} onClick={() => editGrant(grant)}>Edit rule</DenButton>
-        <DenButton size="sm" disabled={busy} variant="destructive" aria-label={`Delete rule for ${audienceName(grant.audience)}`} onClick={() => setDeleting({ resource: "access-grants", id: grant.id, name: `access rule for ${audienceName(grant.audience)}` })}>Delete rule</DenButton>
-      </div>
-    ) },
-  ];
-
   function renderEditor(resource: Editor["resource"]) {
     if (!editor || editor.resource !== resource) return null;
     const memberSignInSupported = supportsMemberCredentialMode(provider.providerId);
     const keyEditor = resource === "credential-sets";
-    const title = `${editor.id ? "Edit" : "Add"} ${editor.resource === "model-groups" ? "model group" : keyEditor ? "upstream key" : "access rule"}`;
+    const title = `${editor.id ? "Edit" : "Add"} ${editor.resource === "model-groups" ? "model group" : "upstream key"}`;
     const panel = <section ref={keyEditor ? undefined : editorRef} className={keyEditor ? "min-w-0" : "mt-6 scroll-mt-6 border-t border-gray-200 pt-6"} aria-label="Matrix entry editor">
       {keyEditor ? <>
         <Dialog.Title className="mb-2 text-xl font-semibold">{title}</Dialog.Title>
@@ -195,16 +147,14 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
         {error ? <DenNotice className="mb-5" tone="error" message={error} /> : null}
       </> : <h3 className="mb-5 text-lg font-semibold">{title}</h3>}
       <fieldset disabled={busy} className="grid min-w-0 gap-5">
-        {editor.resource !== "access-grants" ? <>
-          <div className="grid gap-2">
-            <div className="grid gap-1">
-              <label htmlFor="gateway-matrix-entry-name">Name</label>
-              {editor.resource === "credential-sets" ? <p id="gateway-credential-name-description" className="text-sm text-gray-500">Give this a friendly name to identify and manage easier</p> : null}
-            </div>
-            <DenInput id="gateway-matrix-entry-name" aria-describedby={editor.resource === "credential-sets" ? "gateway-credential-name-description" : undefined} value={editor.resource === "model-groups" ? modelGroupName(editor.name) : editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} />
+        <div className="grid gap-2">
+          <div className="grid gap-1">
+            <label htmlFor="gateway-matrix-entry-name">Name</label>
+            {editor.resource === "credential-sets" ? <p id="gateway-credential-name-description" className="text-sm text-gray-500">Give this a friendly name to identify and manage easier</p> : null}
           </div>
-          <div className="flex items-center justify-between"><span>Active</span><DenSwitch checked={editor.active} onChange={(active) => setEditor({ ...editor, active })} aria-label="Entry active" /></div>
-        </> : null}
+          <DenInput id="gateway-matrix-entry-name" aria-describedby={editor.resource === "credential-sets" ? "gateway-credential-name-description" : undefined} value={editor.resource === "model-groups" ? modelGroupName(editor.name) : editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} />
+        </div>
+        <div className="flex items-center justify-between"><span>Active</span><DenSwitch checked={editor.active} onChange={(active) => setEditor({ ...editor, active })} aria-label="Entry active" /></div>
         {editor.resource === "model-groups" ? <>
           <label className="grid gap-2">Description<DenTextarea value={editor.description} onChange={(event) => setEditor({ ...editor, description: event.target.value })} /></label>
           <ProviderModelPicker models={provider.catalogModels} selectedModelIds={editor.modelIds} onChange={(modelIds) => setEditor({ ...editor, modelIds })} />
@@ -225,12 +175,7 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
             <label className="grid gap-2">OAuth client secret {editor.hasOauthClientSecret ? "(configured)" : ""}<DenInput type="password" value={editor.oauthClientSecret} onChange={(event) => setEditor({ ...editor, oauthClientSecret: event.target.value })} autoComplete="new-password" placeholder={editor.hasOauthClientSecret ? "Saved secret — enter a replacement to change it" : "Enter OAuth client secret"} /></label>
           </> : vertex ? <label className="grid gap-2">Service account JSON<DenTextarea value={editor.secret} onChange={(event) => setEditor({ ...editor, secret: event.target.value })} rows={6} autoComplete="off" spellCheck={false} placeholder={editor.configured ? "Saved credentials — paste a replacement to change them" : "Paste service account JSON"} /></label> : envNames.length > 1 ? envNames.map((env) => <label key={env} className="grid gap-2">{env}<DenInput type="password" value={editor.apiKeys[env] ?? ""} onChange={(event) => setEditor({ ...editor, apiKeys: { ...editor.apiKeys, [env]: event.target.value } })} autoComplete="new-password" placeholder={editor.configured ? "Saved credentials — enter a replacement to change them" : "Enter API key"} /></label>) : <label className="grid gap-2">API key {editor.configured ? "(configured)" : ""}<DenInput type="password" value={editor.secret} onChange={(event) => setEditor({ ...editor, secret: event.target.value })} autoComplete="new-password" placeholder={editor.configured ? "Saved key — enter a replacement to change it" : "Enter API key"} /></label>}
         </> : null}
-        {editor.resource === "access-grants" ? <>
-          <DenCombobox ariaLabel="Model group" value={editor.modelGroupId} onChange={(modelGroupId) => setEditor({ ...editor, modelGroupId })} options={provider.modelGroups.map((group) => ({ value: group.id, label: modelGroupName(group.name), description: group.status }))} placeholder="Choose model group" searchPlaceholder="Search groups" emptyLabel="Create a model group first" />
-          <DenCombobox ariaLabel="Upstream key" value={editor.credentialSetId} onChange={(credentialSetId) => setEditor({ ...editor, credentialSetId })} options={provider.credentialSets.map((set) => ({ value: set.id, label: set.name, description: `${set.credentialMode === "org" ? "Shared/Private API Key" : "Member sign-in"} / ${set.status}` }))} placeholder="Choose upstream key" searchPlaceholder="Search upstream keys" emptyLabel="Create an upstream key first" />
-          <ProviderAccessPicker orgContext={orgContext} value={editor.access} onChange={(access) => setEditor({ ...editor, access })} lockedMemberId={null} singleAudience testIdPrefix="gateway-rule" />
-        </> : null}
-        <div className="flex gap-3"><DenButton loading={busy} onClick={() => void save()}>Save {editor.resource === "access-grants" ? "access rule" : editor.resource === "model-groups" ? "model group" : "upstream key"}</DenButton><DenButton variant="secondary" onClick={() => { setEditor(null); setError(null); }}>Cancel</DenButton></div>
+        <div className="flex gap-3"><DenButton loading={busy} onClick={() => void save()}>Save {editor.resource === "model-groups" ? "model group" : "upstream key"}</DenButton><DenButton variant="secondary" onClick={() => { setEditor(null); setError(null); }}>Cancel</DenButton></div>
       </fieldset>
     </section>;
     if (!keyEditor) return panel;
@@ -251,7 +196,7 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
   function renderDeletion(resource: Editor["resource"]) {
     if (deleting?.resource !== resource) return null;
     return <section className="mt-6 border-t border-gray-200 pt-5" aria-label="Confirm matrix entry deletion">
-      <p>Delete {deleting.name}? {resource === "access-grants" ? "Only this audience rule will be deleted. Other rules in this access group stay unchanged." : "Referencing access rules may stop working. Server validation errors will be shown without silently changing other entries."}</p>
+      <p>Delete {deleting.name}? Referencing access rules may stop working. Server validation errors will be shown without silently changing other entries.</p>
       <div className="mt-4 flex flex-wrap gap-3"><DenButton variant="destructive" loading={busy} onClick={() => void remove()}>Confirm delete</DenButton><DenButton disabled={busy} variant="secondary" onClick={() => setDeleting(null)}>Cancel</DenButton></div>
     </section>;
   }
@@ -281,23 +226,6 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
       {renderEditor("credential-sets")}
       {renderDeletion("credential-sets")}
     </section>
-    <section className={SECTION_CLASS}>
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Access groups</h2><DenButton disabled={busy} onClick={() => editGrant()}>Add access rule</DenButton></div>
-      <p className="my-4 text-gray-500">Rules sharing a model group and upstream key appear together. Only directly assigned teams and people are listed; team members are not expanded. Organization-wide rules include everyone in the organization.</p>
-      <p className="mb-4 text-sm text-gray-500">Edit or delete one audience rule at a time. Administrators and key creators do not receive automatic access.</p>
-      {!accessGroups.size ? <p className="text-sm text-gray-500">No access groups yet. Add an access rule to grant model access.</p> : <div className="divide-y divide-gray-200">{Array.from(accessGroups, ([key, group]) => {
-        const models = provider.modelGroups.find((item) => item.id === group.modelGroupId);
-        const upstreamKey = provider.credentialSets.find((item) => item.id === group.credentialSetId);
-        const groupLabel = models ? modelGroupName(models.name) : `Unavailable model group (${group.modelGroupId})`;
-        const keyLabel = upstreamKey ? upstreamKey.name : `Unavailable upstream key (${group.credentialSetId})`;
-        return <section key={key} className="min-w-0 py-5 first:pt-0" aria-label={`${groupLabel} / ${keyLabel}`}>
-          <h3 className="break-words text-lg font-semibold">{groupLabel} / {keyLabel}</h3>
-          <p className="mb-3 mt-1 break-words text-sm text-gray-500">Model group: {groupLabel} / Upstream key: {keyLabel}</p>
-          <DenTable headerTone="plain" columns={accessColumns} rows={group.grants} getRowKey={(grant) => grant.id} />
-        </section>;
-      })}</div>}
-      {renderEditor("access-grants")}
-      {renderDeletion("access-grants")}
-    </section>
+    <Link href={`${getAiGatewayRoute()}?tab=users-and-teams`} scroll={false} className={buttonVariants({ variant: "ghost", size: "sm" })}>Manage access in Users &amp; Teams</Link>
   </div>;
 }

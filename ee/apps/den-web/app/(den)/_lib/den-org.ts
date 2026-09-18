@@ -612,6 +612,44 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
+export function getAiGatewayRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/ai-gateway`;
+}
+
+export function getAiGatewayProvidersRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=ai-providers`;
+}
+
+export function getNewAiGatewayProviderRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}/providers/new`;
+}
+
+export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
+}
+
+export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
+}
+
+export type GatewayProviderRouteContext = "gateway-providers" | "ai-gateway";
+
+export function getGatewayProviderRoutes(routeContext: GatewayProviderRouteContext = "gateway-providers") {
+  return routeContext === "ai-gateway"
+    ? {
+      list: getAiGatewayProvidersRoute,
+      new: getNewAiGatewayProviderRoute,
+      detail: getAiGatewayProviderRoute,
+      edit: getEditAiGatewayProviderRoute,
+    }
+    : {
+      list: getGatewayProvidersRoute,
+      new: getNewGatewayProviderRoute,
+      detail: getGatewayProviderRoute,
+      edit: getEditGatewayProviderRoute,
+    };
+}
+
 export function getGatewayProvidersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/gateway-providers`;
 }

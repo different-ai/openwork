@@ -58,7 +58,10 @@ describe("Den org sidebar information architecture", () => {
     expect(workSection).toBeLessThan(manageSection);
     expect(manageSection).toBeLessThan(observabilitySection);
     expect(observabilitySection).toBeLessThan(teamSection);
-    expect(navigation).toContain('badge: "Providers"');
+    expect(navigation).toContain('label: "AI Gateway"');
+    expect(navigation).toContain('badge: "Models"');
+    expect(navigation).toContain('label: "Old Gateway"');
+    expect(shell).toContain('return "AI Gateway";');
     expect(navigation).toContain('badge: "MCPs"');
     expect(navigation).toContain("capabilities.mcpConnections && access.isAdmin");
     expect(navigation.slice(navigation.indexOf("const manageItems"), navigation.indexOf("const observabilityItems"))).not.toContain('label: "Tool Tester"');

@@ -8,6 +8,7 @@ import { GATEWAY_EXPLAINER } from "../app/(den)/dashboard/_components/inference-
 import { GatewayModelUniverse } from "../app/(den)/dashboard/_components/inference-provider-model-universe";
 import {
   getCustomLlmProvidersRoute,
+  getGatewayProviderRoutes,
   getEditGatewayProviderRoute,
   getGatewayProviderRoute,
   getGatewayProvidersRoute,
@@ -26,6 +27,7 @@ const list = read("dashboard", "_components", "inference-providers-screen.tsx");
 const editor = read("dashboard", "_components", "inference-provider-editor-screen.tsx");
 const detail = read("dashboard", "_components", "inference-provider-detail-screen.tsx");
 const matrix = read("dashboard", "_components", "inference-provider-matrix.tsx");
+const subjects = read("dashboard", "_components", "gateway-users-teams-section.tsx");
 const universe = read("dashboard", "_components", "inference-provider-model-universe.tsx");
 const usage = read("dashboard", "_components", "gateway-usage-section.tsx");
 const llmDetail = read("dashboard", "_components", "llm-provider-detail-screen.tsx");
@@ -51,14 +53,46 @@ describe("Gateway providers routes", () => {
   });
 });
 
+describe("AI Gateway nested provider routes", () => {
+  test.each(["workspace", null, undefined])("preserves both route contexts and encodes IDs for %s", (orgSlug) => {
+    const current = getGatewayProviderRoutes("ai-gateway");
+    expect(current.list(orgSlug)).toBe("/dashboard/ai-gateway?tab=ai-providers");
+    expect(current.new(orgSlug)).toBe("/dashboard/ai-gateway/providers/new");
+    expect(current.detail(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid");
+    expect(current.edit(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid/edit");
+    const old = getGatewayProviderRoutes();
+    expect(old.list(orgSlug)).toBe("/dashboard/gateway-providers");
+    expect(old.new(orgSlug)).toBe("/dashboard/gateway-providers/new");
+    expect(old.detail(orgSlug, "provider/id")).toBe("/dashboard/gateway-providers/provider%2Fid");
+    expect(old.edit(orgSlug, "provider/id")).toBe("/dashboard/gateway-providers/provider%2Fid/edit");
+  });
+
+  test("new, detail and edit retain the tab shell and capability guard", () => {
+    const pages = ["dashboard", "(admin)", "ai-gateway"];
+    expect(read(...pages, "page.tsx")).toContain("<AiGatewayScreen");
+    const layout = read(...pages, "providers", "layout.tsx");
+    expect(layout).toContain("<AiGatewayScreen");
+    expect(layout).toContain("providerContent={<GatewayDashboardCapabilityGuard>{children}</GatewayDashboardCapabilityGuard>}");
+    for (const path of [["new"], ["[inferenceProviderId]"], ["[inferenceProviderId]", "edit"]]) {
+      const page = read(...pages, "providers", ...path, "page.tsx");
+      expect(page).toContain('routeContext="ai-gateway" embedded');
+    }
+    for (const screen of [list, editor, detail]) expect(screen).toContain("getGatewayProviderRoutes(routeContext)");
+    expect(editor).toContain("routes.detail(orgSlug,");
+    expect(editor).toContain("routes.list(orgSlug)");
+    expect(detail).toContain("routes.edit(orgSlug,");
+    expect(detail).toContain("routes.list(orgSlug)");
+  });
+});
+
 describe("Gateway providers sidebar", () => {
-  test("appears first under the admin-gated Models group before legacy BYOK", () => {
+  test("retains Old Gateway under the admin-gated AI Gateway root before legacy BYOK", () => {
     const byok = navigation.indexOf('label: "Bring Your Own Keys (Legacy)"');
-    const gateway = navigation.indexOf('label: "Gateway", badge: "New"');
+    const gateway = navigation.indexOf('label: "Old Gateway", badge: "New"');
     expect(gateway).toBeGreaterThan(-1);
     expect(byok).toBeGreaterThan(gateway);
-    expect(navigation).toMatch(/const modelsGroup[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "Gateway"/);
-    expect(shell).toContain('return "Gateway";');
+    expect(navigation).toMatch(/const modelsGroup[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "AI Gateway"/);
+    expect(shell).toContain('return "AI Gateway";');
   });
 });
 
@@ -100,7 +134,9 @@ describe("Gateway provider editor", () => {
   test("reuses the BYOK pickers instead of duplicating them", () => {
     expect(editor).toContain("<GatewayAccessMatrix");
     expect(editor).toContain("<GatewayModelUniverse");
-    expect(matrix).toContain("<ProviderAccessPicker");
+    expect(matrix).not.toContain("<ProviderAccessPicker");
+    expect(subjects).toContain("<ProviderAccessPicker");
+    expect(subjects).toContain("lockedMemberId={null} singleAudience");
     expect(matrix).toContain("<ProviderModelPicker");
     expect(universe).toContain("<ProviderModelPicker");
     expect(universe).toContain('layout="cards"');
@@ -162,8 +198,11 @@ describe("Gateway provider detail", () => {
   test("upstream key rows identify their creator without expanding audience membership", () => {
     expect(matrix).toContain('set.createdBy?.name || set.createdBy?.email || "Not recorded"');
     expect(matrix).toContain("set.createdBy.email");
-    expect(matrix).toContain("Only directly assigned teams and people are listed; team members are not expanded.");
-    expect(matrix).toContain("getRowKey={(grant) => grant.id}");
+    expect(matrix).toContain('getRowKey={(set) => set.id}');
+    expect(matrix).toContain('href={`${getAiGatewayRoute()}?tab=users-and-teams`}');
+    expect(matrix).toContain("Manage access in Users &amp; Teams");
+    expect(matrix).not.toContain('resource: "access-grants"');
+    expect(subjects).toContain("for (const grant of provider.accessGrants) ensureCard(grant.audience).grants.push({ provider, grant })");
   });
 });
 
@@ -181,12 +220,12 @@ describe("Gateway model and access defaults", () => {
   test("does not grant default access or save a new empty upstream key", () => {
     expect(editor).toContain('allMembers: false, memberIds: [], teamIds: []');
     expect(editor).not.toContain("saveGatewayResource");
-    expect(matrix).toContain('modelGroupId: grant?.modelGroupId ?? "", credentialSetId: grant?.credentialSetId ?? ""');
+    expect(subjects).toContain('access: { allMembers: false, memberIds: [], teamIds: [] }, providerId: "", modelGroupId: "", credentialSetId: ""');
     expect(matrix).toContain("if (needsCredential && !hasCredential) return setError");
-    expect(matrix).toContain("Choose exactly one audience: organization, team or person.");
-    expect(matrix).toContain("Choose a team in the current organization.");
-    expect(matrix).toContain("Choose a person in the current organization.");
-    expect(matrix).toContain("Administrators and key creators do not receive automatic access.");
+    expect(subjects).toContain("Number(access.allMembers) + access.memberIds.length + access.teamIds.length !== 1");
+    expect(subjects).toContain("directory.teams.some((team) => team.id === teamId)");
+    expect(subjects).toContain("directory.members.some((member) => member.id === memberId)");
+    expect(subjects).toContain("!audience || !validDetails || duplicate");
     expect(matrix).toContain("No models in this group. It does not grant access to any models.");
   });
 

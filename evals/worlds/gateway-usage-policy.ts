@@ -56,7 +56,7 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
   });
   const databaseUrl = den.database?.url;
   if (!databaseUrl || !new URL(databaseUrl).pathname.startsWith("/openwork_eval_")) throw new Error("Expected testkit scratch database");
-  for (const name of ["0105_gateway_incremental_usage", "0106_gateway_usage_lifecycle", "0107_gateway_usage_durable_capture"]) {
+  for (const name of ["0105_gateway_incremental_usage", "0106_gateway_usage_lifecycle", "0107_gateway_usage_durable_capture", "0108_gateway_usage_organization_assignments"]) {
     const migration = await readFile(`${root}/ee/packages/den-db/drizzle/${name}.sql`, "utf8");
     const migrationHash = createHash("sha256").update(migration).digest("hex");
     const migrationReceipts = await queryDenDatabase(databaseUrl, "SELECT hash FROM __drizzle_migrations WHERE hash = ?", [migrationHash]);
@@ -122,7 +122,7 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
   const modelId = usageString(usageRecords(connected.models)[0]?.id);
   const baseUrl = usageString(usageRecord(connected.providerConfig).api);
   if (new URL(baseUrl).origin !== gatewayUrl) throw new Error("Gateway connect escaped the owned loopback origin");
-  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/gateway-providers", headless: true, viewport: { width: 1440, height: 1200 } }).catch((error: unknown) => {
+  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=limits", headless: true, viewport: { width: 1440, height: 1200 } }).catch((error: unknown) => {
     if (error instanceof Error && "error" in error && "suppressed" in error) {
       throw new AggregateError([error.suppressed, error.error], "Den browser setup and disposal failed");
     }

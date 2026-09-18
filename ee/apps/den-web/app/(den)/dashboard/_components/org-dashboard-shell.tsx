@@ -16,6 +16,7 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { DEFAULT_AUTH_NAME } from "../../_lib/den-flow";
 import {
   formatRoleLabel,
+  getAiGatewayRoute,
   getAnalyticsRoute,
   getAutomationsRoute,
   getBackgroundAgentsRoute,
@@ -247,6 +248,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
+  }
+  if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
+    return "AI Gateway";
   }
   if (pathname.startsWith(getGatewayProvidersRoute(orgSlug))) {
     return "Gateway";
@@ -646,7 +650,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                     Boolean(activeOrg && item.href === getLibraryRoute(activeOrg.slug));
                   const childActive = (child: DashboardNavChild) =>
                     pathname === child.href || pathname.startsWith(`${child.href}/`);
-                  const groupActive = (item.children ?? []).some(childActive);
+                  const groupActive = (item.href !== "#" && (
+                    pathname === item.href || (!isDashboardRoot && pathname.startsWith(`${item.href}/`))
+                  )) || (item.children ?? []).some(childActive);
                   const selected =
                     item.href !== "#" &&
                     (item.children
