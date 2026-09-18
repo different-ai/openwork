@@ -273,6 +273,13 @@ export function isBetterAuthEmailPasswordRequest(request: Request) {
   return request.method.toUpperCase() === "POST" && (path === "/sign-in/email" || path === "/sign-up/email")
 }
 
+// Email OTP sign-in issues a session (and creates unknown users) just like
+// email/password, so SSO-only deployments must reject it as well.
+export function isBetterAuthEmailOtpSignInRequest(request: Request) {
+  const url = new URL(request.url)
+  return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/sign-in/email-otp"
+}
+
 export function isBetterAuthEmailSignupRequest(request: Request) {
   const url = new URL(request.url)
   return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/sign-up/email"
@@ -341,7 +348,7 @@ async function getSingleOrgAuthGuardResponse(request: Request, context: Context,
     }
   }
 
-  if (isBetterAuthEmailPasswordRequest(request)) {
+  if (isBetterAuthEmailPasswordRequest(request) || isBetterAuthEmailOtpSignInRequest(request)) {
     const status = await getSingletonSsoStatus()
     if (status.configured) {
       return singleOrgSsoRequiredResponse(status.signInPath)
