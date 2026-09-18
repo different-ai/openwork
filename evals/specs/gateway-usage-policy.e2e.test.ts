@@ -134,7 +134,7 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect((await adminProbe.dom('[role="dialog"] button:disabled')).elements.map((element) => element.text)).toContain("Continue");
     await admin.click({ role: "button", label: "People (0)" });
     await admin.type({ placeholder: "Search people..." }, world.member.email);
-    await admin.click({ role: "button", label: /Usage Member.*usage-member@example\.test/ });
+    await admin.click({ role: "button", label: /Usage Member[\s\S]*usage-member@example\.test/ });
     await admin.click({ role: "button", label: "Continue" });
     await admin.click({ role: "combobox", label: "Usage limit policy" });
     await admin.click({ role: "option", label: new RegExp(policyName) });
@@ -188,14 +188,14 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
     await admin.click({ role: "combobox", label: "Find person to inspect" });
     await admin.type({ role: "combobox", label: "Find person to inspect" }, world.member.email);
-    await admin.click({ role: "option", label: /Usage Member.*usage-member@example\.test/ });
+    await admin.click({ role: "option", label: /Usage Member[\s\S]*usage-member@example\.test/ });
     await admin.see({ text: "Within allowance" });
     expect((await adminProbe.dom('[aria-label="Usage for Usage Member"]')).elements[0]?.text).toContain("Within allowance");
     await admin.see({ text: "$0.00 used" });
     await admin.click({ role: "button", label: "Change person" });
     await admin.click({ role: "combobox", label: "Find person to inspect" });
     await admin.type({ role: "combobox", label: "Find person to inspect" }, world.control.email);
-    await admin.click({ role: "option", label: /Usage Control.*usage-control@example\.test/ });
+    await admin.click({ role: "option", label: /Usage Control[\s\S]*usage-control@example\.test/ });
     await admin.see({ text: "Unlimited" });
     expect((await adminProbe.dom('[aria-label="Usage for Usage Control"]')).elements[0]?.text).toContain("Unlimited");
     await admin.notSee({ text: "$0.00 used" });
