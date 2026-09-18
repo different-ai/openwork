@@ -415,6 +415,7 @@ export class AutomationService {
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: current.revision.model,
         failure: access,
+        executionTarget: target,
         modelAttentionCapable: target === "cloud" || supportsModelAttention(scope),
       })) blocked = { code: access.code, message: access.message, occurredAt: Date.now() }
     }
@@ -530,6 +531,7 @@ export class AutomationService {
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: item.revision.model,
         failure: access,
+        executionTarget: item.revision.executionTarget ?? "desktop",
         // Scheduling must remain compatible until a capable desktop claims
         // the work or a capable management client reconciles the Automation.
         modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud",
@@ -730,9 +732,9 @@ export class AutomationService {
   }
 
   /**
-   * New capable clients require current authority. Published clients may
-   * continue submitting the exact legacy Zen selection until they advertise
-   * support for the repairable attention state.
+   * Published Desktop admission remains compatible, including model-attention
+   * v1 clients. Cloud enforces provider filters here; updated Desktop runners
+   * check their effective workspace model catalog before creating a thread.
    */
   private async requireNewModel(scope: OwnerScope, model: ModelSelection, target: "desktop" | "cloud") {
     // The cloud default only means something where the runner picks the model.
@@ -746,6 +748,7 @@ export class AutomationService {
     if (!result.ok && shouldApplyAutomationModelAccessFailure({
       model,
       failure: result,
+      executionTarget: target,
       modelAttentionCapable: supportsModelAttention(scope),
     })) {
       const error = new Error(result.message)
@@ -768,6 +771,7 @@ export class AutomationService {
     if (access.ok || !shouldApplyAutomationModelAccessFailure({
       model: item.revision.model,
       failure: access,
+      executionTarget: item.revision.executionTarget ?? "desktop",
       modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud"
         || supportsModelAttention(scope),
     })) return item
