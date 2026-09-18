@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import { type DenOrgCapabilities, getOrgAccessFlags, getToolTesterRoute } from "../app/(den)/_lib/den-org";
-import type { getGatewayDashboardAccess } from "../app/(den)/dashboard/_lib/gateway-dashboard-access";
 import {
   buildDashboardNavSections,
   flattenNavigationForSearch,
@@ -18,7 +17,6 @@ const searchBar = readFileSync(
 );
 
 const baseCapabilities: DenOrgCapabilities = {
-  gatewayDashboard: false,
   cloud: true,
   installLinks: true,
   mcpConnections: true,
@@ -30,7 +28,6 @@ const baseCapabilities: DenOrgCapabilities = {
 function buildFor(
   role: "member" | "admin",
   capabilities = baseCapabilities,
-  gatewayAccess: ReturnType<typeof getGatewayDashboardAccess> = capabilities.gatewayDashboard ? "unavailable" : "denied",
   orgMode: "multi_org" | "single_org" = "multi_org",
   runtimeConfigLoaded = true,
 ) {
@@ -38,15 +35,14 @@ function buildFor(
     orgSlug: "example",
     access: getOrgAccessFlags(role, false),
     capabilities,
-    gatewayAccess,
     orgMode,
     runtimeConfigLoaded,
   });
 }
 
 describe("dashboard navigation index", () => {
-  test.each([false, true])("Gateway opt-in %s keeps canonical navigation without the removed Gateway link", (gatewayDashboard) => {
-    const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard });
+  test("keeps canonical navigation without the removed Gateway link", () => {
+    const sections = buildFor("admin");
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
     expect(models?.href).toBe("/dashboard/ai-gateway");
     expect(models?.children).toBeUndefined();
@@ -55,12 +51,12 @@ describe("dashboard navigation index", () => {
     expect(search.some((entry) => entry.label === "AI Gateway › OpenWork Models")).toBe(false);
     expect(search.some((entry) => entry.label === "AI Gateway › Bring Your Own Keys (Legacy)")).toBe(false);
     expect(search.find((entry) => entry.label === "AI Gateway")?.href).toBe("/dashboard/ai-gateway");
-    expect(flattenNavigationForSearch(buildFor("member", { ...baseCapabilities, gatewayDashboard }))
+    expect(flattenNavigationForSearch(buildFor("member"))
       .some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(false);
   });
 
-  test.each(["checking", "denied", "unavailable", "enabled"] satisfies ReturnType<typeof getGatewayDashboardAccess>[])("AI Gateway remains a top-level item with %s access without hiding billing/keys", (gatewayAccess) => {
-    const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard: true }, gatewayAccess);
+  test("AI Gateway remains a top-level admin item without hiding billing/keys", () => {
+    const sections = buildFor("admin");
     const entries = flattenNavigationForSearch(sections);
     const hrefs = entries.map((entry) => entry.href);
     expect(hrefs.some((href) => href.startsWith("/dashboard/gateway-providers"))).toBe(false);
@@ -74,7 +70,7 @@ describe("dashboard navigation index", () => {
   });
 
   test("hosted admins have one normal AI Gateway navigation item without children", () => {
-    const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard: true }, "enabled");
+    const sections = buildFor("admin");
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
     expect(models?.children).toBeUndefined();
     const search = flattenNavigationForSearch(sections);
@@ -84,12 +80,10 @@ describe("dashboard navigation index", () => {
     expect(shell).not.toContain("getInferenceRoute");
   });
 
-  test.each([false, true])("no duplicate Models child appears before runtime config or on single-org deployments with gateway opt-in %s", (gatewayDashboard) => {
-    const capabilities = { ...baseCapabilities, gatewayDashboard };
-    const gatewayAccess = gatewayDashboard ? "enabled" : "denied";
+  test("no duplicate Models child appears before runtime config or on single-org deployments", () => {
     for (const sections of [
-      buildFor("admin", capabilities, gatewayAccess, "single_org"),
-      buildFor("admin", capabilities, gatewayAccess, "multi_org", false),
+      buildFor("admin", baseCapabilities, "single_org"),
+      buildFor("admin", baseCapabilities, "multi_org", false),
     ]) {
       const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
       expect(models?.href).toBe("/dashboard/ai-gateway");
@@ -98,8 +92,8 @@ describe("dashboard navigation index", () => {
     }
   });
 
-  test.each(["denied", "unavailable", "enabled"] satisfies ReturnType<typeof getGatewayDashboardAccess>[])("members never receive AI Gateway, Old Gateway or OpenWork Models navigation with %s access", (gatewayAccess) => {
-    const sections = buildFor("member", { ...baseCapabilities, gatewayDashboard: true }, gatewayAccess);
+  test("members never receive AI Gateway, Old Gateway or OpenWork Models navigation", () => {
+    const sections = buildFor("member");
     expect(sections.flatMap((section) => section.items).some((item) => item.label === "AI Gateway")).toBe(false);
     expect(flattenNavigationForSearch(sections).some((entry) => ["/dashboard/ai-gateway", "/dashboard/inference", "/dashboard/gateway-providers"].includes(entry.href))).toBe(false);
   });
@@ -133,7 +127,7 @@ describe("dashboard navigation index", () => {
           for (const runtimeConfigLoaded of [true, false]) {
             const sections = buildDashboardNavSections({
               orgSlug, access, capabilities: { ...baseCapabilities, mcpConnections },
-              gatewayAccess: "denied", orgMode, runtimeConfigLoaded,
+              orgMode, runtimeConfigLoaded,
             });
             const visible = allowed && mcpConnections && orgSlug !== null;
             const items = sections.flatMap((section) => section.items);

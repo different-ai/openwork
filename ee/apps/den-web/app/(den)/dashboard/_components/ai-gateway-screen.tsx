@@ -128,7 +128,7 @@ export function AiGatewayScreen({ providerContent }: { providerContent?: ReactNo
                     ? "Checking workspace access..."
                     : access === "unavailable"
                       ? "This feature is not part of your deployment system, please ask an instance admin to configure deployment"
-                      : "AI Gateway is not enabled for this workspace."} />
+                      : "AI Gateway requires workspace admin permissions. Ask a workspace owner to update your role."} />
             ) : null}
             {tab === "openwork-models" ? <InferenceScreen embedded /> : null}
             {tab === "ai-providers" && orgId && !orgError ? (

@@ -1016,7 +1016,7 @@ test("Models enable and disable affect only Models keys, never the stable Gatewa
   const ready = usable.find((provider) => provider.credentialStatus === "ready")
   if (!ready) throw new Error("expected a usable gateway provider")
   try {
-    for (const enabled of [false, true]) for (const gatewayDashboard of [false, true]) {
+    for (const enabled of [false, true]) for (const gatewayDashboard of [undefined, null, false, true, "false", 1, {}, []]) {
       env.gatewayEnabled = enabled
       await db.update(schema.OrganizationTable).set({ metadata: {
         inference: { enabled: true, tier: "tier1" }, capabilities: { gatewayDashboard },
@@ -1024,9 +1024,10 @@ test("Models enable and disable affect only Models keys, never the stable Gatewa
       const context = await request(ownerCookie, "/v1/org")
       expect(context.status).toBe(200)
       expect(await context.json()).toMatchObject({
-        capabilities: { gatewayDashboard }, deploymentCapabilities: { version: 1, aiGateway: enabled },
+        capabilities: { gatewayDashboard: true }, deploymentCapabilities: { version: 1, aiGateway: enabled },
       })
       expect((await request(ownerCookie, "/v1/inference-providers?scope=manageable")).status).toBe(enabled ? 200 : 403)
+      expect((await request(memberCookie, "/v1/inference-providers?scope=manageable")).status).toBe(403)
       const connect = await request(memberCookie, `/v1/inference-providers/${readString(ready, "id")}/connect`)
       expect(connect.status).toBe(200)
       expect(readProvider(await connect.json()).apiKey).toBe(beforeKey.encryptedKey)

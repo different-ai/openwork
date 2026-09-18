@@ -73,9 +73,8 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
   const memberId = usageString(members.find((row) => usageRecord(row.user).email === member.email)?.id);
   const controlId = usageString(members.find((row) => usageRecord(row.user).email === control.email)?.id);
   const adminId = usageString(usageRecord(org.currentMember).id);
-  await queryDenDatabase(databaseUrl, "UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, '{}'), '$.capabilities', COALESCE(JSON_EXTRACT(metadata, '$.capabilities'), JSON_OBJECT()), '$.capabilities.gatewayDashboard', JSON_EXTRACT('true', '$')) WHERE id = ?", [orgId]);
-  const capabilityResponse = await seed.api(den.admin, "/v1/org");
-  if (!capabilityResponse.response.ok || usageRecord(usageRecord(capabilityResponse.body).capabilities).gatewayDashboard !== true) throw new Error("Synthetic org Gateway dashboard capability was not enabled");
+  const orgMetadata = await queryDenDatabase(databaseUrl, "SELECT JSON_CONTAINS_PATH(COALESCE(metadata, '{}'), 'one', '$.capabilities.gatewayDashboard') AS hasGatewayDashboard FROM organization WHERE id = ?", [orgId]);
+  if (orgMetadata.length !== 1 || usageRecord(orgMetadata[0]).hasGatewayDashboard !== 0) throw new Error("Fresh Gateway journey organization must not have a dashboard capability override");
   const child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", "src/server.ts"], {
     cwd: `${root}/ee/apps/gateway`, stdio: ["ignore", "pipe", "pipe"],
     env: {
@@ -105,6 +104,10 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
     if (child.exitCode !== null || Date.now() >= deadline) throw new Error(`Gateway readiness failed (exit ${child.exitCode}): ${logs}`);
     if (await fetch(`${gatewayUrl}/ready`, { signal: AbortSignal.timeout(2000) }).then((response) => response.ok).catch(() => false)) break;
     await delay(500);
+  }
+  for (const path of ["/v1/inference-providers?scope=manageable", "/v1/gateway/usage-limit-policies"]) {
+    const response = await seed.api(den.admin, path);
+    if (response.response.status !== 200) throw new Error(`Default organization Gateway management requires no opt-in: ${path}, HTTP ${response.response.status}`);
   }
   const providerResponse = await seed.api(den.admin, "/v1/inference-providers", {
     method: "POST", body: JSON.stringify({

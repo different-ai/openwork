@@ -14,6 +14,7 @@ const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query
 const navigation = await import("next/navigation");
 const organization = await import("../app/(den)/dashboard/_providers/org-dashboard-provider");
 const capability = await import("../app/(den)/dashboard/_components/gateway-dashboard-capability-guard");
+const { getGatewayDashboardAccess } = await import("../app/(den)/dashboard/_lib/gateway-dashboard-access");
 const models = await import("../app/(den)/dashboard/_components/inference-screen");
 const requests = await import("../app/(den)/_lib/den-flow");
 const legacyData = await import("../app/(den)/dashboard/_components/llm-provider-data");
@@ -33,6 +34,7 @@ const grantsPath = "/v1/inference-providers/provider%2Ffixture/access-grants";
 const noop = async () => {};
 const directory = parseOrgContextPayload({
   organization: { id: orgId, name: "Fixture Workspace", slug: "fixture" },
+  deploymentCapabilities: { version: 1, aiGateway: true },
   currentMember: { id: "admin-member", userId: "admin-user", role: "owner", isOwner: true },
   members: [{ id: memberId, userId: "user-fixture", role: "member", user: { id: "user-fixture", name: "Example Person", email: "person@example.test" } }],
   teams: [
@@ -89,7 +91,7 @@ async function mount(node: ReactNode, handler: Handler = reply, tab = "users-and
       try { return await action(); } catch (error) { reauthErrors.push(error); throw error; }
     },
   });
-  const access = spyOn(capability, "useGatewayDashboardAccess").mockReturnValue("enabled");
+  const access = spyOn(capability, "useGatewayDashboardAccess").mockImplementation(() => getGatewayDashboardAccess(organization.useOrgDashboard()));
   const search = spyOn(navigation, "useSearchParams").mockReturnValue(new navigation.ReadonlyURLSearchParams(`tab=${tab}&keep=value`));
   const router = spyOn(navigation, "useRouter").mockReturnValue({
     push(href, options) { pushes.push({ href, scroll: options?.scroll }); }, replace() {}, refresh() {}, back() {}, forward() {}, prefetch: noop, bfcacheId: "fixture",
@@ -196,7 +198,7 @@ test.each(["checking", "denied", "unavailable"] satisfies ReturnType<typeof capa
       expect(view.container.querySelector('[aria-labelledby="gateway-usage-limits-heading"]')).toBeNull();
     }
     expect(view.calls).toEqual([]);
-    expect(view.container.textContent).toContain(state === "checking" ? "Checking workspace access" : state === "unavailable" ? "ask an instance admin" : "not enabled");
+    expect(view.container.textContent).toContain(state === "checking" ? "Checking workspace access" : state === "unavailable" ? "ask an instance admin" : "AI Gateway requires workspace admin permissions. Ask a workspace owner to update your role.");
   } finally { await view.close(); }
 });
 

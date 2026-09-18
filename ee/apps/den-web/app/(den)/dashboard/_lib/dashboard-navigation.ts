@@ -38,7 +38,6 @@ import {
   getWebRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
-import type { getGatewayDashboardAccess } from "./gateway-dashboard-access";
 
 export type DashboardNavChild = {
   href: string;
@@ -76,7 +75,6 @@ export type BuildDashboardNavSectionsInput = {
   orgSlug: string | null;
   access: DenOrgAccessFlags;
   capabilities: DenOrgCapabilities;
-  gatewayAccess: ReturnType<typeof getGatewayDashboardAccess>;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
 };

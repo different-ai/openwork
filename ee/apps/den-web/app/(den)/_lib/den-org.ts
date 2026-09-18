@@ -250,8 +250,6 @@ export type DenOrgEntitlements = {
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
-  /** Platform-admin opt-in for the Gateway dashboard only; never a runtime inference gate. */
-  gatewayDashboard: boolean;
   orgManagedDashboards: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
@@ -1016,12 +1014,11 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { gatewayDashboard: false, orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
+    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
   }
 
   return {
     orgManagedDashboards: value.orgManagedDashboards === true,
-    gatewayDashboard: value.gatewayDashboard === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
     // Workflows are enabled everywhere on current servers; only an explicit

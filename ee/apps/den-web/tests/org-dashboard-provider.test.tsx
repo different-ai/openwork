@@ -26,13 +26,12 @@ import { getGatewayDashboardAccess } from "../app/(den)/dashboard/_lib/gateway-d
 
 type Reply = { payload: unknown; status?: number };
 const account = { id: "user-1", name: "Member", email: "member@example.test" };
-const enabledMetadata = JSON.stringify({ capabilities: { gatewayDashboard: true } });
 const orgs = ["a", "b", "c"].map((key) => ({
   id: `org-${key}`, name: `Workspace ${key}`, slug: key, role: "owner",
   orgMemberId: `member-${key}`, membershipId: `membership-${key}`,
 }));
 
-function context(id: string, metadata = enabledMetadata, role = "owner", deployment: { deploymentCapabilities?: unknown } = { deploymentCapabilities: { version: 1, aiGateway: true } }): Reply {
+function context(id: string, metadata = "{}", role = "owner", deployment: { deploymentCapabilities?: unknown } = { deploymentCapabilities: { version: 1, aiGateway: true } }): Reply {
   const organization = orgs.find((org) => org.id === id);
   if (!organization) throw new Error(`Unknown fixture organization: ${id}`);
   const parsed: unknown = JSON.parse(metadata);
@@ -182,12 +181,13 @@ test("switch commits default-deny state and unmounts Gateway before changing req
     expect(state()).toMatchObject({ orgId: "org-b", orgContext: null, orgBusy: true, mutationBusy: "switch-organization" });
     expect(scopeWrites.at(-1)).toEqual({ id: "org-b", busy: true, contextId: undefined, gatewayMounted: false });
     expect(unmountedScopes).toEqual(["org-a"]);
-    await act(async () => next.resolve(context("org-b", JSON.stringify({ capabilities: { gatewayDashboard: false } }))));
+    await act(async () => next.resolve(context("org-b")));
     expect(state()).toMatchObject({ orgId: "org-b", orgBusy: false, orgError: null, mutationBusy: null });
     expect(state().orgContext?.organization.id).toBe("org-b");
-    expect(container.querySelector("[data-gateway]")).toBeNull();
+    expect(container.querySelector("[data-gateway]")).not.toBeNull();
     expect(calls.filter((call) => call.path.startsWith("/v1/inference-providers"))).toEqual([
       { path: "/v1/inference-providers?scope=manageable", orgId: "org-a" },
+      { path: "/v1/inference-providers?scope=manageable", orgId: "org-b" },
     ]);
   });
 });
@@ -196,27 +196,27 @@ test.each([
   "/dashboard/ai-gateway/providers/new",
   "/dashboard/ai-gateway/providers/infp_1",
   "/dashboard/ai-gateway/providers/infp_1/edit",
-])("disabled direct route %s redirects without mounting its real screen or fetching providers", async (pathname) => {
+])("unauthorized direct route %s redirects without mounting its real screen or fetching providers", async (pathname) => {
   const page = await gatewayPage(pathname);
   await withDashboard(async ({ container, calls, replace }) => {
-    expect(container.querySelector("[data-access-state=denied]")).not.toBeNull();
+    expect(container.querySelector("[data-testid=admin-access-state][data-access-state=redirecting]")).not.toBeNull();
     expect(replace).toHaveBeenCalledWith("/dashboard");
     expect(calls.some((call) => call.path.startsWith("/v1/inference-providers"))).toBe(false);
     expect(featureCalls(calls)).toEqual([]);
     expect(container.querySelector("[data-testid=gateway-provider-create]")).toBeNull();
-  }, { metadata: "{}", pathname, page, outsideGateway: true });
+  }, { role: "member", pathname, page, outsideGateway: true });
 });
 
-test.each(["admin", "super-admin", "owner", "member"])("enabled organization retains %s permissions", async (role) => {
+test.each(["admin", "super-admin", "owner", "member", "qa-reviewer"])("configured deployment retains %s permissions", async (role) => {
   await withDashboard(async ({ container, calls, replace }) => {
-    const enabled = role !== "member";
+    const enabled = ["admin", "super-admin", "owner"].includes(role);
     expect(Boolean(container.querySelector("[data-gateway]"))).toBe(enabled);
     expect(calls.some((call) => call.path.startsWith("/v1/inference-providers"))).toBe(enabled);
     if (!enabled) expect(replace).toHaveBeenCalledWith("/dashboard");
   }, { role });
 });
 
-test("disabled-to-enabled switch waits for the selected org and fetches only that org", async () => {
+test("unauthorized-to-admin switch waits for the selected org and fetches only that org", async () => {
   await withDashboard(async ({ state, hold, container, calls }) => {
     expect(container.querySelector("[data-gateway]")).toBeNull();
     const next = hold("/v1/org", "org-b");
@@ -228,34 +228,46 @@ test("disabled-to-enabled switch waits for the selected org and fetches only tha
     expect(calls.filter((call) => call.path.startsWith("/v1/inference-providers"))).toEqual([
       { path: "/v1/inference-providers?scope=manageable", orgId: "org-b" },
     ]);
-  }, { metadata: "{}" });
+  }, { role: "member" });
 });
 
-test.each([false, true])("BYOK remains available with Gateway %s and only opt-in exposes migration", async (enabled) => {
+const legacyGatewayMetadata = [
+  "{}", '{"capabilities":null}', '{"capabilities":false}',
+  '{"capabilities":{"gatewayDashboard":true}}', '{"capabilities":{"gatewayDashboard":false}}',
+  '{"capabilities":{"gatewayDashboard":"true"}}', '{"capabilities":{"gatewayDashboard":1}}',
+];
+
+test.each(legacyGatewayMetadata)("configured admins retain BYOK migration regardless of retired metadata: %s", async (metadata) => {
   await withDashboard(async ({ container, calls, state, hold }) => {
     expect(container.textContent).toContain("Test BYOK");
     expect(container.textContent).toContain("Edit Provider");
-    expect(Boolean(container.querySelector("[data-testid=llm-provider-move-to-gateway]"))).toBe(enabled);
+    const button = container.querySelector<HTMLButtonElement>("[data-testid=llm-provider-move-to-gateway]");
+    expect(button).not.toBeNull();
     expect(calls.some((call) => call.path.startsWith("/v1/inference-providers"))).toBe(false);
-    if (enabled) {
-      const button = container.querySelector<HTMLButtonElement>("[data-testid=llm-provider-move-to-gateway]");
-      await act(async () => button?.click());
-      expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).not.toBeNull();
-      const next = hold("/v1/org", "org-b");
-      await act(async () => state().switchOrganization("b"));
-      expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).toBeNull();
-      await act(async () => next.resolve(context("org-b", "{}")));
-      expect(container.querySelector("[data-testid=llm-provider-move-to-gateway]")).toBeNull();
-    }
-  }, { metadata: enabled ? enabledMetadata : "{}", outsideGateway: true,
-    page: <LlmProviderDetailScreen llmProviderId="llm-1" /> });
+    await act(async () => button?.click());
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).not.toBeNull();
+    const next = hold("/v1/org", "org-b");
+    await act(async () => state().switchOrganization("b"));
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).toBeNull();
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway]")).toBeNull();
+    await act(async () => next.resolve(context("org-b", metadata)));
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway]")).not.toBeNull();
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).toBeNull();
+  }, { metadata, outsideGateway: true, page: <LlmProviderDetailScreen llmProviderId="llm-1" /> });
 });
 
-test.each(["{}", '{"capabilities":null}', '{"capabilities":{"gatewayDashboard":false}}', '{"capabilities":{"gatewayDashboard":"true"}}', '{"capabilities":{"gatewayDashboard":1}}'])("missing or malformed Gateway config fails closed: %s", async (metadata) => {
+test.each(legacyGatewayMetadata)("parser and real guard ignore retired Gateway metadata: %s", async (metadata) => {
+  for (const role of ["admin", "super-admin", "owner", "admin, qa-reviewer"]) {
+    const orgContext = parseOrgContextPayload(context("org-a", metadata, role).payload);
+    expect(orgContext?.capabilities).not.toHaveProperty("gatewayDashboard");
+    expect(getGatewayDashboardAccess({ orgId: "org-a", orgContext, orgBusy: false, orgError: null, mutationBusy: null })).toBe("enabled");
+  }
   await withDashboard(async ({ container, state, calls }) => {
-    expect(state().orgContext?.capabilities.gatewayDashboard).toBe(false);
-    expect(container.querySelector("[data-gateway]")).toBeNull();
-    expect(calls.some((call) => call.path.startsWith("/v1/inference-providers"))).toBe(false);
+    expect(getGatewayDashboardAccess(state())).toBe("enabled");
+    expect(container.querySelector("[data-gateway]")).not.toBeNull();
+    expect(calls.filter((call) => call.path.startsWith("/v1/inference-providers"))).toEqual([
+      { path: "/v1/inference-providers?scope=manageable", orgId: "org-a" },
+    ]);
   }, { metadata });
 });
 
@@ -312,7 +324,7 @@ test("late set-active responses stop before loading context; a refresh during sw
   });
 });
 
-test("overlapping refreshes keep the latest busy state and capability result", async () => {
+test("overlapping refreshes keep the latest busy state and authorization result", async () => {
   await withDashboard(async ({ state, hold, container }) => {
     const old = hold("/v1/org", "org-a");
     let first: Promise<void> | undefined;
@@ -323,9 +335,9 @@ test("overlapping refreshes keep the latest busy state and capability result", a
     await act(async () => { old.resolve(context("org-a")); await first; });
     expect(state().orgBusy).toBe(true);
     expect(container.querySelector("[data-gateway]")).toBeNull();
-    await act(async () => { next.resolve(context("org-a", "{}")); await second; });
+    await act(async () => { next.resolve(context("org-a", "{}", "member")); await second; });
     expect(state().orgBusy).toBe(false);
-    expect(state().orgContext?.organization.metadata).toBe("{}");
+    expect(state().orgContext?.currentMember.role).toBe("member");
     expect(container.querySelector("[data-gateway]")).toBeNull();
   });
 });
@@ -505,18 +517,28 @@ function featureCalls(calls: { path: string }[]) {
   return calls.filter(({ path }) => /inference|models-dev|llm-providers|catalog|gateway/.test(path));
 }
 
-test.each(unsupportedDeployments)("deployment parser fails closed independently of the org opt-in: %j", (deploymentCapabilities) => {
-  const orgContext = parseOrgContextPayload(context("org-a", enabledMetadata, "owner", { deploymentCapabilities }).payload);
-  expect(orgContext?.capabilities.gatewayDashboard).toBe(true);
-  expect(orgContext?.deploymentCapabilities).toEqual({ version: 1, aiGateway: false });
+test.each(unsupportedDeployments)("deployment parser still fails closed without supported configuration: %j", (deploymentCapabilities) => {
+  for (const metadata of legacyGatewayMetadata) {
+    const orgContext = parseOrgContextPayload(context("org-a", metadata, "owner", { deploymentCapabilities }).payload);
+    expect(orgContext?.deploymentCapabilities).toEqual({ version: 1, aiGateway: false });
+    expect(getGatewayDashboardAccess({ orgId: "org-a", orgContext, orgBusy: false, orgError: null, mutationBusy: null })).toBe("unavailable");
+  }
+});
+
+test("organization metadata cannot enable deployment support", () => {
+  const metadata = JSON.stringify({ deploymentCapabilities: { version: 1, aiGateway: true } });
+  const orgContext = parseOrgContextPayload(context("org-a", metadata, "owner", {}).payload);
+  expect(orgContext?.deploymentCapabilities.aiGateway).toBe(false);
   expect(getGatewayDashboardAccess({ orgId: "org-a", orgContext, orgBusy: false, orgError: null, mutationBusy: null })).toBe("unavailable");
 });
 
-test("deployment metadata cannot enable deployment support and deployment support cannot opt an org in", () => {
-  const metadata = JSON.stringify({ capabilities: { gatewayDashboard: true }, deploymentCapabilities: { version: 1, aiGateway: true } });
-  const orgContext = parseOrgContextPayload(context("org-a", metadata, "owner", {}).payload);
-  expect(orgContext?.deploymentCapabilities.aiGateway).toBe(false);
-  expect(getGatewayDashboardAccess({ orgId: "org-a", orgContext: parseOrgContextPayload(context("org-a", "{}").payload), orgBusy: false, orgError: null, mutationBusy: null })).toBe("denied");
+test.each(["member", "qa-reviewer"])("retired metadata never authorizes %s", (role) => {
+  for (const metadata of legacyGatewayMetadata) {
+    for (const deploymentCapabilities of [{ version: 1, aiGateway: true }, ...unsupportedDeployments]) {
+      const orgContext = parseOrgContextPayload(context("org-a", metadata, role, { deploymentCapabilities }).payload);
+      expect(getGatewayDashboardAccess({ orgId: "org-a", orgContext, orgBusy: false, orgError: null, mutationBusy: null })).toBe("denied");
+    }
+  }
 });
 
 test("access never trusts missing, loading, mismatched or switching context; org errors are not deployment unavailability", () => {
@@ -554,7 +576,7 @@ for (const pathname of gatewayRoutes) {
       expect(container.textContent).not.toContain(unavailableMessage);
       expect(featureCalls(calls)).toEqual([]);
       expect(replace).not.toHaveBeenCalled();
-      await act(async () => initialContext.resolve(context("org-a", enabledMetadata, "owner", {})));
+      await act(async () => initialContext.resolve(context("org-a", "{}", "owner", {})));
       expect(container.querySelector("[data-access-state=unavailable]")?.textContent).toBe(unavailableMessage);
       expect(featureCalls(calls)).toEqual([]);
     }, { pathname, outsideGateway: true, page: await gatewayPage(pathname), initialContext });
@@ -585,15 +607,14 @@ for (const tab of ["overview", "ai-providers"]) {
     }, { pathname, page, outsideGateway: true, gatewayFailure: true });
   });
 
-  test.each([{}, ...unsupportedDeployments.map((deploymentCapabilities) => ({ deploymentCapabilities }))])(`${tab} blocks gateway requests without org opt-in or deployment support: %j`, async (deployment) => {
-    const optedIn = "deploymentCapabilities" in deployment;
+  test.each(unsupportedDeployments)(`${tab} blocks gateway requests without deployment support: %j`, async (deploymentCapabilities) => {
     await withDashboard(async ({ container, calls, replace }) => {
-      expect(container.textContent).toContain(optedIn ? unavailableMessage : "AI Gateway is not enabled for this workspace.");
+      expect(container.textContent).toContain(unavailableMessage);
       expect(calls.some(({ path }) => /inference|models-dev|gateway/.test(path))).toBe(false);
       expect(container.querySelector("[data-testid=gateway-provider-create], [data-testid=gateway-usage]")).toBeNull();
       expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
       expect(replace).not.toHaveBeenCalled();
-    }, { pathname, page, outsideGateway: true, metadata: optedIn ? enabledMetadata : "{}", ...deployment });
+    }, { pathname, page, outsideGateway: true, deploymentCapabilities });
   });
 
   test(`${tab} waits for context and rejects nonadmins before any feature request`, async () => {
@@ -602,21 +623,21 @@ for (const tab of ["overview", "ai-providers"]) {
       expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
       expect(featureCalls(calls)).toEqual([]);
       expect(replace).not.toHaveBeenCalled();
-      await act(async () => initialContext.resolve(context("org-a", enabledMetadata, "member")));
+      await act(async () => initialContext.resolve(context("org-a", "{}", "member")));
       expect(container.querySelector("[data-testid=admin-access-state][data-access-state=redirecting]")).not.toBeNull();
       expect(featureCalls(calls)).toEqual([]);
       expect(replace).toHaveBeenCalledWith("/dashboard");
     }, { pathname, page, outsideGateway: true, initialContext });
   });
 
-  test(`${tab} unmounts gateway controls during org switching and cannot fetch for a disabled org`, async () => {
+  test(`${tab} unmounts gateway controls during org switching and cannot fetch without deployment support`, async () => {
     await withDashboard(async ({ container, calls, state, hold }) => {
       const next = hold("/v1/org", "org-b");
       await act(async () => state().switchOrganization("b"));
       expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
       expect(container.querySelector("[data-testid=gateway-provider-create], [data-testid=gateway-usage]")).toBeNull();
-      await act(async () => next.resolve(context("org-b", "{}")));
-      expect(container.textContent).toContain("AI Gateway is not enabled for this workspace.");
+      await act(async () => next.resolve(context("org-b", "{}", "owner", {})));
+      expect(container.textContent).toContain(unavailableMessage);
       expect(calls.filter(({ path, orgId }) => path.startsWith("/v1/inference-providers") && orgId !== "org-a")).toEqual([]);
     }, { pathname, page, outsideGateway: true, providerAvailable: true });
   });
@@ -666,7 +687,7 @@ test("switching between enabled and unavailable deployments unmounts Gateway bef
     const next = hold("/v1/org", "org-b");
     await act(async () => state().switchOrganization("b"));
     expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
-    await act(async () => next.resolve(context("org-b", enabledMetadata, "owner", {})));
+    await act(async () => next.resolve(context("org-b", "{}", "owner", {})));
     expect(container.textContent).toBe(unavailableMessage);
     expect(featureCalls(calls)).toEqual([{ path: "/v1/inference-providers?scope=manageable", orgId: "org-a" }]);
     await act(async () => state().switchOrganization("c"));
@@ -676,6 +697,42 @@ test("switching between enabled and unavailable deployments unmounts Gateway bef
       { path: "/v1/inference-providers?scope=manageable", orgId: "org-c" },
     ]);
   });
+});
+
+test.each([
+  { source: "models_dev", canManage: true, credentialMode: "per_member", role: "owner" },
+  { source: "models_dev", canManage: false, credentialMode: "shared", role: "owner" },
+  { source: "custom", canManage: true, credentialMode: "shared", role: "owner" },
+  { source: "openwork", canManage: true, credentialMode: "shared", role: "owner" },
+  { source: "models_dev", canManage: true, credentialMode: "shared", role: "member" },
+])("BYOK migration retains source, management, credential and role restrictions: %j", async ({ role, ...provider }) => {
+  await withDashboard(async ({ container, calls }) => {
+    expect(container.textContent).toContain("Restricted BYOK");
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway]")).toBeNull();
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).toBeNull();
+    expect(calls.some(({ path }) => path.includes("migrate") || path.startsWith("/v1/inference-providers"))).toBe(false);
+  }, { role, outsideGateway: true, page: <LlmProviderDetailScreen llmProviderId="llm-1" />,
+    reply: (path) => path.startsWith("/v1/llm-providers?") ? { payload: { llmProviders: [{
+      id: "llm-1", name: "Restricted BYOK", organizationId: "org-a", createdByOrgMembershipId: "member-a",
+      providerId: "openai", hasApiKey: true, providerConfig: {}, models: [], access: {}, accessibleVia: {}, ...provider,
+    }] } } : undefined,
+  });
+});
+
+test.each(["member", "unavailable"])("BYOK migration confirmation closes when the next workspace is %s", async (nextAccess) => {
+  await withDashboard(async ({ container, state, hold, calls }) => {
+    const button = container.querySelector<HTMLButtonElement>("[data-testid=llm-provider-move-to-gateway]");
+    expect(button).not.toBeNull();
+    await act(async () => button?.click());
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).not.toBeNull();
+    const next = hold("/v1/org", "org-b");
+    await act(async () => state().switchOrganization("b"));
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).toBeNull();
+    await act(async () => next.resolve(nextAccess === "member" ? context("org-b", "{}", "member") : context("org-b", "{}", "owner", {})));
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway]")).toBeNull();
+    expect(container.querySelector("[data-testid=llm-provider-move-to-gateway-confirm]")).toBeNull();
+    expect(calls.some(({ path }) => path.includes("migrate"))).toBe(false);
+  }, { outsideGateway: true, page: <LlmProviderDetailScreen llmProviderId="llm-1" /> });
 });
 
 test.each(unsupportedDeployments)("BYOK still works but migration is not mounted for unsupported deployment %j", async (deploymentCapabilities) => {
@@ -689,12 +746,12 @@ test.each(unsupportedDeployments)("BYOK still works but migration is not mounted
 });
 
 test.each([
-  { name: "self-hosted", metadata: "{}", singleOrg: true, target: "/dashboard/custom-llm-providers" },
-  { name: "self-hosted with Gateway", metadata: enabledMetadata, singleOrg: true, target: "/dashboard/custom-llm-providers" },
-  { name: "nonadmin", metadata: "{}", role: "member", target: "/dashboard" },
-  { name: "nonadmin with Gateway", metadata: enabledMetadata, role: "member", target: "/dashboard" },
-  { name: "runtime checking", metadata: "{}", runtimeConfigLoaded: false, target: null },
-  { name: "runtime checking with Gateway", metadata: enabledMetadata, runtimeConfigLoaded: false, target: null },
+  { name: "self-hosted without Gateway", deploymentCapabilities: undefined, singleOrg: true, target: "/dashboard/custom-llm-providers" },
+  { name: "self-hosted with Gateway", singleOrg: true, target: "/dashboard/custom-llm-providers" },
+  { name: "nonadmin without Gateway", deploymentCapabilities: undefined, role: "member", target: "/dashboard" },
+  { name: "nonadmin with Gateway", role: "member", target: "/dashboard" },
+  { name: "runtime checking without Gateway", deploymentCapabilities: undefined, runtimeConfigLoaded: false, target: null },
+  { name: "runtime checking with Gateway", runtimeConfigLoaded: false, target: null },
 ])("Models direct URL blocks $name before inference fetches or checkout controls mount", async ({ target, ...options }) => {
   await withDashboard(async ({ container, calls, replace }) => {
     expect(featureCalls(calls)).toEqual([]);
@@ -730,9 +787,9 @@ test.each(["admin", "super-admin", "owner"])("hosted %s mounts the real Models p
 test.each([
   { metadata: "{}", deploymentCapabilities: { version: 1, aiGateway: true } },
   { metadata: "{}", deploymentCapabilities: undefined },
-  { metadata: enabledMetadata, deploymentCapabilities: { version: 1, aiGateway: false } },
-  { metadata: enabledMetadata, deploymentCapabilities: { version: 2, aiGateway: true } },
-])("hosted Models remains unchanged outside an effectively enabled Gateway: %j", async (options) => {
+  { metadata: "{}", deploymentCapabilities: { version: 1, aiGateway: false } },
+  { metadata: "{}", deploymentCapabilities: { version: 2, aiGateway: true } },
+])("hosted Models remains independent of Gateway deployment availability: %j", async (options) => {
   await withDashboard(async ({ container, calls, replace }) => {
     expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(1);
     expect(container.textContent).toContain("OpenWork Models");
@@ -746,7 +803,8 @@ test("Models waits for context and survives hosted-to-gateway-to-hosted switches
   await withDashboard(async ({ state, hold, container, calls, replace }) => {
     expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
     expect(featureCalls(calls)).toEqual([]);
-    await act(async () => initialContext.resolve(context("org-a", "{}")));
+    await act(async () => initialContext.resolve(context("org-a", "{}", "owner", {})));
+    expect(getGatewayDashboardAccess(state())).toBe("unavailable");
     expect(container.textContent).toContain("Manage subscription");
     const next = hold("/v1/org", "org-b");
     await act(async () => state().switchOrganization("b"));
@@ -762,7 +820,8 @@ test("Models waits for context and survives hosted-to-gateway-to-hosted switches
     expect(container.textContent).not.toContain("Manage subscription");
     expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
     expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(2);
-    await act(async () => last.resolve(context("org-c", "{}")));
+    await act(async () => last.resolve(context("org-c", "{}", "owner", {})));
+    expect(getGatewayDashboardAccess(state())).toBe("unavailable");
     expect(container.textContent).toContain("Manage subscription");
     expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(3);
     expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers"))).toBe(false);

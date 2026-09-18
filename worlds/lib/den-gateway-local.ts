@@ -355,7 +355,7 @@ export async function seedGatewayUsage(den: Den) {
   const existing = await queryDenDatabase(databaseUrl, `SELECT id FROM gateway_request_logs WHERE organization_id = ? LIMIT 1`, [organizationId]);
   const rollups = await queryDenDatabase(databaseUrl, `SELECT id FROM gateway_usage_rollups WHERE organization_id = ? LIMIT 1`, [organizationId]);
   if (existing.length || rollups.length) throw new Error("Refusing to overlap existing gateway logs or rollups; start a fresh world stage.");
-  await queryDenDatabase(databaseUrl, `UPDATE organization SET metadata = JSON_MERGE_PATCH(COALESCE(metadata, JSON_OBJECT()), CAST(? AS JSON)) WHERE id = ?`, [JSON.stringify({ capabilities: { gatewayDashboard: true }, gatewayDemo: { synthetic: true, fixture: FIXTURE } }), organizationId]);
+  await queryDenDatabase(databaseUrl, `UPDATE organization SET metadata = JSON_MERGE_PATCH(COALESCE(metadata, JSON_OBJECT()), CAST(? AS JSON)) WHERE id = ?`, [JSON.stringify({ gatewayDemo: { synthetic: true, fixture: FIXTURE } }), organizationId]);
   const fixtures = gatewayFixtures(organizationId, ownerId);
   await insertRows(databaseUrl, "gateway_providers", fixtures.providers);
   await insertRows(databaseUrl, "gateway_provider_models", fixtures.models);
