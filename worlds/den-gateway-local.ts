@@ -75,7 +75,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         name: "den-gateway-local",
         outputs: {
           preview: output(`${den.ref.webUrl}/dashboard/ai-gateway`, { group: "URLs" }),
-          oldGateway: output(`${den.ref.webUrl}/dashboard/gateway-providers`, { group: "URLs", note: "Original page including usage limits and reset requests" }),
           denWeb: output(den.ref.webUrl, { group: "URLs" }),
           denApi: output(den.ref.apiUrl, { group: "URLs" }),
           email: output(den.admin.email, { group: "Synthetic account", note: "Demo owner; other seeded people are display fixtures" }),

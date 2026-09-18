@@ -10,7 +10,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getGatewayProviderRoutes, type GatewayProviderRouteContext } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteInferenceProvider, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
 import { getRequiredSettingKeys, getSettingLabel, isSupportedGatewayNpm } from "./inference-provider-request";
@@ -22,12 +22,10 @@ import { GatewayModelUniverse } from "./inference-provider-model-universe";
 
 const SECTION_CLASS = "mb-8 border-b border-gray-200 pb-8";
 
-export function InferenceProviderEditorScreen({ inferenceProviderId, routeContext = "gateway-providers", embedded = false }: {
+export function InferenceProviderEditorScreen({ inferenceProviderId, embedded = false }: {
   inferenceProviderId?: string;
-  routeContext?: GatewayProviderRouteContext;
   embedded?: boolean;
 }) {
-  const routes = getGatewayProviderRoutes(routeContext);
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
   const { orgId, orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
@@ -104,7 +102,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, routeContex
             ...(provider && JSON.stringify(settings) === JSON.stringify(provider.settings) ? {} : { settings }),
           },
         });
-        router.push(routes.detail(orgSlug, saved.id));
+        router.push(getAiGatewayProviderRoute(orgSlug, saved.id));
         router.refresh();
       });
     } catch (cause) {
@@ -120,7 +118,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, routeContex
       await runReauthableAction("delete-inference-provider", async () => {
         await deleteInferenceProvider(provider.id);
         setConfirmDelete(false);
-        router.push(routes.list(orgSlug));
+        router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();
       });
     } catch (cause) {
@@ -129,7 +127,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, routeContex
   }
 
   if (inferenceProviderId && !provider) return <div className={embedded ? undefined : "p-8"}>{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
-  const backHref = provider ? routes.detail(orgSlug, provider.id) : routes.list(orgSlug);
+  const backHref = provider ? getAiGatewayProviderRoute(orgSlug, provider.id) : getAiGatewayProvidersRoute(orgSlug);
   return (
     <div className={embedded ? undefined : "mx-auto max-w-[1180px] px-6 py-8 md:px-8"}>
       <Link href={backHref} className="text-sm text-gray-500">Back</Link>

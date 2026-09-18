@@ -10,12 +10,13 @@ import * as scope from "../app/(den)/_lib/org-scope";
 import * as flow from "../app/(den)/_providers/den-flow-provider";
 import * as reauth from "../app/(den)/_components/reauth-dialog";
 import { OrgDashboardProvider, useOrgDashboard } from "../app/(den)/dashboard/_providers/org-dashboard-provider";
-import GatewayProvidersLayout from "../app/(den)/dashboard/(admin)/gateway-providers/layout";
+import AiGatewayProvidersLayout from "../app/(den)/dashboard/(admin)/ai-gateway/providers/layout";
+import { GatewayDashboardCapabilityGuard } from "../app/(den)/dashboard/_components/gateway-dashboard-capability-guard";
 import AdminDashboardLayout from "../app/(den)/dashboard/(admin)/layout";
-import GatewayProvidersPage from "../app/(den)/dashboard/(admin)/gateway-providers/page";
-import NewGatewayProviderPage from "../app/(den)/dashboard/(admin)/gateway-providers/new/page";
-import GatewayProviderPage from "../app/(den)/dashboard/(admin)/gateway-providers/[inferenceProviderId]/page";
-import EditGatewayProviderPage from "../app/(den)/dashboard/(admin)/gateway-providers/[inferenceProviderId]/edit/page";
+import AiGatewayPage from "../app/(den)/dashboard/(admin)/ai-gateway/page";
+import NewGatewayProviderPage from "../app/(den)/dashboard/(admin)/ai-gateway/providers/new/page";
+import GatewayProviderPage from "../app/(den)/dashboard/(admin)/ai-gateway/providers/[inferenceProviderId]/page";
+import EditGatewayProviderPage from "../app/(den)/dashboard/(admin)/ai-gateway/providers/[inferenceProviderId]/edit/page";
 import { useOrgInferenceProviders } from "../app/(den)/dashboard/_components/inference-provider-data";
 import { LlmProviderDetailScreen } from "../app/(den)/dashboard/_components/llm-provider-detail-screen";
 import InferencePage from "../app/(den)/dashboard/(admin)/inference/page";
@@ -62,6 +63,7 @@ async function withDashboard(check: (fixture: {
   setupOrganizationId?: string; activeOrgId?: string; singleOrg?: boolean; metadata?: string; role?: string;
   page?: ReactNode; pathname?: string; outsideGateway?: boolean; deploymentCapabilities?: unknown;
   runtimeConfigLoaded?: boolean; initialContext?: ReturnType<typeof deferred<Reply>>; gatewayFailure?: boolean;
+  providerAvailable?: boolean;
 } = {}) {
   GlobalRegistrator.register({ url: "https://app.example.test/dashboard/org-settings" });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
@@ -94,8 +96,10 @@ async function withDashboard(check: (fixture: {
       gatewayMounted: Boolean(container.querySelector("[data-gateway]")) });
     setScope(id);
   });
-  spyOn(navigation, "usePathname").mockReturnValue(options.pathname ?? "/dashboard/org-settings");
-  spyOn(navigation, "useRouter").mockReturnValue({ push() {}, replace, refresh() {}, back() {}, forward() {}, prefetch: async () => {} });
+  const url = new URL(options.pathname ?? "/dashboard/org-settings", "https://app.example.test");
+  spyOn(navigation, "usePathname").mockReturnValue(url.pathname);
+  spyOn(navigation, "useSearchParams").mockReturnValue(new navigation.ReadonlyURLSearchParams(url.search));
+  spyOn(navigation, "useRouter").mockReturnValue({ push() {}, replace, refresh() {}, back() {}, forward() {}, prefetch: async () => {}, bfcacheId: "fixture" });
   spyOn(runtime, "getRuntimeConfig").mockResolvedValue(config);
   // Keep the real parent context shape, overriding only this provider's inputs.
   spyOn(flow, "useDenFlow").mockImplementation(() => ({
@@ -112,6 +116,9 @@ async function withDashboard(check: (fixture: {
       : path === "/v1/org" ? options.initialContext ? await options.initialContext.promise
         : context(orgId ?? "missing", options.metadata, options.role, "deploymentCapabilities" in options ? { deploymentCapabilities: options.deploymentCapabilities } : undefined)
       : options.gatewayFailure && path.startsWith("/v1/inference-providers") ? { status: 503, payload: { message: "Upstream gateway is offline" } }
+      : options.providerAvailable && path === "/v1/inference-providers?scope=manageable" ? { payload: { inferenceProviders: [{
+        id: "infp_1", providerId: "openai", name: "Fixture Provider", credentialMode: "org", status: "active", modelIds: [],
+      }] } }
       : path === "/v1/inference" ? { payload: { inference: { enabled: true, tier: "tier1", subscribed: true } } }
       : path.startsWith("/v1/llm-providers?") ? { payload: { llmProviders: [{
         id: "llm-1", name: "Test BYOK", organizationId: activeOrgId, createdByOrgMembershipId: "member-a",
@@ -135,7 +142,7 @@ async function withDashboard(check: (fixture: {
   function Capture() {
     const state = useOrgDashboard();
     current = state;
-    return options.outsideGateway ? options.page : <GatewayProvidersLayout>{options.page ?? <ScopedConsumer />}</GatewayProvidersLayout>;
+    return options.outsideGateway ? options.page : <GatewayDashboardCapabilityGuard>{options.page ?? <ScopedConsumer />}</GatewayDashboardCapabilityGuard>;
   }
   const render = () => root.render(<QueryClientProvider client={queryClient}><flow.DenFlowProvider><OrgDashboardProvider><Capture /></OrgDashboardProvider></flow.DenFlowProvider></QueryClientProvider>);
   try {
@@ -181,22 +188,18 @@ test("switch commits default-deny state and unmounts Gateway before changing req
 });
 
 test.each([
-  "/dashboard/gateway-providers",
-  "/dashboard/gateway-providers/new",
-  "/dashboard/gateway-providers/infp_1",
-  "/dashboard/gateway-providers/infp_1/edit",
+  "/dashboard/ai-gateway/providers/new",
+  "/dashboard/ai-gateway/providers/infp_1",
+  "/dashboard/ai-gateway/providers/infp_1/edit",
 ])("disabled direct route %s redirects without mounting its real screen or fetching providers", async (pathname) => {
-  const params = Promise.resolve({ inferenceProviderId: "infp_1" });
-  const page = pathname.endsWith("/edit") ? await EditGatewayProviderPage({ params })
-    : pathname.endsWith("/infp_1") ? await GatewayProviderPage({ params })
-    : pathname.endsWith("/new") ? <NewGatewayProviderPage /> : <GatewayProvidersPage />;
+  const page = await gatewayPage(pathname);
   await withDashboard(async ({ container, calls, replace }) => {
     expect(container.querySelector("[data-access-state=denied]")).not.toBeNull();
     expect(replace).toHaveBeenCalledWith("/dashboard");
     expect(calls.some((call) => call.path.startsWith("/v1/inference-providers"))).toBe(false);
     expect(featureCalls(calls)).toEqual([]);
     expect(container.querySelector("[data-testid=gateway-provider-create]")).toBeNull();
-  }, { metadata: "{}", pathname, page });
+  }, { metadata: "{}", pathname, page, outsideGateway: true });
 });
 
 test.each(["admin", "super-admin", "owner", "member"])("enabled organization retains %s permissions", async (role) => {
@@ -480,17 +483,17 @@ test.each([false, true])("reauthentication replays only in its original workspac
 const unavailableMessage = "This feature is not part of your deployment system, please ask an instance admin to configure deployment";
 const unsupportedDeployments = [undefined, null, {}, { version: 1, aiGateway: false }, { version: 2, aiGateway: true }, { version: 1, aiGateway: "true" }];
 const gatewayRoutes = [
-  "/dashboard/gateway-providers",
-  "/dashboard/gateway-providers/new",
-  "/dashboard/gateway-providers/infp_1",
-  "/dashboard/gateway-providers/infp_1/edit",
+  "/dashboard/ai-gateway/providers/new",
+  "/dashboard/ai-gateway/providers/infp_1",
+  "/dashboard/ai-gateway/providers/infp_1/edit",
 ];
 
 async function gatewayPage(pathname: string) {
   const params = Promise.resolve({ inferenceProviderId: "infp_1" });
-  return pathname.endsWith("/edit") ? await EditGatewayProviderPage({ params })
+  const page = pathname.endsWith("/edit") ? await EditGatewayProviderPage({ params })
     : pathname.endsWith("/infp_1") ? await GatewayProviderPage({ params })
-    : pathname.endsWith("/new") ? <NewGatewayProviderPage /> : <GatewayProvidersPage />;
+    : <NewGatewayProviderPage />;
+  return <AdminDashboardLayout><AiGatewayProvidersLayout>{page}</AiGatewayProvidersLayout></AdminDashboardLayout>;
 }
 
 function featureCalls(calls: { path: string }[]) {
@@ -526,16 +529,17 @@ for (const pathname of gatewayRoutes) {
       expect(container.querySelector("[data-testid=gateway-access-state]")).toBeNull();
       expect(featureCalls(calls).length).toBeGreaterThan(0);
       expect(replace).not.toHaveBeenCalled();
-    }, { pathname, page: await gatewayPage(pathname), gatewayFailure: true });
+    }, { pathname, outsideGateway: true, page: await gatewayPage(pathname), gatewayFailure: true });
   });
 
   test.each(unsupportedDeployments)(`${pathname} shows the exact deployment notice with no feature requests or management UI for %j`, async (deploymentCapabilities) => {
     await withDashboard(async ({ container, calls, replace }) => {
       expect(container.querySelector("[data-access-state=unavailable]")?.textContent).toBe(unavailableMessage);
       expect(featureCalls(calls)).toEqual([]);
-      expect(container.querySelector("button, input, form, [data-testid=gateway-usage]")).toBeNull();
+      expect(container.querySelector('[role="tabpanel"]')?.querySelector("button, input, form, [data-testid=gateway-usage]")).toBeNull();
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
       expect(replace).not.toHaveBeenCalled();
-    }, { pathname, page: await gatewayPage(pathname), deploymentCapabilities });
+    }, { pathname, outsideGateway: true, page: await gatewayPage(pathname), deploymentCapabilities });
   });
 
   test(`${pathname} does not mount or fetch while the initial org request is pending`, async () => {
@@ -546,33 +550,87 @@ for (const pathname of gatewayRoutes) {
       expect(featureCalls(calls)).toEqual([]);
       expect(replace).not.toHaveBeenCalled();
       await act(async () => initialContext.resolve(context("org-a", enabledMetadata, "owner", {})));
-      expect(container.textContent).toBe(unavailableMessage);
+      expect(container.querySelector("[data-access-state=unavailable]")?.textContent).toBe(unavailableMessage);
       expect(featureCalls(calls)).toEqual([]);
-    }, { pathname, page: await gatewayPage(pathname), initialContext });
+    }, { pathname, outsideGateway: true, page: await gatewayPage(pathname), initialContext });
   });
 
   test(`${pathname} denies nonadmins even when deployment is unavailable`, async () => {
     await withDashboard(async ({ container, calls, replace }) => {
-      expect(container.querySelector("[data-access-state=denied]")).not.toBeNull();
+      expect(container.querySelector("[data-testid=admin-access-state][data-access-state=redirecting]")).not.toBeNull();
       expect(container.textContent).not.toContain(unavailableMessage);
       expect(featureCalls(calls)).toEqual([]);
       expect(replace).toHaveBeenCalledWith("/dashboard");
-    }, { pathname, page: await gatewayPage(pathname), role: "member", deploymentCapabilities: undefined });
+    }, { pathname, outsideGateway: true, page: await gatewayPage(pathname), role: "member", deploymentCapabilities: undefined });
   });
 }
 
-test("a successful deployment capability keeps the real Gateway dashboard available during an upstream outage", async () => {
-  await withDashboard(async ({ container, calls, replace }) => {
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-    expect(container.textContent).toContain("Upstream gateway is offline");
-    expect(container.textContent).not.toContain(unavailableMessage);
-    expect(container.querySelector("[data-testid=gateway-provider-create]")).not.toBeNull();
-    expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers/usage?"))).toBe(true);
-    expect(replace).not.toHaveBeenCalled();
-  }, { page: <GatewayProvidersPage />, gatewayFailure: true });
+for (const tab of ["overview", "ai-providers"]) {
+  const pathname = `/dashboard/ai-gateway?tab=${tab}`;
+  const page = <AdminDashboardLayout><AiGatewayPage /></AdminDashboardLayout>;
+
+  test(`${tab} keeps the canonical shell available during an upstream outage`, async () => {
+    await withDashboard(async ({ container, calls, replace }) => {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+      expect(container.textContent).toContain("Upstream gateway is offline");
+      expect(container.textContent).not.toContain(unavailableMessage);
+      expect(Boolean(container.querySelector("[data-testid=gateway-provider-create]"))).toBe(tab === "ai-providers");
+      expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers/usage?"))).toBe(false);
+      expect(replace).not.toHaveBeenCalled();
+    }, { pathname, page, outsideGateway: true, gatewayFailure: true });
+  });
+
+  test.each([{}, ...unsupportedDeployments.map((deploymentCapabilities) => ({ deploymentCapabilities }))])(`${tab} blocks gateway requests without org opt-in or deployment support: %j`, async (deployment) => {
+    const optedIn = "deploymentCapabilities" in deployment;
+    await withDashboard(async ({ container, calls, replace }) => {
+      expect(container.textContent).toContain(optedIn ? unavailableMessage : "AI Gateway is not enabled for this workspace.");
+      expect(calls.some(({ path }) => /inference|models-dev|gateway/.test(path))).toBe(false);
+      expect(container.querySelector("[data-testid=gateway-provider-create], [data-testid=gateway-usage]")).toBeNull();
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
+      expect(replace).not.toHaveBeenCalled();
+    }, { pathname, page, outsideGateway: true, metadata: optedIn ? enabledMetadata : "{}", ...deployment });
+  });
+
+  test(`${tab} waits for context and rejects nonadmins before any feature request`, async () => {
+    const initialContext = deferred<Reply>();
+    await withDashboard(async ({ container, calls, replace }) => {
+      expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
+      expect(featureCalls(calls)).toEqual([]);
+      expect(replace).not.toHaveBeenCalled();
+      await act(async () => initialContext.resolve(context("org-a", enabledMetadata, "member")));
+      expect(container.querySelector("[data-testid=admin-access-state][data-access-state=redirecting]")).not.toBeNull();
+      expect(featureCalls(calls)).toEqual([]);
+      expect(replace).toHaveBeenCalledWith("/dashboard");
+    }, { pathname, page, outsideGateway: true, initialContext });
+  });
+
+  test(`${tab} unmounts gateway controls during org switching and cannot fetch for a disabled org`, async () => {
+    await withDashboard(async ({ container, calls, state, hold }) => {
+      const next = hold("/v1/org", "org-b");
+      await act(async () => state().switchOrganization("b"));
+      expect(container.querySelector("[data-access-state=checking]")).not.toBeNull();
+      expect(container.querySelector("[data-testid=gateway-provider-create], [data-testid=gateway-usage]")).toBeNull();
+      await act(async () => next.resolve(context("org-b", "{}")));
+      expect(container.textContent).toContain("AI Gateway is not enabled for this workspace.");
+      expect(calls.filter(({ path, orgId }) => path.startsWith("/v1/inference-providers") && orgId !== "org-a")).toEqual([]);
+    }, { pathname, page, outsideGateway: true, providerAvailable: true });
+  });
+}
+
+test("Overview alone fetches usage after providers load; AI Providers links stay canonical", async () => {
+  for (const tab of ["overview", "ai-providers"]) {
+    await withDashboard(async ({ container, calls }) => {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+      expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers/usage?"))).toBe(tab === "overview");
+      if (tab === "ai-providers") {
+        expect(container.querySelector('[data-testid="gateway-provider-create"]')?.getAttribute("href")).toBe("/dashboard/ai-gateway/providers/new");
+        expect(container.querySelector('[data-testid="gateway-provider-open"]')?.getAttribute("href")).toBe("/dashboard/ai-gateway/providers/infp_1");
+      }
+    }, { pathname: `/dashboard/ai-gateway?tab=${tab}`, page: <AdminDashboardLayout><AiGatewayPage /></AdminDashboardLayout>, outsideGateway: true, providerAvailable: true });
+  }
 });
 
-test.each([<GatewayProvidersPage />, <InferencePage />])("real org errors are shown without a deployment notice or redirect", async (page) => {
+test.each([<AiGatewayPage />, <InferencePage />])("real org errors are shown without a deployment notice or redirect", async (page) => {
   const initialContext = deferred<Reply>();
   initialContext.resolve({ status: 503, payload: { message: "Workspace request failed" } });
   await withDashboard(async ({ container, calls, replace }) => {
@@ -580,7 +638,7 @@ test.each([<GatewayProvidersPage />, <InferencePage />])("real org errors are sh
     expect(container.textContent).not.toContain(unavailableMessage);
     expect(featureCalls(calls)).toEqual([]);
     expect(replace).not.toHaveBeenCalled();
-  }, { page, initialContext, outsideGateway: page.type === InferencePage });
+  }, { page, initialContext, outsideGateway: true });
 });
 
 test.each(["gateway", "models"])("the parent admin layout distinguishes a failed org request from loading on %s", async (page) => {
@@ -594,10 +652,8 @@ test.each(["gateway", "models"])("the parent admin layout distinguishes a failed
     expect(featureCalls(calls)).toEqual([]);
     expect(replace).not.toHaveBeenCalled();
   }, { outsideGateway: true, initialContext,
-    pathname: page === "gateway" ? "/dashboard/gateway-providers" : "/dashboard/inference",
-    page: <AdminDashboardLayout>{page === "gateway"
-      ? <GatewayProvidersLayout><GatewayProvidersPage /></GatewayProvidersLayout>
-      : <InferencePage />}</AdminDashboardLayout> });
+    pathname: page === "gateway" ? "/dashboard/ai-gateway" : "/dashboard/inference",
+    page: <AdminDashboardLayout>{page === "gateway" ? <AiGatewayPage /> : <InferencePage />}</AdminDashboardLayout> });
 });
 
 test("switching between enabled and unavailable deployments unmounts Gateway before scope changes", async () => {
@@ -697,6 +753,7 @@ test("Models waits for context and survives hosted-to-gateway-to-hosted switches
     expect(container.textContent).toContain("Manage subscription");
     expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(3);
     expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers"))).toBe(false);
-    expect(replace).not.toHaveBeenCalledWith("/dashboard/gateway-providers");
+    expect(replace).not.toHaveBeenCalledWith("/dashboard/ai-gateway");
+    expect(replace).not.toHaveBeenCalledWith("/dashboard/ai-gateway?tab=ai-providers");
   }, { pathname: "/dashboard/inference", outsideGateway: true, page: <InferencePage />, initialContext });
 });

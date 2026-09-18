@@ -3,17 +3,15 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ChevronRight, KeyRound, Layers3, Plus, Search } from "lucide-react";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenCard } from "../../_components/ui/card";
 import { buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { getGatewayProviderRoutes, type GatewayProviderRouteContext } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useOrgInferenceProviders } from "./inference-provider-data";
-import { GatewayUsageSection } from "./gateway-usage-section";
 import {
   getCredentialStatusLabel,
   getCredentialStatusTone,
@@ -35,18 +33,16 @@ export function InferenceCredentialStatusBadge({
   );
 }
 
-function GatewayProviderCard({ provider, orgSlug, routeContext = "gateway-providers" }: {
+function GatewayProviderCard({ provider, orgSlug }: {
   provider: DenInferenceProvider;
   orgSlug: string | null;
-  routeContext?: GatewayProviderRouteContext;
 }) {
-  const routes = getGatewayProviderRoutes(routeContext);
   const keyCount = provider.credentialSets?.filter((set) => set.credentialMode === "org" && set.configured).length;
   const groupCount = provider.modelGroups?.length;
 
   return (
     <Link
-      href={routes.detail(orgSlug, provider.id)}
+      href={getAiGatewayProviderRoute(orgSlug, provider.id)}
       aria-label={`Open ${provider.name}`}
       data-testid="gateway-provider-open"
       className="group block min-w-0 rounded-[30px] outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
@@ -89,25 +85,7 @@ function GatewayProviderCard({ provider, orgSlug, routeContext = "gateway-provid
   );
 }
 
-export function InferenceProvidersScreen() {
-  const { orgId } = useOrgDashboard();
-
-  return (
-    <DashboardPageTemplate
-      title="Gateway"
-      description="Configure your organizations AI Model Providers once, track and control each user's access and usage individually"
-      colors={["#F1F5FF", "#1D4ED8", "#60A5FA", "#A7F3D0"]}
-    >
-      {orgId ? <GatewayUsageSection key={orgId} orgId={orgId} /> : null}
-      <div className="mb-10">
-        <GatewayProvidersSection key={orgId} />
-      </div>
-    </DashboardPageTemplate>
-  );
-}
-
-export function GatewayProvidersSection({ routeContext = "gateway-providers" }: { routeContext?: GatewayProviderRouteContext }) {
-  const routes = getGatewayProviderRoutes(routeContext);
+export function GatewayProvidersSection() {
   const { orgId, orgSlug } = useOrgDashboard();
   const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);
   const [query, setQuery] = useState("");
@@ -137,7 +115,7 @@ export function GatewayProvidersSection({ routeContext = "gateway-providers" }: 
             placeholder="Search providers or models..."
           />
           <Link
-            href={routes.new(orgSlug)}
+            href={getNewAiGatewayProviderRoute(orgSlug)}
             data-testid="gateway-provider-create"
             className={buttonVariants({ variant: "primary" })}
           >
@@ -167,7 +145,7 @@ export function GatewayProvidersSection({ routeContext = "gateway-providers" }: 
               </DenCard>
             ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {filtered.map((provider) => <GatewayProviderCard key={provider.id} provider={provider} orgSlug={orgSlug} routeContext={routeContext} />)}
+                {filtered.map((provider) => <GatewayProviderCard key={provider.id} provider={provider} orgSlug={orgSlug} />)}
               </div>
             )}
           </section>

@@ -23,7 +23,6 @@ import {
   getBillingRoute,
   getBrandAppearanceRoute,
   getCustomLlmProvidersRoute,
-  getGatewayProvidersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getInferenceRoute,
@@ -124,9 +123,6 @@ export function buildDashboardNavSections({
         icon: Sparkles,
         badge: "Models",
         children: [
-          ...((gatewayAccess === "enabled" || gatewayAccess === "unavailable") && capabilities.gatewayDashboard === true
-            ? [{ href: getGatewayProvidersRoute(orgSlug), label: "Old Gateway", badge: "New" }]
-            : []),
           ...(showOpenWorkModels
             ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
             : []),

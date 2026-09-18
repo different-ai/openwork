@@ -6,5 +6,5 @@ export default async function EditAiGatewayProviderPage({
   params: Promise<{ inferenceProviderId: string }>;
 }) {
   const { inferenceProviderId } = await params;
-  return <InferenceProviderEditorScreen key={inferenceProviderId} inferenceProviderId={inferenceProviderId} routeContext="ai-gateway" embedded />;
+  return <InferenceProviderEditorScreen key={inferenceProviderId} inferenceProviderId={inferenceProviderId} embedded />;
 }

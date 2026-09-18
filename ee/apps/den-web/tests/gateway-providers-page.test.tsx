@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -7,12 +7,11 @@ import { InferenceCredentialStatusBadge } from "../app/(den)/dashboard/_componen
 import { GATEWAY_EXPLAINER } from "../app/(den)/dashboard/_components/inference-provider-detail-screen";
 import { GatewayModelUniverse } from "../app/(den)/dashboard/_components/inference-provider-model-universe";
 import {
-  getCustomLlmProvidersRoute,
-  getGatewayProviderRoutes,
-  getEditGatewayProviderRoute,
-  getGatewayProviderRoute,
-  getGatewayProvidersRoute,
-  getNewGatewayProviderRoute,
+  getAiGatewayRoute,
+  getEditAiGatewayProviderRoute,
+  getAiGatewayProviderRoute,
+  getAiGatewayProvidersRoute,
+  getNewAiGatewayProviderRoute,
 } from "../app/(den)/_lib/den-org";
 
 const appRoot = join(import.meta.dir, "..", "app", "(den)");
@@ -33,38 +32,24 @@ const usage = read("dashboard", "_components", "gateway-usage-section.tsx");
 const llmDetail = read("dashboard", "_components", "llm-provider-detail-screen.tsx");
 const llmEditor = read("dashboard", "_components", "llm-provider-editor-screen.tsx");
 
-describe("Gateway providers routes", () => {
-  test("live next to custom-llm-providers under the org dashboard", () => {
-    const base = getGatewayProvidersRoute("acme");
-    expect(base).toBe(getCustomLlmProvidersRoute("acme").replace("custom-llm-providers", "gateway-providers"));
-    expect(getNewGatewayProviderRoute("acme")).toBe(`${base}/new`);
-    expect(getGatewayProviderRoute("acme", "infp_1")).toBe(`${base}/infp_1`);
-    expect(getEditGatewayProviderRoute("acme", "infp_1")).toBe(`${base}/infp_1/edit`);
-  });
-
-  test("route pages exist for list, new, detail and edit", () => {
-    const pages = join(appRoot, "dashboard", "(admin)", "gateway-providers");
-    expect(readFileSync(join(pages, "page.tsx"), "utf8")).toContain("InferenceProvidersScreen");
-    expect(readFileSync(join(pages, "new", "page.tsx"), "utf8")).toContain("InferenceProviderEditorScreen");
-    expect(readFileSync(join(pages, "[inferenceProviderId]", "page.tsx"), "utf8")).toContain("InferenceProviderDetailScreen");
-    expect(readFileSync(join(pages, "[inferenceProviderId]", "edit", "page.tsx"), "utf8")).toContain(
-      "InferenceProviderEditorScreen",
-    );
-  });
-});
-
 describe("AI Gateway nested provider routes", () => {
-  test.each(["workspace", null, undefined])("preserves both route contexts and encodes IDs for %s", (orgSlug) => {
-    const current = getGatewayProviderRoutes("ai-gateway");
-    expect(current.list(orgSlug)).toBe("/dashboard/ai-gateway?tab=ai-providers");
-    expect(current.new(orgSlug)).toBe("/dashboard/ai-gateway/providers/new");
-    expect(current.detail(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid");
-    expect(current.edit(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid/edit");
-    const old = getGatewayProviderRoutes();
-    expect(old.list(orgSlug)).toBe("/dashboard/gateway-providers");
-    expect(old.new(orgSlug)).toBe("/dashboard/gateway-providers/new");
-    expect(old.detail(orgSlug, "provider/id")).toBe("/dashboard/gateway-providers/provider%2Fid");
-    expect(old.edit(orgSlug, "provider/id")).toBe("/dashboard/gateway-providers/provider%2Fid/edit");
+  test("removes every legacy route entry instead of retaining pages or redirects", () => {
+    const pages = join(appRoot, "dashboard", "(admin)", "gateway-providers");
+    for (const path of ["layout.tsx", "page.tsx", "new/page.tsx", "[inferenceProviderId]/page.tsx", "[inferenceProviderId]/edit/page.tsx"]) {
+      expect(existsSync(join(pages, path))).toBe(false);
+    }
+    const routes = read("_lib", "den-org.ts");
+    for (const legacy of ["GatewayProviderRouteContext", "getGatewayProviderRoutes", "getGatewayProvidersRoute", "getGatewayProviderRoute", "getNewGatewayProviderRoute", "getEditGatewayProviderRoute", "/gateway-providers"]) {
+      expect(routes).not.toContain(legacy);
+    }
+  });
+
+  test.each(["workspace", null, undefined])("uses only canonical routes and encodes IDs for %s", (orgSlug) => {
+    expect(getAiGatewayRoute(orgSlug)).toBe("/dashboard/ai-gateway");
+    expect(getAiGatewayProvidersRoute(orgSlug)).toBe("/dashboard/ai-gateway?tab=ai-providers");
+    expect(getNewAiGatewayProviderRoute(orgSlug)).toBe("/dashboard/ai-gateway/providers/new");
+    expect(getAiGatewayProviderRoute(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid");
+    expect(getEditAiGatewayProviderRoute(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid/edit");
   });
 
   test("new, detail and edit retain the tab shell and capability guard", () => {
@@ -75,22 +60,30 @@ describe("AI Gateway nested provider routes", () => {
     expect(layout).toContain("providerContent={<GatewayDashboardCapabilityGuard>{children}</GatewayDashboardCapabilityGuard>}");
     for (const path of [["new"], ["[inferenceProviderId]"], ["[inferenceProviderId]", "edit"]]) {
       const page = read(...pages, "providers", ...path, "page.tsx");
-      expect(page).toContain('routeContext="ai-gateway" embedded');
+      expect(page).toContain(" embedded");
+      expect(page).not.toContain("routeContext");
+      expect(page).toContain(path.length === 1 && path[0] === "[inferenceProviderId]" ? "InferenceProviderDetailScreen" : "InferenceProviderEditorScreen");
     }
-    for (const screen of [list, editor, detail]) expect(screen).toContain("getGatewayProviderRoutes(routeContext)");
-    expect(editor).toContain("routes.detail(orgSlug,");
-    expect(editor).toContain("routes.list(orgSlug)");
-    expect(detail).toContain("routes.edit(orgSlug,");
-    expect(detail).toContain("routes.list(orgSlug)");
+    for (const screen of [list, editor, detail]) {
+      expect(screen).not.toContain("routeContext");
+      expect(screen).not.toContain("getGatewayProviderRoutes");
+    }
+    expect(list).not.toContain("InferenceProvidersScreen");
+    expect(list).toContain("getAiGatewayProviderRoute(orgSlug, provider.id)");
+    expect(list).toContain("getNewAiGatewayProviderRoute(orgSlug)");
+    expect(editor).toContain("getAiGatewayProviderRoute(orgSlug,");
+    expect(editor).toContain("getAiGatewayProvidersRoute(orgSlug)");
+    expect(detail).toContain("getEditAiGatewayProviderRoute(orgSlug,");
+    expect(detail).toContain("getAiGatewayProvidersRoute(orgSlug)");
   });
 });
 
 describe("Gateway providers sidebar", () => {
-  test("retains Old Gateway under the admin-gated AI Gateway root before legacy BYOK", () => {
-    const byok = navigation.indexOf('label: "Bring Your Own Keys (Legacy)"');
-    const gateway = navigation.indexOf('label: "Old Gateway", badge: "New"');
-    expect(gateway).toBeGreaterThan(-1);
-    expect(byok).toBeGreaterThan(gateway);
+  test("keeps the admin-gated AI Gateway root and legacy BYOK without Old Gateway", () => {
+    expect(navigation).toContain('label: "Bring Your Own Keys (Legacy)"');
+    expect(navigation).not.toContain('label: "Old Gateway"');
+    expect(navigation).not.toContain("getGatewayProvidersRoute");
+    expect(shell).not.toContain("getGatewayProvidersRoute");
     expect(navigation).toMatch(/const modelsGroup[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "AI Gateway"/);
     expect(shell).toContain('return "AI Gateway";');
   });
@@ -125,7 +118,8 @@ describe("Gateway providers list", () => {
     expect(list).not.toContain("<DenTable");
     expect(list).toContain('data-testid="gateway-provider-create"');
     expect(list).toContain('data-testid="gateway-provider-open"');
-    expect(list).toContain("<GatewayUsageSection");
+    expect(list).not.toContain("<GatewayUsageSection");
+    expect(read("dashboard", "_components", "ai-gateway-screen.tsx")).toContain("<GatewayUsageSection");
     expect(read("dashboard", "_components", "inference-provider-data.tsx")).toContain("scope=manageable");
   });
 });
@@ -263,6 +257,6 @@ describe("Move to gateway", () => {
     expect(llmDetail).toContain('data-testid="llm-provider-move-to-gateway-confirm"');
     expect(llmDetail).toContain("migrateLlmProviderToGateway(provider.id)");
     expect(llmDetail).toContain("re-sync");
-    expect(llmDetail).toContain("getGatewayProviderRoute(orgSlug, gatewayProvider.id)");
+    expect(llmDetail).toContain("getAiGatewayProviderRoute(orgSlug, gatewayProvider.id)");
   });
 });

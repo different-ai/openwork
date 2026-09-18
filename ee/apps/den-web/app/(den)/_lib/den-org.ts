@@ -632,40 +632,6 @@ export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined
   return `${getAiGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
 }
 
-export type GatewayProviderRouteContext = "gateway-providers" | "ai-gateway";
-
-export function getGatewayProviderRoutes(routeContext: GatewayProviderRouteContext = "gateway-providers") {
-  return routeContext === "ai-gateway"
-    ? {
-      list: getAiGatewayProvidersRoute,
-      new: getNewAiGatewayProviderRoute,
-      detail: getAiGatewayProviderRoute,
-      edit: getEditAiGatewayProviderRoute,
-    }
-    : {
-      list: getGatewayProvidersRoute,
-      new: getNewGatewayProviderRoute,
-      detail: getGatewayProviderRoute,
-      edit: getEditGatewayProviderRoute,
-    };
-}
-
-export function getGatewayProvidersRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/gateway-providers`;
-}
-
-export function getGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
-  return `${getGatewayProvidersRoute(orgSlug)}/${encodeURIComponent(inferenceProviderId)}`;
-}
-
-export function getEditGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
-  return `${getGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
-}
-
-export function getNewGatewayProviderRoute(orgSlug?: string | null): string {
-  return `${getGatewayProvidersRoute(orgSlug)}/new`;
-}
-
 export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }

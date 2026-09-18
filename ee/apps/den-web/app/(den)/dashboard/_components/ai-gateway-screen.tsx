@@ -109,7 +109,7 @@ export function AiGatewayScreen({ providerContent }: { providerContent?: ReactNo
                 : access === "enabled" && orgId && orgContext ? (
                   <>
                     {tab === "overview" ? <AiGatewayOverview key={orgId} orgId={orgId} /> : null}
-                    {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} routeContext="ai-gateway" /> : null}
+                    {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} /> : null}
                     {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgContext={orgContext} /> : null}
                     {tab === "limits" ? (
                       <>

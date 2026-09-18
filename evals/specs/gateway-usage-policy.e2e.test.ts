@@ -200,17 +200,25 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect((await adminProbe.dom('[aria-label="Usage for Usage Control"]')).elements[0]?.text).toContain("Unlimited");
     await admin.notSee({ text: "$0.00 used" });
     await admin.click({ role: "button", label: "Change person" });
-    await admin.navigate(new URL("/dashboard/gateway-providers", world.den.ref.webUrl).toString());
-    await admin.see({ testId: "gateway-provider-open" });
-    await admin.notSee({ testId: "ai-gateway-tabs" });
-    await admin.notSee({ role: "button", label: "Create policy" });
-    await admin.notSee({ role: "button", label: "Apply new usage limit" });
+    await admin.notSee({ role: "link", label: "Old Gateway" });
+    for (const oldPath of [
+      "/dashboard/gateway-providers",
+      "/dashboard/gateway-providers/new",
+      `/dashboard/gateway-providers/${world.providerId}`,
+      `/dashboard/gateway-providers/${world.providerId}/edit`,
+    ]) {
+      await admin.navigate(new URL(oldPath, world.den.ref.webUrl).toString());
+      await admin.see({ role: "heading", label: "404" });
+      await admin.notSee({ testId: "gateway-provider-open" });
+      await admin.notSee({ testId: "ai-gateway-tabs" });
+      expect(await adminProbe.eval(browserScript(() => location.pathname, []))).toBe(oldPath);
+    }
     await admin.navigate(new URL("/dashboard/ai-gateway?tab=limits", world.den.ref.webUrl).toString());
     await admin.see({ role: "button", label: "Refresh requests" });
     await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
     expect(await policies()).toHaveLength(1);
     expect(world.upstreamCount()).toBe(0);
-    evidence.recordAssertionEvidence("AI Gateway tab and nested form ownership", "New/edit provider forms stay within AI Providers without saving changes. Central Users & Teams assigns only Usage Member; Limits inspector reports that member within allowance and the unassigned control unlimited. No upstream inference calls occurred.", true);
+    evidence.recordAssertionEvidence("AI Gateway tab and nested form ownership", "New/edit provider forms stay within AI Providers without saving changes. The old Gateway sidebar link is absent and its list/new/detail/edit URLs show 404 without redirecting. Central Users & Teams assigns only Usage Member; Limits inspector reports that member within allowance and the unassigned control unlimited. No upstream inference calls occurred.", true);
   });
 
   const sessionId = await step("member selects the actual managed Gateway model in a real Desktop session", async () => {
