@@ -251,34 +251,45 @@ export function mapRuntimeProvidersToV2Specs(
   return { specs, skippedProviderIds };
 }
 
-function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): string[] {
-  const mirrored = new Set(mirroredProviderIds);
-  const ids = new Set<string>();
+export async function waitForEngineV2Catalog(
+  active: Pick<ManagedOpencodeV2Server, "fetchJson">,
+  directory: string,
+  specs: readonly OpencodeV2ProviderSpec[],
+  timeoutMs = CATALOG_MIRROR_TIMEOUT_MS,
+): Promise<{ modelIds: string[]; lastError?: string }> {
+  const mirrored = new Set(specs.map((spec) => spec.id));
+  const expectedModels = specs.flatMap((spec) => spec.models.map((model) => ({ providerID: spec.id, id: model.id })));
+  const deadline = Date.now() + timeoutMs;
+  const readCatalog = async () => {
+    const catalog = await active.fetchJson("/api/model", {
+      directory, timeoutMs: Math.max(1, Math.min(5_000, deadline - Date.now())),
+    });
+    const payload = isRecord(catalog.json) ? catalog.json.data : undefined;
+    const models = Array.isArray(payload) && payload.every(
+      (model): model is { providerID: string; id: string } =>
+        isRecord(model) && typeof model.providerID === "string" && typeof model.id === "string",
+    ) ? payload : undefined;
+    const missing = expectedModels.filter((expected) =>
+      !models?.some((model) => model.providerID === expected.providerID && model.id === expected.id));
+    const message = isRecord(catalog.json) && typeof catalog.json.message === "string" ? ` ${catalog.json.message}` : "";
+    return { models, missing, status: catalog.status, message,
+      ready: catalog.status === 200 && models !== undefined && missing.length === 0 };
+  };
 
-  function visit(value: unknown, withinMirroredProvider: boolean): void {
-    if (Array.isArray(value)) {
-      for (const entry of value) visit(entry, withinMirroredProvider);
-      return;
-    }
-    if (!isRecord(value)) return;
-
-    const providerId = typeof value.providerID === "string"
-      ? value.providerID
-      : typeof value.providerId === "string"
-        ? value.providerId
-        : undefined;
-    const withinProvider = withinMirroredProvider || (providerId !== undefined && mirrored.has(providerId));
-    if (withinProvider && typeof value.id === "string" && !mirrored.has(value.id)) ids.add(value.id);
-    if (withinProvider && isRecord(value.models)) {
-      for (const modelId of Object.keys(value.models)) ids.add(modelId);
-    }
-    for (const [key, child] of Object.entries(value)) {
-      visit(child, withinProvider || mirrored.has(key));
-    }
+  let catalog = await readCatalog();
+  while (!catalog.ready && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(250, deadline - Date.now())));
+    if (Date.now() >= deadline) break;
+    catalog = await readCatalog();
   }
-
-  visit(payload, false);
-  return [...ids].sort((left, right) => left.localeCompare(right));
+  const modelIds = [...new Set(catalog.models?.flatMap((model) => mirrored.has(model.providerID) ? [model.id] : []) ?? [])]
+    .sort((left, right) => left.localeCompare(right));
+  return {
+    modelIds,
+    ...(catalog.ready ? {} : {
+      lastError: `catalog did not become ready (missing [${catalog.missing.map((model) => `${model.providerID}/${model.id}`).join(", ")}]) after ${timeoutMs}ms: ${catalog.status}${catalog.message}`,
+    }),
+  };
 }
 
 /** Translate only fields supported by the pinned v2 MCP API. */
@@ -460,23 +471,9 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     mirroredProviderIds = nextMirroredProviderIds;
     skippedProviderIds = [...mapped.skippedProviderIds];
     lastMirroredAt = new Date().toISOString();
-    const expectedModelIds = mapped.specs.flatMap((spec) => spec.models.map((model) => model.id));
-    const deadline = Date.now() + CATALOG_MIRROR_TIMEOUT_MS;
-    let catalog = await active.fetchJson("/api/model", { directory: workspaceDir });
-    let nextCatalogModelIds = catalogModelIds(catalog.json, nextMirroredProviderIds);
-    while (expectedModelIds.some((modelId) => !nextCatalogModelIds.includes(modelId)) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      catalog = await active.fetchJson("/api/model", { directory: workspaceDir });
-      nextCatalogModelIds = catalogModelIds(catalog.json, nextMirroredProviderIds);
-    }
-    currentCatalogModelIds = nextCatalogModelIds;
-    const missingModelIds = expectedModelIds.filter((modelId) => !nextCatalogModelIds.includes(modelId));
-    const catalogMessage = isRecord(catalog.json) && typeof catalog.json.message === "string"
-      ? ` ${catalog.json.message}`
-      : "";
-    lastError = missingModelIds.length === 0
-      ? undefined
-      : `catalog missing [${missingModelIds.join(", ")}] after ${CATALOG_MIRROR_TIMEOUT_MS}ms: ${catalog.status}${catalogMessage}`;
+    const catalog = await waitForEngineV2Catalog(active, workspaceDir, mapped.specs);
+    currentCatalogModelIds = catalog.modelIds;
+    lastError = catalog.lastError;
   }
 
   function scheduleMirror(): void {

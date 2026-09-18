@@ -9,8 +9,10 @@ import {
   mapRuntimeMcpToV2,
   readEngineV2PreviewState,
   resolveInitialEngineV2PreviewState,
+  waitForEngineV2Catalog,
   writeEngineV2PreviewState,
 } from "./engine-v2-preview.js";
+import type { ManagedOpencodeV2Server, OpencodeV2ProviderSpec } from "./managed-opencode-v2.js";
 import type { ServerConfig } from "./types.js";
 import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
 
@@ -120,6 +122,96 @@ test("persists chat routing and includes it in preview status without starting t
     await preview.stop();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+const catalogProviders: OpencodeV2ProviderSpec[] = ["alpha", "beta"].map((id) => ({
+  id, name: id, apiKey: "fixture-key", models: [{ id: "shared-model", name: "Shared Model" }],
+}));
+const catalogModels = [
+  { providerID: "alpha", id: "shared-model" },
+  { providerID: "beta", id: "shared-model" },
+];
+
+test("catalog readiness requires each provider/model pair, not a shared bare model id", async () => {
+  const incomplete = await waitForEngineV2Catalog({
+    fetchJson: async () => ({ status: 200, json: { data: [
+      catalogModels[0], { providerID: "unrelated", id: "shared-model" },
+    ] } }),
+  }, "/workspace", catalogProviders, 0);
+  expect(incomplete.modelIds).toEqual(["shared-model"]);
+  expect(incomplete.lastError).toContain("missing [beta/shared-model]");
+
+  const complete = await waitForEngineV2Catalog({
+    fetchJson: async () => ({ status: 200, json: { data: [
+      ...catalogModels, { providerID: "unrelated", id: "foreign-model" },
+    ] } }),
+  }, "/workspace", catalogProviders, 0);
+  expect(complete).toEqual({ modelIds: ["shared-model"] });
+});
+
+test("empty desired catalogs still require a successful, well-formed model response", async () => {
+  const invalid: Array<{ status: number; json: unknown }> = [
+    { status: 503, json: { message: "Catalog is initializing" } },
+    { status: 503, json: { data: [] } },
+    { status: 200, json: null },
+    { status: 200, json: {} },
+    { status: 200, json: { data: {} } },
+    { status: 200, json: { data: [{ id: "unqualified-model" }] } },
+  ];
+  for (const specs of [[], catalogProviders.map((provider) => ({ ...provider, models: [] }))]) {
+    for (const response of invalid) {
+      const result = await waitForEngineV2Catalog({ fetchJson: async () => response }, "/workspace", specs, 0);
+      expect(result.lastError).toContain("catalog did not become ready");
+    }
+    expect(await waitForEngineV2Catalog({
+      fetchJson: async () => ({ status: 200, json: { data: [] } }),
+    }, "/workspace", specs, 0)).toEqual({ modelIds: [] });
+  }
+  const unavailable = await waitForEngineV2Catalog({
+    fetchJson: async () => ({ status: 503, json: { data: catalogModels } }),
+  }, "/workspace", catalogProviders, 0);
+  expect(unavailable.lastError).toContain("503");
+});
+
+test("catalog polling waits through initialization and a partially mirrored shared model", async () => {
+  const requests: Array<{ path: string; directory?: string; timeoutMs?: number }> = [];
+  const fetchJson: ManagedOpencodeV2Server["fetchJson"] = async (path, init) => {
+    requests.push({ path, directory: init?.directory, timeoutMs: init?.timeoutMs });
+    if (requests.length === 1) return { status: 503, json: { data: catalogModels } };
+    return { status: 200, json: { data: requests.length === 2 ? [catalogModels[0]] : catalogModels } };
+  };
+  expect(await waitForEngineV2Catalog({ fetchJson }, "/workspace", catalogProviders, 2_000))
+    .toEqual({ modelIds: ["shared-model"] });
+  expect(requests).toHaveLength(3);
+  for (const request of requests) {
+    expect(request.path).toBe("/api/model");
+    expect(request.directory).toBe("/workspace");
+    expect(request.timeoutMs).toBeGreaterThan(0);
+    expect(request.timeoutMs).toBeLessThanOrEqual(2_000);
+  }
+  expect(requests[2]?.timeoutMs).toBeLessThan(requests[0]?.timeoutMs ?? 0);
+});
+
+test("catalog requests are capped at five seconds and stalled reads respect the remaining budget", async () => {
+  const immediate: ManagedOpencodeV2Server["fetchJson"] = async (_path, init) => {
+    expect(init?.timeoutMs).toBe(5_000);
+    return { status: 200, json: { data: [] } };
+  };
+  expect(await waitForEngineV2Catalog({ fetchJson: immediate }, "/workspace", []))
+    .toEqual({ modelIds: [] });
+
+  const stalled: ManagedOpencodeV2Server["fetchJson"] = async (_path, init) => {
+    const timeoutMs = init?.timeoutMs;
+    expect(timeoutMs).toBeGreaterThan(0);
+    expect(timeoutMs).toBeLessThanOrEqual(20);
+    if (timeoutMs === undefined) throw new Error("Catalog request has no timeout");
+    const signal = AbortSignal.timeout(timeoutMs);
+    return new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  };
+  await expect(waitForEngineV2Catalog({ fetchJson: stalled }, "/workspace", [], 20))
+    .rejects.toMatchObject({ name: "TimeoutError" });
 });
 
 test("maps runtime provider fields and models to an OpenCode v2 spec", () => {

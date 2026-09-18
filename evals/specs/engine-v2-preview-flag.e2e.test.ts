@@ -250,11 +250,20 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     const mirrorLatencyMs = Date.now() - patchCompletedAt;
     const catalogStatus = await untilStatus(
       app,
-      (status) => status.catalogModelIds.includes("witness-model-e2e"),
+      (status) => status.catalogModelIds.includes("witness-model-e2e") && status.lastError === undefined,
       120_000,
       "the witness model to appear in the catalog",
     );
     const catalogLatencyMs = Date.now() - patchCompletedAt;
+    const catalogResponse = await serverFetchJson(app, `/workspace/${workspaceId}/opencode2/api/model`);
+    expect(catalogResponse.status).toBe(200);
+    const catalogModels = isRecord(catalogResponse.json) && Array.isArray(catalogResponse.json.data)
+      ? catalogResponse.json.data : [];
+    expect(catalogModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerID: "openwork-witness-e2e", id: "witness-model-e2e" }),
+    ]));
+    expect(catalogModels.some((model) => isRecord(model)
+      && (model.providerID === "openwork-skip-e2e" || model.providerID === "openwork-untrusted-api-e2e"))).toBe(false);
     console.info(`[engine-v2-preview-flag] mirror latency after PATCH 200: ${mirrorLatencyMs}ms; catalog latency: ${catalogLatencyMs}ms`);
     expect(mirroredStatus.skippedProviderIds).toContain("openwork-skip-e2e");
     expect(mirroredStatus.mirroredProviderIds).not.toContain("openwork-skip-e2e");
@@ -276,7 +285,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     );
     evidence.recordAssertionEvidence(
       "F3 provider changes hot-mirror without restarting the sidecar",
-      `The witness provider mirrored after ${mirrorLatencyMs}ms and its model appeared in the catalog after ${catalogLatencyMs}ms, the invalid provider was skipped and never mirrored, and the sidecar remained running at pid ${pid0}.`,
+      `The witness provider mirrored after ${mirrorLatencyMs}ms and its exact provider/model pair appeared in the live catalog without a readiness error after ${catalogLatencyMs}ms; skipped providers were absent, and the sidecar remained running at pid ${pid0}.`,
       true,
     );
 
