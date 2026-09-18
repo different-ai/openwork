@@ -49,34 +49,34 @@ describe("dashboard navigation index", () => {
     const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard });
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
     expect(models?.href).toBe("/dashboard/ai-gateway");
-    expect(models?.children?.some((child) => child.label === "Old Gateway")).toBe(false);
+    expect(models?.children).toBeUndefined();
     const search = flattenNavigationForSearch(sections);
     expect(search.some((entry) => entry.href.startsWith("/dashboard/gateway-providers"))).toBe(false);
     expect(search.some((entry) => entry.label === "AI Gateway › OpenWork Models")).toBe(false);
-    expect(search.some((entry) => entry.label === "AI Gateway › Bring Your Own Keys (Legacy)")).toBe(true);
+    expect(search.some((entry) => entry.label === "AI Gateway › Bring Your Own Keys (Legacy)")).toBe(false);
+    expect(search.find((entry) => entry.label === "AI Gateway")?.href).toBe("/dashboard/ai-gateway");
     expect(flattenNavigationForSearch(buildFor("member", { ...baseCapabilities, gatewayDashboard }))
       .some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(false);
   });
 
-  test.each(["checking", "denied", "unavailable", "enabled"] satisfies ReturnType<typeof getGatewayDashboardAccess>[])("AI Gateway children respect %s access without hiding BYOK or billing/keys", (gatewayAccess) => {
+  test.each(["checking", "denied", "unavailable", "enabled"] satisfies ReturnType<typeof getGatewayDashboardAccess>[])("AI Gateway remains a top-level item with %s access without hiding billing/keys", (gatewayAccess) => {
     const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard: true }, gatewayAccess);
     const entries = flattenNavigationForSearch(sections);
     const hrefs = entries.map((entry) => entry.href);
     expect(hrefs.some((href) => href.startsWith("/dashboard/gateway-providers"))).toBe(false);
     expect(hrefs.includes("/dashboard/inference")).toBe(false);
-    for (const href of ["/dashboard/custom-llm-providers", "/dashboard/billing", "/dashboard/api-keys"]) expect(hrefs).toContain(href);
+    for (const href of ["/dashboard/ai-gateway", "/dashboard/billing", "/dashboard/api-keys"]) expect(hrefs).toContain(href);
+    expect(hrefs).not.toContain("/dashboard/custom-llm-providers");
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
     expect(models?.href).toBe("/dashboard/ai-gateway");
-    expect(models?.children?.some((child) => child.label === "Old Gateway")).toBe(false);
-    expect(models?.children?.some((child) => child.label === "OpenWork Models")).toBe(false);
+    expect(models?.children).toBeUndefined();
+    expect(models?.badge).toBe("Models");
   });
 
-  test("hosted admins retain the AI Gateway root and legacy BYOK without a duplicate Models child", () => {
+  test("hosted admins have one normal AI Gateway navigation item without children", () => {
     const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard: true }, "enabled");
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
-    expect(models?.children).toEqual([
-      { href: "/dashboard/custom-llm-providers", label: "Bring Your Own Keys (Legacy)" },
-    ]);
+    expect(models?.children).toBeUndefined();
     const search = flattenNavigationForSearch(sections);
     expect(search.find((entry) => entry.label === "AI Gateway › Old Gateway")).toBeUndefined();
     expect(models?.href).toBe("/dashboard/ai-gateway");
@@ -93,7 +93,7 @@ describe("dashboard navigation index", () => {
     ]) {
       const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
       expect(models?.href).toBe("/dashboard/ai-gateway");
-      expect(models?.children?.some((child) => child.label === "OpenWork Models")).toBe(false);
+      expect(models?.children).toBeUndefined();
       expect(flattenNavigationForSearch(sections).some((entry) => entry.href === "/dashboard/inference")).toBe(false);
     }
   });

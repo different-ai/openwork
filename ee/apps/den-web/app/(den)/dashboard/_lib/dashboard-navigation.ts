@@ -22,7 +22,6 @@ import {
   getAutomationsRoute,
   getBillingRoute,
   getBrandAppearanceRoute,
-  getCustomLlmProvidersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getLibraryRoute,
@@ -109,15 +108,12 @@ export function buildDashboardNavSections({
       : []),
   ];
 
-  const modelsGroup: DashboardNavItem | null = access.isAdmin && orgSlug
+  const aiGatewayItem: DashboardNavItem | null = access.isAdmin && orgSlug
     ? {
         href: getAiGatewayRoute(orgSlug),
         label: "AI Gateway",
         icon: Sparkles,
         badge: "Models",
-        children: [
-          { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring Your Own Keys (Legacy)" },
-        ],
       }
     : null;
   const manageItems: DashboardNavItem[] = access.isAdmin && orgSlug
@@ -132,7 +128,7 @@ export function buildDashboardNavSections({
         ...(capabilities.orgManagedDashboards
           ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
           : []),
-        ...(modelsGroup ? [modelsGroup] : []),
+        ...(aiGatewayItem ? [aiGatewayItem] : []),
         {
           href: getMarketplacesRoute(orgSlug),
           label: "Advanced",
