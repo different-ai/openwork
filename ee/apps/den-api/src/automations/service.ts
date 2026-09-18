@@ -3,6 +3,7 @@ import type { AutomationClaimResult, AutomationListItem } from "@openwork/automa
 import { AUTOMATION_MANUAL_CLAIM_WINDOW_MS, desktopRunnerConnected } from "@openwork/automations"
 import type {
   AutomationDesktopRunnerCapability,
+  AutomationExecutionTarget,
   AutomationDesktopRunnerPresence,
   AutomationDesktopRunnerResult,
   AutomationDesktopRunnerRegistration,
@@ -137,7 +138,7 @@ export class AutomationService {
       if (definition.action.kind === "agent") {
         // Action-based creation is Cloud placement. The legacy Zen exception
         // exists only for already-published Desktop clients.
-        await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model)
+        await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model, "cloud")
       }
       else {
         if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
@@ -183,6 +184,7 @@ export class AutomationService {
             ? { ...scope, modelAttentionCapable: true }
             : scope,
           requestedModel,
+          current.revision.executionTarget ?? "desktop",
         )
       }
     }
@@ -208,6 +210,7 @@ export class AutomationService {
           ? { ...scope, modelAttentionCapable: true }
           : scope,
         current.revision.model,
+        current.revision.executionTarget ?? "desktop",
       )
     }
     const activated = await automationRepository.setState({ ...scope, automationId, state: "active", now: Date.now() })
@@ -241,6 +244,7 @@ export class AutomationService {
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: current.revision.model,
         failure: access,
+        executionTarget: current.revision.executionTarget ?? "desktop",
         modelAttentionCapable: (current.revision.executionTarget ?? "desktop") === "cloud"
           || supportsModelAttention(scope),
       })) blocked = { code: access.code, message: access.message, occurredAt: Date.now() }
@@ -339,6 +343,7 @@ export class AutomationService {
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: item.revision.model,
         failure: access,
+        executionTarget: item.revision.executionTarget ?? "desktop",
         // Scheduling must remain compatible until a capable desktop claims
         // the work or a capable management client reconciles the Automation.
         modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud",
@@ -521,15 +526,16 @@ export class AutomationService {
   }
 
   /**
-   * New capable clients require current authority. Published clients may
-   * continue submitting the exact legacy Zen selection until they advertise
-   * support for the repairable attention state.
+   * Published Desktop admission remains compatible, including model-attention
+   * v1 clients. Cloud enforces provider filters here; updated Desktop runners
+   * check their effective workspace model catalog before creating a thread.
    */
-  private async requireNewModel(scope: OwnerScope, model: ModelSelection) {
+  private async requireNewModel(scope: OwnerScope, model: ModelSelection, executionTarget: AutomationExecutionTarget = "desktop") {
     const result = await resolveAutomationModelAccess({ ...scope, ...model })
     if (!result.ok && shouldApplyAutomationModelAccessFailure({
       model,
       failure: result,
+      executionTarget,
       modelAttentionCapable: supportsModelAttention(scope),
     })) {
       const error = new Error(result.message)
@@ -552,6 +558,7 @@ export class AutomationService {
     if (access.ok || !shouldApplyAutomationModelAccessFailure({
       model: item.revision.model,
       failure: access,
+      executionTarget: item.revision.executionTarget ?? "desktop",
       modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud"
         || supportsModelAttention(scope),
     })) return item

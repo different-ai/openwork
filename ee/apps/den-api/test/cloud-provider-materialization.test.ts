@@ -406,6 +406,20 @@ async function materialize(input: {
 }
 
 describe("Cloud provider materialization", () => {
+  test("preserves an empty model allowlist instead of broadening it to every model", async () => {
+    const provider = makeAnthropicProvider({ apiKey: "synthetic" })
+    provider.providerConfig.whitelist = []
+    provider.providerConfig.blacklist = []
+    const instance = makeInstance()
+    expect((await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })).status).toBe("applied")
+    expect(instance.runtimeProvider(provider.id)?.whitelist).toEqual([])
+    expect(instance.runtimeProvider(provider.id)?.blacklist ?? []).toEqual([])
+
+    delete provider.providerConfig.whitelist
+    expect((await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })).status).toBe("applied")
+    expect(instance.runtimeProvider(provider.id)?.whitelist).toBeUndefined()
+  })
+
   test("preserves catalog Fast metadata and accepts expanded v1 readback without repeated writes", async () => {
     const provider = makeAnthropicProvider({ apiKey: "synthetic" })
     provider.providerConfig = { npm: "@ai-sdk/openai", env: ["SYNTHETIC_API_KEY"] }

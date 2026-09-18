@@ -252,4 +252,32 @@ test("a queued manual run completes once after a synthetic Windows runner regist
     "A run queued with no desktop present was discovered and completed by a synthetic Windows runner. A competing runner could not claim it, and completion left no claimable work or second attempt.",
     true,
   )
+
+  const unaffected = await request("/v1/automations", "POST", {
+    name: "Unaffected model selection",
+    instructions: "Keep this Automation unchanged.",
+    schedule: { kind: "daily", timezone: "UTC", hour: 23, minute: 59 },
+    model: { providerId: "opencode", modelId: "big-pickle", variant: null },
+  })
+  const unaffectedId = record(unaffected.automation).id
+  const rejected = await request(`/v1/automations/${automationId}/run`, "POST")
+  const rejectedId = record(rejected.run).id
+  const rejectedClaim = await request(`/v1/automation-runs/${rejectedId}/claim`, "POST", undefined, token)
+  expect(record(rejectedClaim.assignment).model).toEqual({ providerId: "opencode", modelId: "big-pickle", variant: null })
+  await request(`/v1/automation-runs/${rejectedId}/complete`, "POST", {
+    attempt: 1, status: "failed", sessionId: "synthetic-rejected-session", workspaceId: "synthetic-workspace",
+    resultSummary: null, usage: { inputTokens: null, outputTokens: null, costMicros: null },
+    error: { code: "model_access_lost", message: "The selected model is unavailable. Choose a supported model.", retryable: false },
+  }, token)
+  const failedReceipt = record((await request(`/v1/automation-runs/${rejectedId}`)).run)
+  expect(failedReceipt.status).toBe("failed")
+  expect(record(failedReceipt.executionThread).nativeThreadId).toBe("synthetic-rejected-session")
+  expect(record(failedReceipt.executionThread).workspaceId).toBe("synthetic-workspace")
+  const attention = await request(`/v1/automations/${automationId}`)
+  expect(record(attention.automation).state).toBe("needs_attention")
+  expect(record(record(attention.automation).needsAttentionReason).code).toBe("model_access_lost")
+  expect(record(attention.revision).model).toEqual({ providerId: "opencode", modelId: "big-pickle", variant: null })
+  expect(record((await request(`/v1/automations/${unaffectedId}`)).automation).state).toBe("active")
+  expect((await request(`/v1/automation-runs/${rejectedId}/claim`, "POST", undefined, competing)).assignment).toBeNull()
+  expect((await request("/v1/automation-runner/work", "GET", undefined, token)).items).toEqual([])
 })

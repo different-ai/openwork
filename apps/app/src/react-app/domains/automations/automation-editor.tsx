@@ -83,6 +83,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const [input, setInput] = useState<CreateAutomation>(() => props.initial ?? defaultInput(props.modelOptions))
   const [pickerOpen, setPickerOpen] = useState(props.openModelPickerOnMount === true)
   const appliedInitialKey = useRef(props.initialKey)
+  const initializedModel = useRef(props.modelOptions.length > 0)
 
   useEffect(() => {
     if (props.initial) {
@@ -91,7 +92,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
       setInput(props.initial)
       return
     }
-    setInput(defaultInput(props.modelOptions))
+    if (initializedModel.current || props.modelOptions.length === 0) return
+    initializedModel.current = true
+    setInput((current) => ({ ...current, model: defaultInput(props.modelOptions).model }))
   }, [props.initial, props.initialKey, props.modelOptions])
 
   useEffect(() => {

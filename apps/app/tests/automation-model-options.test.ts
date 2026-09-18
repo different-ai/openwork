@@ -12,7 +12,7 @@ function provider(input: Partial<DenOrgLlmProvider> & Pick<DenOrgLlmProvider, "i
     providerId: input.id,
     providerConfig: {},
     models: [],
-    canManage: false,
+    hasApiKey: true,
     createdAt: "2026-08-03T00:00:00.000Z",
     updatedAt: "2026-08-03T00:00:00.000Z",
     ...input,
@@ -166,16 +166,18 @@ describe("Automation proposal model resolution", () => {
     expect(resolveProposalModel(managed, [managedProvider])).toEqual({ model: managed, resolution: "exact" })
   })
 
-  test("maps an upstream provider key to the first matching concrete Den provider", () => {
+  test("maps an upstream provider key only when the concrete Den provider is unambiguous", () => {
     const first = provider({ ...customProvider, id: "lpr_first" })
     const second = provider({ ...customProvider, id: "lpr_second" })
     expect(resolveProposalModel(
       { providerId: "deepseek", modelId: "deepseek-v4-flash", variant: "high" },
-      [first, second],
+      [first],
     )).toEqual({
       model: { providerId: "lpr_first", modelId: "deepseek-v4-flash", variant: "high" },
       resolution: "mapped",
     })
+    const proposed = { providerId: "deepseek", modelId: "deepseek-v4-flash", variant: "high" }
+    expect(resolveProposalModel(proposed, [first, second])).toEqual({ model: proposed, resolution: "unavailable" })
   })
 
   test("does not map through OpenWork provider records", () => {
@@ -188,19 +190,31 @@ describe("Automation proposal model resolution", () => {
       { providerId: "deepseek", modelId: "deepseek-v4-flash" },
       [managed],
     )).toEqual({
-      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
-      resolution: "fallback",
+      model: { providerId: "deepseek", modelId: "deepseek-v4-flash" },
+      resolution: "unavailable",
     })
   })
 
-  test("falls back when the provider or model is unavailable", () => {
-    const fallback = {
-      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
-      resolution: "fallback",
+  test("never substitutes a free or paid model when a selection is unavailable", () => {
+    for (const providerId of ["unknown", "deepseek", "lpr_abc"]) {
+      const model = { providerId, modelId: "missing", variant: "high" }
+      expect(resolveProposalModel(model, [customProvider])).toEqual({ model, resolution: "unavailable" })
     }
-    expect(resolveProposalModel({ providerId: "unknown", modelId: "missing", variant: "high" }, [customProvider]))
-      .toEqual(fallback)
-    expect(resolveProposalModel({ providerId: "deepseek", modelId: "missing", variant: "high" }, [customProvider]))
-      .toEqual(fallback)
+    expect(resolveProposalModel(undefined, [customProvider], { includeFreeStarter: false }).resolution).toBe("unavailable")
+    const free = { providerId: "opencode", modelId: "big-pickle" }
+    expect(resolveProposalModel(free, [customProvider], { includeFreeStarter: false }))
+      .toEqual({ model: free, resolution: "unavailable" })
+  })
+
+  test("filters current runtime availability and provider restrictions without substituting a model", () => {
+    const proposed = { providerId: "lpr_abc", modelId: "deepseek-v4-flash", variant: "high" }
+    expect(resolveProposalModel(proposed, [customProvider], { catalog: {} }))
+      .toEqual({ model: proposed, resolution: "unavailable" })
+    expect(automationModelOptions([customProvider], { catalog: {} })).toEqual([])
+    expect(automationModelOptions([customProvider], { includeFreeStarter: false })).toHaveLength(1)
+    expect(automationModelOptions([{ ...customProvider, providerConfig: { blacklist: [proposed.modelId] } }], { includeFreeStarter: false })).toEqual([])
+    expect(automationModelOptions([{ ...customProvider, providerConfig: { whitelist: ["different"] } }], { includeFreeStarter: false })).toEqual([])
+    expect(automationModelOptions([{ ...customProvider, providerConfig: { whitelist: [] } }], { includeFreeStarter: false })).toEqual([])
+    expect(automationModelOptions([{ ...customProvider, providerConfig: { blacklist: [] } }], { includeFreeStarter: false })).toHaveLength(1)
   })
 })

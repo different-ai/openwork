@@ -792,12 +792,10 @@ test("every dispatch path revalidates the owner's model access", () => {
   assert.match(runNow, /shouldApplyAutomationModelAccessFailure\(\{[\s\S]*supportsModelAttention\(scope\)/)
 
   const executorSource = readFileSync(join(import.meta.dir, "../src/automations/cloud-agent-executor.ts"), "utf8")
-  const execution = executorSource.slice(executorSource.indexOf("export async function executeCloudAgent"))
   assert.match(executorSource, /currentAgentAuthority[\s\S]*resolveAutomationModelAccess\(/)
   assert.match(executorSource, /currentAgentAuthority[\s\S]*getOpenWorkWebRuntimeAccess\(input\.organizationId\)/)
-  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*resolveCloudAgentReadyWorker/)
-  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*createThread/)
-  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*abortAndObserve\(client, nativeThreadId\)[\s\S]*sendTurn/)
+  // Cloud admission order and recovery aborts are exercised behaviorally in
+  // cloud-agent-signed-preview-routing.test.ts, including injected authority.
   assert.match(serviceSource, /"owner_membership_lost",[\s\S]*markNeedsAttention/)
 })
 

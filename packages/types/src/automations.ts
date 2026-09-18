@@ -54,6 +54,15 @@ export const automationModelSchema = z.object({
 })
 export type AutomationModel = z.infer<typeof automationModelSchema>
 
+export function automationModelAllowedByProvider(config: Record<string, unknown>, modelId: string): boolean {
+  const readList = (value: unknown): string[] => Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    : []
+  const blacklist = readList(config.blacklist)
+  const whitelist = readList(config.whitelist)
+  return !blacklist.includes(modelId) && (!Array.isArray(config.whitelist) || whitelist.includes(modelId))
+}
+
 export const automationSavedScriptReferenceSchema = z.object({
   pluginId: idSchema,
   configObjectId: idSchema,
