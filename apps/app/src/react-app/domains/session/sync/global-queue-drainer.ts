@@ -104,11 +104,12 @@ async function performQueuedDraftSend(
   sessionId: string,
   draft: ComposerDraft,
   generation: number,
+  transport?: { desktopTransport: "main" },
 ): Promise<"sent" | "cancelled"> {
   assertQueuedSendCurrent(sessionId, generation);
   const text = draft.text.trim();
   if (!text && draft.attachments.length === 0 && !draft.command) return "cancelled";
-  const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken }, sessionId);
+  const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId);
   assertQueuedSendCurrent(sessionId, generation);
   if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
 
@@ -120,6 +121,7 @@ async function performQueuedDraftSend(
     context.opencodeBaseUrl,
     context.workspaceRoot || undefined,
     { token: context.openworkToken, mode: "openwork" },
+    transport,
   );
 
   if (context.isCurrent?.() === false) return "cancelled";
@@ -158,6 +160,7 @@ async function performQueuedDraftSend(
       workspaceId: context.workspaceId,
       cacheKey: sessionId,
       runtimeKey: context.environmentRuntimeKey,
+      ...transport,
     });
     assertQueuedSendCurrent(sessionId, generation);
     if (sessionWorkHeld(context.opencodeBaseUrl, sessionId) || context.isCurrent?.() === false) return "cancelled";
@@ -400,13 +403,16 @@ async function attemptDrain(sessionId: string) {
 
   try {
     const sendContext = nextItem.steer ? { ...context, agent: nextItem.steer.agent } : context;
-    const send = () => performQueuedDraftSend(sendContext, sessionId, draft, generation);
+    // A requested Send now stays latency-sensitive after its surface unmounts.
+    // Keep its history, interruption and admission off renderer background traffic.
+    const transport: { desktopTransport: "main" } | undefined = nextItem.steer ? { desktopTransport: "main" } : undefined;
+    const send = () => performQueuedDraftSend(sendContext, sessionId, draft, generation, transport);
     const outcome = await (async () => {
       if (!nextItem.steer) return submitAfterInterruption(context.opencodeBaseUrl, sessionId, send, draft.messageId);
-      const messages = await getNativeSessionMessages({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken }, sessionId, { limit: 140 });
+      const messages = await getNativeSessionMessages({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId, { limit: 140 });
       assertQueuedSendCurrent(sessionId, generation);
       const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
-      const client = createEngineClient(context.opencodeBaseUrl, context.workspaceRoot || undefined, { token: context.openworkToken, mode: "openwork" });
+      const client = createEngineClient(context.opencodeBaseUrl, context.workspaceRoot || undefined, { token: context.openworkToken, mode: "openwork" }, transport);
       return submitImmediateSessionTurn(context.opencodeBaseUrl, client, sessionId, messages, send, { directory: context.workspaceRoot || undefined, messageID: draft.messageId });
     })();
     if (outcome === "cancelled" && context.rejectedOwner) {
