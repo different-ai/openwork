@@ -5,8 +5,12 @@ import { z } from "zod";
  * authoritative in Den. Keep all desktop enforcement entry points on this flag. */
 export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
 
-export function desktopSigninRequired(requireSignin: boolean, desktop: boolean): boolean {
-  return requireSignin && (!desktop || DESKTOP_POLICY_ENFORCEMENT_ENABLED);
+export function desktopSigninRequired(
+  requireSignin: boolean,
+  desktop: boolean,
+  distributionRequiresSignin: boolean,
+): boolean {
+  return requireSignin && (!desktop || distributionRequiresSignin || DESKTOP_POLICY_ENFORCEMENT_ENABLED);
 }
 
 /** Runtime-only projection; never persist this over the control-plane config. */

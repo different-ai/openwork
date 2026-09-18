@@ -26,10 +26,11 @@ test("runtime projection removes desktop restrictions but preserves Cloud entitl
   expect(JSON.stringify(config)).toBe(before);
 });
 
-test("bootstrap sign-in is optional on desktop without changing web sign-in", () => {
-  expect(desktopSigninRequired(true, true)).toBe(false);
-  expect(desktopSigninRequired(true, false)).toBe(true);
-  expect(desktopSigninRequired(false, false)).toBe(false);
+test("bootstrap sign-in is optional on desktop without changing Cloud distribution or web sign-in", () => {
+  expect(desktopSigninRequired(true, true, false)).toBe(false);
+  expect(desktopSigninRequired(true, true, true)).toBe(true);
+  expect(desktopSigninRequired(true, false, false)).toBe(true);
+  expect(desktopSigninRequired(false, false, false)).toBe(false);
 });
 
 test("policy readiness never delays activated desktop egress; activation remains required", () => {

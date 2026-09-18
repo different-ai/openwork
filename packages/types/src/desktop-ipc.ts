@@ -178,7 +178,7 @@ export type AppBuildInfo = {
 };
 
 export type DesktopDistributionInfo = {
-  flavor: "public" | "enterprise";
+  flavor: "public" | "cloud" | "enterprise";
   appName: string;
   appIdentifier: string;
   protocolScheme: string;

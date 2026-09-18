@@ -177,7 +177,6 @@ class ManagedDesktopPolicy {
     return policy;
   }
   async assertRequest(request: Request, path: string, engine = false): Promise<void> {
-    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return;
     const generation = this.generation;
     try { await this.assertInstalledRequest(request, path, engine, generation); }
     finally { this.identityChanged(generation); }

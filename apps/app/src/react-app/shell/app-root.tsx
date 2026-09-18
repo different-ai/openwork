@@ -75,9 +75,9 @@ const subscribeToDenBootstrap = (onStoreChange: () => void) => {
  * Forced-signin gate ported from the Solid shell.
  *
  * Desktop policy enforcement is suspended, so persisted bootstrap sign-in
- * requirements cannot hold local work at `/signin`. Web sign-in still applies.
- * When sign-in is NOT required, we
- * never let users land on `/signin` — redirect them to `/session` instead.
+ * requirements cannot hold local work at `/signin`. The Cloud distribution's
+ * immutable first-launch gate and web sign-in still apply. When sign-in is NOT
+ * required, we never let users land on `/signin` — redirect them to `/session` instead.
  *
  * While we're still checking the Den session AND sign-in is required, we
  * show startup progress without mounting transcript/settings behind the gate.
@@ -93,11 +93,16 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readDenBootstrapSnapshot,
     readDenBootstrapSnapshot,
   );
-  const requireSignin = desktopSigninRequired(bootstrap.requireSignin, isDesktopRuntime());
+  const desktop = isDesktopRuntime();
+  const requireSignin = desktopSigninRequired(
+    bootstrap.requireSignin,
+    desktop,
+    readDesktopDistributionInfo().flavor === "cloud",
+  );
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
-  const hasPreparedBootstrap = Boolean(bootstrap.prepared) && (!isDesktopRuntime() || requireSignin);
+  const hasPreparedBootstrap = Boolean(bootstrap.prepared) && (!desktop || requireSignin);
   const redirectingPreparedWorkspace =
     denAuth.status !== "checking" &&
     !requireSignin &&
