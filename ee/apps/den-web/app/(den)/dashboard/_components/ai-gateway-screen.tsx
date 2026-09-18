@@ -19,6 +19,7 @@ import { GatewayUsersTeamsSection } from "./gateway-users-teams-section";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import { GatewayProvidersSection } from "./inference-providers-screen";
 import { LegacyProvidersSection } from "./llm-providers-screen";
+import { InferenceScreen } from "./inference-screen";
 
 type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "openwork-models";
 
@@ -95,7 +96,6 @@ export function AiGatewayScreen({ providerContent }: { providerContent?: ReactNo
       <div data-testid="ai-gateway-tabs" className="mb-6">
         <UnderlineTabs tabs={AI_GATEWAY_TABS} activeTab={tab} onChange={setTab} />
       </div>
-      {/* The remaining subpages stay in the sidebar until their content moves into these panels. */}
       <div
         key={tab}
         role="tabpanel"
@@ -130,6 +130,7 @@ export function AiGatewayScreen({ providerContent }: { providerContent?: ReactNo
                       ? "This feature is not part of your deployment system, please ask an instance admin to configure deployment"
                       : "AI Gateway is not enabled for this workspace."} />
             ) : null}
+            {tab === "openwork-models" ? <InferenceScreen embedded /> : null}
             {tab === "ai-providers" && orgId && !orgError ? (
               <LegacyProvidersSection key={orgId} orgId={orgId} orgSlug={orgSlug} />
             ) : null}

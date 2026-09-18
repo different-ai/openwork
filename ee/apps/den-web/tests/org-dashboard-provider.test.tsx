@@ -14,12 +14,13 @@ import AiGatewayProvidersLayout from "../app/(den)/dashboard/(admin)/ai-gateway/
 import { GatewayDashboardCapabilityGuard } from "../app/(den)/dashboard/_components/gateway-dashboard-capability-guard";
 import AdminDashboardLayout from "../app/(den)/dashboard/(admin)/layout";
 import AiGatewayPage from "../app/(den)/dashboard/(admin)/ai-gateway/page";
+import StripeCheckingPage from "../app/(den)/dashboard/(admin)/billing/stripe/checking/page";
+import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import NewGatewayProviderPage from "../app/(den)/dashboard/(admin)/ai-gateway/providers/new/page";
 import GatewayProviderPage from "../app/(den)/dashboard/(admin)/ai-gateway/providers/[inferenceProviderId]/page";
 import EditGatewayProviderPage from "../app/(den)/dashboard/(admin)/ai-gateway/providers/[inferenceProviderId]/edit/page";
 import { useOrgInferenceProviders } from "../app/(den)/dashboard/_components/inference-provider-data";
 import { LlmProviderDetailScreen } from "../app/(den)/dashboard/_components/llm-provider-detail-screen";
-import InferencePage from "../app/(den)/dashboard/(admin)/inference/page";
 import { parseOrgContextPayload } from "../app/(den)/_lib/den-org";
 import { getGatewayDashboardAccess } from "../app/(den)/dashboard/_lib/gateway-dashboard-access";
 
@@ -56,6 +57,7 @@ async function withDashboard(check: (fixture: {
   scopeWrites: { id: string | null; busy: boolean | undefined; contextId: string | undefined; gatewayMounted: boolean }[];
   unmountedScopes: (string | null)[];
   replace: ReturnType<typeof mock<(path: string) => void>>;
+  push: ReturnType<typeof mock<(path: string) => void>>;
   rerender: (user: typeof account | null) => void;
   unmount: () => void;
   verifyReauth: () => Promise<void>;
@@ -64,8 +66,9 @@ async function withDashboard(check: (fixture: {
   page?: ReactNode; pathname?: string; outsideGateway?: boolean; deploymentCapabilities?: unknown;
   runtimeConfigLoaded?: boolean; initialContext?: ReturnType<typeof deferred<Reply>>; gatewayFailure?: boolean;
   providerAvailable?: boolean;
+  reply?: (path: string, init?: RequestInit) => Reply | undefined;
 } = {}) {
-  GlobalRegistrator.register({ url: "https://app.example.test/dashboard/org-settings" });
+  GlobalRegistrator.register({ url: `https://app.example.test${options.pathname ?? "/dashboard/org-settings"}` });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
   const container = document.createElement("div");
   document.body.append(container);
@@ -81,6 +84,7 @@ async function withDashboard(check: (fixture: {
   const scopeWrites: { id: string | null; busy: boolean | undefined; contextId: string | undefined; gatewayMounted: boolean }[] = [];
   const unmountedScopes: (string | null)[] = [];
   const replace = mock((_path: string) => {});
+  const push = mock((_path: string) => {});
   let verifyReauth: () => Promise<void> = async () => { throw new Error("Reauth dialog not mounted"); };
   const RealReauthDialog = reauth.ReauthDialog;
   spyOn(reauth, "ReauthDialog").mockImplementation((props) => {
@@ -99,7 +103,7 @@ async function withDashboard(check: (fixture: {
   const url = new URL(options.pathname ?? "/dashboard/org-settings", "https://app.example.test");
   spyOn(navigation, "usePathname").mockReturnValue(url.pathname);
   spyOn(navigation, "useSearchParams").mockReturnValue(new navigation.ReadonlyURLSearchParams(url.search));
-  spyOn(navigation, "useRouter").mockReturnValue({ push() {}, replace, refresh() {}, back() {}, forward() {}, prefetch: async () => {}, bfcacheId: "fixture" });
+  spyOn(navigation, "useRouter").mockReturnValue({ push, replace, refresh() {}, back() {}, forward() {}, prefetch: async () => {}, bfcacheId: "fixture" });
   spyOn(runtime, "getRuntimeConfig").mockResolvedValue(config);
   // Keep the real parent context shape, overriding only this provider's inputs.
   spyOn(flow, "useDenFlow").mockImplementation(() => ({
@@ -111,7 +115,8 @@ async function withDashboard(check: (fixture: {
     const orgId = new Headers(init?.headers).get(scope.ORG_SCOPE_HEADER);
     calls.push({ path, orgId });
     const held = pending.get(`${path}:${orgId ?? ""}`)?.shift();
-    const reply: Reply = held ? await held.promise : path === "/v1/me/orgs"
+    const override = options.reply?.(path, init);
+    const reply: Reply = held ? await held.promise : override ?? (path === "/v1/me/orgs"
       ? { payload: { orgs: orgs.map((org) => ({ ...org, isActive: org.id === activeOrgId })) } }
       : path === "/v1/org" ? options.initialContext ? await options.initialContext.promise
         : context(orgId ?? "missing", options.metadata, options.role, "deploymentCapabilities" in options ? { deploymentCapabilities: options.deploymentCapabilities } : undefined)
@@ -125,7 +130,7 @@ async function withDashboard(check: (fixture: {
         source: "models_dev", providerId: "openai", canManage: true, hasApiKey: true,
         providerConfig: {}, models: [], access: {}, accessibleVia: {},
       }] } }
-      : { payload: path === "/v1/me" ? { user: account } : {} };
+      : { payload: path === "/v1/me" ? { user: account } : {} });
     if (path === "/api/auth/organization/set-active" && (reply.status ?? 200) === 200) {
       const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : null;
       if (body && typeof body === "object" && "organizationId" in body && typeof body.organizationId === "string") {
@@ -149,7 +154,7 @@ async function withDashboard(check: (fixture: {
     await act(async () => render());
     await check({
       state: () => { if (!current) throw new Error("Dashboard not mounted"); return current; },
-      container, calls, scopeWrites, unmountedScopes, replace,
+      container, calls, scopeWrites, unmountedScopes, replace, push,
       hold: (path, orgId) => {
         const result = deferred<Reply>();
         const key = `${path}:${orgId ?? ""}`;
@@ -630,7 +635,7 @@ test("Overview alone fetches usage after providers load; AI Providers links stay
   }
 });
 
-test.each([<AiGatewayPage />, <InferencePage />])("real org errors are shown without a deployment notice or redirect", async (page) => {
+test.each(["overview", "openwork-models"])("real org errors on %s are shown without a deployment notice or redirect", async (tab) => {
   const initialContext = deferred<Reply>();
   initialContext.resolve({ status: 503, payload: { message: "Workspace request failed" } });
   await withDashboard(async ({ container, calls, replace }) => {
@@ -638,7 +643,7 @@ test.each([<AiGatewayPage />, <InferencePage />])("real org errors are shown wit
     expect(container.textContent).not.toContain(unavailableMessage);
     expect(featureCalls(calls)).toEqual([]);
     expect(replace).not.toHaveBeenCalled();
-  }, { page, initialContext, outsideGateway: true });
+  }, { page: <AiGatewayPage />, pathname: `/dashboard/ai-gateway?tab=${tab}`, initialContext, outsideGateway: true });
 });
 
 test.each(["gateway", "models"])("the parent admin layout distinguishes a failed org request from loading on %s", async (page) => {
@@ -652,8 +657,8 @@ test.each(["gateway", "models"])("the parent admin layout distinguishes a failed
     expect(featureCalls(calls)).toEqual([]);
     expect(replace).not.toHaveBeenCalled();
   }, { outsideGateway: true, initialContext,
-    pathname: page === "gateway" ? "/dashboard/ai-gateway" : "/dashboard/inference",
-    page: <AdminDashboardLayout>{page === "gateway" ? <AiGatewayPage /> : <InferencePage />}</AdminDashboardLayout> });
+    pathname: page === "gateway" ? "/dashboard/ai-gateway" : "/dashboard/ai-gateway?tab=openwork-models",
+    page: <AdminDashboardLayout><AiGatewayPage /></AdminDashboardLayout> });
 });
 
 test("switching between enabled and unavailable deployments unmounts Gateway before scope changes", async () => {
@@ -694,10 +699,11 @@ test.each([
   await withDashboard(async ({ container, calls, replace }) => {
     expect(featureCalls(calls)).toEqual([]);
     expect(container.textContent).not.toContain("Manage subscription");
-    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector('[data-testid="ai-gateway-panel-openwork-models"] button')).toBeNull();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
     if (target) expect(replace).toHaveBeenCalledWith(target);
     else expect(replace).not.toHaveBeenCalled();
-  }, { ...options, pathname: "/dashboard/inference", outsideGateway: true, page: <InferencePage /> });
+  }, { ...options, pathname: "/dashboard/ai-gateway?tab=openwork-models", outsideGateway: true, page: <AiGatewayPage /> });
 });
 
 test.each(["admin", "super-admin", "owner"])("hosted %s mounts the real Models page alongside an effectively enabled Gateway", async (role) => {
@@ -706,12 +712,19 @@ test.each(["admin", "super-admin", "owner"])("hosted %s mounts the real Models p
     expect(container.querySelector("[data-testid=models-access-state]")).toBeNull();
     expect(calls.filter(({ path }) => path === "/v1/inference")).toHaveLength(1);
     expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers"))).toBe(false);
-    expect(container.querySelector("h1")?.textContent).toBe("OpenWork Models");
+    expect([...container.querySelectorAll("h1")].map((heading) => heading.textContent)).toEqual(["AI Gateway"]);
+    expect(container.querySelectorAll("[data-dashboard-hero]")).toHaveLength(1);
+    const panel = container.querySelector('[data-testid="ai-gateway-panel-openwork-models"]');
+    expect(panel?.querySelector("h2")?.textContent).toBe("OpenWork Models");
+    expect(panel?.firstElementChild?.className).toBe("grid gap-6");
+    expect(panel?.textContent).toContain("Reliable, hand-picked models for knowledge work. No API keys to manage.");
+    expect(panel?.textContent).toContain("$10 / user / month");
+    expect(panel?.querySelector('a[href="/dashboard/custom-llm-providers"]')?.textContent).toBe("Set up Bring your Own Keys.");
     expect(container.textContent).toContain("Manage subscription");
     expect(container.querySelector("table")).not.toBeNull();
     expect(replace).not.toHaveBeenCalled();
-  }, { role, pathname: "/dashboard/inference", outsideGateway: true,
-    page: <AdminDashboardLayout><InferencePage /></AdminDashboardLayout> });
+  }, { role, pathname: "/dashboard/ai-gateway?tab=openwork-models", outsideGateway: true,
+    page: <AdminDashboardLayout><AiGatewayPage /></AdminDashboardLayout> });
 });
 
 test.each([
@@ -725,7 +738,7 @@ test.each([
     expect(container.textContent).toContain("OpenWork Models");
     expect(container.textContent).toContain("Manage subscription");
     expect(replace).not.toHaveBeenCalled();
-  }, { ...options, pathname: "/dashboard/inference", outsideGateway: true, page: <InferencePage /> });
+  }, { ...options, pathname: "/dashboard/ai-gateway?tab=openwork-models", outsideGateway: true, page: <AiGatewayPage /> });
 });
 
 test("Models waits for context and survives hosted-to-gateway-to-hosted switches without leaking requests or controls", async () => {
@@ -755,5 +768,73 @@ test("Models waits for context and survives hosted-to-gateway-to-hosted switches
     expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers"))).toBe(false);
     expect(replace).not.toHaveBeenCalledWith("/dashboard/ai-gateway");
     expect(replace).not.toHaveBeenCalledWith("/dashboard/ai-gateway?tab=ai-providers");
-  }, { pathname: "/dashboard/inference", outsideGateway: true, page: <InferencePage />, initialContext });
+  }, { pathname: "/dashboard/ai-gateway?tab=openwork-models", outsideGateway: true, page: <AiGatewayPage />, initialContext });
+});
+
+test.each([
+  { enabled: false, subscribed: false, action: "Subscribe" },
+  { enabled: false, subscribed: true, action: "Enable" },
+  { enabled: true, subscribed: true, action: "Manage subscription" },
+])("Models tab retains the lineup, usage and $action flow using only mocked APIs", async ({ enabled, subscribed, action }) => {
+  const writes: { path: string; method: string; body: unknown }[] = [];
+  const buckets = ["five_hour", "weekly", "monthly"].map((windowType) => ({
+    windowType, windowStartAt: "2026-09-01T00:00:00Z", windowEndAt: "2026-10-01T00:00:00Z", limitAmount: 100, usedAmount: 25,
+  }));
+  let currentEnabled = enabled;
+  await withDashboard(async ({ container, calls, push }) => {
+    const panel = container.querySelector('[data-testid="ai-gateway-panel-openwork-models"]');
+    expect(panel?.textContent).toContain("$10 / user / month · 3 active members");
+    expect(panel?.textContent?.includes("One subscription activates models for everyone in your workspace.")).toBe(!subscribed);
+    expect(panel?.querySelectorAll('[role="progressbar"]')).toHaveLength(enabled ? 3 : 0);
+    if (enabled) {
+      expect([...container.querySelectorAll('[role="progressbar"]')].map((meter) => [meter.getAttribute("aria-label"), meter.getAttribute("aria-valuenow")])).toEqual([
+        ["5 hour usage limit remaining", "75"], ["Weekly usage limit remaining", "75"], ["Monthly usage limit remaining", "75"],
+      ]);
+    }
+    const lineup = Object.entries(INFERENCE_MODEL_ALIASES).filter(([, model]) => model.enabled);
+    expect(panel?.querySelectorAll("tbody tr")).toHaveLength(lineup.length);
+    for (const [id, model] of lineup) {
+      expect(panel?.textContent).toContain(id);
+      expect(panel?.textContent).toContain(model.displayName.replace(/^OpenWork:\s*/, ""));
+    }
+    const button = [...container.querySelectorAll("button")].find((button) => button.textContent === action);
+    if (!button) throw new Error(`Missing Models action: ${action}`);
+    expect(button.disabled).toBe(false);
+    expect(writes).toEqual([]);
+    await act(async () => button.click());
+    if (!subscribed) {
+      expect(writes).toEqual([{ path: "/v1/billing/stripe/checkout", method: "POST", body: { type: "inference" } }]);
+      expect(window.location.hash).toBe("#mock-checkout");
+    } else if (!enabled) {
+      expect(writes).toEqual([{ path: "/v1/inference", method: "PATCH", body: { enabled: true, tier: "tier1" } }]);
+      expect(container.textContent).toContain("Manage subscription");
+      expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(3);
+    } else {
+      expect(push).toHaveBeenCalledWith("/dashboard/billing");
+      expect(writes).toEqual([]);
+    }
+    expect(calls.some(({ path }) => path.startsWith("/v1/inference-providers") || path.startsWith("/v1/gateway"))).toBe(false);
+  }, {
+    pathname: "/dashboard/ai-gateway?tab=openwork-models", outsideGateway: true, page: <AiGatewayPage />, metadata: "{}",
+    reply(path, init) {
+      if (init?.method === "POST" || init?.method === "PATCH") {
+        writes.push({ path, method: init.method, body: JSON.parse(String(init.body)) });
+        if (path === "/v1/billing/stripe/checkout") return { payload: { url: "#mock-checkout" } };
+        if (path === "/v1/inference") currentEnabled = true;
+      }
+      if (path === "/v1/inference") return { payload: { inference: { enabled: currentEnabled, subscribed, tier: "tier1", memberCount: 3, buckets } } };
+    },
+  });
+});
+
+test("confirmed Models billing returns to the canonical Models tab", async () => {
+  await withDashboard(async ({ calls, replace }) => {
+    expect(calls.some(({ path }) => path === "/v1/billing")).toBe(true);
+    expect(replace).toHaveBeenCalledWith("/dashboard/ai-gateway?tab=openwork-models");
+    expect(calls.some(({ path }) => path.includes("/stripe/checkout"))).toBe(false);
+  }, {
+    pathname: "/dashboard/billing/stripe/checking?return=models&session_id=mock-session",
+    outsideGateway: true, page: <StripeCheckingPage />,
+    reply: (path) => path === "/v1/billing" ? { payload: { billing: { stripe: { hasActiveSubscription: true } } } } : undefined,
+  });
 });

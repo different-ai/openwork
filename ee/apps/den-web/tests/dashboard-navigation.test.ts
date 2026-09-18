@@ -52,7 +52,7 @@ describe("dashboard navigation index", () => {
     expect(models?.children?.some((child) => child.label === "Old Gateway")).toBe(false);
     const search = flattenNavigationForSearch(sections);
     expect(search.some((entry) => entry.href.startsWith("/dashboard/gateway-providers"))).toBe(false);
-    expect(search.some((entry) => entry.label === "AI Gateway › OpenWork Models")).toBe(true);
+    expect(search.some((entry) => entry.label === "AI Gateway › OpenWork Models")).toBe(false);
     expect(search.some((entry) => entry.label === "AI Gateway › Bring Your Own Keys (Legacy)")).toBe(true);
     expect(flattenNavigationForSearch(buildFor("member", { ...baseCapabilities, gatewayDashboard }))
       .some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(false);
@@ -63,28 +63,28 @@ describe("dashboard navigation index", () => {
     const entries = flattenNavigationForSearch(sections);
     const hrefs = entries.map((entry) => entry.href);
     expect(hrefs.some((href) => href.startsWith("/dashboard/gateway-providers"))).toBe(false);
-    expect(hrefs.includes("/dashboard/inference")).toBe(gatewayAccess !== "checking");
+    expect(hrefs.includes("/dashboard/inference")).toBe(false);
     for (const href of ["/dashboard/custom-llm-providers", "/dashboard/billing", "/dashboard/api-keys"]) expect(hrefs).toContain(href);
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
     expect(models?.href).toBe("/dashboard/ai-gateway");
     expect(models?.children?.some((child) => child.label === "Old Gateway")).toBe(false);
-    expect(models?.children?.some((child) => child.label === "OpenWork Models")).toBe(gatewayAccess !== "checking");
+    expect(models?.children?.some((child) => child.label === "OpenWork Models")).toBe(false);
   });
 
-  test("hosted admins retain OpenWork Models and legacy BYOK under the canonical AI Gateway root", () => {
+  test("hosted admins retain the AI Gateway root and legacy BYOK without a duplicate Models child", () => {
     const sections = buildFor("admin", { ...baseCapabilities, gatewayDashboard: true }, "enabled");
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
     expect(models?.children).toEqual([
-      { href: "/dashboard/inference", label: "OpenWork Models" },
       { href: "/dashboard/custom-llm-providers", label: "Bring Your Own Keys (Legacy)" },
     ]);
     const search = flattenNavigationForSearch(sections);
     expect(search.find((entry) => entry.label === "AI Gateway › Old Gateway")).toBeUndefined();
     expect(models?.href).toBe("/dashboard/ai-gateway");
-    expect(search.find((entry) => entry.label === "AI Gateway › OpenWork Models")?.href).toBe("/dashboard/inference");
+    expect(search.find((entry) => entry.label === "AI Gateway › OpenWork Models")).toBeUndefined();
+    expect(shell).not.toContain("getInferenceRoute");
   });
 
-  test.each([false, true])("OpenWork Models stays hidden but AI Gateway retains its root with gateway opt-in %s", (gatewayDashboard) => {
+  test.each([false, true])("no duplicate Models child appears before runtime config or on single-org deployments with gateway opt-in %s", (gatewayDashboard) => {
     const capabilities = { ...baseCapabilities, gatewayDashboard };
     const gatewayAccess = gatewayDashboard ? "enabled" : "denied";
     for (const sections of [

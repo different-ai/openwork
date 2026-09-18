@@ -29,7 +29,6 @@ import {
   getManagedDashboardsRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
-  getInferenceRoute,
   getLibraryRoute,
   getMcpConnectionsRoute,
   getManagedBrandIconUrl,
@@ -260,9 +259,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";
-  }
-  if (pathname.startsWith(getInferenceRoute(orgSlug))) {
-    return "OpenWork Models";
   }
   if (pathname.startsWith(getWebRoute(orgSlug))) {
     return "OpenWork Web";

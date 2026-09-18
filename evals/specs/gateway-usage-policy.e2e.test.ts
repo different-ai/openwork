@@ -213,12 +213,20 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
       await admin.notSee({ testId: "ai-gateway-tabs" });
       expect(await adminProbe.eval(browserScript(() => location.pathname, []))).toBe(oldPath);
     }
+    await admin.navigate(new URL("/dashboard/inference?source=legacy&tag=one&tag=two&tab=limits", world.den.ref.webUrl).toString());
+    await admin.see({ role: "heading", label: "OpenWork Models" });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=openwork-models&source=legacy&tag=one&tag=two", "OpenWork Models");
+    await admin.see({ role: "heading", label: "Models" });
+    await admin.notSee({ role: "link", label: "OpenWork Models" });
+    await admin.notSee({ role: "button", label: "Apply new usage limit" });
+    expect((await adminProbe.dom("h1")).elements).toHaveLength(1);
+    await capture("Den OpenWork Models tab", admin, adminProbe, '[role="tabpanel"][aria-label="OpenWork Models"]');
     await admin.navigate(new URL("/dashboard/ai-gateway?tab=limits", world.den.ref.webUrl).toString());
     await admin.see({ role: "button", label: "Refresh requests" });
     await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
     expect(await policies()).toHaveLength(1);
     expect(world.upstreamCount()).toBe(0);
-    evidence.recordAssertionEvidence("AI Gateway tab and nested form ownership", "New/edit provider forms stay within AI Providers without saving changes. The old Gateway sidebar link is absent and its list/new/detail/edit URLs show 404 without redirecting. Central Users & Teams assigns only Usage Member; Limits inspector reports that member within allowance and the unassigned control unlimited. No upstream inference calls occurred.", true);
+    evidence.recordAssertionEvidence("AI Gateway tab and nested form ownership", "New/edit provider forms stay within AI Providers without saving changes. The old Gateway sidebar link is absent and its list/new/detail/edit URLs show 404 without redirecting. Central Users & Teams assigns only Usage Member; Limits inspector reports that member within allowance and the unassigned control unlimited. The legacy Models URL forwards to the OpenWork Models tab with repeated query values intact and no duplicate sidebar link or page heading. No upstream inference calls occurred.", true);
   });
 
   const sessionId = await step("member selects the actual managed Gateway model in a real Desktop session", async () => {

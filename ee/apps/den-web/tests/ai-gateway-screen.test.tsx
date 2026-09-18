@@ -14,6 +14,7 @@ const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query
 const navigation = await import("next/navigation");
 const organization = await import("../app/(den)/dashboard/_providers/org-dashboard-provider");
 const capability = await import("../app/(den)/dashboard/_components/gateway-dashboard-capability-guard");
+const models = await import("../app/(den)/dashboard/_components/inference-screen");
 const requests = await import("../app/(den)/_lib/den-flow");
 const legacyData = await import("../app/(den)/dashboard/_components/llm-provider-data");
 const { parseOrgContextPayload } = await import("../app/(den)/_lib/den-org");
@@ -197,6 +198,18 @@ test.each(["checking", "denied", "unavailable"] satisfies ReturnType<typeof capa
     expect(view.calls).toEqual([]);
     expect(view.container.textContent).toContain(state === "checking" ? "Checking workspace access" : state === "unavailable" ? "ask an instance admin" : "not enabled");
   } finally { await view.close(); }
+});
+
+test.each(["checking", "denied", "unavailable", "enabled"] satisfies ReturnType<typeof capability.useGatewayDashboardAccess>[])("Models delegates to its own embedded guard with %s gateway access and no gateway requests", async (state) => {
+  const screen = spyOn(models, "InferenceScreen").mockImplementation(({ embedded }) => <section data-testid="models-content" data-embedded={embedded} />);
+  const view = await mount(<div />);
+  try {
+    view.access.mockReturnValue(state);
+    await view.tab("openwork-models");
+    expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("OpenWork Models");
+    expect(view.container.querySelector('[data-testid="ai-gateway-panel-openwork-models"] [data-testid="models-content"]')?.getAttribute("data-embedded")).toBe("true");
+    expect(view.calls).toEqual([]);
+  } finally { await view.close(); screen.mockRestore(); }
 });
 
 test("AI Providers uses nested links and always offers legacy copy and creation", async () => {

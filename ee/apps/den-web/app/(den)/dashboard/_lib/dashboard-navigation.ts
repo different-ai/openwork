@@ -25,7 +25,6 @@ import {
   getCustomLlmProvidersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
-  getInferenceRoute,
   getLibraryRoute,
   getManagedDashboardsRoute,
   getMarketplacesRoute,
@@ -87,8 +86,6 @@ export function buildDashboardNavSections({
   orgSlug,
   access,
   capabilities,
-  gatewayAccess,
-  orgMode,
   runtimeConfigLoaded,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
@@ -112,10 +109,6 @@ export function buildDashboardNavSections({
       : []),
   ];
 
-  // Hosted deployments expose OpenWork Models; self-hosted deployments only
-  // expose their own providers. Keep hidden until runtime config is known.
-  const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org"
-    && gatewayAccess !== "checking";
   const modelsGroup: DashboardNavItem | null = access.isAdmin && orgSlug
     ? {
         href: getAiGatewayRoute(orgSlug),
@@ -123,9 +116,6 @@ export function buildDashboardNavSections({
         icon: Sparkles,
         badge: "Models",
         children: [
-          ...(showOpenWorkModels
-            ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
-            : []),
           { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring Your Own Keys (Legacy)" },
         ],
       }

@@ -569,7 +569,7 @@ export function getCustomLlmProvidersRoute(orgSlug?: string | null): string {
 }
 
 export function getInferenceRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/inference`;
+  return `${getAiGatewayRoute(orgSlug)}?tab=openwork-models`;
 }
 
 export function getWebRoute(orgSlug?: string | null): string {
