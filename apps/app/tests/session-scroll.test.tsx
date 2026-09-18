@@ -729,6 +729,31 @@ describe("session reading position", () => {
     expect(state()).toMatchObject({ mode: saved.mode, scrollTop: saved.scrollTop, anchor: saved.anchor });
   });
 
+  test("pointer scrolling through hidden content preserves gesture intent for paging after reveal", async () => {
+    useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    const saved = state();
+    const load = mock(async () => {});
+    const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false, load };
+    const view = fixture(undefined, { historyPages: pages, windowReady: true });
+    view.layout.transcriptHidden = true;
+    view.layout.fallback = true;
+    await view.render();
+    const message = view.container.querySelector("[data-message-id]");
+    if (!message) throw new Error("Missing pointer target");
+    message.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, isPrimary: true, pointerId: 1 }));
+    view.scroll(80);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+    expect(state()).toEqual(saved);
+    expect(load).not.toHaveBeenCalled();
+    view.layout.transcriptHidden = false;
+    view.layout.fallback = false;
+    await view.render();
+    expect(view.container.scrollTop).toBe(80);
+    view.scroll(60);
+    expect(load.mock.calls).toEqual([["older"]]);
+    expect(state()).toMatchObject({ mode: "manual", scrollTop: 60, anchor: { messageId: "first", offset: -60 } });
+  });
+
   test("records complete geometry and nearby IDs without replacing it with partial or zero-sized layout", async () => {
     const view = fixture("owner-a");
     await view.render();

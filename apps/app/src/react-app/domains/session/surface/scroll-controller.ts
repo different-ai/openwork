@@ -484,16 +484,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     };
     const handleScroll: UIEventHandler<HTMLDivElement> = () => {
       if (!active) return;
-      if (!transcriptMeasurable()) {
-        if (hasScrollGesture() && container.scrollTop !== lastKnownScrollTop) {
-          pendingRestore = false;
-          pendingSubmittedMessageId = null;
-          cancelledWhileLoading = true;
-        } else pendingRestore ||= !cancelledWhileLoading;
-        cancelFrames();
-        lastKnownScrollTop = container.scrollTop;
-        return;
-      }
+      const measurable = transcriptMeasurable();
       // Layout clamping and our own anchoring also dispatch scroll events. Only
       // actual input may replace the saved reading position or change its mode.
       if (hasScrollGesture() && container.scrollTop !== lastKnownScrollTop) {
@@ -507,8 +498,9 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
         pendingRestore = false;
         pendingSubmittedMessageId = null;
-        if (!historyReady) {
+        if (!historyReady || !measurable) {
           cancelledWhileLoading = true;
+          cancelFrames();
           lastKnownScrollTop = container.scrollTop;
           return;
         }
@@ -524,6 +516,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         if (pagePending || pageAnchor) pageAnchor = currentReadingAnchor();
         demandHistory(container.scrollTop > lastKnownScrollTop ? "newer" : "older");
       } else {
+        if (!measurable) {
+          pendingRestore ||= !cancelledWhileLoading;
+          cancelFrames();
+          lastKnownScrollTop = container.scrollTop;
+          return;
+        }
         const saved = readState();
         if (!pendingRestore && historyReady && container.scrollTop !== lastKnownScrollTop) {
           // Native anchoring can move scrollTop when a diagram/image expands
