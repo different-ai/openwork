@@ -8,6 +8,7 @@ import { memberFacingMcpConnectionsEnabled } from "../capability-sources/externa
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import type { McpPrincipal } from "./auth.js"
 import type { McpToolOperation } from "./catalog.js"
+import { liveCodemodeEligibility } from "./codemode-eligibility.js"
 import {
   executeAdminCapability,
   listAvailableAdminCapabilities,
@@ -788,9 +789,19 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           externalCoverageHint = hint
         },
       }
-      const sourceMatches = await Promise.all(CAPABILITY_SOURCE_KINDS.map((kind) => (
-        sources[kind].search(searchContext, input.query, input.limit)
-      )))
+      const sourceMatches = await Promise.all(CAPABILITY_SOURCE_KINDS.map(async (kind) => {
+        const matches = await sources[kind].search(searchContext, input.query, input.limit)
+        return matches.map((match) => ({
+          ...match,
+          liveEligibility: liveCodemodeEligibility({
+            scriptPath: match.scriptPath,
+            authority: kind === "externalMcp" ? "external" : "den",
+            readOnly: kind === "catalog" || kind === "native"
+              ? match.method === "GET"
+              : kind === "builtinSkill" || kind === "marketplace",
+          }),
+        }))
+      }))
       const matches = sourceMatches.flat()
         .sort(compareCapabilityMatches)
         .slice(0, input.limit)

@@ -1,4 +1,5 @@
 import { getJsonRequestBodySchema, getParameters, getQueryParameterSchema, hasJsonRequestBody, pathParameterNamesFromTemplate, type McpToolOperation } from "./catalog.js"
+import type { LiveCodemodeEligibility } from "./codemode-eligibility.js"
 
 /**
  * `search_capabilities` is the "search" half of a search+execute facade laid
@@ -43,6 +44,8 @@ export type CapabilityMatch = {
   invocation?: { argumentsField: "body" }
   /** Exact confined-script path when Code Mode scripts are enabled. */
   scriptPath?: string
+  /** Live mode eligibility, independent of interactive execution availability. */
+  liveEligibility?: LiveCodemodeEligibility
   /** Callable capability or a source-specific advisory/content kind. */
   kind?: string
   /** Standard MCP App binding advertised by the matched provider tool. */

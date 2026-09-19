@@ -11,6 +11,7 @@ import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.j
 import { NATIVE_OAUTH_PROVIDERS } from "../capability-sources/provider-registry.js"
 import type { McpPrincipal } from "./auth.js"
 import type { McpToolOperation } from "./catalog.js"
+import { liveCodemodeEligibility } from "./codemode-eligibility.js"
 import {
   codemodeScriptPath,
   resolveCodemodeConnectionNamespaceContext,
@@ -95,7 +96,7 @@ export function restrictCodemodeToolTree(input: {
   const missing: CodemodeManifestEntry[] = []
   for (const required of input.requiredCapabilities) {
     const resolved = available.get(required.scriptPath)
-    if (!resolved || !manifest.has(`${required.scriptPath}\n${required.capabilityName}`)) {
+    if (!resolved || resolved.definition.unavailableReason !== undefined || !manifest.has(`${required.scriptPath}\n${required.capabilityName}`)) {
       missing.push(required)
       continue
     }
@@ -121,7 +122,7 @@ export function restrictReadOnlyCodemodeToolTree(input: {
     if (missing.has(required)) continue
     const entries = input.built.manifest.filter((entry) =>
       entry.scriptPath === required.scriptPath && entry.capabilityName === required.capabilityName)
-    if (entries.length === 0 || entries.some((entry) => entry.authority !== "den" || entry.readOnly !== true)) {
+    if (entries.length === 0 || entries.some((entry) => !liveCodemodeEligibility(entry).eligible)) {
       unsafe.push(required)
       continue
     }
@@ -132,6 +133,34 @@ export function restrictReadOnlyCodemodeToolTree(input: {
     missing: restricted.missing,
     unsafe,
   }
+}
+
+/** Only manifest-backed, already-authorized tools receive discovery or denial entries. */
+export function codemodeAuthoringToolTree(built: BuiltCodemodeTools, live: boolean): CodemodeToolTree {
+  const namespaces: Array<[string, Record<string, Tool.Definition>]> = []
+  for (const [namespace, definitions] of Object.entries(built.tools)) {
+    const entries: Array<[string, Tool.Definition]> = []
+    for (const [name, definition] of Object.entries(definitions)) {
+      const scriptPath = codemodeScriptPath(namespace, name)
+      const manifest = built.manifest.filter((entry) => entry.scriptPath === scriptPath)
+      const first = manifest[0]
+      if (!first) {
+        if (!live) entries.push([name, definition])
+        continue
+      }
+      const eligibility = manifest.map(liveCodemodeEligibility).find((value) => !value.eligible)
+        ?? liveCodemodeEligibility(first)
+      const metadata = { ...definition.metadata, liveEligibility: eligibility }
+      entries.push([name, live && !eligibility.eligible ? {
+        ...definition,
+        metadata,
+        unavailableReason: `live_capability_ineligible: ${scriptPath} (${eligibility.reason}). Live Code Mode requires a Den-authoritative read-only capability.`,
+        run: () => Effect.fail(toolError("live_capability_ineligible")),
+      } : { ...definition, metadata }])
+    }
+    if (entries.length > 0) namespaces.push([namespace, Object.fromEntries(entries)])
+  }
+  return Object.fromEntries(namespaces)
 }
 
 /**

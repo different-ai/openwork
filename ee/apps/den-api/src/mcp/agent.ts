@@ -162,6 +162,10 @@ const capabilityMatchOutputSchema = z.object({
   hint: z.string().optional(),
   connectionStatus: connectionStatusOutputSchema.optional(),
   scriptPath: z.string().optional(),
+  liveEligibility: z.discriminatedUnion("eligible", [
+    z.object({ eligible: z.literal(true) }),
+    z.object({ eligible: z.literal(false), reason: z.enum(["no_script_path", "external_authority", "authority_unknown", "not_read_only"]) }),
+  ]).optional(),
 }).passthrough()
 
 export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
@@ -937,6 +941,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls.",
           "mode defaults to adhoc with optional input parameters. Explicit live mode is Den-authorized read-only, rejects all caller input, and supplies only input.runtime.{now,today,dayStart,dayEnd,timeZone} from the server; optional IANA timeZone defaults to UTC and is live-only.",
           "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. For a discovered Den/native path call it with {path:{...},query:{...},body:{...}} only as advertised; native query parameters must be wrapped in query, e.g. {query:{q:input.query}}. External MCP paths take their argumentsSchema object directly.",
+          "Check liveEligibility before using a discovered capability in live mode; eligible:false includes the reason. Interactive availability and provider read-only hints do not grant live execution eligibility.",
           "Example adhoc code: return 1 + 1. Example live code: return {today:input.runtime.today}. tools.$codemode.search({query}) is for adhoc exploration; saved Workflows must call discovered paths directly.",
           "Optional inputSchema is checked before dispatch and outputSchema after execution; inspect discovered outputSchema for result shape rather than guessing. Successful tests return value plus authoring-test metadata and receiptId; source retention availability/scope controls whether saveWorkflow can reuse that receipt. This is not a saved Workflow artifact snapshot. For live apps: test with mode:live and outputSchema, saveWorkflow with receiptId and the same schemas (omit code/currentInput), run the saved version with mode:live and timeZone, then save_artifact_view for draft preview; the user chooses Save.",
         ].join(" "),

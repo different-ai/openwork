@@ -30,7 +30,7 @@ import { db } from "./db.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
-import type { BuiltCodemodeTools } from "./mcp/codemode-tools.js"
+import { restrictCodemodeToolTree, restrictReadOnlyCodemodeToolTree, type BuiltCodemodeTools } from "./mcp/codemode-tools.js"
 import { executeWorkflow } from "./mcp/workflow-service.js"
 import {
   artifactDigest,
@@ -820,6 +820,18 @@ export async function saveWorkflow(input: {
         capabilityName: resolved.capabilityName,
         scriptPath: resolved.scriptPath,
       })
+    }
+  }
+  // Recheck executable definitions as well as discovery metadata. A successful
+  // receipt does not freeze the member's capabilities or their live eligibility.
+  const restricted = restrictCodemodeToolTree({ built, requiredCapabilities })
+  if (restricted.missing[0]) {
+    throw new Error(`workflow_capability_unavailable:${restricted.missing[0].scriptPath}`)
+  }
+  if (retained?.mode === "live") {
+    const live = restrictReadOnlyCodemodeToolTree({ built, requiredCapabilities })
+    if (live.unsafe[0]) {
+      throw new Error(`workflow_live_capability_ineligible:${live.unsafe[0].scriptPath}`)
     }
   }
   const normalizedPayloadJson = {
