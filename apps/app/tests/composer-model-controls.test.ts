@@ -52,7 +52,9 @@ describe("composer model controls", () => {
   test("tracks steering until the active run stops streaming", () => {
     const sessionSurfaceSource = readFileSync(sessionSurfacePath, "utf8");
 
-    expect(sessionSurfaceSource).toContain("setSteering(true);\n    await handleSend();");
+    const handleSteer = sessionSurfaceSource.slice(sessionSurfaceSource.indexOf("const handleSteer ="), sessionSurfaceSource.indexOf("const removeQueuedDraft ="));
+    expect(handleSteer).toContain("setSteering(true);");
+    expect(handleSteer).toContain("await handleSend();");
     expect(sessionSurfaceSource).toContain("if (!chatStreaming) setSteering(false);");
     expect(sessionSurfaceSource).toContain("steering={steering}");
     expect(sessionSurfaceSource).toContain("props.onModelChange(nextModel, variant)");

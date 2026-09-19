@@ -228,8 +228,10 @@ function dropAttempt(state: QueuedDrainState, itemId: string): Record<string, nu
 }
 
 /** True when the drain may admit the next queued item. */
-export function canAdmitNextQueuedItem(state: QueuedDrainState): boolean {
-  return state.phase.kind === "ready";
+export function canAdmitNextQueuedItem(state: QueuedDrainState, steer = false): boolean {
+  if (!steer) return state.phase.kind === "ready";
+  return (state.phase.kind === "ready" && (!state.lastResolution || state.lastResolution.resolution === "completed"))
+    || state.phase.kind === "running" || state.phase.kind === "awaiting_observation";
 }
 
 export function hasPendingQueuedAdmission(state: QueuedDrainState): boolean {

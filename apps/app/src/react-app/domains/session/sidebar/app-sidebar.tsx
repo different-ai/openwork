@@ -1,6 +1,8 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { useSessionPrefetchIntent } from "../surface/session-history";
+import { hasPendingComposerAutoSend, subscribeComposerAutoSend } from "../surface/composer-auto-send";
+import { getQueuedDrainState, subscribeQueuedDrain } from "../surface/queued-drain-machine";
 import {
   AlertCircle,
   AlertTriangle,
@@ -138,7 +140,7 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { cn } from "@/lib/utils";
-import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
+import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import {
   SIDEBAR_ROW_LANE,
@@ -224,9 +226,52 @@ function SidebarReorderItem(props: React.ComponentProps<typeof Reorder.Item>) {
   );
 }
 
+const sidebarAdmissionObservations = new WeakMap<object, { runStartedAt: number; observed: boolean }>();
+
+function useSessionStarting(workspaceId: string, sessionId: string | undefined, status: string | undefined) {
+  const subscribe = React.useCallback((listener: () => void) => {
+    if (!sessionId) return () => {};
+    const unsubscribeDrain = subscribeQueuedDrain(sessionId, listener);
+    const unsubscribeAutoSend = subscribeComposerAutoSend(sessionId, listener);
+    return () => {
+      unsubscribeDrain();
+      unsubscribeAutoSend();
+    };
+  }, [sessionId]);
+  const getSnapshot = React.useCallback(() => {
+    if (!sessionId) return false;
+    const admission = getQueuedDrainState(sessionId);
+    if (admission.phase.kind === "sending" || admission.phase.kind === "awaiting_observation") return admission;
+    return admission.phase.kind === "ready" && hasPendingComposerAutoSend(sessionId);
+  }, [sessionId]);
+  const pending = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const runStartedAt = useSessionActivityStore((state) => sessionId
+    ? state.recordsByWorkspaceId[workspaceId]?.[sessionId]?.runStartedAt ?? 0
+    : 0);
+  const admission = typeof pending === "boolean" ? undefined : pending;
+  const token = admission?.attemptsByItemId;
+  const previous = token ? sidebarAdmissionObservations.get(token) : undefined;
+  const observed = previous?.observed === true || isActiveWorkSessionStatus(status)
+    || (admission?.phase.kind === "sending" && admission.phase.busySeen)
+    || (runStartedAt > 0 && (previous
+      ? runStartedAt > previous.runStartedAt
+      : admission?.phase.kind === "awaiting_observation" && runStartedAt >= admission.phase.admittedAt));
+
+  React.useLayoutEffect(() => {
+    if (!token) return;
+    sidebarAdmissionObservations.set(token, {
+      runStartedAt: previous?.runStartedAt ?? runStartedAt,
+      observed: observed || sidebarAdmissionObservations.get(token)?.observed === true,
+    });
+  }, [token, previous?.runStartedAt, runStartedAt, observed]);
+
+  return Boolean(pending) && !observed && (status === undefined || status === "idle");
+}
+
 interface SessionStatusIndicatorProps {
   status?: string;
   isActiveWork: boolean;
+  isStarting?: boolean;
   isUnread: boolean;
   /** Names the delegated child asking, e.g. "Needs permission: Audit four open PRs". */
   attentionLabel?: string;
@@ -255,11 +300,11 @@ function ShowMoreSessionsButton({
 }
 
 /** Activity and outcomes share the fixed glyph slot before the session title. */
-function SessionStatusIndicator({ status, isActiveWork, isUnread, attentionLabel, attentionSource }: SessionStatusIndicatorProps) {
+function SessionStatusIndicator({ status, isActiveWork, isStarting, isUnread, attentionLabel, attentionSource }: SessionStatusIndicatorProps) {
   return (
     <SidebarGlyphSlot>
-      {isActiveWork ? (
-        <SessionDotMatrixLoader label={isSessionActivityStatus(status) && status !== "idle"
+      {isActiveWork || isStarting ? (
+        <SessionDotMatrixLoader label={isStarting ? "Starting" : isSessionActivityStatus(status) && status !== "idle"
           ? getSessionActivityStatusLabel(status)
           : t("workspace_list.session_streaming")} />
       ) : (
@@ -704,6 +749,7 @@ function SessionSideChatControl({ workspaceId, sessionId, title }: {
   const status = sideChat ? ctx.sessionStatusById?.[sideChat.sessionId] : undefined;
   const isUnread = Boolean(sideChat && unreadIds.has(sideChat.sessionId) && !selected);
   const isActiveWork = isActiveWorkSessionStatus(status);
+  const isStarting = useSessionStarting(sideChat?.workspaceId ?? workspaceId, sideChat?.sessionId, status);
 
   React.useEffect(() => {
     if (!focusRequested || !selected || !sideChat) return;
@@ -719,7 +765,7 @@ function SessionSideChatControl({ workspaceId, sessionId, title }: {
       data-session-side-chat={sideChat?.sessionId ?? "new"}
       aria-label={sideChat ? `${t("session_management.split_view")} · ${title}` : t("session_management.new_split")}
       aria-pressed={Boolean(sideChat && selected && focusedPane === "secondary")}
-      aria-description={isSessionActivityStatus(status) && status !== "idle" ? getSessionActivityStatusLabel(status) : undefined}
+      aria-description={isStarting ? "Starting" : isSessionActivityStatus(status) && status !== "idle" ? getSessionActivityStatusLabel(status) : undefined}
       disabled={!sideChat && ctx.newTaskDisabled}
       title={sideChat?.title || t("session_management.new_split")}
       className={cn(
@@ -736,10 +782,11 @@ function SessionSideChatControl({ workspaceId, sessionId, title }: {
         if (!selected) ctx.onOpenSession(workspaceId, sessionId);
       }}
     >
-      {isActiveWork || isNeedsAttentionSessionStatus(status) || isUnread
+      {isActiveWork || isStarting || isNeedsAttentionSessionStatus(status) || isUnread
         ? <SessionStatusIndicator
             status={status}
             isActiveWork={isActiveWork}
+            isStarting={isStarting}
             isUnread={isUnread}
             attentionLabel={sideChat ? ctx.sessionAttentionLabelById?.[sideChat.sessionId] : undefined}
             attentionSource={sideChat ? ctx.sessionAttentionSourceById?.[sideChat.sessionId] : undefined}
@@ -2026,7 +2073,7 @@ function SessionNumberShortcutSlot({ digit }: { digit: number | undefined }) {
   );
 }
 
-function SessionMenuItem({
+export function SessionMenuItem({
   session,
   workspaceId,
   isPinned = false,
@@ -2045,6 +2092,7 @@ function SessionMenuItem({
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
   const sessionAttentionLabel = ctx.sessionAttentionLabelById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
+  const isStarting = useSessionStarting(workspaceId, session.id, sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
   const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
@@ -2084,13 +2132,15 @@ function SessionMenuItem({
     },
   };
 
-  const accessibleState = resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
-    ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
-    : isNeedsAttentionSessionStatus(sessionActivityStatus)
-      ? `${displayTitle}, ${sessionAttentionLabel ?? t("workspace_list.session_needs_attention")}`
-      : isUnread
-        ? `${displayTitle}, ${t("workspace_list.session_unread")}`
-        : itemTitle;
+  const accessibleState = isStarting
+    ? `${displayTitle}, Starting`
+    : resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
+      ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
+      : isNeedsAttentionSessionStatus(sessionActivityStatus)
+        ? `${displayTitle}, ${sessionAttentionLabel ?? t("workspace_list.session_needs_attention")}`
+        : isUnread
+          ? `${displayTitle}, ${t("workspace_list.session_unread")}`
+          : itemTitle;
 
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
@@ -2109,6 +2159,7 @@ function SessionMenuItem({
     <SessionStatusIndicator
       status={sessionActivityStatus}
       isActiveWork={resolvedActiveWork}
+      isStarting={isStarting}
       isUnread={isUnread}
       attentionLabel={sessionAttentionLabel}
       attentionSource={ctx.sessionAttentionSourceById?.[session.id]}

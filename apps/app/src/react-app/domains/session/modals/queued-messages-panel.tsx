@@ -210,6 +210,7 @@ function QueuedDraftRow(props: {
       }}
       className="flex items-start gap-2 rounded-xl border border-gray-6 bg-gray-1 px-2 py-2.5"
       aria-busy={props.active || undefined}
+      data-queued-item-id={props.item.id}
     >
       <span
         className="mt-0.5 flex size-5 shrink-0 cursor-grab items-center justify-center text-gray-9 active:cursor-grabbing"
@@ -256,14 +257,13 @@ function QueuedDraftRow(props: {
             <QueuedDraftContent draft={props.item.draft} />
           </button>
         )}
-        {props.active ? <span role="status" className="block px-0.5 text-xs text-gray-10">Sending...</span> : null}
+        {props.active || props.item.steer ? <span role="status" className="block px-0.5 text-xs text-gray-10">{props.active ? "Sending..." : "Send requested"}</span> : null}
       </div>
       <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
         <button
           type="button"
           onClick={() => props.onSendNow(props.item.id)}
-          disabled={props.sending}
-          className="flex size-5 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-40"
+          className="flex size-5 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
           title={props.active ? "Sending..." : t("composer.queued_send_now")}
           aria-label={props.active ? "Sending..." : t("composer.queued_send_now")}
         >

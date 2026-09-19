@@ -3,14 +3,15 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { markTaskRunStart } from "@/app/lib/analytics";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, readPromptAdmission } from "@/app/lib/opencode";
 import { shellInSession } from "@/app/lib/opencode-session";
-import { composeNativeSessionSnapshot, getNativeSession } from "@/app/lib/opencode-session-native";
-import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, sessionWorkHeld, submitAfterInterruption } from "@/app/lib/opencode-interruption";
+import { composeNativeSessionSnapshot, getNativeSession, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn } from "@/app/lib/opencode-interruption";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import type { ComposerDraft, ModelRef } from "@/app/types";
 import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import {
   getComposerQueuedDrafts,
+  getNextComposerQueuedDraft,
   useComposerStateStore,
 } from "../surface/composer-state-store";
 import {
@@ -24,6 +25,7 @@ import {
   nextObservationProbeAt,
   subscribeQueuedDrain,
 } from "../surface/queued-drain-machine";
+import { hasComposerAutoSend } from "../surface/composer-auto-send";
 import { getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
 import { draftToParts } from "./draft-parts";
 import { buildOpenworkSessionSystemContext } from "./env-context";
@@ -56,7 +58,7 @@ let unsubscribeComposerStore: (() => void) | null = null;
 let unsubscribeContexts: (() => void) | null = null;
 
 function sameContext(left: QueuedSendContext, right: QueuedSendContext) {
-  return left.workspaceId === right.workspaceId
+  return left.owner === right.owner && left.workspaceId === right.workspaceId
     && left.workspaceRoot === right.workspaceRoot
     && left.opencodeBaseUrl === right.opencodeBaseUrl
     && left.openworkToken === right.openworkToken
@@ -96,11 +98,12 @@ async function performQueuedDraftSend(
   sessionId: string,
   draft: ComposerDraft,
   generation: number,
+  transport?: { desktopTransport: "main" },
 ): Promise<"sent" | "cancelled"> {
   assertQueuedSendCurrent(sessionId, generation);
   const text = draft.text.trim();
   if (!text && draft.attachments.length === 0 && !draft.command) return "cancelled";
-  const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken }, sessionId);
+  const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId);
   assertQueuedSendCurrent(sessionId, generation);
   if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
 
@@ -112,6 +115,7 @@ async function performQueuedDraftSend(
     context.opencodeBaseUrl,
     context.workspaceRoot || undefined,
     { token: context.openworkToken, mode: "openwork" },
+    transport,
   );
 
   if (draft.mode === "shell") {
@@ -139,6 +143,7 @@ async function performQueuedDraftSend(
     workspaceId: context.workspaceId,
     cacheKey: sessionId,
     runtimeKey: context.environmentRuntimeKey,
+    ...transport,
   });
   assertQueuedSendCurrent(sessionId, generation);
   if (sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
@@ -307,7 +312,7 @@ function watchSession(sessionId: string, context: QueuedSendContext) {
   watchedSessions.set(sessionId, watched);
   watched.unsubscribeDrain = subscribeQueuedDrain(sessionId, () => {
     armObservationProbe(watched);
-    if (watched.lastObservedStatus?.type === "idle") void attemptDrain(sessionId);
+    void attemptDrain(sessionId);
     if (!hasPendingQueuedAdmission(getQueuedDrainState(sessionId))
       && !watched.sendInFlight && getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId).length === 0) {
       releaseWatchedSession(watched, true);
@@ -357,23 +362,37 @@ async function attemptDrain(sessionId: string) {
   const watched = watchedSessions.get(sessionId);
   if (!watched || watched.sendInFlight) return;
   const context = getQueuedSendContext(sessionId);
-  const nextItem = getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId)[0];
-  if (!context || !nextItem || watched.lastObservedStatus?.type !== "idle") return;
+  if (!context) return;
+  const nextItem = getNextComposerQueuedDraft(useComposerStateStore.getState(), sessionId, context.owner, getQueuedSendGeneration(sessionId));
+  if (!nextItem || hasComposerAutoSend(sessionId)
+    || (context.owner && hasComposerAutoSend(sessionId, context.owner))) return;
+  if (!nextItem.steer && watched.lastObservedStatus?.type !== "idle") return;
   if (sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return;
-  if (!canAdmitNextQueuedItem(getQueuedDrainState(sessionId))) return;
+  if (!canAdmitNextQueuedItem(getQueuedDrainState(sessionId), Boolean(nextItem.steer))) return;
 
   const draft = { ...withoutRevertTarget(nextItem.draft), messageId: nextItem.draft.messageId ?? createPromptMessageID() };
   // Claim synchronously before any await so a mounted surface cannot win the
   // same item after this drainer observes it.
-  if (!claimQueuedSend(sessionId, nextItem.id)) return;
+  if (!claimQueuedSend(sessionId, nextItem.id, Boolean(nextItem.steer))) return;
   const generation = getQueuedSendGeneration(sessionId);
   watched.sendInFlight = true;
   // The claim prevents another send; retain the row (and its durable mirror)
   // until acceptance so a renderer restart can recover it as an unsent draft.
 
   try {
-    const outcome = await submitAfterInterruption(context.opencodeBaseUrl, sessionId,
-      () => performQueuedDraftSend(context, sessionId, draft, generation), draft.messageId);
+    const sendContext = nextItem.steer ? { ...context, agent: nextItem.steer.agent } : context;
+    // A requested Send now stays latency-sensitive after its surface unmounts.
+    // Keep its history, interruption and admission off renderer background traffic.
+    const transport: { desktopTransport: "main" } | undefined = nextItem.steer ? { desktopTransport: "main" } : undefined;
+    const send = () => performQueuedDraftSend(sendContext, sessionId, draft, generation, transport);
+    const outcome = await (async () => {
+      if (!nextItem.steer) return submitAfterInterruption(context.opencodeBaseUrl, sessionId, send, draft.messageId);
+      const messages = await getNativeSessionMessages({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId, { limit: 140 });
+      assertQueuedSendCurrent(sessionId, generation);
+      const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
+      const client = createEngineClient(context.opencodeBaseUrl, context.workspaceRoot || undefined, { token: context.openworkToken, mode: "openwork" }, transport);
+      return submitImmediateSessionTurn(context.opencodeBaseUrl, client, sessionId, messages, send, { directory: context.workspaceRoot || undefined, messageID: draft.messageId });
+    })();
     if (outcome === "sent") useComposerStateStore.getState().removeQueuedDraft(sessionId, nextItem.id);
     dispatchQueuedDrain(sessionId, {
       type: "send_result",
@@ -383,6 +402,7 @@ async function attemptDrain(sessionId: string) {
       terminalObserved: draft.mode === "shell",
       deferredMessageID: draft.command ? draft.messageId : undefined,
     });
+    if (outcome === "cancelled" && nextItem.steer) return;
     draft.attachments.forEach(revokeAttachmentPreview);
     if (outcome === "cancelled") {
       useComposerStateStore.getState().clearQueuedDrafts(sessionId);

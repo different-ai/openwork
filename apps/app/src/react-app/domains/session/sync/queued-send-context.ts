@@ -2,6 +2,7 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { ModelRef } from "@/app/types";
 
 export type QueuedSendContext = {
+  owner?: string;
   workspaceId: string;
   workspaceRoot: string;
   opencodeBaseUrl: string;

@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import type { ComposerDraft } from "../src/app/types";
 
 import {
   canAdmitNextQueuedItem,
@@ -213,6 +214,43 @@ test("send now shares the current claim with the idle drain and every split pane
   resetQueuedDrainForTests();
 });
 
+test("deferred steers release after admission, not busy or run completion, and share one send slot", () => {
+  resetQueuedDrainForTests();
+  const sessionId = "ses_starting_steer";
+  expect(claimQueuedSend(sessionId, "initial")).toBe(true);
+  expect(canAdmitNextQueuedItem(getQueuedDrainState(sessionId), true)).toBe(false);
+  expect(canAdmitNextQueuedItem(reduceQueuedDrain(getQueuedDrainState(sessionId), { type: "busy_observed" }), true)).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "send_result", itemId: "initial", outcome: "accepted", at: t0 });
+  const admitted = getQueuedDrainState(sessionId);
+  expect(canAdmitNextQueuedItem(admitted)).toBe(false);
+  expect(canAdmitNextQueuedItem(admitted, true)).toBe(true);
+  expect(claimQueuedSend(sessionId, "steer", true)).toBe(true);
+  expect(claimQueuedSend(sessionId, "steer", true)).toBe(false);
+  expect(claimQueuedSend(sessionId, "second-steer", true)).toBe(false);
+  dispatchQueuedDrain(sessionId, { type: "send_result", itemId: "steer", outcome: "accepted", at: t0 + 1 });
+  expect(getQueuedDrainState(sessionId).phase.kind).toBe("awaiting_observation");
+  expect(canAdmitNextQueuedItem(getQueuedDrainState(sessionId), true)).toBe(true);
+  expect(claimQueuedSend(sessionId, "queued")).toBe(false);
+  expect(claimQueuedSend(sessionId, "second-steer", true)).toBe(true);
+  resetQueuedDrainForTests();
+});
+
+test("deferred steers cannot bypass unknown, failed, blocked, or cancelled admissions", () => {
+  const sending = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "initial" });
+  for (const event of [
+    { type: "send_unknown", itemId: "initial", messageID: "msg_initial", at: t0 },
+    { type: "send_error", itemId: "initial" },
+    { type: "send_result", itemId: "initial", outcome: "blocked", at: t0 },
+    { type: "send_result", itemId: "initial", outcome: "cancelled", at: t0 },
+  ] satisfies Parameters<typeof reduceQueuedDrain>[1][]) {
+    const state = reduceQueuedDrain(sending, event);
+    expect(canAdmitNextQueuedItem(state, true)).toBe(false);
+    expect(canAdmitNextQueuedItem(reduceQueuedDrain(state, { type: "user_retry" }), true)).toBe(false);
+  }
+  const unknown = reduceQueuedDrain(sending, { type: "send_unknown", itemId: "initial", messageID: "msg_initial", at: t0 });
+  expect(canAdmitNextQueuedItem(reduceQueuedDrain(unknown, { type: "admission_observed", itemId: "initial", messageID: "msg_initial", at: t0 + 1 }), true)).toBe(true);
+});
+
 test("promotion after definite failure claims atomically without exposing a ready slot", () => {
   resetQueuedDrainForTests();
   const sessionId = "ses_atomic_promotion";
@@ -352,6 +390,131 @@ test("an active admission survives navigating away and back", () => {
   dispatchQueuedDrain(sessionId, { type: "idle_reconciled", observedAt: t0 + 30_000 });
   expect(claimQueuedSend(sessionId, "item-2")).toBe(true);
   resetQueuedDrainForTests();
+});
+
+test.each(["steer", "queued", "chain"])("background eligible %s skips stale owners and generations without losing unsent items", async (followup) => {
+  const sessionId = `ses_background_${followup}`;
+  const owner = "background-owner";
+  const [sync, parts, context, native] = await Promise.all([
+    import("../src/react-app/domains/session/sync/session-sync"),
+    import("../src/react-app/domains/session/sync/draft-parts"),
+    import("../src/react-app/domains/session/sync/env-context"),
+    import("../src/app/lib/opencode-session-native"),
+  ]);
+  const session = { id: sessionId, slug: sessionId, title: "Background steer", projectID: "project", directory: "/tmp/workspace", version: "1", time: { created: 1, updated: 1 } };
+  const spies = [
+    spyOn(sync, "ensureWorkspaceSessionSync").mockImplementation(() => () => {}),
+    spyOn(sync, "trackWorkspaceSessionSync").mockImplementation(() => () => {}),
+    spyOn(parts, "draftToParts").mockImplementation(async (draft) => [{ type: "text", text: draft.text }]),
+    spyOn(context, "buildOpenworkSessionSystemContext").mockResolvedValue(""),
+    spyOn(native, "composeNativeSessionSnapshot").mockResolvedValue({ session, messages: [], todos: [], status: { type: "idle" } }),
+    spyOn(native, "getNativeSession").mockResolvedValue(session),
+    spyOn(native, "getNativeSessionMessages").mockResolvedValue([]),
+  ];
+  const { startGlobalQueueDrainer } = await import("../src/react-app/domains/session/sync/global-queue-drainer");
+  const { useComposerStateStore } = await import("../src/react-app/domains/session/surface/composer-state-store");
+  const { setQueuedSendContext, clearQueuedSendContext } = await import("../src/react-app/domains/session/sync/queued-send-context");
+  const { createOpenworkServerClient } = await import("../src/app/lib/openwork-server");
+  const posts: unknown[] = [];
+  let admission = Promise.withResolvers<Response>();
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (request.method === "POST") {
+      posts.push(await request.json());
+      return admission.promise;
+    }
+    return Response.json({});
+  });
+  resetQueuedDrainForTests();
+  expect(claimQueuedSend(sessionId, "initial")).toBe(true);
+  setQueuedSendContext(sessionId, {
+    owner, workspaceId: "workspace", workspaceRoot: "/tmp/workspace", opencodeBaseUrl: "http://localhost:1/opencode",
+    openworkToken: "test-token", client: createOpenworkServerClient({ baseUrl: "http://localhost:1", token: "test-token" }),
+    agent: "plan", variant: null, model: null, environmentRuntimeKey: null,
+  });
+  const draft: ComposerDraft = { mode: "prompt", text: "After the run", parts: [{ type: "text", text: "After the run" }], attachments: [] };
+  useComposerStateStore.getState().appendQueuedDraft(sessionId, draft);
+  useComposerStateStore.getState().appendQueuedDraft(sessionId, { ...draft, text: "Other owner steer" }, {
+    owner: "wrong-owner", generation: getQueuedSendGeneration(sessionId), agent: "build",
+  });
+  useComposerStateStore.getState().appendQueuedDraft(sessionId, { ...draft, text: "Old generation steer" }, {
+    owner, generation: getQueuedSendGeneration(sessionId) - 1, agent: "build",
+  });
+  const staleItems = useComposerStateStore.getState().queuedDrafts[sessionId]?.slice(1);
+  const stop = startGlobalQueueDrainer();
+  try {
+    if (followup === "chain") {
+      for (const text of ["A", "B", "C"]) useComposerStateStore.getState().appendQueuedDraft(sessionId, { ...draft, text });
+      const items = useComposerStateStore.getState().queuedDrafts[sessionId] ?? [];
+      const [a, b, c] = items.slice(-3);
+      if (!a || !b || !c) throw new Error("Expected chain rows");
+      const request = (id: string) => useComposerStateStore.getState().requestQueuedDraftSend(sessionId, id, {
+        owner, generation: getQueuedSendGeneration(sessionId), agent: "build",
+      });
+      request(c.id);
+      request(a.id);
+      const requested = useComposerStateStore.getState().queuedDrafts[sessionId];
+      request(c.id);
+      request(a.id);
+      expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBe(requested);
+      useComposerStateStore.getState().reorderQueuedDrafts(sessionId, items.map((item) => item.id).reverse());
+      expect(posts).toHaveLength(0);
+      dispatchQueuedDrain(sessionId, { type: "send_result", itemId: "initial", outcome: "accepted", at: Date.now() });
+      for (let index = 0; index < 3; index++) {
+        for (let attempt = 0; posts.length < index + 1 && attempt < 50; attempt++) await Bun.sleep(10);
+        expect(posts).toHaveLength(index + 1);
+        const expected = [c, a, b][index];
+        if (!expected) throw new Error("Expected a requested row");
+        expect(posts[index]).toMatchObject({ messageID: expected.draft.messageId, parts: [{ type: "text", text: expected.draft.text }] });
+        expect(claimQueuedSend(sessionId, "other-pane", true)).toBe(false);
+        request(expected.id);
+        if (index === 0) request(b.id);
+        expect(posts).toHaveLength(index + 1);
+        const current = admission;
+        admission = Promise.withResolvers<Response>();
+        current.resolve(new Response(null, { status: 204 }));
+      }
+      for (let attempt = 0; getQueuedDrainState(sessionId).phase.kind === "sending" && attempt < 50; attempt++) await Bun.sleep(10);
+      expect(posts).toHaveLength(3);
+      expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.map((item) => item.draft.text).sort()).toEqual(["After the run", "Old generation steer", "Other owner steer"]);
+      return;
+    }
+    dispatchQueuedDrain(sessionId, { type: "send_unknown", itemId: "initial", messageID: "msg_initial", at: Date.now() });
+    await Bun.sleep(10);
+    expect(posts).toHaveLength(0);
+    dispatchQueuedDrain(sessionId, { type: "admission_observed", itemId: "initial", messageID: "msg_initial", at: Date.now() });
+    await Bun.sleep(10);
+    expect(posts).toHaveLength(0);
+    if (followup === "steer") {
+      useComposerStateStore.getState().appendQueuedDraft(sessionId, { ...draft, text: "Steer now" }, {
+        owner, generation: getQueuedSendGeneration(sessionId), agent: "build",
+      });
+    } else {
+      dispatchQueuedDrain(sessionId, { type: "idle_reconciled", observedAt: Date.now() });
+    }
+    for (let attempt = 0; posts.length === 0 && attempt < 50; attempt++) await Bun.sleep(10);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ agent: followup === "steer" ? "build" : "plan", parts: [{ type: "text", text: followup === "steer" ? "Steer now" : "After the run" }] });
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.slice(1, 3)).toEqual(staleItems);
+    expect(claimQueuedSend(sessionId, "rival", true)).toBe(false);
+    useComposerStateStore.getState().clearQueuedDrafts(sessionId);
+    useComposerStateStore.getState().appendQueuedDraft(sessionId, { ...draft, text: "Cancelled steer" }, {
+      owner, generation: getQueuedSendGeneration(sessionId), agent: "build",
+    });
+    dispatchQueuedDrain(sessionId, { type: "queue_cleared" });
+    admission.resolve(new Response(null, { status: 204 }));
+    await Bun.sleep(20);
+    expect(posts).toHaveLength(1);
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.some((item) => item.draft.text === "Cancelled steer")).toBe(true);
+  } finally {
+    admission.resolve(new Response(null, { status: 204 }));
+    stop();
+    useComposerStateStore.getState().clearQueuedDrafts(sessionId);
+    clearQueuedSendContext(sessionId);
+    resetQueuedDrainForTests();
+    fetch.mockRestore();
+    for (const spy of spies) spy.mockRestore();
+  }
 });
 
 test("blocked and cancelled sends classify as needs_input and rejected without wedging", () => {

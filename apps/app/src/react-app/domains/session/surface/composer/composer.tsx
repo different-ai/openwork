@@ -358,15 +358,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   // Enter queues until the agent finishes, and Cmd/Ctrl+Enter steers.
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
-    if (!hasContent) return;
-    if (props.submissionPreparing) return;
+    if (!hasContent || props.disabled || props.stopping) return;
     if (props.busy) {
       if (options.queue) void props.onSteer();
       else void props.onQueue();
       return;
     }
+    if (props.submissionPreparing) return;
     void props.onSend();
-  }, [props.busy, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing]);
+  }, [props.busy, props.disabled, props.stopping, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing]);
 
   const slashCommandQuery = getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -19,7 +19,7 @@ afterEach(() => {
   clearOpenworkEnvSystemContextCache();
 });
 
-function fixture() {
+function fixture(options: { renderer?: () => Promise<void> } = {}) {
   const main: Request[] = [];
   const renderer: Request[] = [];
   const directory = "/fixture/send";
@@ -38,6 +38,8 @@ function fixture() {
     if (path === "/permission" || path === "/question") return [];
     if (path === "/session/status") return {};
     if (path.endsWith("/abort")) return true;
+    if (path.endsWith("/prompt_async")) return {};
+    if (path.endsWith("/todo")) return [];
     const match = path.match(/^\/session\/(ses_root|ses_child)(\/message)?$/);
     if (!match) throw new Error(`Unexpected fixture request ${path}`);
     return match[2] ? messages(match[1]) : session(match[1]);
@@ -45,6 +47,7 @@ function fixture() {
   const raw: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     renderer.push(request);
+    await options.renderer?.();
     return Response.json(respond(request));
   };
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: raw });
@@ -137,4 +140,59 @@ test("Stop's final history refresh opts in without changing ordinary snapshot tr
   await composeNativeSessionHistory(endpoint, "ses_root");
   expect(world.renderer).toHaveLength(2);
   expect(world.main).toHaveLength(2);
+});
+
+test.each(["blocked", "rejected"])("background Send now interrupts foreground work and admits once while renderer traffic is %s", async (fault) => {
+  const sync = await import("../src/react-app/domains/session/sync/session-sync");
+  const spies = [
+    spyOn(sync, "ensureWorkspaceSessionSync").mockImplementation(() => () => {}),
+    spyOn(sync, "trackWorkspaceSessionSync").mockImplementation(() => () => {}),
+  ];
+  const { startGlobalQueueDrainer } = await import("../src/react-app/domains/session/sync/global-queue-drainer");
+  const { useComposerStateStore } = await import("../src/react-app/domains/session/surface/composer-state-store");
+  const { setQueuedSendContext, clearQueuedSendContext } = await import("../src/react-app/domains/session/sync/queued-send-context");
+  const { claimQueuedSend, dispatchQueuedDrain, getQueuedDrainState, getQueuedSendGeneration, resetQueuedDrainForTests } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
+  const rendererGate = Promise.withResolvers<void>();
+  const world = fixture({ renderer: async () => {
+    if (fault === "rejected") throw new Error("Renderer unavailable");
+    await rendererGate.promise;
+  } });
+  const sessionId = "ses_root";
+  const owner = "isolated-background-owner";
+  resetQueuedDrainForTests();
+  expect(claimQueuedSend(sessionId, "initial")).toBe(true);
+  setQueuedSendContext(sessionId, {
+    owner, workspaceId: "ws_fixture", workspaceRoot: world.directory, opencodeBaseUrl: world.base,
+    openworkToken: "fixture-client", client: createOpenworkServerClient({ baseUrl: "http://127.0.0.1:8788", token: "fixture-client" }),
+    agent: "build", variant: null, model: null, environmentRuntimeKey: null,
+  });
+  useComposerStateStore.getState().appendQueuedDraft(sessionId, {
+    mode: "prompt", text: "Follow up", parts: [{ type: "text", text: "Follow up" }], attachments: [],
+  }, { owner, generation: getQueuedSendGeneration(sessionId), agent: "build" });
+  const item = useComposerStateStore.getState().queuedDrafts[sessionId]?.[0];
+  if (!item) throw new Error("Missing requested follow-up");
+  const stop = startGlobalQueueDrainer();
+  try {
+    dispatchQueuedDrain(sessionId, { type: "send_result", itemId: "initial", outcome: "accepted", at: Date.now() });
+    for (let attempt = 0; getQueuedDrainState(sessionId).phase.kind === "sending" && attempt < 100; attempt++) await Bun.sleep(10);
+    expect(getQueuedDrainState(sessionId).phase.kind).toBe("awaiting_observation");
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId] ?? []).toHaveLength(0);
+    const paths = world.main.map(request => new URL(request.url).pathname.replace("/workspace/ws_fixture/opencode", ""));
+    for (const path of ["/session/ses_root/message", "/session/ses_root/abort", "/session/ses_child/abort", "/path", "/session/status", "/permission", "/question", "/env/keys"]) expect(paths).toContain(path);
+    const prompts = world.main.filter(request => new URL(request.url).pathname.endsWith("/prompt_async"));
+    expect(prompts).toHaveLength(1);
+    expect(await prompts[0].json()).toMatchObject({ messageID: item.draft.messageId, parts: [{ type: "text", text: "Follow up" }] });
+    expect(prompts[0].headers.get("x-opencode-directory")).toBe(world.directory);
+    expect(world.main.every(request => request.headers.get("authorization") === "Bearer fixture-client")).toBe(true);
+    expect(world.renderer.length).toBeGreaterThan(0);
+    expect(world.renderer.some(request => request.method === "POST")).toBe(false);
+  } finally {
+    stop();
+    rendererGate.resolve();
+    await Bun.sleep(20);
+    useComposerStateStore.getState().clearQueuedDrafts(sessionId);
+    clearQueuedSendContext(sessionId);
+    resetQueuedDrainForTests();
+    for (const spy of spies) spy.mockRestore();
+  }
 });
