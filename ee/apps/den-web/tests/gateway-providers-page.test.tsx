@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -7,11 +7,11 @@ import { InferenceCredentialStatusBadge } from "../app/(den)/dashboard/_componen
 import { GATEWAY_EXPLAINER } from "../app/(den)/dashboard/_components/inference-provider-detail-screen";
 import { GatewayModelUniverse } from "../app/(den)/dashboard/_components/inference-provider-model-universe";
 import {
-  getCustomLlmProvidersRoute,
-  getEditGatewayProviderRoute,
-  getGatewayProviderRoute,
-  getGatewayProvidersRoute,
-  getNewGatewayProviderRoute,
+  getAiGatewayRoute,
+  getEditAiGatewayProviderRoute,
+  getAiGatewayProviderRoute,
+  getAiGatewayProvidersRoute,
+  getNewAiGatewayProviderRoute,
 } from "../app/(den)/_lib/den-org";
 
 const appRoot = join(import.meta.dir, "..", "app", "(den)");
@@ -26,39 +26,67 @@ const list = read("dashboard", "_components", "inference-providers-screen.tsx");
 const editor = read("dashboard", "_components", "inference-provider-editor-screen.tsx");
 const detail = read("dashboard", "_components", "inference-provider-detail-screen.tsx");
 const matrix = read("dashboard", "_components", "inference-provider-matrix.tsx");
+const subjects = read("dashboard", "_components", "gateway-users-teams-section.tsx");
 const universe = read("dashboard", "_components", "inference-provider-model-universe.tsx");
 const usage = read("dashboard", "_components", "gateway-usage-section.tsx");
 const llmDetail = read("dashboard", "_components", "llm-provider-detail-screen.tsx");
 const llmEditor = read("dashboard", "_components", "llm-provider-editor-screen.tsx");
 
-describe("Gateway providers routes", () => {
-  test("live next to custom-llm-providers under the org dashboard", () => {
-    const base = getGatewayProvidersRoute("acme");
-    expect(base).toBe(getCustomLlmProvidersRoute("acme").replace("custom-llm-providers", "gateway-providers"));
-    expect(getNewGatewayProviderRoute("acme")).toBe(`${base}/new`);
-    expect(getGatewayProviderRoute("acme", "infp_1")).toBe(`${base}/infp_1`);
-    expect(getEditGatewayProviderRoute("acme", "infp_1")).toBe(`${base}/infp_1/edit`);
+describe("AI Gateway nested provider routes", () => {
+  test("removes every legacy route entry instead of retaining pages or redirects", () => {
+    const pages = join(appRoot, "dashboard", "(admin)", "gateway-providers");
+    for (const path of ["layout.tsx", "page.tsx", "new/page.tsx", "[inferenceProviderId]/page.tsx", "[inferenceProviderId]/edit/page.tsx"]) {
+      expect(existsSync(join(pages, path))).toBe(false);
+    }
+    const routes = read("_lib", "den-org.ts");
+    for (const legacy of ["GatewayProviderRouteContext", "getGatewayProviderRoutes", "getGatewayProvidersRoute", "getGatewayProviderRoute", "getNewGatewayProviderRoute", "getEditGatewayProviderRoute", "/gateway-providers"]) {
+      expect(routes).not.toContain(legacy);
+    }
   });
 
-  test("route pages exist for list, new, detail and edit", () => {
-    const pages = join(appRoot, "dashboard", "(admin)", "gateway-providers");
-    expect(readFileSync(join(pages, "page.tsx"), "utf8")).toContain("InferenceProvidersScreen");
-    expect(readFileSync(join(pages, "new", "page.tsx"), "utf8")).toContain("InferenceProviderEditorScreen");
-    expect(readFileSync(join(pages, "[inferenceProviderId]", "page.tsx"), "utf8")).toContain("InferenceProviderDetailScreen");
-    expect(readFileSync(join(pages, "[inferenceProviderId]", "edit", "page.tsx"), "utf8")).toContain(
-      "InferenceProviderEditorScreen",
-    );
+  test.each(["workspace", null, undefined])("uses only canonical routes and encodes IDs for %s", (orgSlug) => {
+    expect(getAiGatewayRoute(orgSlug)).toBe("/dashboard/ai-gateway");
+    expect(getAiGatewayProvidersRoute(orgSlug)).toBe("/dashboard/ai-gateway?tab=ai-providers");
+    expect(getNewAiGatewayProviderRoute(orgSlug)).toBe("/dashboard/ai-gateway/providers/new");
+    expect(getAiGatewayProviderRoute(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid");
+    expect(getEditAiGatewayProviderRoute(orgSlug, "provider/id")).toBe("/dashboard/ai-gateway/providers/provider%2Fid/edit");
+  });
+
+  test("new, detail and edit retain the tab shell and capability guard", () => {
+    const pages = ["dashboard", "(admin)", "ai-gateway"];
+    expect(read(...pages, "page.tsx")).toContain("<AiGatewayScreen");
+    const layout = read(...pages, "providers", "layout.tsx");
+    expect(layout).toContain("<AiGatewayScreen");
+    expect(layout).toContain("providerContent={<GatewayDashboardCapabilityGuard>{children}</GatewayDashboardCapabilityGuard>}");
+    for (const path of [["new"], ["[inferenceProviderId]"], ["[inferenceProviderId]", "edit"]]) {
+      const page = read(...pages, "providers", ...path, "page.tsx");
+      expect(page).toContain(" embedded");
+      expect(page).not.toContain("routeContext");
+      expect(page).toContain(path.length === 1 && path[0] === "[inferenceProviderId]" ? "InferenceProviderDetailScreen" : "InferenceProviderEditorScreen");
+    }
+    for (const screen of [list, editor, detail]) {
+      expect(screen).not.toContain("routeContext");
+      expect(screen).not.toContain("getGatewayProviderRoutes");
+    }
+    expect(list).not.toContain("InferenceProvidersScreen");
+    expect(list).toContain("getAiGatewayProviderRoute(orgSlug, provider.id)");
+    expect(list).toContain("getNewAiGatewayProviderRoute(orgSlug)");
+    expect(editor).toContain("getAiGatewayProviderRoute(orgSlug,");
+    expect(editor).toContain("getAiGatewayProvidersRoute(orgSlug)");
+    expect(detail).toContain("getEditAiGatewayProviderRoute(orgSlug,");
+    expect(detail).toContain("getAiGatewayProvidersRoute(orgSlug)");
   });
 });
 
 describe("Gateway providers sidebar", () => {
-  test("appears first under the admin-gated Models group before legacy BYOK", () => {
-    const byok = navigation.indexOf('label: "Bring Your Own Keys (Legacy)"');
-    const gateway = navigation.indexOf('label: "Gateway", badge: "New"');
-    expect(gateway).toBeGreaterThan(-1);
-    expect(byok).toBeGreaterThan(gateway);
-    expect(navigation).toMatch(/const modelsGroup[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "Gateway"/);
-    expect(shell).toContain('return "Gateway";');
+  test("keeps the admin-gated AI Gateway item without submenu links and preserves the legacy page", () => {
+    expect(navigation).not.toContain('label: "Bring Your Own Keys (Legacy)"');
+    expect(existsSync(join(appRoot, "dashboard", "(admin)", "custom-llm-providers", "page.tsx"))).toBe(true);
+    expect(navigation).not.toContain('label: "Old Gateway"');
+    expect(navigation).not.toContain("getGatewayProvidersRoute");
+    expect(shell).not.toContain("getGatewayProvidersRoute");
+    expect(navigation).toMatch(/const aiGatewayItem[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "AI Gateway"/);
+    expect(shell).toContain('return "AI Gateway";');
   });
 });
 
@@ -91,7 +119,8 @@ describe("Gateway providers list", () => {
     expect(list).not.toContain("<DenTable");
     expect(list).toContain('data-testid="gateway-provider-create"');
     expect(list).toContain('data-testid="gateway-provider-open"');
-    expect(list).toContain("<GatewayUsageSection");
+    expect(list).not.toContain("<GatewayUsageSection");
+    expect(read("dashboard", "_components", "ai-gateway-screen.tsx")).toContain("<GatewayUsageSection");
     expect(read("dashboard", "_components", "inference-provider-data.tsx")).toContain("scope=manageable");
   });
 });
@@ -100,7 +129,9 @@ describe("Gateway provider editor", () => {
   test("reuses the BYOK pickers instead of duplicating them", () => {
     expect(editor).toContain("<GatewayAccessMatrix");
     expect(editor).toContain("<GatewayModelUniverse");
-    expect(matrix).toContain("<ProviderAccessPicker");
+    expect(matrix).not.toContain("<ProviderAccessPicker");
+    expect(subjects).toContain("<ProviderAccessPicker");
+    expect(subjects).toContain("lockedMemberId={null} singleAudience");
     expect(matrix).toContain("<ProviderModelPicker");
     expect(universe).toContain("<ProviderModelPicker");
     expect(universe).toContain('layout="cards"');
@@ -162,8 +193,11 @@ describe("Gateway provider detail", () => {
   test("upstream key rows identify their creator without expanding audience membership", () => {
     expect(matrix).toContain('set.createdBy?.name || set.createdBy?.email || "Not recorded"');
     expect(matrix).toContain("set.createdBy.email");
-    expect(matrix).toContain("Only directly assigned teams and people are listed; team members are not expanded.");
-    expect(matrix).toContain("getRowKey={(grant) => grant.id}");
+    expect(matrix).toContain('getRowKey={(set) => set.id}');
+    expect(matrix).toContain('href={`${getAiGatewayRoute()}?tab=users-and-teams`}');
+    expect(matrix).toContain("Manage access in Users &amp; Teams");
+    expect(matrix).not.toContain('resource: "access-grants"');
+    expect(subjects).toContain("for (const grant of provider.accessGrants) ensureCard(grant.audience).grants.push({ provider, grant })");
   });
 });
 
@@ -181,12 +215,12 @@ describe("Gateway model and access defaults", () => {
   test("does not grant default access or save a new empty upstream key", () => {
     expect(editor).toContain('allMembers: false, memberIds: [], teamIds: []');
     expect(editor).not.toContain("saveGatewayResource");
-    expect(matrix).toContain('modelGroupId: grant?.modelGroupId ?? "", credentialSetId: grant?.credentialSetId ?? ""');
+    expect(subjects).toContain('access: { allMembers: false, memberIds: [], teamIds: [] }, providerId: "", modelGroupId: "", credentialSetId: ""');
     expect(matrix).toContain("if (needsCredential && !hasCredential) return setError");
-    expect(matrix).toContain("Choose exactly one audience: organization, team or person.");
-    expect(matrix).toContain("Choose a team in the current organization.");
-    expect(matrix).toContain("Choose a person in the current organization.");
-    expect(matrix).toContain("Administrators and key creators do not receive automatic access.");
+    expect(subjects).toContain("Number(access.allMembers) + access.memberIds.length + access.teamIds.length !== 1");
+    expect(subjects).toContain("directory.teams.some((team) => team.id === teamId)");
+    expect(subjects).toContain("directory.members.some((member) => member.id === memberId)");
+    expect(subjects).toContain("!audience || !validDetails || duplicate");
     expect(matrix).toContain("No models in this group. It does not grant access to any models.");
   });
 
@@ -224,6 +258,6 @@ describe("Move to gateway", () => {
     expect(llmDetail).toContain('data-testid="llm-provider-move-to-gateway-confirm"');
     expect(llmDetail).toContain("migrateLlmProviderToGateway(provider.id)");
     expect(llmDetail).toContain("re-sync");
-    expect(llmDetail).toContain("getGatewayProviderRoute(orgSlug, gatewayProvider.id)");
+    expect(llmDetail).toContain("getAiGatewayProviderRoute(orgSlug, gatewayProvider.id)");
   });
 });

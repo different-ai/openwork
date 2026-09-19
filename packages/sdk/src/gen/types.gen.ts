@@ -69,6 +69,17 @@ export type AdminUsersPageResponse = {
 
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   page: AdminPageInfo;
@@ -130,6 +141,17 @@ export type AdminOverviewResponse = {
     [key: string]: unknown;
   }>;
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   userPage: AdminPageInfo;
@@ -662,7 +684,12 @@ export type OrganizationContextResponse = {
     [key: string]: unknown;
   }>;
   capabilities: {
-    gatewayDashboard: boolean;
+    /**
+     * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+     *
+     * @deprecated
+     */
+    gatewayDashboard: true;
     [key: string]: unknown;
   };
   deploymentCapabilities: {
@@ -1211,7 +1238,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
 };
 
 export type CreateInstallLinkRequest = {
@@ -4944,7 +4971,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -4996,7 +5031,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -12378,6 +12421,7 @@ export type GetV1GatewayUsageLimitPoliciesResponses = {
         id: string;
         memberId: string | null;
         teamId: string | null;
+        organization?: boolean;
       }>;
       archivedAt?: string | null;
     }>;
@@ -12468,6 +12512,7 @@ export type PostV1GatewayUsageLimitPoliciesResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12560,6 +12605,7 @@ export type PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12645,6 +12691,7 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12719,6 +12766,7 @@ export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization: boolean;
     }>;
   };
 };
@@ -12728,6 +12776,9 @@ export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponse =
 
 export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
   body:
+    | {
+        organization: true;
+      }
     | {
         memberId: string;
       }
@@ -12807,6 +12858,7 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12891,6 +12943,7 @@ export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentId
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -13058,6 +13111,12 @@ export type GetV1GatewayUsageLimitsMeResponses = {
       policyRevision?: number;
       provenance?: Array<
         | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
+        | {
             kind: "direct";
             assignmentId: string;
             memberId: string;
@@ -13176,6 +13235,12 @@ export type GetV1GatewayUsageLimitsMembersByMemberIdResponses = {
       policyName: string;
       policyRevision?: number;
       provenance?: Array<
+        | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
         | {
             kind: "direct";
             assignmentId: string;

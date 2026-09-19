@@ -34,13 +34,24 @@ async function beforeCreate(metadata: unknown) {
   throw new Error("Organization hook not registered")
 }
 
-test.each([true, false, null, "true", 1])("public creation cannot set platform-managed gatewayDashboard to %s", async (value) => {
-  const metadata = { capabilities: { gatewayDashboard: value } }
+test.each([true, false, null, "true", 1, {}, []].map((value) => ({ value })))("public creation strips obsolete gatewayDashboard value %s without retaining enable semantics", async ({ value }) => {
+  const metadata = { label: "preserved", capabilities: { gatewayDashboard: value, installLinks: false, otherCapability: "preserved" } }
   for (const input of [metadata, JSON.stringify(metadata)]) {
-    await expect(beforeCreate(input)).rejects.toMatchObject({
-      status: "FORBIDDEN",
-      body: { message: "capabilities.gatewayDashboard is reserved for internal platform administration." },
+    const result = await beforeCreate(input)
+    const organization = { name: "Test Workspace", slug: "test-workspace", metadata: input, ...result?.data }
+    expect(organization).toEqual({
+      name: "Test Workspace",
+      slug: "test-workspace",
+      metadata: { label: "preserved", capabilities: { installLinks: false, otherCapability: "preserved" } },
     })
+    expect(metadata.capabilities).toHaveProperty("gatewayDashboard", value)
+  }
+})
+
+test("public creation drops gateway-only metadata through the hook data replacement", async () => {
+  const metadata = { capabilities: { gatewayDashboard: false } }
+  for (const input of [metadata, JSON.stringify(metadata)]) {
+    await expect(beforeCreate(input)).resolves.toEqual({ data: { metadata: { capabilities: {} } } })
   }
 })
 
@@ -55,7 +66,7 @@ test("existing malformed metadata and dpaSigned denials are preserved", async ()
   for (const metadata of ["not-json", "[]", "true", 42, []]) {
     await expect(beforeCreate(metadata)).rejects.toMatchObject({ status: "BAD_REQUEST" })
   }
-  for (const metadata of [{ dpaSigned: true }, JSON.stringify({ dpaSigned: false })]) {
+  for (const metadata of [{ dpaSigned: true }, JSON.stringify({ dpaSigned: false }), { dpaSigned: true, capabilities: { gatewayDashboard: true } }]) {
     await expect(beforeCreate(metadata)).rejects.toMatchObject({
       status: "FORBIDDEN", body: { message: "dpaSigned is reserved for internal platform administration." },
     })

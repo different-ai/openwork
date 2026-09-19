@@ -79,7 +79,7 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await user.click({ role: "button", label: "Enable task analytics" });
   await user.see({ role: "tab", label: "Activity" });
   expect(await settings()).toMatchObject({ enabled: true, consentVersion: 1 });
-  await user.navigate(`${world.den.ref.webUrl}/dashboard/inference`);
+  await user.navigate(`${world.den.ref.webUrl}/dashboard/ai-gateway?tab=openwork-models`);
   await user.see({ role: "button", label: "Manage subscription" });
   await user.notSee({ role: "link", label: "Models & usage" });
   await user.notSee({ role: "link", label: /^Usage & adoption$/ });

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getEditGatewayProviderRoute, getGatewayProvidersRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getEditAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
 import { GatewayAccessMatrix } from "./inference-provider-matrix";
@@ -81,15 +81,19 @@ function ProviderModelUniverseEditor({ provider, reload }: { provider: DenInfere
   </section>;
 }
 
-export function InferenceProviderDetailScreen({ inferenceProviderId }: { inferenceProviderId: string }) {
+export function InferenceProviderDetailScreen({ inferenceProviderId, embedded = false }: {
+  inferenceProviderId: string;
+  embedded?: boolean;
+}) {
+  const Heading = embedded ? "h2" : "h1";
   const { orgId, orgSlug } = useOrgDashboard();
   const { provider, busy, error, reload } = useInferenceProvider(orgId, inferenceProviderId);
-  if (!provider) return <div className="p-8">{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
-  return <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-    <Link href={getGatewayProvidersRoute(orgSlug)} className="text-sm text-gray-500">Back to AI Gateway</Link>
-    <div className="my-8 flex flex-wrap items-center justify-between gap-4">
-      <h1 className="text-3xl font-semibold">{provider.name}</h1>
-      <Link href={getEditGatewayProviderRoute(orgSlug, provider.id)}><DenButton variant="secondary" data-testid="gateway-provider-edit">Edit provider and models</DenButton></Link>
+  if (!provider) return <div className={embedded ? undefined : "p-8"}>{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
+  return <div className={embedded ? undefined : "mx-auto max-w-[1180px] px-6 py-8 md:px-8"}>
+    <Link href={getAiGatewayProvidersRoute(orgSlug)} className="text-sm text-gray-500">Back to AI Providers</Link>
+    <div className={embedded ? "my-4 flex flex-wrap items-center justify-between gap-4" : "my-8 flex flex-wrap items-center justify-between gap-4"}>
+      <Heading className={embedded ? "text-lg font-semibold tracking-tight" : "text-3xl font-semibold"}>{provider.name}</Heading>
+      <Link href={getEditAiGatewayProviderRoute(orgSlug, provider.id)}><DenButton variant="secondary" data-testid="gateway-provider-edit">Edit provider and models</DenButton></Link>
     </div>
     <p className="mb-8 text-gray-500">{GATEWAY_EXPLAINER}</p>
     <section className={SECTION_CLASS}>

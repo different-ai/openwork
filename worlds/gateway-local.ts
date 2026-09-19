@@ -198,7 +198,7 @@ export async function main(): Promise<void> {
     await hold({ name: "gateway-local", outputs: {
       denWeb: den.ref.webUrl, denApi: den.ref.apiUrl, gatewayUrl,
       signup: `${den.ref.webUrl}/`, ownerEmail,
-      gatewayProviders: `${den.ref.webUrl}/dashboard/gateway-providers`,
+      gatewayProviders: `${den.ref.webUrl}/dashboard/ai-gateway?tab=ai-providers`,
       desktop: "Isolated OpenWork Eval testkit-fresh window; sign in to the local Den manually",
       desktopState: desktop.readiness?.state ?? "workspace created", expires,
       status: "HTTP readiness and isolated Electron workspace verified; no account, provider key, policy, or inference request seeded",
