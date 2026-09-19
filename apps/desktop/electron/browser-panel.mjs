@@ -13,6 +13,7 @@ import {
 } from "@openwork/browser-tabs";
 import { runDetachedTask } from "./process-resilience.mjs";
 import { listInstalledBrowsers } from "./installed-browsers.mjs";
+import { registeredNativeAppLinkForHttps } from "./native-app-links.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
@@ -490,9 +491,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (request.source === "link") {
         request.browsers = await listInstalledBrowsers();
         if (!isCurrent()) return;
+        request.nativeApp = registeredNativeAppLinkForHttps(
+          request.url,
+          (nativeUrl) => app.getApplicationNameForProtocol(nativeUrl),
+        );
         request.items = [
           { type: "item", id: "open-builtin", label: "Open in OpenWork" },
           { type: "item", id: "open-external", label: "Open in Default Browser" },
+          ...(request.nativeApp ? [{ type: "item", id: "open-native-app", label: `Open in ${request.nativeApp.name}` }] : []),
           ...request.browsers.map(({ id, name }) => ({ type: "item", id: `browser:${id}`, label: `Open in ${name}` })),
           { type: "separator" },
           { type: "item", id: "copy-url", label: "Copy Link Address" },
@@ -527,6 +533,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
         } else if (itemId === "open-external") {
           await shell.openExternal(request.url);
+        } else if (itemId === "open-native-app") {
+          await shell.openExternal(request.nativeApp.url);
         } else {
           const browser = request.browsers.find(({ id }) => `browser:${id}` === itemId);
           await browser.open(request.url);
@@ -535,7 +543,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (isCurrent()) {
           await dialog.showMessageBox(window(), {
             type: "error", message: "Could not open this link",
-            detail: error instanceof Error ? error.message : "Your browser may be unavailable, or your organization may restrict this destination. You can copy the link address instead.",
+            detail: error instanceof Error ? error.message : "The selected app or browser may be unavailable, or your organization may restrict this destination. You can copy the link address instead.",
           });
         }
       }

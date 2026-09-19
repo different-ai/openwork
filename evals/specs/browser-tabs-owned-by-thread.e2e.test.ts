@@ -1,12 +1,13 @@
 import { expect } from "vitest";
 import { browserImageTarget, eventually, spec } from "@openwork/testkit";
 import type { BrowserTaskInput, Target } from "@openwork/testkit";
-import { browserTabHandle, createBuiltinBrowserWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
+import { browserTabHandle, createBuiltinBrowserWorld, nativeAppLinkWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
 import { browserBackgroundWorld } from "../worlds/browser-webmcp.ts";
 
 const test = spec.world(browserBackgroundWorld);
 const lifecycleTest = spec.world((seed) => createBuiltinBrowserWorld(seed));
 const linkTest = spec.world(transcriptLinkWorld);
+const nativeLinkTest = spec.world(nativeAppLinkWorld);
 const artifactTest = spec.world((seed) => createBuiltinBrowserWorld(seed));
 const tabButton = (name: string): Target => ({ role: "button", label: `Select tab: Project ${name}` });
 const lifecycleTabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
@@ -630,6 +631,123 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     expect(typeof observed.text).toBe("string");
     await user.notSee({ role: "button", label: "Allow for this thread" });
     await user.see({ role: "button", label: "Take over" });
+  });
+});
+
+nativeLinkTest("a transcript link offers only a registered narrow native mapping and launches its exact app URL", async ({ world, user, step, evidence }) => {
+  const mappedLink: Target = { role: "link", label: world.mappedUrl };
+  const unmappedLink: Target = { role: "link", label: world.unmappedUrl };
+  await user.see(mappedLink);
+  await user.see(unmappedLink);
+  expect(await world.readLink(world.mappedUrl)).toEqual({ href: world.mappedUrl, sessionId: world.reading.sessionId });
+  expect(await world.readLink(world.unmappedUrl)).toEqual({ href: world.unmappedUrl, sessionId: world.reading.sessionId });
+  const initialBrowser = await world.readBrowserState();
+  const initialPages = await world.pageTargets();
+  const initialMainUrl = await world.readMainUrl();
+  const menuOpen = (open: boolean) => eventually(() => world.nativeMenu(), {
+    within: 15_000, until: value => value.open === open,
+    label: open ? "the native app link menu is on screen" : "the native app link menu has closed",
+  });
+  const openMenu = async (target: Target) => {
+    await user.rightClick(target);
+    const shown = await menuOpen(true);
+    if (!shown.current) throw new Error("The native app link menu is open without a template.");
+    return shown.current;
+  };
+  const labels = (popup: { items: Array<{ type: string; label: string | null }> }) =>
+    popup.items.filter(item => item.type === "item").map(item => item.label);
+  const choose = async (popup: { items: Array<{ id: string | null; label: string | null }> }, label: string) => {
+    const id = popup.items.find(item => item.label === label)?.id;
+    if (!id) throw new Error(`The native menu offers no "${label}" entry.`);
+    expect(await world.chooseMenuItem(id)).toBe(true);
+    await menuOpen(false);
+  };
+  const unchanged = async (includeTransientBlankTargets = true) => {
+    expect(await world.readBrowserState()).toEqual(initialBrowser);
+    const pages = await world.pageTargets();
+    expect(includeTransientBlankTargets ? pages : pages.filter(page => page.url))
+      .toEqual(includeTransientBlankTargets ? initialPages : initialPages.filter(page => page.url));
+    expect(await world.readMainUrl()).toBe(initialMainUrl);
+  };
+
+  await step("The synthetic protocol registry name appears and its exact mapped URL reaches intercepted external dispatch without browser state changes", async () => {
+    const popup = await openMenu(mappedLink);
+    const entries = labels(popup);
+    expect(entries.slice(0, 3)).toEqual(["Open in OpenWork", "Open in Default Browser", "Open in Workspace Chat"]);
+    await choose(popup, "Open in Workspace Chat");
+    const protocol = await eventually(() => world.nativeProtocolState(), {
+      within: 15_000,
+      until: value => value.launches.includes(world.nativeUrl),
+      label: "the mapped native URL reaches intercepted external dispatch",
+    });
+    expect(protocol.handlers).toEqual({ "slack:": "Workspace Chat" });
+    expect(protocol.lookups).toEqual([world.nativeUrl]);
+    expect(protocol.launches).toEqual([world.nativeUrl]);
+    await unchanged();
+    evidence.recordAssertionEvidence(
+      "A narrowly mapped HTTPS link uses the synthetic protocol registry name and reaches intercepted external dispatch",
+      `Menu=${JSON.stringify(entries)}; synthetic lookup=${JSON.stringify(protocol.lookups)}; intercepted dispatches=${JSON.stringify(protocol.launches)}; no browser tab or target changed.`,
+      entries[2] === "Open in Workspace Chat" && protocol.lookups[0] === world.nativeUrl
+        && protocol.launches.length === 1 && protocol.launches[0] === world.nativeUrl,
+    );
+  });
+
+  await step("Copy still uses the original HTTPS address and cancellation launches nothing", async () => {
+    await choose(await openMenu(mappedLink), "Copy Link Address");
+    await user.click("composer");
+    const clipboard = await world.readClipboard();
+    expect(clipboard).toBe(world.mappedUrl);
+    expect((await world.nativeProtocolState()).launches).toEqual([world.nativeUrl]);
+    const popup = await openMenu(mappedLink);
+    const nativeId = popup.items.find(item => item.label === "Open in Workspace Chat")?.id;
+    if (!nativeId) throw new Error("The mapped native entry disappeared before cancellation.");
+    await user.press("Escape");
+    expect((await menuOpen(false)).last).toMatchObject({ selectedId: null });
+    expect(await world.chooseMenuItem(nativeId)).toBe(false);
+    const stalePopup = await openMenu(mappedLink);
+    const staleNativeId = stalePopup.items.find(item => item.label === "Open in Workspace Chat")?.id;
+    if (!staleNativeId) throw new Error("The mapped native entry disappeared before the source changed.");
+    await world.showSession(world.neighbor.sessionId);
+    await menuOpen(false);
+    expect(await world.chooseMenuItem(staleNativeId)).toBe(false);
+    await world.showSession(world.reading.sessionId);
+    await user.see(mappedLink);
+    const protocol = await world.nativeProtocolState();
+    expect(protocol.launches).toEqual([world.nativeUrl]);
+    await unchanged(false);
+    evidence.recordAssertionEvidence(
+      "Copy and cancellation preserve the original HTTPS address and cause no native launch",
+      `Clipboard=${JSON.stringify(clipboard)}; launches remained ${JSON.stringify(protocol.launches)} after Escape, a rejected canceled choice, and a rejected choice from the previous conversation surface.`,
+      clipboard === world.mappedUrl && protocol.launches.length === 1 && protocol.launches[0] === world.nativeUrl,
+    );
+  });
+
+  await step("Missing handlers, lookup errors, and unmapped hosts expose no native app action", async () => {
+    await world.configureNativeHandlers({});
+    const missingLabels = labels(await openMenu(mappedLink));
+    expect(missingLabels).not.toContain("Open in Workspace Chat");
+    expect(await world.dismissMenu()).toBe(true);
+    await menuOpen(false);
+    await world.configureNativeHandlers({ "slack:": "Workspace Chat" }, true);
+    const errorLabels = labels(await openMenu(mappedLink));
+    expect(errorLabels).not.toContain("Open in Workspace Chat");
+    expect(await world.dismissMenu()).toBe(true);
+    await menuOpen(false);
+    await world.configureNativeHandlers({ "slack:": "Workspace Chat" });
+    const unmappedLabels = labels(await openMenu(unmappedLink));
+    expect(unmappedLabels.slice(0, 2)).toEqual(["Open in OpenWork", "Open in Default Browser"]);
+    expect(unmappedLabels).not.toContain("Open in Workspace Chat");
+    expect(await world.dismissMenu()).toBe(true);
+    await menuOpen(false);
+    const protocol = await world.nativeProtocolState();
+    expect(protocol.launches).toEqual([world.nativeUrl]);
+    await unchanged(false);
+    evidence.recordAssertionEvidence(
+      "No native app action appears without both an exact mapping and a successful handler lookup",
+      `Missing=${JSON.stringify(missingLabels)}; lookup error=${JSON.stringify(errorLabels)}; unmapped=${JSON.stringify(unmappedLabels)}; launches=${JSON.stringify(protocol.launches)}.`,
+      !missingLabels.includes("Open in Workspace Chat") && !errorLabels.includes("Open in Workspace Chat")
+        && !unmappedLabels.includes("Open in Workspace Chat") && protocol.launches.length === 1,
+    );
   });
 });
 
