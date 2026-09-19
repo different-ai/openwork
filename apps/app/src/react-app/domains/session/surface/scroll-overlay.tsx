@@ -1,18 +1,10 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useLayoutEffect, useState, type RefObject } from "react";
 
 import {
-  selectSessionIsStickyBottom,
   selectSessionTopClippedMessageId,
   sessionScrollKey,
   useSessionScrollStore,
 } from "./scroll-store";
-
-function useSessionScrollOverlayState(sessionId: string) {
-  const isAtBottom = useSessionScrollStore((state) => selectSessionIsStickyBottom(state.sessions, sessionId));
-  const topClippedMessageId = useSessionScrollStore((state) => selectSessionTopClippedMessageId(state.sessions, sessionId));
-
-  return { isAtBottom, topClippedMessageId };
-}
 
 type JumpToStartButtonProps = {
   onJumpToStartOfMessage: (behavior?: ScrollBehavior) => void;
@@ -62,6 +54,10 @@ type SessionScrollOverlayProps = {
   sessionId: string;
   owner?: string;
   isStreaming: boolean;
+  historyReady: boolean;
+  hasNewer: boolean;
+  containerRef: RefObject<HTMLDivElement | null>;
+  contentRef: RefObject<HTMLDivElement | null>;
   onJumpToLatest: (behavior?: ScrollBehavior) => void;
   onJumpToStartOfMessage: (behavior?: ScrollBehavior) => void;
 };
@@ -70,12 +66,43 @@ export const SessionScrollOverlay = memo(function SessionScrollOverlay({
   sessionId,
   owner,
   isStreaming,
+  historyReady,
+  hasNewer,
+  containerRef,
+  contentRef,
   onJumpToLatest,
   onJumpToStartOfMessage,
 }: SessionScrollOverlayProps) {
-  const { isAtBottom, topClippedMessageId } = useSessionScrollOverlayState(sessionScrollKey(sessionId, owner));
+  const topClippedMessageId = useSessionScrollStore((state) =>
+    selectSessionTopClippedMessageId(state.sessions, sessionScrollKey(sessionId, owner)));
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content || !historyReady) {
+      setShowJumpToLatest(false);
+      return;
+    }
+    // Follow mode is reading intent, not geometry: restoration or native reflow
+    // can leave a manual reader at the bottom without enabling auto-follow.
+    const measure = () => setShowJumpToLatest(container.clientHeight > 0 && container.clientWidth > 0
+      && (hasNewer || container.scrollHeight - container.scrollTop - container.clientHeight > 1));
+    measure();
+    // Also measure after the parent's initial restoration layout effect.
+    const frame = window.requestAnimationFrame(measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    observer.observe(content);
+    container.addEventListener("scroll", measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      container.removeEventListener("scroll", measure);
+    };
+  }, [sessionId, owner, historyReady, hasNewer, containerRef, contentRef]);
+
   const showJumpToStart = !isStreaming && Boolean(topClippedMessageId);
-  const showJumpToLatest = !isAtBottom;
 
   if (!showJumpToStart && !showJumpToLatest) {
     return null;
