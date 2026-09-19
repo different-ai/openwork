@@ -224,7 +224,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     const readSource = input.readSource
     input.server.registerTool("read_artifact_view", {
       title: "Read an app for editing",
-      description: "Read the newest draft source of an app you manage before improving it. Use the app id from its render or preview tool name. Editing must keep the existing artifactViewId and configObjectId.",
+      description: "Restricted to organization owners and admins. Read the newest draft source of an app you manage before improving it. Use the app id from its render or preview tool name. Editing must keep the existing artifactViewId and configObjectId.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ artifactViewId: idSchema }),
     }, async (request) => ({ content: [{ type: "text", text: JSON.stringify(await readSource(request)) }] }))
@@ -235,7 +235,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     {
       title: "Create or improve an app draft",
       description: [
-        "Create or improve an in-app dashboard or artifact view of Workflow results. Call this Cloud MCP tool directly, not through search_capabilities or execute_capability. Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
+        "Restricted to organization owners and admins. Being the app creator or a Workflow manager does not override that restriction. Create or improve an in-app dashboard or artifact view of Workflow results. Call this Cloud MCP tool directly, not through search_capabilities or execute_capability. Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
         "Create the complete app in one request without asking the user about Workflow internals, naming, or runtime code. Reuse an existing app when editing. The current saved Workflow must declare outputSchema. New apps default to live: write the Workflow to read input.runtime.{now,today,timeZone,dayStart,dayEnd}, with an inputSchema accepting that object. Never hardcode creation dates or copy author example inputs. Live preview executes the saved version as the viewer. Snapshot mode is restricted to workflows without capability dependencies and receipts remain private to their caller.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
         "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app. Use one friendly name for the workflow and app. Only create an Automation when the user asks for a schedule. Generated views display, filter, and explore results; they do not submit approvals or other writes.",
@@ -330,7 +330,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     "activate_artifact_view_revision",
     {
       title: "Activate or roll back Artifact view",
-      description: "Point an Artifact's render tool at an exact compatible immutable revision. Selecting an older revision performs a rollback without changing its bytes.",
+      description: "Restricted to organization owners and admins. Point an Artifact's render tool at an exact compatible immutable revision. Selecting an older revision performs a rollback without changing its bytes.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ artifactViewId: idSchema, revisionId: idSchema }),
       outputSchema: saveOutputSchema,
@@ -353,7 +353,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     "retire_artifact_view",
     {
       title: "Retire Artifact view",
-      description: "Remove the active render capability without deleting or changing any immutable view revision.",
+      description: "Restricted to organization owners and admins. Remove the active render capability without deleting or changing any immutable view revision.",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ artifactViewId: idSchema }),
       outputSchema: saveOutputSchema,

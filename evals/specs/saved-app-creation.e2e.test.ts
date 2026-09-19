@@ -498,7 +498,8 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(record(colleagueList.body).items).toEqual([]);
   const deniedAdd = await seed.api(colleague, `/v1/apps/${appId}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) });
   expect(deniedAdd.response.status).toBe(403);
-  await seed.api(colleague, `/v1/apps/${appId}/dashboard`, { method: "POST", body: JSON.stringify({ added: false }) });
+  const deniedRemove = await seed.api(colleague, `/v1/apps/${appId}/dashboard`, { method: "POST", body: JSON.stringify({ added: false }) });
+  expect(deniedRemove.response.status).toBe(403);
   expect((await readApp()).onDashboard).toBe(true);
   evidence.recordAssertionEvidence("Stale saves and members without workflow access cannot overwrite or read the saved app", "Stale activation returned 409 and kept the title; the ungranted colleague received 403 for missing workflow access without result content.", true);
 
@@ -506,7 +507,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(deniedDelete.response.status).toBe(403);
   expect((await readApp()).onDashboard).toBe(true);
 
-  await step("a regular member deletes their own saved app", async () => {
+  await step("workflow ownership does not allow a regular member to manage apps", async () => {
     const memberCode = 'return { topic: input.topic, total: 7 };';
     const memberInput = { topic: "Personal report" };
     await world.rpc("execute_capability_script", { code: memberCode, input: memberInput }, colleague);
@@ -520,28 +521,45 @@ test("create, preview, save and reopen an app without changing already-open resu
     await runWorkflow(colleague, memberWorkflowId, {
       pluginId: field(memberSaved.body, "pluginId"), configObjectVersionId: field(memberSaved.body, "configObjectVersionId"), input: memberInput,
     });
-    const memberBuilt = await world.rpc("save_artifact_view", {
+    const draft = {
       configObjectId: memberWorkflowId, dataMode: "snapshot", title: "Personal report", reactSource: 'export default function Report({data}) { return <p>{data.topic}</p> }',
-    }, colleague);
+    };
+    await expect(world.rpc("save_artifact_view", draft, colleague)).rejects.toThrow("owners and admins");
+    await runWorkflow(world.den.admin, memberWorkflowId, {
+      pluginId: field(memberSaved.body, "pluginId"), configObjectVersionId: field(memberSaved.body, "configObjectVersionId"), input: memberInput,
+    });
+    const memberBuilt = await world.rpc("save_artifact_view", draft);
     const memberView = record(record(memberBuilt.structuredContent).view);
     const memberAppId = field(memberView, "id");
     if (!Array.isArray(memberView.revisions)) throw new Error("Member app has no revisions");
     const memberRevisionId = field(memberView.revisions[0], "id");
-    const memberSave = await seed.api(colleague, `/v1/apps/${memberAppId}/save`, {
-      method: "POST", body: JSON.stringify({ revisionId: memberRevisionId, title: "Personal report", useInWorkflow: true, expectedActiveRevisionId: null }),
-    });
-    expect(memberSave.response.status, memberSave.text).toBe(200);
-    expect((await probe.api(colleague, `/v1/apps/${memberAppId}`)).body).toMatchObject({ canManage: true, onDashboard: true });
+    const saveBody = { revisionId: memberRevisionId, title: "Personal report", useInWorkflow: true, expectedActiveRevisionId: null };
+    const memberSave = await seed.api(colleague, `/v1/apps/${memberAppId}/save`, { method: "POST", body: JSON.stringify(saveBody) });
+    expect(memberSave.response.status).toBe(403);
+    const adminSave = await seed.api(world.den.admin, `/v1/apps/${memberAppId}/save`, { method: "POST", body: JSON.stringify(saveBody) });
+    expect(adminSave.response.status, adminSave.text).toBe(200);
+    expect((await probe.api(colleague, `/v1/apps/${memberAppId}`)).body).toMatchObject({ canManage: false, onDashboard: false, payload: { data: memberInput } });
+    await expect(world.rpc("save_artifact_view", { ...draft, artifactViewId: memberAppId }, colleague)).rejects.toThrow("owners and admins");
+    await expect(world.rpc("activate_artifact_view_revision", { artifactViewId: memberAppId, revisionId: memberRevisionId }, colleague)).rejects.toThrow("owners and admins");
+    await expect(world.rpc("retire_artifact_view", { artifactViewId: memberAppId }, colleague)).rejects.toThrow("owners and admins");
     const memberSnapshots = (await probe.api(colleague, `/v1/workflows/${memberWorkflowId}/snapshots`)).body;
-    const removed = await seed.api(colleague, `/v1/artifact-views/${memberAppId}/retire`, { method: "POST" });
+    for (const [path, body] of [
+      [`/v1/apps/${memberAppId}/dashboard`, { added: true }],
+      [`/v1/apps/${memberAppId}/dashboard`, { added: false }],
+      [`/v1/apps/${memberAppId}/share`, { email: world.den.admin.email }],
+      [`/v1/artifact-views/${memberAppId}/retire`, {}],
+    ] satisfies Array<[string, Record<string, unknown>]>) {
+      expect((await seed.api(colleague, path, { method: "POST", body: JSON.stringify(body) })).response.status).toBe(403);
+    }
+    expect((await probe.api(world.den.admin, `/v1/apps/${memberAppId}`)).body).toMatchObject({ onDashboard: true, view: { activeRevisionId: memberRevisionId } });
+    const removed = await seed.api(world.den.admin, `/v1/artifact-views/${memberAppId}/retire`, { method: "POST" });
     expect(removed.response.status, removed.text).toBe(200);
-    expect(removed.body).toMatchObject({ status: "retired", activeRevisionId: null, useInWorkflow: false });
     expect(record((await probe.api(colleague, "/v1/apps")).body).items).toEqual([]);
     expect((await probe.api(colleague, `/v1/apps/${memberAppId}?revisionId=${memberRevisionId}`)).body).toMatchObject({ onDashboard: false, payload: { data: memberInput } });
     expect((await probe.api(colleague, `/v1/workflows/${memberWorkflowId}/snapshots`)).body).toEqual(memberSnapshots);
     expect((await readApp()).onDashboard).toBe(true);
   });
-  evidence.recordAssertionEvidence("Members can delete their own apps but cannot delete another member's private app", "The member created and retired their own saved app, removing its placement and workflow selection while preserving historical results; deleting the admin's app was rejected and that app stayed saved.", true);
+  evidence.recordAssertionEvidence("Only organization owners and admins manage apps, including apps built from member-owned workflows", "Member workflow creation and execution still work. The workflow manager was denied app creation, editing, activation, saving, placement, sharing and retirement through REST and MCP, while authorized app viewing remained available. Admin save and retirement preserved workflow history and unrelated apps.", true);
 
   // Use a separate workflow so sharing the selected app cannot grant indirect access to this one.
   const privateInput = { topic: "Private planning" };

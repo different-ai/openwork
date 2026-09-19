@@ -13,6 +13,9 @@ import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
+  ConnectorAccountTable,
+  ConnectorInstanceTable,
+  ConnectorInstanceAccessGrantTable,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
   MarketplaceTable,
@@ -21,6 +24,7 @@ import {
   PluginConfigObjectTable,
   PluginTable,
   OrganizationTable,
+  TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { PluginArchActorContext } from "../src/routes/org/plugin-system/access.js"
@@ -47,6 +51,7 @@ type SeededWorkflow = {
   organizationId: DenTypeId<"organization">
   ownerMemberId: DenTypeId<"member">
   pluginId: DenTypeId<"plugin">
+  marketplaceId: DenTypeId<"marketplace">
   viewerMemberId: DenTypeId<"member">
   ownerContext: PluginArchActorContext
   viewerContext: PluginArchActorContext
@@ -89,6 +94,10 @@ afterEach(async () => {
     await db.delete(ConfigObjectTable).where(inArray(ConfigObjectTable.organizationId, createdOrganizationIds))
     await db.delete(PluginTable).where(inArray(PluginTable.organizationId, createdOrganizationIds))
     await db.delete(MarketplaceTable).where(inArray(MarketplaceTable.organizationId, createdOrganizationIds))
+    await db.delete(ConnectorInstanceAccessGrantTable).where(inArray(ConnectorInstanceAccessGrantTable.organizationId, createdOrganizationIds))
+    await db.delete(ConnectorInstanceTable).where(inArray(ConnectorInstanceTable.organizationId, createdOrganizationIds))
+    await db.delete(ConnectorAccountTable).where(inArray(ConnectorAccountTable.organizationId, createdOrganizationIds))
+    await db.delete(TeamTable).where(inArray(TeamTable.organizationId, createdOrganizationIds))
     await db.delete(MemberTable).where(inArray(MemberTable.organizationId, createdOrganizationIds))
     await db.delete(OrganizationTable).where(inArray(OrganizationTable.id, createdOrganizationIds))
   }
@@ -196,7 +205,7 @@ async function seedWorkflowWithViewer(): Promise<SeededWorkflow> {
   const configObjectVersionId = versions[0]?.id
   if (!configObjectVersionId) throw new Error("Workflow has no version")
   return {
-    configObjectId, configObjectVersionId, organizationId, ownerMemberId, pluginId: plugin.id, viewerMemberId,
+    configObjectId, configObjectVersionId, organizationId, ownerMemberId, pluginId: plugin.id, marketplaceId, viewerMemberId,
     ownerContext: context,
     viewerContext: {
       ...context,
@@ -444,6 +453,206 @@ function actorTools(memberId: string, readOnly = true): BuiltCodemodeTools {
     manifest: [{ ...liveRequired, authority: "den", readOnly }],
   }
 }
+
+function appResources(seeded: SeededWorkflow, context = seeded.viewerContext) {
+  return [
+    { context, resourceId: seeded.configObjectId, resourceKind: "config_object" },
+    { context, resourceId: seeded.pluginId, resourceKind: "plugin" },
+    { context, resourceId: seeded.marketplaceId, resourceKind: "marketplace" },
+  ] satisfies Array<Parameters<PluginStore["listResourceAccess"]>[0]>
+}
+
+async function grantAppManager(seeded: SeededWorkflow) {
+  for (const resource of appResources(seeded, seeded.ownerContext)) {
+    await pluginStore.createResourceAccessGrant({ ...resource, value: { orgMembershipId: seeded.viewerMemberId, role: "manager" } })
+  }
+  await db.update(ConfigObjectTable).set({ createdByOrgMembershipId: seeded.viewerMemberId })
+    .where(eq(ConfigObjectTable.id, seeded.configObjectId))
+}
+
+async function bindApp(seeded: SeededWorkflow, state = "draft") {
+  await prepareLiveWorkflow(seeded)
+  const views = await import("../src/artifact-views.js")
+  const view = await views.saveArtifactViewRevision({ context: seeded.ownerContext, configObjectId: seeded.configObjectId,
+    title: "Managed report", reactSource: "export default function App({data}) { return <div>{data.actor}</div> }" })
+  const revisionId = view.revisions[0]?.id
+  if (!revisionId) throw new Error("Missing app revision")
+  if (state !== "draft") await views.activateArtifactViewRevision({ context: seeded.ownerContext, artifactViewId: view.id, revisionId })
+  if (state === "retired") await views.retireArtifactView({ context: seeded.ownerContext, artifactViewId: view.id })
+  await db.update(ArtifactViewTable).set({ owner_member_id: seeded.viewerMemberId }).where(eq(ArtifactViewTable.id, view.id))
+  return view
+}
+
+const changedWorkflow = {
+  metadata: { title: "Scheduled briefing" },
+  rawSourceText: 'return { actor: "changed" }',
+  normalizedPayloadJson: { language: "codemode-js", outputSchema: liveOutputSchema, requiredCapabilities: [] },
+}
+
+async function testChangedWorkflow(seeded: SeededWorkflow, context: PluginArchActorContext) {
+  const draft = { name: "Scheduled briefing", code: changedWorkflow.rawSourceText, outputSchema: liveOutputSchema, requiredCapabilities: [] }
+  const buildTools = async () => ({ tools: {}, manifest: [] })
+  const tested = await workflows.testWorkflowDraft({ context, configObjectId: seeded.configObjectId, draft, buildTools })
+  if (!tested.ok || !tested.receiptId) throw new Error("Expected tested draft")
+  return { context, configObjectId: seeded.configObjectId, draft, buildTools, receiptId: tested.receiptId }
+}
+
+test.each(["draft", "active", "retired"])("%s app bindings deny backing workflow owners indirect edits and sharing through every parent", async (state) => {
+  const seeded = await seedWorkflowWithViewer()
+  await grantAppManager(seeded)
+  const teamId = createDenTypeId("team")
+  await db.insert(TeamTable).values({ id: teamId, organizationId: seeded.organizationId, name: "Report readers" })
+  await bindApp(seeded, state)
+  const context = seeded.viewerContext
+  const tested = await testChangedWorkflow(seeded, context)
+  const before = await workflows.getWorkflowDetail({ context, configObjectId: seeded.configObjectId })
+  expect(before.canManage).toBe(true)
+  const versions = await db.select().from(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.configObjectId, seeded.configObjectId))
+  const appRows = await db.select().from(ArtifactViewTable).where(eq(ArtifactViewTable.config_object_id, seeded.configObjectId))
+  const grants = await Promise.all(appResources(seeded).map((resource) => pluginStore.listResourceAccess(resource)))
+  for (const operation of [
+    () => pluginStore.createConfigObjectVersion({ context, configObjectId: seeded.configObjectId, value: changedWorkflow }),
+    ...(["archive", "delete", "restore"] satisfies Array<"archive" | "delete" | "restore">).map((action) =>
+      () => pluginStore.setConfigObjectLifecycle({ context, configObjectId: seeded.configObjectId, action })),
+    () => workflows.createWorkflowVersion(tested),
+    () => workflows.saveWorkflow({ context, organizationId: seeded.organizationId, ownerMemberId: seeded.viewerMemberId,
+      workflow: { pluginId: seeded.pluginId, name: tested.draft.name, code: tested.draft.code, outputSchema: liveOutputSchema }, buildTools: tested.buildTools }),
+    () => pluginStore.attachConfigObjectToPlugin({ context, configObjectId: seeded.configObjectId, pluginId: seeded.pluginId }),
+    () => pluginStore.removeConfigObjectFromPlugin({ context, configObjectId: seeded.configObjectId, pluginId: seeded.pluginId }),
+    () => pluginStore.attachPluginToMarketplace({ context, pluginId: seeded.pluginId, marketplaceId: seeded.marketplaceId }),
+    () => pluginStore.removePluginFromMarketplace({ context, pluginId: seeded.pluginId, marketplaceId: seeded.marketplaceId }),
+    ...(["archive", "restore"] satisfies Array<"archive" | "restore">).map((action) =>
+      () => pluginStore.setPluginLifecycle({ context, pluginId: seeded.pluginId, action })),
+    ...(["archive", "delete", "restore"] satisfies Array<"archive" | "delete" | "restore">).map((action) =>
+      () => pluginStore.setMarketplaceLifecycle({ context, marketplaceId: seeded.marketplaceId, action })),
+  ]) await expect(operation()).rejects.toThrow("Only organization owners and admins")
+  for (const resource of appResources(seeded)) {
+    for (const value of [
+      { orgMembershipId: seeded.viewerMemberId, role: "viewer" }, { teamId, role: "viewer" }, { orgWide: true, role: "viewer" },
+    ] satisfies Array<Parameters<PluginStore["createResourceAccessGrant"]>[0]["value"]>) {
+      await expect(pluginStore.createResourceAccessGrant({ ...resource, value })).rejects.toThrow("Only organization owners and admins")
+    }
+  }
+  const [configGrant] = await db.select().from(ConfigObjectAccessGrantTable).where(eq(ConfigObjectAccessGrantTable.configObjectId, seeded.configObjectId))
+  const [pluginGrant] = await db.select().from(PluginAccessGrantTable).where(eq(PluginAccessGrantTable.pluginId, seeded.pluginId))
+  const [marketplaceGrant] = await db.select().from(MarketplaceAccessGrantTable).where(eq(MarketplaceAccessGrantTable.marketplaceId, seeded.marketplaceId))
+  if (!configGrant || !pluginGrant || !marketplaceGrant) throw new Error("Missing grants")
+  for (const resource of [
+    { context, resourceKind: "config_object", resourceId: seeded.configObjectId, grantId: configGrant.id },
+    { context, resourceKind: "plugin", resourceId: seeded.pluginId, grantId: pluginGrant.id },
+    { context, resourceKind: "marketplace", resourceId: seeded.marketplaceId, grantId: marketplaceGrant.id },
+  ] satisfies Array<Parameters<PluginStore["deleteResourceAccessGrant"]>[0]>) {
+    await expect(pluginStore.deleteResourceAccessGrant(resource)).rejects.toThrow("Only organization owners and admins")
+  }
+  expect(await db.select().from(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.configObjectId, seeded.configObjectId))).toEqual(versions)
+  expect(await db.select().from(ArtifactViewTable).where(eq(ArtifactViewTable.config_object_id, seeded.configObjectId))).toEqual(appRows)
+  expect(await Promise.all(appResources(seeded).map((resource) => pluginStore.listResourceAccess(resource)))).toEqual(grants)
+  const fresh = await workflows.executeLiveArtifactWorkflow({ context, configObjectId: seeded.configObjectId,
+    expectedOutputSchemaDigest: artifactDigest(liveOutputSchema), buildTools: async () => actorTools(seeded.viewerMemberId) })
+  expect(fresh.ok).toBe(true)
+  if (fresh.ok) expect(fresh.value).toMatchObject({ actor: seeded.viewerMemberId })
+})
+
+test("non-app workflow editors and managers retain version, lifecycle and access permissions", async () => {
+  const seeded = await seedWorkflowWithViewer()
+  await grantAppManager(seeded)
+  await pluginStore.createResourceAccessGrant({ context: seeded.ownerContext, resourceKind: "config_object", resourceId: seeded.configObjectId,
+    value: { orgMembershipId: seeded.viewerMemberId, role: "editor" } })
+  await pluginStore.createConfigObjectVersion({ context: seeded.viewerContext, configObjectId: seeded.configObjectId, value: changedWorkflow })
+  expect((await workflows.getWorkflowDetail({ context: seeded.ownerContext, configObjectId: seeded.configObjectId })).currentVersion.code).toBe(changedWorkflow.rawSourceText)
+  await bindApp(seeded)
+  await expect(pluginStore.createConfigObjectVersion({ context: seeded.viewerContext, configObjectId: seeded.configObjectId, value: changedWorkflow }))
+    .rejects.toThrow("Only organization owners and admins")
+  const plain = await seedWorkflowWithViewer()
+  await grantAppManager(plain)
+  const tested = await testChangedWorkflow(plain, plain.viewerContext)
+  await workflows.createWorkflowVersion(tested)
+  await workflows.saveWorkflow({ context: plain.viewerContext, organizationId: plain.organizationId, ownerMemberId: plain.viewerMemberId,
+    workflow: { pluginId: plain.pluginId, name: tested.draft.name, code: tested.draft.code, outputSchema: liveOutputSchema }, buildTools: tested.buildTools })
+  for (const resource of appResources(plain)) {
+    await pluginStore.createResourceAccessGrant({ ...resource, value: { orgMembershipId: plain.ownerMemberId, role: "viewer" } })
+  }
+  await pluginStore.setConfigObjectLifecycle({ context: plain.viewerContext, configObjectId: plain.configObjectId, action: "archive" })
+  await pluginStore.setConfigObjectLifecycle({ context: plain.viewerContext, configObjectId: plain.configObjectId, action: "restore" })
+})
+
+test.each(["owner", "admin"])("%s can edit app-bound workflows and change inherited app access without an ownership override", async (role) => {
+  const seeded = await seedWorkflowWithViewer()
+  await grantAppManager(seeded)
+  const view = await bindApp(seeded, "retired")
+  await db.update(MemberTable).set({ role }).where(eq(MemberTable.id, seeded.ownerMemberId))
+  const context: PluginArchActorContext = { ...seeded.ownerContext, organizationContext: { ...seeded.ownerContext.organizationContext,
+    currentMember: { ...seeded.ownerContext.organizationContext.currentMember, role, directRole: role, isOwner: role === "owner" } } }
+  await pluginStore.createConfigObjectVersion({ context, configObjectId: seeded.configObjectId, value: changedWorkflow })
+  const tested = await testChangedWorkflow(seeded, context)
+  await workflows.createWorkflowVersion(tested)
+  await workflows.saveWorkflow({ context, organizationId: seeded.organizationId, ownerMemberId: seeded.ownerMemberId,
+    workflow: { pluginId: seeded.pluginId, name: tested.draft.name, code: tested.draft.code, outputSchema: liveOutputSchema }, buildTools: tested.buildTools })
+  for (const resource of appResources(seeded, context)) {
+    await pluginStore.createResourceAccessGrant({ ...resource, value: { orgMembershipId: seeded.viewerMemberId, role: "editor" } })
+  }
+  const [grant] = await db.select().from(ConfigObjectAccessGrantTable).where(eq(ConfigObjectAccessGrantTable.configObjectId, seeded.configObjectId))
+  if (!grant) throw new Error("Missing config grant")
+  await pluginStore.deleteResourceAccessGrant({ context, resourceKind: "config_object", resourceId: seeded.configObjectId, grantId: grant.id })
+  await pluginStore.removeConfigObjectFromPlugin({ context, configObjectId: seeded.configObjectId, pluginId: seeded.pluginId })
+  await pluginStore.attachConfigObjectToPlugin({ context, configObjectId: seeded.configObjectId, pluginId: seeded.pluginId })
+  await pluginStore.removePluginFromMarketplace({ context, pluginId: seeded.pluginId, marketplaceId: seeded.marketplaceId })
+  await pluginStore.attachPluginToMarketplace({ context, pluginId: seeded.pluginId, marketplaceId: seeded.marketplaceId })
+  await pluginStore.setPluginLifecycle({ context, pluginId: seeded.pluginId, action: "archive" })
+  await pluginStore.setPluginLifecycle({ context, pluginId: seeded.pluginId, action: "restore" })
+  await pluginStore.setMarketplaceLifecycle({ context, marketplaceId: seeded.marketplaceId, action: "archive" })
+  await pluginStore.setMarketplaceLifecycle({ context, marketplaceId: seeded.marketplaceId, action: "restore" })
+  await pluginStore.setConfigObjectLifecycle({ context, configObjectId: seeded.configObjectId, action: "delete" })
+  await pluginStore.setConfigObjectLifecycle({ context, configObjectId: seeded.configObjectId, action: "restore" })
+  const { activateArtifactViewRevision } = await import("../src/artifact-views.js")
+  const revisionId = view.revisions[0]?.id
+  if (!revisionId) throw new Error("Missing app revision")
+  expect((await activateArtifactViewRevision({ context, artifactViewId: view.id, revisionId })).status).toBe("active")
+})
+
+test("detached parents remain manageable but restoring app access still requires an admin", async () => {
+  const seeded = await seedWorkflowWithViewer()
+  await grantAppManager(seeded)
+  await bindApp(seeded, "retired")
+  await pluginStore.removeConfigObjectFromPlugin({ context: seeded.ownerContext, configObjectId: seeded.configObjectId, pluginId: seeded.pluginId })
+  for (const resource of appResources(seeded).filter((resource) => resource.resourceKind !== "config_object")) {
+    await pluginStore.createResourceAccessGrant({ ...resource, value: { orgMembershipId: seeded.ownerMemberId, role: "viewer" } })
+  }
+  await expect(pluginStore.attachConfigObjectToPlugin({ context: seeded.viewerContext, configObjectId: seeded.configObjectId, pluginId: seeded.pluginId }))
+    .rejects.toThrow("Only organization owners and admins")
+  await pluginStore.attachConfigObjectToPlugin({ context: seeded.ownerContext, configObjectId: seeded.configObjectId, pluginId: seeded.pluginId })
+  await pluginStore.removePluginFromMarketplace({ context: seeded.ownerContext, pluginId: seeded.pluginId, marketplaceId: seeded.marketplaceId })
+  await pluginStore.createResourceAccessGrant({ context: seeded.viewerContext, resourceKind: "marketplace", resourceId: seeded.marketplaceId,
+    value: { orgMembershipId: seeded.ownerMemberId, role: "viewer" } })
+  await expect(pluginStore.attachPluginToMarketplace({ context: seeded.viewerContext, pluginId: seeded.pluginId, marketplaceId: seeded.marketplaceId }))
+    .rejects.toThrow("Only organization owners and admins")
+  const foreign = await seedWorkflowWithViewer()
+  await expect(pluginStore.createConfigObjectVersion({ context: foreign.ownerContext, configObjectId: seeded.configObjectId, value: changedWorkflow }))
+    .rejects.toThrow("Config object not found")
+  await expect(pluginStore.createResourceAccessGrant({ context: foreign.ownerContext, resourceKind: "plugin", resourceId: seeded.pluginId,
+    value: { orgMembershipId: foreign.viewerMemberId, role: "viewer" } })).rejects.toThrow("Plugin not found")
+})
+
+test.each([false, true])("connector cleanup preserves admin-only app bindings (bound: %s)", async (bound) => {
+  const seeded = await seedWorkflowWithViewer()
+  const account = await pluginStore.createConnectorAccount({ context: seeded.ownerContext, connectorType: "github", displayName: "Synthetic repository", remoteId: "synthetic" })
+  const instance = await pluginStore.createConnectorInstance({ context: seeded.ownerContext, connectorAccountId: account.id, connectorType: "github", name: "Synthetic import" })
+  await pluginStore.createResourceAccessGrant({ context: seeded.ownerContext, resourceKind: "connector_instance", resourceId: instance.id,
+    value: { orgMembershipId: seeded.viewerMemberId, role: "editor" } })
+  await db.update(ConfigObjectTable).set({ connectorInstanceId: instance.id }).where(eq(ConfigObjectTable.id, seeded.configObjectId))
+  if (bound) {
+    await bindApp(seeded, "retired")
+    await expect(pluginStore.removeConnectorInstance({ context: seeded.viewerContext, connectorInstanceId: instance.id }))
+      .rejects.toThrow("Only organization owners and admins")
+    await expect(pluginStore.disconnectConnectorAccount({ context: seeded.viewerContext, connectorAccountId: account.id }))
+      .rejects.toThrow("Only organization owners and admins")
+    expect(await db.select().from(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.configObjectId, seeded.configObjectId))).toHaveLength(1)
+    expect(await db.select().from(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, instance.id))).toHaveLength(1)
+  } else {
+    const removed = await pluginStore.removeConnectorInstance({ context: seeded.viewerContext, connectorInstanceId: instance.id })
+    expect(removed.deletedConfigObjectCount).toBe(1)
+  }
+})
 
 describe("live generated apps and personal receipts", () => {
   test("published workflow snapshot reads retain other members' explicit runs but exclude live provenance", async () => {

@@ -5,8 +5,10 @@ import type { GeneratedArtifactView, GeneratedArtifactViewRevision } from "@open
 import { db } from "./db.js"
 import { getWorkflowAccess, getWorkflowDetail } from "./workflows.js"
 import { buildGeneratedArtifactView } from "./generated-artifact-view-builder.js"
-import type { PluginArchActorContext } from "./routes/org/plugin-system/access.js"
+import { requireDashboardAdmin, type PluginArchActorContext } from "./routes/org/plugin-system/access.js"
 import { artifactViewResourceUri } from "./artifact-view-resource.js"
+
+export { requireDashboardAdmin } from "./routes/org/plugin-system/access.js"
 
 const ARTIFACT_VIEW_LIST_LIMIT = 50
 const ARTIFACT_VIEW_REVISION_LIST_LIMIT = 50
@@ -85,6 +87,7 @@ async function accessibleView(input: {
   artifactViewId: string
   role: "viewer" | "manager"
 }): Promise<ArtifactViewRow> {
+  if (input.role === "manager") requireDashboardAdmin(input.context)
   const viewId = parseViewId(input.artifactViewId)
   const rows = await db.select().from(ArtifactViewTable).where(and(
     eq(ArtifactViewTable.id, viewId),
@@ -233,6 +236,7 @@ export async function saveArtifactViewRevision(input: {
   cssSource?: string
   dataMode?: "live" | "snapshot"
 }): Promise<GeneratedArtifactView> {
+  requireDashboardAdmin(input.context)
   const script = await getWorkflowDetail({ context: input.context, configObjectId: input.configObjectId })
   if (!script.canManage) throw new Error("artifact_view_not_found")
   if (!script.currentVersion.outputSchema || !script.currentVersion.outputSchemaDigest) {
