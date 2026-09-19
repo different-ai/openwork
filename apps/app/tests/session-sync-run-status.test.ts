@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, jest, setSystemTime, spyOn, test } from "bun:test";
 import type { PermissionV2Request, SessionStatus } from "@opencode-ai/sdk/v2/client";
+import type { UIMessage } from "ai";
 
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { markTaskRunStart, takeTaskRunStart } from "../src/app/lib/analytics";
 import * as notifications from "../src/react-app/shell/desktop-notifications";
 import { createClientV2, createV2EventTranslationState, translateV2Event } from "../src/app/lib/opencode-v2-adapter";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
-import { hasNoNewActivity } from "../src/react-app/domains/session/status/session-progress";
+import { activeDelegatedTasks, hasNoNewActivity, lastTaskProgressAt } from "../src/react-app/domains/session/status/session-progress";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
@@ -231,6 +232,122 @@ afterEach(() => {
   __resetWorkspaceSyncReconcileHealthForTest();
   getReactQueryClient().clear();
   setSystemTime();
+});
+
+describe("active child transcript retention", () => {
+  const childId = "delegated-child";
+
+  function activeChild(kind: "text" | "reasoning" = "text") {
+    jest.useFakeTimers();
+    setSystemTime(1_000);
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => ({ [childId]: { type: "busy" } }));
+    const { input } = createTestSync();
+    const releaseChild = trackWorkspaceSessionSync(input, childId);
+    __applySessionSyncEventForTest(input, {
+      type: "session.status", properties: { sessionID: childId, status: { type: "busy" } },
+    });
+    for (const [owner, messageId] of [[sessionId, "parent-message"], [childId, "child-message"]]) {
+      __applySessionSyncEventForTest(input, {
+        type: "message.updated",
+        properties: { info: { id: messageId, sessionID: owner, role: "assistant", time: { created: 1_000 } } },
+      });
+    }
+    __applySessionSyncEventForTest(input, {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "delegation", sessionID: sessionId, messageID: "parent-message", type: "tool", callID: "delegate", tool: "task",
+        state: { status: "running", input: { description: "Inspect files", subagent_type: "general" },
+          metadata: { sessionId: childId }, time: { start: 1_000 } },
+      } },
+    });
+    __applySessionSyncEventForTest(input, {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "child-part", sessionID: childId, messageID: "child-message", type: kind, text: "Initial",
+        ...(kind === "reasoning" ? { time: { start: 1_000 } } : {}),
+      } },
+    });
+    return { input, releaseChild, queryClient: getReactQueryClient(), key: transcriptKey(workspaceId, childId) };
+  }
+
+  test.each(["text", "reasoning"] as const)("keeps navigation-free child %s progress after transcript GC would run", async (kind) => {
+    const { input, queryClient, key } = activeChild(kind);
+    const tasks = activeDelegatedTasks(queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? []);
+    expect(tasks).toHaveLength(1);
+    setSystemTime(62_000);
+    jest.advanceTimersByTime(61_000);
+    await flushMicrotasks();
+    const progress = () => lastTaskProgressAt(1_000, tasks, useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]);
+    expect(hasNoNewActivity({ active: true, lastProgressAt: progress(), now: Date.now() })).toBe(true);
+    __applySessionSyncEventForTest(input, {
+      type: "message.part.delta",
+      properties: { sessionID: childId, messageID: "child-message", partID: "child-part", field: "text", delta: " continues" },
+    });
+    jest.advanceTimersByTime(100);
+    await flushMicrotasks();
+    expect(queryClient.getQueryData<UIMessage[]>(key)?.[0]?.parts[0]).toMatchObject({ type: kind, text: "Initial continues" });
+    expect(progress()).toBe(Date.now());
+    expect(hasNoNewActivity({ active: true, lastProgressAt: progress(), now: Date.now() })).toBe(false);
+  });
+
+  test("shares one observer across owners and retains a running child after the last route leaves", async () => {
+    const { input, releaseChild, queryClient, key } = activeChild();
+    const releaseOther = trackWorkspaceSessionSync(input, childId);
+    const query = () => queryClient.getQueryCache().find({ queryKey: key, exact: true });
+    expect(query()?.getObserversCount()).toBe(1);
+    releaseChild();
+    expect(query()?.getObserversCount()).toBe(1);
+    releaseOther();
+    jest.advanceTimersByTime(16_000);
+    await flushMicrotasks();
+    expect(query()?.getObserversCount()).toBe(1);
+    const releaseAgain = trackWorkspaceSessionSync(input, childId);
+    expect(query()?.getObserversCount()).toBe(1);
+    releaseAgain();
+    __disposeWorkspaceSessionSyncForTest(input);
+    expect(query()?.getObserversCount()).toBe(0);
+    jest.advanceTimersByTime(16_000);
+    expect(query()).toBeUndefined();
+  });
+
+  test.each(["idle", "error", "deleted"] as const)("releases the baseline on child %s even while its parent still tracks it", async (terminal) => {
+    const { input, queryClient, key } = activeChild();
+    const query = () => queryClient.getQueryCache().find({ queryKey: key, exact: true });
+    expect(query()?.getObserversCount()).toBe(1);
+    if (terminal === "idle") {
+      __applySessionSyncEventForTest(input, { type: "session.idle", properties: { sessionID: childId } });
+    } else if (terminal === "error") {
+      __applySessionSyncEventForTest(input, { type: "session.error", properties: { sessionID: childId } });
+    } else {
+      __applySessionSyncEventForTest(input, { type: "session.deleted", properties: { sessionID: childId } });
+    }
+    await flushMicrotasks();
+    expect(query()?.getObserversCount()).toBe(0);
+    jest.advanceTimersByTime(16_000);
+    expect(query()).toBeUndefined();
+  });
+
+  test("only observes a tracked active baseline, including a run hydrated before tracking", () => {
+    jest.useFakeTimers();
+    setSystemTime(1_000);
+    const { input } = createTestSync();
+    const queryClient = getReactQueryClient();
+    const key = transcriptKey(workspaceId, childId);
+    queryClient.setQueryData<UIMessage[]>(key, []);
+    const query = () => queryClient.getQueryCache().find({ queryKey: key, exact: true });
+    const releaseIdle = trackWorkspaceSessionSync(input, childId);
+    expect(query()?.getObserversCount()).toBe(0);
+    releaseIdle();
+    jest.advanceTimersByTime(600_001);
+    queryClient.setQueryData<UIMessage[]>(key, []);
+    seedSessionStatus(workspaceId, childId, { type: "busy" }, { snapshotStartedAt: 1_001 });
+    expect(query()?.getObserversCount()).toBe(0);
+    const release = trackWorkspaceSessionSync(input, childId);
+    expect(query()?.getObserversCount()).toBe(1);
+    seedSessionStatus(workspaceId, childId, { type: "idle" }, { snapshotStartedAt: 1_002 });
+    expect(query()?.getObserversCount()).toBe(0);
+    release();
+  });
 });
 
 describe("native v2 run lifecycle", () => {

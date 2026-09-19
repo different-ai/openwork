@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import { create } from "zustand";
+import { QueryObserver } from "@tanstack/react-query";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
@@ -92,6 +93,7 @@ type SyncEntry = {
   dispose: () => void;
   disposeTimer: ReturnType<typeof setTimeout> | null;
   trackedSessionRefs: Map<string, number>;
+  transcriptObservers: Map<string, () => void>;
   retainedSessionTimers: Map<string, { timer: ReturnType<typeof setTimeout>; releaseAt: number }>;
   sessionCreatedListeners: ListenerRegistry<NonNullable<SyncOptions["onSessionCreated"]>>;
   sessionUpdatedListeners: ListenerRegistry<NonNullable<SyncOptions["onSessionUpdated"]>>;
@@ -424,6 +426,25 @@ function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0 || entry.retainedSessionTimers.has(sessionId);
 }
 
+function releaseTranscriptObserver(entry: SyncEntry, sessionId: string) {
+  entry.transcriptObservers.get(sessionId)?.();
+  entry.transcriptObservers.delete(sessionId);
+}
+
+function observeActiveTranscript(entry: SyncEntry, sessionId: string) {
+  const record = useSessionActivityStore.getState().recordsByWorkspaceId[entry.input.workspaceId]?.[sessionId];
+  if (!isTrackedSession(entry, sessionId) || !record?.runActive) {
+    releaseTranscriptObserver(entry, sessionId);
+    return;
+  }
+  if (entry.transcriptObservers.has(sessionId)) return;
+  const observer = new QueryObserver<UIMessage[]>(getReactQueryClient(), {
+    queryKey: transcriptKey(entry.input.workspaceId, sessionId),
+    enabled: false,
+  });
+  entry.transcriptObservers.set(sessionId, observer.subscribe(() => {}));
+}
+
 function getSessionUpdatedInfo(event: OpencodeEvent) {
   if (event.type !== "session.updated") return null;
   const props = event.properties;
@@ -522,6 +543,7 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   const retained = entry.retainedSessionTimers.get(sessionId);
   if (retained) clearTimeout(retained.timer);
   entry.retainedSessionTimers.delete(sessionId);
+  releaseTranscriptObserver(entry, sessionId);
   entry.runActiveObservedAt.delete(sessionId);
   entry.assistantMessageCompletedAt.delete(sessionId);
   entry.gatewayUsageRuns.delete(sessionId);
@@ -571,6 +593,7 @@ function disposeWorkspaceSync(key: string, entry: SyncEntry) {
   }
   for (const { timer } of entry.retainedSessionTimers.values()) clearTimeout(timer);
   entry.retainedSessionTimers.clear();
+  for (const sessionId of entry.transcriptObservers.keys()) releaseTranscriptObserver(entry, sessionId);
   entry.cancelDeltaFlush?.();
   entry.deltaFlushLane = null;
   entry.cancelDeltaFlush = null;
@@ -1543,6 +1566,7 @@ function applySessionRunStatus(
     trackLiveSession(entry, sessionId, status, options.source ?? "stream");
   } else {
     entry.liveSessionIds.delete(sessionId);
+    releaseTranscriptObserver(entry, sessionId);
     clearActiveSessionStatusReconcileTimer(entry);
   }
 
@@ -1638,6 +1662,7 @@ function trackLiveSession(entry: SyncEntry, sessionId: string, status: SessionSt
     entry.runActiveObservedAt.set(sessionId, perfNow());
     recordSessionCompletionMark("run-active", { sessionID: sessionId, source, status: status.type });
   }
+  observeActiveTranscript(entry, sessionId);
   scheduleActiveSessionStatusReconciliation(entry);
 }
 
@@ -1714,6 +1739,7 @@ function clearActiveSessionStatusReconcileTimer(entry: SyncEntry) {
 
 function stopTrackingLiveSession(entry: SyncEntry, sessionId: string) {
   entry.liveSessionIds.delete(sessionId);
+  releaseTranscriptObserver(entry, sessionId);
   entry.runActiveObservedAt.delete(sessionId);
   entry.assistantMessageCompletedAt.delete(sessionId);
   clearActiveSessionStatusReconcileTimer(entry);
@@ -1822,6 +1848,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     dispose: () => {},
     disposeTimer: null,
     trackedSessionRefs: new Map(),
+    transcriptObservers: new Map(),
     retainedSessionTimers: new Map(),
     sessionCreatedListeners: createListenerRegistry(input.onSessionCreated),
     sessionUpdatedListeners: createListenerRegistry(input.onSessionUpdated),
@@ -1942,11 +1969,12 @@ export function seedSessionStatus(
     if (questions) activity.replaceWaitingRequests(workspaceId, sessionId, "question", questions.map((item) => item.id));
   }
   queryClient.setQueryData(statusKey(workspaceId, sessionId), status);
-  if (isLiveStatus(status)) {
-    for (const entry of syncs.values()) {
-      if (entry.input.workspaceId === workspaceId) {
-        trackLiveSession(entry, sessionId, status, "snapshot");
-      }
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId !== workspaceId) continue;
+    if (isLiveStatus(status)) {
+      trackLiveSession(entry, sessionId, status, "snapshot");
+    } else {
+      releaseTranscriptObserver(entry, sessionId);
     }
   }
 }
@@ -2133,6 +2161,7 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
     normalizedSessionId,
     (entry.trackedSessionRefs.get(normalizedSessionId) ?? 0) + 1,
   );
+  observeActiveTranscript(entry, normalizedSessionId);
 
   return () => {
     const current = entry.trackedSessionRefs.get(normalizedSessionId) ?? 0;
@@ -2168,6 +2197,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     dispose: () => {},
     disposeTimer: null,
     trackedSessionRefs: new Map(),
+    transcriptObservers: new Map(),
     retainedSessionTimers: new Map(),
     sessionCreatedListeners: createListenerRegistry(input.onSessionCreated),
     sessionUpdatedListeners: createListenerRegistry(input.onSessionUpdated),
@@ -2192,6 +2222,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
   return () => {
     const entry = syncs.get(key);
     if (entry) {
+      for (const sessionId of entry.transcriptObservers.keys()) releaseTranscriptObserver(entry, sessionId);
       for (const { timer } of entry.retainedSessionTimers.values()) clearTimeout(timer);
       if (entry.statusReconcileTimer) clearTimeout(entry.statusReconcileTimer);
       entry.statusReconcileAbort?.abort();
