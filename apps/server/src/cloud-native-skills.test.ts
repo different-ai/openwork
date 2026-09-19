@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs/promises";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import {
   cloudNativeSkillId,
   cloudNativeSkillScopeKey,
   createCloudNativeSkillSync,
+  materializeCloudNativeSkills,
 } from "./cloud-native-skills.js";
 import type { McpFetch } from "./connect-mcp-transport.js";
 import { renderOpencodeV2Config } from "./managed-opencode-v2.js";
@@ -109,6 +111,112 @@ test("fresh fetch materializes every body verbatim under the scope root and regi
     expect(cloud.reads.filter((uri) => uri === BRIEFING_URI)).toHaveLength(2);
     expect(registered).toHaveLength(1);
     expect((await readdir(root)).sort()).toEqual([String(scope)]);
+  });
+});
+
+test("unchanged materialized files skip staging writes and renames without reusing another scope", async () => {
+  await withRoot(async (root) => {
+    const bodies = [{ uri: BRIEFING_URI, content: BRIEFING_BODY }, { uri: TRIAGE_URI, content: TRIAGE_BODY }];
+    const writes = spyOn(fs, "writeFile");
+    const renames = spyOn(fs, "rename");
+    const directories = spyOn(fs, "mkdir");
+    try {
+      const first = await materializeCloudNativeSkills(root, "scope-a", bodies);
+      expect(writes).toHaveBeenCalledTimes(2);
+      expect(renames).toHaveBeenCalledTimes(4);
+      const before = await Promise.all(first.skills.map((skill) => stat(skill.location)));
+      writes.mockClear();
+      renames.mockClear();
+      directories.mockClear();
+
+      expect(await materializeCloudNativeSkills(root, "scope-a", bodies)).toEqual(first);
+      expect(writes).not.toHaveBeenCalled();
+      expect(renames).not.toHaveBeenCalled();
+      expect(directories.mock.calls.map(([path]) => path)).toEqual([root, join(root, "scope-a")]);
+      for (const [index, skill] of first.skills.entries()) {
+        const after = await stat(skill.location);
+        expect(after.ino).toBe(before[index]?.ino);
+        expect(after.mtimeMs).toBe(before[index]?.mtimeMs);
+        expect(after.mode & 0o777).toBe(0o600);
+      }
+      expect(await readdir(root)).toEqual(["scope-a"]);
+
+      const switched = await materializeCloudNativeSkills(root, "scope-b", bodies);
+      expect(writes).toHaveBeenCalledTimes(2);
+      expect(renames).toHaveBeenCalledTimes(4);
+      expect(await readdir(root)).toEqual(["scope-b"]);
+      expect(switched.skills.map((skill) => skill.content)).toEqual(first.skills.map((skill) => skill.content));
+    } finally {
+      writes.mockRestore();
+      renames.mockRestore();
+      directories.mockRestore();
+    }
+  });
+});
+
+test("mixed updates publish only changed files atomically and removal-only syncs do not write", async () => {
+  await withRoot(async (root) => {
+    const triage = { uri: TRIAGE_URI, content: TRIAGE_BODY };
+    const bodies = [{ uri: BRIEFING_URI, content: BRIEFING_BODY }, triage];
+    const first = await materializeCloudNativeSkills(root, "scope", bodies);
+    const briefingPath = join(root, "scope", cloudNativeSkillId(BRIEFING_URI), "SKILL.md");
+    const triagePath = join(root, "scope", cloudNativeSkillId(TRIAGE_URI), "SKILL.md");
+    const original = await fs.open(briefingPath, "r");
+    const triageStat = await stat(triagePath);
+    const writes = spyOn(fs, "writeFile");
+    const renames = spyOn(fs, "rename");
+    try {
+      const updated = `${BRIEFING_BODY}\nUpdated.\n`;
+      const second = await materializeCloudNativeSkills(root, "scope", [{ uri: BRIEFING_URI, content: updated }, triage]);
+      expect(second.skills.map((skill) => skill.id)).toEqual(first.skills.map((skill) => skill.id));
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect(renames).toHaveBeenCalledTimes(2);
+      expect(renames.mock.calls[1]?.[1]).toBe(briefingPath);
+      expect(await readFile(briefingPath, "utf8")).toBe(updated);
+      expect(await original.readFile("utf8")).toBe(BRIEFING_BODY);
+      expect((await stat(briefingPath)).mode & 0o777).toBe(0o600);
+      expect((await stat(triagePath)).ino).toBe(triageStat.ino);
+      expect((await stat(triagePath)).mtimeMs).toBe(triageStat.mtimeMs);
+      writes.mockClear();
+      renames.mockClear();
+
+      const remaining = await materializeCloudNativeSkills(root, "scope", [triage]);
+      expect(remaining.skills.map((skill) => skill.id)).toEqual([cloudNativeSkillId(TRIAGE_URI)]);
+      expect(await readdir(join(root, "scope"))).toEqual([cloudNativeSkillId(TRIAGE_URI)]);
+      expect(await readFile(triagePath, "utf8")).toBe(TRIAGE_BODY);
+      expect(await materializeCloudNativeSkills(root, "scope", [])).toEqual({ root: join(root, "scope"), skills: [] });
+      expect(await readdir(join(root, "scope"))).toEqual([]);
+      expect(await readdir(root)).toEqual(["scope"]);
+      expect(writes).not.toHaveBeenCalled();
+      expect(renames).not.toHaveBeenCalled();
+    } finally {
+      writes.mockRestore();
+      renames.mockRestore();
+      await original.close();
+    }
+  });
+});
+
+test("failed staging preserves published files and pending removals", async () => {
+  await withRoot(async (root) => {
+    const first = await materializeCloudNativeSkills(root, "scope", [
+      { uri: BRIEFING_URI, content: BRIEFING_BODY },
+      { uri: TRIAGE_URI, content: TRIAGE_BODY },
+    ]);
+    const failure = new Error("staging failed");
+    const writes = spyOn(fs, "writeFile").mockRejectedValueOnce(failure);
+    try {
+      await expect(materializeCloudNativeSkills(root, "scope", [
+        { uri: BRIEFING_URI, content: `${BRIEFING_BODY}\nUpdated.\n` },
+      ])).rejects.toBe(failure);
+      for (const skill of first.skills) {
+        expect(await readFile(skill.location, "utf8")).toBe(skill.content);
+      }
+      expect((await readdir(join(root, "scope"))).sort()).toEqual(first.skills.map((skill) => skill.id));
+      expect(await readdir(root)).toEqual(["scope"]);
+    } finally {
+      writes.mockRestore();
+    }
   });
 });
 

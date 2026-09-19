@@ -15,6 +15,7 @@ import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/ope
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
+import { observeSendStep } from "@/app/lib/send-step-diagnostics";
 import { setThemeMode } from "@/app/theme";
 import { t } from "@/i18n";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
@@ -2167,7 +2168,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // The reading preview can omit the current delegated turn. Decide whether
       // this follow-up must interrupt it from cached complete history or one
       // bounded newest read; never wait on the uncapped read.
-      const sendMessages = await openingHistory.readSendHistory({ revealLatest: true });
+      const sendMessages = await observeSendStep("history", () => openingHistory.readSendHistory({ revealLatest: true }));
       if (getQueuedSendGeneration(props.sessionId) !== generation) throw new Error("Send cancelled by Stop.");
       const result = await submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, opencodeClient, props.sessionId,
         sendMessages, async () => {

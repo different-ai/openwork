@@ -180,13 +180,18 @@ export async function materializeCloudNativeSkills(
   await privateDir(root);
   const stage = join(root, `.stage-${randomBytes(6).toString("hex")}`);
   const skills: CloudNativeSkill[] = [];
+  const changed: Array<{ skill: CloudNativeSkill; missing: boolean }> = [];
   try {
-    await privateDir(stage);
     for (const body of bodies) {
       const id = cloudNativeSkillId(body.uri);
+      const skill = { id, uri: body.uri, location: join(scopeDir, id, "SKILL.md"), content: body.content };
+      skills.push(skill);
+      const current = await readFile(skill.location, "utf8").catch(() => null);
+      if (current === skill.content) continue;
+      if (changed.length === 0) await privateDir(stage);
       await privateDir(join(stage, id));
       await writePrivateFile(join(stage, id, "SKILL.md"), body.content);
-      skills.push({ id, uri: body.uri, location: join(scopeDir, id, "SKILL.md"), content: body.content });
+      changed.push({ skill, missing: current === null });
     }
     skills.sort((left, right) => left.id.localeCompare(right.id));
     await privateDir(scopeDir);
@@ -194,11 +199,9 @@ export async function materializeCloudNativeSkills(
     for (const existing of await listDirectories(scopeDir)) {
       if (!keep.has(existing)) await rm(join(scopeDir, existing), { recursive: true, force: true });
     }
-    for (const skill of skills) {
+    for (const { skill, missing } of changed) {
       const target = join(scopeDir, skill.id);
-      const current = await readFile(join(target, "SKILL.md"), "utf8").catch(() => null);
-      if (current === skill.content) continue;
-      if (current === null) {
+      if (missing) {
         await rm(target, { recursive: true, force: true });
         await rename(join(stage, skill.id), target);
       } else {

@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, jest, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import {
@@ -13,6 +13,82 @@ import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
+
+describe("send-step diagnostics", () => {
+  test.each([
+    { suffix: "/skill", step: "v2_skill_catalog", count: 1 },
+    { suffix: "/permission", step: "v2_permission", count: 2 },
+    { suffix: "/model", step: "v2_model_setting", count: 3 },
+    { suffix: "/instructions/entries/openwork-context", step: "v2_context_put", count: 4 },
+    { suffix: "/prompt", step: "v2_native_prompt", count: 5 },
+  ])("warns for pending $step without duplicating or advancing requests", async ({ suffix, step, count }) => {
+    jest.useFakeTimers();
+    let now = 0;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const originalFetch = globalThis.fetch;
+    const paths: string[] = [];
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(new Request(input, init).url).pathname;
+      paths.push(path);
+      if (path.endsWith(suffix)) {
+        entered();
+        await gate;
+      }
+      return jsonResponse({ data: path.endsWith("/skill")
+        ? [{ id: "synthetic-private-skill", name: "release" }]
+        : { effect: "allow" } });
+    };
+    let settled = false;
+    const pending = createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
+      sessionID: "synthetic-private-session",
+      model: { providerID: "witness", modelID: "model" },
+      system: "synthetic-private-context synthetic-private-token https://synthetic.invalid/private",
+      parts: [{ type: "text", text: "synthetic-private-prompt" }, ...mentionPromptParts({ type: "skill", name: "release" })],
+    }).then((result) => { settled = true; return result; });
+    try {
+      await reached;
+      now = 1_999;
+      jest.advanceTimersByTime(1_999);
+      expect(warn).not.toHaveBeenCalled();
+      now = 2_000;
+      jest.advanceTimersByTime(1);
+      expect(warn.mock.calls).toEqual([["[send-step] Still pending", {
+        step, durationMs: 2_000, thresholdMs: 2_000,
+      }]]);
+      expect(settled).toBe(false);
+      expect(paths).toHaveLength(count);
+      now += 60_000;
+      jest.advanceTimersByTime(60_000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
+      expect(paths).toHaveLength(count);
+      release();
+      expect((await pending).error).toBeUndefined();
+      expect(paths).toEqual([
+        "/opencode2/api/skill",
+        "/opencode2/api/session/synthetic-private-session/permission",
+        "/opencode2/api/session/synthetic-private-session/model",
+        "/opencode2/api/session/synthetic-private-session/instructions/entries/openwork-context",
+        "/opencode2/api/session/synthetic-private-session/prompt",
+      ]);
+      jest.advanceTimersByTime(60_000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("synthetic");
+    } finally {
+      release();
+      await pending;
+      globalThis.fetch = originalFetch;
+      clock.mockRestore();
+      warn.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+});
 
 describe("explicit native skill attachments", () => {
   test("preserves v1 instructions but attaches live native IDs on v2, deduplicated", async () => {

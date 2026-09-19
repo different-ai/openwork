@@ -17,6 +17,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
+import { observeSendStep } from "./send-step-diagnostics";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
 import type { OpencodeEvent } from "../types";
@@ -1955,7 +1956,7 @@ export function createClientV2(
       if (selections.length) {
         // Resolve against the same workspace's live registry, never guess an ID
         // from prose or silently fall back to asking the model to load a skill.
-        const catalog = await request("GET", "/api/skill", undefined, options?.signal);
+        const catalog = await observeSendStep("v2_skill_catalog", () => request("GET", "/api/skill", undefined, options?.signal));
         if (!catalog.response.ok) return failedResult(catalog);
         for (const selection of selections) {
           const id = readString(selection, "id");
@@ -1971,10 +1972,10 @@ export function createClientV2(
         // The pinned native prompt materializes attachments without running the
         // skill tool's permission check. Ask the engine (including its policy
         // hooks) rather than treating catalog membership as authorization.
-        const permission = await request("POST",
+        const permission = await observeSendStep("v2_permission", () => request("POST",
           `/api/session/${encodeURIComponent(parameters.sessionID)}/permission`,
           { action: "skill", resources: skills.map((skill) => skill.id), save: skills.map((skill) => skill.id) },
-          options?.signal);
+          options?.signal));
         if (!permission.response.ok) return failedResult(permission);
         const effect = readString(responseData(permission.payload), "effect");
         if (effect !== "allow") {
@@ -1984,30 +1985,31 @@ export function createClientV2(
           return unsupportedResult(baseUrl, "skill.attachment", message);
         }
       }
-      const modelResult = await request(
+      const model = parameters.model;
+      const modelResult = await observeSendStep("v2_model_setting", () => request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/model`,
         { model: {
-          providerID: parameters.model.providerID,
-          id: parameters.model.modelID,
+          providerID: model.providerID,
+          id: model.modelID,
           ...(parameters.variant === undefined ? {} : { variant: parameters.variant }),
         } },
         options?.signal,
-      );
+      ));
       if (!modelResult.response.ok) return failedResult(modelResult);
       if (parameters.system !== undefined) {
-        const instructions = await request("PUT",
+        const instructions = await observeSendStep("v2_context_put", () => request("PUT",
           `/api/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
-          { value: parameters.system }, options?.signal);
+          { value: parameters.system }, options?.signal));
         if (!instructions.response.ok) return failedResult(instructions);
       }
       const text = v2PromptText(parameters.parts ?? []);
-      const promptResult = await request(
+      const promptResult = await observeSendStep("v2_native_prompt", () => request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,
         { text, ...(skills.length ? { skills } : {}) },
         options?.signal,
-      );
+      ));
       return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);
     },
     abort: async (
