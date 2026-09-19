@@ -5,6 +5,7 @@ import type { CreateAutomation } from "@openwork/types/automations";
 import type { AutomationProviderCatalog, AutomationModelOption } from "../src/react-app/domains/automations/automation-model-options";
 import type { ModelOption } from "../src/app/types";
 import { fastVariantId } from "@openwork/types/cloud-model-fast";
+import type { OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 
 // Base UI detects DOM support when its module loads.
 GlobalRegistrator.register({ url: "http://localhost" });
@@ -373,6 +374,84 @@ test("long picker labels retain full hover text and select the complete model ID
     host.remove();
     settingsSpy.mockRestore();
     authSpy.mockRestore();
+  }
+});
+
+test("scoped replacement refreshes exact target drift before any local selection is saved", async () => {
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const { UnavailableModelRepick } = await import("../src/react-app/domains/session/modals/unavailable-model-repick");
+  const { createSessionModelActions } = await import("../src/react-app/domains/session/control/session-model-actions");
+  const { useSessionModelStore } = await import("../src/react-app/domains/session/surface/session-model-store");
+  const replacement: OpenworkCatalogModel = {
+    providerId: "fixture",
+    modelId: "available",
+    displayName: "Available model",
+    providerName: "Fixture",
+  };
+  const removed = { providerId: "fixture", modelId: "removed", variant: null, displayName: "Removed model" };
+  const sessions = ["repick-current", "repick-peer"].map((id) => ({
+    id,
+    title: id,
+    directory: "/fixture",
+    time: { archived: 0 },
+    model: { providerID: "fixture", id: "removed" },
+  }));
+  const before = useSessionModelStore.getState().bySessionId;
+  const stored = localStorage.getItem("openwork.sessionModels.v1");
+  const actions = createSessionModelActions({
+    workspaces: [{ id: "fixture", path: "/fixture" }],
+    catalog: async () => [replacement],
+    directory: async () => "/fixture",
+    session: async () => sessions[0],
+    sessions: async () => sessions,
+    statuses: async () => ({ data: {}, response: { status: 200 } }),
+  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); }); };
+  try {
+    await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient, children:
+      createElement(UnavailableModelRepick, {
+        sessionId: "repick-current",
+        workspaceId: "fixture",
+        from: removed,
+        workspaceDefault: null,
+        loadModels: async () => [replacement],
+        modelActions: actions,
+        onClose: () => undefined,
+      }) })));
+    let all: HTMLElement | undefined;
+    for (let attempt = 0; attempt < 20 && (!all || all.getAttribute("aria-disabled") === "true"); attempt += 1) {
+      await flush();
+      all = document.querySelectorAll<HTMLElement>('[role="radio"]')[1];
+    }
+    if (!all) throw new Error("Missing bulk scope");
+    expect(document.querySelectorAll<HTMLElement>('[role="radio"]')[0]?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => all.click());
+    await flush();
+    const firstConfirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Save for 2 sessions");
+    if (!firstConfirm) throw new Error("Missing first confirmation");
+    sessions.push({ id: "repick-new", title: "repick-new", directory: "/fixture", time: { archived: 0 }, model: { providerID: "fixture", id: "removed" } });
+    await act(async () => firstConfirm.click());
+    for (let attempt = 0; attempt < 20 && !document.body.textContent?.includes("Matching sessions changed from 2 to 3"); attempt += 1) await flush();
+    expect(document.body.textContent).toContain("Matching sessions changed from 2 to 3");
+    expect(document.body.textContent).toContain("All 3 matching sessions in this workspace (unarchived)");
+    expect(useSessionModelStore.getState().bySessionId).toEqual(before);
+    const secondConfirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Save for 3 sessions");
+    if (!secondConfirm) throw new Error("Missing refreshed confirmation");
+    await act(async () => secondConfirm.click());
+    await flush();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("Saved for next send");
+    expect(Object.keys(useSessionModelStore.getState().bySessionId)).toEqual(["repick-current", "repick-peer", "repick-new"]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    queryClient.clear();
+    useSessionModelStore.setState({ bySessionId: before });
+    if (stored === null) localStorage.removeItem("openwork.sessionModels.v1");
+    else localStorage.setItem("openwork.sessionModels.v1", stored);
   }
 });
 

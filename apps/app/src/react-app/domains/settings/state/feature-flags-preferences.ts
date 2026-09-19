@@ -29,10 +29,25 @@ export function useFeatureFlagsPreferences() {
     }));
   }, [setPrefs]);
 
+  const unavailableModelRepickEnabled =
+    prefs.featureFlags?.unavailableModelRepick === true;
+
+  const toggleUnavailableModelRepick = useCallback(() => {
+    setPrefs((previous) => ({
+      ...previous,
+      featureFlags: {
+        ...previous.featureFlags,
+        unavailableModelRepick: !previous.featureFlags?.unavailableModelRepick,
+      },
+    }));
+  }, [setPrefs]);
+
   return {
     workspaceRunModeEnabled,
     toggleWorkspaceRunMode,
     microsandboxCreateSandboxEnabled,
     toggleMicrosandboxCreateSandbox,
+    unavailableModelRepickEnabled,
+    toggleUnavailableModelRepick,
   };
 }

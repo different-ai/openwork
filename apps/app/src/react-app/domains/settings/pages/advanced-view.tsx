@@ -20,6 +20,7 @@ import {
   AdvancedOrganizationServerSection,
   AdvancedRuntimeConfigSourcesSection,
   AdvancedRuntimeSection,
+  AdvancedUnavailableModelRepickSection,
   AdvancedWorkspaceRunModeSection,
 } from "./advanced-view-sections";
 
@@ -222,6 +223,8 @@ export function AdvancedView(props: AdvancedViewProps) {
         />
 
         <AdvancedWorkspaceRunModeSection />
+
+        <AdvancedUnavailableModelRepickSection />
 
         <AdvancedDeveloperSection
           busy={props.busy}
