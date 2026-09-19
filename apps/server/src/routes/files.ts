@@ -455,6 +455,11 @@ function normalizeResolvedRelativePath(input: string): string {
   return parts.join("/");
 }
 
+function compareCatalogPaths(left: string, right: string): number {
+  // Distinct filenames can collate equally; cursors need a total order.
+  return left.localeCompare(right) || (left < right ? -1 : left > right ? 1 : 0);
+}
+
 async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDirectories = false) {
   const rootResolved = resolve(workspaceRoot);
   const items: FileSessionCatalogEntry[] = [];
@@ -527,7 +532,7 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
 
   await walk(rootResolved);
 
-  items.sort((a, b) => a.path.localeCompare(b.path));
+  items.sort((a, b) => compareCatalogPaths(a.path, b.path));
   return { items, skippedDirectories };
 }
 
@@ -757,7 +762,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const filtered = entries.filter((entry) => {
       if (!includeDirs && entry.kind === "dir") return false;
       if (!matchesCatalogFilter(entry.path, prefix)) return false;
-      if (after && entry.path <= after) return false;
+      if (after && compareCatalogPaths(entry.path, after) <= 0) return false;
       return true;
     });
 
