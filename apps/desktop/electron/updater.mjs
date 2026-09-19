@@ -264,12 +264,22 @@ async function enableSquirrelDirectContentsWrite(
   await writeDefaults(["write", shipItDefaultsDomain, "SquirrelMacEnableDirectContentsWrite", "-bool", "YES"]);
 }
 
+// Home the ShipIt cache is resolved against. Everything else in the process
+// isolation points HOME at the profile it owns (electronSurfaceEnv in
+// evals/packages/hosts/src/local.ts), but `app.getPath("home")` resolves from
+// the OS account instead, so an isolated launch that overrides HOME would
+// still clean the developer's real cache. Prefer the overridden HOME and fall
+// back to Electron's for a normal install, where the two agree. Exported for
+// tests.
+export function staleUpdaterStateHome(app, env = process.env) {
+  return env?.HOME?.trim() || app.getPath("home");
+}
+
 // Path of the ShipIt cache that, when stuck, keeps aborting future installs.
 // Exported for tests.
-export function staleUpdaterStatePaths(app, shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN) {
+export function staleUpdaterStatePaths(app, shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN, env = process.env) {
   if (process.platform !== "darwin") return [];
-  const home = app.getPath("home");
-  return [path.join(home, "Library", "Caches", shipItDefaultsDomain)];
+  return [path.join(staleUpdaterStateHome(app, env), "Library", "Caches", shipItDefaultsDomain)];
 }
 
 // Remove a previously-failed, half-applied update so the next attempt starts
