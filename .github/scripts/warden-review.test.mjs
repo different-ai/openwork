@@ -567,3 +567,20 @@ test("clearance workflow fails closed before guard matching and revokes every ap
   assert.match(revoke, /while IFS= read -r rid;/);
   assert.doesNotMatch(revoke, /\| last|\|\| echo "Could not dismiss/);
 });
+
+test("verified revert skips analysis honestly; clearance independently verifies without a receipt or approval", () => {
+  const marker = wardenWorkflow.slice(wardenWorkflow.indexOf("- name: Record verified revert exemption"), wardenWorkflow.indexOf("- name: Checkout\n"));
+  assert.match(marker, /if: needs\.revert-preflight\.outputs\.verified == 'true'/);
+  assert.match(marker, /Warden: not reviewed/);
+  assert.doesNotMatch(marker, /warden-summary\.json|APPROVE|findings_count/);
+  for (const step of ["Checkout", "Analyze", "Fetch trusted review helper", "Report"]) {
+    assert.ok(wardenWorkflow.includes(`- name: ${step}\n        if: needs.revert-preflight.outputs.verified != 'true'`));
+  }
+  const exemption = clearanceWorkflow.split("  clearance:\n")[0];
+  assert.match(exemption, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(exemption, /node scripts\/ci\/revert-preflight\.mjs --clearance/);
+  assert.doesNotMatch(exemption, /APPROVE|secrets\.|pull-requests: write/);
+  assert.match(clearanceWorkflow, /needs\.revert-exemption\.outputs\.verified != 'true'/);
+  const download = clearanceWorkflow.slice(clearanceWorkflow.indexOf("- name: Download review receipt"), clearanceWorkflow.indexOf("- name: Verify receipt producer binding"));
+  assert.doesNotMatch(download, /continue-on-error/); // Ordinary missing receipts still fail closed.
+});

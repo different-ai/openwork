@@ -20,22 +20,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  revert-preflight:
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      verified: ${{ steps.revert.outcome == 'success' && steps.revert.outputs.verified == 'true' }}
+    steps:
+      - name: Checkout immutable base for revert preflight
+        if: >-
+          !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository &&
+          (startsWith(github.event.pull_request.title, 'Revert "') || contains(github.event.pull_request.body, 'This reverts commit '))
+        id: revert-base
+        continue-on-error: true
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify clean revert from trusted base
+        if: steps.revert-base.outcome == 'success'
+        id: revert
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/revert-preflight.mjs
+
   warden:
+    needs: revert-preflight
     # Fork PRs have no secrets, so analysis cannot run there (and clearance
     # is fork-blocked in warden-clearance.yml anyway). Drafts are reviewed too.
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       WARDEN_MODEL: ${{ secrets.WARDEN_MODEL }}
       WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
     steps:
+      # This successful step is only a routing marker. Clearance independently
+      # verifies the producer attempt, current PR, and exact inverse before skipping.
+      - name: Record verified revert exemption
+        if: needs.revert-preflight.outputs.verified == 'true'
+        run: |
+          printf '## Warden: not reviewed\n\nVerified exact clean-revert exemption. Analysis was not run; no normal review receipt or Warden approval is produced.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout
+        if: needs.revert-preflight.outputs.verified != 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - name: Analyze
+        if: needs.revert-preflight.outputs.verified != 'true'
         id: analyze
         uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
         with:
@@ -44,6 +81,7 @@ jobs:
       # Never execute the pull request's copy of this helper: the job has
       # write-capable permissions and the analyzer needs the model secret.
       - name: Fetch trusted review helper
+        if: needs.revert-preflight.outputs.verified != 'true'
         id: trusted-helper
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -135,6 +173,7 @@ jobs:
           echo "completed=true" >> "$GITHUB_OUTPUT"
 
       - name: Report
+        if: needs.revert-preflight.outputs.verified != 'true'
         uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
         with:
           mode: report

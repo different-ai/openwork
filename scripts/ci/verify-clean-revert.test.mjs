@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, test } from "node:test";
+import { eligiblePull, exemptionProducer, preflight, samePull, unguardedFiles } from "./revert-preflight.mjs";
 
 const script = resolve(import.meta.dirname, "verify-clean-revert.mjs");
 const tempDirs = [];
@@ -154,4 +155,104 @@ test("merge API rejection fails the job without claiming success", () => {
   const result = runAutoMerge({}, 1);
   assert.equal(result.status, 1);
   assert.doesNotMatch(result.summary, /Automatic merge requested/);
+});
+
+const repository = "example/repo";
+function pull(base = "b".repeat(40), head = "c".repeat(40)) {
+  return { number: 42, state: "open", draft: false, merged: false, merged_at: null,
+    title: 'Revert "change"', body: "", base: { ref: "dev", sha: base, repo: { full_name: repository } },
+    head: { sha: head, repo: { full_name: repository } } };
+}
+
+test("only ready same-repo dev PRs with full immutable SHAs are candidates", () => {
+  const pr = pull();
+  assert.equal(eligiblePull(pr, repository), true);
+  for (const change of [
+    { draft: true }, { state: "closed" }, { merged: true }, { number: "42" },
+    { title: "ordinary change" }, { base: { ...pr.base, ref: "main" } },
+    { head: { ...pr.head, repo: { full_name: "fork/repo" } } },
+    { base: { ...pr.base, sha: "dev" } }, { head: { ...pr.head, sha: "c".repeat(39) } },
+  ]) assert.equal(eligiblePull({ ...pr, ...change }, repository), false, JSON.stringify(change));
+  assert.equal(samePull(pr, pull(pr.base.sha, "d".repeat(40)), repository), false);
+});
+
+test("policy-changing reverts never receive an exemption", () => {
+  for (const path of [".github/workflows/ci-tests.yml", "scripts/ci/revert-preflight.mjs", "warden.toml",
+    ".warden/README.md", ".agents/skills/review/SKILL.md", ".claude/skills/review.md", ".opencode/config", "AGENTS.md"]) {
+    assert.equal(unguardedFiles(["src/app.ts", path]), false, path);
+  }
+  assert.equal(unguardedFiles([]), false);
+  assert.equal(unguardedFiles(["src/app.ts"]), true);
+});
+
+test("preflight uses the real Git verifier, not the candidate title/body", () => {
+  const { repo, b, c } = fixture();
+  const pr = pull(b, c);
+  const api = (endpoint) => endpoint.endsWith("/git/ref/heads/dev") ? { object: { sha: b } } : pr;
+  const run = (head) => preflight({ event: { pull_request: { ...pr, head: { ...pr.head, sha: head } } }, repository,
+    api: (endpoint) => { const value = api(endpoint); return value === pr ? { ...pr, head: { ...pr.head, sha: head } } : value; },
+    git: (args) => args[0] === "fetch" ? "" : spawnSync("git", args, { cwd: repo, encoding: "utf8" }).stdout,
+    verify: (options) => { const result = verify(repo, "--base", options.base, "--head", options.head);
+      if (result.status !== 0) throw new Error("not exact"); return b; },
+  });
+  assert.equal(run(c).reverted, b);
+  assert.equal(run(b), false); // An unchanged tree is rejected before verification.
+  writeFileSync(resolve(repo, "extra.txt"), "hand edit\n");
+  git(repo, "add", "extra.txt");
+  git(repo, "commit", "-qm", `Revert fake\n\nThis reverts commit ${b}.`);
+  assert.throws(() => run(git(repo, "rev-parse", "HEAD")), /not exact/);
+});
+
+test("stale events/base, unavailable or malformed verifier cannot exempt", () => {
+  const pr = pull();
+  const options = { event: { pull_request: pr }, repository,
+    api: (endpoint) => endpoint.endsWith("/git/ref/heads/dev") ? { object: { sha: pr.base.sha } } : pr,
+    git: () => "src/app.ts\0", verify: () => "a".repeat(40) };
+  assert.ok(preflight(options));
+  assert.equal(preflight({ ...options, verify: () => "verdict=pass" }), false);
+  assert.throws(() => preflight({ ...options, verify: () => { throw new Error("missing helper"); } }), /missing helper/);
+  assert.equal(preflight({ ...options, api: () => pull(pr.base.sha, "d".repeat(40)) }), false);
+  assert.equal(preflight({ ...options, api: (endpoint) => endpoint.endsWith("/git/ref/heads/dev") ? { object: { sha: "d".repeat(40) } } : pr }), false);
+  let reads = 0;
+  assert.equal(preflight({ ...options, api: (endpoint) => endpoint.endsWith("/git/ref/heads/dev")
+    ? { object: { sha: pr.base.sha } } : ++reads === 1 ? pr : pull(pr.base.sha, "d".repeat(40)) }), false);
+});
+
+test("base/head symbolic, abbreviated, option-like and nonexistent SHAs fail", () => {
+  const { repo, b, c } = fixture();
+  for (const bad of ["HEAD", b.slice(0, 8), "--help", "f".repeat(40)]) {
+    assert.notEqual(verify(repo, "--base", bad, "--head", c).status, 0);
+    assert.notEqual(verify(repo, "--base", b, "--head", bad).status, 0);
+  }
+});
+
+test("clearance marker is bound to the successful Warden producer and skipped analysis", () => {
+  const run = { id: 7, run_attempt: 1, name: "Warden", path: ".github/workflows/warden.yml", event: "pull_request",
+    status: "completed", conclusion: "success", head_sha: "c".repeat(40), repository: { full_name: repository }, head_repository: { full_name: repository } };
+  const job = { name: "warden", run_id: 7, head_sha: run.head_sha, conclusion: "success", steps: [
+    { name: "Record verified revert exemption", conclusion: "success" }, { name: "Analyze", conclusion: "skipped" }] };
+  assert.equal(exemptionProducer(run, [job], repository), true);
+  for (const change of [{ event: "push" }, { conclusion: "failure" }, { path: "other.yml" }, { head_repository: { full_name: "fork/repo" } }]) {
+    assert.equal(exemptionProducer({ ...run, ...change }, [job], repository), false);
+  }
+  assert.equal(exemptionProducer(run, [{ ...job, steps: [] }], repository), false);
+  assert.equal(exemptionProducer(run, [{ ...job, head_sha: "d".repeat(40) }], repository), false);
+  assert.equal(exemptionProducer(run, [{ ...job, steps: [...job.steps.slice(0, 1), { name: "Analyze", conclusion: "success" }] }], repository), false);
+});
+
+test("existing aggregate accepts only the validated exemption and preserves all normal lanes", () => {
+  const workflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/ci-tests.yml"), "utf8");
+  const shell = workflow.split("      - name: Require the selected test lane to pass\n")[1].split("        run: |\n")[1]
+    .split("\n").map((line) => line.replace(/^          /, "")).join("\n");
+  const run = (overrides) => spawnSync("bash", ["-c", shell], { encoding: "utf8", env: { ...process.env,
+    CLASSIFY_RESULT: "success", LANE: "verified-revert", VERIFIED_REVERT: "true", CORE_RESULT: "skipped", BUILD_RESULT: "skipped",
+    AUTHORING_RESULT: "skipped", SNAPSHOT_RESULT: "skipped", DOCS_RESULT: "skipped", ...overrides } }).status;
+  assert.equal(run({}), 0);
+  for (const change of [{ VERIFIED_REVERT: "" }, { VERIFIED_REVERT: "false" }, { CLASSIFY_RESULT: "failure" },
+    { CORE_RESULT: "failure" }, { BUILD_RESULT: "cancelled" }, { AUTHORING_RESULT: "success" }, { LANE: "unknown" }, { LANE: "full" }]) {
+    assert.equal(run(change), 1, JSON.stringify(change));
+  }
+  assert.equal(run({ LANE: "full", CORE_RESULT: "success", BUILD_RESULT: "success", AUTHORING_RESULT: "success" }), 0);
+  assert.equal(run({ LANE: "docs", DOCS_RESULT: "success" }), 0);
+  assert.equal(run({ LANE: "snapshot", SNAPSHOT_RESULT: "success" }), 0);
 });

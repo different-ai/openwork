@@ -45,6 +45,11 @@ function parseRevertedSha(message) {
 }
 
 export function verifyCleanRevert(options, run = spawnSync) {
+  for (const name of ["base", "head", "reverted"]) {
+    if ((name !== "reverted" || options[name]) && !SHA_PATTERN.test(options[name] ?? "")) {
+      throw new Error(`${name} must be a full 40-character commit SHA.`);
+    }
+  }
   const cwd = process.cwd();
   let reverted = options.reverted?.toLowerCase();
   if (!reverted) {
