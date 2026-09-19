@@ -30,17 +30,6 @@ export function getNativeMenuPoint(
   };
 }
 
-export function computeBounds(el: HTMLElement) {
-  const rect = el.getBoundingClientRect();
-
-  return {
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
-  };
-}
-
 export function hasNativeBrowserOccluder() {
   const overlays = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
   for (const overlay of overlays) {

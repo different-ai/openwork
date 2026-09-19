@@ -39,13 +39,12 @@ import type { OpenTarget } from "../artifacts/open-target";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
 import {
-  computeBounds,
   getElectronBrowser,
   getNativeMenuPoint,
   hasNativeBrowserOccluder,
 } from "./utils";
 import { LoginSyncCard } from "../../browser-logins/login-sync-card";
-import { createBrowserBoundsSync } from "./browser-bounds-sync";
+import { computeBrowserBounds, createBrowserBoundsSync } from "./browser-bounds-sync";
 
 type SidePanelProps = {
   sessionId: string;
@@ -267,7 +266,7 @@ function BrowserPanelContent({
 
     const syncBounds = () => {
       if (!ready || disposed) return;
-      boundsSync.sync(computeBounds(content), window.devicePixelRatio, hasNativeBrowserOccluder());
+      boundsSync.sync(computeBrowserBounds(content), window.devicePixelRatio, hasNativeBrowserOccluder());
     };
 
     const invalidateBounds = () => {
