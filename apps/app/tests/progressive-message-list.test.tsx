@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
-import { act, createContext, StrictMode, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { act, createContext, StrictMode, Suspense, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import type { MessageListViewport } from "../src/components/chat/progressive-message-list"
 
@@ -96,7 +96,7 @@ function trackHeightReads(data: readonly Group[]) {
   return () => reads.mock.calls.filter(([key]) => keys.has(key)).length
 }
 
-function fixture(initial = groups(), options: Partial<MessageListViewport> = {}, strict = false, fixedGeometry = false, viewportHeight = 200, listOffset = 0, controller?: "immediate" | "delayed", geometry: { heightAtWidth?: (height: number, width: number) => number; headerHeight?: number; bottomPadding?: number; scrollOptions?: Pick<Parameters<typeof useSessionScrollController>[0], "geometryOwner" | "historyPages" | "windowReady" | "pageForAnchor"> } = {}) {
+function fixture(initial = groups(), options: Partial<MessageListViewport> = {}, strict = false, fixedGeometry = false, viewportHeight = 200, listOffset = 0, controller?: "immediate" | "delayed", geometry: { suspense?: boolean; heightAtWidth?: (height: number, width: number) => number; headerHeight?: number; bottomPadding?: number; scrollOptions?: Pick<Parameters<typeof useSessionScrollController>[0], "geometryOwner" | "historyPages" | "windowReady" | "pageForAnchor"> } = {}) {
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
@@ -105,6 +105,16 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
   let top = 0
   let width = options.viewportWidth ?? 600
   let viewportHidden = false
+  let transcriptHidden = false
+  let suspension: Promise<void> | undefined
+  let reveal = () => {}
+  const layoutMount = mock(() => {})
+  const layoutCleanup = mock(() => {})
+  function DeferredChild() {
+    useLayoutEffect(() => { layoutMount(); return layoutCleanup }, [])
+    if (suspension) throw suspension
+    return null
+  }
   let sticky = false
   let unmounted = false
   let initializedSession: string | undefined
@@ -122,9 +132,11 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
     const height = id ? messages.get(id)?.height ?? 0 : 0
     return geometry.heightAtWidth?.(height, width) ?? height
   }
-  const hidden = (node: Element) => node.hasAttribute("data-thread-group") && !node.hasChildNodes()
+  const transcriptUnavailable = (node: Element): boolean => node !== container && (Boolean(node instanceof HTMLElement && node.style.display === "none")
+    || transcriptHidden && node.hasAttribute("data-thread-virtualized") || Boolean(node.parentElement && transcriptUnavailable(node.parentElement)))
+  const hidden = (node: Element) => transcriptUnavailable(node) || node.hasAttribute("data-thread-group") && !node.hasChildNodes()
   const height = (node: Element): number => {
-    if (viewportHidden) return 0
+    if (viewportHidden || hidden(node)) return 0
     if (fixedGeometry) return node === container ? data.length * 248 : 240
     if (node instanceof HTMLElement && (node.hasAttribute("data-thread-placeholder") || node.hasAttribute("data-thread-loading") || node.hasAttribute("data-thread-test-header"))) return Number.parseFloat(node.style.height) || 0
     if (node.hasAttribute("data-message-id")) return messageHeight(node)
@@ -210,14 +222,17 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
         container.removeEventListener("wheel", onWheel)
       }
     }, [scroll.handleScroll, scroll.markScrollGesture])
+    const list = renderList({ ...viewport, onReady: scroll.refresh,
+      stickyBottom: () => getSessionScrollState(useSessionScrollStore.getState().sessions, viewport.sessionKey, geometry.scrollOptions?.geometryOwner).mode === "stickyBottom" })
+    const fallback = <div data-thread-loading style={{ height: geometry.suspense ? 200 : viewport.scrollHeight ?? 40_000 }} />
     return <div ref={contentRef}>
-      {loading ? <div data-thread-loading style={{ height: viewport.scrollHeight ?? 40_000 }} />
-        : renderList({ ...viewport, onReady: scroll.refresh,
-          stickyBottom: () => getSessionScrollState(useSessionScrollStore.getState().sessions, viewport.sessionKey, geometry.scrollOptions?.geometryOwner).mode === "stickyBottom" })}
+      {loading ? fallback : geometry.suspense ? <Suspense fallback={fallback}>{list}</Suspense> : list}
     </div>
   }
   return {
-    container, ready, writes, rendered, key, ids, unmount,
+    container, ready, writes, rendered, key, ids, unmount, layoutMount, layoutCleanup,
+    suspend() { suspension = new Promise<void>((resolve) => { reveal = () => { suspension = undefined; resolve() } }) },
+    async reveal() { await act(async () => reveal()) },
     async render(next = data, update: Partial<MessageListViewport> = {}, renderer?: (group: Group, index: number) => ReactNode, groupKeyReplacements?: ReadonlyMap<string, string>, priorityMessageId?: string, loading = false) {
       data = next
       messages = new Map([...messages, ...data.flatMap((group) => group.messages.map((message) => [message.id, message] as const))])
@@ -241,7 +256,7 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
           if (renderer) return renderer(group, index)
           return group.messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.id}</div>)
         }}
-      />
+      >{geometry.suspense ? <DeferredChild /> : null}</ProgressiveMessageList>
       const list = controller ? <ControlledList loading={loading} renderList={renderList} /> : renderList(viewport)
       await act(async () => root.render(strict ? <StrictMode>{list}</StrictMode> : list))
     },
@@ -261,6 +276,9 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
     scroll(value: number) { top = value; container.dispatchEvent(new Event("scroll")) },
     setSticky(value: boolean) { sticky = value },
     setHidden(value: boolean) { viewportHidden = value; for (const emit of [...observers]) emit() },
+    setTranscriptHidden(value: boolean) { transcriptHidden = value; this.resizeTranscript() },
+    resizeTranscript() { for (const emit of [...observers]) emit((target) => target !== container) },
+    setListOffset(value: number) { listOffset = value },
     resize(nextWidth = width, nextHeight = viewportHeight) { width = nextWidth; viewportHeight = nextHeight; for (const emit of observers) emit() },
     resizeItemsFirst(nextWidth: number) { width = nextWidth; for (const emit of [...observers]) emit((target) => target.hasAttribute("data-thread-group")) },
     resizeViewport() { for (const emit of [...observers]) emit((target) => target === container) },
@@ -413,6 +431,80 @@ describe("progressive whole-group rendering", () => {
     expect(view.mounted.length).toBeLessThanOrEqual(10)
     expect(frames.size).toBe(0)
   })
+
+  test("preserves group measurements and origin while only the transcript is hidden", async () => {
+    const observe = tanstack.observeElementOffset
+    let instance: Parameters<typeof observe>[0] | undefined
+    spyOn(tanstack, "observeElementOffset").mockImplementation((value, callback) => {
+      instance = value
+      return observe(value, callback)
+    })
+    const view = fixture(groups(), { anchorMessageId: "m40" }, false, false, 612, 1500)
+    await view.render()
+    for (let index = 0; index < 12 && frames.size; index++) await batch()
+    const measurements = instance?.measurementsCache.map((item) => item.size)
+    const margin = instance?.options.scrollMargin
+    expect(margin).toBe(1500)
+    await act(async () => view.setTranscriptHidden(true))
+    await view.render()
+    for (let index = 0; index < 12 && frames.size; index++) await batch()
+    expect(view.container.clientHeight).toBe(612)
+    expect(instance?.measurementsCache.map((item) => item.size)).toEqual(measurements)
+    expect(instance?.options.scrollMargin).toBe(margin)
+    expect(frames.size).toBe(0)
+    view.setListOffset(1700)
+    await act(async () => view.setTranscriptHidden(false))
+    for (let index = 0; index < 12 && frames.size; index++) await batch()
+    expect(instance?.options.scrollMargin).toBe(1700)
+    expect(instance?.measurementsCache.map((item) => item.size)).toEqual(measurements)
+    expect(frames.size).toBe(0)
+  })
+
+  for (const initial of [false, true]) {
+    test.each(["manual", "stickyBottom"])(`restores actual Suspense content at an unchanged viewport (initial: ${initial}, %s)`, async (mode) => {
+      const sessionKey = `suspense-${++sessionId}`
+      const anchor = { messageId: "m40", offset: -75 }
+      if (mode === "manual") useSessionScrollStore.getState().setManualScroll(sessionKey, 125, null, anchor)
+      const data = groups()
+      for (const [index, group] of data.entries()) group.messages[0].height = index % 2 ? 300 : 180
+      const view = fixture(data, { sessionKey, scrollHeight: 19_832,
+        ...(mode === "manual" ? { anchorMessageId: anchor.messageId, scrollTop: 125 } : {}) }, false, false, 612, 16, "immediate", { suspense: true, scrollOptions: {} })
+      if (!initial) {
+        await view.render()
+        for (let index = 0; index < 12 && frames.size; index++) await batch()
+      }
+      const saved = getSessionScrollState(useSessionScrollStore.getState().sessions, sessionKey)
+      const list = view.container.querySelector("[data-thread-virtualized]")
+      const extent = view.container.scrollHeight
+      view.suspend()
+      await view.render()
+      expect(view.container.querySelector("[data-thread-loading]")).not.toBeNull()
+      expect(view.container.clientHeight).toBe(612)
+      if (!initial) {
+        expect(view.container.querySelector("[data-thread-virtualized]")).toBe(list)
+        expect(list?.getBoundingClientRect().width).toBe(0)
+        expect(view.layoutCleanup).toHaveBeenCalledTimes(1)
+      }
+      await act(async () => view.resizeTranscript())
+      for (let index = 0; index < 12 && frames.size; index++) await batch()
+      expect(getSessionScrollState(useSessionScrollStore.getState().sessions, sessionKey)).toEqual(saved)
+      expect(frames.size).toBe(0)
+      await view.reveal()
+      for (let index = 0; index < 12 && frames.size; index++) await batch()
+      expect(view.container.querySelector("[data-thread-loading]")).toBeNull()
+      expect(view.layoutMount).toHaveBeenCalledTimes(initial ? 1 : 2)
+      if (!initial) expect(view.container.scrollHeight).toBe(extent)
+      if (mode === "manual") {
+        expect(view.position("m40")).toBe(-75)
+        expect(getSessionScrollState(useSessionScrollStore.getState().sessions, sessionKey)).toEqual(saved)
+      } else {
+        expect(view.message("m79").getBoundingClientRect().bottom).toBe(view.container.getBoundingClientRect().bottom)
+        expect(getSessionScrollState(useSessionScrollStore.getState().sessions, sessionKey).mode).toBe(mode)
+      }
+      expect(view.mounted.length).toBeLessThanOrEqual(10)
+      expect(frames.size).toBe(0)
+    })
+  }
 
   test("item resize callbacks cannot cache new-width heights in the previous width scope", async () => {
     const data = groups(20)

@@ -143,13 +143,26 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         return rect.bottom > viewport.top && rect.top < viewport.bottom;
       });
     };
+    const transcriptMeasurable = () => {
+      if (container.clientHeight <= 0 || container.getBoundingClientRect().width <= 0 || content.querySelector("[data-thread-loading]")) return false;
+      const transcript = content.querySelector("[data-thread-history-complete], [data-message-id]");
+      return transcript ? transcript.getBoundingClientRect().width > 0
+        : Array.isArray(optionsRef.current.renderedMessages) && optionsRef.current.renderedMessages.length === 0;
+    };
+    const reserveLoadingGeometry = () => {
+      const saved = readState();
+      if (pendingRestore && saved.geometry && saved.geometry.owner === geometryOwner && content.querySelector("[data-thread-loading]")) {
+        container.scrollTop = saved.mode === "manual" ? saved.scrollTop : container.scrollHeight;
+        lastKnownScrollTop = container.scrollTop;
+      }
+    };
     const currentReadingAnchor = () => {
       const anchor = readingAnchor(container, restoredPageAnchorId);
       if (anchor?.messageId !== restoredPageAnchorId) restoredPageAnchorId = undefined;
       return anchor;
     };
     const rememberGeometry = () => {
-      if (!geometryOwner || !scrollKey || !historyReady || pendingRestore || cancelledWhileLoading
+      if (!geometryOwner || !scrollKey || !historyReady || !transcriptMeasurable() || pendingRestore || cancelledWhileLoading
         || container.clientWidth <= 0 || container.clientHeight <= 0 || hasPendingPlaceholders()
         || !content.querySelector('[data-thread-history-complete="true"]') && !optionsRef.current.windowReady) return;
       const viewport = container.getBoundingClientRect();
@@ -193,7 +206,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       });
     };
     const refreshTopClippedMessage = () => {
-      if (active && historyReady) store.setTopClippedMessageId(scrollKey, latestMessageTopClippedId(container));
+      if (active && historyReady && transcriptMeasurable()) store.setTopClippedMessageId(scrollKey, latestMessageTopClippedId(container));
     };
     const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
       if (!active) return;
@@ -209,6 +222,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       container.scrollTo({ top: container.scrollHeight, behavior });
       lastKnownScrollTop = container.scrollTop;
       if (behavior === "auto") scheduleFrame(() => {
+        if (!transcriptMeasurable()) { reconcile(); return; }
         container.scrollTop = container.scrollHeight;
         lastKnownScrollTop = container.scrollTop;
         refreshTopClippedMessage();
@@ -216,12 +230,13 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     };
     const anchorTop = (anchor: SessionScrollAnchor) => {
       const message = messageElementById(container, anchor.messageId);
-      return message ? container.scrollTop + message.getBoundingClientRect().top
+      const rect = message?.getBoundingClientRect();
+      return rect && rect.height > 0 ? container.scrollTop + rect.top
         - container.getBoundingClientRect().top - anchor.offset : null;
     };
     const demandHistory = (direction?: "older" | "newer") => {
       const pages = optionsRef.current.historyPages;
-      if (!active || !historyReady || !pages || pages.loading || pages.failed || pagePending || pendingRestore) return;
+      if (!active || !historyReady || !transcriptMeasurable() || !pages || pages.loading || pages.failed || pagePending || pendingRestore) return;
       const messages = [...content.querySelectorAll<HTMLElement>("[data-message-id]")];
       const first = messages[0];
       const last = messages.at(-1);
@@ -245,7 +260,13 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       void pages.load(next).catch(() => undefined).finally(() => { pagePending = false; });
     };
     const reconcile = () => {
-      if (!active || container.clientHeight === 0) return;
+      if (!active) return;
+      if (!transcriptMeasurable()) {
+        pendingRestore ||= !cancelledWhileLoading;
+        cancelFrames();
+        reserveLoadingGeometry();
+        return;
+      }
       if (pendingTop) {
         if (!topLoadReady || !optionsRef.current.historyComplete) return;
         container.scrollTo({ top: 0, behavior: "instant" });
@@ -297,16 +318,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         else store.setManualScroll(scrollKey, container.scrollTop, clipped, readingAnchor(container));
         return;
       }
-      if (!historyReady) {
-        // Reserve the last known extent while Suspense owns the transcript,
-        // without overwriting the real reading position with a loading clamp.
-        const saved = readState();
-        if (pendingRestore && saved.geometry && saved.geometry.owner === geometryOwner && content.querySelector("[data-thread-loading]")) {
-          container.scrollTop = saved.mode === "manual" ? saved.scrollTop : container.scrollHeight;
-          lastKnownScrollTop = container.scrollTop;
-        }
-        return;
-      }
+      if (!historyReady) return;
       const saved = readState();
       if (pendingRestore) {
         if (saved.mode === "manual") {
@@ -395,6 +407,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     };
     const handleScroll: UIEventHandler<HTMLDivElement> = () => {
       if (!active) return;
+      const measurable = transcriptMeasurable();
       // Layout clamping and our own anchoring also dispatch scroll events. Only
       // actual input may replace the saved reading position or change its mode.
       if (hasScrollGesture() && container.scrollTop !== lastKnownScrollTop) {
@@ -406,8 +419,9 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
         pendingRestore = false;
         pendingSubmittedMessageId = null;
-        if (!historyReady) {
+        if (!historyReady || !measurable) {
           cancelledWhileLoading = true;
+          cancelFrames();
           lastKnownScrollTop = container.scrollTop;
           return;
         }
@@ -423,6 +437,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         if (pagePending || pageAnchor) pageAnchor = currentReadingAnchor();
         demandHistory(container.scrollTop > lastKnownScrollTop ? "newer" : "older");
       } else {
+        if (!measurable) {
+          pendingRestore ||= !cancelledWhileLoading;
+          cancelFrames();
+          lastKnownScrollTop = container.scrollTop;
+          return;
+        }
         const saved = readState();
         if (!pendingRestore && historyReady && container.scrollTop !== lastKnownScrollTop) {
           // Native anchoring can move scrollTop when a diagram/image expands
