@@ -76,7 +76,7 @@ function observeStorageWrites() {
   return writes;
 }
 
-function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useSessionScrollController>[0], "historyPages" | "windowReady" | "pageForAnchor" | "historyComplete" | "ensureFullHistory"> = {}) {
+function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useSessionScrollController>[0], "historyPages" | "windowReady" | "pageForAnchor" | "historyComplete" | "ensureFullHistory" | "submittedMessageId"> = {}) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -171,6 +171,136 @@ function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useS
 }
 
 describe("session reading position", () => {
+  test("start-of-message supersedes pending top navigation even when its history completes late", async () => {
+    let finish = () => {};
+    const cancelRestore = mock(() => {});
+    const options = { historyComplete: false, ensureFullHistory: () => new Promise<void>((resolve) => { finish = resolve; }),
+      historyPages: { version: {}, hasOlder: false, hasNewer: false, loading: false, failed: false, load: async () => {}, cancelRestore } };
+    const view = fixture("owner-a", options);
+    await view.render();
+    const navigation = view.controls.scrollToTop();
+    view.controls.jumpToStartOfMessage("auto");
+    expect(view.container.scrollTop).toBe(600);
+    options.historyComplete = true;
+    await act(async () => finish());
+    await view.render();
+    expect(view.container.scrollTop).toBe(600);
+    expect(await navigation).toBe(false);
+    expect(cancelRestore).toHaveBeenCalledTimes(2);
+  });
+
+  test("start-of-message clears the old page anchor without aborting user paging", async () => {
+    let finish = () => {};
+    const load = mock(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const cancelRestore = mock(() => {});
+    const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false, load, cancelRestore };
+    const view = fixture("owner-a", { historyPages: pages, windowReady: true });
+    await view.render();
+    view.wheel(100);
+    expect(load.mock.calls).toEqual([["older"]]);
+    view.controls.jumpToStartOfMessage("auto");
+    expect(view.container.scrollTop).toBe(600);
+    for (const message of view.layout.messages) message.top += 400;
+    view.layout.height += 400;
+    pages.version = {};
+    await act(async () => finish());
+    await view.render();
+    expect(view.container.scrollTop).toBe(600);
+    expect(state("a", "owner-a").anchor?.messageId).toBe("latest");
+    expect(cancelRestore).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(["resolve", "reject"])("an abandoned top request cannot %s a newer top navigation", async (outcome) => {
+    const reads: { resolve: () => void; reject: (error: Error) => void }[] = [];
+    const options = { historyComplete: true, ensureFullHistory: () => new Promise<void>((resolve, reject) => { reads.push({ resolve, reject }); }) };
+    const view = fixture("owner-a", options);
+    await view.render();
+    const first = view.controls.scrollToTop().catch(() => false);
+    view.controls.jumpToLatest("auto");
+    const second = view.controls.scrollToTop();
+    await act(async () => outcome === "resolve" ? reads[0].resolve() : reads[0].reject(new Error("Abandoned read")));
+    expect(await first).toBe(false);
+    expect(view.container.scrollTop).toBe(800);
+    await act(async () => reads[1].resolve());
+    expect(await second).toBe(true);
+    expect(view.container.scrollTop).toBe(0);
+  });
+
+  test("submission cancels old top and page anchors once without reviving them on later renders", async () => {
+    let finish = () => {};
+    const cancelRestore = mock(() => {});
+    const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false,
+      load: async () => {}, cancelRestore };
+    const options = { historyPages: pages, windowReady: true, historyComplete: false, submittedMessageId: "",
+      ensureFullHistory: () => new Promise<void>((resolve) => { finish = resolve; }) };
+    const view = fixture("owner-a", options);
+    await view.render();
+    view.wheel(100);
+    const navigation = view.controls.scrollToTop();
+    options.submittedMessageId = "latest";
+    await view.render();
+    expect(view.container.scrollTop).toBe(600);
+    options.historyComplete = true;
+    pages.version = {};
+    await act(async () => finish());
+    await view.render();
+    expect(await navigation).toBe(false);
+    expect(view.container.scrollTop).toBe(600);
+    expect(cancelRestore).toHaveBeenCalledTimes(3);
+  });
+
+  test.each(["viewport", "message"])("a %s pointer press cancels page recovery only after actual scrolling", async (target) => {
+    const cancelRestore = mock(() => {});
+    const pages = { version: {}, hasOlder: false, hasNewer: false, loading: true, failed: false, load: async () => {}, cancelRestore };
+    const view = fixture("owner-a", { historyPages: pages });
+    await view.render("a", false);
+    const element = target === "viewport" ? view.container : view.container.querySelector("[data-message-id]");
+    if (!element) throw new Error("Missing pointer target");
+    element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, isPrimary: true, pointerId: 1 }));
+    expect(cancelRestore).not.toHaveBeenCalled();
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+    expect(cancelRestore).not.toHaveBeenCalled();
+    element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, isPrimary: true, pointerId: 2 }));
+    view.scroll(80);
+    expect(cancelRestore).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2 }));
+    await view.render();
+    expect(view.container.scrollTop).toBe(80);
+  });
+
+  test("a wheel gesture without movement keeps the anchor of legitimate pending user paging", async () => {
+    let finish = () => {};
+    const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false,
+      load: () => new Promise<void>((resolve) => { finish = resolve; }) };
+    const view = fixture("owner-a", { historyPages: pages, windowReady: true });
+    await view.render();
+    view.wheel(100);
+    view.wheel(100);
+    for (const message of view.layout.messages) message.top += 400;
+    view.layout.height += 400;
+    pages.version = {};
+    await act(async () => finish());
+    await view.render();
+    expect(view.container.scrollTop).toBe(500);
+    expect(state("a", "owner-a").anchor).toEqual({ messageId: "first", offset: -100 });
+  });
+
+  test("background sticky reconciliation does not cancel history restoration", async () => {
+    const cancelRestore = mock(() => {});
+    const pages = { version: {}, hasOlder: false, hasNewer: false, loading: false, failed: false, load: async () => {}, cancelRestore };
+    const view = fixture("owner-a", { historyPages: pages });
+    await view.render();
+    runFrames();
+    view.layout.height += 100;
+    view.resize();
+    runFrames();
+    expect(view.container.scrollTop).toBe(900);
+    expect(cancelRestore).not.toHaveBeenCalled();
+    view.controls.scrollToBottom();
+    expect(cancelRestore).toHaveBeenCalledTimes(1);
+  });
+
   test.each(["keyboard", "wheel", "pointer"])("a padded page prepend preserves its boundary anchor until the next %s gesture", async (gesture) => {
     let finish = () => {};
     const load = mock(() => new Promise<void>((resolve) => { finish = resolve; }));

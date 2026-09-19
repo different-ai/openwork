@@ -122,6 +122,13 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     let pendingTop: ((completed: boolean) => void) | null = null;
     let topLoadReady = false;
     const cancelTop = () => { pendingTop?.(false); pendingTop = null; };
+    const cancelRestoration = () => {
+      cancelTop();
+      optionsRef.current.historyPages?.cancelRestore?.();
+      pageAnchor = undefined;
+      pendingHistoryDemand = null;
+      pendingReadingAnchor = false;
+    };
     const frames = new Set<number>();
     const hasScrollGesture = () => activePointerId !== null || Date.now() - lastGestureAt < SCROLL_GESTURE_WINDOW_MS;
     const scheduleFrame = (callback: () => void) => {
@@ -347,24 +354,24 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     const scrollToTop = async () => {
       if (!active) return false;
       restoredPageAnchorId = undefined;
-      cancelTop();
+      cancelRestoration();
       cancelFrames();
-      optionsRef.current.historyPages?.cancelRestore?.();
       container.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
       pendingRestore = false;
       pendingSubmittedMessageId = null;
-      pageAnchor = undefined;
       lastGestureAt = -Infinity;
       topLoadReady = false;
-      const position = new Promise<boolean>((resolve) => { pendingTop = resolve; });
+      let finish = (_completed: boolean) => {};
+      const position = new Promise<boolean>((resolve) => { finish = resolve; pendingTop = resolve; });
       try {
         await optionsRef.current.ensureFullHistory?.();
+        if (!active || pendingTop !== finish) return false;
         topLoadReady = true;
         reconcile();
         return await position;
       } catch (error) {
+        if (!active || pendingTop !== finish) return false;
         cancelTop();
-        if (!active) return false;
         throw error;
       }
     };
@@ -374,10 +381,10 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       if (nested && nested !== container) return;
       cancelTop();
       container.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
-      optionsRef.current.historyPages?.cancelRestore?.();
       // Pointer presses may just be clicks. Defer cancelling restoration until
       // they actually scroll; release without scrolling resumes pending follow.
       if (activePointerId === null) {
+        optionsRef.current.historyPages?.cancelRestore?.();
         restoredPageAnchorId = undefined;
         cancelledWhileLoading ||= pendingRestore;
         pendingRestore = false;
@@ -401,6 +408,11 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         // Trackpad momentum can outlast the original wheel/touch event.
         lastGestureAt = Date.now();
         if (activePointerId !== null) {
+          if (!pointerScrolled) {
+            cancelTop();
+            optionsRef.current.historyPages?.cancelRestore?.();
+            container.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
+          }
           pointerScrolled = true;
           restoredPageAnchorId = undefined;
         }
@@ -453,6 +465,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       restoredPageAnchorId = undefined;
       const top = anchorTop(anchor);
       if (top === null) return;
+      cancelRestoration();
       cancelFrames();
       pendingRestore = false;
       pendingSubmittedMessageId = null;
@@ -516,7 +529,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
           const key = JSON.stringify([scrollKey, messageId]);
           if (!submittedMessagesRef.current.has(key)) {
             submittedMessagesRef.current.add(key);
-            cancelTop();
+            cancelRestoration();
             pendingSubmittedMessageId = messageId;
             cancelFrames();
           }
@@ -525,7 +538,13 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       },
       handleScroll,
       markScrollGesture,
-      scrollToBottom,
+      scrollToBottom: (behavior) => {
+        if (!active) return;
+        cancelRestoration();
+        const pages = optionsRef.current.historyPages;
+        if (pages?.hasNewer) void pages.load("latest").catch(() => undefined);
+        scrollToBottom(behavior);
+      },
       scrollToTop,
       jumpToStartOfMessage,
     };
@@ -562,8 +581,6 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     if (controllerRef.current?.sessionId === scrollKey) {
       containerRef.current?.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
-      const pages = optionsRef.current.historyPages;
-      if (pages?.hasNewer) void pages.load("latest").catch(() => undefined);
       controllerRef.current.scrollToBottom(behavior);
     }
   }, [scrollKey, containerRef]);
