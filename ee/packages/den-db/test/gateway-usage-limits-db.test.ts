@@ -695,33 +695,81 @@ dbTest(
 )
 
 dbTest(
-  "one 25% extension per counter, idempotent submit/review, policy A-B-A invalidation and no minted spend",
+  "repeated 25% extensions accumulate, submit/review are idempotent, policy revisions and A-B-A invalidate pending requests",
   async () => {
     const f = await fixture()
-    const p = await f.assigned({ ...f.body, limits: [{ timeframe: "day", costUsd: "0.000005" }] })
-    await f.spend(5)
+    const p = await f.assigned({ ...f.body, limits: [{ timeframe: "day", costUsd: "0.000100" }] })
+    await f.spend(100)
     const day = (await f.service.getStatus(f.member)).buckets[0]
-    const requests = await Promise.all([
-      f.service.submitReset(f.member, day.id, "fixture"),
-      f.service.submitReset(f.member, day.id, "fixture"),
-    ])
-    assert.equal(requests[0].id, requests[1].id)
-    const reviews = await Promise.all([
-      f.service.reviewReset(f.admin, requests[0].id, "approved"),
-      f.service.reviewReset(f.admin, requests[0].id, "approved"),
-    ])
-    assert.deepEqual(reviews[0], reviews[1])
-    assert.equal((await f.service.getStatus(f.member)).buckets[0].allowanceMicroUsd, 7)
+    assert.equal(day.allowanceMicroUsd, 100)
+    const history: Awaited<ReturnType<typeof f.service.reviewReset>>[] = []
+    for (const increase of [1, 2]) {
+      f.setTime(`2026-09-15T12:0${increase}:00Z`)
+      const exhausted = (await f.service.getStatus(f.member)).buckets[0]
+      assert.equal(exhausted.canRequestReset, true)
+      assert.equal(exhausted.remainingMicroUsd, 0)
+      assert.equal(exhausted.allowanceMicroUsd, 100 + 25 * (increase - 1))
+      await assert.rejects(f.service.submitReset(f.member, day.id, "   "))
+      const requests = await Promise.all([
+        f.service.submitReset(f.member, day.id, `Increase ${increase}`),
+        f.service.submitReset(f.member, day.id, `Increase ${increase}`),
+      ])
+      assert.equal(requests[0].id, requests[1].id)
+      assert.ok(history.every((request) => request.id !== requests[0].id))
+      const pending = (await f.service.getStatus(f.member)).buckets[0]
+      assert.equal(pending.canRequestReset, false)
+      assert.equal(pending.resetRequestStatus, "pending")
+      for (const page of [
+        await f.service.listResets(f.member, true),
+        await f.service.listResets(f.admin, false),
+      ]) {
+        assert.equal(page.pendingCount, 1)
+        assert.deepEqual(page.requests, [requests[0]])
+        assert.equal(page.requests[0].status, "pending")
+        assert.equal(page.requests[0].allowanceMicroUsd, exhausted.allowanceMicroUsd)
+      }
+      if (history[0]) {
+        assert.deepEqual(await f.service.reviewReset(f.admin, history[0].id, "approved"), history[0])
+        assert.equal((await f.service.getStatus(f.member)).buckets[0].allowanceMicroUsd, 125)
+      }
+      const reviews = await Promise.all([
+        f.service.reviewReset(f.admin, requests[0].id, "approved"),
+        f.service.reviewReset(f.admin, requests[0].id, "approved"),
+      ])
+      assert.deepEqual(reviews[0], reviews[1])
+      history.unshift(reviews[0])
+      const approved = (await f.service.getStatus(f.member)).buckets[0]
+      assert.equal(approved.extensionMicroUsd, 25 * increase)
+      assert.equal(approved.allowanceMicroUsd, 100 + 25 * increase)
+      assert.equal(approved.usedMicroUsd, exhausted.usedMicroUsd)
+      assert.equal(approved.resetAt, day.resetAt)
+      assert.equal(approved.remainingMicroUsd, 25)
+      assert.equal(approved.canRequestReset, false)
+      assert.equal(approved.resetRequestStatus, "approved")
+      await assert.rejects(f.service.submitReset(f.member, day.id, "Not exhausted"))
+      assert.equal((await f.service.listResets(f.admin, false)).pendingCount, 0)
+      assert.deepEqual((await f.service.listResets(f.admin, false, { view: "history" })).requests, history)
+      assert.deepEqual((await f.service.listResets(f.member, true, { view: "history" })).requests, history)
+      await f.spend(25)
+    }
+    f.setTime("2026-09-15T12:03:00Z")
+    const stale = await f.service.submitReset(f.member, day.id, "Before policy revision")
     const p2 = await f.service.savePolicy(
       f.admin,
-      { ...f.body, limits: [{ timeframe: "day", costUsd: "0.000005" }] },
+      { ...f.body, limits: [{ timeframe: "day", costUsd: "0.000100" }] },
       p.id,
       1,
     )
+    assert.equal((await f.service.reviewReset(f.admin, stale.id, "approved")).status, "expired")
     const rebased = (await f.service.getStatus(f.member)).buckets[0]
-    assert.equal(rebased.usedMicroUsd, 5)
+    assert.equal(rebased.usedMicroUsd, 150)
     assert.equal(rebased.extensionMicroUsd, 0)
-    assert.equal(rebased.canRequestReset, false)
+    assert.equal(rebased.resetAt, day.resetAt)
+    assert.equal(rebased.canRequestReset, true)
+    assert.deepEqual(
+      (await f.service.listResets(f.member, true, { view: "history" })).requests.filter((request) => request.status === "approved"),
+      history,
+    )
     await assert.rejects(f.service.savePolicy(f.admin, f.body, p.id, 1))
     assert.equal(p2.revision, 2)
 
@@ -741,6 +789,33 @@ dbTest(
     assert.equal((await g.service.getStatus(g.member)).buckets[0].usedMicroUsd, 1000000)
   },
 )
+
+dbTest("repeated extensions round up from base and overflow rolls back approval", async () => {
+  const f = await fixture()
+  await f.assigned({ ...f.body, limits: [{ timeframe: "day", costUsd: "0.000005" }] })
+  await f.spend(5)
+  const day = (await f.service.getStatus(f.member)).buckets[0]
+  for (const increase of [1, 2]) {
+    f.setTime(`2026-09-15T12:0${increase}:00Z`)
+    const request = await f.service.submitReset(f.member, day.id, "Rounded increase")
+    await f.service.reviewReset(f.admin, request.id, "approved")
+    const approved = (await f.service.getStatus(f.member)).buckets[0]
+    assert.equal(approved.extensionMicroUsd, 2 * increase)
+    assert.equal(approved.allowanceMicroUsd, 5 + 2 * increase)
+    await f.spend(2)
+  }
+  await f.db.update(B).set({
+    extensionMicroUsd: Number.MAX_SAFE_INTEGER - 5,
+    usedMicroUsd: Number.MAX_SAFE_INTEGER,
+  }).where(eq(B.id, day.id))
+  f.setTime("2026-09-15T12:03:00Z")
+  const request = await f.service.submitReset(f.member, day.id, "Overflow")
+  const [before] = await f.db.select().from(B).where(eq(B.id, day.id))
+  await assert.rejects(f.service.reviewReset(f.admin, request.id, "approved"), /safe integer range/)
+  assert.deepEqual((await f.db.select().from(B).where(eq(B.id, day.id)))[0], before)
+  assert.deepEqual((await f.service.listResets(f.admin, false)).requests, [request])
+  assert.equal((await f.service.listResets(f.member, true, { view: "history" })).requests.length, 2)
+})
 
 dbTest(
   "policy-edit/approval race, elapsed period, member removal and reviewer authorization",
@@ -762,9 +837,17 @@ dbTest(
     await g.assigned()
     await g.spend(1000000)
     const current = (await g.service.getStatus(g.member)).buckets[0]
-    const pending = await g.service.submitReset(g.member, current.id, "elapsed")
+    const first = await g.service.submitReset(g.member, current.id, "First increase")
+    const approved = await g.service.reviewReset(g.admin, first.id, "approved")
+    await g.spend(250000)
+    g.setTime("2026-09-15T12:01:00Z")
+    const pending = await g.service.submitReset(g.member, current.id, "elapsed repeat increase")
     g.setTime(current.resetAt)
     assert.equal((await g.service.reviewReset(g.admin, pending.id, "approved")).status, "expired")
+    assert.deepEqual(await g.service.reviewReset(g.admin, first.id, "approved"), approved)
+    const [expiredBucket] = await g.db.select().from(B).where(eq(B.id, current.id))
+    assert.equal(expiredBucket.extensionMicroUsd, 250000)
+    assert.equal(expiredBucket.usedMicroUsd, 1250000)
     await g.spend(1000000)
     const next = (await g.service.getStatus(g.member)).buckets[0]
     const removed = await g.service.submitReset(g.member, next.id, "removed")

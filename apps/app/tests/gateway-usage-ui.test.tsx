@@ -128,7 +128,7 @@ afterEach(async () => {
 
 test("summary presents day/week/month micro-USD, base/extension, hard/soft, pending and incomplete estimates", () => {
   const first = status.buckets[0];
-  const html = renderToStaticMarkup(<GatewayUsageSummary status={{ ...status, coverage: { complete: false, unpricedRequests: 2 }, buckets: [first, { ...first, id: "week", timeframe: "week", hardLimit: false, canRequestReset: false, resetRequestStatus: "pending" }, { ...approvedUsageStatus().buckets[0], id: "month", timeframe: "month" }] }} onRequest={() => {}} />);
+  const html = renderToStaticMarkup(<GatewayUsageSummary status={{ ...status, coverage: { complete: false, unpricedRequests: 2 }, buckets: [first, { ...first, id: "week", timeframe: "week", hardLimit: false, canRequestReset: false, resetRequestStatus: "pending" }, { ...approvedUsageStatus().buckets[0], id: "month", timeframe: "month", usedMicroUsd: 1_000_000, remainingMicroUsd: 250_000, canRequestReset: false }] }} onRequest={() => {}} />);
   for (const text of ["Daily", "Weekly", "Monthly", "1.30", "1.00", "1.25", "Base", "Extension", "0.00", "0.25", "Hard limit", "Soft limit", "Incomplete accounting", "Increase request pending", "approved", "Running sessions not reflected in usage above", "GMT"]) expect(html).toContain(text);
   expect(html).toContain("<dt>Base</dt><dd>$1.00</dd>");
   expect(html).toContain("<dt>Extension</dt><dd>$0.25</dd>");
@@ -161,7 +161,7 @@ test("hard/soft notices retain usage controls and stale truth disables only the 
   await act(async () => root?.render(<QueryClientProvider client={getReactQueryClient()}><GatewayUsageNotice state="blocked" status={status} stale={true} /></QueryClientProvider>));
   expect(container.textContent).toContain("Out of usage");
   expect(container.textContent).toContain("You've consumed the AI usage limits assigned to you.");
-  expect(container.textContent).toContain("You can request a one time increase to your limits here:");
+  expect(container.textContent).toContain("You can request an increase to your limits here:");
   const notice = container.querySelector('[data-testid="gateway-usage-notice"]');
   expect(notice?.classList.contains("text-destructive")).toBe(false);
   expect(notice?.classList.contains("text-card-foreground")).toBe(true);
@@ -256,7 +256,7 @@ test("eligible bucket opens a titled reset dialog and pending status removes its
   await act(async () => request.click());
   await flush();
   expectTitleOnlySurface("dialog", "Request Increase");
-  expect(document.querySelector('[data-slot="dialog-content"]')?.textContent).toContain("Approval adds 25% of the base allowance once; usage and reset time are unchanged.");
+  expect(document.querySelector('[data-slot="dialog-content"]')?.textContent).toContain("Each approval adds 25% of the base allowance; usage and reset time are unchanged.");
   expect(document.body.textContent).not.toContain("Ask your organization administrator");
   expect(document.querySelector("textarea")?.required).toBe(true);
   status = { ...status, buckets: status.buckets.map((bucket) => ({ ...bucket, canRequestReset: false, resetRequestStatus: "pending" })) };
@@ -275,7 +275,7 @@ test("direct notice opens an increase dialog with a required reason and submits 
   await flush();
   const dialog = document.querySelector('[role="dialog"]');
   expectTitleOnlySurface("dialog", "Request Increase");
-  expect(dialog?.textContent).toContain("Approval adds 25% of the base allowance once; usage and reset time are unchanged.");
+  expect(dialog?.textContent).toContain("Each approval adds 25% of the base allowance; usage and reset time are unchanged.");
   expect(dialog?.textContent).not.toContain("Ask your organization administrator");
   const textarea = dialog?.querySelector("textarea");
   const submit = dialog?.querySelector<HTMLButtonElement>('button[type="submit"]');
@@ -511,32 +511,70 @@ test("reset mutation refetches own truth and prevents a pending duplicate", asyn
   expect(writes).toBe(1);
 });
 
-test("approved extension remains exhausted but cannot request another reset", async () => {
-  const eligible = usageStatus().buckets[0];
-  expect(eligible.extensionMicroUsd).toBe(0);
-  expect(eligible.allowanceMicroUsd).toBe(eligible.baseAllowanceMicroUsd);
-  expect(eligible.remainingMicroUsd).toBe(eligible.allowanceMicroUsd - eligible.usedMicroUsd);
-  expect(eligible.canRequestReset).toBe(true);
-  expect(eligible.resetRequestStatus).toBeNull();
+test("exhausted approved extension opens another reason form and pending prevents duplicates", async () => {
   status = approvedUsageStatus();
   const approved = status.buckets[0];
   expect(approved).toMatchObject({
     baseAllowanceMicroUsd: 1_000_000, extensionMicroUsd: 250_000, allowanceMicroUsd: 1_250_000,
     usedMicroUsd: 1_300_000, remainingMicroUsd: -50_000,
-    canRequestReset: false, resetRequestStatus: "approved",
+    canRequestReset: true, resetRequestStatus: "approved",
   });
-  expect(approved.remainingMicroUsd).toBe(approved.allowanceMicroUsd - approved.usedMicroUsd);
   const html = renderToStaticMarkup(<GatewayUsageSummary status={status} onRequest={() => {}} />);
   expect(html).toContain("approved");
   expect(html).toContain("1.25");
   expect(html).toContain("0.25");
+  expect(html).toContain("Request Increase — Daily");
+  await act(async () => renderProbe());
+  await flush();
+  const request = [...container.querySelectorAll("button")].find((button) => button.textContent === "Request Increase");
+  if (!request) throw new Error("Missing repeat increase action");
+  await act(async () => request.click());
+  await flush();
+  const dialog = document.querySelector('[role="dialog"]');
+  expectTitleOnlySurface("dialog", "Request Increase");
+  expect(dialog?.textContent).toContain("$1.30 used / $1.25 total");
+  expect(dialog?.textContent).toContain("Each approval adds 25% of the base allowance");
+  const textarea = dialog?.querySelector("textarea");
+  const submit = dialog?.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (!textarea || !submit) throw new Error("Missing repeat increase form");
+  expect(textarea.required).toBe(true);
+  expect(submit.disabled).toBe(true);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, " Another extension ");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => submit.click());
+  await flush();
+  expect(submitted).toEqual({ bucketId: approved.id, reason: "Another extension" });
+  expect(writes).toBe(1);
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Request Increase")).toBe(false);
+  expect(latest().data?.buckets[0]).toMatchObject({
+    ...approved, resetRequestStatus: "pending", canRequestReset: false,
+  });
+  const pendingHtml = renderToStaticMarkup(<GatewayUsageSummary status={status} onRequest={() => {}} />);
+  expect(pendingHtml).toContain("Increase request pending");
+  expect(pendingHtml).not.toContain("Request Increase — Daily");
+  await act(async () => {
+    await expect(latest().reset.mutateAsync({ bucketId: approved.id, reason: "Duplicate" })).rejects.toThrow("eligibility");
+  });
+  expect(writes).toBe(1);
+});
+
+test("approved extension with remaining allowance cannot request another increase", async () => {
+  status = approvedUsageStatus();
+  status = { ...status, state: "within_limit", buckets: status.buckets.map((bucket) => ({
+    ...bucket, usedMicroUsd: 1_000_000, remainingMicroUsd: 250_000, canRequestReset: false,
+  })) };
+  const html = renderToStaticMarkup(<GatewayUsageSummary status={status} onRequest={() => {}} />);
+  expect(html).toContain("approved");
   expect(html).not.toContain("Request Increase — Daily");
   await act(async () => renderProbe());
   await flush();
+  expect(container.querySelector('[data-testid="gateway-usage-notice"]')).toBeNull();
   await act(async () => {
-    await expect(latest().reset.mutateAsync({ bucketId: approved.id, reason: "Another extension" })).rejects.toThrow("eligibility");
+    await expect(latest().reset.mutateAsync({ bucketId: status.buckets[0].id, reason: "Too early" })).rejects.toThrow("eligibility");
   });
-  await flush();
   expect(writes).toBe(0);
 });
 

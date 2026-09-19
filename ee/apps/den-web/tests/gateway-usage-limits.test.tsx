@@ -28,7 +28,7 @@ function policy(): GatewayUsageLimitPolicy {
   return { id: "policy-fixture", name: "Standard", revision: 7, hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costLimitMicroUsd: 100_000_001 }], assignments: [] };
 }
 function status(): GatewayUsageStatus {
-  return { organizationId: orgId, memberId: person.id, serverTime: "2026-01-15T05:00:00.000Z", state: "blocked", coverage: { complete: false, unpricedRequests: 2 }, buckets: [{ id: "bucket-fixture", timeframe: "month", policyId: "policy-fixture", policyName: "Standard", baseAllowanceMicroUsd: 100_000_000, allowanceMicroUsd: 125_000_000, extensionMicroUsd: 25_000_000, usedMicroUsd: 130_000_001, remainingMicroUsd: -5_000_001, resetAt: "2099-02-01T05:00:00.000Z", hardLimit: true, allowRequestReset: true, canRequestReset: false, resetRequestStatus: "approved" }] };
+  return { organizationId: orgId, memberId: person.id, serverTime: "2026-01-15T05:00:00.000Z", state: "blocked", coverage: { complete: false, unpricedRequests: 2 }, buckets: [{ id: "bucket-fixture", timeframe: "month", policyId: "policy-fixture", policyName: "Standard", baseAllowanceMicroUsd: 100_000_000, allowanceMicroUsd: 125_000_000, extensionMicroUsd: 25_000_000, usedMicroUsd: 130_000_001, remainingMicroUsd: -5_000_001, resetAt: "2099-02-01T05:00:00.000Z", hardLimit: true, allowRequestReset: true, canRequestReset: true, resetRequestStatus: "approved" }] };
 }
 function trackedCoverage(overrides: Partial<GatewayUsageStatus["coverage"]> = {}): GatewayUsageStatus["coverage"] {
   return {
@@ -415,14 +415,16 @@ test("reset queue previews ceil(base/4), safely renders reasons, approves once a
 });
 
 test("each approval describes only its own financial impact without adding a confirmation step", async () => {
-  const second = { ...reset(), id: "second-request", memberName: "Second person", baseAllowanceMicroUsd: 8_000_000, allowanceMicroUsd: 8_000_000, usedMicroUsd: 9_000_000 };
+  const second = { ...reset(), id: "second-request", memberName: "Second person", baseAllowanceMicroUsd: 8_000_000, allowanceMicroUsd: 10_000_000, usedMicroUsd: 11_000_000 };
   const view = await mount(<GatewayUsageResetRequests orgId={orgId} members={[]} />, (call) => resetListReply(call.path, [reset(), second]));
   try {
     const first = button("Approve 25% for Example Member, 1 month");
     const next = button("Approve 25% for Second person, 1 month");
     expect(first.getAttribute("aria-describedby")).not.toBe(next.getAttribute("aria-describedby"));
     expect(document.getElementById(first.getAttribute("aria-describedby") ?? "")?.textContent).toBe("+$25.000001 allowance ($125.000002 total); may increase provider charges; no undo.");
-    expect(document.getElementById(next.getAttribute("aria-describedby") ?? "")?.textContent).toBe("+$2.00 allowance ($10.00 total); may increase provider charges; no undo.");
+    const nextImpact = document.getElementById(next.getAttribute("aria-describedby") ?? "");
+    expect(nextImpact?.textContent).toBe("+$2.00 allowance ($12.00 total); may increase provider charges; no undo.");
+    expect(nextImpact?.parentElement?.textContent).not.toContain("Approval will still leave this bucket exhausted");
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(button("Deny request for Second person, 1 month").disabled).toBe(false);
     expect(view.calls.every((call) => call.init.method === "GET")).toBe(true);

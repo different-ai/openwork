@@ -82,7 +82,7 @@ export function GatewayResetForm({ bucket, pending, error, onSubmit, submitLabel
     event.preventDefault();
     if (!pending && reason.trim() && reason.trim().length <= 2000) onSubmit(reason.trim());
   }}>
-    <p>{gatewayTimeframeLabels[bucket.timeframe]}: {formatGatewayMoney(bucket.usedMicroUsd)} used / {formatGatewayMoney(bucket.allowanceMicroUsd)} total. Approval adds 25% of the base allowance once; usage and reset time are unchanged.</p>
+    <p>{gatewayTimeframeLabels[bucket.timeframe]}: {formatGatewayMoney(bucket.usedMicroUsd)} used / {formatGatewayMoney(bucket.allowanceMicroUsd)} total. Each approval adds 25% of the base allowance; usage and reset time are unchanged.</p>
     <FieldGroup><Field><FieldLabel htmlFor={id}>Reason (required)</FieldLabel><Textarea id={id} required maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} disabled={pending} /></Field></FieldGroup>
     {error ? <p role="alert">The request could not be confirmed. Check the refreshed usage status before trying again.</p> : null}
     <Button type="submit" disabled={pending || !reason.trim() || reason.trim().length > 2000}>{pending ? "Submitting…" : submitLabel}</Button>
@@ -140,7 +140,7 @@ export function GatewayUsageApprovalNotice() {
     <CheckCircle2 aria-hidden="true" className="size-4" />
     <AlertTitle>Usage increase approved</AlertTitle>
     <AlertDescription className="text-green-11">
-      <p>Your request for a one-time usage increase has been approved.</p>
+      <p>Your request for a usage increase has been approved.</p>
       {approved.map((bucket) => <p key={bucket.id}>{bucket.policyName} - {gatewayTimeframeLabels[bucket.timeframe]}: +{formatGatewayMoney(bucket.extensionMicroUsd)} ({formatGatewayMoney(bucket.allowanceMicroUsd)} total)</p>)}
       {usage.data?.state === "blocked" ? <p>One or more usage limits are still exhausted.</p> : null}
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -187,7 +187,7 @@ export function GatewayUsageNotice({ state, status, stale }: {
       <AlertTitle>{state === "blocked" ? "Out of usage" : "Over estimated usage allowance"}</AlertTitle>
       <AlertDescription>
         <p>{state === "blocked" ? "You've consumed the AI usage limits assigned to you." : "You’re over your estimated usage allowance. Requests are still allowed."}</p>
-        {canRequestIncrease ? <p>You can request a one time increase to your limits here: <Button variant="link" size="sm" className="h-auto px-0 py-0 align-baseline" disabled={stale} onClick={() => setRequestOpen(true)}>Request Increase</Button></p> : null}
+        {canRequestIncrease ? <p>You can request an increase to your limits here: <Button variant="link" size="sm" className="h-auto px-0 py-0 align-baseline" disabled={stale} onClick={() => setRequestOpen(true)}>Request Increase</Button></p> : null}
         {buckets.map((bucket) => <div key={bucket.id} className="flex flex-col gap-1">
           <p>Consumed Limit: {bucket.policyName} - {gatewayTimeframeLabels[bucket.timeframe]}</p>
           <p>Next Reset: <GatewayResetTime value={bucket.resetAt} localOnly /></p>

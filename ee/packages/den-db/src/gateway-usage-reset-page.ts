@@ -220,7 +220,6 @@ export async function readGatewayUsageResetPage(
         member?.userId != null &&
         member.removedAt === null &&
         bucket !== null &&
-        !bucket.extensionUsed &&
         bucket.resetAt.getTime() === period.end.getTime() &&
         bucket.startAt.getTime() === period.start.getTime() &&
         bucket.policyId === request.policyId &&

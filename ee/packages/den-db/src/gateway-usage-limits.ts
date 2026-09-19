@@ -475,7 +475,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
             bucket.policyRevision === row.policyRevision &&
             bucket.baseAllowanceMicroUsd === row.baseAllowanceMicroUsd &&
             bucket.allowRequestReset &&
-            !bucket.extensionUsed &&
             bucket.resetAt > now &&
             current.winners.some(
               (winner) =>
@@ -488,7 +487,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         }
         const extension =
           decision === "approved"
-            ? Math.ceil(bucket.baseAllowanceMicroUsd / 4)
+            ? gatewaySafeMoney(bucket.extensionMicroUsd + Math.ceil(bucket.baseAllowanceMicroUsd / 4))
             : bucket.extensionMicroUsd
         const allowanceMicroUsd = gatewaySafeMoney(bucket.baseAllowanceMicroUsd + extension)
         if (decision === "approved")
