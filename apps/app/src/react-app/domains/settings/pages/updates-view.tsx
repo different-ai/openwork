@@ -16,9 +16,10 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatBytes, formatRelativeTime } from "../../../../app/utils";
-import { t } from "../../../../i18n";
+import { restartWaitingMessagesText, t } from "../../../../i18n";
 import type { ReleaseChannel } from "../../../../app/types";
 import type { SettingsUpdateStatus } from "../state/electron-updater-state";
+import { countComposerQueuedDrafts, useComposerStateStore } from "../../session/surface/composer-state-store";
 import {
   LayoutSectionItem,
   LayoutSectionItemDescription,
@@ -110,6 +111,7 @@ export function UpdatesView(props: UpdatesViewProps) {
   const candidate = updateState === "ready" ? props.updateStatus?.candidate : undefined;
   const installLabel = t("updates.install_version", undefined, { version: updateVersion ?? "" });
 
+  const waitingMessages = useComposerStateStore(countComposerQueuedDrafts);
   const updateRestartActiveRunsMessage =
     updateState === "ready" && props.anyActiveRuns
       ? t("settings.update_restart_active_tasks")
@@ -248,7 +250,16 @@ export function UpdatesView(props: UpdatesViewProps) {
               <ConfirmModal
                 open={confirmRestartOpen}
                 title={t("settings.update_restart_confirm_title")}
-                message={t("settings.update_restart_confirm_message")}
+                message={(
+                  <>
+                    {t("settings.update_restart_confirm_message")}
+                    {waitingMessages > 0 ? (
+                      <span data-testid="update-restart-waiting-messages" className="mt-2 block">
+                        {restartWaitingMessagesText(waitingMessages)}
+                      </span>
+                    ) : null}
+                  </>
+                )}
                 confirmLabel={installLabel}
                 cancelLabel={t("common.cancel")}
                 onConfirm={() => {

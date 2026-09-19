@@ -268,6 +268,14 @@ export function getComposerQueuedDrafts(state: ComposerStateStore, sessionId: st
   return state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
 }
 
+/** Text follow-ups waiting behind running tasks that restart recovery can preserve. */
+export function countComposerQueuedDrafts(state: ComposerStateStore): number {
+  return Object.values(state.queuedDrafts).reduce(
+    (count, items) => count + items.filter((item) => persistableComposerDraftText(item.draft.text).trim().length > 0).length,
+    0,
+  );
+}
+
 export function getComposerRevertMessageId(state: ComposerStateStore, sessionId: string): string | null {
   return state.sessions[sessionId]?.revertMessageId ?? null;
 }
