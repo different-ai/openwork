@@ -3,6 +3,9 @@
  */
 
 export default {
+  "den.workspace_address_or_code": "ワークスペースのアドレスまたはサインインコード",
+  "den.workspace_code_hint": "サインインコードを使う場合は、ワークスペースのアドレスを含むOpenWorkのリンク全体をブラウザーからコピーして貼り付けてください。",
+  "den.signin_return_help": "サインイン後に戻れませんでしたか？ブラウザーのコードを貼り付けてください",
   "app.compact_command_desc": "このセッションを要約してコンテキストサイズを削減します。",
   "app.error_audit_load": "監査ログの読み込みに失敗しました。",
   "app.error_auth_failed": "認証に失敗しました",

@@ -4,6 +4,9 @@
  */
 
 export default {
+  "den.workspace_address_or_code": "Dirección del espacio de trabajo o código de inicio de sesión",
+  "den.workspace_code_hint": "Para un código de inicio de sesión, pega el enlace completo de OpenWork copiado del navegador, incluida la dirección del espacio de trabajo.",
+  "den.signin_return_help": "¿El inicio de sesión no volvió? Pega el código del navegador",
   "app.compact_command_desc": "Resume esta sesión para reducir el contexto.",
   "app.error_audit_load": "No se pudo cargar el audit log.",
   "app.error_auth_failed": "Error de autenticación",

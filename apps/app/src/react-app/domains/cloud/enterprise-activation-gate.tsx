@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 
 import {
   buildDenAuthUrl,
@@ -16,6 +16,7 @@ import { normalizeOrganizationServerInput } from "@/app/lib/organization-server-
 import { DitherBackdrop } from "@/components/dither-backdrop";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { t } from "@/i18n";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
 
@@ -39,7 +40,9 @@ export function useEnterpriseActivationRequired() {
 }
 
 function EnterpriseActivationPage() {
+  const serverInputRef = useRef<HTMLInputElement>(null);
   const [serverInput, setServerInput] = useState("");
+  const [waitingForBrowser, setWaitingForBrowser] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingServerConfirmation | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -50,7 +53,7 @@ function EnterpriseActivationPage() {
   const submitServer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    // The address field quietly accepts a pasted openwork:// sign-in link as
+    // The address field accepts a pasted openwork:// sign-in link as
     // the recovery path when the browser round trip cannot come back.
     const pastedLink = parseManualAuthInput(serverInput);
     if (pastedLink?.baseUrl && pastedLink.grant) {
@@ -137,6 +140,7 @@ function EnterpriseActivationPage() {
         return;
       }
       setStatusMessage("Finish signing in in your browser, then return to OpenWork.");
+      setWaitingForBrowser(true);
     } catch (error) {
       setStatusMessage(null);
       setServerError(
@@ -204,10 +208,11 @@ function EnterpriseActivationPage() {
                   className="text-sm font-medium text-foreground"
                   htmlFor="organization-server-input"
                 >
-                  Workspace address
+                  {t("den.workspace_address_or_code")}
                 </label>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
+                    ref={serverInputRef}
                     id="organization-server-input"
                     data-testid="organization-server-input"
                     value={serverInput}
@@ -218,6 +223,7 @@ function EnterpriseActivationPage() {
                     spellCheck={false}
                     disabled={browserBusy || authBusy}
                     aria-invalid={serverError ? true : undefined}
+                    aria-describedby="organization-server-hint"
                   />
                   <Button
                     type="submit"
@@ -228,8 +234,26 @@ function EnterpriseActivationPage() {
                     Continue
                   </Button>
                 </div>
+                <p id="organization-server-hint" className="text-xs leading-5 text-muted-foreground">
+                  {t("den.workspace_code_hint")}
+                </p>
               </form>
             )}
+
+            {waitingForBrowser && !pendingConfirmation ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-auto justify-start whitespace-normal text-left"
+                disabled={browserBusy || authBusy}
+                onClick={() => {
+                  serverInputRef.current?.focus();
+                  serverInputRef.current?.select();
+                }}
+              >
+                {t("den.signin_return_help")}
+              </Button>
+            ) : null}
 
             {pendingConfirmation ? (
               <section className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
