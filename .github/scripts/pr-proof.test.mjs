@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { changedFiles, proofArtifact, selectProof } from "./pr-proof.mjs";
+import { changedFiles, proofArtifact, safePath, selectProof } from "./pr-proof.mjs";
 
 const file = (filename, status = "modified", previous_filename) => ({ filename, status, ...(previous_filename ? { previous_filename } : {}) });
 
@@ -21,16 +21,33 @@ test("a PR without spec changes selects nothing instead of failing", () => {
   assert.deepEqual(selectProof([]).specs, []);
 });
 
-test("normal Git paths are accepted while traversal, controls, backslashes and duplicates fail closed", () => {
+test("Next.js route groups and dynamic routes preserve proof selection, including renamed paths", () => {
   assert.deepEqual(selectProof([
-    file("ee/apps/den-web/app/(den)/dashboard/a file.ts"),
-    file("packages/docs/café.mdx"),
+    file("ee/apps/den-web/app/(den)/install/page.tsx"),
+    file("ee/apps/den-web/app/(den)/dashboard/(admin)/plugins/[pluginId]/page.tsx"),
+    file("ee/apps/den-web/app/api/auth/[...path]/route.ts"),
+    file("ee/apps/diagnostics/app/via/[scenario]/[[...path]]/route.ts", "renamed",
+      "ee/apps/diagnostics/app/(old)/[[...path]]/route.ts"),
     file("evals/specs/change.e2e.test.ts", "added"),
   ]).specs, ["evals/specs/change.e2e.test.ts"]);
-  for (const files of [
-    [file("../escape.ts")], [file("/absolute.ts")], [file("apps\\escape.ts")],
-    [file("apps/control\n.ts")], [file("apps/a.ts"), file("apps/a.ts")],
-  ]) assert.throws(() => selectProof(files));
+});
+
+test("unsafe path parts fail closed for both current and previous filenames", () => {
+  for (const path of [
+    "", ".", "..", "../escape.ts", "apps/./a.ts", "apps/../a.ts", "/absolute.ts",
+    "apps//a.ts", "apps/a.ts/", "-apps/a.ts", "apps/-a.ts", "apps\\escape.ts",
+    "apps/a file.ts", "apps/a\t.ts", "apps/a\n.ts", "apps/a\0.ts", "apps/a\x7f.ts", "apps/a.ts\n",
+    "apps/a;echo.ts", "apps/a&b.ts", "apps/a|b.ts", "apps/$(echo).ts", "apps/`echo`.ts",
+    "apps/a'b.ts", 'apps/a"b.ts', "apps/a<b.ts", "apps/a>b.ts", "apps/*.ts", "apps/a?.ts",
+    "apps/{a,b}.ts", "apps/!a.ts", "packages/docs/café.mdx", "a".repeat(241),
+  ]) {
+    assert.equal(safePath(path), false, JSON.stringify(path));
+    assert.throws(() => selectProof([file(path)]), /unsafe changed-file listing/);
+    assert.throws(() => selectProof([{ filename: "apps/a.ts", status: "renamed", previous_filename: path }]), /unsafe changed-file listing/);
+  }
+  assert.equal(safePath(null), false);
+  assert.equal(safePath("a".repeat(240)), true);
+  assert.throws(() => selectProof([file("apps/a.ts"), file("apps/a.ts")]), /Duplicate/);
 });
 
 test("changed-file pagination is complete and bounded", async () => {

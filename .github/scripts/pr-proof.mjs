@@ -5,7 +5,8 @@ const SPEC = /^evals\/specs\/.+\.e2e\.test\.ts$/;
 export function safePath(path) {
   return typeof path === "string" && path.length > 0 && path.length <= 240
     && !path.startsWith("/") && !/[\\\0-\x1f\x7f]/u.test(path)
-    && path.split("/").every(part => part.length > 0 && part !== "." && part !== "..");
+    && path.split("/").every(part => part !== "." && part !== ".."
+      && !part.startsWith("-") && /^[a-zA-Z0-9_.()\[\]-]+$/.test(part));
 }
 
 // Every E2E spec the PR added or changed is a proof of its work. Nothing is
