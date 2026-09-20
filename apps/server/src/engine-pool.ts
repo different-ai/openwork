@@ -480,6 +480,14 @@ export class EnginePool {
     return primary ? { pid: primary.handle.pid ?? null, isAlive: primary.handle.isAlive } : null;
   }
 
+  // The engine resolves its catalog cache from the environment it was spawned
+  // with, which is not the server's own environment: a dev profile redirects
+  // XDG_CACHE_HOME at spawn time. Anything invalidating that cache has to read
+  // the same values the engine did.
+  spawnEnv(): NodeJS.ProcessEnv {
+    return this.template.env;
+  }
+
   reportRequestSuccess(baseUrl: string): void {
     if (this.isPrimaryEndpoint(baseUrl)) this.consecutiveConnectionFailures = 0;
   }

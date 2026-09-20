@@ -22,6 +22,7 @@ import {
   type RolloverOutcome,
   type RolloverReason,
 } from "./engine-pool.js";
+import { invalidateOpencodeModelsCache } from "./opencode-models-cache.js";
 import { withEngineDirectoryFence } from "./engine-directory-fence.js";
 import {
   clearEngineInstanceReaperForConfig,
@@ -3425,6 +3426,24 @@ function createRoutes(
       // Explicit reloads also follow provider credential writes, which are not
       // part of the runtime-config fingerprint used by background syncs.
       await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route", manual: true });
+    },
+    refreshModelCatalog: async (routeConfig, workspace) => {
+      // The engine spawns with the server's environment overlaid by the pool's
+      // template, so the catalog cache has to be resolved through that same
+      // composition; reading the server's environment alone points at a
+      // different directory whenever a dev profile redirects XDG_CACHE_HOME.
+      const { removed } = await invalidateOpencodeModelsCache({
+        env: { ...process.env, ...enginePoolForConfig(routeConfig)?.spawnEnv() },
+      });
+      // An idle engine reloads in place and keeps answering from the catalog it
+      // already parsed, so dropping the file alone changes nothing a user can
+      // see. Only a standby generation is a process that fetches it again.
+      await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, {
+        forceStandby: true,
+        reason: "models_refresh",
+        manual: true,
+      });
+      return { invalidated: removed.length };
     },
   });
 

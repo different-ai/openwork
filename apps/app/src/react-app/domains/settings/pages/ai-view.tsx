@@ -42,6 +42,9 @@ export type AiSettingsViewProps = {
   providerSummary: string;
   providerLoadState: ProviderLoadState;
   onRetryProviders: () => void | Promise<void>;
+  onRefreshModels: () => void | Promise<void>;
+  modelsRefreshing: boolean;
+  modelsRefreshedAt: number | null;
   connectedProviders: ConnectedProvider[];
   disconnectingProviderId: string | null;
   providerConnectError: string | null;
@@ -158,8 +161,23 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 />
               ) : null}
             </LayoutSectionItemTitle>
-            {props.canAddProviders ? (
-              <LayoutSectionItemHeaderActions>
+            <LayoutSectionItemHeaderActions>
+              {props.modelsRefreshedAt !== null && !props.modelsRefreshing ? (
+                <span className="text-sm text-gray-11" role="status">
+                  {t("settings.models_refreshed")}
+                </span>
+              ) : null}
+              <Button
+                variant="outline"
+                onClick={() => void props.onRefreshModels()}
+                disabled={props.busy || props.modelsRefreshing || !providersReady}
+                aria-busy={props.modelsRefreshing}
+              >
+                {props.modelsRefreshing
+                  ? t("settings.models_refreshing")
+                  : t("settings.models_refresh")}
+              </Button>
+              {props.canAddProviders ? (
                 <Button
                   onClick={() => void props.onOpenProviderAuth()}
                   disabled={props.busy || props.providerAuthBusy || !providersReady}
@@ -168,8 +186,8 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                     ? t("settings.loading_providers")
                     : t("settings.connect_provider")}
                 </Button>
-              </LayoutSectionItemHeaderActions>
-            ) : null}
+              ) : null}
+            </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
 

@@ -1944,6 +1944,19 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         timeoutMs: ENGINE_RELOAD_TIMEOUT_MS,
       }),
+    refreshModels: (workspaceId: string) =>
+      requestJson<{ ok: boolean; refreshedAt?: number; invalidated?: number }>(
+        baseUrl,
+        `/workspace/${workspaceId}/models/refresh`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          // A refresh drops the catalog cache and rolls the engine, so it
+          // inherits the reload budget rather than the default request one.
+          timeoutMs: ENGINE_RELOAD_TIMEOUT_MS,
+        },
+      ),
     listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(

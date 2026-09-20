@@ -527,6 +527,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [token, setToken] = useState("");
   const [openworkClient, setOpenworkClient] = useState<OpenworkServerClient | null>(null);
   const [activeClient, setActiveClient] = useState<Client | null>(null);
+  const [modelCatalogRefreshing, setModelCatalogRefreshing] = useState(false);
+  const [modelCatalogRefreshedAt, setModelCatalogRefreshedAt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
@@ -1609,6 +1611,28 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return true;
   }, [openworkClient, refreshRouteState, selectedWorkspaceId]);
 
+  // Reloading the engine reuses whatever catalog is already cached on disk, so
+  // a newly released model needs the cache dropped as well as a reload.
+  const refreshModelCatalogFromUi = useCallback(async () => {
+    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId.trim();
+    if (!openworkClient || !workspaceId) {
+      toast.error(t("app.error_connect_first"));
+      return;
+    }
+
+    setModelCatalogRefreshing(true);
+    try {
+      await openworkClient.refreshModels(workspaceId);
+      await refreshProviderListQueries(getReactQueryClient());
+      setModelCatalogRefreshedAt(Date.now());
+    } catch (error) {
+      setModelCatalogRefreshedAt(null);
+      toast.error(error instanceof Error ? error.message : t("settings.models_refresh_failed"));
+    } finally {
+      setModelCatalogRefreshing(false);
+    }
+  }, [openworkClient, selectedWorkspaceId]);
+
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
       canReloadWorkspaceEngine: () => Boolean(openworkClient && (selectedWorkspace?.id || selectedWorkspaceId)),
@@ -2396,6 +2420,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerSummary={providerSummary}
             providerLoadState={activeClient ? providerAuthSnapshot.providerLoadState : { status: "idle", error: null }}
             onRetryProviders={async () => { await providerAuthStore.refreshProviders({ force: true }); }}
+            onRefreshModels={refreshModelCatalogFromUi}
+            modelsRefreshing={modelCatalogRefreshing}
+            modelsRefreshedAt={modelCatalogRefreshedAt}
             connectedProviders={connectedProviders}
             disconnectingProviderId={null}
             providerConnectError={providerAuthSnapshot.providerAuthError}
