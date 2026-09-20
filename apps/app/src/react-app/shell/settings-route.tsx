@@ -1625,9 +1625,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       await openworkClient.refreshModels(workspaceId);
       await refreshProviderListQueries(getReactQueryClient());
       setModelCatalogRefreshedAt(Date.now());
-    } catch (error) {
+    } catch {
+      // Transport failures read as "Failed to fetch", which means nothing to
+      // the people this surface is for; the cause still reaches the logs.
       setModelCatalogRefreshedAt(null);
-      toast.error(error instanceof Error ? error.message : t("settings.models_refresh_failed"));
+      toast.error(t("settings.models_refresh_failed"));
     } finally {
       setModelCatalogRefreshing(false);
     }
