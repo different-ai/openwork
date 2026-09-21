@@ -102,7 +102,7 @@ async function withShell(
       capabilities: {
         gatewayDashboard: false, cloud: true, installLinks: true,
         mcpConnections: options.mcpConnections ?? true,
-        openworkWeb: true, orgManagedDashboards: true, workflows: true,
+        openworkWeb: true, orgManagedDashboards: true, workflows: true, codeModeOptIn: false,
       },
     }),
     orgSelectionOpen: false, orgBusy: false, orgError: null, mutationBusy: null,

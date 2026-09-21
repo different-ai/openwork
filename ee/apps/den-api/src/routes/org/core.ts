@@ -17,6 +17,7 @@ import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } 
 import { env } from "../../env.js"
 import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
+import { codeModeSettingWriteAllowed } from "../../mcp/code-mode-policy.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
@@ -52,11 +53,12 @@ const updateOrganizationSchema = z.object({
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
   requireSso: z.boolean().optional(),
+  codeModeEnabled: z.boolean().optional(),
   brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
   brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
+}).strict().refine((value) => value.codeModeEnabled !== undefined || value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -192,10 +194,16 @@ const invalidBrandIconSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InvalidBrandIconError" })
 
+const codeModeUnavailableSchema = z.object({
+  error: z.literal("code_mode_unavailable"),
+  message: z.string(),
+}).meta({ ref: "CodeModeUnavailableError" })
+
 const updateOrganizationBadRequestSchema = z.union([
   invalidRequestSchema,
   invalidEmailDomainSchema,
   invalidBrandIconSchema,
+  codeModeUnavailableSchema,
 ]).meta({ ref: "UpdateOrganizationBadRequest" })
 
 const accountEmailDomainNotAllowedSchema = z.object({
@@ -484,6 +492,16 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }, 400)
       }
 
+      // Turning Code Mode on is inert without the deployment switch; reject it
+      // instead of storing a flag the MCP catalog will silently ignore.
+      // Turning it off stays allowed so an earlier opt-in can always be cleared.
+      if (!codeModeSettingWriteAllowed(input.codeModeEnabled, { optInEnabled: env.codeModeOptInEnabled })) {
+        return c.json({
+          error: "code_mode_unavailable",
+          message: "Code Mode is not available on this deployment yet.",
+        }, 400)
+      }
+
       const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
       const enablesRequireSso = input.requireSso === true && currentMetadata.requireSso !== true
       const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
@@ -519,6 +537,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         allowedEmailDomains: normalizedDomains.domains,
         allowedDesktopVersions: input.allowedDesktopVersions,
         requireSso: input.requireSso,
+        codeModeEnabled: input.codeModeEnabled,
         brandAppName: input.brandAppName,
         brandLogoUrl: input.brandLogoUrl,
         brandIconUrl: input.brandIconUrl,
@@ -722,9 +741,13 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
             gatingEnabled: env.mcpConnectionsGatingEnabled,
           }),
-          // Workflows/Code Mode are enabled for every organization; the field
-          // remains for published clients that still read it.
+          // Workflows/Code Mode execution are enabled for every organization;
+          // the field remains for published clients that still read it.
           workflows: true,
+          // Deployment switch for the organization Code Mode presentation
+          // opt-in. Off until a supported engine keeps app-only routers out of
+          // the model catalog; the settings UI shows a locked control meanwhile.
+          codeModeOptIn: env.codeModeOptInEnabled,
           installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
             gatingEnabled: env.installLinksGatingEnabled,
           }),

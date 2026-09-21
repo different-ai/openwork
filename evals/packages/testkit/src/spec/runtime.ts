@@ -826,9 +826,9 @@ export class UserChannel implements User {
     });
   }
 
-  screenshot() {
+  screenshot(explicitCaption?: string) {
     const surface = requireSurface(this.#surface);
-    const caption = this.#runtime.currentStepName();
+    const caption = explicitCaption?.trim() || this.#runtime.currentStepName();
     return this.#runtime.call("user", "screenshot", "screenshot", surface, () => screenshot(surface, { caption }));
   }
 

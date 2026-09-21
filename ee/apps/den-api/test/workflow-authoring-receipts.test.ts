@@ -52,6 +52,23 @@ test("foreign organizations and members cannot read or overwrite retained source
   }
 })
 
+test("retained contracts are exact, digest-bound and immune to caller or reader mutation", async () => {
+  const schema = { type: "object", properties: { count: { type: "number" } } }
+  const contract = { input: { count: 2 }, inputSchema: schema, outputSchema: schema }
+  const original = source({ contract, inputDigest: artifactDigest(contract.input),
+    inputSchemaDigest: artifactDigest(schema), outputSchemaDigest: artifactDigest(schema) })
+  expect(await retainWorkflowAuthoringSource(original)).toBe(true)
+  const expected = structuredClone(contract)
+  contract.input.count = 99
+  schema.properties.count.type = "string"
+  const retained = await getWorkflowAuthoringSource(original)
+  expect(retained?.contract).toEqual(expected)
+  if (!retained?.contract) throw new Error("Missing contract")
+  retained.contract.input = { count: -1 }
+  expect((await getWorkflowAuthoringSource(original))?.contract).toEqual(expected)
+  expect(await retainWorkflowAuthoringSource({ ...original, receiptId: createDenTypeId("workflowRun") })).toBe(false)
+})
+
 test("receipt retention is immutable and accepts digests rather than raw input metadata", async () => {
   const original = source()
   expect(await retainWorkflowAuthoringSource(original)).toBe(true)

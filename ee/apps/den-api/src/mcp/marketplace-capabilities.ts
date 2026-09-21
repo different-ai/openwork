@@ -57,6 +57,8 @@ export type AccessibleMarketplaceCapabilityReference = {
   marketplaceId: string | null
   objectType: MarketplaceCapabilityObjectType
   pluginId: string
+  title?: string
+  description?: string | null
 }
 
 export function normalizeRemoteSkillDescription(input: {
@@ -674,6 +676,7 @@ async function filterVisibleRows(input: {
 
 export async function listAccessibleMarketplaceCapabilityReferences(input: {
   enabled?: boolean
+  includeDescriptions?: boolean
   member: McpMemberIdentity | null
   organizationId: string
 }): Promise<AccessibleMarketplaceCapabilityReference[]> {
@@ -695,6 +698,7 @@ export async function listAccessibleMarketplaceCapabilityReferences(input: {
       marketplaceId,
       objectType: canonicalConfigObjectType(row.configObject.objectType),
       pluginId: row.plugin.id,
+      ...(input.includeDescriptions ? { title: row.configObject.title, description: row.configObject.description } : {}),
     })
   }
   return [...references.values()].sort((left, right) => {

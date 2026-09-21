@@ -4,16 +4,11 @@ import type {
   OpenworkCloudMcpProviderModelContext,
 } from "../../../app/lib/openwork-server";
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
+import { cloudMcpCodeModeProjectionSafe, cloudMcpRequiredTools } from "@openwork/types/den/cloud-mcp-tools";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
 export const CLOUD_MCP_SUBMISSION_ATTEMPT_TIMEOUT_MS = 12_000;
 export const CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS = 12_000;
-
-const REQUIRED_DIRECT_TOOL_IDS = ["search_capabilities", "execute_capability"];
-const REQUIRED_PROJECTED_TOOL_IDS = [
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
-];
 
 export type CloudMcpSubmissionIssue = Pick<
   OpenworkCloudMcpFailure,
@@ -228,7 +223,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
   if (
     health.engine.status !== "connected" ||
     !health.tools.direct.checked ||
-    !hasEvery(health.tools.direct.present, REQUIRED_DIRECT_TOOL_IDS) ||
+    !hasEvery(health.tools.direct.present, cloudMcpRequiredTools(health.tools.direct.present)) ||
     health.tools.direct.missing.length > 0
   ) {
     return {
@@ -237,12 +232,20 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "cloud_mcp_direct_tools_unverified",
         stage: "tool_registration",
-        message: "OpenWork Cloud did not prove that search_capabilities and execute_capability are available.",
+        message: "OpenWork Cloud could not verify that connected service tools are available.",
       }),
     };
   }
 
   const projection = health.tools.providerProjection;
+  if (health.tools.direct.present.includes("capability_helper") &&
+    (projection.source !== "experimental_tool" || !cloudMcpCodeModeProjectionSafe(projection.present))) {
+    return { ready: false, health, issue: genericSubmissionIssue({
+      code: "provider_tool_projection_missing", stage: "provider_projection", retryable: false,
+      message: "This client cannot verify Code Mode's private App-tool boundary.",
+      recommendedAction: "Ask your organization owner to turn off Code Mode until a compatible engine is available.",
+    }) };
+  }
   if (
     projection.provider !== input.providerModel.provider ||
     projection.model !== input.providerModel.model
@@ -306,7 +309,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
   }
   if (
     health.usableByCurrentModel !== true ||
-    !hasEvery(projection.present, REQUIRED_PROJECTED_TOOL_IDS) ||
+    !hasEvery(projection.present, cloudMcpRequiredTools(projection.present, "openwork-cloud_")) ||
     projection.missing.length > 0
   ) {
     return {
@@ -316,7 +319,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         code: "provider_tool_projection_missing",
         stage: "provider_projection",
         retryable: false,
-        message: "The selected model is missing search_capabilities or execute_capability.",
+        message: "The selected model is missing required OpenWork Cloud tools.",
         recommendedAction: "Choose a compatible model or open Settings → Connect for diagnostics.",
       }),
     };

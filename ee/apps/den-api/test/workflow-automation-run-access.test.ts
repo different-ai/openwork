@@ -25,9 +25,8 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { PluginArchActorContext } from "../src/routes/org/plugin-system/access.js"
 
-// Scheduling a Workflow executes it. These tests pin the rule that read access
-// to a Workflow is not run access: a viewer may not pin it to a Cloud
-// Automation, while an editor grant (the bar the detail reports as canRun) may.
+// Interactive viewers may run with their own tools, but cannot edit or own
+// unattended Cloud execution. Scheduling retains its editor-or-manager bar.
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_workflow_run_access"
@@ -527,7 +526,7 @@ describe("live generated apps and personal receipts", () => {
       expect(await workflows.getWorkflowSnapshot({ context, configObjectId: seeded.configObjectId, receiptId: foreign })).toBeNull()
     }
     const detail = await workflows.getWorkflowDetail({ context: seeded.viewerContext, configObjectId: seeded.configObjectId })
-    expect(detail.canRun).toBe(false)
+    expect(detail.canRun).toBe(true)
     expect(detail.canManage).toBe(false)
     expect(detail.currentVersion.code).toBeNull()
     expect(detail.latestSuccessfulSnapshot?.finishedAt).not.toBe(seeded.viewerContext.organizationContext.organization.createdAt.toISOString())

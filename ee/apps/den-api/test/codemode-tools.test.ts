@@ -313,6 +313,34 @@ test("live OpenAPI Calendar discovery and Code Mode expose flattened event strin
   expect(disconnected).toHaveLength(1)
   expect(disconnected[0]?.kind).toBe("connection_status")
   expect(disconnected[0]).not.toHaveProperty("outputSchema")
+  const nativeConnections = await import("../src/capability-sources/native-provider-connections.js")
+  const { createCapabilityRegistryContext, executeCapability } = await import("../src/mcp/capability-registry.js")
+  const { isCodeModeHelperCapability } = await import("../src/mcp/code-mode-helper.js")
+  const context = createCapabilityRegistryContext({
+    app, env: undefined, catalog, organizationId, member,
+    principal: { userId: createDenTypeId("user"), organizationId, scopes: new Set(["mcp:read"]), payload: {} },
+    redirectUriBase: "https://openwork.example", generatedArtifactViewsEnabled: false,
+    organizationMetadata: { codeModeEnabled: true }, mcpConnectionsGatingEnabled: false,
+  })
+  const name = disconnected[0]?.name
+  if (!name) throw new Error("Missing status name")
+  const usable = spyOn(nativeConnections, "listNativeProviderUsableEntries").mockResolvedValue([connection])
+  try {
+    expect(await isCodeModeHelperCapability(context, name)).toBe(true)
+    const status = await executeCapability(context, { name })
+    expect(status.isError).not.toBe(true)
+    expect(status.structuredContent).toBeDefined()
+    expect(JSON.stringify(status)).toContain(connection.name)
+    connection.connectedForMe = true
+    expect((await executeCapability(context, { name })).isError).not.toBe(true)
+    usable.mockResolvedValue([])
+    const denied = await executeCapability(context, { name })
+    expect(denied.isError).toBe(true)
+    expect(denied.structuredContent).toBeUndefined()
+    expect((await executeCapability({ ...context, member: null }, { name })).isError).toBe(true)
+  } finally {
+    usable.mockRestore()
+  }
 })
 
 test("generic and Code Mode execution require write scope even for misleading read-only hints", async () => {
@@ -394,10 +422,45 @@ test("generic and Code Mode execution require write scope even for misleading re
       }
       allowed = false
       const before = calls
+      expect((await executeCapability(context, { name: `mcp:${connection.id}:*` })).isError).toBe(true)
       expect((await executeCapability(context, { name: leaf.capabilityName, body: {} })).isError).toBe(true)
       expect((await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: built.tools, timeoutMs: 1_000 })).ok).toBe(false)
       expect(calls).toBe(before)
       allowed = true
+      liveTool = { ...liveTool, _meta: { ui: { resourceUri: "ui://fixture/app" } } }
+      const appTree = await buildExternalMcpToolTree({
+        organizationId, member, scopes, redirectUriBase: context.redirectUriBase,
+        preserveAppHandoffs: true,
+        namespaceContext: {
+          nativeProviderEntries: [], codemodeNativeProviderEntries: [],
+          externalMcpConnections: [connection], codemodeExternalMcpConnections: [connection],
+          namespaces: buildCodemodeConnectionNamespaceMaps({ native: [], externalMcp: [connection] }),
+        },
+      })
+      const beforeApp = calls
+      const appResult = await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: appTree.tools, timeoutMs: 1_000 })
+      expect(appResult).toMatchObject({ ok: false, error: { message: expect.stringContaining("capability_helper") } })
+      expect(calls).toBe(beforeApp)
+      const { isCodeModeHelperCapability } = await import("../src/mcp/code-mode-helper.js")
+      const helperContext = { ...context, resolveNamespaceContext: async () => ({
+        nativeProviderEntries: [], codemodeNativeProviderEntries: [],
+        externalMcpConnections: [connection], codemodeExternalMcpConnections: [connection],
+        namespaces: buildCodemodeConnectionNamespaceMaps({ native: [], externalMcp: [connection] }),
+      }) }
+      expect(await isCodeModeHelperCapability(helperContext, leaf.capabilityName)).toBe(true)
+      liveTool = { ...liveTool, _meta: { ui: { resourceUri: "ui://fixture/app", visibility: ["app"] } } }
+      expect(await isCodeModeHelperCapability(helperContext, leaf.capabilityName)).toBe(false)
+      // A previously model-visible definition cannot authorize a newly private tool.
+      expect((await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: built.tools, timeoutMs: 1_000 })).ok).toBe(false)
+      expect((await executeCapability(context, { name: leaf.capabilityName, body: {}, requireModelVisible: true })).isError).toBe(true)
+      const privateTree = await buildExternalMcpToolTree({
+        organizationId, member, scopes, redirectUriBase: context.redirectUriBase,
+        namespaceContext: await helperContext.resolveNamespaceContext(),
+      })
+      expect(privateTree.manifest).toEqual([])
+      expect((await runCodemodeScript({ code: `return await ${leaf.scriptPath}({})`, tools: privateTree.tools, timeoutMs: 1_000 })).ok).toBe(false)
+      expect(calls).toBe(beforeApp)
+      liveTool = { ...liveTool, _meta: undefined }
     }
   } finally {
     mock.restore()

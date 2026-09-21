@@ -8,6 +8,7 @@ import { Archive, ArrowLeft, Code2, FileText, MoreHorizontal, Pencil, Plus, Serv
 import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenNotice } from "../../_components/ui/notice";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -40,7 +41,6 @@ export function PluginDetailScreen({
   const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: plugin, isLoading, error, refetch } = usePlugin(pluginId);
-  const pluginAccessQuery = usePluginAccess(pluginId);
   const archivePlugin = useArchivePlugin();
   const attachWorkflow = useAttachWorkflowToPlugin(pluginId);
   const libraryQuery = useLibrary();
@@ -55,6 +55,13 @@ export function PluginDetailScreen({
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.roles ?? [],
   );
+
+  const canManageAccess = access.isAdmin
+    || Boolean(plugin?.createdByOrgMembershipId && plugin.createdByOrgMembershipId === orgContext?.currentMember.id)
+    || libraryQuery.data?.some((item) => item.type === "plugin" && item.id === pluginId && item.role === "manager") === true;
+  // Access-grant inventory is manager-only. A viewer can use the contents
+  // without requesting the private audience or displaying a spurious 403.
+  const pluginAccessQuery = usePluginAccess(canManageAccess ? pluginId : "");
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -217,13 +224,13 @@ export function PluginDetailScreen({
       </article>
 
       <div className="mt-6 space-y-6">
-        <PluginAccessSection
+        {canManageAccess ? <PluginAccessSection
           pluginId={plugin.id}
           pluginCreatedByOrgMembershipId={plugin.createdByOrgMembershipId}
           grants={pluginAccessQuery.data ?? []}
           isLoading={pluginAccessQuery.isLoading}
           error={pluginAccessQuery.error}
-        />
+        /> : <DenNotice tone="neutral" message="Sharing is managed by this Plugin's manager." />}
         <SkillsSection orgSlug={orgSlug} plugin={plugin} canEdit={access.isAdmin} />
         <WorkflowsSection
           plugin={plugin}

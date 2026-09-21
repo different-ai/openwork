@@ -49,6 +49,9 @@ export async function bootAppWebWorld(
   deps: typeof dependencies = dependencies,
 ): Promise<Record<string, WorldOutput>> {
   const selectedEnv = appWebEnvironment(env);
+  if (options.place === "daytona" && selectedEnv.OPENWORK_DEV_DEN_API_PROXY_TARGET !== undefined) {
+    throw new Error("A separate Den API proxy target is supported only for local app-web previews.");
+  }
   const lifetimeMinutes = options.lifetimeMinutes ?? 120;
   if (!Number.isInteger(lifetimeMinutes) || lifetimeMinutes < 10 || lifetimeMinutes > 1430) throw new Error("app-web lifetime must be 10-1430 minutes.");
   if (options.place === "daytona" && selectedEnv.OPENWORK_DEV_DEN_PROXY_TARGET !== undefined

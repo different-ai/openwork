@@ -22,6 +22,7 @@ import {
   listWorkflowSnapshots,
   listWorkflowVersions,
   saveWorkflow,
+  getWorkflowAuthoringHistory,
   testWorkflowDraft,
 } from "../../workflows.js"
 import { keysetCursorQuerySchema, nextCursorSchema } from "../../list-pagination.js"
@@ -65,12 +66,12 @@ const saveSchema = z.object({
   pluginId: z.string().trim().min(1).max(160).optional().describe("Existing OpenWork Connect Plugin that will contain and share this Workflow. Omit to use the member's private My Workflows Plugin."),
   name: z.string().trim().min(1).max(255),
   description: z.string().trim().max(4_000).optional(),
-  code: z.string().min(1).max(200_000).optional().describe("Exact tested source. Required without receiptId; if both are supplied it must byte-match the retained source."),
-  receiptId: z.string().min(1).max(160).optional().describe("Successful authoring receipt from this caller within 15 minutes. Encrypted source retention is shared across replicas when Redis is configured, otherwise process-local. If unavailable, retest or omit receiptId and supply the exact source."),
-  currentInput: z.unknown().optional().describe("Must match the tested input when receiptId is supplied. Forbidden for live authoring receipts."),
+  code: z.string().min(1).max(200_000).optional().describe("Legacy code-only save. Omit when using receiptId; the server recovers exact tested source."),
+  receiptId: z.string().min(1).max(160).optional().describe("Preferred: canonical private procedure version ID returned by execute_capability_script. Send only receiptId and name (optional description/pluginId). Source, input and schemas are recovered automatically. Requires its successful run and retained contract, at most 15 minutes old."),
+  currentInput: z.unknown().optional().describe("Legacy assertion only; omit with receiptId. Forbidden for live receipts."),
   inputSchema: z.unknown().optional(),
   outputSchema: z.unknown().optional().describe("Optional JSON Schema for the value returned by this Workflow."),
-}).refine((value) => value.code !== undefined || value.receiptId !== undefined, {
+}).strict().refine((value) => value.code !== undefined || value.receiptId !== undefined, {
   message: "Provide code or receiptId.",
 })
 const savedSchema = z.object({
@@ -160,6 +161,15 @@ function routeFailure(error: unknown) {
     return { status: error.status, body: { error: error.error, message: error.message } } as const
   }
   const message = error instanceof Error ? error.message : "Workflow request failed."
+  if (message.startsWith("workflow_authoring_field_mismatch:")) {
+    const field = message.split(":")[1]
+    return { status: 400, body: { error: "workflow_authoring_field_mismatch", field,
+      message: `${field} differs from the stored procedure version. Send only receiptId and name; omit code, currentInput, inputSchema and outputSchema. To change the procedure, execute a new submission first.` } } as const
+  }
+  if (message === "workflow_authoring_run_not_successful") return { status: 400, body: { error: message,
+    message: "This private procedure attempt failed and cannot be kept as a Workflow. Inspect its authoring history, fix it, then execute a new submission successfully." } } as const
+  if (message === "workflow_authoring_contract_unavailable") return { status: 400, body: { error: message,
+    message: "This older receipt retained only contract digests. Execute the procedure again, then save using only the new receiptId and name." } } as const
   if (message === "app_changed_since_preview") return { status: 409, body: { error: message, message: "This app was saved elsewhere. Reopen it before saving your changes." } } as const
   if (message.includes("not_found")) return { status: 404, body: { error: "workflow_not_found", message } } as const
   if (message === "workflow_matching_test_receipt_required") {
@@ -179,7 +189,7 @@ function routeFailure(error: unknown) {
       status: 400,
       body: {
         error: message,
-        message: "A matching successful authoring receipt and its retained source are required. Source retention lasts at most 15 minutes and is shared across replicas when Redis is configured, otherwise process-local. Configured storage failures do not fall back locally. Retest and use the new receiptId with unchanged source, input, and schemas, or omit receiptId and supply the exact tested source.",
+        message: "The private procedure version is unavailable, expired, belongs to another caller/organization, or has no matching execution record. Retention is bounded to 15 minutes and may evict older entries. Execute again, then send only the new receiptId and name. Do not reconstruct source or schemas.",
       },
     } as const
   }
@@ -257,6 +267,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationMetadata: context.organization.metadata,
       mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
+      codeModeOptInEnabled: env.codeModeOptInEnabled,
     })
     const buildTools = () => buildCapabilityToolTree(capabilityContext)
     const actorContext = { organizationContext: context, memberTeams: teams, session: c.get("session") }
@@ -277,12 +288,33 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     },
   )
 
+  app.get(
+    "/v1/workflow-authoring-history",
+    describeRoute({
+      operationId: "getWorkflowAuthoringHistory", tags: ["Workflows"], summary: "Inspect private Code Mode procedure attempts",
+      description: "Returns up to 50 recent retained procedure versions and their separate execution metadata, including failed attempts. Pass receiptId to inspect one canonical submission/version ID. Only the submitting member in the same organization can read these records; Plugin sharing never exposes them. Retention is bounded to at most 15 minutes; expired or unavailable entries are omitted. These are not library Workflows or shared artifact snapshots.",
+      responses: { 200: jsonResponse("Private retained history.", z.object({ items: z.array(z.unknown()) })) },
+    }),
+    orgMemberRoute(), queryValidator(z.object({ receiptId: z.string().min(1).max(160).optional() })),
+    async (c) => {
+      try {
+        const context = c.get("organizationContext")
+        if (!context) throw new Error("organization_context_required")
+        return c.json(await getWorkflowAuthoringHistory({ organizationId: context.organization.id,
+          ownerMemberId: context.currentMember.id, ...c.req.valid("query") }))
+      } catch (error) {
+        const failure = routeFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
   app.post(
     "/v1/workflows",
     describeRoute({
       operationId: saveWorkflowOperationId,
       tags: ["Workflows"], summary: "Save a successful Code Mode run as a Workflow inside an OpenWork Connect Plugin",
-      description: "Saves a successful authoring run as a reusable Workflow. Supply code or receiptId, or both with byte-identical source. Explicit receiptId requires a successful run from this caller in this organization within 15 minutes, retained source (encrypted shared storage when Redis is configured; process-local otherwise), and exactly matching tested input and schema digests; missing retention fails closed (400 workflow_authoring_receipt_required). Live receipts forbid currentInput, validate with their server-generated runtime, and never save runtime day bounds as example input. Without receiptId, the existing byte-exact recent successful code lookup applies (400 workflow_recent_receipt_required). Literal credentials in source are rejected, not sanitized. The run's tool calls become requiredCapabilities and must still be available. Saving creates no artifact snapshot linkage. Omit pluginId for the private My Workflows Plugin; a chosen Plugin requires editor access. Replacing a same-name Workflow requires manager access.",
+      description: "Keep as Workflow: send {receiptId, name}, optionally description and pluginId. receiptId is the canonical private procedure version ID from execute_capability_script. Do not resubmit code, currentInput, inputSchema, outputSchema or title: the exact stored source and contract are recovered automatically. Requires a matching successful run by this member in this organization, retained within 15 minutes; failed attempts cannot be promoted. Current capabilities and source security are checked again. Legacy code-only saves and exact explicit field assertions remain supported. No authoring execution is linked into shared snapshots. Omit pluginId for private My Workflows; a chosen Plugin requires editor access and inherits existing sharing. Same-name replacement requires manager access. Use the returned configObjectId/configObjectVersionId/pluginId to run the saved Workflow; share through existing Plugin access only when requested.",
       responses: {
         201: jsonResponse("Workflow saved.", savedSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),

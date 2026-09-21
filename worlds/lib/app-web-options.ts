@@ -25,13 +25,13 @@ export function parseAppWebOptions(argv: readonly string[], env: NodeJS.ProcessE
 }
 
 export function appWebEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
-  const allowed = ["OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY", "OPENWORK_DEV_DEN_PROXY_TARGET"];
+  const allowed = ["OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY", "OPENWORK_DEV_DEN_PROXY_TARGET", "OPENWORK_DEV_DEN_API_PROXY_TARGET"];
   let selected: string[] = [];
   if (source.OPENWORK_WORLD_SELECTED_ENV_KEYS !== undefined) {
     let keys: unknown;
     try { keys = JSON.parse(source.OPENWORK_WORLD_SELECTED_ENV_KEYS); } catch { throw new Error("Invalid world environment selection marker."); }
     if (!Array.isArray(keys) || !keys.every((key): key is string => typeof key === "string" && allowed.includes(key))) {
-      throw new Error("app-web --env accepts only OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY and OPENWORK_DEV_DEN_PROXY_TARGET.");
+      throw new Error(`app-web --env accepts only ${allowed.join(", ")}.`);
     }
     selected = keys;
   }
@@ -52,6 +52,19 @@ export function appWebEnvironment(source: NodeJS.ProcessEnv): Record<string, str
       throw new Error("app-web Den proxy target must be a nonsecret HTTP(S) origin.");
     }
     env.OPENWORK_DEV_DEN_PROXY_TARGET = url.origin;
+  }
+  // Local Den can expose web and API on separate ports. Keep sign-in on the
+  // selected web origin while proxying API requests directly, without a 307.
+  const apiTarget = selected.includes("OPENWORK_DEV_DEN_API_PROXY_TARGET") ? source.OPENWORK_DEV_DEN_API_PROXY_TARGET : undefined;
+  if (apiTarget !== undefined) {
+    if (!proxyEnabled || !target) throw new Error("A Den API proxy target requires the enabled Den web proxy and target together.");
+    if (source.OPENWORK_WORLD_PLACE === "daytona") throw new Error("A separate Den API proxy target is supported only for local app-web previews.");
+    let url: URL;
+    try { url = new URL(apiTarget); } catch { throw new Error("Invalid app-web Den API proxy target."); }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+      throw new Error("app-web Den API proxy target must be a nonsecret HTTP(S) origin.");
+    }
+    env.OPENWORK_DEV_DEN_API_PROXY_TARGET = url.origin;
   }
   return env;
 }

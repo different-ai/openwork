@@ -36,11 +36,12 @@ test("Den HTTP proxy sends auth, cookies, method, body and query directly withou
   await new Promise<void>((resolve) => backend.listen(0, "127.0.0.1", resolve));
   const address = backend.address();
   assert(address && typeof address !== "string");
-  const proxy = devDenProxy({ OPENWORK_DEV_HEADLESS_DEN_TARGET: "https://app.openworklabs.com" })["/api/den"];
-  assert.equal(proxy.target, "https://api.openworklabs.com");
+  const proxy = devDenProxy({ OPENWORK_DEV_HEADLESS_DEN_TARGET: "http://127.0.0.1:3005",
+    OPENWORK_DEV_DEN_API_PROXY_TARGET: `http://127.0.0.1:${address.port}` })["/api/den"];
+  assert.equal(proxy.target, `http://127.0.0.1:${address.port}`);
   const vite = await createViteServer({
     configFile: false, logLevel: "silent", server: { host: "127.0.0.1", port: 0,
-      proxy: { "/api/den": { ...proxy, target: `http://127.0.0.1:${address.port}` } },
+      proxy: { "/api/den": proxy },
     },
   });
   try {

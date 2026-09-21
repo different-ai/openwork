@@ -25,6 +25,7 @@ const baseCapabilities: DenOrgCapabilities = {
   openworkWeb: true,
   orgManagedDashboards: true,
   workflows: false,
+  codeModeOptIn: false,
 };
 
 function buildFor(

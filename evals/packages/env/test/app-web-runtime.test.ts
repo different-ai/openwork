@@ -97,6 +97,14 @@ test("remote unsupported targets fail before provisioning", async () => {
     await assert.rejects(bootAppWebWorld(stack, { place: "daytona", ref }, { ...callerEnv, OPENWORK_DEV_DEN_PROXY_TARGET: target }, deps), /supports only/);
     assert.deepEqual(calls, []);
   }
+  const { deps, calls, ref } = fakeWorld();
+  await using stack = new AsyncDisposableStack();
+  await assert.rejects(bootAppWebWorld(stack, { place: "daytona", ref }, {
+    ...callerEnv,
+    OPENWORK_DEV_DEN_API_PROXY_TARGET: "http://127.0.0.1:8790",
+    OPENWORK_WORLD_SELECTED_ENV_KEYS: '["OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY","OPENWORK_DEV_DEN_PROXY_TARGET","OPENWORK_DEV_DEN_API_PROXY_TARGET"]',
+  }, deps), /only for local/);
+  assert.deepEqual(calls, []);
 });
 
 test("app-web failure cleanup deletes its sandbox after launch, source, or security failure", async () => {

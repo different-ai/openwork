@@ -98,11 +98,17 @@ test("async input and output contracts reject authoring before side effects or u
           buildTools, recordRun, retainSource,
         })
         expect(result.isError).toBe(true)
+        const failureText = result.content[0]
+        if (failureText?.type !== "text") throw new Error("Expected failure text")
+        expect(JSON.parse(failureText.text)).toMatchObject({ status: "failed", retention: { canSaveByReceipt: false } })
         expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining('"error":"invalid_schema"') })
         expect(buildTools).not.toHaveBeenCalled()
         expect(dispatch).not.toHaveBeenCalled()
-        expect(recordRun).not.toHaveBeenCalled()
-        expect(retainSource).not.toHaveBeenCalled()
+        // Accepted safe procedures retain a private failed version, never a
+        // successful authoring receipt. Schema rejection still precedes dispatch.
+        expect(recordRun).toHaveBeenCalledTimes(1)
+        expect(recordRun).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", toolCalls: [] }))
+        expect(retainSource).toHaveBeenCalledTimes(1)
       }
     }
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -126,7 +132,8 @@ test("separate authoring callers cannot poison input or output validation throug
     const id = `urn:synthetic:cross-caller:${key}`
     expect((await execute({ code: "return input", input: "value", [key]: { $id: id, type: "string" } }, first)).isError).not.toBe(true)
     expect((await execute({ code: "return input", input: "value", [key]: { $id: id, type: "number" } }, second)).isError).toBe(true)
-    expect(second.retainSource).not.toHaveBeenCalled()
+    expect(second.retainSource).toHaveBeenCalledTimes(1)
+    expect(second.recordRun).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", toolCalls: [] }))
     if (key === "inputSchema") expect(second.buildTools).not.toHaveBeenCalled()
   }
 })

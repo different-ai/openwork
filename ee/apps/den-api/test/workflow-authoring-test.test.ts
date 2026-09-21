@@ -123,7 +123,7 @@ test("live strips mutation, external hinted and undeclared paths even inside try
     const denied = await execute({ mode: "live", code: `return await ${path}({})` }, direct.context)
     expect(denied.isError).toBe(true)
     expect(direct.calls).toEqual([])
-    expect(direct.retainSource).not.toHaveBeenCalled()
+    expect(direct.retainSource).toHaveBeenCalledTimes(1)
     expect(direct.receipts[0]?.status).toBe("failed")
     const caught = fixture()
     const result = await execute({ mode: "live", code: `try { await ${path}({}) } catch (error) { return 2 } return 3` }, caught.context)
@@ -168,7 +168,7 @@ test("live runtime is immutable in the interpreter", async () => {
     const f = fixture()
     expect((await execute({ mode: "live", code }, f.context)).isError).toBe(true)
     expect(f.calls).toEqual([])
-    expect(f.retainSource).not.toHaveBeenCalled()
+    expect(f.retainSource).toHaveBeenCalledTimes(1)
   }
 })
 
@@ -211,11 +211,11 @@ test("input contract fails before dispatch and malformed schemas fail before dis
     expect(result.isError).toBe(true)
     expect(f.buildTools).not.toHaveBeenCalled()
     expect(f.calls).toEqual([])
-    expect(f.retainSource).not.toHaveBeenCalled()
+    expect(f.retainSource).toHaveBeenCalledTimes(Array.isArray(contract.inputSchema) || contract.outputSchema === true ? 0 : 1)
   }
 })
 
-test("output contract fails after real execution without retaining source or durable result", async () => {
+test("output contract failure retains a private inspectable version but no validated result", async () => {
   const f = fixture()
   const result = await execute({ code: "return await tools.den.read({})", outputSchema: { type: "string" } }, f.context)
   expect(result.isError).toBe(true)
@@ -223,10 +223,17 @@ test("output contract fails after real execution without retaining source or dur
   expect(f.receipts[0]).toMatchObject({ status: "failed", errorKind: "InvalidResult", resultDigest: artifactDigest({ count: 2 }) })
   expect(f.receipts[0]).not.toHaveProperty("validatedResult")
   expect(f.receipts[0]).not.toHaveProperty("resultMarkdown")
-  expect(f.retainSource).not.toHaveBeenCalled()
+  expect(f.retainSource).toHaveBeenCalledTimes(1)
+  expect(await f.store.get(f.identity)).toMatchObject({ code: "return await tools.den.read({})", contract: { outputSchema: { type: "string" } } })
+  expect(await f.store.get({ ...f.identity, orgMembershipId: createDenTypeId("member") })).toBeNull()
+  expect(await f.store.get({ ...f.identity, organizationId: createDenTypeId("organization") })).toBeNull()
+  const text = result.content[0]
+  if (text?.type !== "text") throw new Error("Expected failure text")
+  expect(JSON.parse(text.text)).toMatchObject({ runId: f.identity.receiptId, status: "failed", verification: "failed",
+    retention: { available: true, canSaveByReceipt: false } })
 })
 
-test("successful contracts return schema verification and retain only source plus contract hashes", async () => {
+test("successful contracts privately retain exact source, normalized input and schemas", async () => {
   const f = fixture()
   const schema = { type: "object", required: ["count"], additionalProperties: false, properties: { count: { type: "number" } } }
   const result = await execute({ code: "return input", input: '{"count":2}', inputSchema: schema, outputSchema: schema }, f.context)
@@ -234,6 +241,9 @@ test("successful contracts return schema verification and retain only source plu
   expect(f.receipts[0]).toMatchObject({ inputSchemaDigest: artifactDigest(schema), outputSchemaDigest: artifactDigest(schema), resultDigest: artifactDigest({ count: 2 }) })
   const retained = await f.store.get(f.identity)
   expect(retained).toMatchObject({ inputSchemaDigest: artifactDigest(schema), outputSchemaDigest: artifactDigest(schema) })
+  expect(retained?.contract).toEqual({ input: { count: 2 }, inputSchema: schema, outputSchema: schema })
+  expect(record(record(result.structuredContent).metadata)).toMatchObject({ runId: f.identity.receiptId, status: "succeeded",
+    keepAsWorkflow: { receiptId: f.identity.receiptId, name: "<choose a name>" } })
   expect(retained).not.toHaveProperty("input")
   expect(retained).not.toHaveProperty("result")
 })

@@ -5,6 +5,7 @@ import type {
   OpenworkCloudMcpHealth,
 } from "../src/app/lib/openwork-server";
 import {
+  assessCloudMcpSubmissionReadiness,
   createCloudMcpSubmissionCoordinator,
   clearCloudMcpSubmissionFailure,
   decideCloudMcpSubmissionGate,
@@ -16,6 +17,25 @@ import {
 } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
 
 const PROVIDER_MODEL = { provider: "openwork", model: "gpt-5" };
+
+test("Code Mode readiness requires its complete entry pair, not App-only routers", () => {
+  const snapshot = health();
+  snapshot.tools.direct.present = ["execute_capability_script", "capability_helper"];
+  snapshot.tools.providerProjection.present = snapshot.tools.direct.present.map((name) => `openwork-cloud_${name}`);
+  expect(assessCloudMcpSubmissionReadiness({ health: snapshot, providerModel: PROVIDER_MODEL }).ready).toBe(true);
+  snapshot.tools.providerProjection.present.push("openwork-cloud_execute_capability");
+  expect(assessCloudMcpSubmissionReadiness({ health: snapshot, providerModel: PROVIDER_MODEL }).ready).toBe(false);
+  snapshot.tools.providerProjection.source = "provider_capability";
+  snapshot.tools.providerProjection.modelExists = true;
+  snapshot.tools.providerProjection.toolCalling = true;
+  expect(assessCloudMcpSubmissionReadiness({ health: snapshot, providerModel: PROVIDER_MODEL }).ready).toBe(false);
+  snapshot.tools.providerProjection.source = "experimental_tool";
+  snapshot.tools.providerProjection.present = ["openwork-cloud_capability_helper"];
+  expect(assessCloudMcpSubmissionReadiness({ health: snapshot, providerModel: PROVIDER_MODEL }).ready).toBe(false);
+  snapshot.tools.direct.present = ["capability_helper"];
+  expect(assessCloudMcpSubmissionReadiness({ health: snapshot, providerModel: PROVIDER_MODEL }).ready).toBe(false);
+  expect(assessCloudMcpSubmissionReadiness({ health: health(), providerModel: PROVIDER_MODEL }).ready).toBe(true);
+});
 
 function failure(input?: Partial<OpenworkCloudMcpFailure>): OpenworkCloudMcpFailure {
   return {

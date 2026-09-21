@@ -1,4 +1,5 @@
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
+import { toolVisibleToModel } from "./tool-visibility.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import {
   CallToolRequestSchema,
@@ -115,17 +116,6 @@ const appGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.map((tool) =
   ...tool,
   _meta: { ui: { visibility: ["app"] } },
 }))
-
-/**
- * A provider tool the model may see on a directly exposed connection. Tools
- * that declare an app-only UI visibility stay private to the App host.
- */
-function toolVisibleToModel(tool: ExternalMcpProxyTool): boolean {
-  const meta = isRecord(tool._meta) ? tool._meta : {}
-  const ui = isRecord(meta.ui) ? meta.ui : {}
-  if (ui.visibility === undefined) return true
-  return Array.isArray(ui.visibility) && ui.visibility.includes("model")
-}
 
 function toolVisibleToApp(tool: ExternalMcpProxyTool): boolean {
   const meta = isRecord(tool._meta) ? tool._meta : {}

@@ -16,6 +16,7 @@ export default defineConfig({
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/connect-diagnostics": "src/den/connect-diagnostics.ts",
+    "den/cloud-mcp-tools": "src/den/cloud-mcp-tools.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/gateway": "src/den/gateway.ts",
     "den/gateway-usage-limits": "src/den/gateway-usage-limits.ts",

@@ -4,7 +4,7 @@ import Redis from "ioredis"
 import ts from "typescript"
 import { z } from "zod"
 import type { artifactRuntime } from "./artifact-runtime.js"
-import { artifactDigest } from "./workflow-artifacts.js"
+import { artifactDigest, optionalArtifactDigest } from "./workflow-artifacts.js"
 import { codemodeCodeDigest } from "./workflow-runs.js"
 
 export type WorkflowAuthoringSourceInput = {
@@ -16,6 +16,8 @@ export type WorkflowAuthoringSourceInput = {
   inputDigest: string
   inputSchemaDigest: string | null
   outputSchemaDigest: string | null
+  // Versioned private contract; absent on receipts created by older servers.
+  contract?: { input: unknown; inputSchema?: unknown; outputSchema?: unknown }
   runtime?: ReturnType<typeof artifactRuntime>
 }
 
@@ -60,6 +62,7 @@ const sourceSchema = identitySchema.extend({
   outputSchemaDigest: digestSchema.nullable(),
   codeDigest: digestSchema,
   source: z.enum(["adhoc", "authoring:live"]),
+  contract: z.object({ input: z.unknown(), inputSchema: z.unknown().optional(), outputSchema: z.unknown().optional() }).strict().optional(),
   runtime: z.object({
     now: z.string().max(100), today: z.string().max(100), timeZone: z.string().max(100),
     dayStart: z.string().max(100), dayEnd: z.string().max(100),
@@ -178,10 +181,14 @@ function prepareSource(input: WorkflowAuthoringSourceInput): WorkflowAuthoringSo
     code: input.code, mode: input.mode, inputDigest: input.inputDigest,
     inputSchemaDigest: input.inputSchemaDigest, outputSchemaDigest: input.outputSchemaDigest,
     codeDigest: codemodeCodeDigest(input.code), source: input.mode === "live" ? "authoring:live" : "adhoc",
+    ...(input.contract === undefined ? {} : { contract: structuredClone(input.contract) }),
     ...(runtime === undefined ? {} : { runtime }),
   })
   if (!parsed.success) return null
   assertWorkflowSourceSafe(parsed.data.code)
+  if (parsed.data.contract && (artifactDigest(parsed.data.contract.input) !== parsed.data.inputDigest
+    || optionalArtifactDigest(parsed.data.contract.inputSchema) !== parsed.data.inputSchemaDigest
+    || optionalArtifactDigest(parsed.data.contract.outputSchema) !== parsed.data.outputSchemaDigest)) return null
   if (runtime && artifactDigest({ runtime }) !== parsed.data.inputDigest) return null
   if (parsed.data.runtime) Object.freeze(parsed.data.runtime)
   return Object.freeze(parsed.data)
@@ -253,7 +260,11 @@ export function createWorkflowAuthoringSourceStore(options: { redis: WorkflowAut
       const key = keys(input)
       if (!redis) {
         expire()
-        return entries.get(key.entry)?.source ?? null
+        const source = entries.get(key.entry)?.source
+        if (!source) return null
+        const copy = structuredClone(source)
+        if (copy.runtime) Object.freeze(copy.runtime)
+        return Object.freeze(copy)
       }
       try {
         const encrypted = await redis.get(key.entry)

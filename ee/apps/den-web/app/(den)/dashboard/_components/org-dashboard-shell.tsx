@@ -444,6 +444,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         openworkWeb: false,
         orgManagedDashboards: false,
         workflows: false,
+        codeModeOptIn: false,
       }),
       gatewayDashboard: orgContext?.capabilities.gatewayDashboard === true,
     },

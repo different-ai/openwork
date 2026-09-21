@@ -40,6 +40,7 @@ const EMPTY_CAPABILITIES: DenOrgCapabilities = {
   openworkWeb: false,
   orgManagedDashboards: false,
   workflows: false,
+  codeModeOptIn: false,
 };
 
 type PaletteEntry = {

@@ -19,16 +19,10 @@ import {
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { validateMcpConfig } from "./validators.js";
+import { cloudMcpCodeModeProjectionSafe, cloudMcpRequiredTools } from "@openwork/types/den/cloud-mcp-tools";
 
 export const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
-export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
-] satisfies string[];
-const OPENWORK_CLOUD_DIRECT_TOOL_NAMES = [
-  "search_capabilities",
-  "execute_capability",
-] satisfies string[];
+export const OPENWORK_CLOUD_EXPECTED_TOOLS = cloudMcpRequiredTools([], "openwork-cloud_");
 export const OPENWORK_CLOUD_PLUGIN_CANARIES = [
   "openwork_docs_search",
   "openwork_query",
@@ -1039,12 +1033,12 @@ function locationParams(directory: string | null): { directory?: string } {
   return directory ? { directory } : {};
 }
 
-function expectedTools(): string[] {
-  return [...OPENWORK_CLOUD_EXPECTED_TOOLS];
+function expectedTools(present: string[] = []): string[] {
+  return cloudMcpRequiredTools(present, "openwork-cloud_");
 }
 
-function expectedDirectToolNames(): string[] {
-  return [...OPENWORK_CLOUD_DIRECT_TOOL_NAMES];
+function expectedDirectToolNames(present: string[] = []): string[] {
+  return cloudMcpRequiredTools(present);
 }
 
 function prefixedCloudToolId(name: string): string {
@@ -1302,7 +1296,7 @@ async function mcpJsonRpcPost(input: {
 }
 
 function directToolsFromNames(names: string[]): DirectCloudToolsSnapshot {
-  const split = splitPresentMissing(names, expectedDirectToolNames());
+  const split = splitPresentMissing(names, expectedDirectToolNames(names));
   const failureResult = split.missing.length
     ? directCloudToolsFailure({
         retryable: false,
@@ -1333,9 +1327,9 @@ function directToolsNotChecked(): DirectCloudToolsSnapshot {
 function toolsFromDirectCloudTools(directTools: DirectCloudToolsSnapshot): ToolSnapshot {
   if (!directTools.checked) return { expected: expectedTools(), present: [], missing: [] };
   if (directTools.missing.length === 0) {
-    return splitPresentMissing(directTools.present.map(prefixedCloudToolId), expectedTools());
+    return splitPresentMissing(directTools.present.map(prefixedCloudToolId), directTools.expected.map(prefixedCloudToolId));
   }
-  return splitPresentMissing([], expectedTools());
+  return splitPresentMissing([], directTools.expected.map(prefixedCloudToolId));
 }
 
 function toolsFromEngineAttestation(): ToolSnapshot {
@@ -1588,8 +1582,9 @@ async function readProviderProjection(input: {
   opencode: WorkspaceOpencodeClient;
   directory: string | null;
   providerModel: CloudMcpProviderModelContext;
-  /** Kept for call-site compatibility; experimental MCP omissions always fall back. */
+  /** Kept for call-site compatibility; standard-mode MCP omissions fall back. */
   experimentalToolIdsIncludeMcpTools: boolean | null;
+  codeMode: boolean;
 }): Promise<ProviderProjectionSnapshot> {
   // experimentalToolIdsIncludeMcpTools is intentionally unused: a global IDs hit
   // must not hard-fail when the per-model experimental list omits MCP tools.
@@ -1605,7 +1600,11 @@ async function readProviderProjection(input: {
     if (!result.data) {
       experimentalError = opencodeRequestFailure("provider_projection", "/experimental/tool", result.response, result.error).details;
     } else {
-      experimentalSplit = splitPresentMissing(toolListIds(result.data), expectedTools());
+      const ids = toolListIds(result.data);
+      experimentalSplit = splitPresentMissing(ids, expectedTools(ids));
+      if ((input.codeMode || ids.includes("openwork-cloud_capability_helper")) && !cloudMcpCodeModeProjectionSafe(ids)) {
+        return unsupportedCodeModeProjection(input.providerModel);
+      }
       if (experimentalSplit.missing.length === 0) {
         return {
           checked: true,
@@ -1621,6 +1620,9 @@ async function readProviderProjection(input: {
     experimentalError = thrownOpencodeFailure("provider_projection", "/experimental/tool", error).details;
   }
 
+  // Generic model tool-call support cannot attest Code Mode's private boundary.
+  if (input.codeMode) return unsupportedCodeModeProjection(input.providerModel);
+
   // OpenCode's /experimental/tool enumerates ToolRegistry tools and often omits
   // MCP tools that prompts still attach at runtime. Always fall back to
   // /provider tool-call capability when the per-model experimental list is
@@ -1632,6 +1634,19 @@ async function readProviderProjection(input: {
     experimentalSplit,
     experimentalError,
   });
+}
+
+function unsupportedCodeModeProjection(providerModel: CloudMcpProviderModelContext): ProviderProjectionSnapshot {
+  const expected = expectedTools(["openwork-cloud_capability_helper"]);
+  return {
+    checked: true, provider: providerModel.provider, model: providerModel.model,
+    source: "experimental_tool", present: [], missing: expected,
+    failure: failure({
+      code: "provider_tool_projection_missing", stage: "provider_projection", retryable: false,
+      message: "This client cannot verify Code Mode's private App-tool boundary.",
+      recommendedAction: "Ask your organization owner to turn off Code Mode until a compatible engine is available.",
+    }),
+  };
 }
 
 async function readProviderCapability(input: {
@@ -1959,7 +1974,7 @@ async function inspectOpenworkCloud(input: {
     };
   }
   const ids = idsResult.data ?? [];
-  const experimentalToolIds = experimentalToolIdsFromSplit(splitPresentMissing(ids, expectedTools()));
+  const experimentalToolIds = experimentalToolIdsFromSplit(splitPresentMissing(ids, expectedTools(ids)));
   const pluginCanaries = splitPresentMissing(ids, expectedCanaries());
   const reusableDirectTools = input.directProbeReuse?.desiredRevision === input.desiredRevision
     && successfulDirectCloudToolsProbe(input.directProbeReuse.value)
@@ -1990,6 +2005,7 @@ async function inspectOpenworkCloud(input: {
         directory: input.directory,
         providerModel: input.providerModel,
         experimentalToolIdsIncludeMcpTools: experimentalToolIds.includesMcpTools,
+        codeMode: directTools.present.includes("capability_helper") || ids.includes("openwork-cloud_capability_helper"),
       })
     : providerProjectionNotChecked(input.providerModel);
   const experimentalProviderTools = experimentalProviderToolsFromProjection(providerProjection);
@@ -2068,7 +2084,7 @@ function experimentalProviderToolsFromProjection(projection: ProviderProjectionS
     checked: true,
     ...(projection.provider ? { provider: projection.provider } : {}),
     ...(projection.model ? { model: projection.model } : {}),
-    expected: expectedTools(),
+    expected: expectedTools([...projection.present, ...projection.missing]),
     present: projection.present,
     missing: projection.missing,
     includesMcpTools,

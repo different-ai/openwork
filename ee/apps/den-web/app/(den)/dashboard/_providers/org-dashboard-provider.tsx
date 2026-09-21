@@ -41,7 +41,7 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
+  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; codeModeEnabled?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
   deleteOrganization: () => Promise<void>;
   switchOrganization: (slug: string) => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
@@ -611,10 +611,10 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
+  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; codeModeEnabled?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
     ensureCanManageSettings();
     const shouldPublishOrgSettingsCompletion = pathnameRef.current === ORG_SETTINGS_PATH;
-    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
+    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; codeModeEnabled?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -630,6 +630,9 @@ export function OrgDashboardProvider({
     }
     if (input.requireSso !== undefined) {
       body.requireSso = input.requireSso;
+    }
+    if (input.codeModeEnabled !== undefined) {
+      body.codeModeEnabled = input.codeModeEnabled;
     }
     if (input.brandAppName !== undefined) {
       body.brandAppName = input.brandAppName;

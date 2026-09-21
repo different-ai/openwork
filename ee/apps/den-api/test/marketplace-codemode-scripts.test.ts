@@ -712,6 +712,34 @@ describe("saved marketplace Workflows", () => {
     expect(result.issues.length).toBeGreaterThan(0)
   })
 
+  test("opted-in Code Mode discovers and runs saved Workflows and rechecks revoked Plugin access", async () => {
+    const seeded = await seedScript({ title: "Reusable report", code: "return { count: input.count }",
+      payload: { language: "codemode-js", requiredCapabilities: [] } })
+    const context = capabilityRegistry.createCapabilityRegistryContext({
+      app: new Hono(), env: undefined, catalog: [], organizationId: seeded.organizationId,
+      member: seeded.member,
+      principal: { userId: createDenTypeId("user"), organizationId: seeded.organizationId,
+        scopes: new Set(["mcp:read", "mcp:write"]), payload: {} },
+      redirectUriBase: "http://127.0.0.1:8790", generatedArtifactViewsEnabled: false,
+      organizationMetadata: { codeModeEnabled: true }, mcpConnectionsGatingEnabled: false,
+    })
+    const search = await capabilityRegistry.searchCapabilityRegistry(context, { query: "Reusable report" })
+    const match = search.matches.find((entry) => entry.name.includes(seeded.configObjectId))
+    expect(match?.scriptPath).toBeDefined()
+    const built = await capabilityRegistry.buildCapabilityToolTree(context)
+    const leaf = built.manifest.find((entry) => entry.capabilityName === match?.name)
+    expect(leaf).toMatchObject({ readOnly: false, authority: "den" })
+    const { runCodemodeScript } = await import("../src/mcp/codemode-run.js")
+    const run = () => runCodemodeScript({ tools: built.tools, timeoutMs: 5000,
+      code: `return await ${match?.scriptPath}({ count: 7 })` })
+    expect(await run()).toMatchObject({ ok: true, value: { value: { count: 7 } } })
+    // Keep the already-built tree: invocation must still check current access.
+    await db.delete(PluginAccessGrantTable).where(eq(PluginAccessGrantTable.pluginId, seeded.pluginId))
+    await db.delete(MarketplacePluginTable).where(eq(MarketplacePluginTable.pluginId, seeded.pluginId))
+    await db.delete(MemberTable).where(eq(MemberTable.id, seeded.member.orgMembershipId))
+    expect(await run()).toMatchObject({ ok: false })
+  })
+
   test("validates saved script output before returning an artifact-ready result", async () => {
     const seeded = await seedScript({
       title: "Typed Result Script",

@@ -39,7 +39,7 @@ const roots: string[] = [];
 const runtimeDbRoots: string[] = [];
 const stops: Array<() => void> = [];
 
-type DirectProbeMode = "ok" | "missing" | "unauthorized" | "status_missing_token" | "bad_gateway";
+type DirectProbeMode = "ok" | "code_mode" | "code_mode_missing" | "missing" | "unauthorized" | "status_missing_token" | "bad_gateway";
 type ReadHealthOptions = {
   probe?: boolean;
   beforeRead?: (directUrl: string) => void;
@@ -109,6 +109,7 @@ function requestBarrier() {
 
 function startMockOpencode(initialMode: DirectProbeMode) {
   let mode = initialMode;
+  let projectedTools: string[] | null = null;
   let toolIdsBarrier: ReturnType<typeof requestBarrier> | null = null;
   let initializeBarrier: ReturnType<typeof requestBarrier> | null = null;
   const directOperations: string[] = [];
@@ -117,6 +118,9 @@ function startMockOpencode(initialMode: DirectProbeMode) {
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
+      if (url.pathname === "/experimental/tool" && projectedTools) {
+        return Response.json(projectedTools.map((id) => ({ id, description: id, parameters: {} })));
+      }
       if (url.pathname === "/global/health") return Response.json({ healthy: true, version: "1.17.11" });
       if (url.pathname === "/mcp" && request.method === "GET") {
         if (mode === "status_missing_token") {
@@ -159,6 +163,11 @@ function startMockOpencode(initialMode: DirectProbeMode) {
           if (mode === "bad_gateway") return Response.json({ error: "upstream unavailable" }, { status: 502 });
           const tools = mode === "missing"
             ? [{ name: "search_capabilities", inputSchema: {} }]
+            : mode === "code_mode" ? [
+                { name: "execute_capability_script", inputSchema: {} },
+                { name: "capability_helper", inputSchema: {} },
+              ]
+            : mode === "code_mode_missing" ? [{ name: "capability_helper", inputSchema: {} }]
             : [
                 { name: "search_capabilities", inputSchema: {} },
                 { name: "execute_capability", inputSchema: {} },
@@ -174,6 +183,7 @@ function startMockOpencode(initialMode: DirectProbeMode) {
   return {
     server,
     directOperations,
+    setProjectedTools(ids: string[] | null) { projectedTools = ids; },
     setMode(nextMode: DirectProbeMode): void {
       mode = nextMode;
     },
@@ -556,6 +566,30 @@ describe("cloud MCP health foundation", () => {
     expect(health.tools.missing).toEqual([]);
     expect(health.tools.direct.checked).toBe(false);
     expect(directFetchCount).toBe(0);
+  });
+
+  test("direct Code Mode probes require script and helper without requiring App routers", async () => {
+    const { health } = await readHealthForDirectProbe("code_mode", { probe: true });
+    expect(health.tools.direct.expected).toEqual(["execute_capability_script", "capability_helper"]);
+    expect(health.tools.direct.missing).toEqual([]);
+    expect(health.tools.present).toEqual(["openwork-cloud_execute_capability_script", "openwork-cloud_capability_helper"]);
+    const incomplete = await readHealthForDirectProbe("code_mode_missing", { probe: true });
+    expect(incomplete.health.usable).toBe(false);
+    expect(incomplete.health.tools.direct.missing).toEqual(["execute_capability_script"]);
+  });
+
+  test("Code Mode model readiness fails closed for leaked or unverifiable App routers", async () => {
+    const harness = await setupDirectProbeHarness("code_mode");
+    const pair = ["openwork-cloud_execute_capability_script", "openwork-cloud_capability_helper"];
+    harness.setProjectedTools(pair);
+    expect((await harness.read(undefined, { provider: "fixture", model: "fixture" })).usableByCurrentModel).toBe(true);
+    for (const projection of [[...pair, "openwork-cloud_execute_capability"], ["openwork-cloud_search_capabilities"], null]) {
+      harness.setProjectedTools(projection);
+      const health = await harness.read(undefined, { provider: "fixture", model: "fixture" });
+      expect(health.usableByCurrentModel).toBe(false);
+      expect(health.firstFailure).toMatchObject({ stage: "provider_projection", retryable: false,
+        message: "This client cannot verify Code Mode's private App-tool boundary." });
+    }
   });
 
   test("default engine-attested health marks delivery applied", async () => {

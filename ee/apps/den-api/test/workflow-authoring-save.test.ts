@@ -100,7 +100,7 @@ beforeEach(() => {
   organizationId = createDenTypeId("organization")
 })
 
-async function fixture(options: { mode?: "adhoc" | "live"; currentInput?: unknown; inputSchema?: unknown; outputSchema?: unknown; retain?: boolean } = {}) {
+async function fixture(options: { mode?: "adhoc" | "live"; currentInput?: unknown; inputSchema?: unknown; outputSchema?: unknown; retain?: boolean; contract?: boolean } = {}) {
   const orgMembershipId = createDenTypeId("member")
   const now = new Date()
   const runtime = options.mode === "live" ? artifactRuntime("America/Los_Angeles") : undefined
@@ -111,6 +111,8 @@ async function fixture(options: { mode?: "adhoc" | "live"; currentInput?: unknow
     inputDigest: artifactDigest(runtime ? { runtime } : options.currentInput ?? null),
     inputSchemaDigest: optionalArtifactDigest(options.inputSchema),
     outputSchemaDigest: optionalArtifactDigest(options.outputSchema),
+    ...(options.contract ? { contract: { input: runtime ? { runtime } : options.currentInput ?? null,
+      inputSchema: options.inputSchema, outputSchema: options.outputSchema } } : {}),
     ...(runtime ? { runtime } : {}),
   }
   if (options.retain !== false) expect(await retainWorkflowAuthoringSource(source)).toBe(true)
@@ -187,7 +189,7 @@ test("allows byte-identical supplied code but rejects even whitespace changes", 
   const { source, input } = await fixture()
   await workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, code: source.code } })
   written = []
-  await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, code: source.code.trim() } })).rejects.toThrow("workflow_authoring_receipt_required")
+  await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, code: source.code.trim() } })).rejects.toThrow("workflow_authoring_field_mismatch:code")
   expect(written).toEqual([])
 })
 
@@ -195,7 +197,7 @@ test("explicit input digest normalizes omitted input to null, not to an empty ob
   const { input } = await fixture({ inputSchema: { type: "null" } })
   await workflows.saveWorkflow(input)
   await workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, currentInput: null } })
-  await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, currentInput: {} } })).rejects.toThrow("workflow_authoring_receipt_required")
+  await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, currentInput: {} } })).rejects.toThrow("workflow_authoring_field_mismatch:currentInput")
 })
 
 test("altered current input or either schema cannot save, including removed schemas", async () => {
@@ -205,7 +207,7 @@ test("altered current input or either schema cannot save, including removed sche
     { inputSchema: { type: "string" } }, { inputSchema: undefined },
     { outputSchema: { type: "string" } }, { outputSchema: undefined },
   ]) {
-    await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, ...change } })).rejects.toThrow("workflow_authoring_receipt_required")
+    await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, ...change } })).rejects.toThrow("workflow_authoring_field_mismatch:")
   }
   expect(written).toEqual([])
   expect(toolBuilds).toBe(0)
@@ -213,7 +215,7 @@ test("altered current input or either schema cannot save, including removed sche
 
 test("new output schema cannot be attached to an unvalidated explicit receipt", async () => {
   const { input } = await fixture()
-  await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, outputSchema: { type: "object" } } })).rejects.toThrow("workflow_authoring_receipt_required")
+  await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, outputSchema: { type: "object" } } })).rejects.toThrow("workflow_authoring_field_mismatch:outputSchema")
   expect(written).toEqual([])
 })
 
@@ -310,7 +312,8 @@ test("durable row must bind exact identity, provenance, digests, success and fre
   for (const mutation of mutations) {
     const { input, row } = await fixture()
     Object.assign(row, mutation)
-    await expect(workflows.saveWorkflow(input)).rejects.toThrow("workflow_authoring_receipt_required")
+    await expect(workflows.saveWorkflow(input)).rejects.toThrow(mutation.status === "failed"
+      ? "workflow_authoring_run_not_successful" : "workflow_authoring_receipt_required")
   }
   const { input } = await fixture()
   rows = []
@@ -418,5 +421,51 @@ test("a tested capability must still be available in the caller's current tool t
   const { input, row } = await fixture()
   row.tool_calls = [{ name: "tools.den.syntheticRead" }]
   await expect(workflows.saveWorkflow(input)).rejects.toThrow("workflow_capability_unavailable:tools.den.syntheticRead")
+  expect(written).toEqual([])
+})
+
+test("keep by canonical ID and name recovers exact nested schemas and normalized input", async () => {
+  const inputSchema = { title: "Original input", type: "object", required: ["count"], properties: { count: { type: "number", minimum: 1 } } }
+  const outputSchema = { title: "Original output", type: "object", additionalProperties: false, properties: { count: { type: "number" } } }
+  const { input, source } = await fixture({ contract: true, currentInput: { count: 2 }, inputSchema, outputSchema })
+  await workflows.saveWorkflow({ ...input, workflow: { receiptId: source.receiptId, name: "Kept procedure" } })
+  expect(savedVersion().rawSourceText).toBe(source.code)
+  expect(savedVersion().normalizedPayloadJson).toEqual({ language: "codemode-js", inputSchema, outputSchema,
+    exampleInput: { count: 2 }, requiredCapabilities: [] })
+  expect(written.some((entry) => entry.table === WorkflowRunTable)).toBe(false)
+})
+
+test("identifier-only live keep recovers schemas without saving server runtime", async () => {
+  const { input, source } = await fixture({ contract: true, mode: "live", inputSchema: { type: "object" }, outputSchema: { type: "object" } })
+  await workflows.saveWorkflow({ ...input, workflow: { receiptId: source.receiptId, name: "Live kept procedure" } })
+  expect(savedVersion().normalizedPayloadJson).toEqual({ language: "codemode-js", inputSchema: { type: "object" },
+    outputSchema: { type: "object" }, requiredCapabilities: [] })
+})
+
+test("identifier-only keep denies failed attempts, foreign owners/orgs, expired sources and revoked dependencies", async () => {
+  const { input, source, row } = await fixture({ contract: true })
+  const keep = { ...input, workflow: { receiptId: source.receiptId, name: "Keep" } }
+  row.status = "failed"
+  await expect(workflows.saveWorkflow(keep)).rejects.toThrow("workflow_authoring_run_not_successful")
+  row.status = "succeeded"
+  await expect(workflows.saveWorkflow({ ...keep, ownerMemberId: createDenTypeId("member") })).rejects.toThrow("workflow_authoring_receipt_required")
+  await expect(workflows.saveWorkflow({ ...keep, organizationId: createDenTypeId("organization") })).rejects.toThrow("workflow_authoring_receipt_required")
+  row.tool_calls = [{ name: "tools.den.revoked" }]
+  await expect(workflows.saveWorkflow(keep)).rejects.toThrow("workflow_capability_unavailable:tools.den.revoked")
+  const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 900_000)
+  try { await expect(workflows.saveWorkflow(keep)).rejects.toThrow("workflow_authoring_receipt_required") }
+  finally { clock.mockRestore() }
+  expect(written).toEqual([])
+})
+
+test("private history inspects failed attempts without exposing them through Workflow snapshots", async () => {
+  const { input, row, source } = await fixture({ contract: true })
+  Object.assign(row, { status: "failed", error_kind: "InvalidResult", error_message: "Output mismatch" })
+  const history = await workflows.getWorkflowAuthoringHistory(input)
+  expect(history.items).toHaveLength(1)
+  expect(history.items[0]).toMatchObject({ receiptId: source.receiptId, procedure: { code: source.code },
+    execution: { runId: source.receiptId, status: "failed", errorKind: "InvalidResult" } })
+  expect((await workflows.getWorkflowAuthoringHistory({ ...input, ownerMemberId: createDenTypeId("member") })).items).toEqual([])
+  expect((await workflows.getWorkflowAuthoringHistory({ ...input, organizationId: createDenTypeId("organization") })).items).toEqual([])
   expect(written).toEqual([])
 })

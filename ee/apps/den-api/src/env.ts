@@ -151,6 +151,7 @@ const EnvSchema = z.object({
   DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
+  DEN_CODE_MODE_OPT_IN_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
@@ -538,6 +539,13 @@ const mcpConnectionsGatingEnabled =
 const generatedArtifactViewsEnabled =
   (parsed.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? "false").trim().toLowerCase() === "true"
 
+// The organization Code Mode opt-in changes the model-facing MCP catalog. No
+// published OpenWork engine keeps app-only routers out of that catalog yet, so
+// the deployment must fail closed: without this switch a stored opt-in has no
+// effect and owners cannot turn it on. Preview/eval worlds set it explicitly.
+const codeModeOptInEnabled =
+  (parsed.DEN_CODE_MODE_OPT_IN_ENABLED ?? "false").trim().toLowerCase() === "true"
+
 // Desktop availability stays fail-closed, while an entirely unconfigured
 // server preserves the published-client runtime. An explicit availability
 // value also supplies the runtime default, so DEN_AUTOMATIONS_ENABLED=false is
@@ -697,6 +705,7 @@ export const env = {
   connectLink,
   mcpConnectionsGatingEnabled,
   generatedArtifactViewsEnabled,
+  codeModeOptInEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
   passwordBreachScreeningEnabled,

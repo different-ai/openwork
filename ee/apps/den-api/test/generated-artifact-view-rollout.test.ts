@@ -6,9 +6,13 @@ import { fileURLToPath } from "node:url"
 const denApiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
 function probeGeneratedArtifactViews(value?: string) {
+  return probeEnvFlag("generatedArtifactViewsEnabled", "DEN_GENERATED_ARTIFACT_VIEWS_ENABLED", value)
+}
+
+function probeEnvFlag(field: string, variable: string, value?: string) {
   return spawnSync(process.execPath, ["--conditions", "development", "--eval", `
     const { env } = await import("./src/env.ts")
-    console.log(JSON.stringify(env.generatedArtifactViewsEnabled))
+    console.log(JSON.stringify(env[${JSON.stringify(field)}]))
   `], {
     cwd: denApiRoot,
     encoding: "utf8",
@@ -23,10 +27,17 @@ function probeGeneratedArtifactViews(value?: string) {
       BETTER_AUTH_URL: "https://den.openwork.test",
       OPENWORK_DEV_MODE: "0",
       PROVISIONER_MODE: "stub",
-      ...(value === undefined ? {} : { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: value }),
+      ...(value === undefined ? {} : { [variable]: value }),
     },
   })
 }
+
+test("the organization Code Mode opt-in stays inert until the deployment enables it", () => {
+  const probe = (value?: string) => probeEnvFlag("codeModeOptInEnabled", "DEN_CODE_MODE_OPT_IN_ENABLED", value)
+  expect(probe().stdout.trim()).toBe("false")
+  expect(probe("false").stdout.trim()).toBe("false")
+  expect(probe("true").stdout.trim()).toBe("true")
+})
 
 test("generated Artifact views stay disabled until the compatible Desktop rollout is enabled", () => {
   const unset = probeGeneratedArtifactViews()

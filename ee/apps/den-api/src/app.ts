@@ -289,6 +289,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationMetadata,
     mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
+    codeModeOptInEnabled: env.codeModeOptInEnabled,
   })
   const result = await executeMarketplaceCapability({
     organizationId,

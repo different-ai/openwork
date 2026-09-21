@@ -1,4 +1,5 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { toolVisibleToModel } from "./tool-visibility.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import {
@@ -791,7 +792,7 @@ async function probeExternalMcpConnection(input: {
   }
 
   for (const tool of tools) {
-    if (isToolDisabled(connection.toolPolicy, tool.name)) continue
+    if (!toolVisibleToModel(tool) || isToolDisabled(connection.toolPolicy, tool.name)) continue
     const summary = tool.description ?? tool.title ?? tool.name
     const nameTokens = tokenize(`${connection.name} ${tool.name}`)
     const summaryTokens = tokenize(summary)
@@ -1105,6 +1106,8 @@ export async function executeExternalCapability(input: {
   requireReadOnly?: boolean
   /** Fail closed when the live input schema no longer matches schemaDigest. */
   requireSchemaMatch?: boolean
+  /** Script/helper callers cannot execute a provider's private App tool. */
+  requireModelVisible?: boolean
 }): Promise<ExternalCapabilityExecuteResult> {
   if (!input.member) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
@@ -1217,7 +1220,7 @@ export async function executeExternalCapability(input: {
     const redirectUri = redirectUriFor(input.redirectUriBase, connection.id)
     const tools = await listExternalMcpTools(connection, redirectUri, member, undefined, deadline)
     const tool = tools.find((candidate) => candidate.name === input.toolName)
-    if (!tool) {
+    if (!tool || (input.requireModelVisible && !toolVisibleToModel(tool))) {
       return {
         ok: false,
         error: "unknown_capability",

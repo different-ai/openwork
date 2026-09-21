@@ -345,7 +345,9 @@ export async function getWorkflowDetail(input: {
     configObjectId: resource.configObject.id,
     title: resource.configObject.title,
     description: resource.configObject.description,
-    canRun: role === "editor" || role === "manager",
+    // Interactive execution uses the caller's tools and accepts the same
+    // viewer grant as executeMarketplaceCapability. Editing stays manager-only.
+    canRun: role === "viewer" || role === "editor" || role === "manager",
     canManage: role === "manager",
     currentVersion,
     versions,
@@ -672,9 +674,8 @@ export async function validateWorkflowAutomationAction(input: {
       )),
     ])
     const grantInput = { memberId: ownerMemberId, teamIds: teams.map((team) => team.id) }
-    // Scheduling a Workflow executes it, so the owner needs run access — the
-    // same editor-or-manager bar the detail response reports as `canRun`. A
-    // viewer may read results but must not gain scheduled execution.
+    // Unattended scheduling retains its stronger editor-or-manager grant.
+    // Interactive viewer execution does not grant Cloud Automation ownership.
     const roles = [
       resolvePluginArchGrantRole({ ...grantInput, grants: configObjectGrants }),
       resolvePluginArchGrantRole({ ...grantInput, grants: pluginGrants }),
@@ -711,6 +712,37 @@ export async function validateWorkflowAutomationAction(input: {
     const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, input.action.input)
     if (!validation.ok) throw new Error("automation_saved_script_input_invalid")
   }
+}
+
+/** Private submission history, never projected through Workflow/Plugin grants. */
+export async function getWorkflowAuthoringHistory(input: {
+  organizationId: string
+  ownerMemberId: string
+  receiptId?: string
+}) {
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const orgMembershipId = normalizeDenTypeId("member", input.ownerMemberId)
+  const receiptId = input.receiptId === undefined ? undefined : parseReceiptId(input.receiptId)
+  const runs = await db.select().from(WorkflowRunTable).where(and(
+    eq(WorkflowRunTable.organization_id, organizationId),
+    eq(WorkflowRunTable.org_membership_id, orgMembershipId),
+    inArray(WorkflowRunTable.source, ["adhoc", "authoring:live"]),
+    isNull(WorkflowRunTable.config_object_id),
+    gt(WorkflowRunTable.finished_at, new Date(Date.now() - RECENT_RUN_WINDOW_MS)),
+    receiptId === undefined ? undefined : eq(WorkflowRunTable.id, receiptId),
+  )).orderBy(desc(WorkflowRunTable.finished_at)).limit(receiptId ? 1 : 50)
+  const items = await Promise.all(runs.map(async (run) => {
+    const version = await getWorkflowAuthoringSource({ receiptId: run.id, organizationId, orgMembershipId })
+    if (!version || run.organization_id !== organizationId || run.org_membership_id !== orgMembershipId) return null
+    return {
+      receiptId: run.id,
+      procedure: { code: version.code, mode: version.mode, contract: version.contract ?? null },
+      execution: { runId: run.id, status: run.status, errorKind: run.error_kind, errorMessage: run.error_message,
+        finishedAt: run.finished_at.toISOString() },
+      expiresAt: new Date(run.finished_at.getTime() + RECENT_RUN_WINDOW_MS).toISOString(),
+    }
+  }))
+  return { items: items.filter((item) => item !== null) }
 }
 
 export async function saveWorkflow(input: {
@@ -762,26 +794,41 @@ export async function saveWorkflow(input: {
   const code = retained?.code ?? input.workflow.code
   if (!code) throw new Error("workflow_code_or_receipt_required")
   if (retained && input.workflow.code !== undefined && input.workflow.code !== retained.code) {
-    throw new Error("workflow_authoring_receipt_required")
+    throw new Error("workflow_authoring_field_mismatch:code")
   }
   assertWorkflowSourceSafe(code)
   if (retained?.mode === "live" && Object.hasOwn(input.workflow, "currentInput")) {
     throw new Error("workflow_live_current_input_forbidden")
   }
+  const contract = retained?.contract
+  // Omitted fields recover the exact stored contract. Explicit fields remain
+  // assertions for older clients, never edits to a tested procedure version.
+  for (const [field, digest] of [
+    ["currentInput", retained?.inputDigest],
+    ["inputSchema", retained?.inputSchemaDigest],
+    ["outputSchema", retained?.outputSchemaDigest],
+  ] satisfies Array<["currentInput" | "inputSchema" | "outputSchema", string | null | undefined]>) {
+    if (!retained || !Object.hasOwn(input.workflow, field)) continue
+    const actual = field === "currentInput" ? artifactDigest(input.workflow[field] ?? null) : optionalArtifactDigest(input.workflow[field])
+    if (actual !== digest) throw new Error(`workflow_authoring_field_mismatch:${field}`)
+  }
+  const inputSchema = contract ? contract.inputSchema : input.workflow.inputSchema
+  const outputSchema = contract ? contract.outputSchema : input.workflow.outputSchema
+  const currentInput = contract ? contract.input : input.workflow.currentInput
   const validationInput = retained?.mode === "live"
     ? { runtime: retained.runtime }
-    : input.workflow.currentInput
+    : currentInput
   if (retained && (retained.inputDigest !== artifactDigest(validationInput ?? null)
-    || retained.inputSchemaDigest !== optionalArtifactDigest(input.workflow.inputSchema)
-    || retained.outputSchemaDigest !== optionalArtifactDigest(input.workflow.outputSchema))) {
-    throw new Error("workflow_authoring_receipt_required")
+    || retained.inputSchemaDigest !== optionalArtifactDigest(inputSchema)
+    || retained.outputSchemaDigest !== optionalArtifactDigest(outputSchema))) {
+    throw new Error("workflow_authoring_contract_unavailable")
   }
   const codeDigest = codemodeCodeDigest(code)
   const receipts = await db.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.organization_id, organizationId),
     eq(WorkflowRunTable.org_membership_id, ownerMemberId),
     eq(WorkflowRunTable.code_digest, codeDigest),
-    eq(WorkflowRunTable.status, "succeeded"),
+    explicitReceipt ? undefined : eq(WorkflowRunTable.status, "succeeded"),
     gt(WorkflowRunTable.finished_at, new Date(Date.now() - RECENT_RUN_WINDOW_MS)),
     receiptId === undefined ? undefined : eq(WorkflowRunTable.id, receiptId),
     retained === null
@@ -789,6 +836,10 @@ export async function saveWorkflow(input: {
       : eq(WorkflowRunTable.source, retained.source),
   )).orderBy(desc(WorkflowRunTable.finished_at)).limit(1)
   const receipt = receipts[0]
+  if (retained && receipt?.id === retained.receiptId && receipt.organization_id === organizationId
+    && receipt.org_membership_id === ownerMemberId && receipt.status !== "succeeded") {
+    throw new Error("workflow_authoring_run_not_successful")
+  }
   if (!retained && receipt?.source === "authoring:live") throw new Error("workflow_authoring_receipt_required")
   if (retained) {
     if (!receipt || receipt.id !== retained.receiptId
@@ -824,9 +875,9 @@ export async function saveWorkflow(input: {
   }
   const normalizedPayloadJson = {
     language: "codemode-js",
-    ...(input.workflow.inputSchema === undefined ? {} : { inputSchema: input.workflow.inputSchema }),
-    ...(input.workflow.outputSchema === undefined ? {} : { outputSchema: input.workflow.outputSchema }),
-    ...(retained?.mode === "live" || input.workflow.currentInput === undefined ? {} : { exampleInput: input.workflow.currentInput }),
+    ...(inputSchema === undefined ? {} : { inputSchema }),
+    ...(outputSchema === undefined ? {} : { outputSchema }),
+    ...(retained?.mode === "live" || currentInput === undefined || currentInput === null ? {} : { exampleInput: currentInput }),
     requiredCapabilities,
   }
   const parsed = parseCodemodeScriptPayload(normalizedPayloadJson)

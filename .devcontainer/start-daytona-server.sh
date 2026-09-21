@@ -122,9 +122,36 @@ wait_for_http() {
 }
 
 echo "==> Starting MySQL..."
-run_root service mysql start >/tmp/openwork-mysql-service.log 2>&1 || run_root service mariadb start >/tmp/openwork-mysql-service.log 2>&1
+if [ "${OPENWORK_EVAL_MYSQL8:-0}" = "1" ]; then
+  [ "$(uname -m)" = "x86_64" ] || { echo "ERROR: MySQL 8 fixture requires x86_64." >&2; exit 1; }
+  MYSQL8_HOME="/tmp/openwork-mysql8"
+  [ ! -e "$MYSQL8_HOME" ] || { echo "ERROR: MySQL 8 fixture directory already exists." >&2; exit 1; }
+  mkdir -p "$MYSQL8_HOME"
+  curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 \
+    https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.11-linux-glibc2.28-x86_64-minimal.tar.xz \
+    -o "$MYSQL8_HOME/mysql.tar.xz"
+  printf '%s  %s\n' 383f54e124d5f325d67f0c6912a8f96814eedc761a17ea30112e52fa4cc6b143 "$MYSQL8_HOME/mysql.tar.xz" | sha256sum --check
+  tar -xJf "$MYSQL8_HOME/mysql.tar.xz" --strip-components=1 -C "$MYSQL8_HOME"
+  run_root apt-get update -qq
+  run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libaio1t64 libnuma1
+  ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 "$MYSQL8_HOME/lib/libaio.so.1"
+  export PATH="$MYSQL8_HOME/bin:$PATH"
+  export LD_LIBRARY_PATH="$MYSQL8_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  run_root service mariadb stop >/tmp/openwork-mysql-service.log 2>&1 || true
+  run_root service mysql stop >>/tmp/openwork-mysql-service.log 2>&1 || true
+  "$MYSQL8_HOME/bin/mysqld" --no-defaults --initialize-insecure --basedir="$MYSQL8_HOME" --datadir="$MYSQL8_HOME/data" --log-error="$MYSQL8_HOME/mysql.log"
+  nohup "$MYSQL8_HOME/bin/mysqld" --no-defaults --basedir="$MYSQL8_HOME" --datadir="$MYSQL8_HOME/data" --bind-address=127.0.0.1 --mysqlx=OFF --port=3306 --socket=/tmp/mysql.sock --pid-file="$MYSQL8_HOME/mysql.pid" --log-error="$MYSQL8_HOME/mysql.log" >/dev/null 2>&1 &
+else
+  run_root service mysql start >/tmp/openwork-mysql-service.log 2>&1 || run_root service mariadb start >/tmp/openwork-mysql-service.log 2>&1
+fi
 
 for _ in $(seq 1 60); do
+  if [ "${OPENWORK_EVAL_MYSQL8:-0}" = "1" ]; then
+    MYSQL_ROOT_CMD=("$MYSQL8_HOME/bin/mysql" --no-defaults --socket=/tmp/mysql.sock -uroot)
+    if "${MYSQL_ROOT_CMD[@]}" -e "SELECT 1" >/dev/null 2>&1; then break; fi
+    sleep 2
+    continue
+  fi
   if mysql -uroot -ppassword -e "SELECT 1" >/dev/null 2>&1; then
     MYSQL_ROOT_CMD=(mysql -uroot -ppassword)
     break

@@ -64,3 +64,16 @@ test("dev-headless explicitly rejects nonlocal placement without changing its lo
   assert.doesNotThrow(() => assertDevHeadlessPlacement({ OPENWORK_WORLD_PLACE: "local" }));
   assert.throws(() => assertDevHeadlessPlacement({ OPENWORK_WORLD_PLACE: "daytona" }), /only --place local/);
 });
+
+test("local split-origin Den requires explicit nonsecret API selection and keeps the web origin", () => {
+  const env = { OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1", OPENWORK_DEV_DEN_PROXY_TARGET: "http://127.0.0.1:3005",
+    OPENWORK_DEV_DEN_API_PROXY_TARGET: "http://127.0.0.1:8790/" };
+  const selected = { ...env, OPENWORK_WORLD_SELECTED_ENV_KEYS: JSON.stringify(Object.keys(env)) };
+  assert.deepEqual(appWebEnvironment(selected), { ...env, VITE_DISABLE_OPENWORK_MODELS: "0", OPENWORK_DEV_DEN_API_PROXY_TARGET: "http://127.0.0.1:8790" });
+  assert.equal(appWebEnvironment({ ...env, ...selection }).OPENWORK_DEV_DEN_API_PROXY_TARGET, undefined);
+  assert.throws(() => appWebEnvironment({ ...selected, OPENWORK_WORLD_PLACE: "daytona" }), /only for local/);
+  assert.throws(() => appWebEnvironment({ ...selected, OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "0" }), /together/);
+  for (const target of ["https://user:secret@example.test", "https://example.test?token=secret", "file:///tmp/data", "http://localhost:8790/v1"]) {
+    assert.throws(() => appWebEnvironment({ ...selected, OPENWORK_DEV_DEN_API_PROXY_TARGET: target }));
+  }
+});

@@ -58,12 +58,40 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
     orgMembershipId: context.orgMembershipId,
     code, source, scriptInputDigest, inputSchemaDigest, outputSchemaDigest,
   }
-  const record = (input: RecordWorkflowRunInput) => context.recordRun(input).catch(() => null)
+  let retained = false
+  let retentionError = context.orgMembershipId ? "workflow_authoring_receipt_unavailable" : "workflow_authoring_member_required"
+  // A receipt is the canonical submission/version identifier. Its private source
+  // record is separate from the durable execution record, including failed runs.
+  const record = async (input: RecordWorkflowRunInput) => {
+    const receiptId = await context.recordRun(input).catch(() => null)
+    if (context.orgMembershipId && receiptId) {
+      retentionError = "workflow_authoring_source_not_retained"
+      try {
+        assertWorkflowSourceSafe(code)
+        retained = await (context.retainSource ?? retainWorkflowAuthoringSource)({
+          receiptId, organizationId: context.organizationId, orgMembershipId: context.orgMembershipId,
+          code, mode, inputDigest: scriptInputDigest, inputSchemaDigest, outputSchemaDigest,
+          contract: { input: scriptInput, inputSchema, outputSchema },
+          ...(runtime ? { runtime } : {}),
+        })
+      } catch (error) {
+        retentionError = error instanceof Error && error.message === "workflow_source_contains_secret"
+          ? "workflow_source_contains_secret" : "workflow_authoring_retention_unavailable"
+      }
+    }
+    return receiptId
+  }
+  const failed = (error: string, message: string, receiptId: string | null, extra: Record<string, unknown> = {}) =>
+    failure(error, message, { ...extra, receiptId, runId: receiptId, status: "failed", verification: "failed",
+      retention: { available: retained, canSaveByReceipt: false, ...(!retained ? { error: retentionError } : {}) } })
   for (const [name, schema] of [["inputSchema", inputSchema], ["outputSchema", outputSchema]] satisfies Array<[string, typeof inputSchema]>) {
     if (!schema) continue
     const validation = validateCodemodeScriptInput(schema, null)
     if (!validation.ok && validation.error === "invalid_schema") {
-      return failure("invalid_schema", `The ${name} could not be compiled.`)
+      const now = new Date()
+      const receiptId = await record({ ...receipt, status: "failed", errorKind: "InvalidArguments",
+        errorMessage: `The ${name} could not be compiled.`, toolCalls: [], durationMs: 0, startedAt: now, finishedAt: now })
+      return failed("invalid_schema", `The ${name} could not be compiled.`, receiptId)
     }
   }
   if (inputSchema) {
@@ -72,7 +100,7 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
       const now = new Date()
       const receiptId = await record({ ...receipt, status: "failed", errorKind: "InvalidArguments",
         errorMessage: "The input does not match inputSchema.", toolCalls: [], durationMs: 0, startedAt: now, finishedAt: now })
-      return failure("invalid_arguments", "The input does not match inputSchema.", { receiptId })
+      return failed("invalid_arguments", "The input does not match inputSchema.", receiptId)
     }
   }
   const built = await context.buildTools()
@@ -85,7 +113,7 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
   if (!result.ok) {
     const receiptId = await record({ ...receipt, status: "failed", errorKind: result.error.kind,
       errorMessage: "The authoring test script failed.", toolCalls: result.toolCalls, durationMs: result.durationMs, startedAt, finishedAt })
-    return failure("script_failed", result.error.message, { kind: result.error.kind, receiptId,
+    return failed("script_failed", result.error.message, receiptId, { kind: result.error.kind,
       ...(result.error.suggestions ? { suggestions: result.error.suggestions } : {}), toolCalls: result.toolCalls })
   }
   const resultDigest = artifactDigest(result.value)
@@ -94,33 +122,17 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
     if (!validation.ok) {
       const receiptId = await record({ ...receipt, resultDigest, status: "failed", errorKind: "InvalidResult",
         errorMessage: "The result does not match outputSchema.", toolCalls: result.toolCalls, durationMs: result.durationMs, startedAt, finishedAt })
-      return failure("invalid_result", "The result does not match outputSchema.", { receiptId })
+      return failed("invalid_result", "The result does not match outputSchema.", receiptId)
     }
   }
   const receiptId = await record({ ...receipt, resultDigest, status: "succeeded",
     toolCalls: result.toolCalls, durationMs: result.durationMs, startedAt, finishedAt })
-  let retained = false
-  let retentionError = context.orgMembershipId ? "workflow_authoring_receipt_unavailable" : "workflow_authoring_member_required"
-  if (context.orgMembershipId && receiptId) {
-    retentionError = "workflow_authoring_source_not_retained"
-    try {
-      assertWorkflowSourceSafe(code)
-      retained = await (context.retainSource ?? retainWorkflowAuthoringSource)({
-        receiptId, organizationId: context.organizationId, orgMembershipId: context.orgMembershipId,
-        code, mode, inputDigest: scriptInputDigest, inputSchemaDigest, outputSchemaDigest,
-        ...(runtime ? { runtime } : {}),
-      })
-    } catch (error) {
-      retentionError = error instanceof Error && error.message === "workflow_source_contains_secret"
-        ? "workflow_source_contains_secret" : "workflow_authoring_retention_unavailable"
-      retained = false
-    }
-  }
   const retention = await (context.retentionMetadata ?? getWorkflowAuthoringRetentionMetadata)()
     .catch((): WorkflowAuthoringRetentionMetadata => ({ scope: "unavailable", ttlMs: 0 }))
   const available = retained && retention.scope !== "unavailable"
   const metadata = {
-    receiptId, mode, executionType: "authoring-test", verification: outputSchema ? "schema" : "not-requested",
+    receiptId, runId: receiptId, status: "succeeded", mode, executionType: "authoring-test", verification: outputSchema ? "schema" : "not-requested",
+    keepAsWorkflow: available ? { receiptId, name: "<choose a name>" } : null,
     executedAt: startedAt.toISOString(), fetchedAt: finishedAt.toISOString(),
     ...(runtime ? { timeZone: runtime.timeZone } : {}),
     retention: { ...retention, available, canSaveByReceipt: available,

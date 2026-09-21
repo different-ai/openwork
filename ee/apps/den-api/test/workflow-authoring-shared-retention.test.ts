@@ -104,6 +104,26 @@ test("cross-member, cross-org and cross-receipt ciphertext substitution fails au
   expect((await second.get(original))?.code).toBe(original.code)
 })
 
+test("exact private contracts survive replica handoff without plaintext storage or digest drift", async () => {
+  const { first, second, values } = fixture()
+  const contract = { input: { topic: "private-synthetic-topic" },
+    inputSchema: { title: "Original input", type: "object", properties: { topic: { type: "string" } } },
+    outputSchema: { type: "object", required: ["syntheticReport"] } }
+  const original = source({ contract, inputDigest: artifactDigest(contract.input),
+    inputSchemaDigest: artifactDigest(contract.inputSchema), outputSchemaDigest: artifactDigest(contract.outputSchema) })
+  expect(await first.retain(original)).toBe(true)
+  expect((await second.get(original))?.contract).toEqual(contract)
+  const { payload } = firstEntry(values)
+  expect(payload.value).not.toContain("private-synthetic-topic")
+  expect(payload.value).not.toContain("Original input")
+  const plaintext = ConfigObjectVersionTable.rawSourceText.mapFromDriverValue(payload.value)
+  if (typeof plaintext !== "string") throw new Error("Missing plaintext")
+  const altered = ConfigObjectVersionTable.rawSourceText.mapToDriverValue(plaintext.replace("Original input", "Changed input"))
+  if (typeof altered !== "string") throw new Error("Missing ciphertext")
+  payload.value = altered
+  expect(await second.get(original)).toBeNull()
+})
+
 test("tampered ciphertext and plaintext entries fail closed without a process fallback", async () => {
   const { first, second, values } = fixture()
   const original = source()

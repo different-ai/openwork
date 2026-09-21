@@ -1,6 +1,14 @@
-import { CodeMode } from "@openwork/codemode"
+import { AsyncLocalStorage } from "node:async_hooks"
+import { CodeMode, toolError } from "@openwork/codemode"
 import { Effect } from "effect"
 import type { CodemodeToolTree } from "./codemode-tools.js"
+
+// Shared across nested runs, including parallel branches. A nested Workflow
+// cannot reset the outer deadline or multiply its capability-call allowance.
+const executionScope = new AsyncLocalStorage<{
+  depth: number
+  budget: { remaining: number; deadline: number }
+}>()
 
 type CodemodeRunCommon = {
   logs: string[]
@@ -46,17 +54,39 @@ export async function runCodemodeScript(input: {
     }
   }
   const bindings = input.scriptInput === undefined ? undefined : { input: input.scriptInput }
-  const result = await Effect.runPromise(CodeMode.execute({
+  const parent = executionScope.getStore()
+  const depth = (parent?.depth ?? 0) + 1
+  const budget = parent?.budget ?? {
+    remaining: input.maxToolCalls ?? 50,
+    deadline: startedAt + input.timeoutMs,
+  }
+  if (depth > 4 || budget.deadline <= startedAt) {
+    return { ok: false, error: { kind: "InvalidDataValue", message: "Nested Workflow execution limit reached." },
+      logs: [], toolCalls: [], durationMs: Date.now() - startedAt }
+  }
+  const tools: CodemodeToolTree = Object.fromEntries(Object.entries(input.tools).map(([namespace, definitions]) => [
+    namespace,
+    Object.fromEntries(Object.entries(definitions).map(([name, definition]) => [name, {
+      ...definition,
+      run: (args: unknown) => Effect.suspend(() => {
+        if (budget.deadline <= Date.now() || budget.remaining-- <= 0) {
+          return Effect.fail(toolError("Workflow execution call budget or deadline exceeded."))
+        }
+        return definition.run(args)
+      }),
+    }])),
+  ]))
+  const result = await executionScope.run({ depth, budget }, () => Effect.runPromise(CodeMode.execute({
     code: input.code,
-    tools: input.tools,
+    tools,
     ...(bindings ? { bindings } : {}),
     readonlyBindings: input.readOnlyInput,
     limits: {
-      timeoutMs: input.timeoutMs,
+      timeoutMs: Math.min(input.timeoutMs, budget.deadline - startedAt),
       maxToolCalls: input.maxToolCalls ?? 50,
       maxOutputBytes: input.maxOutputBytes ?? 65_536,
     },
-  }))
+  })))
   const common = {
     logs: [...(result.logs ?? [])],
     toolCalls: result.toolCalls.map((call) => ({ name: call.name })),

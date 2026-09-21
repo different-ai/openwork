@@ -558,7 +558,7 @@ export function pluginMcpEntries(item: {
   }));
 }
 
-function parseMembershipConfigObject(entry: unknown) {
+export function parseMembershipConfigObject(entry: unknown) {
   if (!isRecord(entry) || !isRecord(entry.configObject)) {
     return null;
   }
@@ -567,7 +567,10 @@ function parseMembershipConfigObject(entry: unknown) {
   const id = asString(configObject.id);
   const title = asString(configObject.title);
   const description = asString(configObject.description) ?? "";
-  const objectType = asString(configObject.objectType);
+  // /resolved preserves the historical wire name for existing MCP clients.
+  // Normalize at the UI boundary so saved Workflows appear in their Plugin.
+  const wireObjectType = asString(configObject.objectType);
+  const objectType = wireObjectType === "script" ? "workflow" : wireObjectType;
   const currentRelativePath = asString(configObject.currentRelativePath);
   const latestVersion = isRecord(configObject.latestVersion) ? configObject.latestVersion : null;
   const latestVersionId = latestVersion ? asString(latestVersion.id) : null;

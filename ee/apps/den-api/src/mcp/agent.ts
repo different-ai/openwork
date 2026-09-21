@@ -15,6 +15,8 @@ import type { RequestIdVariables } from "hono/request-id"
 import { z } from "zod"
 import { connectorCatalogSchema, type ConnectorCatalog } from "@openwork/types/connection-action-app"
 import { connectorCatalogForQuery } from "./connector-catalog.js"
+import { CODE_MODE_INSTRUCTIONS } from "./code-mode-policy.js"
+import { isCodeModeHelperCapability } from "./code-mode-helper.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
@@ -299,7 +301,7 @@ export async function executeCapabilityWithBudget<T extends ExecuteCapabilityToo
   }
 }
 
-export function createAgentMcpServer(): McpServer {
+export function createAgentMcpServer(codeModeEnabled = false): McpServer {
   return new McpServer({
     name: "openwork-den-api-agent",
     version: "1.0.0",
@@ -309,7 +311,7 @@ export function createAgentMcpServer(): McpServer {
       tools: { listChanged: true },
       resources: { listChanged: true },
     },
-    instructions: AGENT_MCP_INSTRUCTIONS,
+    instructions: codeModeEnabled ? CODE_MODE_INSTRUCTIONS : AGENT_MCP_INSTRUCTIONS,
   })
 }
 
@@ -446,6 +448,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationMetadata,
       mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
+      codeModeOptInEnabled: env.codeModeOptInEnabled,
     })
     const { externalMcpConnectionsEnabled } = capabilityContext
     let remoteSkills: RemoteSkillDescriptor[] = []
@@ -484,7 +487,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       ]
         .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
     }
-    const server = createAgentMcpServer()
+    // Single effective value: the registry context already folded the
+    // deployment switch into the stored opt-in.
+    const { codeModeEnabled } = capabilityContext
+    const server = createAgentMcpServer(codeModeEnabled)
     if (method === "server/discover" || method === "initialize" || method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
         // Select before the per-member readiness probes so an ordinary client
@@ -548,7 +554,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           "Built-in and marketplace skill matches return SKILL.md content when executed.",
         ].join(" "),
         annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
-        _meta: { ui: { visibility: ["model", "app"] } },
+        _meta: { ui: { visibility: codeModeEnabled ? ["app"] : ["model", "app"] } },
         inputSchema: z.object({
           intent: z.enum(["discover", "connect"]).optional().describe("Use connect only when the user explicitly asks to connect, reconnect, or set up a service. Ordinary capability discovery must omit this or use discover; it will not show sign-in cards."),
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
@@ -566,6 +572,32 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       },
     )
 
+    if (codeModeEnabled) server.registerTool("capability_helper", {
+      title: "Open connection or app",
+      description: "Preserve MCP App and sign-in cards. Provide query to discover app launches, connection status, or remote sessions; use intent connect only for an explicit setup request. Use type connectors to browse quick adds. Provide an exact discovered name, schemaDigest and body to open an app, probe sign-in, or control a remote session. Ordinary actions and Workflows use execute_capability_script.",
+      inputSchema: z.object({
+        query: z.string().min(1).optional(),
+        type: z.literal("connectors").optional(),
+        intent: z.enum(["discover", "connect"]).optional(),
+        name: z.string().min(1).optional(),
+        body: z.unknown().optional(),
+        schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+      }).refine((value) => Boolean(value.query) !== Boolean(value.name), "Provide query or name."),
+    }, async ({ query, type, intent, name, body, schemaDigest }) => {
+      if (query) {
+        if (type === "connectors") return capabilitySearchToolResult([], undefined, connectorCatalogForQuery(query, true))
+        const result = await searchCapabilityRegistry(capabilityContext, { query, limit: 20 })
+        const matches = result.matches.filter((match) => match.kind === "mcp_app" || match.kind === "connection_status" || match.name.startsWith("remote-session:"))
+        return capabilitySearchToolResult(matches, result.externalCoverageHint,
+          intent === "connect" && !result.matches.some((match) => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query) : null,
+          intent === "connect")
+      }
+      if (!name || !await isCodeModeHelperCapability(capabilityContext, name)) {
+        return { isError: true, content: [{ type: "text", text: "This helper only opens MCP Apps, connection status and remote sessions. Use execute_capability_script for other actions." }] }
+      }
+      return executeCapabilityWithBudget({ capability: name, invoke: () => executeCapability(capabilityContext, { name, body, schemaDigest, requireModelVisible: true }) })
+    })
+
     server.registerTool(
       EXECUTE_CAPABILITY_TOOL_NAME,
       {
@@ -579,7 +611,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           "Returns unknown_capability if name doesn't match a current capability — call search_capabilities again.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
-        _meta: { ui: { visibility: ["model", "app"] } },
+        _meta: { ui: { visibility: codeModeEnabled ? ["app"] : ["model", "app"] } },
         inputSchema: z.object({
           name: z.string().min(1).describe("The exact tool name returned by search_capabilities."),
           schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift can be reported as advisory guidance without blocking the provider call."),
@@ -936,9 +968,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         description: [
           "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls.",
           "mode defaults to adhoc with optional input parameters. Explicit live mode is Den-authorized read-only, rejects all caller input, and supplies only input.runtime.{now,today,dayStart,dayEnd,timeZone} from the server; optional IANA timeZone defaults to UTC and is live-only.",
-          "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. For a discovered Den/native path call it with {path:{...},query:{...},body:{...}} only as advertised; native query parameters must be wrapped in query, e.g. {query:{q:input.query}}. External MCP paths take their argumentsSchema object directly.",
+          codeModeEnabled
+            ? "Discover tools with tools.$codemode.search({query}). Results contain items with path, description and signature; call the exact tools expression in a returned signature. Den/native calls wrap path, query and body as advertised. External MCP tools and Workflows take their input object directly. Workflow results contain output in value. Never guess tool names or arguments."
+            : "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. For a discovered Den/native path call it with {path:{...},query:{...},body:{...}} only as advertised; native query parameters must be wrapped in query, e.g. {query:{q:input.query}}. External MCP paths take their argumentsSchema object directly.",
           "Example adhoc code: return 1 + 1. Example live code: return {today:input.runtime.today}. tools.$codemode.search({query}) is for adhoc exploration; saved Workflows must call discovered paths directly.",
-          "Optional inputSchema is checked before dispatch and outputSchema after execution; inspect discovered outputSchema for result shape rather than guessing. Successful tests return value plus authoring-test metadata and receiptId; source retention availability/scope controls whether saveWorkflow can reuse that receipt. This is not a saved Workflow artifact snapshot. For live apps: test with mode:live and outputSchema, saveWorkflow with receiptId and the same schemas (omit code/currentInput), run the saved version with mode:live and timeZone, then save_artifact_view for draft preview; the user chooses Save.",
+          "Optional inputSchema is checked before dispatch and outputSchema after execution; inspect discovered outputSchema for result shape rather than guessing. Submissions retain a private immutable procedure contract separately from the run, including failed attempts, with bounded retention up to 15 minutes. receiptId is the canonical stored procedure version identifier; runId/status describe its execution. Check retention.available. Inspect attempts with getWorkflowAuthoringHistory. Keep as Workflow only when requested: discover saveWorkflow and send {receiptId, name}, optionally description/pluginId. Omit code, currentInput, inputSchema, outputSchema and title; the server recovers them exactly. Failed attempts cannot be promoted. This is not a saved Workflow artifact snapshot. For live apps: test with mode:live and outputSchema, saveWorkflow with receiptId and name only, run the saved version with mode:live and timeZone, then save_artifact_view for draft preview; the user chooses Save.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         inputSchema: workflowAuthoringTestInputSchema,

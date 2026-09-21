@@ -150,6 +150,7 @@ function fixtureContext(platformAdmin: boolean): CapabilityRegistryContext {
     generatedArtifactViewsEnabled: false,
     externalMcpConnectionsEnabled: true,
     remoteSessionsEnabled: true,
+    codeModeEnabled: false,
     resolvePlatformAdmin: () => {
       platformAdminResolution ??= Promise.resolve(platformAdmin)
       return platformAdminResolution

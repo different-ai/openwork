@@ -8,6 +8,7 @@ import type { NativeProviderConnectionEntry } from "../capability-sources/native
 import { listExternalMcpTools } from "../capability-sources/external-mcp-client-runtime.js"
 import { createExternalMcpLifecycleDeadline, EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS } from "../capability-sources/external-mcp-client.js"
 import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.js"
+import { toolVisibleToModel } from "./tool-visibility.js"
 import { NATIVE_OAUTH_PROVIDERS } from "../capability-sources/provider-registry.js"
 import type { McpPrincipal } from "./auth.js"
 import type { McpToolOperation } from "./catalog.js"
@@ -19,6 +20,7 @@ import {
 import {
   buildExternalCapabilityName,
   executeExternalCapability,
+  externalMcpAppResourceUri,
   EXTERNAL_MCP_SEARCH_CONCURRENCY,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
@@ -329,6 +331,7 @@ export async function buildExternalMcpToolTree(input: {
   scopes: ReadonlySet<string>
   redirectUriBase: string
   namespaceContext?: CodemodeConnectionNamespaceContext
+  preserveAppHandoffs?: boolean
 }): Promise<BuiltCodemodeTools> {
   if (!input.member) return { tools: {}, manifest: [] }
   const memberIdentity = input.member
@@ -350,7 +353,7 @@ export async function buildExternalMcpToolTree(input: {
         undefined,
         deadline,
       )
-      return { connection, tools }
+      return { connection, tools: tools.filter((tool) => toolVisibleToModel(tool) && !isToolDisabled(connection.toolPolicy, tool.name)) }
     } catch {
       return undefined
     }
@@ -359,16 +362,18 @@ export async function buildExternalMcpToolTree(input: {
   const namespaceEntries = listed.flatMap(({ connection, tools }) => {
     const namespace = namespaces.get(connection.id)
     if (!namespace) return []
-    const enabledTools = tools.filter((tool) => !isToolDisabled(connection.toolPolicy, tool.name))
-    const definitions = enabledTools.map((tool) => [tool.name, Tool.make({
+    const definitions = tools.map((tool) => [tool.name, Tool.make({
       description: tool.description ?? tool.title ?? tool.name,
       input: tool.inputSchema,
-      run: (args) => Effect.promise(() => executeExternalCapability({
+      run: (args) => input.preserveAppHandoffs && externalMcpAppResourceUri(tool)
+        ? Effect.fail(toolError(`Use capability_helper with name ${buildExternalCapabilityName(connection.id, tool.name)} and the same body to open this MCP App. No provider call was made.`))
+        : Effect.promise(() => executeExternalCapability({
         organizationId: input.organizationId,
         member: memberIdentity,
         scopes: input.scopes,
         connectionId: connection.id,
         toolName: tool.name,
+        requireModelVisible: true,
         args: stripUndefinedEntries(args),
         redirectUriBase: input.redirectUriBase,
       })).pipe(Effect.flatMap((result) => result.ok
@@ -383,7 +388,6 @@ export async function buildExternalMcpToolTree(input: {
       const namespace = namespaces.get(connection.id)
       if (!namespace) return []
       return tools
-        .filter((tool) => !isToolDisabled(connection.toolPolicy, tool.name))
         .map((tool) => ({
           scriptPath: codemodeScriptPath(namespace, tool.name),
           capabilityName: buildExternalCapabilityName(connection.id, tool.name),
