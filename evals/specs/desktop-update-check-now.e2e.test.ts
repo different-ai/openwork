@@ -10,23 +10,26 @@ const test = spec.world(desktopUpdateCheckNowWorld, {
 
 const staged = "0.18.47-alpha.2962";
 const newer = "0.18.47-alpha.2966";
-const downloadLabel = `Download v${newer} (123 MB)`;
+const downloadLabel = "Download (123 MB)";
 
 for (const replaceStaged of [false, true]) {
   test(replaceStaged
-    ? "Settings explicitly downloads B before replacing staged A; the titlebar still confirms restart"
-    : "Settings Check now discovers B without replacing A or changing its restart capsule", async ({ world, user, probe, evidence }) => {
+    ? "A desktop user downloads a newer update with a version-free button before restarting"
+    : "A desktop user discovers a newer update and can still install the downloaded version", async ({ world, user, probe, evidence, step }) => {
     await world.openSettings();
     await user.click({ role: "combobox", label: "Release channel" });
     await user.click({ role: "option", label: "Alpha" });
     await probe.eventually(world.snapshot, { within: 10_000, label: "the renderer selects Alpha", until: (value) => value.channel === "alpha" && value.checks.at(-1)?.channel === "alpha" });
     await user.see({ text: "You're up to date" });
-    await world.publishInitial();
-    await user.click({ role: "button", text: "Check now" });
-    await probe.eventually(world.snapshot, { within: 10_000, label: "the initial release downloads", until: (value) => value.downloads.length === 1 });
-    await world.finishDownload();
-    await user.see({ text: `Ready to install: v${staged}` });
-    await user.see({ text: "Restart to update" });
+    await step("before: the downloaded update is ready to install", async () => {
+      await world.publishInitial();
+      await user.click({ role: "button", text: "Check now" });
+      await probe.eventually(world.snapshot, { within: 10_000, label: "the initial release downloads", until: (value) => value.downloads.length === 1 });
+      await world.finishDownload();
+      await user.see({ text: `Ready to install: v${staged}` });
+      await user.see({ text: "Restart to update" });
+      await user.screenshot();
+    });
     const ready = await world.snapshot();
     expect(ready).toMatchObject({ stagedVersion: staged, downloads: [staged], installs: [], automaticChecksEnabled: true, automaticDownloadsEnabled: true, capsuleText: "Restart to update", updateInSidebar: false });
 
@@ -46,10 +49,15 @@ for (const replaceStaged of [false, true]) {
       return Date.now() >= quietUntil;
     }, { within: 5_000, label: "automatic timer, focus, online and visibility leave ready A alone", until: Boolean });
 
-    await user.click({ role: "button", text: "Check now" });
-    await user.see({ text: downloadLabel });
-    await user.see({ text: `Ready to install: v${staged}` });
-    await user.notSee({ text: `Install v${newer} & restart` });
+    await step("after: Download shows the size, with the version in the update status", async () => {
+      await user.click({ role: "button", text: "Check now" });
+      await user.see({ role: "button", text: downloadLabel });
+      await user.notSee({ role: "button", text: `Download v${newer} (123 MB)` });
+      await user.see({ text: `v${newer} available (v${staged} downloaded)` });
+      await user.see({ text: `Ready to install: v${staged}` });
+      await user.notSee({ text: `Install v${newer} & restart` });
+      await user.screenshot();
+    });
     const discovered = await world.snapshot();
     expect(discovered.checks).toHaveLength(ready.checks.length + 1);
     expect(discovered.checks.at(-1)).toMatchObject({ channel: "alpha", preserveStaged: true });
@@ -77,23 +85,28 @@ for (const replaceStaged of [false, true]) {
     );
 
     if (!replaceStaged) {
-      await user.click({ role: "button", text: `Install v${staged} & restart` });
-      await probe.eventually(world.snapshot, { within: 10_000, label: "Settings installs A, not the discovered B", until: (value) => value.installs.length === 1 });
-      const installed = await world.snapshot();
-      expect(installed).toMatchObject({ checks: discovered.checks, downloads: [staged], installs: [staged] });
-      evidence.recordAssertionEvidence("Settings still installs staged A without downloading B (fake installer)", JSON.stringify(installed), true);
+      await step("the already downloaded update remains installable", async () => {
+        await user.click({ role: "button", text: `Install v${staged} & restart` });
+        await probe.eventually(world.snapshot, { within: 10_000, label: "Settings installs A, not the discovered B", until: (value) => value.installs.length === 1 });
+        const installed = await world.snapshot();
+        expect(installed).toMatchObject({ checks: discovered.checks, downloads: [staged], installs: [staged] });
+        evidence.recordAssertionEvidence("Settings still installs staged A without downloading B (fake installer)", JSON.stringify(installed), true);
+      });
       return;
     }
 
-    await user.click({ role: "button", text: downloadLabel });
-    await probe.eventually(world.snapshot, { within: 10_000, label: "only the explicit Download action starts B", until: (value) => value.downloads.length === 2 });
-    await user.notSee({ text: `Install v${staged} & restart` });
-    await user.notSee({ text: "Restart to update" });
-    expect(await world.snapshot()).toMatchObject({ downloads: [staged, newer], stagedVersion: null, installs: [] });
-    await world.finishDownload();
-    await user.see({ text: `Ready to install: v${newer}` });
-    await user.see({ text: `Install v${newer} & restart` });
-    await user.notSee({ text: downloadLabel });
+    await step("Download fetches the newer update and makes it ready to install", async () => {
+      await user.click({ role: "button", text: downloadLabel });
+      await probe.eventually(world.snapshot, { within: 10_000, label: "only the explicit Download action starts B", until: (value) => value.downloads.length === 2 });
+      await user.notSee({ text: `Install v${staged} & restart` });
+      await user.notSee({ text: "Restart to update" });
+      expect(await world.snapshot()).toMatchObject({ downloads: [staged, newer], stagedVersion: null, installs: [] });
+      await world.finishDownload();
+      await user.see({ text: `Ready to install: v${newer}` });
+      await user.see({ text: `Install v${newer} & restart` });
+      await user.notSee({ text: downloadLabel });
+      await user.screenshot();
+    });
     await world.triggerAutomaticChecks();
     const replacementQuietUntil = Date.now() + 750;
     await probe.eventually(async () => {

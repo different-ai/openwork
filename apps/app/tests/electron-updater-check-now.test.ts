@@ -273,7 +273,7 @@ describe("Settings staged-update discovery", () => {
       channel: "stable",
     });
     expect(button(`Install v${stagedVersion} & restart`).disabled).toBe(false);
-    expect(button(`Download v${newerVersion} (${formatBytes(artifactBytes)})`).disabled).toBe(false);
+    expect(button(`Download (${formatBytes(artifactBytes)})`).disabled).toBe(false);
     expect(host.textContent).toContain(`v${newerVersion} available (v${stagedVersion} downloaded)`);
     expect(host.textContent).toContain(`Notes for ${newerVersion}`);
     expect(host.textContent).toContain("Released 2026-09-12");
@@ -299,11 +299,11 @@ describe("Settings staged-update discovery", () => {
     expect(updater.updateStatus?.newest).toBe(feedVersion === alphaStagedVersion);
     if (feedVersion === alphaNewerVersion) {
       expect(updater.updateStatus?.candidate).toMatchObject({ version: alphaNewerVersion, channel: "alpha", totalBytes: artifactBytes });
-      expect(button(`Download v${alphaNewerVersion} (${formatBytes(artifactBytes)})`).disabled).toBe(false);
+      expect(button(`Download (${formatBytes(artifactBytes)})`).disabled).toBe(false);
       expect(host.textContent).toContain(`v${alphaNewerVersion} available (v${alphaStagedVersion} downloaded)`);
     } else {
       expect(updater.updateStatus?.candidate).toBeUndefined();
-      expect(host.textContent).not.toContain("Download v");
+      expect(host.textContent).not.toContain("Download (");
     }
     expect(button(`Install v${alphaStagedVersion} & restart`).disabled).toBe(false);
   });
@@ -331,7 +331,7 @@ describe("Settings staged-update discovery", () => {
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: stagedVersion, newest: true });
     expect(updater.updateStatus?.candidate).toBeUndefined();
     expect(host.textContent).toContain(`Ready to install: v${stagedVersion} — newest`);
-    expect(host.textContent).not.toContain("Download v");
+    expect(host.textContent).not.toContain("Download (");
   });
 
   test("older feed is neither a newer candidate nor equal-newest", async () => {
@@ -341,14 +341,14 @@ describe("Settings staged-update discovery", () => {
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: stagedVersion, newest: false });
     expect(updater.updateStatus?.candidate).toBeUndefined();
     expect(host.textContent).not.toContain("— newest");
-    expect(host.textContent).not.toContain("Download v");
+    expect(host.textContent).not.toContain("Download (");
   });
 
   test("unknown artifact size is honest in the rendered download action", async () => {
     await stage();
     totalBytes = null;
     await click("Check now");
-    expect(button(`Download v${newerVersion} (size unknown)`).disabled).toBe(false);
+    expect(button("Download (size unknown)").disabled).toBe(false);
     expect(updater.updateStatus?.candidate?.totalBytes).toBeNull();
   });
 
@@ -445,7 +445,7 @@ describe("Settings staged-update discovery", () => {
     await click("Check now");
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: stagedVersion, checkError: "offline" });
     expect(updater.updateStatus?.candidate).toBeUndefined();
-    expect(host.textContent).not.toContain(`Download v${newerVersion}`);
+    expect(host.textContent).not.toContain("Download (");
     expect(host.textContent).toContain("offline");
     expect(button("Retry").disabled).toBe(false);
     expect(button(`Install v${stagedVersion} & restart`).disabled).toBe(false);
@@ -479,7 +479,7 @@ describe("Settings staged-update discovery", () => {
       expect(updater.updateStatus?.checkCooldownUntil).toBeUndefined();
       expect(host.textContent).toContain("The previously downloaded update is no longer confirmed ready to install.");
       expect(host.textContent).not.toContain(`Install v${stagedVersion}`);
-      expect(host.textContent).not.toContain(`Download v${newerVersion}`);
+      expect(host.textContent).not.toContain("Download (");
       expect(button("Retry").disabled).toBe(false);
       await advance(15 * 60 * 1000);
       await act(async () => { window.dispatchEvent(new Event("focus")); automaticTick(); });
@@ -517,7 +517,7 @@ describe("Settings staged-update discovery", () => {
     const deferred = Promise.withResolvers<{ ok: boolean }>();
     downloadResult = () => deferred.promise;
     statuses = [];
-    await click(`Download v${newerVersion} (${formatBytes(artifactBytes)})`);
+    await click(`Download (${formatBytes(artifactBytes)})`);
     expect(downloads).toEqual([newerVersion]);
     expect(updater.updateStatus).toMatchObject({ state: "downloading", version: newerVersion });
     expect(updater.updateStatus?.candidate).toBeUndefined();
@@ -538,7 +538,7 @@ describe("Settings staged-update discovery", () => {
     await click("Check now");
     downloadReason = "download failed";
     statuses = [];
-    await click(`Download v${newerVersion} (${formatBytes(artifactBytes)})`);
+    await click(`Download (${formatBytes(artifactBytes)})`);
     expect(downloads).toEqual([newerVersion]);
     expect(updater.updateStatus).toMatchObject({ state: "error", failedAction: "download", message: "download failed" });
     expect(statuses.some((status) => status?.state === "ready")).toBe(false);
@@ -565,7 +565,7 @@ describe("Settings staged-update discovery", () => {
     await act(async () => { installing = updater.installUpdateAndRestart(); });
     expect(installs).toBe(0);
     if (replace) {
-      await click(`Download v${newerVersion} (${formatBytes(artifactBytes)})`);
+      await click(`Download (${formatBytes(artifactBytes)})`);
       expect(downloadedStage).toBe(newerVersion);
     }
     await act(async () => {

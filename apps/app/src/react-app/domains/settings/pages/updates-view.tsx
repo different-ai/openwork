@@ -195,8 +195,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                         onClick={() => void props.downloadUpdate()}
                         disabled={props.busy || checkingForNewer}
                       >
-                        {t("updates.download_version", undefined, {
-                          version: candidate.version,
+                        {t("updates.download_with_size", undefined, {
                           size: candidate.totalBytes != null && candidate.totalBytes > 0
                             ? formatBytes(candidate.totalBytes)
                             : t("updates.size_unknown"),

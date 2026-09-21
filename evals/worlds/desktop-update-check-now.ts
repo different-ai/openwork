@@ -92,7 +92,7 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
     snapshot: () => evalIn(app, () => {
       const { channel, checks, downloads, installs, stagedVersion } = window.__checkNowUpdateWitness;
       const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
-      const settingsActions = buttons.filter((button) => /^(Install v|Download v)/.test(button.textContent?.trim() ?? ""));
+      const settingsActions = buttons.filter((button) => /^(Install v|Download \()/.test(button.textContent?.trim() ?? ""));
       return {
         channel, checks, downloads, installs, stagedVersion,
         automaticChecksEnabled: localStorage.getItem("openwork.react.settings.update-auto-check") !== "0",

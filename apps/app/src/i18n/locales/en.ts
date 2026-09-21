@@ -2035,7 +2035,7 @@ export default {
   "settings.update_ready_version": "Ready to install: v{version}",
   "updates.ready_newest": "Ready to install: v{version} — newest",
   "updates.install_version": "Install v{version} & restart",
-  "updates.download_version": "Download v{version} ({size})",
+  "updates.download_with_size": "Download ({size})",
   "updates.size_unknown": "size unknown",
   "updates.checking": "Checking for newer updates…",
   "updates.check_cooldown": "Check now (15-second cooldown)",
