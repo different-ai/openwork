@@ -1342,9 +1342,15 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     );
     if (stale.length === 0) return;
     for (const [workspaceId] of stale) delete hydratedRouteSessionIdsRef.current[workspaceId];
+    // A direct read that settled just before its inventory is marked hydrated
+    // after that inventory merged, so the marker alone cannot prove the session
+    // is display-only. Sessions the fetched inventory knows stay listed.
+    const displayOnly = stale.filter(([workspaceId, sessionId]) =>
+      sessionReferenceLoadsRef.current.get(workspaceId)?.sessionIds.has(sessionId) !== true);
+    if (displayOnly.length === 0) return;
     setSessionsByWorkspaceId((current) => {
       let next = current;
-      for (const [workspaceId, sessionId] of stale) {
+      for (const [workspaceId, sessionId] of displayOnly) {
         const items = current[workspaceId] ?? [];
         const filtered = removeWorkspaceRouteSession(items, sessionId);
         if (filtered === items) continue;
@@ -1392,7 +1398,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
               delete hydratedRouteSessionIdsRef.current[selectedWorkspaceId];
               return current;
             }
-            hydratedRouteSessionIdsRef.current[selectedWorkspaceId] = selectedSessionId;
+            if (sessionReferenceLoadsRef.current.get(selectedWorkspaceId)?.sessionIds.has(selectedSessionId) !== true) {
+              hydratedRouteSessionIdsRef.current[selectedWorkspaceId] = selectedSessionId;
+            }
             const nextItems = mergeWorkspaceRouteSession(currentItems, session);
             const next = { ...current, [selectedWorkspaceId]: nextItems };
             sessionsByWorkspaceIdRef.current = next;
