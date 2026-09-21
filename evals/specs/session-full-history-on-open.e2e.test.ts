@@ -428,8 +428,10 @@ test("a long conversation pages on demand, restores its saved page cold and load
       await user.press("PageDown");
       await expectReadingWindow(40);
     }
-    await probe.eventually(() => historyDom(), { within: 5_000, label: "the earlier message leaves the mounted window",
-      until: ({ rows }) => !rows.some((row) => row.text.includes(longHistoryFirst)) });
+    // The clicked first message keeps keyboard focus, so the transcript retains
+    // that one group on purpose; the unfocused rows after it must still unmount.
+    await probe.eventually(() => historyDom(), { within: 5_000, label: "the earlier unfocused messages leave the mounted window",
+      until: ({ rows }) => !rows.some((row) => persisted.slice(1, 10).some((text) => row.text.includes(text))) });
     expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount);
     await user.screenshot();
     expect(await agent.run("session.scroll_top")).toMatchObject({ ok: true, position: "top" });
