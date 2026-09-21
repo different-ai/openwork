@@ -8,8 +8,8 @@ const test = spec.world(desktopUpdateCheckNowWorld, {
   timeout: 180_000,
 });
 
-const staged = "0.18.47-alpha.2962";
-const newer = "0.18.47-alpha.2966";
+const staged = "9.9.8";
+const newer = "9.9.9";
 const downloadLabel = "Download (123 MB)";
 
 for (const replaceStaged of [false, true]) {
@@ -17,11 +17,12 @@ for (const replaceStaged of [false, true]) {
     ? "A desktop user downloads a newer update with a version-free button before restarting"
     : "A desktop user discovers a newer update and can still install the downloaded version", async ({ world, user, probe, evidence, step }) => {
     await world.openSettings();
-    await user.click({ role: "combobox", label: "Release channel" });
-    await user.click({ role: "option", label: "Alpha" });
-    await probe.eventually(world.snapshot, { within: 10_000, label: "the renderer selects Alpha", until: (value) => value.channel === "alpha" && value.checks.at(-1)?.channel === "alpha" });
+    // Re-arm the real timer after the world installs its interval witness.
+    await user.click({ role: "switch", label: "Check automatically" });
+    await user.click({ role: "switch", label: "Check automatically" });
+    await user.click({ role: "button", text: "Check now" });
     await user.see({ text: "You're up to date" });
-    await step("before: the downloaded update is ready to install", async () => {
+    await step("the downloaded update is ready to install", async () => {
       await world.publishInitial();
       await user.click({ role: "button", text: "Check now" });
       await probe.eventually(world.snapshot, { within: 10_000, label: "the initial release downloads", until: (value) => value.downloads.length === 1 });
@@ -60,7 +61,7 @@ for (const replaceStaged of [false, true]) {
     });
     const discovered = await world.snapshot();
     expect(discovered.checks).toHaveLength(ready.checks.length + 1);
-    expect(discovered.checks.at(-1)).toMatchObject({ channel: "alpha", preserveStaged: true });
+    expect(discovered.checks.at(-1)).toMatchObject({ channel: "stable", targetVersion: newer, preserveStaged: true });
     expect(discovered).toMatchObject({ downloads: [staged], stagedVersion: staged, installs: [], capsuleText: "Restart to update", updateInSidebar: false });
     expect(discovered.settingsActions).toEqual([
       { text: `Install v${staged} & restart`, disabled: false, primary: true, secondary: false },
@@ -79,7 +80,7 @@ for (const replaceStaged of [false, true]) {
     await user.notSee({ text: "Restart OpenWork?" });
     expect((await world.snapshot()).installs).toEqual([]);
     evidence.recordAssertionEvidence(
-      "Manual Alpha discovery preserves A, offers explicit B, and leaves the titlebar panel and background checks unchanged",
+      "Manual discovery preserves A, offers explicit B, and leaves the titlebar panel and background checks unchanged",
       JSON.stringify({ ready, discovered, unchangedPanel: panel }),
       true,
     );

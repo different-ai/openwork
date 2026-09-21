@@ -1,5 +1,4 @@
 import { evalIn, go } from "@openwork/behaviors";
-import { SkipError } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 
 declare global {
@@ -21,13 +20,14 @@ declare global {
 }
 
 export async function desktopUpdateCheckNowWorld(seed: Seed) {
-  if (process.platform !== "darwin") throw new SkipError("macOS desktop for the Alpha release channel");
   const app = await seed.desktop({ name: "desktop-update-check-now", signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("desktop-update-check-now"));
-  await evalIn(app, () => {
-    const currentVersion = "0.18.47-alpha.2960";
+  await evalIn(app, async () => {
+    // Keep the installed version stable so the first manual check does not
+    // re-key the background checker while its fake download is pending.
+    const { currentVersion } = await window.__OPENWORK_ELECTRON__.updater.getChannel();
     const state: Window["__checkNowUpdateWitness"] = {
-      channel: "stable", latestVersion: "0.18.47-alpha.2962", selectedVersion: null,
+      channel: "stable", latestVersion: "9.9.8", selectedVersion: null,
       stagedVersion: null, published: false, checks: [], downloads: [], installs: [],
       offset: 0, intervalCheck: null, finishDownload: null,
     };
@@ -40,11 +40,12 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
       if (delay === 15 * 60 * 1000 && typeof callback === "function") state.intervalCheck = () => callback(...args);
       return schedule(callback, delay, ...args);
     };
-    window.__openworkApplyDesktopConfig({ allowAlphaUpdates: true });
-    window.__openworkSetDesktopConfigRefreshResult({ allowAlphaUpdates: true });
-    window.__openworkReadDesktopVersionMetadataEval = () => ({
-      minAppVersion: "0.1.0", latestAppVersion: "0.18.46", publishedDesktopVersions: ["0.18.46"],
-    });
+    window.__openworkApplyDesktopConfig({});
+    window.__openworkSetDesktopConfigRefreshResult({});
+    window.__openworkReadDesktopVersionMetadataEval = () => {
+      const latestAppVersion = state.latestVersion;
+      return { minAppVersion: "0.1.0", latestAppVersion, publishedDesktopVersions: [latestAppVersion] };
+    };
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: state.channel, currentVersion }),
       setChannel: async (channel) => {
@@ -54,7 +55,7 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
       },
       check: async (channel, targetVersion?: string, options?: { preserveStaged?: boolean }) => {
         state.checks.push({ channel, targetVersion, preserveStaged: options?.preserveStaged === true });
-        const available = state.published && channel === "alpha";
+        const available = state.published && channel === "stable";
         state.selectedVersion = available ? state.latestVersion : null;
         if (!options?.preserveStaged) state.stagedVersion = null;
         return {
@@ -86,7 +87,7 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
       },
       onDownloadProgress: () => () => {},
     };
-  });
+  }, { awaitPromise: true });
   return {
     app,
     snapshot: () => evalIn(app, () => {
@@ -108,7 +109,7 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
       };
     }),
     publishInitial: () => evalIn(app, () => { window.__checkNowUpdateWitness.published = true; }),
-    advanceFeed: () => evalIn(app, () => { window.__checkNowUpdateWitness.latestVersion = "0.18.47-alpha.2966"; }),
+    advanceFeed: () => evalIn(app, () => { window.__checkNowUpdateWitness.latestVersion = "9.9.9"; }),
     finishDownload: () => evalIn(app, () => {
       const finish = window.__checkNowUpdateWitness.finishDownload;
       if (!finish) throw new Error("No update download is pending");
