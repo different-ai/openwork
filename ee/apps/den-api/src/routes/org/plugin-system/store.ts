@@ -29,7 +29,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
+import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchAppAdmin, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
 import { CONTENT_EDIT_SESSION_MAX_AGE_MS } from "../shared.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
@@ -1799,6 +1799,7 @@ export async function createConfigObjectVersion(input: { context: PluginArchActo
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
   const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
   await requirePluginArchResourceRole({
     context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
@@ -1843,6 +1844,7 @@ export async function setConfigObjectLifecycle(input: { context: PluginArchActor
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
   const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
   await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "manager" })
   const now = new Date()
@@ -1882,6 +1884,7 @@ export async function listConfigObjectPlugins(input: { context: PluginArchActorC
 
 export async function attachConfigObjectToPlugin(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; membershipSource?: PluginMembershipRow["membershipSource"]; pluginId: PluginId }) {
   const configObject = await ensureVisibleConfigObject(input.context, input.configObjectId)
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: configObject.id, resourceKind: "config_object" })
   if (configObject.objectType === "workflow" || configObject.objectType === "script") {
     // Adding a Workflow to a Plugin can expand its audience through Plugin and
     // Marketplace grants, so only a Workflow manager may make that sharing
@@ -1925,6 +1928,7 @@ export async function attachConfigObjectToPlugin(input: { context: PluginArchAct
 
 export async function removeConfigObjectFromPlugin(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; pluginId: PluginId }) {
   const configObject = await ensureVisibleConfigObject(input.context, input.configObjectId)
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: configObject.id, resourceKind: "config_object" })
   if (configObject.objectType === "workflow" || configObject.objectType === "script") {
     await requirePluginArchResourceRole({
       context: input.context,
@@ -2548,6 +2552,7 @@ export async function listMeLibraryConnectionItems(input: {
 
 export async function createResourceAccessGrant(input: { context: PluginArchActorContext; value: AccessGrantWrite } & ResourceTarget) {
   await ensureResourceInOrganization(input.context, input)
+  await requirePluginArchAppAdmin(input)
   await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
   if (input.value.orgWide === true && !isPluginArchOrgAdmin(input.context)) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can grant org-wide access.")
@@ -2560,6 +2565,7 @@ export async function createResourceAccessGrant(input: { context: PluginArchActo
 
 export async function deleteResourceAccessGrant(input: { context: PluginArchActorContext } & GrantTarget) {
   await ensureResourceInOrganization(input.context, input)
+  await requirePluginArchAppAdmin(input)
   await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
   await removeGrant(input)
   await syncPluginMcpRequirementAccessForResource(input)
@@ -2901,6 +2907,7 @@ export async function updatePlugin(input: { context: PluginArchActorContext; des
 
 export async function setPluginLifecycle(input: { action: "archive" | "restore"; context: PluginArchActorContext; pluginId: PluginId }) {
   const row = await ensureVisiblePlugin(input.context, input.pluginId)
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: row.id, resourceKind: "plugin" })
   const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "plugin" })
   await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "plugin", role: "manager" })
   const updatedAt = new Date()
@@ -3395,6 +3402,7 @@ export async function updateMarketplace(input: { context: PluginArchActorContext
 
 export async function setMarketplaceLifecycle(input: { action: "archive" | "delete" | "restore"; context: PluginArchActorContext; marketplaceId: MarketplaceId }) {
   const row = await ensureVisibleMarketplace(input.context, input.marketplaceId)
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: row.id, resourceKind: "marketplace" })
   await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "marketplace", role: "manager" })
   const updatedAt = new Date()
   if (input.action === "delete") {
@@ -3586,6 +3594,7 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
 
 export async function attachPluginToMarketplace(input: { context: PluginArchActorContext; marketplaceId: MarketplaceId; membershipSource?: MarketplaceMembershipRow["membershipSource"]; pluginId: PluginId }) {
   await ensureVisiblePlugin(input.context, input.pluginId)
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: input.pluginId, resourceKind: "plugin" })
   if (input.marketplaceId) {
     await ensureEditableMarketplace(input.context, input.marketplaceId)
   }
@@ -3620,6 +3629,7 @@ export async function attachPluginToMarketplace(input: { context: PluginArchActo
 
 export async function removePluginFromMarketplace(input: { context: PluginArchActorContext; marketplaceId: MarketplaceId; pluginId: PluginId }) {
   await ensureVisiblePlugin(input.context, input.pluginId)
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: input.pluginId, resourceKind: "plugin" })
   await ensureEditableMarketplace(input.context, input.marketplaceId)
   const rows = await db
     .select()
@@ -3712,6 +3722,7 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
   // Resolve every imported marketplace/plugin id to delete up front so the
   // transaction below is a single pass of pure writes (no reads on the tx).
   const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds({ organizationId, seedPluginIds: connectorPluginIds })
+  await requireAppAdminForResourceCleanup(input.context, configObjectIds, importedResourceCleanupPlan)
   const pluginMcpRequirementBindingIdsToDelete = await pluginMcpRequirementBindingIdsForHardDeletedResources({
     configObjectIds,
     organizationId,
@@ -3892,6 +3903,12 @@ type ConnectorImportedResourceCleanupPlan = {
   marketplaceIdsToDelete: MarketplaceId[]
   pluginMcpRequirementBindingIdsToDelete: PluginMcpRequirementBindingId[]
   pluginIdsToDelete: PluginId[]
+}
+
+async function requireAppAdminForResourceCleanup(context: PluginArchActorContext, configObjectIds: ConfigObjectId[], plan: ConnectorImportedResourceCleanupPlan) {
+  for (const resourceId of configObjectIds) await requirePluginArchAppAdmin({ context, resourceKind: "config_object", resourceId })
+  for (const resourceId of plan.pluginIdsToDelete) await requirePluginArchAppAdmin({ context, resourceKind: "plugin", resourceId })
+  for (const resourceId of plan.marketplaceIdsToDelete) await requirePluginArchAppAdmin({ context, resourceKind: "marketplace", resourceId })
 }
 
 async function pluginMcpRequirementBindingIdsForHardDeletedResources(input: {
@@ -4193,6 +4210,7 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
   // Resolve every imported marketplace/plugin id to delete up front so the
   // transaction below is a single pass of pure writes (no reads on the tx).
   const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds({ organizationId: instance.organizationId, seedPluginIds: pluginIds })
+  await requireAppAdminForResourceCleanup(input.context, configObjectIds, importedResourceCleanupPlan)
   const pluginMcpRequirementBindingIdsToDelete = await pluginMcpRequirementBindingIdsForHardDeletedResources({
     configObjectIds,
     organizationId: instance.organizationId,

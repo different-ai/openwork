@@ -2,12 +2,12 @@ import { artifactFreshness } from "./workflow-artifacts.js"
 import type { BuiltCodemodeTools } from "./mcp/codemode-tools.js"
 import { executeLiveArtifactWorkflow } from "./workflows.js"
 import type { SavedAppDetail, SavedAppSummary } from "@openwork/types/workflows"
-import { getArtifactView, getGeneratedArtifactViewRevision, listArtifactViewsWithWorkflowAccess, loadArtifactViewRevision } from "./artifact-views.js"
+import { getArtifactView, getGeneratedArtifactViewRevision, listArtifactViewsWithWorkflowAccess, loadArtifactViewRevision, requireDashboardAdmin } from "./artifact-views.js"
 import { getWorkflowDetail, getWorkflowSnapshot } from "./workflows.js"
 import type { PluginArchActorContext } from "./routes/org/plugin-system/access.js"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, DashboardAppTable, MemberTable } from "@openwork-ee/den-db/schema"
-import { requirePluginArchResourceRole } from "./routes/org/plugin-system/access.js"
+import { isPluginArchOrgAdmin, requirePluginArchResourceRole } from "./routes/org/plugin-system/access.js"
 import { createResourceAccessGrant, listResourceAccess } from "./routes/org/plugin-system/store.js"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
@@ -21,6 +21,7 @@ function dashboardScope(context: PluginArchActorContext) {
 
 /** Share through the workflow's existing access model; never copy result data. */
 export async function shareSavedApp(context: PluginArchActorContext, appId: string, email: string) {
+  requireDashboardAdmin(context)
   const view = await getArtifactView({ context, artifactViewId: appId })
   if (view.status !== "active" || !view.activeRevisionId) throw new Error("artifact_view_not_found")
   const resource: { context: PluginArchActorContext; resourceId: DenTypeId<"configObject">; resourceKind: "config_object" } = {
@@ -44,6 +45,7 @@ export async function shareSavedApp(context: PluginArchActorContext, appId: stri
 }
 
 export async function setAppOnDashboard(context: PluginArchActorContext, appId: string, added: boolean) {
+  requireDashboardAdmin(context)
   const id = normalizeDenTypeId("artifactView", appId)
   if (added) {
     const view = await getArtifactView({ context, artifactViewId: id })
@@ -64,7 +66,7 @@ export async function listSavedApps(context: PluginArchActorContext): Promise<Sa
   const placements = await db.select().from(DashboardAppTable).where(dashboardScope(context))
   const onDashboard = new Set(placements.map((entry) => entry.artifact_view_id))
   return entries.filter(({ view }) => view.activeRevisionId !== null).map(({ view, workflow }) => {
-    return { view, workflowTitle: workflow.title, canManage: workflow.canManage, onDashboard: onDashboard.has(normalizeDenTypeId("artifactView", view.id)) }
+    return { view, workflowTitle: workflow.title, canManage: isPluginArchOrgAdmin(context) && workflow.canManage, onDashboard: onDashboard.has(normalizeDenTypeId("artifactView", view.id)) }
   })
 }
 
@@ -87,7 +89,7 @@ export async function getSavedApp(input: {
   const revision = view.revisions.find((entry) => entry.id === revisionId) ?? null
   const placements = await db.select().from(DashboardAppTable).where(and(dashboardScope(input.context),
     eq(DashboardAppTable.artifact_view_id, normalizeDenTypeId("artifactView", view.id)))).limit(1)
-  const base = { view, workflowTitle: workflow.title, canManage: workflow.canManage, onDashboard: placements.length > 0, revision }
+  const base = { view, workflowTitle: workflow.title, canManage: isPluginArchOrgAdmin(input.context) && workflow.canManage, onDashboard: placements.length > 0, revision }
   if (!revision || revision.buildStatus !== "ready" || revision.retiredAt) {
     return { ...base, html: null, payload: null, previewNotice: "This app is still being prepared. Ask OpenWork to finish its preview." }
   }

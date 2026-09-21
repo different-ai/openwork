@@ -42,6 +42,7 @@ import {
 import { redactWorkflowGraphAuthoringDetails, redactWorkflowVersionAuthoringDetails } from "./workflow-projections.js"
 import {
   PluginArchAuthorizationError,
+  requirePluginArchAppAdmin,
   requirePluginArchResourceRole,
   resolvePluginArchGrantRole,
   resolvePluginArchResourceRole,
@@ -495,6 +496,7 @@ export async function createWorkflowVersion(input: {
   buildTools: () => Promise<BuiltCodemodeTools>
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
+  await requirePluginArchAppAdmin({ context: input.context, resourceId: resource.configObject.id, resourceKind: "config_object" })
   assertWorkflowSourceSafe(input.draft.code)
   const payload = normalizedPayload(input.draft)
   if (payload.parsed.inputSchema) {
@@ -913,6 +915,7 @@ export async function saveWorkflow(input: {
       // Workflow. Plugin edit access can widen the audience, but it must never
       // grant authority to replace another Workflow manager's executable code.
       if (!input.context) throw new Error("saved_workflow_manager_context_required")
+      await requirePluginArchAppAdmin({ context: input.context, resourceId: configObjectId, resourceKind: "config_object" })
       await requirePluginArchResourceRole({
         context: input.context,
         resourceId: configObjectId,

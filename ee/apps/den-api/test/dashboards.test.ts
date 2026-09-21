@@ -248,6 +248,23 @@ test("dashboard management requires an admin role", async () => {
   expect(createResponse.status).toBe(403)
   const listResponse = await request("/v1/dashboards", { actor: "casey" })
   expect(listResponse.status).toBe(403)
+  const dashboard = await createDashboard("Managed tools", [readOnlyElement, writeElement])
+  const grant = await grantAccess(dashboard.id, { orgMembershipId: caseyMemberId, role: "manager" })
+  for (const [path, method, body] of [
+    [`/v1/dashboards/${dashboard.id}`, "PATCH", { name: "Changed", elements: [] }],
+    [`/v1/dashboards/${dashboard.id}`, "PATCH", { elements: [organizationAutoLaunchElement] }],
+    [`/v1/dashboards/${dashboard.id}`, "DELETE", undefined],
+    [`/v1/dashboards/${dashboard.id}/access`, "POST", { orgWide: true, role: "viewer" }],
+    [`/v1/dashboards/${dashboard.id}/access/${grant.id}`, "DELETE", undefined],
+  ] satisfies Array<[string, string, Record<string, unknown> | undefined]>) {
+    const response = await request(path, { actor: "casey", method, body: body ? JSON.stringify(body) : undefined })
+    expect(response.status).toBe(403)
+  }
+  const visible = await request("/v1/me/dashboards", { actor: "casey" })
+  expect(visible.status).toBe(200)
+  expect(await visible.json()).toMatchObject({ items: expect.arrayContaining([
+    { id: dashboard.id, name: "Managed tools", elements: [readOnlyElement, writeElement], updatedAt: expect.any(String) },
+  ]) })
 })
 
 test("dashboard elements are validated", async () => {

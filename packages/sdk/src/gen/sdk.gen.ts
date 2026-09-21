@@ -3040,7 +3040,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Share a saved app with a teammate
    *
-   * Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.
+   * Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires an organization owner or admin with manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.
    */
   public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3113,7 +3113,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Add or remove an app on your personal dashboard
    *
-   * Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.
+   * Restricted to organization owners and admins. Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.
    */
   public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3148,7 +3148,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Save an exact app revision for reuse
    *
-   * Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.
+   * Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires an organization owner or admin with manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.
    */
   public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3212,7 +3212,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Activate or roll back an immutable Artifact view revision
    *
-   * Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.
+   * Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires an organization owner or admin with manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivate<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3246,7 +3246,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Retire a generated Artifact view
    *
-   * Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.
+   * Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires an organization owner or admin with manager access to the Workflow.
    */
   public postV1ArtifactViewsByArtifactViewIdRetire<ThrowOnError extends boolean = false>(
     parameters: {

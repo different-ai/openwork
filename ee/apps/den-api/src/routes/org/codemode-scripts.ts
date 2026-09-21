@@ -367,10 +367,10 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/apps/:appId/share",
     describeRoute({
       tags: ["Apps"], summary: "Share a saved app with a teammate",
-      description: "Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.",
+      description: "Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires an organization owner or admin with manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.",
       responses: {
         200: jsonResponse("App shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
-        403: jsonResponse("Only app managers can share.", forbiddenSchema),
+        403: jsonResponse("Only organization owners and admins with manager access to the Workflow can share.", forbiddenSchema),
         404: jsonResponse("App or teammate not found.", notFoundSchema),
       },
     }),
@@ -417,7 +417,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/apps/:appId/dashboard",
     describeRoute({
       tags: ["Apps"], summary: "Add or remove an app on your personal dashboard",
-      description: "Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.",
+      description: "Restricted to organization owners and admins. Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.",
       responses: {
         200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
       },
@@ -440,7 +440,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/apps/:appId/save",
     describeRoute({
       tags: ["Apps"], summary: "Save an exact app revision for reuse",
-      description: "Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.",
+      description: "Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires an organization owner or admin with manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.",
       responses: {
         200: jsonResponse("App saved.", generatedArtifactViewSchema),
       },
@@ -491,7 +491,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/artifact-views/:artifactViewId/revisions/:revisionId/activate",
     describeRoute({
       tags: ["Codemode Runs"], summary: "Activate or roll back an immutable Artifact view revision",
-      description: "Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.",
+      description: "Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires an organization owner or admin with manager access to the Workflow.",
       responses: {
         200: jsonResponse("Artifact view activated.", generatedArtifactViewSchema),
         400: jsonResponse("Invalid view revision.", invalidRequestSchema),
@@ -518,7 +518,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/artifact-views/:artifactViewId/retire",
     describeRoute({
       tags: ["Codemode Runs"], summary: "Retire a generated Artifact view",
-      description: "Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.",
+      description: "Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires an organization owner or admin with manager access to the Workflow.",
       responses: {
         200: jsonResponse("Artifact view retired.", generatedArtifactViewSchema),
         400: jsonResponse("Invalid view.", invalidRequestSchema),

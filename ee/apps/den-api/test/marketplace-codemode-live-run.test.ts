@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, beforeEach, expect, mock, setSystemTime, test } from "bun:test"
 import { Tool } from "@openwork/codemode"
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
+import { McpServer } from "@modelcontextprotocol/server"
+import { registerAgentGeneratedArtifactViews } from "../src/mcp/generated-artifact-views.js"
 import {
-  ArtifactViewRevisionTable, ArtifactViewTable, ConfigObjectAccessGrantTable,
+  ArtifactViewRevisionTable, ArtifactViewTable, DashboardAppTable, ConfigObjectAccessGrantTable,
   ConfigObjectTable, ConfigObjectVersionTable, MemberTable, PluginTable, WorkflowRunTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -23,6 +26,7 @@ let db: typeof import("../src/db.js")["db"]
 let workflows: typeof import("../src/workflows.js")
 let authoring: typeof import("../src/mcp/workflow-authoring-test.js")
 let artifactViews: typeof import("../src/artifact-views.js")
+let savedApps: typeof import("../src/saved-apps.js")
 let app: Hono<{ Variables: OrgRouteVariables }>
 let context: PluginArchActorContext
 let store = createWorkflowAuthoringSourceStore({ redis: null })
@@ -65,6 +69,16 @@ function put(table: unknown, value: Row) {
   tables.set(table, [...rows(table), { createdAt: now, created_at: now, updated_at: now, artifact_content_deleted_at: null, ...value }])
 }
 
+function matchesIds(row: Row, values: unknown[]) {
+  return values.filter((value) => typeof value === "string" && /^(org|mem|arv|avr)_/.test(value))
+    .every((value) => Object.values(row).includes(value))
+}
+
+function adminContext(role = "admin"): PluginArchActorContext {
+  return { ...context, organizationContext: { ...context.organizationContext,
+    currentMember: { ...context.organizationContext.currentMember, role, directRole: role, isOwner: role === "owner" } } }
+}
+
 const transactionDb = {
   select: (projection?: Row) => ({ from: (table: unknown) => {
     let values: unknown[] = []
@@ -80,6 +94,11 @@ const transactionDb = {
         const id = values.find((value) => typeof value === "string" && value.startsWith(prefix))
         if (id !== undefined && field) result = result.filter((row) => row[field] === id)
       }
+      if (table === ArtifactViewTable || table === ArtifactViewRevisionTable || table === DashboardAppTable) {
+        result = result.filter((row) => matchesIds(row, values))
+      }
+      const email = values.find((value) => typeof value === "string" && value.includes("@"))
+      if (table === MemberTable && email) result = result.filter((row) => row.email === email)
       if (descending) result.reverse()
       result = result.slice(0, maximum)
       if (table === ConfigObjectTable) return result.map((configObject) => ({ configObject, plugin: rows(PluginTable)[0], marketplace: null }))
@@ -88,6 +107,7 @@ const transactionDb = {
       if (projection && (table === ConfigObjectVersionTable || table === ArtifactViewRevisionTable) && isRecord(table)) {
         const columns = Object.entries(table)
         const fields = Object.entries(projection).map(([alias, column]) => {
+          if (alias === "rank" && table === ArtifactViewRevisionTable) return { alias, key: "rank" }
           const entry = columns.find(([, candidate]) => candidate === column)
           if (!entry) throw new Error(`Unsupported test database projection: ${alias}`)
           return { alias, key: entry[0] }
@@ -97,6 +117,19 @@ const transactionDb = {
       return result
     }
     const query = {
+      as: (name: string) => {
+        if (name !== "ranked_revisions" || table !== ArtifactViewRevisionTable || !projection) {
+          throw new Error(`Unsupported test database subquery: ${name}`)
+        }
+        const ranked = { ...projection }
+        const counts = new Map<unknown, number>()
+        tables.set(ranked, selected().reverse().map(row => {
+          const rank = (counts.get(row.artifact_view_id) ?? 0) + 1
+          counts.set(row.artifact_view_id, rank)
+          return { ...row, rank }
+        }))
+        return ranked
+      },
       where: (condition: unknown) => { values = parameters(condition); queries.push({ table, values }); return query },
       innerJoin: (_table: unknown, _condition: unknown) => query,
       leftJoin: (_table: unknown, _condition: unknown) => query,
@@ -107,7 +140,16 @@ const transactionDb = {
     }
     return query
   } }),
-  insert: (table: unknown) => ({ values: async (value: Row) => { put(table, value) } }),
+  insert: (table: unknown) => ({ values: (value: Row) => {
+    put(table, value)
+    return { then: (resolve: () => unknown) => Promise.resolve().then(resolve), onDuplicateKeyUpdate: async () => {} }
+  } }),
+  update: (table: unknown) => ({ set: (patch: Row) => ({ where: async (condition: unknown) => {
+    for (const row of rows(table).filter((row) => matchesIds(row, parameters(condition)))) Object.assign(row, patch)
+  } }) }),
+  delete: (table: unknown) => ({ where: async (condition: unknown) => {
+    tables.set(table, rows(table).filter((row) => !matchesIds(row, parameters(condition))))
+  } }),
 }
 const database = {
   ...transactionDb,
@@ -115,6 +157,7 @@ const database = {
 }
 
 beforeAll(async () => {
+  process.env.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED = "true"
   process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:3306/not_connected"
   process.env.DEN_DB_ENCRYPTION_KEY ??= "x".repeat(32)
   process.env.BETTER_AUTH_SECRET ??= "y".repeat(32)
@@ -149,6 +192,7 @@ beforeAll(async () => {
   workflows = await import("../src/workflows.js")
   authoring = await import("../src/mcp/workflow-authoring-test.js")
   artifactViews = await import("../src/artifact-views.js")
+  savedApps = await import("../src/saved-apps.js")
   const { registerOrgWorkflowRoutes } = await import("../src/routes/org/codemode-scripts.js")
   app = new Hono<{ Variables: OrgRouteVariables }>()
   registerOrgWorkflowRoutes(app)
@@ -280,7 +324,7 @@ test("live authoring -> receipt-only save -> exact saved live run -> validated s
   const detail = await workflows.getWorkflowDetail({ context, configObjectId: saved.configObjectId })
   expect(detail.latestSuccessfulSnapshot).toMatchObject({ receiptId: result.receiptId, configObjectVersionId: saved.configObjectVersionId,
     value: { count: 3 }, markdown: result.markdown, outputSchemaDigest: artifactDigest(outputSchema) })
-  const view = await artifactViews.saveArtifactViewRevision({ context, configObjectId: saved.configObjectId,
+  const view = await artifactViews.saveArtifactViewRevision({ context: adminContext(), configObjectId: saved.configObjectId,
     title: "ENG-113 live authoring", reactSource: "export default function View({ data }) { return <div>{data.count}</div> }" })
   expect(view).toMatchObject({ configObjectId: saved.configObjectId, dataMode: "live", activeRevisionId: null })
   expect(view.revisions[0]).toMatchObject({ buildStatus: "ready", outputSchemaDigest: artifactDigest(outputSchema) })
@@ -428,7 +472,7 @@ test("legacy marketplace execution still skips output validation unless explicit
 
 test("artifact building retains schema-only prerequisites and live/snapshot data-mode safeguards", async () => {
   const saved = seed()
-  const draft = { context, configObjectId: saved.configObjectId, title: "ENG-113 schema prerequisite",
+  const draft = { context: adminContext(), configObjectId: saved.configObjectId, title: "ENG-113 schema prerequisite",
     reactSource: "export default function View({ data }) { return <div>{data.count}</div> }" }
   const payload = record(rows(ConfigObjectVersionTable)[0]?.normalizedPayloadJson)
   delete payload.outputSchema
@@ -448,6 +492,125 @@ test("artifact building retains schema-only prerequisites and live/snapshot data
   expect(buildTools).not.toHaveBeenCalled()
   expect(calls).toEqual([])
   expect(rows(WorkflowRunTable)).toEqual([])
+})
+
+test("an app creator and workflow manager loses all app mutations when demoted to member, but can still view and run", async () => {
+  const saved = seed("return { count: 2 }", { requiredCapabilities: [] })
+  const draft = { configObjectId: saved.configObjectId, title: "Team report",
+    reactSource: "export default function View({ data }) { return <div>{data.count}</div> }" }
+  const view = await artifactViews.saveArtifactViewRevision({ ...draft, context: adminContext() })
+  const revisionId = view.revisions[0]!.id
+  await artifactViews.activateArtifactViewRevision({ context: adminContext(), artifactViewId: view.id, revisionId,
+    save: { title: view.title, useInWorkflow: true, expectedActiveRevisionId: null } })
+  expect(rows(ArtifactViewTable)[0]?.owner_member_id).toBe(context.organizationContext.currentMember.id)
+  expect((await workflows.getWorkflowDetail({ context, configObjectId: saved.configObjectId })).canManage).toBe(true)
+  const before = structuredClone([...tables.values()])
+  for (const operation of [
+    () => artifactViews.saveArtifactViewRevision({ ...draft, context }),
+    () => artifactViews.saveArtifactViewRevision({ ...draft, context, artifactViewId: view.id }),
+    () => artifactViews.activateArtifactViewRevision({ context, artifactViewId: view.id, revisionId }),
+    () => artifactViews.retireArtifactView({ context, artifactViewId: view.id }),
+    () => artifactViews.readArtifactViewSource({ context, artifactViewId: view.id }),
+    () => savedApps.setAppOnDashboard(context, view.id, true),
+    () => savedApps.setAppOnDashboard(context, view.id, false),
+    () => savedApps.shareSavedApp(context, view.id, "teammate@example.test"),
+  ]) {
+    await expect(operation()).rejects.toMatchObject({ status: 403, error: "forbidden" })
+  }
+  for (const [path, body] of [
+    [`/v1/apps/${view.id}/dashboard`, { added: true }],
+    [`/v1/apps/${view.id}/dashboard`, { added: false }],
+    [`/v1/apps/${view.id}/share`, { email: "teammate@example.test" }],
+    [`/v1/apps/${view.id}/save`, { revisionId, title: "Changed", useInWorkflow: true, expectedActiveRevisionId: revisionId }],
+    [`/v1/artifact-views/${view.id}/revisions/${revisionId}/activate`, {}],
+    [`/v1/artifact-views/${view.id}/retire`, {}],
+  ] satisfies Array<[string, Row]>) {
+    const response = await request(path, body)
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({ error: "forbidden", message: expect.stringContaining("owners and admins") })
+  }
+  const server = new McpServer({ name: "app-permissions", version: "1" })
+  const client = new Client({ name: "member", version: "1" })
+  const loadData = mock(async () => { throw new Error("Rejected management must not run a provider") })
+  const notifyCatalogChanged = mock(() => {})
+  registerAgentGeneratedArtifactViews({
+    server, views: [], loadData, loadResource: async () => { throw new Error("No resource expected") },
+    readSource: (request) => artifactViews.readArtifactViewSource({ context, ...request }),
+    save: (request) => artifactViews.saveArtifactViewRevision({ context, ...request }),
+    activate: (request) => artifactViews.activateArtifactViewRevision({ context, ...request }),
+    retire: (request) => artifactViews.retireArtifactView({ context, ...request }),
+    notifyCatalogChanged,
+  })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  await client.connect(clientTransport)
+  try {
+    for (const [name, args] of [
+      ["save_artifact_view", draft],
+      ["save_artifact_view", { ...draft, artifactViewId: view.id }],
+      ["activate_artifact_view_revision", { artifactViewId: view.id, revisionId }],
+      ["retire_artifact_view", { artifactViewId: view.id }],
+      ["read_artifact_view", { artifactViewId: view.id }],
+    ] satisfies Array<[string, Row]>) {
+      const result = await client.callTool({ name, arguments: args })
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain("owners and admins")
+    }
+    expect(loadData).not.toHaveBeenCalled()
+    expect(notifyCatalogChanged).not.toHaveBeenCalled()
+  } finally {
+    await client.close()
+    await server.close()
+  }
+  expect([...tables.values()]).toEqual(before)
+  expect(await savedApps.listSavedApps(context)).toMatchObject([{ canManage: false, onDashboard: true }])
+  const detail = await savedApps.getSavedApp({ context, appId: view.id, buildTools })
+  expect(detail.canManage).toBe(false)
+  expect(detail.payload?.data).toEqual({ count: 2 })
+  expect(detail.html).toContain("openwork-artifact-view-root")
+  const run = await request(`/v1/workflows/${saved.configObjectId}/run`, {
+    pluginId: saved.pluginId, configObjectVersionId: saved.configObjectVersionId, mode: "live",
+  })
+  expect(run.status).toBe(200)
+  expect(await run.json()).toMatchObject({ value: { count: 2 } })
+})
+
+test.each(["admin", "owner", "super-admin", "member,admin"])("%s can create, revise, activate, place, share and retire an app only within its organization", async (role) => {
+  const saved = seed("return { count: 2 }", { requiredCapabilities: [] })
+  context = adminContext(role)
+  const draft = { context, configObjectId: saved.configObjectId, title: "Team report",
+    reactSource: "export default function View({ data }) { return <div>{data.count}</div> }" }
+  const view = await artifactViews.saveArtifactViewRevision(draft)
+  const revised = await artifactViews.saveArtifactViewRevision({ ...draft, artifactViewId: view.id })
+  expect(revised.revisions).toHaveLength(2)
+  expect((await artifactViews.readArtifactViewSource({ context, artifactViewId: view.id })).reactSource).toBe(draft.reactSource)
+  const revisionId = revised.revisions[0]!.id
+  const response = await request(`/v1/apps/${view.id}/save`, { revisionId, title: "Saved report", useInWorkflow: true, expectedActiveRevisionId: null })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({ activeRevisionId: revisionId, title: "Saved report" })
+  expect(await savedApps.listSavedApps(context)).toMatchObject([{ canManage: true, onDashboard: true }])
+  await savedApps.setAppOnDashboard(context, view.id, false)
+  expect(rows(DashboardAppTable)).toHaveLength(0)
+  await savedApps.setAppOnDashboard(context, view.id, true)
+  expect(rows(DashboardAppTable)).toHaveLength(1)
+  const teammateId = createDenTypeId("member")
+  put(MemberTable, { id: teammateId, email: "teammate@example.test", role: "member", organizationId: context.organizationContext.organization.id })
+  await savedApps.shareSavedApp(context, view.id, "teammate@example.test")
+  expect(rows(DashboardAppTable)).toHaveLength(2)
+  expect(rows(DashboardAppTable)[1]?.member_id).toBe(teammateId)
+  expect(rows(ConfigObjectAccessGrantTable).some((grant) => grant.orgMembershipId === teammateId && grant.role === "viewer")).toBe(true)
+  const foreign = { ...context, organizationContext: { ...context.organizationContext,
+    organization: { ...context.organizationContext.organization, id: createDenTypeId("organization") } } }
+  const before = structuredClone([...tables.values()])
+  await expect(artifactViews.retireArtifactView({ context: foreign, artifactViewId: view.id })).rejects.toThrow("artifact_view_not_found")
+  await expect(artifactViews.activateArtifactViewRevision({ context: foreign, artifactViewId: view.id, revisionId })).rejects.toThrow("artifact_view_not_found")
+  await expect(savedApps.setAppOnDashboard(foreign, view.id, true)).rejects.toThrow("artifact_view_not_found")
+  await expect(savedApps.shareSavedApp(foreign, view.id, "teammate@example.test")).rejects.toThrow("artifact_view_not_found")
+  expect([...tables.values()]).toEqual(before)
+  expect((await artifactViews.retireArtifactView({ context, artifactViewId: view.id })).status).toBe("retired")
+  expect(rows(DashboardAppTable)).toHaveLength(0)
+  expect(rows(ArtifactViewRevisionTable)).toHaveLength(2)
+  expect(rows(ConfigObjectTable)).toHaveLength(1)
 })
 
 test("run route returns UTC for omitted live timezone and schema failures as 400", async () => {

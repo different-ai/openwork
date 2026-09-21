@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
+  ArtifactViewTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConnectorInstanceAccessGrantTable,
@@ -104,6 +105,40 @@ function maxRole(current: PluginArchRole | null, candidate: PluginArchRole | nul
 
 export function isPluginArchOrgAdmin(context: PluginArchActorContext) {
   return context.organizationContext.currentMember.isOwner || memberHasRole(context.organizationContext.currentMember.role, "admin")
+}
+
+export function requireDashboardAdmin(context: PluginArchActorContext) {
+  if (!isPluginArchOrgAdmin(context)) {
+    throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can manage dashboards and apps.")
+  }
+}
+
+export async function requirePluginArchAppAdmin(input: ResourceLookupInput) {
+  if (isPluginArchOrgAdmin(input.context) || input.resourceKind === "connector_instance") return
+  const organizationId = input.context.organizationContext.organization.id
+  const appScope = eq(ArtifactViewTable.organization_id, organizationId)
+  const bound = input.resourceKind === "config_object"
+    ? await db.select({ id: ArtifactViewTable.id }).from(ArtifactViewTable).where(and(
+      appScope, eq(ArtifactViewTable.config_object_id, input.resourceId),
+    )).limit(1)
+    : input.resourceKind === "plugin"
+      ? await db.select({ id: ArtifactViewTable.id }).from(ArtifactViewTable)
+        .innerJoin(PluginConfigObjectTable, eq(PluginConfigObjectTable.configObjectId, ArtifactViewTable.config_object_id))
+        .where(and(appScope,
+          eq(PluginConfigObjectTable.organizationId, organizationId),
+          eq(PluginConfigObjectTable.pluginId, input.resourceId), isNull(PluginConfigObjectTable.removedAt),
+        )).limit(1)
+      : await db.select({ id: ArtifactViewTable.id }).from(ArtifactViewTable)
+        .innerJoin(PluginConfigObjectTable, eq(PluginConfigObjectTable.configObjectId, ArtifactViewTable.config_object_id))
+        .innerJoin(MarketplacePluginTable, eq(MarketplacePluginTable.pluginId, PluginConfigObjectTable.pluginId))
+        .where(and(appScope,
+          eq(PluginConfigObjectTable.organizationId, organizationId), isNull(PluginConfigObjectTable.removedAt),
+          eq(MarketplacePluginTable.organizationId, organizationId),
+          eq(MarketplacePluginTable.marketplaceId, input.resourceId), isNull(MarketplacePluginTable.removedAt),
+        )).limit(1)
+  if (bound.length) {
+    throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can change workflows or access used by generated apps.")
+  }
 }
 
 export function hasPluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
