@@ -597,6 +597,63 @@ describe("workspace OpenCode proxy", () => {
     }
   }
 
+  for (const mount of ["/workspace/ws_1/opencode", "/opencode"]) {
+    test.serial(`v1 ${mount} session read survives upstream body finalization while ownership is pending`, async () => {
+      const workspaceRoot = await createWorkspaceRoot();
+      const release = deferred();
+      const historyPath = "/session/ses_1/message";
+      const engine = startMockOpencode({
+        onRead: async (request) => {
+          if (new URL(request.url).pathname === "/session/ses_1") await release.promise;
+        },
+      });
+      const engineUrl = `http://127.0.0.1:${engine.server.port}`;
+      const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: engineUrl });
+      const base = `http://127.0.0.1:${openwork.server.port}`;
+      const originalFetch = globalThis.fetch;
+      let upstream: ReadableStream<Uint8Array> | undefined;
+      // Hand the proxy what Node's fetch hands it: a Response whose body is a
+      // plain ReadableStream that stays unlocked until something reads it.
+      globalThis.fetch = Object.assign(
+        async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          const response = await originalFetch(input, init);
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.origin !== engineUrl || url.pathname !== historyPath) return response;
+          const payload = new TextEncoder().encode(await response.text());
+          upstream = new ReadableStream<Uint8Array>({
+            start(controller) { controller.enqueue(payload); controller.close(); },
+          });
+          return new Response(upstream, { status: response.status, headers: response.headers });
+        },
+        { preconnect: originalFetch.preconnect },
+      );
+      const result = originalFetch(`${base}${mount}${historyPath}`, {
+        headers: auth(openwork.token), signal: AbortSignal.timeout(2_000),
+      });
+      void result.catch(() => undefined);
+      try {
+        // The engine has answered the history read and the proof still holds it back.
+        expect(await waitUntil(() => upstream !== undefined
+          && engine.requests.some(({ pathname }) => pathname === "/session/ses_1"), 100)).toBe(true);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(await Promise.race([result.then(() => "settled"), Promise.resolve("pending")])).toBe("pending");
+        // Node's fetch registers every upstream Response body in a FinalizationRegistry
+        // that cancels the stream once the Response is collected while the body is still
+        // unlocked and unread. The proxy has already dropped its Response, so apply that
+        // rule now: an unlocked body here is the body the finalizer would cancel.
+        if (upstream && !upstream.locked) await upstream.cancel("Response object has been garbage collected");
+        release.resolve();
+        const response = await result;
+        expect(response.status).toBe(200);
+        expect(JSON.stringify(await response.json())).toContain("hostname: mock-host");
+      } finally {
+        release.resolve();
+        await result.catch(() => undefined);
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+
   for (const version of ["v1", "v2"]) {
     for (const phase of ["ownership", "history"]) {
       test.serial(`${version} history disconnect cancels the upstream ${phase} GET`, async () => {

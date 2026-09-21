@@ -684,6 +684,17 @@ async function sendWithOwnershipProof(proof: Promise<void>, send: () => Promise<
   return sending;
 }
 
+/**
+ * An unexpected proxy failure becomes a generic 500 for the caller. Desktop
+ * telemetry only captures it while a Cloud session is active, so also write
+ * the real error to the local server log; otherwise the request log records
+ * where the proxy failed but never what threw.
+ */
+function reportProxyFailure(error: unknown, request: Request, route: string) {
+  captureServerException(error, { method: request.method, route, requestSignal: request.signal });
+  console.error(`[openwork-server] OpenCode proxy error (${request.method} ${route}):`, error);
+}
+
 export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
   const m = method.toUpperCase();
   const scope = actor.scope ?? "viewer";
@@ -908,7 +919,7 @@ export async function startServer(
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
-            captureServerException(error, { method: request.method, route: "/workspace/:id/opencode/*", requestSignal: request.signal });
+            reportProxyFailure(error, request, "/workspace/:id/opencode/*");
           }
           const apiError = error instanceof ApiError
             ? error
@@ -959,7 +970,7 @@ export async function startServer(
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
-            captureServerException(error, { method: request.method, route: "/workspace/:id/opencode2/*", requestSignal: request.signal });
+            reportProxyFailure(error, request, "/workspace/:id/opencode2/*");
           }
           const apiError = error instanceof ApiError
             ? error
@@ -1028,7 +1039,7 @@ export async function startServer(
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
-            captureServerException(error, { method: request.method, route: "/opencode/*", requestSignal: request.signal });
+            reportProxyFailure(error, request, "/opencode/*");
           }
           const apiError = error instanceof ApiError
             ? error
@@ -2073,7 +2084,22 @@ function sanitizeProxyResponse(response: Response): Response {
   headers.delete("content-encoding");
   headers.delete("transfer-encoding");
   headers.delete("content-length");
-  return new Response(response.body, {
+  return rewrapResponse(response, headers);
+}
+
+/**
+ * Rebuild a response around new headers without leaving its body stream
+ * unlocked. Node's fetch registers every upstream Response in a
+ * FinalizationRegistry that cancels the body once that Response is collected
+ * while the stream is still unlocked and unread. A header-only rewrap that
+ * drops the source Response therefore races garbage collection whenever the
+ * body is not read straight away, which is exactly the window a session read
+ * spends waiting on its ownership proof. Piping through an identity
+ * TransformStream locks the source synchronously, so the new Response owns a
+ * body no finalizer can cancel.
+ */
+function rewrapResponse(response: Response, headers: Headers): Response {
+  return new Response(response.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>()) ?? null, {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -2108,7 +2134,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   const exposed = headers.get("Access-Control-Expose-Headers");
   headers.set("Access-Control-Expose-Headers", [exposed, "X-Next-Cursor", "Link"].filter(Boolean).join(", "));
   headers.set("Vary", "Origin");
-  return new Response(response.body, { status: response.status, headers });
+  return rewrapResponse(response, headers);
 }
 
 async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
