@@ -28,7 +28,13 @@ export const ipcRenderer = new EventEmitter();
 ipcRenderer.invoke = (channel, ...args) => { preloadCalls.push({ channel, args }); return controls.invoke(channel, ...args); };
 ipcRenderer.send = (channel, ...args) => { preloadCalls.push({ channel, args }); };
 ipcRenderer.sendSync = () => null;
-export const app = { on() {} };
+export const app = {
+  on() {},
+  getApplicationNameForProtocol(url) {
+    if (controls.protocolLookupError) throw new Error("Injected protocol lookup failure");
+    return controls.protocolHandlers.get(new URL(url).protocol) ?? "";
+  },
+};
 export const clipboard = { writeText(url) { effects.push({ type: "copy", url }); } };
 export const dialog = { async showMessageBox(_window, options) { effects.push({ type: "dialog" }); return { response: await controls.confirm(options) }; } };
 export const requestHooks = [];
@@ -203,6 +209,12 @@ const { createApplicationMenu } = await import("./app-menu.mjs");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
 const LINK = { url: "https://example.com/a%2Fb?x=one%20two&x=%2F#section", point: { x: 20, y: 30 }, sessionId: "A" };
+const NOTION_LINK = {
+  url: "https://www.notion.so/Roadmap-0123456789abcdef0123456789abcdef?pvs=4#comments",
+  point: { x: 20, y: 30 },
+  sessionId: "A",
+};
+const NOTION_NATIVE_URL = "notion://www.notion.so/Roadmap-0123456789abcdef0123456789abcdef?pvs=4#comments";
 const RESET_SEQUENCE = [
   { method: "Emulation.setDeviceMetricsOverride", params: { width: 0, height: 0, deviceScaleFactor: 0, mobile: false } },
   { method: "Emulation.clearDeviceMetricsOverride", params: undefined },
@@ -215,6 +227,8 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
   controls.beforeLoad = async () => {};
   controls.beforeCommand = async () => {};
   controls.beforeDiscovery = async () => {};
+  controls.protocolHandlers = new Map();
+  controls.protocolLookupError = false;
   browserSession.removeAllListeners("will-download");
   const policies = [];
   const children = [];
@@ -1444,6 +1458,71 @@ test("a native choice launches only the selected installed or default browser wi
       : { type: "browser", id: itemId.slice("browser:".length), url: LINK.url }]);
     assert.deepEqual(invoke("openwork:browser:state").tabs, []);
     assert.deepEqual(views(), [], "native menus allocate no overlay renderer");
+  }
+});
+
+test("a registered mapped protocol adds its actual handler and launches only the native URL after checking the original HTTPS policy", async () => {
+  const { openLinkMenu, invoke, policies, views } = createPanel();
+  controls.protocolHandlers.set("notion:", "Workspace Notes");
+  const { request, choose } = await openLinkMenu(NOTION_LINK);
+  assert.deepEqual(request.items, [
+    { type: "item", id: "open-builtin", label: "Open in OpenWork" },
+    { type: "item", id: "open-external", label: "Open in Default Browser" },
+    { type: "item", id: "open-native-app", label: "Open in Workspace Notes" },
+    { type: "item", id: "browser:chrome", label: "Open in Google Chrome" },
+    { type: "item", id: "browser:firefox", label: "Open in Firefox" },
+    { type: "separator" },
+    { type: "item", id: "copy-url", label: "Copy Link Address" },
+  ]);
+  assert.deepEqual(policies, []);
+  assert.deepEqual(effects, []);
+  choose("open-native-app");
+  await flush();
+  assert.deepEqual(policies, [{ url: NOTION_LINK.url, external: true }]);
+  assert.deepEqual(effects, [{ type: "external", url: NOTION_NATIVE_URL }]);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+  assert.deepEqual(views(), []);
+});
+
+test("native app entries stay hidden for missing handlers, lookup failures, and unmapped URLs", async () => {
+  for (const mode of ["missing", "lookup-error", "unmapped"]) {
+    const { openLinkMenu } = createPanel();
+    controls.protocolHandlers.set("notion:", "Notion");
+    controls.protocolLookupError = mode === "lookup-error";
+    if (mode === "missing") controls.protocolHandlers.clear();
+    const { request, choose } = await openLinkMenu(mode === "unmapped" ? LINK : NOTION_LINK);
+    assert.equal(request.items.some(item => item.id === "open-native-app"), false, mode);
+    choose("open-native-app");
+    await flush();
+    assert.deepEqual(effects, [], mode);
+  }
+});
+
+test("native app launches fail closed on policy denial and stale source documents", async () => {
+  for (const ending of ["policy", "navigate", "destroy", "supersede"]) {
+    const policy = gate();
+    const { openLinkMenu, invoke, mainContents, policies } = createPanel(({ external }) => {
+      if (!external) return;
+      if (ending === "policy") throw new Error("blocked");
+      return policy.promise;
+    });
+    controls.protocolHandlers.set("notion:", "Notion");
+    const menu = await openLinkMenu(NOTION_LINK);
+    menu.choose("open-native-app");
+    await flush();
+    assert.deepEqual(policies, [{ url: NOTION_LINK.url, external: true }], ending);
+    if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    if (ending === "destroy") invoke("openwork:browser:destroy");
+    const newer = ending === "supersede" ? await openLinkMenu({ ...LINK, url: "https://newer.example/" }) : null;
+    policy.finish();
+    await flush();
+    assert.deepEqual(effects, ending === "policy" ? [{ type: "dialog" }] : [], ending);
+    if (newer) {
+      assert.equal(newer.closed, false);
+      newer.choose("copy-url");
+      await flush();
+      assert.deepEqual(effects, [{ type: "copy", url: "https://newer.example/" }]);
+    }
   }
 });
 

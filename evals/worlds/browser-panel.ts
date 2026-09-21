@@ -2,7 +2,8 @@ import { browserScript, browserSource } from "@openwork/cdp";
 import { control, readBrowserTabMetrics } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
-import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { resolveEvalEngine, type Place, type Seed } from "@openwork/env";
+import { fileURLToPath } from "node:url";
 
 export const CAPTURE_VIEWPORT = { width: 1440, height: 900 };
 
@@ -537,17 +538,27 @@ export async function browserLoginSyncWorld(seed: Seed) {
 }
 
 /** Arrange a persisted transcript link and its neighboring conversation. */
-export async function transcriptLinkWorld(seed: Seed) {
-  const world = await createBuiltinBrowserWorld(seed);
+interface TranscriptLinkWorldOptions {
+  env?: Record<string, string>;
+  linkUrl?: string;
+  additionalUrls?: string[];
+}
+
+async function createTranscriptLinkWorld(seed: Seed, options: TranscriptLinkWorldOptions = {}) {
+  const world = await createBuiltinBrowserWorld(seed, options.env);
   const { app, workspace } = world;
   const reading = { ...world.session, title: "Reading a shared link" };
   await world.renameSession(reading.sessionId, reading.title);
   const neighbor = await world.openSession("Unrelated browser research");
   const neighborTab = await world.openTab("link-neighbor", neighbor.sessionId);
   const origin = await embeddedServerUrl(seed, app);
-  const linkUrl = `${origin}/?link-context=alpha%20beta&encoded=%2Fkeep%3Fyes%3D1#thread-link`;
+  const linkUrl = options.linkUrl ?? `${origin}/?link-context=alpha%20beta&encoded=%2Fkeep%3Fyes%3D1#thread-link`;
+  const additionalUrls = options.additionalUrls ?? [];
+  const urls = [linkUrl, ...additionalUrls];
+  const referencePrefix = additionalUrls.length === 0 ? "Reference: " : "\n\nReference: ";
+  const linkTexts = urls.map(url => referencePrefix + url);
   const note = "Keep this note in its own conversation.";
-  await seed.evalIn(app, browserScript(async (workspaceId, sessionId, note, url) => {
+  await seed.evalIn(app, browserScript(async (workspaceId, sessionId, note, links) => {
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
     const response = await fetch(String(info.baseUrl).replace(/\/+$/, "")
       + "/workspace/" + encodeURIComponent(workspaceId)
@@ -556,13 +567,13 @@ export async function transcriptLinkWorld(seed: Seed) {
       headers: { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" },
       body: JSON.stringify({ noReply: true, parts: [
         { type: "text", text: note },
-        { type: "text", text: "Reference: " + url },
+        ...links.map((text: string) => ({ type: "text", text })),
       ] }),
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error("Transcript message seed failed: " + response.status);
     return true;
-  }, [workspace.workspaceId, reading.sessionId, note, linkUrl]), { awaitPromise: true, timeoutMs: 35_000 });
+  }, [workspace.workspaceId, reading.sessionId, note, linkTexts]), { awaitPromise: true, timeoutMs: 35_000 });
   await world.showSession(reading.sessionId);
 
   return {
@@ -573,12 +584,12 @@ export async function transcriptLinkWorld(seed: Seed) {
     linkUrl,
     note,
 
-    async readLink() {
-      return evaluate(app.client, browserScript((linkUrl) => {
+    async readLink(url = linkUrl) {
+      return evaluate(app.client, browserScript((url) => {
         const link = [...document.querySelectorAll<HTMLAnchorElement>('[data-message-role="user"] a[href]')]
-          .find(node => node.getAttribute("href") === linkUrl);
+          .find(node => node.getAttribute("href") === url);
         return link ? { href: link.href, sessionId: link.closest<HTMLElement>("[data-session-surface-id]")?.dataset.sessionSurfaceId } : null;
-      }, [linkUrl]));
+      }, [url]));
     },
 
     async readMainUrl() {
@@ -606,6 +617,72 @@ export async function transcriptLinkWorld(seed: Seed) {
     async dismissMenu(): Promise<boolean> {
       return await evaluate(app.client, () => (window.__OPENWORK_ELECTRON__.contextMenu.dismiss()), { awaitPromise: true }) === true;
     },
+  };
+}
+
+export async function transcriptLinkWorld(seed: Seed) {
+  return createTranscriptLinkWorld(seed);
+}
+
+interface NativeAppProtocolState {
+  witness: string;
+  handlers: Record<string, string>;
+  lookups: string[];
+  launches: string[];
+  lookupError: boolean;
+}
+
+function parseNativeAppProtocolState(value: unknown): NativeAppProtocolState {
+  if (!isRecord(value) || value.witness !== "native-app-protocol-v1" || !isRecord(value.handlers)
+    || !Array.isArray(value.lookups) || !value.lookups.every(item => typeof item === "string")
+    || !Array.isArray(value.launches) || !value.launches.every(item => typeof item === "string")
+    || typeof value.lookupError !== "boolean") throw new Error("The native app protocol witness returned malformed state.");
+  const handlers: Record<string, string> = {};
+  for (const [scheme, name] of Object.entries(value.handlers)) {
+    if (typeof name !== "string") throw new Error("The native app protocol witness returned a malformed handler.");
+    handlers[scheme] = name;
+  }
+  return { witness: value.witness, handlers, lookups: value.lookups, launches: value.launches, lookupError: value.lookupError };
+}
+
+/** A transcript with mapped and unmapped links plus an in-memory OS protocol registry. */
+export async function nativeAppLinkWorld(seed: Seed, { place }: { place: Place }) {
+  const daytonaSandbox = process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim();
+  const remoteRoot = place.kind === "daytona" ? place.host()?.workspaceRoot : daytonaSandbox ? "/workspace" : undefined;
+  if ((place.kind === "daytona" || daytonaSandbox) && !remoteRoot?.startsWith("/")) throw new Error("Native app protocol witness requires the remote source checkout path.");
+  const preload = remoteRoot ? `${remoteRoot.replace(/\/+$/, "")}/evals/fixtures/native-app-protocol.cjs`
+    : fileURLToPath(new URL("../fixtures/native-app-protocol.cjs", import.meta.url));
+  const mappedUrl = "https://app.slack.com/client/T12345/C12345";
+  const nativeUrl = "slack://channel?team=T12345&id=C12345";
+  const unmappedUrl = "https://example.com/";
+  const world = await createTranscriptLinkWorld(seed, {
+    env: {
+      OPENWORK_DEV_SHARED_STATE: "0",
+      OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require ${JSON.stringify(preload)}`].filter(Boolean).join(" "),
+    },
+    linkUrl: mappedUrl,
+    additionalUrls: [unmappedUrl],
+  });
+  const control = async (command: Record<string, unknown>): Promise<NativeAppProtocolState> => {
+    const value = await seed.evalIn(world.app, browserScript(async (command) => {
+      const response = await window.__OPENWORK_ELECTRON__.invokeDesktop("__fetch", "http://127.0.0.1/__openwork_native_app_test_control", {
+        method: "POST", body: JSON.stringify(command), timeoutMs: 5_000,
+      });
+      if (response.status !== 200) throw new Error("Native app protocol witness control failed: " + response.status);
+      return JSON.parse(response.body);
+    }, [command]), { awaitPromise: true, timeoutMs: 10_000 });
+    return parseNativeAppProtocolState(value);
+  };
+  await control({ action: "configure", handlers: { "slack:": "Workspace Chat" } });
+  return {
+    ...world,
+    mappedUrl,
+    nativeUrl,
+    unmappedUrl,
+    configureNativeHandlers: (handlers: Record<string, string>, lookupError = false) => control({ action: "configure", handlers, lookupError }),
+    nativeProtocolState: () => control({ action: "state" }),
+    clearNativeLaunches: () => control({ action: "clear-launches" }),
   };
 }
 
