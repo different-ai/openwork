@@ -13,6 +13,7 @@ import { connectionCardPayloadFromChatToolResult, reconnectActionFromChatToolRes
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import { mcpAppDiscoverySignature, scheduleMcpAppDiscovery } from "@/app/lib/mcp-app-discovery-scheduler"
+import { onCloudCredentialRefreshed, readCloudCredentialRevision } from "@/react-app/domains/connections/cloud-credential-revision"
 import {
   OpenworkServerError,
   type OpenworkMcpAppLaunchReference,
@@ -824,11 +825,15 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
         void openworkServerClient.releaseMcpApp(workspaceId, launchId).catch(() => undefined)
       }
     }
+    let stopCredentialRetry: (() => void) | undefined
     setApp(null)
     setError(null)
     if (draft || !result || !openworkServerClient || !workspaceId || !origin) return () => { cancelled = true }
     const startedAt = performance.now()
     const checkpoints = ["resolve-started"]
+    const usesCloudCredentials = Boolean(launch) || part.toolName.startsWith("openwork-cloud_")
+    const credentialScope = { serverBaseUrl: openworkServerClient.baseUrl, workspaceId }
+    const credentialRevision = usesCloudCredentials ? readCloudCredentialRevision(credentialScope) : 0
     const manual = consumedRetryToken.current !== resolveToken
     consumedRetryToken.current = resolveToken
     const cancelDiscovery = scheduleMcpAppDiscovery(origin, part.toolName, launch, manual,
@@ -858,10 +863,16 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
             console.error(`[OpenWork MCP App] ${diagnostic.code}`, diagnostic)
             setError(diagnostic)
           }
-        })
+          if (usesCloudCredentials && cause instanceof OpenworkServerError && cause.code === "mcp_auth_required") {
+            stopCredentialRetry = onCloudCredentialRefreshed([credentialScope], credentialRevision,
+              () => { if (!cancelled) setResolveToken(token => token + 1) },
+            )
+          }
+        }, credentialRevision)
     return () => {
       cancelled = true
       cancelDiscovery()
+      stopCredentialRetry?.()
       release()
     }
   }, [draft, launch, openworkServerClient, part.toolName, result, workspaceId, origin, resolution])

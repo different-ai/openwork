@@ -28,6 +28,7 @@ import {
   type CloudMcpScope,
   type CloudMcpUserState,
 } from "./cloud-mcp-user-state";
+import { markCloudCredentialRefreshed } from "./cloud-credential-revision";
 
 export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
   "openwork-cloud_search_capabilities",
@@ -397,8 +398,12 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     clearCloudMcpUnhealthyRemintAttempt(scope);
   }
   const markerWritten = writeUsableMarker({ health, scope, expiresAt: token.expiresAt });
+  const repaired = health?.usable === true && health.appHostAuthorizationReady !== false;
+  // This path minted and installed a usable token. Catalog-only refreshes
+  // return earlier and must not wake views waiting for new credentials.
+  if (repaired) markCloudCredentialRefreshed(scope);
   return {
-    status: health?.usable && health.appHostAuthorizationReady !== false ? "repaired" : "failed",
+    status: repaired ? "repaired" : "failed",
     health,
     attempts,
     markerWritten,

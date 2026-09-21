@@ -17,6 +17,7 @@ import {
 import { formatMcpAppDiagnostic, safeMcpAppDiagnosticMessage } from "../src/components/chat/mcp-app-diagnostics"
 import type { McpAppSandboxViewProps } from "../src/components/chat/mcp-app-frame"
 import * as mcpAppOrigin from "../src/components/chat/mcp-app-origin"
+import { markCloudCredentialRefreshed } from "../src/react-app/domains/connections/cloud-credential-revision"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
 afterAll(() => GlobalRegistrator.unregister())
@@ -1067,6 +1068,73 @@ describe("MCP App resolution", () => {
       },
     }
   }
+
+  const credentialScope = { serverBaseUrl: "https://server.example", workspaceId: "fixture" }
+
+  test.each([false, true])("recovers a Cloud authentication failure on matching credential refresh (installation before failure: %j)", async early => {
+    const host = resolutionFixture(true)
+    const pending = Promise.withResolvers<{ app: OpenworkMcpAppResource | null }>()
+    const timer = spyOn(window, "setTimeout")
+    host.resolveSpy.mockImplementationOnce(() => pending.promise).mockResolvedValue({ app: fixture() })
+    const reject = () => pending.reject(new OpenworkServerError(401, "mcp_auth_required", "This App's connection needs authentication."))
+    try {
+      await host.render()
+      if (!early) await act(async () => { reject() })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      expect(timer.mock.calls.some(([, delay]) => delay === 1_000 || delay === 3_000)).toBe(false)
+      await act(async () => {
+        markCloudCredentialRefreshed({ ...credentialScope, workspaceId: "other-workspace" })
+        markCloudCredentialRefreshed({ ...credentialScope, serverBaseUrl: "https://other.example" })
+      })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      if (early) {
+        expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+        await act(async () => { reject() })
+      }
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      expect(host.resolveSpy.mock.calls[1]).toEqual(host.resolveSpy.mock.calls[0])
+      expect(host.container.querySelector('[role="status"]')).toBeNull()
+      expect(host.container.querySelector("iframe")).not.toBeNull()
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      expect(host.callSpy).not.toHaveBeenCalled()
+      expect(host.providerRetry).not.toHaveBeenCalled()
+    } finally { await host.dispose(); timer.mockRestore() }
+  })
+
+  test.each(["access-denied", "other-failure", "local-provider", "healthy", "unmounted"])("credential refresh leaves %s chat views alone", async scenario => {
+    const host = resolutionFixture(scenario !== "local-provider")
+    if (scenario === "healthy") host.resolveSpy.mockResolvedValue({ app: fixture() })
+    else host.resolveSpy.mockRejectedValue(new OpenworkServerError(
+      scenario === "access-denied" ? 403 : 401,
+      scenario === "access-denied" ? "mcp_access_denied" : scenario === "other-failure" ? "unexpected_failure" : "mcp_auth_required",
+      "This view is unavailable.",
+    ))
+    try {
+      await host.render()
+      if (scenario === "unmounted") await host.unmountFrame()
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      expect(host.callSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose() }
+  })
+
+  test("a still-rejected chat view waits for another credential installation after one retry", async () => {
+    const host = resolutionFixture(true)
+    host.resolveSpy.mockRejectedValue(new OpenworkServerError(401, "mcp_auth_required", "Sign in to this connection."))
+    try {
+      await host.render()
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      await act(async () => { await Promise.resolve() })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(3)
+      expect(host.callSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose() }
+  })
 
   test.each([
     new Error("Request timed out."),

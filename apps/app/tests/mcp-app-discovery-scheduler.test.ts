@@ -79,6 +79,28 @@ describe("chat discovery admission", () => {
     expect(calls).toBe(10)
   })
 
+  test("a fresh credential revision leaves cached authentication failures behind without losing sharing", async () => {
+    const schedule = createMcpAppDiscoveryScheduler(() => 10_000)
+    let calls = 0
+    const origin = originFor(async () => {
+      calls++
+      throw new OpenworkServerError(401, "mcp_auth_required", "Sign in to this connection.")
+    })
+    const run = (revision: number, manual = false) => schedule(origin, "render", null, manual, () => {}, () => {}, revision)
+    run(0); await flush()
+    run(0, true); await flush()
+    run(0, true); await flush()
+    expect(calls).toBe(2)
+    // A real installation changes access even during the old manual cooldown.
+    for (let i = 0; i < 100; i++) run(1)
+    await flush()
+    expect(calls).toBe(3)
+    run(1); await flush()
+    expect(calls).toBe(3)
+    run(2); await flush()
+    expect(calls).toBe(4)
+  })
+
   test("equivalent object order has one key; meaningful launch arguments do not", () => {
     expect(mcpAppDiscoverySignature({ a: 1, b: { x: 2, y: 3 } })).toBe(mcpAppDiscoverySignature({ b: { y: 3, x: 2 }, a: 1 }))
     expect(mcpAppDiscoverySignature({ arguments: { id: 1 } })).not.toBe(mcpAppDiscoverySignature({ arguments: { id: 2 } }))

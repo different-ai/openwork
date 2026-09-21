@@ -18,6 +18,7 @@ import {
   runOpenworkCloudMcpEngineRefresh,
   runOpenworkCloudMcpReconciler,
 } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
+import { readCloudCredentialRevision } from "../src/react-app/domains/connections/cloud-credential-revision";
 
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
 const scope = {
@@ -433,6 +434,41 @@ describe("OpenWork Cloud MCP reconciler", () => {
       refreshMarginMs: 1,
     });
     expect(readCloudMcpSyncMarker(scope)?.expiresAt).toBe(token.expiresAt);
+  });
+
+  test("announces a credential refresh only after a usable token installation", async () => {
+    const before = readCloudCredentialRevision();
+    const client = {
+      baseUrl: scope.serverBaseUrl,
+      getOpenworkCloudMcpHealth: async () => health({ usable: false }),
+      reconcileOpenworkCloudMcp: async () => health({ usable: false }),
+    };
+    const input = { client, context, mintToken: async () => token, refreshMarginMs: 1 };
+    await runOpenworkCloudMcpReconciler({ ...input, mode: "health" });
+    await runOpenworkCloudMcpReconciler({ ...input, mode: "repair", force: true });
+    await runOpenworkCloudMcpReconciler({ ...input, mode: "repair", force: true, mintToken: async () => null });
+    expect(readCloudCredentialRevision()).toBe(before);
+
+    const ready: OpenworkCloudMcpHealth = { ...health({ usable: true }), appHostAuthorizationReady: true, connectCatalogDiagnostic: "ready" };
+    const catalogOnly = await runOpenworkCloudMcpReconciler({
+      ...input, mode: "repair", client: { ...client,
+        getOpenworkCloudMcpHealth: async () => ready,
+        refreshOpenworkCloudMcpCatalog: async () => ready,
+      },
+    });
+    expect(catalogOnly).toMatchObject({ status: "repaired", attempts: 0 });
+    expect(readCloudCredentialRevision()).toBe(before);
+
+    const installed = Promise.withResolvers<OpenworkCloudMcpHealth>();
+    const repairInput = { ...input, force: true, client: { ...client, reconcileOpenworkCloudMcp: () => installed.promise } };
+    const first = runOpenworkCloudMcpReconciler({ ...repairInput, mode: "repair" });
+    const second = runOpenworkCloudMcpReconciler({ ...repairInput, mode: "repair" });
+    await Promise.resolve();
+    expect(readCloudCredentialRevision()).toBe(before);
+    installed.resolve(ready);
+    expect(await first).toMatchObject({ status: "repaired", attempts: 1 });
+    expect(await second).toMatchObject({ status: "repaired", attempts: 1 });
+    expect(readCloudCredentialRevision()).toBe(before + 1);
   });
 
   test("auth failures remint exactly once", async () => {
