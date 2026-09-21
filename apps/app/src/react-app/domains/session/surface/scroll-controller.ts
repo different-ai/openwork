@@ -124,6 +124,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     let pageAnchor: SessionScrollAnchor | undefined;
     let restoredPageAnchorId: string | undefined;
     let pagePending = false;
+    let viewportFillVersion: { version: unknown } | null = null;
     let pendingHistoryDemand: "older" | "newer" | null = null;
     let pendingTop: ((completed: boolean) => void) | null = null;
     let topLoadReady = false;
@@ -262,7 +263,10 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       pendingHistoryDemand = null;
       pageAnchor = currentReadingAnchor();
       pagePending = true;
-      void pages.load(next).catch(() => undefined).finally(() => { pagePending = false; });
+      void pages.load(next).catch(() => undefined).finally(() => {
+        pagePending = false;
+        if (active) scheduleFrame(reconcile);
+      });
     };
     const reconcile = () => {
       if (!active || container.clientHeight === 0) return;
@@ -384,6 +388,14 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
       }
       rememberGeometry();
+      const pages = optionsRef.current.historyPages;
+      if (pages?.hasOlder && !pages.hasNewer && !pages.loading && !pages.failed && !pagePending
+        && !pendingRestore && optionsRef.current.windowReady && readState().mode === "stickyBottom"
+        && !hasScrollGesture() && container.clientWidth > 0 && container.scrollHeight <= container.clientHeight
+        && !hasPendingPlaceholders() && (viewportFillVersion === null || viewportFillVersion.version !== pages.version)) {
+        viewportFillVersion = { version: pages.version };
+        demandHistory("older");
+      }
       if (pendingHistoryDemand) {
         const direction = pendingHistoryDemand;
         pendingHistoryDemand = null;

@@ -277,6 +277,23 @@ test("a long conversation pages on demand, restores its saved page cold and load
     return page;
   });
 
+  await step("repeated returns keep a filled newest page visible without fetching earlier history", async () => {
+    for (let visit = 0; visit < 3; visit++) {
+      await user.click({ testId: `sidebar-session-${world.other.sessionId}` });
+      await probe.eventually(() => probe.dom(surface), {
+        within: 5_000, label: "the unrelated chat replaces the long conversation", until: (value) => value.elements.length === 0,
+      });
+      await user.notSee({ text: longHistoryLast });
+      await user.click(sidebarTarget);
+      await probe.eventually(latestVisible, {
+        within: 5_000, label: "the newest message returns without a scroll gesture", until: Boolean,
+      });
+      await expectIdlePage(pageSize);
+      expect((await readFault()).history.pageReads.every((read) => read.before === null)).toBe(true);
+    }
+    await user.screenshot();
+  });
+
   const olderPage = await step("Home reaches the virtualized page boundary and prepends one cursor page with the first loaded message still visible", async () => {
     await user.click({ text: longHistoryLast });
     await user.press("Tab");
