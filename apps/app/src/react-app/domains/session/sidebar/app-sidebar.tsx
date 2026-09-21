@@ -156,6 +156,8 @@ import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
+import { getSessionOrder } from "./session-order";
+import { SESSION_DRAG_TYPE, SessionDragScope, SessionReorderList, useDraggedSession, useSessionReorderTarget } from "./session-reorder";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
 const OUTCOME_DOT_UNREAD = "#2FBE54";
@@ -174,7 +176,9 @@ export function SidebarReorderScope({ children }: { children: React.ReactNode })
 
   return (
     <SidebarReorderContext.Provider value={{ isReordering, setIsReordering }}>
-      <LazyMotion features={domMax}>{children}</LazyMotion>
+      <SessionDragScope>
+        <LazyMotion features={domMax}>{children}</LazyMotion>
+      </SessionDragScope>
     </SidebarReorderContext.Provider>
   );
 }
@@ -1113,6 +1117,7 @@ export function AppSidebar(props: AppSidebarProps) {
 }
 
 function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
+  const pinnedIds = useSessionManagementStore(state => state.pinnedIds);
   return (
     <SidebarGroup data-global-pinned-sessions className="pb-0 pt-4">
       <SidebarGroupContent>
@@ -1122,15 +1127,22 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuSub>
-              {entries.map((entry) => (
-                <SessionMenuItem
-                  key={`${entry.group.workspace.id}:${entry.session.id}`}
-                  session={entry.session}
-                  workspaceId={entry.group.workspace.id}
-                  isPinned
-                  workspaceName={workspaceLabel(entry.group.workspace)}
-                />
-              ))}
+              <SessionReorderList
+                sessionIds={entries.map(entry => entry.session.id)}
+                orderIds={pinnedIds}
+                onReorder={ids => useSessionManagementStore.getState().reorderPins(ids)}
+              >
+                {entries.map((entry) => (
+                  <SessionMenuItem
+                    key={`${entry.group.workspace.id}:${entry.session.id}`}
+                    session={entry.session}
+                    workspaceId={entry.group.workspace.id}
+                    isPinned
+                    draggable
+                    workspaceName={workspaceLabel(entry.group.workspace)}
+                  />
+                ))}
+              </SessionReorderList>
             </SidebarMenuSub>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -1358,6 +1370,7 @@ function WorkspaceSidebarGroup({
   const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedIds = React.useMemo(() => new Set(pinnedIdList), [pinnedIdList]);
   const orderIds = useSessionOrder(workspace.id);
+  const fullOrderIds = React.useMemo(() => getSessionOrder(getRootSessions(group.sessions), orderIds), [group.sessions, orderIds]);
   const { groups: wsGroups, assignments } = useWorkspaceGroups(workspace.id);
   const pendingConversations = usePendingConversationStore((state) => state.conversations);
   const wsAssignments = React.useMemo(() => withPendingGroupAssignments(assignments, pendingConversations, ctx.draftScope, workspace.id),
@@ -1476,19 +1489,13 @@ function WorkspaceSidebarGroup({
                         pinnedIds={pinnedIds}
                         workspaceId={workspace.id}
                         store={store}
+                        orderIds={fullOrderIds}
                       />
                     ) : (
-                      <Reorder.Group
-                        as="div"
-                        axis="y"
-                        values={visibleRootIds}
-                        onReorder={(ids) => {
-                          const visible = new Set(ids);
-                          const allRootIds = getRootSessions(activeSessions).map((s) => s.id);
-                          const full = [...ids, ...allRootIds.filter((id) => !visible.has(id))];
-                          store.getState().reorderSessions(workspace.id, full);
-                        }}
-                        className="flex flex-col gap-0.5"
+                      <SessionReorderList
+                        sessionIds={visibleRootIds}
+                        orderIds={fullOrderIds}
+                        onReorder={(ids) => store.getState().reorderSessions(workspace.id, ids)}
                       >
                         <NewSessionDraftRow workspaceId={workspace.id} />
                         {sessionRows.map((row) => (
@@ -1500,7 +1507,7 @@ function WorkspaceSidebarGroup({
                             draggable
                           />
                         ))}
-                      </Reorder.Group>
+                      </SessionReorderList>
                     )}
                     {wsGroups.length === 0 && activeRootCount > previewCount ? (
                       <ShowMoreSessionsButton
@@ -1551,8 +1558,6 @@ function WorkspaceSidebarGroup({
     </SidebarGroup>
   );
 }
-
-const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
 
 function useNewSessionDraft(workspaceId: string, groupId?: string) {
   const ctx = useSidebarContext();
@@ -1846,6 +1851,11 @@ function GroupDropZone({ groupId, workspaceId, children }: {
 }) {
   const [dragOver, setDragOver] = React.useState(false);
   const store = useSessionManagementStore;
+  const drag = useDraggedSession();
+
+  React.useEffect(() => {
+    if (!drag.session) setDragOver(false);
+  }, [drag.session]);
 
   return (
     <div
@@ -1854,22 +1864,25 @@ function GroupDropZone({ groupId, workspaceId, children }: {
         dragOver && "bg-accent/40 ring-1 ring-accent/60",
       )}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) {
+        if (drag.session?.workspaceId === workspaceId && e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) {
           e.preventDefault();
           setDragOver(true);
         }
       }}
       onDragLeave={(e) => {
         // Only clear when leaving this container, not when entering a child.
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+        if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) {
           setDragOver(false);
         }
       }}
       onDrop={(e) => {
         setDragOver(false);
         const sessionId = e.dataTransfer.getData(SESSION_DRAG_TYPE);
-        if (sessionId) {
+        if (sessionId && drag.session?.workspaceId === workspaceId && drag.session.id === sessionId) {
+          e.preventDefault();
+          e.stopPropagation();
           store.getState().assignGroup(workspaceId, sessionId, groupId);
+          drag.setSession(null);
         }
       }}
     >
@@ -1879,16 +1892,19 @@ function GroupDropZone({ groupId, workspaceId, children }: {
 }
 
 /** Renders sessions partitioned by group. Empty groups always show. Ungrouped sessions render at the end. */
-export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, workspaceId, store }: {
+export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, workspaceId, store, orderIds }: {
   sessionRows: FlattenedSessionRow[];
   groups: SessionGroupDefinition[];
   assignments: Record<string, string>;
   pinnedIds: Set<string>;
   workspaceId: string;
   store: typeof useSessionManagementStore;
+  orderIds?: string[];
 }) {
   const [previewCountByGroup, setPreviewCountByGroup] = React.useState<Record<string, number>>({});
   const ungroupedDraft = useNewSessionDraft(workspaceId);
+  const fullOrderIds = orderIds ?? sessionRows.map(row => row.session.id);
+  const reorderSessions = (ids: string[]) => store.getState().reorderSessions(workspaceId, ids);
 
   const groupPreviewCount = (groupId: string) =>
     previewCountByGroup[groupId] ?? MAX_SESSIONS_PREVIEW;
@@ -1914,6 +1930,7 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
       session={row.session}
       workspaceId={workspaceId}
       isPinned={pinnedIds.has(row.session.id)}
+      draggable
     />
   );
 
@@ -1933,6 +1950,8 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
         renderRow={renderRow}
         previewCount={limit}
         onShowMore={() => showMoreInGroup(group.id, rows.length)}
+        orderIds={fullOrderIds}
+        onReorder={reorderSessions}
       />
     );
   };
@@ -1967,20 +1986,10 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
               onToggle={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
             />
             <CollapsibleContent>
-              <Reorder.Group
-                as="div"
-                axis="y"
-                values={visibleUngroupedRootIds}
-                onReorder={(ids) => {
-                  const allRootIds = sessionRows.map((r) => r.session.id);
-                  const ungroupedSet = new Set(ungroupedRows.map((r) => r.session.id));
-                  const visibleSet = new Set(ids);
-                  const fullUngrouped = [...ids, ...ungroupedRows.map((r) => r.session.id).filter((id) => !visibleSet.has(id))];
-                  let ui = 0;
-                  const full = allRootIds.map((id) => ungroupedSet.has(id) ? fullUngrouped[ui++] : id);
-                  store.getState().reorderSessions(workspaceId, full);
-                }}
-                className="flex flex-col gap-0.5"
+              <SessionReorderList
+                sessionIds={visibleUngroupedRootIds}
+                orderIds={fullOrderIds}
+                onReorder={reorderSessions}
               >
                 <NewSessionDraftRow workspaceId={workspaceId} />
                 {visibleUngroupedRows.map((row) => (
@@ -1992,7 +2001,7 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
                     draggable
                   />
                 ))}
-              </Reorder.Group>
+              </SessionReorderList>
               {ungroupedRemaining > 0 ? (
                 <ShowMoreSessionsButton
                   label={t("workspace_list.show_more", { count: Math.min(MAX_SESSIONS_PREVIEW, ungroupedRemaining) })}
@@ -2007,7 +2016,7 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
   );
 }
 
-function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore }: {
+function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore, orderIds, onReorder }: {
   group: SessionGroupDefinition;
   rows: FlattenedSessionRow[];
   expanded: boolean;
@@ -2016,6 +2025,8 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
   renderRow: (row: FlattenedSessionRow) => React.ReactNode;
   previewCount: number;
   onShowMore: () => void;
+  orderIds: string[];
+  onReorder: (ids: string[]) => void;
 }) {
   const dragControls = useDragControls();
   const draft = useNewSessionDraft(workspaceId, group.id);
@@ -2050,8 +2061,10 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
             {visibleRows.length > 0 || draft.hasDraft
               ? (
                 <>
-                  <NewSessionDraftRow workspaceId={workspaceId} group={group} />
-                  {visibleRows.map(renderRow)}
+                  <SessionReorderList sessionIds={visibleRows.map(row => row.session.id)} orderIds={orderIds} onReorder={onReorder}>
+                    <NewSessionDraftRow workspaceId={workspaceId} group={group} />
+                    {visibleRows.map(renderRow)}
+                  </SessionReorderList>
                   {remaining > 0 ? (
                     <ShowMoreSessionsButton
                       label={t("workspace_list.show_more", { count: Math.min(MAX_SESSIONS_PREVIEW, remaining) })}
@@ -2157,13 +2170,7 @@ export function SessionMenuItem({
 
   const titleIntent = isTitleFocused ? "focus" : isTitleHovered ? "hover" : null;
 
-  const dragProps = {
-    draggable: true,
-    onDragStart: (e: React.DragEvent) => {
-      e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id);
-      e.dataTransfer.effectAllowed = "move";
-    },
-  };
+  const { dragProps, dropPosition } = useSessionReorderTarget(session.id, workspaceId, draggable);
 
   const accessibleState = resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
     ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
@@ -2211,7 +2218,12 @@ export function SessionMenuItem({
   const item = (
     <SidebarMenuSubItem
       {...dragProps}
-      className="flex items-center"
+      className={cn("relative flex items-center",
+        dropPosition && "before:pointer-events-none before:absolute before:inset-x-0 before:h-px before:bg-primary",
+        dropPosition === "before" && "before:top-0",
+        dropPosition === "after" && "before:bottom-0",
+      )}
+      data-session-drop-position={dropPosition ?? undefined}
       data-sidebar-session-id={session.id}
       data-sidebar-session-workspace-id={workspaceId}
     >
@@ -2255,15 +2267,5 @@ export function SessionMenuItem({
   );
 
   if (attachedAsSideChat && !isSelected) return null;
-  if (!draggable) return item;
-
-  return (
-    <SidebarReorderItem
-      as="div"
-      value={session.id}
-      id={session.id}
-    >
-      {item}
-    </SidebarReorderItem>
-  );
+  return item;
 }

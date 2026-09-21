@@ -36,6 +36,13 @@ describe("session group management", () => {
     ]);
   });
 
+  test("reordering pins keeps unloaded pins and cannot pin another session or change workspace order", () => {
+    useSessionManagementStore.setState({ pinnedIds: ["a", "unloaded", "b"], orderByWorkspace: { [workspaceId]: ["a", "b"] } });
+    useSessionManagementStore.getState().reorderPins(["b", "a", "b", "not-pinned"]);
+    expect(useSessionManagementStore.getState().pinnedIds).toEqual(["b", "a", "unloaded"]);
+    expect(useSessionManagementStore.getState().orderByWorkspace[workspaceId]).toEqual(["a", "b"]);
+  });
+
   test("moves sessions to the selected destination before removing a group", () => {
     useSessionManagementStore.getState().removeGroup(workspaceId, "group-a", "group-b");
 

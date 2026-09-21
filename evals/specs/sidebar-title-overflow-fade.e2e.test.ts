@@ -2,6 +2,7 @@ import { browserScript } from "@openwork/testkit";
 import { beforeEach, describe, expect } from "vitest";
 import { spec, readSidebarOverflow, type Surface } from "@openwork/testkit";
 import { sidebarExpansion, sidebarOverflow } from "../worlds/session-shell.ts";
+import { nativeDrag } from "../helpers/native-drag.ts";
 
 type SidebarMode = "overflow" | "workspace" | "group" | "ungrouped";
 
@@ -244,9 +245,7 @@ const expansionModes: ("workspace" | "group" | "ungrouped")[] = ["workspace", "g
 for (const mode of expansionModes) {
   describe(mode, () => {
   beforeEach(() => { selectedMode = mode; });
-  // Session rows are also native HTML drag sources (dropping into a group), and a native drag cancels
-  // the pointer gesture Motion's Reorder needs, so only groups reorder by dragging.
-  const dragClaim = mode === "group" ? "still permits reordering" : "still starts the native session drag";
+  const dragClaim = "still permits reordering";
   test(`${mode} Show more keeps old rows anchored through every frame and ${dragClaim}`, async ({ world, user, probe, step }) => {
     if (world.mode === "overflow") throw new Error("Unexpected sidebar fixture");
     const first = world.sessions[0];
@@ -343,7 +342,7 @@ for (const mode of expansionModes) {
       expect(before.drags).toEqual([]);
       const from = before.current.rows.find(row => row.id === sourceId)!;
       const to = before.current.rows.find(row => row.id === targetId)!;
-      await dragPointer(world.app, from, { x: from.x, y: to.y - 4 });
+      await (mode === "group" ? dragPointer : nativeDrag)(world.app, from, { x: from.x, y: to.y - 4 });
       const idsBefore = before.current.rows.map(row => row.id);
       const sessionOrder = [...world.sessions.map(session => session.sessionId), world.neighbor.sessionId];
       if (mode === "group") {
@@ -370,11 +369,15 @@ for (const mode of expansionModes) {
         });
       } else {
         const dragged = await probe.eventually(() => world.observation.read(), {
-          within: 10_000, label: "trusted drag starts the native session drag",
-          until: value => value.drags.length > 0,
+          within: 10_000, label: "trusted native drag reorders the session rows",
+          until: value => value.drags.length > 0
+            && value.current.rows.findIndex(row => row.id === sourceId) < value.current.rows.findIndex(row => row.id === targetId),
         });
         expect(dragged.drags).toEqual([{ sessionId: last.sessionId, types: ["application/x-openwork-session-id"] }]);
-        expect(dragged.current.rows.map(row => row.id)).toEqual(idsBefore);
+        const expected = [...idsBefore];
+        expected.splice(expected.indexOf(sourceId), 1);
+        expected.splice(expected.indexOf(targetId), 0, sourceId);
+        expect(dragged.current.rows.map(row => row.id)).toEqual(expected);
         expect(dragged.current.hash).toBe(initial.current.hash);
       }
       expect((await world.observation.read()).current.selected).toEqual(initial.current.selected);
@@ -382,7 +385,11 @@ for (const mode of expansionModes) {
       if (mode === "group") expect(management).toMatchObject({ state: { groupsByWorkspace: {
         [world.workspace.workspaceId]: { groups: [{ id: "grp_neighbor" }, { id: "grp_expansion" }] },
       } } });
-      else expect(management).toMatchObject({ state: { orderByWorkspace: { [world.workspace.workspaceId]: sessionOrder } } });
+      else {
+        sessionOrder.splice(sessionOrder.indexOf(last.sessionId), 1);
+        sessionOrder.splice(sessionOrder.indexOf(preceding.sessionId), 0, last.sessionId);
+        expect(management).toMatchObject({ state: { orderByWorkspace: { [world.workspace.workspaceId]: sessionOrder } } });
+      }
     });
   });
   });
