@@ -3,6 +3,7 @@ run-name: ${{ github.event_name == 'schedule' && 'Full regression — component 
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - dev
   push:
@@ -29,7 +30,28 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.classify.outputs.lane }}
+      verified-revert: ${{ steps.revert.outputs.verified }}
     steps:
+      # Only trusted base code runs. Failure/unavailable helpers select normal CI.
+      - name: Checkout immutable base for revert preflight
+        if: >-
+          github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          (startsWith(github.event.pull_request.title, 'Revert "') || contains(github.event.pull_request.body, 'This reverts commit '))
+        id: revert-base
+        continue-on-error: true
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify clean revert from trusted base
+        if: steps.revert-base.outcome == 'success'
+        id: revert
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/revert-preflight.mjs
       - name: Classify changed files
         id: classify
         uses: actions/github-script@v8
@@ -38,6 +60,11 @@ jobs:
             if (context.eventName !== "pull_request") {
               core.setOutput("lane", "full")
               core.info("Selected lane: full")
+              return
+            }
+
+            if (process.env.VERIFIED_REVERT === "true") {
+              core.setOutput("lane", "verified-revert")
               return
             }
 
@@ -56,6 +83,8 @@ jobs:
             const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
             core.setOutput("lane", lane)
             core.info(`Selected lane: ${lane}`)
+        env:
+          VERIFIED_REVERT: ${{ steps.revert.outcome == 'success' && steps.revert.outputs.verified == 'true' }}
 
   openwork-tests-core:
     needs: classify-changes
@@ -72,6 +101,10 @@ jobs:
         run: pnpm test:core
       - name: Check journey selection, reporting, and alerts
         run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs
+      - name: Check exact-revert exemption boundaries
+        run: |
+          node --test scripts/ci/verify-clean-revert.test.mjs .github/scripts/warden-review.test.mjs
+          pnpm evals:pr specs/warden-review-lifecycle.test.ts
 
   workflow-authoring:
     needs: classify-changes
@@ -389,6 +422,7 @@ jobs:
         env:
           CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
           LANE: ${{ needs.classify-changes.outputs.lane }}
+          VERIFIED_REVERT: ${{ needs.classify-changes.outputs.verified-revert }}
           CORE_RESULT: ${{ needs.openwork-tests-core.result }}
           BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
           AUTHORING_RESULT: ${{ needs.workflow-authoring.result }}
@@ -408,6 +442,10 @@ jobs:
           fi
 
           case "$LANE" in
+            verified-revert)
+              [ "$VERIFIED_REVERT" = "true" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$AUTHORING_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              echo "Exact clean-revert exemption validated; expensive checks intentionally not run."
+              ;;
             full)
               [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$AUTHORING_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;

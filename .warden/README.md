@@ -1,5 +1,11 @@
 # Local Warden preflight
 
+GitHub's verified clean-revert exemption is documented in
+[`docs/EMERGENCY-CHANGES.md`](../docs/EMERGENCY-CHANGES.md). It means **not
+reviewed**, never Warden clearance. It does not exempt policy-changing PRs or
+replace the complete local final review below. Ordinary missing receipts remain
+fail-closed; the exemption's producer and exact inverse are independently checked.
+
 Prerequisites: Node 20 or newer and approved Pi/OpenAI credentials. The repository pins
 the native CLI through `pnpm warden:check`; do not substitute a global install.
 

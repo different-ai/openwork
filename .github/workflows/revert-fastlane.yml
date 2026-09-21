@@ -97,14 +97,23 @@ jobs:
           echo "reverted=$verified_reverted" >> "$GITHUB_OUTPUT"
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
+      - name: Confirm shared exemption eligibility
+        id: exemption
+        if: steps.verify.outputs.verdict == 'pass'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/revert-preflight.mjs
+
       - name: Approve verified revert
         id: approve
-        if: steps.verify.outputs.verdict == 'pass'
+        if: steps.verify.outputs.verdict == 'pass' && steps.exemption.outcome == 'success' && steps.exemption.outputs.verified == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REVERTED_SHA: ${{ steps.verify.outputs.reverted }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           # This control's residual read-then-approve race is closed server-side by
@@ -116,9 +125,12 @@ jobs:
           fi
           # Bind the approval to the verified head. If the head moved since
           # verification, withhold — the synchronize event re-runs verification.
-          current="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
-          if [[ "$current" != "$HEAD_SHA" ]]; then
-            printf '## Revert Fast Lane\n\nHead moved after verification (%s -> %s); approval withheld. The new push re-runs verification.\n' "$HEAD_SHA" "$current" >> "$GITHUB_STEP_SUMMARY"
+          current="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          if ! jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" --arg repo "$GITHUB_REPOSITORY" \
+            '.state == "open" and .draft == false and .merged == false and .merged_at == null and
+             .head.sha == $head and .base.sha == $base and .base.ref == "dev" and
+             .head.repo.full_name == $repo and .base.repo.full_name == $repo' <<< "$current" >/dev/null; then
+            printf '## Revert Fast Lane\n\nPR eligibility or verified head/base changed; approval withheld.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           body="Machine-verified at \`$HEAD_SHA\`: this PR's tree is the exact inverse of commit \`$REVERTED_SHA\`, which previously landed on protected \`dev\` via a reviewed PR. Auto-approval per the clean-revert fast-lane control, bound to the verified commit; any further push re-runs verification."
@@ -159,7 +171,7 @@ jobs:
           printf 'Automatic merge requested for verified head %s; GitHub enforces required checks and reviews.\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record ineligible revert
-        if: steps.verify.outputs.verdict != 'pass'
+        if: steps.verify.outputs.verdict != 'pass' || steps.exemption.outputs.verified != 'true'
         env:
           REASON: ${{ steps.verify.outputs.reason }}
         run: |

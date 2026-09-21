@@ -31,8 +31,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  clearance:
+  revert-exemption:
     if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      verified: ${{ steps.revert.outcome == 'success' && steps.revert.outputs.verified == 'true' }}
+    steps:
+      - name: Checkout trusted exemption verifier
+        id: trusted-base
+        continue-on-error: true
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Independently verify producer and clean revert
+        if: steps.trusted-base.outcome == 'success'
+        id: revert
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/revert-preflight.mjs --clearance
+
+  clearance:
+    needs: revert-exemption
+    if: >-
+      !cancelled() && needs.revert-exemption.outputs.verified != 'true' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository

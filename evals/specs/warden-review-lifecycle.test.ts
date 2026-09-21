@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { test } from "@openwork/testkit";
-import { wardenReviewLifecycle } from "../worlds/warden-review-lifecycle.ts";
+import { wardenReviewLifecycle, wardenRevertLifecycle } from "../worlds/warden-review-lifecycle.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -12,6 +12,21 @@ function record(value: unknown, label: string): Record<string, unknown> {
   }
   return value;
 }
+
+test("A verified revert bypasses Warden without review authority; ordinary, stale and edited changes do not", { timeout: 120_000 }, async ({ evidence }) => {
+  const result = await wardenRevertLifecycle();
+  expect(result.verified.output).toBe("verified=true\n");
+  expect(result.verified.summary).toContain("Not reviewed by Warden");
+  expect(result.verified.summary).toContain("No Warden approval is granted");
+  for (const rejected of [result.ordinaryMissingReceipt, result.stale, result.handEdited]) {
+    expect(rejected.output).toBe("verified=false\n");
+    expect(rejected.summary).toBe("");
+  }
+  expect(result.requests.length).toBeGreaterThan(0);
+  expect(result.requests.every((request) => request.method === "GET")).toBe(true);
+  evidence.recordAssertionEvidence("Exact-revert exemption is not Warden approval",
+    "The production exemption CLI independently verified a real Git revert and its producer through the GitHub HTTP witness. Ordinary analysis without a receipt, a stale head, and a hand-edited fake revert could not bypass. All API calls were reads; no receipt, approval or review mutation was fabricated.", true);
+});
 
 test("A contributor can publish and safely refresh a Warden PR review report", { timeout: 120_000 }, async ({ evidence }) => {
   await using world = await wardenReviewLifecycle();

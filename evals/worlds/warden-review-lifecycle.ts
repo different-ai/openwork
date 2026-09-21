@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -202,6 +203,71 @@ function nativeFixture(fixture: WardenFixture, identity: WardenIdentity): unknow
 
 function cloneThread(thread: MockWardenGithubThread): MockWardenGithubThread {
   return { ...thread, author: { ...thread.author } };
+}
+
+// Actual exemption CLI + Git trees, with the same HTTP witness as review reporting.
+// The local gh shim translates read-only CLI requests to that witness, never GitHub.
+export async function wardenRevertLifecycle() {
+  const directory = await mkdtemp(join(tmpdir(), "openwork-warden-revert-"));
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", ...args], { cwd: directory, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`Fixture git failed: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  try {
+    git("init", "-q");
+    await writeFile(join(directory, "file.txt"), "before\n");
+    git("add", "file.txt");
+    git("commit", "-qm", "before");
+    await writeFile(join(directory, "file.txt"), "after\n");
+    git("commit", "-qam", "change");
+    const base = git("rev-parse", "HEAD");
+    git("revert", "--no-edit", base);
+    const head = git("rev-parse", "HEAD");
+    git("remote", "add", "origin", directory);
+    await using witness = await startMockWardenGithub({ token: "test-token", repository: REPOSITORY,
+      pullRequest: PULL_REQUEST, headSha: head, baseSha: base, headBranch: "fixture-revert", baseBranch: "dev", revertCandidate: true });
+    const run: MockWardenGithubRun = { id: "123", runNumber: 1, attempt: 1, headSha: head, revertExemption: true };
+    witness.seedRun(run);
+    const bin = join(directory, "bin");
+    await mkdir(bin);
+    await writeFile(join(bin, "gh"), `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args[0] !== "api") process.exit(1);
+fetch(process.env.WITNESS_URL + "/" + args.at(-1), {headers: {authorization: "Bearer test-token"}})
+  .then(async response => { if (!response.ok) process.exit(1); const value = await response.json();
+    console.log(JSON.stringify(args.includes("--slurp") ? [value] : value)); }).catch(() => process.exit(1));
+`, { mode: 0o755 });
+    const event = join(directory, "event.json");
+    const output = join(directory, "output");
+    const summary = join(directory, "summary");
+    const invoke = async (runHead: string) => {
+      await writeFile(event, JSON.stringify({ workflow_run: { id: 123, run_attempt: 1, head_sha: runHead } }));
+      await writeFile(output, "");
+      await writeFile(summary, "");
+      await promisify(execFile)(process.execPath, [join(repoRoot, "scripts/ci/revert-preflight.mjs"), "--clearance"], {
+        cwd: directory, timeout: 30_000, env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: directory,
+          GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: REPOSITORY, GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary, WITNESS_URL: witness.apiUrl },
+      });
+      return { output: await readFile(output, "utf8"), summary: await readFile(summary, "utf8") };
+    };
+    const verified = await invoke(head);
+    witness.seedRun({ ...run, revertExemption: false });
+    const ordinaryMissingReceipt = await invoke(head);
+    witness.seedRun(run);
+    witness.setPullHead("f".repeat(40));
+    const stale = await invoke(head);
+    await writeFile(join(directory, "file.txt"), "hand-adjusted revert\n");
+    git("commit", "-qam", `Revert fake\n\nThis reverts commit ${base}.`);
+    const editedHead = git("rev-parse", "HEAD");
+    witness.setPullHead(editedHead);
+    witness.seedRun({ ...run, headSha: editedHead });
+    const handEdited = await invoke(editedHead);
+    return { verified, ordinaryMissingReceipt, stale, handEdited, requests: witness.requests() };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 export async function wardenReviewLifecycle() {

@@ -70,6 +70,7 @@ export interface MockWardenGithubRun {
   conclusion?: string;
   workflowPath?: string;
   pullRequest?: number;
+  revertExemption?: boolean;
 }
 
 export interface MockWardenGithubRequest {
@@ -88,6 +89,7 @@ export interface StartMockWardenGithubOptions {
   baseSha: string;
   headBranch: string;
   baseBranch: string;
+  revertCandidate?: boolean;
   comments?: MockWardenGithubComment[];
   threads?: MockWardenGithubThread[];
   port?: number;
@@ -602,6 +604,8 @@ export async function startMockWardenGithub(
           state: "open",
           merged: false,
           merged_at: null,
+          draft: false,
+          title: options.revertCandidate ? 'Revert "fixture change"' : "Fixture change",
           head: {
             sha: pullHeadSha,
             ref: options.headBranch,
@@ -617,6 +621,25 @@ export async function startMockWardenGithub(
       }
 
       const runPrefix = `${root}/actions/runs/`;
+      if (method === "GET" && url.pathname === `${root}/git/ref/heads/dev`) {
+        sendJson(response, 200, { object: { sha: options.baseSha } });
+        return;
+      }
+      const jobsMatch = url.pathname.startsWith(runPrefix)
+        ? /^(\d+)\/attempts\/(\d+)\/jobs$/.exec(url.pathname.slice(runPrefix.length)) : null;
+      if (method === "GET" && jobsMatch) {
+        const run = runs.get(jobsMatch[1] ?? "");
+        if (!run || String(run.attempt) !== jobsMatch[2]) {
+          sendJson(response, 404, { message: "not found" });
+          return;
+        }
+        sendJson(response, 200, { jobs: [{ name: "warden", run_id: Number(run.id), head_sha: run.headSha,
+          conclusion: "success", steps: [
+            { name: "Record verified revert exemption", conclusion: run.revertExemption ? "success" : "skipped" },
+            { name: "Analyze", conclusion: run.revertExemption ? "skipped" : "success" },
+          ] }] });
+        return;
+      }
       if (method === "GET" && url.pathname.startsWith(runPrefix)) {
         const runId = decodeURIComponent(url.pathname.slice(runPrefix.length));
         const run = runs.get(runId);
@@ -627,6 +650,7 @@ export async function startMockWardenGithub(
         const runRepository = run.repository ?? options.repository;
         sendJson(response, 200, {
           id: Number(run.id),
+          name: "Warden",
           run_number: run.runNumber,
           run_attempt: run.attempt,
           event: "pull_request",
