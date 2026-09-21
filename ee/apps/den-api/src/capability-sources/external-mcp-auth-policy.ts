@@ -69,8 +69,11 @@ export function pluginMcpAuthTypeCompatible(input: {
   return !preset || (preset.supportedAuthTypes ?? [preset.authType]).includes(input.authType)
 }
 
-export function pluginMcpRequiresPreRegisteredOAuthClient(url: string): boolean {
-  return matchExternalMcpPresetForUrl(url)?.requiresOAuthClient === true
+export function pluginMcpRequiresPreRegisteredOAuthClient(
+  url: string,
+  presets: readonly ExternalMcpPreset[] = EXTERNAL_MCP_PRESETS,
+): boolean {
+  return matchExternalMcpPresetForUrl(url, presets)?.requiresOAuthClient === true
 }
 
 export function resolveGithubPluginMcpImportAuthType(input: {

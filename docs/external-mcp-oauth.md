@@ -55,6 +55,16 @@ When authorization starts, OpenWork uses this registration priority:
 3. Dynamic client registration when the server advertises a registration endpoint.
 4. A configuration-required result with the missing manual steps.
 
+A deployment can hold pre-registered clients for specific MCP server URLs via
+`DEN_EXTERNAL_MCP_PREREGISTERED_OAUTH_CLIENTS` (JSON keyed by server URL, see
+`ee/apps/den-api/src/capability-sources/external-mcp-preregistered-oauth-clients.ts`).
+Creating or saving an OAuth connection to such a URL without an admin-supplied
+client stores the deployment client as a pre-registered client on that row, so
+step 1 applies unchanged. The matching quick-add preset drops
+`requiresOAuthClient` and requirements discovery downgrades the
+`oauth_client_registration` blocker for that URL. Only rows on the shared
+callback receive the deployment client; it is bound to that redirect URL.
+
 Required challenge scopes are locked. Administrators may select optional
 advertised scopes and edit the saved scope set later. When neither the 401
 challenge nor the administrator selects scopes, OpenWork falls back to the

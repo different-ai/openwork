@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
+import { parseExternalMcpPreRegisteredOAuthClients } from "./capability-sources/external-mcp-preregistered-oauth-clients.js"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
@@ -150,6 +151,7 @@ const EnvSchema = z.object({
   DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
   DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
+  DEN_EXTERNAL_MCP_PREREGISTERED_OAUTH_CLIENTS: z.string().optional(),
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
@@ -532,6 +534,13 @@ const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && 
 const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
+// OAuth clients a provider issued to this deployment for MCP servers that
+// support neither client metadata documents nor dynamic registration. Keyed
+// by MCP server URL; each client is bound to this deployment's callback URL.
+const externalMcpPreRegisteredOAuthClients = parseExternalMcpPreRegisteredOAuthClients(
+  parsed.DEN_EXTERNAL_MCP_PREREGISTERED_OAUTH_CLIENTS,
+)
+
 // Generated custom views require the matching desktop MCP Apps host release.
 // Keep the Den capability fail-closed so a Den deployment cannot advertise
 // bridge-dependent resources to older published desktop builds.
@@ -696,6 +705,7 @@ export const env = {
   installLinksGatingEnabled,
   connectLink,
   mcpConnectionsGatingEnabled,
+  externalMcpPreRegisteredOAuthClients,
   generatedArtifactViewsEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
