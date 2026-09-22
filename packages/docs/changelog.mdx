@@ -4,12 +4,14 @@ title: "Changelog"
 ---
 <Update label="September 22nd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
-  ## [v0.18.50](https://github.com/different-ai/openwork/compare/v0.18.49...v0.18.50): Preview worlds resume reliably and connection setup stays actionable
+  ## [v0.18.50](https://github.com/different-ai/openwork/compare/v0.18.49...v0.18.50): Run OpenWork on your own server with one command
 
-  - Warm sandbox preview links now open reliably.
-  - Running ACME worlds can resume with AI Gateway enabled, and full worlds can launch with revealed outputs.
-  - Chat connection questions stay actionable with a native connection card.
-  - OpenWork now supports a self-hosted web server command and agent gateway skill discovery.
+  - **Self-host OpenWork with one command.** For self-hosters: `npm i -g openwork-server && openwork-server web` now runs the full OpenWork web app on a home server or VPS. It downloads the matching engine on first run and keeps its access tokens across restarts, and `npm i -g openwork-server@latest` updates it. Before, you had to clone and build the repo, install the engine yourself, and recreate tokens after every restart.
+  - **Connecting an account in chat no longer gets stuck.** When the agent needs you to connect a service, you now always get a clear card to connect or skip, with **Try again** if sign-in doesn't finish. Before, chat could wait forever on "Checking connection request…".
+  - **Chat replies are simpler.** Creating or sharing a skill, asking for a mockup, being asked for an environment variable, and browsing connectors now reply in plain text instead of embedded cards. The connection card is the only one that stays.
+  - **Your email stays out of the sidebar.** The account row now shows your name and "OpenWork Cloud" instead of your email address. Your email is still at the top of the account menu.
+  - **If you use OpenWork from Claude Code, Cursor, or Codex:** agents can now list your organization's skills and open any of them directly. Before, they had to guess search keywords, so organization skills often went unused.
+  - **Clearer pricing everywhere.** The website, docs, and sign-up now all show the same plans: Free, Team at $10 per seat per month, and Enterprise at $40 per user billed annually, with Cloud Computer and OpenWork models as add-ons. The website and docs also have refreshed branding.
 
 </Update>
 
