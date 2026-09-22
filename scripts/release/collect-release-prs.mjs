@@ -63,9 +63,33 @@ export function parseCommits(log) {
     });
 }
 
+// Remove every HTML comment. Repeats until nothing changes, so overlapping
+// markers such as "<!<!--x-->--" cannot leave a "<!--" behind; an unterminated
+// comment drops the rest of the text.
+export function stripHtmlComments(text) {
+  let current = text;
+  for (;;) {
+    let next = "";
+    let index = 0;
+    for (;;) {
+      const start = current.indexOf("<!--", index);
+      if (start === -1) {
+        next += current.slice(index);
+        break;
+      }
+      next += current.slice(index, start);
+      const end = current.indexOf("-->", start + 4);
+      if (end === -1) break;
+      index = end + 3;
+    }
+    if (next === current) return next;
+    current = next;
+  }
+}
+
 export function extractReleaseNote(body) {
   if (!body) return null;
-  const lines = body.replace(/<!--[\s\S]*?-->/g, "").split("\n");
+  const lines = stripHtmlComments(body).split("\n");
   const start = lines.findIndex((line) => /^#{2,3}\s*release notes?\s*$/i.test(line.trim()));
   if (start === -1) return null;
   const collected = [];
@@ -79,8 +103,7 @@ export function extractReleaseNote(body) {
 
 export function cleanBody(body, limit = BODY_LIMIT) {
   if (!body) return "";
-  const cleaned = body
-    .replace(/<!--[\s\S]*?-->/g, "")
+  const cleaned = stripHtmlComments(body)
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/<img\b[^>]*>/gi, "")
     .replace(/<\/?details>|<\/?summary>/gi, "")

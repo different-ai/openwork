@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { classifyPr, cleanBody, extractReleaseNote, parseCommits, renderMarkdown } from "./collect-release-prs.mjs"
+import { classifyPr, cleanBody, extractReleaseNote, parseCommits, renderMarkdown, stripHtmlComments } from "./collect-release-prs.mjs"
 
 test("commit subjects map to their squash-merged PR numbers", () => {
   const commits = parseCommits("aaa\tfeat(server): add web command (#5212)\nbbb\tHotfix without a PR\n")
@@ -79,4 +79,16 @@ test("markdown lists internal PRs by title only and product PRs with their descr
   assert(markdown.includes("## Product (1)"))
   assert(markdown.includes("> Users can now do the thing."))
   assert(markdown.includes("- #2 ci: speed up (.github/workflows)"))
+})
+
+test("HTML comments are fully stripped, even with overlapping or unterminated markers", () => {
+  assert.equal(stripHtmlComments("a<!-- one -->b<!-- two -->c"), "abc")
+  assert.equal(stripHtmlComments("<!<!--x-->--"), "")
+  assert.equal(stripHtmlComments("keep <!<!--x-->-- this"), "keep ")
+  assert.equal(stripHtmlComments("text <!-- never closed"), "text ")
+  assert.equal(stripHtmlComments("no comments"), "no comments")
+  for (const input of ["<!<!--x-->--", "<<!--!--a-->--b-->", "<!--<!---->-->x"]) {
+    assert(!stripHtmlComments(input).includes("<!--"), input)
+  }
+  assert.equal(extractReleaseNote("## Release note\n<!<!--x-->-- hint -->\nShip it.\n## Evidence"), "Ship it.")
 })
