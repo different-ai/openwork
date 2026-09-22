@@ -152,6 +152,11 @@ summary and `freestyle-launch-proof` artifact contain sanitized measurements. Th
 measure controller launch through public readiness, **not** reviewer HTTP overhead
 or browser rendering. The ACME selected-proof report verifies the world recipe;
 it does not benchmark Freestyle. Do not quote a direct launch timing as click-to-usable.
+The OpenWork web prewarm job also verifies a fresh clone's app HTML and engine,
+with separate link and page timings in `freestyle-app-launch-proof`.
+Fresh clones only write their private access file and check the gateway before
+returning a link. ACME snapshots older than five days renew their demo session
+before use so a new sandbox does not outlive the session it inherited.
 
 Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
 offers **Launch in Freestyle**. The server reads the commit from the stored report;

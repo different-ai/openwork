@@ -54,6 +54,20 @@ jobs:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
           PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node scripts/verify-freestyle-preview.ts "$PREVIEW_SHA"
+      - name: Measure and verify a restored OpenWork web clone
+        if: matrix.world == 'app-web'
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/verify-freestyle-fast-app.ts "$PREVIEW_SHA"
+      - name: Save sanitized OpenWork web measurements
+        if: matrix.world == 'app-web'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freestyle-app-launch-proof
+          path: freestyle-app-launch-proof.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Save sanitized launch measurements
         if: matrix.world == 'acme-web'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
