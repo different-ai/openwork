@@ -146,6 +146,13 @@ each click still clones separately. ACME is fully seeded, its service chain veri
 before its memory snapshot is captured. Clones resume those processes; launch only
 assigns public access, renews expired demo sessions if needed, and checks readiness.
 
+After prewarming, CI measures two real ACME launches and verifies restored processes,
+independent databases/access, sign-in, and a fresh AI Gateway reply. The prewarm job
+summary and `freestyle-launch-proof` artifact contain sanitized measurements. These
+measure controller launch through public readiness, **not** reviewer HTTP overhead
+or browser rendering. The ACME selected-proof report verifies the world recipe;
+it does not benchmark Freestyle. Do not quote a direct launch timing as click-to-usable.
+
 Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
 offers **Launch in Freestyle**. The server reads the commit from the stored report;
 the browser cannot select another revision. On the first launch it checks out that
