@@ -228,7 +228,14 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
   await step("below the hover breakpoint, titles stop before the always-visible row actions", async () => {
     // TODO(primitive): user.resizeViewport should narrow a desktop surface below the hover breakpoint.
     await world.app.client.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 800, deviceScaleFactor: 1, mobile: false });
-    await user.press("Meta+b");
+    // The responsive sidebar changes from a desktop panel to a mobile sheet.
+    // Wait for that render before opening it; an immediate keyboard toggle can
+    // still target the old desktop state and leave the mobile sheet closed.
+    await user.see({ role: "button", label: "Open sidebar" });
+    const mobileSidebar = await probe.dom('[data-sidebar="sidebar"][data-mobile="true"]');
+    if (!mobileSidebar.elements.some((element) => element.rect.width > 0 && element.rect.height > 0)) {
+      await user.click({ role: "button", label: "Open sidebar" });
+    }
     const rows = await probe.eventually(() => rowStates(world.app), {
       within: 15_000,
       label: "session rows with visible actions",
