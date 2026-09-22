@@ -31,7 +31,11 @@ lifecycleTest("the global tab limit rejects new pages without disturbing live ta
   for (let index = 2; index < initial.tabLimit; index += 1) {
     await world.openTab(`capacity-${index}`, researching.sessionId);
   }
-  const full = await world.readBrowserState();
+  const full = await eventually(() => world.readBrowserState(), {
+    within: 15_000,
+    until: state => state.tabs.length === initial.tabLimit && state.tabs.every(tab => tab.url !== "" && tab.url !== "about:blank"),
+    label: "all capacity tabs finish their initial navigation",
+  });
   expect(full.tabs).toHaveLength(12);
   expect(full).toMatchObject({ activeTabId: readingTab.tabId, visibleSessionId: reading.sessionId,
     backgroundWindowCount: 1, backgroundWindowVisible: false, visibleWindowCount: 1 });
@@ -270,9 +274,13 @@ test("a background conversation reads its owned page silently and requests atten
   await agent.run("session.rename", { sessionId: reading.sessionId, title: reading.title });
   const researching = { sessionId: await agent.createSession("Background research"), title: "Background research" };
   await user.click(conversation(reading.title));
-  const readingOpen = agent.run("browser.open_url", { url: `${world.origin}/?viewport-probe=reading`, provider: "builtin" });
+  const readingOpen = world.commandFrom(reading.sessionId, "browser.open_url", { url: `${world.origin}/?viewport-probe=reading`, provider: "builtin" });
   await user.click({ role: "button", label: "Allow for this thread" });
-  const readingTab = browserTabHandle(await readingOpen);
+  const readingResult = await readingOpen;
+  if (!readingResult || typeof readingResult !== "object" || !("result" in readingResult)) {
+    throw new Error(`The reading browser command returned no result: ${JSON.stringify(readingResult)}`);
+  }
+  const readingTab = browserTabHandle(readingResult.result);
   await user.see(tabButton("reading"), { timeoutMs: 30_000 });
   const initial = await probe.browserTabMetrics(readingTab.targetId);
   const panelViewport = { width: initial.width, height: initial.height };
