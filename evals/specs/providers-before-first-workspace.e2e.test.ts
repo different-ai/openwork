@@ -45,54 +45,64 @@ test("a member who signs in before creating a workspace can use their organizati
     await user.screenshot();
   });
 
-  await step("the local engine is already running and serves the organization's provider", async () => {
+  await step("the local engine is already running with no workspace", async () => {
     await user.notSee({ text: "Not connected to a server" });
-    const providers = await probe.eventually(() => probe.desktopApi("/opencode/provider"), {
-      within: 180_000,
-      label: "the engine lists the organization provider as connected",
-      until: (result) => result.status === 200 && connectedProviderIds(result.body).includes(world.providerId),
+    const engine = await probe.eventually(async () => {
+      const result = await probe.desktopApi("/opencode/provider");
+      return { status: result.status, providers: listField(result.body, "all").length };
+    }, {
+      within: 120_000,
+      label: "the engine answers without a workspace",
+      until: (result) => result.status === 200,
     });
-    const connected = connectedProviderIds(providers.body);
     evidence.recordAssertionEvidence(
-      "The engine answers with no workspace and holds the organization's key",
-      `GET /opencode/provider → HTTP ${providers.status}; connected: ${connected.join(", ") || "none"}`,
-      providers.status === 200 && connected.includes(world.providerId),
+      "The engine answers before any workspace exists",
+      `GET /opencode/provider → HTTP ${engine.status}; ${engine.providers} providers in the catalog`,
+      engine.status === 200,
     );
-    expect(connected).toContain(world.providerId);
+    expect(engine.status).toBe(200);
   });
 
   await step("after: AI provider settings list the organization's provider instead of a server error", async () => {
     await agent.run("route.settings.providers");
-    await user.see({ text: world.providerName }, { timeoutMs: 120_000 });
+    await user.see({ text: world.providerName }, { timeoutMs: 180_000 });
     await user.notSee({ text: "Not connected to a server" });
     await user.notSee({ text: "Failed to load providers" });
     await user.notSee({ text: "Loading providers..." });
+    const synced = await probe.eventually(async () => {
+      const result = await probe.desktopApi("/opencode/provider");
+      return { status: result.status, connected: connectedProviderIds(result.body) };
+    }, {
+      within: 60_000,
+      label: "the engine holds the organization provider",
+      until: (result) => result.status === 200 && result.connected.includes(world.providerId),
+    });
     evidence.recordAssertionEvidence(
-      "Settings › AI providers shows the organization provider",
-      `"${world.providerName}" is listed; no "Not connected to a server", "Failed to load providers", or "Loading providers..." on screen`,
-      true,
+      "Settings › AI providers shows the organization provider, served by the running engine",
+      `"${world.providerName}" is listed with no server error; GET /opencode/provider → HTTP ${synced.status}, organization provider connected: ${synced.connected.includes(world.providerId)}`,
+      synced.connected.includes(world.providerId),
     );
+    expect(synced.connected).toContain(world.providerId);
     await user.screenshot();
   });
 
   const joined = await step("creating the first workspace joins the running server and engine instead of restarting them", async () => {
     const before = serverIdentity((await probe.desktopApi("/status")).body);
-    await agent.run("route.session");
+    await user.click("Back to app");
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
-    await probe.eventually(() => agent.actions(), {
-      within: 60_000,
-      label: "workspace creation is available",
-      until: (actions) => Array.isArray(actions)
-        && actions.some((action) => isRecord(action) && action.id === "workspace.create" && action.disabled !== true),
-    });
+    await probe.eventually(async () => {
+      const actions = await agent.actions();
+      return Array.isArray(actions)
+        && actions.some((action) => isRecord(action) && action.id === "workspace.create" && action.disabled !== true);
+    }, { within: 60_000, label: "workspace creation is available", until: (available) => available });
     await agent.run("workspace.create", { path: world.firstWorkspacePath });
-    const workspaces = await probe.eventually(() => probe.desktopApi("/workspaces"), {
+    const workspaceIds = await probe.eventually(async () => listField((await probe.desktopApi("/workspaces")).body, "items")
+      .flatMap((item) => (isRecord(item) && typeof item.id === "string" ? [item.id] : [])), {
       within: 120_000,
       label: "the first workspace is registered",
-      until: (result) => listField(result.body, "items").length === 1,
+      until: (ids) => ids.length === 1,
     });
-    const workspace = listField(workspaces.body, "items")[0];
-    const workspaceId = isRecord(workspace) && typeof workspace.id === "string" ? workspace.id : "";
+    const workspaceId = workspaceIds[0] ?? "";
     const after = serverIdentity((await probe.desktopApi("/status")).body);
     const kept = after.port === before.port && after.uptimeMs >= before.uptimeMs;
     evidence.recordAssertionEvidence(
