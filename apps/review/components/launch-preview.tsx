@@ -47,8 +47,13 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
       </p>
       <details className="preview-details">
         <summary>Sandbox details</summary>
-        <p>Each launch restores this commit’s snapshot into a separate sandbox. The first launch for a commit can take several minutes. Sandboxes are deleted after two hours; work is not saved.</p>
+        <p>This preview runs the OpenWork web app and its local engine. Each launch restores this commit’s snapshot into a separate sandbox. The first launch for a commit can take several minutes. Sandboxes are deleted after two hours; work is not saved.</p>
       </details>
+      {session && <details className="preview-details">
+        <summary>Reveal sandbox link</summary>
+        <p>Anyone with this link can access your sandbox until it expires.</p>
+        <code style={{ overflowWrap: "anywhere", userSelect: "all" }}>{session.url}</code>
+      </details>}
     </div>
   );
 }

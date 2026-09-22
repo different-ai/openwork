@@ -198,6 +198,8 @@ export async function reviewWorld(
       cwd: join(root, "apps/review"),
       env: {
         ...process.env,
+        // This isolated HTTP fixture must never inherit live sandbox access.
+        FREESTYLE_API_KEY: "",
         OPENWORK_REVIEW_LOCAL_DIR: storage,
         VERCEL: "1",
         VERCEL_ENV: environment,
