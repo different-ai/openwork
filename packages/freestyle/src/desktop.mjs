@@ -47,12 +47,23 @@ export async function startDesktop(stack, world) {
   // unavailable to the guest's root services, so container mode passes --no-sandbox.
   process.env.DISPLAY = DESKTOP_DISPLAY;
   process.env.OPENWORK_EVAL_CONTAINER_ELECTRON = "1";
+  // The snapshot builder already fetched the sidecars and helpers.
+  process.env.OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED = "1";
   void (async () => {
     const { app } = await import("/workspace/evals/packages/env/src/desktop-app.ts");
     const { resolvePlace } = await import("/workspace/evals/packages/env/src/place.ts");
     // Signed out: the snapshot's Den answers on internal template origins that the
     // in-VM desktop cannot reach yet. The app itself, its workspace and UI are real.
-    stack.use(await app({ den: world.den, place: resolvePlace(), signIn: false, workspacePath: "/root/openwork-desktop" }));
+    // A cold first boot compiles on demand; the retry reuses those warm caches.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        stack.use(await app({ den: world.den, place: resolvePlace(), signIn: false, workspacePath: "/root/openwork-desktop" }));
+        break;
+      } catch (error) {
+        if (attempt >= 2) throw error;
+        console.error("Desktop app first boot timed out; retrying with warm caches:", error);
+      }
+    }
     status("ready");
   })().catch((error) => {
     console.error("Desktop app did not start:", error);

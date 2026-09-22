@@ -67,7 +67,10 @@ mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY
 pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway... --filter @openwork/desktop...
 pnpm --dir evals install --frozen-lockfile --ignore-scripts
 pnpm --filter @openwork-ee/den-db build
-pnpm --filter @openwork/email build` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
+pnpm --filter @openwork/email build
+# Desktop build: fetch the app's sidecars and helpers once so launches skip it.
+node apps/desktop/scripts/prepare-sidecar.mjs --force --outdir apps/desktop/resources/sidecars
+node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/desktop/resources/helpers` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
 pnpm --filter @openwork/types build
 pnpm --filter @openwork/sdk build
 pnpm --filter @openwork/enterprise-mcp-client build
