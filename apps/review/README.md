@@ -142,8 +142,9 @@ credential. Update the controller pin after reviewing its code and dependencies.
 Each world/commit is serialized in CI; the provider snapshot cache and builder lock
 also deduplicate reruns and concurrent reviewer launches. Existing snapshots are
 reused until their seven-day expiry. Prewarming does not create a shared reviewer VM:
-each click still clones separately. ACME starts and seeds its services after cloning,
-so prewarming removes installation/build time, not all startup time.
+each click still clones separately. ACME is fully seeded, its service chain verified, and browser entry points compiled
+before its memory snapshot is captured. Clones resume those processes; launch only
+assigns public access, renews expired demo sessions if needed, and checks readiness.
 
 Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
 offers **Launch in Freestyle**. The server reads the commit from the stored report;

@@ -71,8 +71,12 @@ OpenWork Models subscription/credit-billing flow.
 ## Private Freestyle review
 
 The reviewer can launch **ACME web · Full stack** from the report's exact commit.
-Its snapshot prepares the repository, MySQL and Redis; each clone boots and seeds
-its own full world, then verifies a real OpenCode request through AI Gateway.
+CI starts and seeds the whole world, enables AI Gateway in the owner sidebar,
+verifies an OpenCode request through the gateway, and warms browser entry points
+before capturing the running memory snapshot. Each clone resumes those processes
+with independent database and file state; it does not reseed or restart them.
+The private edge maps the snapshot’s virtual origins to each clone’s unique URLs.
+Launch checks restored services and renews expired demo sessions when necessary.
 The model upstream alone is deterministic. This is an isolated demo, not production
 accounts or billing. Initial preparation can take several minutes.
 

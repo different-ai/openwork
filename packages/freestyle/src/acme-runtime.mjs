@@ -31,7 +31,7 @@ try {
     const response = await fetch(`${web.manifest.webUrl}${path}`);
     if (!response.ok) throw new Error(`App warmup failed: ${path}`);
     const source = await response.text();
-    const imports = [...source.matchAll(/(?:from\s*|import\s*|src=)["'](\/[^"']+)["']/g)].map((match) => match[1]);
+    const imports = [...source.matchAll(/(?:from\s*|import\s*\(?\s*|src=)["'](\/[^"']+)["']/g)].map((match) => match[1]);
     for (const dependency of imports) await warmModule(dependency);
   }
   await warmModule("/");

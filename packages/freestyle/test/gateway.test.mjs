@@ -5,11 +5,24 @@ import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { gzipSync } from "node:zlib";
+import { templateOrigins } from "../src/origins.mjs";
 
 test("preview gateway requires its own token, strips it upstream, rejects cross-site sockets and expires", async () => {
   const directory = await mkdtemp(join(tmpdir(), "openwork-gateway-"));
   const path = join(directory, "access.json");
-  const upstream = createServer((req, res) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ cookie: req.headers.cookie ?? "", path: req.url, authorization: req.headers.authorization })); });
+  const upstream = createServer(async (req, res) => {
+    if (req.url === "/api/auth/origin-test") {
+      const parts = [];
+      for await (const chunk of req) parts.push(chunk);
+      const body = JSON.parse(Buffer.concat(parts).toString());
+      assert.ok(body.callbackURL.includes(new URL(templateOrigins.den).hostname));
+      assert.ok(req.headers.origin.includes(new URL(templateOrigins.den).hostname));
+      res.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip", location: templateOrigins.den });
+      res.end(gzipSync(JSON.stringify({ url: templateOrigins.den, callbackURL: body.callbackURL })));
+      return;
+    }
+    res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ cookie: req.headers.cookie ?? "", path: req.url, authorization: req.headers.authorization })); });
   upstream.listen(0, "127.0.0.1");
   await once(upstream, "listening");
   const address = upstream.address();
@@ -41,6 +54,18 @@ test("preview gateway requires its own token, strips it upstream, rejects cross-
     await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() + 60000).toISOString(), origins: { app: "https://unrelated.example" } }));
     assert.equal((await fetch(origin, { headers: { cookie } })).status, 503);
     await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() + 60000).toISOString() }));
+    assert.equal((await fetch(origin, { headers: { cookie, origin: "https://another-clone.preview.openwork.software" } })).status, 403);
+    await writeFile(join(directory, "services.json"), JSON.stringify({ den: `http://127.0.0.1:${address.port}` }));
+    const actualDen = `https://127.0.0.1:${gate.port}`;
+    await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() + 60000).toISOString(), origins: { den: actualDen }, templateOrigins }));
+    const translated = await fetch(`${origin}/api/auth/origin-test`, {
+      method: "POST", headers: { cookie, origin: actualDen, "content-type": "application/json" },
+      body: JSON.stringify({ callbackURL: `${actualDen}/dashboard` }),
+    });
+    assert.equal(translated.status, 200);
+    assert.equal(translated.headers.get("content-encoding"), null);
+    assert.equal(translated.headers.get("location"), "https://127.0.0.1");
+    assert.deepEqual(await translated.json(), { url: "https://127.0.0.1", callbackURL: `${actualDen}/dashboard` });
     const status = await new Promise((resolve, reject) => {
       const req = request(origin, { headers: { cookie, origin: "https://unrelated.example", connection: "Upgrade", upgrade: "websocket" } }, (res) => { res.resume(); resolve(res.statusCode); });
       req.on("error", reject); req.end();

@@ -92,6 +92,12 @@ export const server = createServer(async (req, res) => {
     res.end("Open this sandbox from your review launch link. If it has expired, launch a fresh sandbox.");
     return;
   }
+  // Clones share fixture credentials internally. The outer private cookie and
+  // origin check prevent a page in one clone from using another clone's cookies.
+  const allowedOrigins = Object.values(auth.config.origins ?? { app: `https://${req.headers.host}` });
+  if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) {
+    res.writeHead(403); res.end("Use this sandbox's own service URLs."); return;
+  }
   let destination;
   try { destination = await target(req, auth); }
   catch { res.writeHead(503); res.end("This world is not ready. Try launching again from the review."); return; }

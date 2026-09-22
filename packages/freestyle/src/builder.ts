@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { FreestyleApiError } from "freestyle";
 import { client, execChecked, findSnapshot, isMissing, snapshotSlug, type PreviewWorld } from "./index.ts";
 
-/** Build once per exact source revision, then clone the running, empty app. */
+/** Build once per exact source revision, then clone the running, verified world. */
 export async function ensureSnapshot(sha: string, api = client(), log: (message: string) => void = () => {}, world: PreviewWorld = "app-web") {
   const slug = snapshotSlug(sha, world);
   const deadline = Date.now() + 11 * 60_000;
