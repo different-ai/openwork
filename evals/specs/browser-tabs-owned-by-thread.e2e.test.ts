@@ -15,7 +15,7 @@ const lifecycleTabButton = (name: string): Target => ({ role: "button", label: n
 const conversation = (title: string): Target => ({ text: title });
 const BACKGROUND_TAB_VIEWPORT = { width: 1280, height: 800 };
 
-lifecycleTest("the global tab limit rejects new pages without disturbing live tabs, and closing a tab makes room", async ({ world, user, agent, step }) => {
+lifecycleTest("the global tab limit rejects new pages without disturbing live tabs, and closing a tab makes room", async ({ world, user, agent, step, evidence }) => {
   const reading = { ...world.session, title: "Reading at capacity" };
   await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Research at capacity");
@@ -52,6 +52,8 @@ lifecycleTest("the global tab limit rejects new pages without disturbing live ta
     expect(await world.pageTargets()).toEqual(pages);
     expect(await world.readInputProbe(researchTab)).toEqual({ clicks: 1, value: "before" });
     await user.see(lifecycleTabButton(readingTab.name));
+    evidence.recordAssertionEvidence("At the tab limit, New tab explains how to make room and opens nothing",
+      `${full.tabs.length}/${initial.tabLimit} tabs open; message shown: "OpenWork has 12 browser tabs open. Close an unused browser tab…"; tabs ${full.tabs.length} → ${rejected.tabs.length}; browser pages unchanged; typed text in another tab kept`, true);
   });
 
   await step("Foreground and background opens hit the same limit without allocating or replacing a CDP page", async () => {
@@ -68,6 +70,8 @@ lifecycleTest("the global tab limit rejects new pages without disturbing live ta
     expect(await world.clickAndType(researchTab, "-limited")).toEqual({ clicks: 2, value: "before-limited" });
     await user.see(lifecycleTabButton(readingTab.name));
     await user.notSee(lifecycleTabButton("capacity-retry"));
+    evidence.recordAssertionEvidence("Agent and background opens hit the same limit",
+      `Agent open and background open both refused with "12 browser tabs open … Close … try again"; tabs stayed ${rejected.tabs.length}; browser pages unchanged; the other tab still accepts typing`, true);
   });
 
   await step("Closing a visible tab releases exactly one slot and the same request succeeds", async () => {
@@ -102,10 +106,12 @@ lifecycleTest("the global tab limit rejects new pages without disturbing live ta
     await world.loadInputProbe(handle);
     expect(await world.clickAndType(handle, "retry works")).toEqual({ clicks: 1, value: "retry works" });
     expect(await world.readInputProbe(researchTab)).toEqual({ clicks: 3, value: "before-limited-retry" });
+    evidence.recordAssertionEvidence("Closing one tab frees exactly one slot for the same request",
+      `Closed 1 tab (12 → 11), then the same open succeeded: ${retryUrl} in "${reading.title}", back to ${retried.tabs.length} tabs; the new page accepts typing and other tabs kept their text`, true);
   });
 });
 
-lifecycleTest("session deletion closes only its owned pages and preserves neighbor and shared tabs", async ({ world, user, agent, probe, step }) => {
+lifecycleTest("session deletion closes only its owned pages and preserves neighbor and shared tabs", async ({ world, user, agent, probe, step, evidence }) => {
     const removed = { ...world.session, title: "Completed browser research" };
     await world.renameSession(removed.sessionId, removed.title);
     const neighbor = await world.openSession("Continuing browser research");
@@ -162,10 +168,12 @@ lifecycleTest("session deletion closes only its owned pages and preserves neighb
       expect(await world.readInputProbe(neighborTab)).toEqual({ clicks: 1, value: "neighbor" });
       expect(await world.clickAndType(neighborTab, "-kept")).toEqual({ clicks: 2, value: "neighbor-kept" });
       expect(await world.pageTargets()).toEqual(baselinePages);
+      evidence.recordAssertionEvidence("Deleting a conversation closes only its own tabs",
+        `Deleted "${removed.title}" (server returns 404): its ${owned.length} tabs closed, tabs ${before.tabs.length} → ${baseline.tabs.length}; "${neighbor.title}" tab and the shared tab survive with their typed text; hidden browser host released`, true);
     });
 });
 
-lifecycleTest("repeated refused navigations leave no allocated page or hidden host and keep the existing input alive", async ({ world, user, step }) => {
+lifecycleTest("repeated refused navigations leave no allocated page or hidden host and keep the existing input alive", async ({ world, user, step, evidence }) => {
   const reading = { ...world.session, title: "Reading during failed opens" };
   await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Retrying browser research");
@@ -203,6 +211,8 @@ lifecycleTest("repeated refused navigations leave no allocated page or hidden ho
       expect(await world.readInputProbe(readingTab)).toEqual({ clicks: 1, value: "kept" });
     }
     expect(await world.clickAndType(readingTab, "-after")).toEqual({ clicks: 2, value: "kept-after" });
+    evidence.recordAssertionEvidence("Refused page loads leave nothing behind",
+      `3 approved opens of an unreachable address failed with "Browser operation could not finish"; after each, tabs stayed ${baseline.tabs.length}, no hidden browser host, browser pages unchanged; the existing tab kept its text`, true);
   });
 
   await step("An approved retry remains usable in the background after the failures", async () => {
@@ -215,10 +225,12 @@ lifecycleTest("repeated refused navigations leave no allocated page or hidden ho
     await world.loadInputProbe(recovered);
     expect(await world.clickAndType(recovered, "recovered")).toEqual({ clicks: 1, value: "recovered" });
     expect(await world.readInputProbe(readingTab)).toEqual({ clicks: 2, value: "kept-after" });
+    evidence.recordAssertionEvidence("A later approved open still works",
+      `After the failures, an approved open in "${researching.title}" loaded and accepts typing; tabs ${baseline.tabs.length} → 2; the first tab kept its text`, true);
   });
 });
 
-lifecycleTest("moving the last background page on screen releases its hidden host and repeated create-close cycles return to baseline", async ({ world, user, step }) => {
+lifecycleTest("moving the last background page on screen releases its hidden host and repeated create-close cycles return to baseline", async ({ world, user, step, evidence }) => {
   const reading = { ...world.session, title: "Conversation without browser tabs" };
   await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Temporary browser research");
@@ -265,6 +277,8 @@ lifecycleTest("moving the last background page on screen releases its hidden hos
         expect(await world.pageTargets()).toEqual(pages);
         return true;
       }, { within: 15_000, label: "closing the page returns native resources and CDP targets to baseline" });
+      evidence.recordAssertionEvidence(`Create-close cycle ${cycle + 1} returns to baseline`,
+        "Background tab opened in a hidden host (1 host); showing it in its conversation released the hidden host (0) and kept the same page and typed text; closing it left 0 tabs and the starting browser pages", true);
     });
   }
 });
@@ -513,6 +527,13 @@ linkTest("a member opens transcript links in their saved destination and can ove
     const closed = await menuOpen(false);
     expect(closed.last).toMatchObject({ selectedId: id });
   };
+  // The one-time login sync offer squeezes the narrow browser panel; clear it so
+  // screenshots show the tab strip and address bar instead of wrapped banner text.
+  const dismissLoginSyncOffer = async () => {
+    if ((await probe.dom('[data-testid="login-sync-not-now"]')).elements.length === 0) return;
+    await user.click({ role: "button", label: "Not now" });
+    await user.notSee({ role: "button", label: "Set up sync" });
+  };
 
   await step("Right-click and Escape leave the transcript and every browser page unchanged", async () => {
     const popup = await openMenu(link);
@@ -535,8 +556,10 @@ linkTest("a member opens transcript links in their saved destination and can ove
     await choose(await openMenu(link), "Copy Link Address");
     // Clipboard reads require the app document to be focused.
     await user.click("composer");
-    expect(await world.readClipboard()).toBe(world.linkUrl);
+    const copied = await world.readClipboard();
+    expect(copied).toBe(world.linkUrl);
     await unchanged();
+    evidence.recordAssertionEvidence("Copy Link Address copies only the link", `Clipboard: ${copied}; browser tabs unchanged (${initial.tabs.length})`, true);
   });
 
   await step("Right-clicking nonlink message text still offers the message menu", async () => {
@@ -550,6 +573,7 @@ linkTest("a member opens transcript links in their saved destination and can ove
     await world.dismissMenu();
     expect((await menuOpen(false)).last).toMatchObject({ selectedId: null });
     await unchanged();
+    evidence.recordAssertionEvidence("Right-clicking plain message text keeps the message menu", `Menu entries: ${entries.join("; ")}`, true);
   });
 
   const opened = await step("Open in OpenWork creates exactly one tab owned by the link's conversation", async () => {
@@ -574,6 +598,11 @@ linkTest("a member opens transcript links in their saved destination and can ove
       label: "the new owned browser page is visible in the side panel",
     });
     expect(await world.readMainUrl()).toBe(mainUrl);
+    evidence.recordAssertionEvidence(
+      "Open in OpenWork adds exactly one tab owned by the link's conversation",
+      `OpenWork tabs ${initial.tabs.length} → ${state.tabs.length}; new tab URL ${tab.url} belongs to "${world.reading.title}"; the other conversation's tab is untouched`,
+      true,
+    );
     return tab;
   });
 
@@ -597,6 +626,11 @@ linkTest("a member opens transcript links in their saved destination and can ove
     });
     await user.see(link);
     await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
+    evidence.recordAssertionEvidence(
+      "Each conversation shows only its own browser tabs",
+      `"${world.neighbor.title}" shows only its original tab; "${world.reading.title}" gets its link tab back when reselected; 2 tabs total, none duplicated`,
+      true,
+    );
   });
 
   const manualTabId = await step("Normal click loads an owned sidebar tab without browser control consent or controls", async () => {
@@ -624,6 +658,13 @@ linkTest("a member opens transcript links in their saved destination and can ove
     await user.notSee({ role: "button", label: "Take over" });
     await user.notSee({ role: "button", label: "Resume browser" });
     expect(await world.externalOpens()).toEqual([]);
+    const openedTab = state.tabs.find(tab => tab.id === state.activeTabId);
+    evidence.recordAssertionEvidence(
+      "With the OpenWork default, a click opens one tab in this conversation and nothing externally",
+      `OpenWork tabs ${browserBefore.tabs.length} → ${state.tabs.length}; new tab URL ${openedTab?.url} belongs to "${world.reading.title}"; external browser opens: 0`,
+      true,
+    );
+    await dismissLoginSyncOffer();
     await user.screenshot();
     if (!state.activeTabId) throw new Error("The manual link did not select a tab.");
     return state.activeTabId;
@@ -643,6 +684,11 @@ linkTest("a member opens transcript links in their saved destination and can ove
     expect(typeof observed.text).toBe("string");
     await user.notSee({ role: "button", label: "Allow for this thread" });
     await user.see({ role: "button", label: "Take over" });
+    evidence.recordAssertionEvidence(
+      "A tab the member opened still needs approval before the agent reads it",
+      `The agent's read waited on "Allow for this thread"; after approval it read ${destination.origin + destination.pathname}`,
+      true,
+    );
   });
 
   const destination: Target = { role: "combobox", label: "Open links in" };
@@ -655,38 +701,54 @@ linkTest("a member opens transcript links in their saved destination and can ove
     return prefs && typeof prefs === "object" ? Reflect.get(prefs, "linkOpenDestination") : null;
   };
 
-  await step("before: links open in OpenWork by default", async () => {
+  await step("Links open in OpenWork by default", async () => {
     await preferences();
     await user.see(destination, { text: /OpenWork/ });
-    expect(await savedDestination()).toBe("openwork");
+    const saved = await savedDestination();
+    expect(saved).toBe("openwork");
+    evidence.recordAssertionEvidence("The saved link destination starts as OpenWork", `"Open links in" shows OpenWork; saved linkOpenDestination = ${String(saved)}`, true);
     await user.screenshot();
   });
 
-  await step("after: choosing External browser with the keyboard survives a reload", async () => {
+  await step("Choosing External browser with the keyboard survives a reload", async () => {
     await user.click(destination);
     await user.see({ role: "option", label: "External browser" });
     await user.press("End");
     await user.press("Enter");
     await user.see(destination, { text: /External browser/ });
-    expect(await savedDestination()).toBe("external");
+    const beforeReload = await savedDestination();
+    expect(beforeReload).toBe("external");
     await user.reload();
     // Wait until the setting is interactive, not merely mounted under startup.
     await user.hover(destination);
     await user.see(destination, { text: /External browser/ });
-    expect(await savedDestination()).toBe("external");
+    const afterReload = await savedDestination();
+    expect(afterReload).toBe("external");
+    evidence.recordAssertionEvidence(
+      "A keyboard choice of External browser is saved and survives a reload",
+      `Chosen with End + Enter; saved value before reload = ${String(beforeReload)}, after reload = ${String(afterReload)}; "Open links in" still shows External browser`,
+      true,
+    );
     await user.screenshot();
   });
 
-  await step("a normal click opens the external browser once and leaves every OpenWork tab alone", async () => {
+  await step("With External browser saved, a normal click opens the link outside OpenWork once and adds no OpenWork tab", async () => {
     await user.click({ role: "button", label: "Back to app" });
     await user.see(link);
     const before = await world.readBrowserState();
     await user.click(link);
     await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 1, label: "the external browser receives one link" });
-    expect(await world.externalOpens()).toEqual([world.linkUrl]);
-    expect((await world.readBrowserState()).tabs).toEqual(before.tabs);
+    const opens = await world.externalOpens();
+    expect(opens).toEqual([world.linkUrl]);
+    const after = await world.readBrowserState();
+    expect(after.tabs).toEqual(before.tabs);
     expect((await world.nativeMenu()).open).toBe(false);
     await user.see(link);
+    evidence.recordAssertionEvidence(
+      "The saved External browser default opens the link outside OpenWork exactly once",
+      `External browser received ${opens.length} open: ${opens.join(", ")}; OpenWork tabs ${before.tabs.length} → ${after.tabs.length} (unchanged)`,
+      true,
+    );
     await user.screenshot();
   });
 
@@ -698,13 +760,24 @@ linkTest("a member opens transcript links in their saved destination and can ove
       label: "the one-time OpenWork choice adds exactly one owned tab",
     });
     expect(after.tabs.filter(tab => before.tabs.some(previous => previous.id === tab.id))).toEqual(before.tabs);
-    expect(after.tabs.find(tab => !before.tabs.some(previous => previous.id === tab.id))).toMatchObject({ url: world.linkUrl, ownerSessionId: world.reading.sessionId });
-    expect(await world.externalOpens()).toEqual([world.linkUrl]);
-    expect(await savedDestination()).toBe("external");
+    const added = after.tabs.find(tab => !before.tabs.some(previous => previous.id === tab.id));
+    expect(added).toMatchObject({ url: world.linkUrl, ownerSessionId: world.reading.sessionId });
+    const opens = await world.externalOpens();
+    expect(opens).toEqual([world.linkUrl]);
+    const saved = await savedDestination();
+    expect(saved).toBe("external");
     await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
+    evidence.recordAssertionEvidence(
+      "Open in OpenWork is a one-time override",
+      `OpenWork tabs ${before.tabs.length} → ${after.tabs.length}; new tab URL ${added?.url} belongs to "${world.reading.title}"; external browser opens still ${opens.length}; saved default still ${String(saved)}`,
+      true,
+    );
+    await dismissLoginSyncOffer();
     await user.screenshot();
   });
 
+  // Nothing changes inside OpenWork here, so a screenshot would prove nothing;
+  // the external-open capture and saved value are the evidence.
   await step("Open in external browser overrides OpenWork without changing the saved default", async () => {
     await preferences();
     await user.click(destination);
@@ -712,17 +785,25 @@ linkTest("a member opens transcript links in their saved destination and can ove
     expect(await savedDestination()).toBe("openwork");
     await user.click({ role: "button", label: "Back to app" });
     const before = await world.readBrowserState();
+    const opensBefore = (await world.externalOpens()).length;
     await choose(await openMenu(link), "Open in external browser");
     await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 2, label: "the external override opens exactly once" });
-    expect(await world.externalOpens()).toEqual([world.linkUrl, world.linkUrl]);
-    expect((await world.readBrowserState()).tabs).toEqual(before.tabs);
-    expect(await savedDestination()).toBe("openwork");
+    const opens = await world.externalOpens();
+    expect(opens).toEqual([world.linkUrl, world.linkUrl]);
+    const after = await world.readBrowserState();
+    expect(after.tabs).toEqual(before.tabs);
+    const saved = await savedDestination();
+    expect(saved).toBe("openwork");
     await user.see(link);
-    await user.screenshot();
+    evidence.recordAssertionEvidence(
+      "Open in external browser is a one-time override",
+      `External browser opens ${opensBefore} → ${opens.length} (latest: ${opens.at(-1)}); OpenWork tabs ${before.tabs.length} → ${after.tabs.length} (unchanged); saved default still ${String(saved)}`,
+      true,
+    );
   });
 });
 
-artifactTest("a transcript link replaces the selected artifact with its own live sidebar tab, not a native window", async ({ world, user, step }) => {
+artifactTest("a transcript link replaces the selected artifact with its own live sidebar tab, not a native window", async ({ world, user, step, evidence }) => {
   const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
   const reading = { ...world.session, title: "Linked research" };
   await world.renameSession(reading.sessionId, reading.title);
@@ -757,6 +838,8 @@ artifactTest("a transcript link replaces the selected artifact with its own live
     await user.see({ role: "button", label: `Select tab: ${owned[0].label}` });
     await user.notSee({ text: link.artifactText });
     await user.notSee(tabButton(otherTab.name));
+    evidence.recordAssertionEvidence("A transcript link replaces the open file with one tab in the sidebar",
+      `Clicking the link added 1 tab (${before.tabs.length} → ${state.tabs.length}) at ${owned[0].url} owned by "${reading.title}"; the file preview is no longer shown; only that tab is attached; no separate window`, true);
     return eventually(() => world.tabHandle(owned[0]), { within: 15_000, label: "the exact transcript URL has one CDP target" });
   });
 
@@ -786,6 +869,8 @@ artifactTest("a transcript link replaces the selected artifact with its own live
       until: (value) => value.width === viewport.width && value.height === viewport.height,
       label: "the preserved page returns to its sidebar viewport",
     })).toEqual(viewport);
+    evidence.recordAssertionEvidence("Hiding and showing the sidebar keeps the same page",
+      `Closing the side panel hid every browser view; reopening showed the same tab with its typed text ("before" → "before-shown") at ${viewport.width}×${viewport.height}`, true);
   });
 
   await step("A page refresh preserves the selected artifact, but a new browser request selects its working page", async () => {
@@ -808,6 +893,8 @@ artifactTest("a transcript link replaces the selected artifact with its own live
     expect(state).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
     await user.see(tabButton(requested.name));
     await user.notSee({ text: link.artifactText });
+    evidence.recordAssertionEvidence("A page reload keeps the file selected, but a new browser request takes over",
+      `Reloading the tab left ${link.artifactName} on screen; an approved new open selected its own tab (${requested.name}) and hid the file`, true);
   });
 
   await step("The other conversation keeps its original tab and page", async () => {
@@ -825,5 +912,7 @@ artifactTest("a transcript link replaces the selected artifact with its own live
     expect((await world.tabHandle(before.tabs[0])).targetId).toBe(otherTab.targetId);
     await user.see(tabButton(otherTab.name));
     await user.notSee({ role: "link", text: link.url });
+    evidence.recordAssertionEvidence("The other conversation keeps its original tab",
+      `"${other.title}" shows only its own tab (same page as before); ${state.tabs.length} tabs total; the link tab is hidden there`, true);
   });
 });
