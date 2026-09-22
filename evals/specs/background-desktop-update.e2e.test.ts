@@ -26,8 +26,8 @@ revokedTest("a downloaded update is not installed once the organization revokes 
   await user.see({ text: blockedText }, { timeoutMs: 30_000 });
   await user.notSee({ text: readyText });
   await user.notSee({ text: "Restart to update" });
-  await user.notSee({ text: "Install & restart" });
-  expect(await world.snapshot()).toMatchObject({ downloads: 1, installs: 0 });
+  await user.see({ role: "button", text: "Install & restart" });
+  expect(await world.snapshot()).toMatchObject({ downloads: 1, installs: 0, installEnabled: false });
   await user.screenshot();
 
   // Positive control: the same version approved again installs from Settings.
@@ -36,7 +36,7 @@ revokedTest("a downloaded update is not installed once the organization revokes 
   await probe.eventually(world.snapshot, { within: 30_000, label: "the re-approved version downloads again", until: downloaded(2) });
   await user.see({ text: readyText });
   await user.notSee({ text: blockedText });
-  await user.click({ role: "button", text: "Install v9.9.9 & restart" });
+  await user.click({ role: "button", text: "Install & restart" });
   await probe.eventually(world.snapshot, {
     within: 10_000, label: "install proceeds while the version stays allowed",
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,

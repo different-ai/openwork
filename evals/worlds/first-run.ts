@@ -1544,7 +1544,9 @@ export async function revokedUpdateWorld(seed: Seed) {
     allowVersions,
     snapshot: () => evalIn(app, () => {
       const { downloads, installs } = window.__backgroundUpdateWitness;
-      return { downloads, installs };
+      const installButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.trim() === "Install & restart");
+      return { downloads, installs, installEnabled: installButton != null && !installButton.disabled };
     }),
     openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
