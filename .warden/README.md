@@ -1,49 +1,51 @@
-# Local Warden preflight
+# Warden security review
 
-Prerequisites: Node 20 or newer and approved Pi/OpenAI credentials. The repository pins
-the native CLI through `pnpm warden:check`; do not substitute a global install.
+Warden runs two skills: new security regressions and public-repository
+confidentiality. It does not review design, provenance, or Desktop/Den parity
+automatically. Those skill files remain available for optional local use.
 
-## Final review
+GitHub's existing `openwork-admin-reviewers` approval rule owns merge approval,
+including changes to `.github/`, CI, and Warden itself. Warden has no separate
+path veto, approval bot, request-changes review, or unresolved review threads.
+Security findings are advisory in the run summary; incomplete analysis fails
+the job so it cannot look like a clean review. Warden must remain an optional
+check in the branch rules. No branch rules are changed by this setup.
 
-Run journey checks first. Then assign one owner and record both refs:
+## Local review
+
+With the model credentials configured, run the pinned CLI:
 
 ```sh
-git rev-parse HEAD
-git rev-parse origin/dev
 pnpm warden:check
-git rev-parse HEAD
-git rev-parse origin/dev
 ```
 
-The bare config mode reviews committed branch changes against the configured
-`dev` base. It is the final policy check; explicit `--git` or file mode does not
-have the same fail policy. The working tree should be clean because unstaged
-and untracked files are not reviewed. Do not commit unless the user authorized
-it.
+This reviews committed branch changes against `dev`. For an uncommitted
+iteration, `pnpm warden:check --staged` reviews the index. Local security and
+confidentiality findings still return a failure at every severity. Missing
+credentials, partial analysis, and model errors are incomplete reviews.
 
-Only completed expected applicable skills, verified scope, and no blockers
-means reviewed with no blockers. Exit 0 with no files or no matching triggers
-is `Not reviewed` or `Not applicable`, with scope explicit, never clear.
-Missing credentials, CLI/model errors, cancellation, or partial skill coverage
-is `Incomplete`. Record the expected and actually reviewed skills, both
-before/after refs, exact command, exit code, scope, and run reference. Keep
-private analysis logs private; do not attach them to a public PR.
-
-For quick iteration on authorized but uncommitted work, use:
+Run the reporter's contract tests without model credentials:
 
 ```sh
-pnpm warden:check --staged
-pnpm warden:check --skill <name>
+node --test .github/scripts/warden-report.test.mjs
 ```
 
-These are diagnostics only: `--staged` sees the index only, and `--skill`
-provides partial coverage. Do not use `--fix`. After the last edit, rebase, base
-update, policy change, or model change, rerun bare `pnpm warden:check` with all
-applicable skills. Do not run it in every parallel subagent.
+## Rollout
 
-Finish with each native finding ID, classification, evidence, `Clear when`, and
-disposition, plus the run metadata above. Reuse native IDs and deduplicate an
-already-reported root cause; never invent durable advisory IDs. A suggested
-reproduction is not an executed test. Local clearance never authorizes GitHub
-approval, must not be cached across changes, and must not be pushed across
-branches or worktrees as approval evidence.
+The repository's Warden workflow is currently disabled in GitHub. The new
+workflow declares PR triggers, but this change does not enable the live
+workflow. After merging and reviewing the first run, a maintainer can enable
+Warden in Actions and synchronize/reopen a same-repository PR. Forks cannot
+use the model secret and are skipped. Draft PRs are included.
+
+The workflow reads policy, skills, and the reporter from the PR's immutable
+base; proposed policy changes take effect after merging. PR code is inspected,
+never installed or executed by the workflow. The first rollout PR does not
+have the new reporter on its base yet and cannot demonstrate a hosted run of
+the new reporter. Validate on a subsequent PR after enabling.
+
+The `warden-clearance` environment and App credentials are still used by
+release and other automation. Removing the Warden approval workflow does not
+remove those shared credentials or change existing reviews and threads.
+
+See [reporting.md](reporting.md) for timing and future tracking.
