@@ -10,6 +10,8 @@ test("reviewers see Freestyle scope and recoverable setup without exposing sandb
   expect(html).toContain("Launch in Freestyle");
   expect(html).toContain("Freestyle is not connected");
   expect(html).toContain("Sandbox details");
+  expect(html).toContain("ACME web");
+  expect(html).toContain("Full stack");
   expect(html).toContain("OpenWork web app and its local engine");
   expect(html).not.toContain("__openwork_launch?token=");
   evidence.recordAssertionEvidence(

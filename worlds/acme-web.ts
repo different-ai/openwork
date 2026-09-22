@@ -40,7 +40,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
       ...(preview ? { DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname } : {}) },
     seedProfile: "demo-org",
     trustedOrigins: [`http://127.0.0.1:${webPort}`, ...(preview ? Object.values(preview) : [])],
-    publicOrigins: preview ? { web: preview.den, api: preview.api } : undefined,
+    publicOrigins: preview ? { web: preview.den, api: preview.den } : undefined,
     web: true,
   }));
   if (!den.database) throw new Error("Acme Gateway requires the world's isolated Den database.");
@@ -75,6 +75,31 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
   return { den, web, model, upstream, gatewayUrl: gateway.baseUrl };
 }
 
+export function acmeWebOutputs(world: AcmeWebWorld) {
+  const { den, web, model, gatewayUrl } = world;
+  return {
+      webUrl: output(web.manifest.webUrl, { group: "URLs" }),
+      openworkUrl: output(web.manifest.openworkUrl, { group: "URLs" }),
+      denWeb: output(den.ref.webUrl, { group: "URLs" }),
+      denApi: output(den.ref.apiUrl, { group: "URLs" }),
+      gatewayUrl: output(gatewayUrl, { group: "URLs" }),
+      model: output(model.modelName, { group: "AI Gateway" }),
+      providerId: output(model.providerId, { group: "AI Gateway" }),
+      modelId: output(model.modelId, { group: "AI Gateway" }),
+      reply: output(ACME_REPLY, { group: "AI Gateway", note: "Deterministic upstream; no paid inference keys required" }),
+      verified: output("OpenCode chat through AI Gateway", { group: "AI Gateway" }),
+      alexEmail: output(den.admin.email, { group: "Accounts", note: "org owner (Acme)" }),
+      denToken: secret(den.admin.token, { group: "Accounts", note: "Disposable demo bearer token" }),
+      openworkToken: secret(web.manifest.token, { group: "OpenWork" }),
+      openworkHostToken: secret(web.manifest.hostToken, { group: "OpenWork" }),
+      databaseUrl: secret(den.database?.url ?? "", { group: "Infrastructure", note: "Inside this VM; MySQL is not exposed publicly" }),
+      redisUrl: output("redis://127.0.0.1:6379", { group: "Infrastructure", note: "Inside this VM" }),
+      upstreamKey: secret(world.upstream.key, { group: "AI Gateway", note: "Synthetic upstream; no paid credentials" }),
+      alexPassword: secret(den.admin.password, { group: "Accounts" }),
+      dashboards: output("enabled", { group: "Org", note: "DEN_DASHBOARDS_ENABLED=true" }),
+    };
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   await using stack = new AsyncDisposableStack();
   if (process.env.OPENWORK_WORLD_PLACE === "freestyle") {
@@ -92,25 +117,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
   const world = await bootAcmeWeb(stack);
-  const { den, web, model, gatewayUrl } = world;
   await probeAcmeGateway(world);
   await hold({
     name: ACME_WEB_NAME,
-    outputs: {
-      webUrl: output(web.manifest.webUrl, { group: "URLs" }),
-      openworkUrl: output(web.manifest.openworkUrl, { group: "URLs" }),
-      denWeb: output(den.ref.webUrl, { group: "URLs" }),
-      denApi: output(den.ref.apiUrl, { group: "URLs" }),
-      gatewayUrl: output(gatewayUrl, { group: "URLs" }),
-      model: output(model.modelName, { group: "AI Gateway" }),
-      providerId: output(model.providerId, { group: "AI Gateway" }),
-      modelId: output(model.modelId, { group: "AI Gateway" }),
-      reply: output(ACME_REPLY, { group: "AI Gateway", note: "Deterministic upstream; no paid inference keys required" }),
-      verified: output("OpenCode chat through AI Gateway", { group: "AI Gateway" }),
-      alexEmail: output(den.admin.email, { group: "Accounts", note: "org owner (Acme)" }),
-      alexPassword: secret(den.admin.password, { group: "Accounts" }),
-      dashboards: output("enabled", { group: "Org", note: "DEN_DASHBOARDS_ENABLED=true" }),
-    },
+    outputs: acmeWebOutputs(world),
   });
 }
 

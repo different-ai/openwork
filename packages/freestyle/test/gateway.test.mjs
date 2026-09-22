@@ -17,6 +17,7 @@ test("preview gateway requires its own token, strips it upstream, rejects cross-
   process.env.OPENWORK_PREVIEW_UPSTREAM_PORT = String(address.port);
   process.env.OPENWORK_PREVIEW_GATEWAY_PORT = "0";
   process.env.OPENWORK_PREVIEW_ACCESS_FILE = path;
+  process.env.OPENWORK_PREVIEW_SERVICES_FILE = join(directory, "services.json");
   const { server } = await import("../src/gateway.mjs");
   await once(server, "listening");
   const gate = server.address();
@@ -33,6 +34,13 @@ test("preview gateway requires its own token, strips it upstream, rejects cross-
     const cookie = launch.headers.get("set-cookie").split(";")[0];
     const response = await fetch(`${origin}/api/openwork/test`, { headers: { cookie: `${cookie}; app=kept`, authorization: "Bearer app-token" } });
     assert.deepEqual(await response.json(), { cookie: "app=kept", path: "/api/openwork/test", authorization: "Bearer app-token" });
+    await writeFile(join(directory, "services.json"), JSON.stringify({ app: `http://127.0.0.1:${address.port}`, api: `http://127.0.0.1:${address.port}` }));
+    await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() + 60000).toISOString(), origins: { app: `https://127.0.0.1:${gate.port}` } }));
+    const routed = await fetch(`${origin}/api/den/v1/me`, { headers: { cookie } });
+    assert.equal((await routed.json()).path, "/v1/me");
+    await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() + 60000).toISOString(), origins: { app: "https://unrelated.example" } }));
+    assert.equal((await fetch(origin, { headers: { cookie } })).status, 503);
+    await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() + 60000).toISOString() }));
     const status = await new Promise((resolve, reject) => {
       const req = request(origin, { headers: { cookie, origin: "https://unrelated.example", connection: "Upgrade", upgrade: "websocket" } }, (res) => { res.resume(); resolve(res.statusCode); });
       req.on("error", reject); req.end();

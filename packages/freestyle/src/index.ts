@@ -93,8 +93,11 @@ export async function launchPreview(
         await delay(2000);
       }
       outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
-      for (const [name, origin] of Object.entries(origins ?? {})) {
-        outputs[`${name}Url`] = { value: `${origin}/__openwork_launch?token=${token}`, secret: true, group: "Services", note: "Ready · open this link to authorize this service" };
+      const serviceKeys = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
+      for (const [name, key] of Object.entries(serviceKeys)) {
+        const origin = Object.entries(origins ?? {}).find(([service]) => service === name)?.[1];
+        if (!origin) throw new Error("Missing private service origin");
+        outputs[key] = { value: `${origin}/__openwork_launch?token=${token}`, secret: true, group: "Services", note: "Ready · open this link to authorize this service" };
       }
       outputs.previewCookie = { value: `__Host-openwork-preview=${token}`, secret: true, group: "Developer access", note: "Cookie header for requests to this VM's private service URLs" };
     } else {

@@ -16,6 +16,9 @@ export function parsePreviewOutputs(input: unknown): PreviewOutputs {
     if ("secret" in entry) { if (typeof entry.secret !== "boolean") throw new Error("Invalid secret flag"); output.secret = entry.secret; }
     if ("group" in entry) { if (typeof entry.group !== "string") throw new Error("Invalid output group"); output.group = entry.group; }
     if ("note" in entry) { if (typeof entry.note !== "string") throw new Error("Invalid output note"); output.note = entry.note; }
+    if (output.group === "Services" && !/^https:\/\/(?:ow|den|api|engine|gateway)-[a-f0-9]{32}\.style\.dev\/__openwork_launch\?token=[A-Za-z0-9_-]+$/.test(output.value)) {
+      throw new Error("Invalid private service link");
+    }
     result[key] = output;
   }
   return result;

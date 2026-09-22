@@ -66,6 +66,7 @@ pnpm --filter @openwork/email build` : "pnpm install --frozen-lockfile --filter 
 pnpm --filter @openwork/types build
 pnpm --filter @openwork/sdk build
 pnpm --filter @openwork/enterprise-mcp-client build
+${world === "acme-web" ? "pnpm --filter @openwork-ee/den-api run build:workspace-dependencies" : ""}
 mkdir -p /opt/openwork-preview/tools
 printf 'allowBuilds:\n  opencode-ai: true\n' > /opt/openwork-preview/tools/pnpm-workspace.yaml
 pnpm --dir /opt/openwork-preview/tools add opencode-ai@1.18.15

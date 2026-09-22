@@ -213,14 +213,15 @@ function spawnService(
 ): SpawnedService {
   const logFd = openSync(logPath, "a");
   const prepared = process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1";
-  const args = prepared
+  const preparedApi = prepared || process.env.OPENWORK_EVAL_DEN_API_PREPARED === "1";
+  const args = (label === "den-api" ? preparedApi : prepared)
     ? label === "den-api"
       ? ["--filter", "@openwork-ee/den-api", "exec", "tsx", "src/main.ts"]
       : ["--filter", "@openwork-ee/den-web", "exec", "next", "start", "--hostname", "127.0.0.1", "--port", String(port)]
     : [script];
   const child = spawn("pnpm", args, {
     cwd: REPO_ROOT,
-    env: prepared && label === "den-api" ? { ...env, PORT: String(port) } : env,
+    env: preparedApi && label === "den-api" ? { ...env, PORT: String(port), NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --conditions=development` } : env,
     detached: true,
     stdio: ["ignore", logFd, logFd],
   });

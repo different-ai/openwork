@@ -25,12 +25,19 @@ async function access(req) {
 
 async function target(req, auth) {
   if (!auth?.config.origins) return { hostname: "127.0.0.1", port: upstreamPort };
-  const name = Object.entries(auth.config.origins).find(([, origin]) => origin === `https://${req.headers.host}`)?.[0];
+  let name = Object.entries(auth.config.origins).find(([, origin]) => origin === `https://${req.headers.host}`)?.[0];
   if (!name) throw new Error("Unknown preview service");
-  const services = JSON.parse(await readFile("/opt/openwork-preview/services.json", "utf8"));
+  const services = JSON.parse(await readFile(process.env.OPENWORK_PREVIEW_SERVICES_FILE ?? "/opt/openwork-preview/services.json", "utf8"));
+  let path = req.url;
+  if ((name === "app" || name === "den") && /^\/api\/den(?:\/|\?|$)/.test(path)) {
+    name = "api";
+    path = path.replace(/^\/api\/den(?=\/|\?|$)/, "") || "/";
+  } else if (name === "den" && /^(?:\/v1(?:\/|\?|$)|\/mcp(?:\/|\?|$)|\/health(?:\?|$))/.test(path)) {
+    name = "api";
+  }
   const url = new URL(services[name]);
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") throw new Error("Invalid local service");
-  return { hostname: "127.0.0.1", port: Number(url.port) };
+  return { hostname: "127.0.0.1", port: Number(url.port), path };
 }
 
 function headers(req, port = upstreamPort) {
@@ -64,7 +71,7 @@ export const server = createServer(async (req, res) => {
   let destination;
   try { destination = await target(req, auth); }
   catch { res.writeHead(503); res.end("This world is not ready. Try launching again from the review."); return; }
-  const upstream = request({ ...destination, path: req.url, method: req.method, headers: headers(req, destination.port) }, (response) => {
+  const upstream = request({ ...destination, path: destination.path ?? req.url, method: req.method, headers: headers(req, destination.port) }, (response) => {
     res.writeHead(response.statusCode ?? 502, { ...response.headers, "cache-control": "private, no-store", "referrer-policy": "no-referrer" });
     response.pipe(res);
   });
@@ -82,7 +89,7 @@ server.on("upgrade", async (req, socket, head) => {
   let destination;
   try { destination = await target(req, auth); }
   catch { socket.destroy(); return; }
-  const upstream = request({ ...destination, path: req.url, headers: headers(req, destination.port) });
+  const upstream = request({ ...destination, path: destination.path ?? req.url, headers: headers(req, destination.port) });
   upstream.on("upgrade", (response, peer, upstreamHead) => {
     socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join("\r\n")}\r\n\r\n`);
     if (head.length) peer.write(head);
