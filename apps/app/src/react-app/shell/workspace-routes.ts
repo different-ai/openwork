@@ -1,14 +1,46 @@
-import type { SettingsTab } from "../../app/types";
+import { SETTINGS_TAB_VALUES, type SettingsTab } from "../../app/types";
 
 /**
- * Search param that asks the session route to open the create-workspace
- * flow on arrival. Used by surfaces that need a workspace but live outside
- * the session route, such as Settings › AI providers with no workspace yet.
+ * Search params that ask the session route to get the member a workspace on
+ * arrival. Used by surfaces that need one but live outside the session route,
+ * such as Settings › AI providers with no workspace yet. On desktop the route
+ * creates the default chat workspace, exactly as a first message does; off
+ * desktop it opens the create-workspace dialog. `returnTo` names the settings
+ * tab to reopen inside the new workspace once it exists.
  */
 export const CREATE_WORKSPACE_SEARCH_PARAM = "createWorkspace";
+export const CREATE_WORKSPACE_RETURN_PARAM = "createWorkspaceReturn";
 
-export function createWorkspaceRoute() {
-  return `/session?${CREATE_WORKSPACE_SEARCH_PARAM}=1`;
+/** Folder under the user's home that holds the default chat workspace. */
+export const DEFAULT_CHAT_WORKSPACE_FOLDER = "OpenWork Chat";
+
+export function createWorkspaceRoute(returnTo?: SettingsTab) {
+  const params = new URLSearchParams({ [CREATE_WORKSPACE_SEARCH_PARAM]: "1" });
+  if (returnTo) params.set(CREATE_WORKSPACE_RETURN_PARAM, returnTo);
+  return `/session?${params.toString()}`;
+}
+
+export type CreateWorkspaceRequest = { returnTo: SettingsTab | null };
+
+function isSettingsTab(value: string | null): value is SettingsTab {
+  return value !== null && (SETTINGS_TAB_VALUES as readonly string[]).includes(value);
+}
+
+/** The create-workspace request carried by a session route URL, if any. */
+export function readCreateWorkspaceRequest(search: string): CreateWorkspaceRequest | null {
+  const params = new URLSearchParams(search);
+  if (!params.has(CREATE_WORKSPACE_SEARCH_PARAM)) return null;
+  const returnTo = params.get(CREATE_WORKSPACE_RETURN_PARAM);
+  return { returnTo: isSettingsTab(returnTo) ? returnTo : null };
+}
+
+/** The same URL with the create-workspace request removed. */
+export function withoutCreateWorkspaceRequest(pathname: string, search: string) {
+  const params = new URLSearchParams(search);
+  params.delete(CREATE_WORKSPACE_SEARCH_PARAM);
+  params.delete(CREATE_WORKSPACE_RETURN_PARAM);
+  const next = params.toString();
+  return `${pathname}${next ? `?${next}` : ""}`;
 }
 
 export function workspaceSessionRoute(workspaceId: string, sessionId?: string | null) {

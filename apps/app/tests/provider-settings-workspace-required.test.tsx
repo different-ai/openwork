@@ -8,6 +8,11 @@ import {
   type ProviderAuthStore,
 } from "../src/react-app/domains/connections/provider-auth/store";
 import { AiSettingsView } from "../src/react-app/domains/settings/pages/ai-view";
+import {
+  createWorkspaceRoute,
+  readCreateWorkspaceRequest,
+  withoutCreateWorkspaceRequest,
+} from "../src/react-app/shell/workspace-routes";
 
 const stores: ProviderAuthStore[] = [];
 
@@ -103,4 +108,15 @@ test("AI settings keeps the loading state while the workspace list is still unkn
   const html = renderView({ hasWorkspace: undefined });
   expect(html).toContain(t("settings.loading_providers"));
   expect(html).not.toContain(t("settings.providers_workspace_required_title"));
+});
+
+test("the create-workspace request round-trips through the session route URL and is removed afterwards", () => {
+  const route = createWorkspaceRoute("ai");
+  expect(route.startsWith("/session?")).toBe(true);
+  const search = route.slice(route.indexOf("?"));
+  expect(readCreateWorkspaceRequest(search)).toEqual({ returnTo: "ai" });
+  expect(readCreateWorkspaceRequest("?createWorkspace=1&createWorkspaceReturn=../evil")).toEqual({ returnTo: null });
+  expect(readCreateWorkspaceRequest("?pendingConversation=abc")).toBeNull();
+  expect(withoutCreateWorkspaceRequest("/session", `${search}&pendingConversation=abc`)).toBe("/session?pendingConversation=abc");
+  expect(withoutCreateWorkspaceRequest("/session", search)).toBe("/session");
 });

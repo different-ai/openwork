@@ -268,7 +268,9 @@ import { useSessionControlActions } from "@/react-app/domains/session/control/se
 import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
-  CREATE_WORKSPACE_SEARCH_PARAM,
+  DEFAULT_CHAT_WORKSPACE_FOLDER,
+  readCreateWorkspaceRequest,
+  withoutCreateWorkspaceRequest,
   globalExtensionsRoute,
   legacySessionRoute,
   mergeWorkspaceRouteSession,
@@ -380,6 +382,12 @@ function singlePickedDirectory(selection: string | string[] | null) {
     : Array.isArray(selection)
       ? selection[0] ?? null
       : null;
+}
+
+/** `~/OpenWork Chat` on desktop, or "" when the home folder cannot be resolved. */
+async function resolveDefaultChatWorkspaceFolder() {
+  const home = await getDesktopHomeDir().catch(() => "");
+  return home ? await joinDesktopPath(home, DEFAULT_CHAT_WORKSPACE_FOLDER).catch(() => "") : "";
 }
 
 function focusedWorkbenchPaneOwner() {
@@ -2285,19 +2293,6 @@ export function SessionRoute() {
     setCreateWorkspaceOpen(true);
   }, [checkDesktopRestriction, restrictionNotice, workspaces.length]);
 
-  // Surfaces outside this route (Settings › AI providers without a workspace)
-  // arrive with `?createWorkspace=1`. Open the flow once and drop the param so
-  // a refresh or back navigation does not reopen it.
-  const createWorkspaceRequested = new URLSearchParams(location.search).has(CREATE_WORKSPACE_SEARCH_PARAM);
-  useEffect(() => {
-    if (!createWorkspaceRequested) return;
-    const params = new URLSearchParams(location.search);
-    params.delete(CREATE_WORKSPACE_SEARCH_PARAM);
-    const search = params.toString();
-    navigate(`${location.pathname}${search ? `?${search}` : ""}`, { replace: true });
-    handleOpenCreateWorkspace();
-  }, [createWorkspaceRequested, handleOpenCreateWorkspace, location.pathname, location.search, navigate]);
-
   const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (!workspace) return;
@@ -3439,8 +3434,7 @@ export function SessionRoute() {
           if (canCreateWorkspaces()) handleOpenCreateWorkspace();
           throw new Error("Choose a workspace before retrying this message.");
         }
-        const home = await getDesktopHomeDir().catch(() => "");
-        const folder = home ? await joinDesktopPath(home, "OpenWork Chat").catch(() => "") : "";
+        const folder = await resolveDefaultChatWorkspaceFolder();
         if (!folder) throw new Error("Choose a workspace before retrying this message.");
         await handleCreateWorkspace("starter", folder, undefined, (workspace) => { prepared = workspace; });
       }
@@ -3453,6 +3447,42 @@ export function SessionRoute() {
       if (current) publishCreatedConversation(current, created, newTaskAgent, prepared?.title);
     });
   }, [endpointForWorkspace, handleCreateWorkspace, handleOpenCreateWorkspace, navigate, newTaskAgent, publishCreatedConversation, sessionDraftScope, workspacesRef]);
+
+  // Surfaces outside this route (Settings › AI providers without a workspace)
+  // arrive with `?createWorkspace=1`. Get the member a workspace the same way
+  // a first message does: the default chat workspace on desktop, the dialog
+  // elsewhere. Handle each request once and drop the params so a refresh or
+  // back navigation does not create another workspace.
+  const createWorkspaceRequest = useMemo(() => readCreateWorkspaceRequest(location.search), [location.search]);
+  const createWorkspaceRequestKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!createWorkspaceRequest || createWorkspaceRequestKeyRef.current === location.key) return;
+    createWorkspaceRequestKeyRef.current = location.key;
+    const { returnTo } = createWorkspaceRequest;
+    navigate(withoutCreateWorkspaceRequest(location.pathname, location.search), { replace: true });
+    if (!canCreateWorkspaces()) return;
+    if (!isDesktopRuntime()) {
+      handleOpenCreateWorkspace();
+      return;
+    }
+    void (async () => {
+      const folder = await resolveDefaultChatWorkspaceFolder();
+      if (!folder) {
+        handleOpenCreateWorkspace();
+        return;
+      }
+      let created: PreparedChatWorkspace | undefined;
+      try {
+        await handleCreateWorkspace("starter", folder, undefined, (workspace) => { created = workspace; });
+      } catch {
+        // Default creation failed (folder unusable, server down): let the
+        // person choose a folder and see the error in the dialog instead.
+        handleOpenCreateWorkspace();
+        return;
+      }
+      if (created && returnTo) navigate(workspaceSettingsRoute(created.workspaceId, returnTo));
+    })();
+  }, [createWorkspaceRequest, handleCreateWorkspace, handleOpenCreateWorkspace, location.key, location.pathname, location.search, navigate]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.create",

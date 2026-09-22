@@ -2397,7 +2397,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerSummary={providerSummary}
             providerLoadState={activeClient ? providerAuthSnapshot.providerLoadState : { status: "idle", error: null }}
             hasWorkspace={loading ? undefined : workspaces.length > 0}
-            onCreateWorkspace={() => navigate(createWorkspaceRoute())}
+            onCreateWorkspace={() => navigate(createWorkspaceRoute("ai"))}
             onRetryProviders={async () => { await providerAuthStore.refreshProviders({ force: true }); }}
             connectedProviders={connectedProviders}
             disconnectingProviderId={null}
