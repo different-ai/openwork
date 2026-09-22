@@ -676,7 +676,7 @@ export function createWorkspaceReadiness(prepare: (signal: AbortSignal) => Promi
 export type WorkspacePreparationScope = { runtimeKey: string; workspaceKey: string; configurationKey: string };
 
 export function runtimeWorkspaceReadinessKey(runtime: RuntimeInfo, workspaceId: string): string {
-  return JSON.stringify([runtime.serverUrl, runtime.ownerToken, runtime.engineManaged, runtime.readinessKey, runtime.workspaceReadinessRevisions?.[workspaceId] ?? 0]);
+  return JSON.stringify([runtime.serverUrl, runtime.ownerToken, runtime.engineManaged, runtime.engineError, runtime.readinessKey, runtime.workspaceReadinessRevisions?.[workspaceId] ?? 0]);
 }
 
 export function workspacePreparationScope(runtime: RuntimeInfo, coworker: CoworkerSummary, session: Pick<DenSession, "baseUrl" | "orgId" | "token"> | null): WorkspacePreparationScope {

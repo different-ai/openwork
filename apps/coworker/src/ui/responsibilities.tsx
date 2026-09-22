@@ -862,7 +862,8 @@ function CreateResponsibility({
     [coworker.model, coworker.modelVariant, options, providers],
   );
   const preferredId = `${preferred.model.providerId}/${preferred.model.modelId}`;
-  const effectiveModelId = options.some((option) => option.id === modelId) ? modelId : preferredId;
+  const effectiveModelId = modelId || preferredId;
+  const selectedModelAvailable = options.some((option) => option.id === effectiveModelId);
 
   useEffect(() => {
     let cancelled = false;
@@ -925,6 +926,9 @@ function CreateResponsibility({
       </Field>
       <Field label="AI model in OpenWork Cloud">
         <select className={`${inputClass} bg-panel`} value={effectiveModelId} onChange={(event) => setModelId(event.target.value)}>
+          {!selectedModelAvailable ? (
+            <option value={effectiveModelId} disabled>Not in Cloud model list · {effectiveModelId}</option>
+          ) : null}
           {options.map((option) => (
             <option key={option.id} value={option.id}>
               {option.providerName} · {option.modelName}
@@ -934,9 +938,11 @@ function CreateResponsibility({
         </select>
       </Field>
       <p className="text-[11px] leading-relaxed text-mist">
-        {preferred.resolution === "default" && coworker.model
-          ? `${coworker.name}'s usual AI model (${coworker.model}) is not authorized in OpenWork Cloud, so the free starter is preselected.`
-          : "Cloud runs can only use AI models your organization authorizes in OpenWork."}
+        {modelId && !selectedModelAvailable
+          ? "Your selected model is not in the current Cloud model list. Choose an available model to schedule this assignment; no replacement has been selected automatically."
+          : !modelId && preferred.resolution === "unavailable"
+            ? `${coworker.name}'s usual AI model (${coworker.model}) is not in the current Cloud model list. Choose an available model to schedule this assignment; no replacement has been selected automatically.`
+            : "Cloud runs can only use AI models your organization authorizes in OpenWork."}
       </p>
       {providersError ? <ErrorNote>Could not read organization models: {providersError}</ErrorNote> : null}
       <div className="grid grid-cols-2 gap-2">

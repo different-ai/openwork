@@ -31,6 +31,7 @@ export type RegisterCloudMcpRoutesOptions = {
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serverMetadata?: CloudMcpServerMetadata;
+  withSessionMutation?: (work: () => Promise<Response>) => Promise<Response>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,6 +93,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
     registerRuntimeMcp,
     refreshRegistrationFromLiveStatus,
     serverMetadata,
+    withSessionMutation = (work) => work(),
   } = options;
 
   addRoute(routes, "GET", "/workspace/:id/mcp/openwork-cloud/health", "client", async (ctx) => {
@@ -110,7 +112,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
     return jsonResponse(health);
   });
 
-  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/engine-refresh", "client", async (ctx) => {
+  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/engine-refresh", "client", (ctx) => withSessionMutation(async () => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -145,9 +147,9 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       trigger: typeof body.trigger === "string" ? body.trigger : undefined,
     });
     return jsonResponse(result);
-  });
+  }));
 
-  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/reconcile", "client", async (ctx) => {
+  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/reconcile", "client", (ctx) => withSessionMutation(async () => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -177,5 +179,5 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       refreshRegistrationFromLiveStatus,
     });
     return jsonResponse(health);
-  });
+  }));
 }

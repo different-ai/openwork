@@ -13,7 +13,10 @@
  * Model options mirror the OpenWork desktop's Automation editor: Den's
  * member-scoped `/v1/llm-providers` list plus the free starter model, with
  * submitted ids normalized to the ids Den revalidates (`opencode`, `openwork`,
- * or a concrete `lpr_*` provider record).
+ * or a concrete `lpr_*` provider record). Gateway `ipr_*` providers are not
+ * accepted by Den's Automation authority yet, even though Cloud worker
+ * materialization supports them. Do not merge the desktop Gateway inventory
+ * into this execution catalog until that authority contract supports it.
  */
 import {
   AUTOMATION_FREE_MODEL,
@@ -48,7 +51,7 @@ export type CloudModelOption = {
   accessKind: CloudModelAccess;
 };
 
-export type CloudModelResolution = "exact" | "mapped" | "default";
+export type CloudModelResolution = "exact" | "mapped" | "default" | "unavailable";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -83,9 +86,11 @@ function parseProvider(value: unknown): DenLlmProvider | null {
   };
 }
 
-/** Lenient reader for Den's `GET /v1/llm-providers` payload. */
+/** Tolerate legacy row extensions, but never mistake a failed inventory for an empty one. */
 export function parseDenLlmProviders(payload: unknown): DenLlmProvider[] {
-  if (!isRecord(payload) || !Array.isArray(payload.llmProviders)) return [];
+  if (!isRecord(payload) || !Array.isArray(payload.llmProviders)) {
+    throw new Error("OpenWork Cloud returned an unreadable model inventory. Refresh to try again.");
+  }
   return payload.llmProviders.map(parseProvider).filter((provider): provider is DenLlmProvider => provider !== null);
 }
 
@@ -114,6 +119,7 @@ function openWorkManagedOptions(provider: DenLlmProvider): CloudModelOption[] {
 }
 
 function authorizedCustomOptions(provider: DenLlmProvider): CloudModelOption[] {
+  if (!provider.id.startsWith("lpr_")) return [];
   return provider.models.map((model) => ({
     id: `${provider.id}/${model.id}`,
     providerId: provider.id,
@@ -136,7 +142,8 @@ export function cloudModelOptions(
   const managed = providers.flatMap((provider) =>
     provider.source === "openwork" ? openWorkManagedOptions(provider) : authorizedCustomOptions(provider),
   );
-  const all = options.includeFreeStarter === false ? managed : [freeStarter, ...managed];
+  const merged = options.includeFreeStarter === false ? managed : [freeStarter, ...managed];
+  const all = [...new Map(merged.map((option) => [option.id, option])).values()];
   return all.sort(
     (left, right) =>
       ACCESS_ORDER.indexOf(left.accessKind) - ACCESS_ORDER.indexOf(right.accessKind) ||
@@ -156,8 +163,9 @@ export function findCloudModelOption(
  * Turn a coworker's local model preference (`providerId/modelId` against the
  * local engine) into a Cloud-authorized model. Exact ids win; a local
  * `anthropic/...` preference maps onto the organization's `lpr_*` record for
- * the same upstream provider and model; anything else falls back to the free
- * starter (or the first authorized option when the starter is excluded).
+ * the same upstream provider and model only when the match is unambiguous and
+ * visible. A missing preference may use the default; an unavailable selection
+ * keeps its identity so the caller cannot silently submit another model.
  */
 export function resolveCloudModel(
   preferred: { model: string; modelVariant?: string } | undefined,
@@ -165,32 +173,39 @@ export function resolveCloudModel(
   options: readonly CloudModelOption[] = cloudModelOptions(providers),
 ): { model: AutomationModel; resolution: CloudModelResolution } {
   const fallbackOption = options.find((option) => option.accessKind === "free") ?? options[0];
-  const fallback: AutomationModel = fallbackOption
-    ? { providerId: fallbackOption.providerId, modelId: fallbackOption.modelId, variant: null }
-    : { providerId: AUTOMATION_FREE_MODEL.providerId, modelId: AUTOMATION_FREE_MODEL.modelId, variant: null };
-
   const raw = preferred?.model.trim() ?? "";
+  if (!raw && fallbackOption) {
+    return {
+      model: { providerId: fallbackOption.providerId, modelId: fallbackOption.modelId, variant: null },
+      resolution: "default",
+    };
+  }
   const separator = raw.indexOf("/");
-  if (separator <= 0 || separator === raw.length - 1) return { model: fallback, resolution: "default" };
-  const providerId = raw.slice(0, separator);
-  const modelId = raw.slice(separator + 1);
+  const providerId = separator > 0 ? raw.slice(0, separator) : raw;
+  const modelId = separator > 0 ? raw.slice(separator + 1) : "";
   const variant = preferred?.modelVariant?.trim() || null;
 
+  if (providerId.startsWith("ipr_")) {
+    return { model: { providerId, modelId, variant }, resolution: "unavailable" };
+  }
   if (findCloudModelOption(options, { providerId, modelId })) {
     return { model: { providerId, modelId, variant }, resolution: "exact" };
   }
 
-  const mapped = providers.find(
+  const mapped = providers.filter(
     (provider) =>
       provider.source !== "openwork" &&
+      !providerId.startsWith("lpr_") &&
       provider.providerId === providerId &&
-      provider.models.some((model) => model.id === modelId),
+      provider.models.some((model) => model.id === modelId) &&
+      findCloudModelOption(options, { providerId: provider.id, modelId }) !== null,
   );
-  if (mapped) {
-    return { model: { providerId: mapped.id, modelId, variant }, resolution: "mapped" };
+  const mappedIds = [...new Set(mapped.map((provider) => provider.id))];
+  if (mappedIds.length === 1 && mappedIds[0]) {
+    return { model: { providerId: mappedIds[0], modelId, variant }, resolution: "mapped" };
   }
 
-  return { model: fallback, resolution: "default" };
+  return { model: { providerId, modelId, variant }, resolution: "unavailable" };
 }
 
 export type CloudResponsibilityDraft = {
@@ -202,6 +217,12 @@ export type CloudResponsibilityDraft = {
 
 /** Exact `POST /v1/cloud-automations` body: placement is fixed to OpenWork Cloud by Den. */
 export function cloudResponsibilityBody(draft: CloudResponsibilityDraft) {
+  if (draft.model.providerId.startsWith("ipr_")) {
+    throw new Error("Gateway models are not supported by OpenWork Cloud Automation authorization yet. Choose a supported Cloud model.");
+  }
+  if (!draft.model.providerId.trim() || !draft.model.modelId.trim()) {
+    throw new Error("Choose a model your organization authorizes for OpenWork Cloud.");
+  }
   return {
     name: draft.name.trim(),
     schedule: draft.schedule,

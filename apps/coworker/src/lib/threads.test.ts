@@ -151,6 +151,7 @@ test("prepared workspaces survive navigation, isolate coworker changes and dispo
     const changed = { ...runtime, workspaceReadinessRevisions: { ws_first: 1 } };
     assert.equal(runtimeWorkspaceReadinessKey(runtime, other.workspaceId), runtimeWorkspaceReadinessKey(changed, other.workspaceId));
     assert.notEqual(runtimeWorkspaceReadinessKey(runtime, coworker.workspaceId), runtimeWorkspaceReadinessKey(changed, coworker.workspaceId));
+    assert.notEqual(runtimeWorkspaceReadinessKey(runtime, coworker.workspaceId), runtimeWorkspaceReadinessKey({ ...runtime, engineError: "OpenCode exited during startup." }, coworker.workspaceId));
     const replacement = cache.get(workspacePreparationScope(changed, coworker, null), prepare);
     assert.equal(first.signal.aborted, true);
     assert.equal(second.signal.aborted, false);

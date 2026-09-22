@@ -2641,6 +2641,28 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
   });
 
+  // Native Coworker account teardown also owns the Connect registry. Wait for
+  // the entire reconcile (including catalog discovery), not just its HTTP
+  // caller or the native registration acknowledgement, before deleting it.
+  let nativeCloudSessionTail: Promise<unknown> = Promise.resolve();
+  let nativeCloudSessionGeneration = 0;
+  let nativeCloudSessionClosed = false;
+  function queueNativeCloudSession<T>(work: () => Promise<T>): Promise<T> {
+    if (config.engine !== "v2") return work();
+    const result = nativeCloudSessionTail.then(work);
+    nativeCloudSessionTail = result.catch(() => undefined);
+    return result;
+  }
+  async function clearNativeCloudGateway(): Promise<void> {
+    const removal = await removeOpenworkCloudMcpDesiredConfig(config);
+    // Re-read/sync every workspace even on retry: desired config can already
+    // be absent while an earlier native removal or registry settle failed.
+    for (const workspace of config.workspaces) {
+      for (const name of removal.removedNames) deleteEngineMcpRegistration(config, engineMcpServerState, workspace, name);
+      await disconnectMcpFromOpencodeEngine(config, workspace, OPENWORK_CLOUD_MCP_NAME);
+    }
+  }
+
   registerCloudMcpRoutes({
     routes,
     config,
@@ -2661,6 +2683,15 @@ function createRoutes(
         engineMcpServerState,
       ),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: config.engine === "v2" ? resolveOpencodeV2Version(config.opencodeV2?.version) : OPENCODE_VERSION },
+    withSessionMutation: (work) => {
+      const generation = nativeCloudSessionGeneration;
+      return queueNativeCloudSession(async () => {
+        if (config.engine === "v2" && (nativeCloudSessionClosed || generation !== nativeCloudSessionGeneration)) {
+          throw new ApiError(409, "cloud_session_changed", "The OpenWork account changed. Connect again after signing in.");
+        }
+        return work();
+      });
+    },
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
@@ -3217,16 +3248,27 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
-    await managedDesktopPolicy(config).setSession(session);
-    await cloudProviderSync.setSession(session);
-    return new Response(null, { status: 204 });
+    const generation = nativeCloudSessionGeneration;
+    return queueNativeCloudSession(async () => {
+      await managedDesktopPolicy(config).setSession(session);
+      await cloudProviderSync.setSession(session);
+      if (generation === nativeCloudSessionGeneration) nativeCloudSessionClosed = false;
+      return new Response(null, { status: 204 });
+    });
   });
 
   addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
     ensureWritable(config);
-    await managedDesktopPolicy(config).clearSession();
-    await cloudProviderSync.clearSession();
-    return new Response(null, { status: 204 });
+    if (config.engine === "v2") {
+      nativeCloudSessionClosed = true;
+      nativeCloudSessionGeneration += 1;
+    }
+    return queueNativeCloudSession(async () => {
+      if (config.engine === "v2") await clearNativeCloudGateway();
+      await managedDesktopPolicy(config).clearSession();
+      await cloudProviderSync.clearSession();
+      return new Response(null, { status: 204 });
+    });
   });
 
   addRoute(routes, "POST", "/cloud-provider-sync/run", "host-token", async (ctx) => {

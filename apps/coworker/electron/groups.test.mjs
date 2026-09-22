@@ -749,6 +749,7 @@ test("turn submission preserves definitive refusal and generation checks without
         if (route === "/api/plugin") return { data: ["collaboration", "computer", "browser", "group-documents", "events", "abilities", "turn-roles", "progress-summary", "auto-memory"].map((id) => ({ id: `coworker.${id}`, state: { status: "active" } })) };
       },
       denSessionHandoff: Promise.resolve(), storedSkillSession: null, appliedSkillSession: null,
+      denAccountHandoff: Promise.resolve(), denAccountGeneration: 0, denAccountReady: false,
       getCoworker: async (...args) => {
         if (readGate && args[1] === coworker.slug) { readGate.entered.resolve(); await readGate.release.promise; }
         return getCoworker(...args);
@@ -872,6 +873,7 @@ test("turn submission preserves definitive refusal and generation checks without
     assert.notEqual(readiness.workspaceRevision(coworker.workspaceId, coworker.slug), beforeFailure);
     failSave = false;
     context.denSession = { orgId: "fixture" };
+    context.denAccountReady = true;
     const nativeNoChange = { fingerprintChanged: false, providerStateChanged: false, envUpserts: 0, envDeletes: 0,
       cleanupChanged: false, cleanupRuntimeChanged: false, fileChanged: false, reloadDeferred: false, nativeReloadAttempted: false, nativeReloadPending: false };
     syncOutcome = { status: "noop", detail: nativeNoChange };

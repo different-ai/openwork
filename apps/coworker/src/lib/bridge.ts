@@ -804,7 +804,9 @@ export const coworkerBridge = {
    */
   den: {
     setSession: (session: { baseUrl: string; token: string; orgId: string }) =>
-      invoke<ProviderSyncRun>("den.session.set", session),
+      invoke<ProviderSyncRun & { accountGeneration: number }>("den.session.set", session),
+    reconcileConnect: (accountGeneration: number, workspaceId: string, config: Record<string, unknown>) =>
+      invoke<unknown>("den.connect.reconcile", { accountGeneration, workspaceId, config }),
     clearSession: () => invoke<{ ok: boolean }>("den.session.clear"),
     syncProviders: () => invoke<ProviderSyncRun>("den.providers.sync"),
   },

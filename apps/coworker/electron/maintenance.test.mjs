@@ -758,6 +758,7 @@ async function mainFixture(t, apiContract = "beta19271") {
     setTimeout: later, clearTimeout, clearInterval, setImmediate: (work) => exitTasks.push(work),
     process: { argv: ["fixture-node", "fixture-main.mjs"] }, userDataDir: "/fixture/electron-userdata", coworkersDir: "/fixture/coworkers",
     serverHandle: handle, ownerToken: "fixture-owner", denSession: null,
+    ensurePlatformServer: async () => { await context.startingServer; return context.serverHandle; },
     nativeRuntime: { apiContract }, teamSessions: { list: async () => [] },
     maintenanceAdmission: admission, resetExitReady: false, resetInProgress: false, resetRetryReady: false, resetBlockedReason: "", quitting: false, quitReady: false,
     localResponsibilitiesTimer: null, responsibilityAbort: new AbortController(), queuedLocalRuns: [], liveWorkerTurns: new Map(), localRunAdmission: Promise.resolve(),
@@ -897,6 +898,50 @@ for (const apiContract of ["beta19271", "native-2"]) test(`main cleanup stays id
   assert.equal((await f.invoke("ordinary")).ok, false);
   assert.equal(f.effects.ordinary, 0);
   assertNoResetWrites(f);
+});
+
+test("main reset joins startup before retaining its shutdown owner and leaves failed readiness recoverable", async (t) => {
+  const f = await mainFixture(t);
+  const startup = Promise.withResolvers();
+  f.context.serverHandle = null;
+  f.context.startingServer = startup.promise.then(() => {
+    f.context.serverHandle = f.handle;
+    f.context.startingServer = null;
+  });
+  const pending = f.invoke("maintenance.factoryReset", { confirmation: "DELETE" });
+  await new Promise(setImmediate);
+  assert.equal(f.effects.helpers.length, 0);
+  assert.equal(f.admission.closed, false);
+  startup.resolve();
+  const ready = await pending;
+  assert.equal(ready.ok, true, ready.error);
+  assert.equal(f.effects.stops.filter((name) => name === "engine").length, 1);
+  assertNoResetWrites(f);
+
+  for (const fault of ["missing", "pid", "dead", "startup"]) {
+    const blocked = await mainFixture(t);
+    if (fault === "missing") blocked.context.serverHandle = null;
+    if (fault === "pid") blocked.state.pid = null;
+    if (fault === "dead") blocked.state.alive = false;
+    if (fault === "startup") blocked.context.ensurePlatformServer = async () => { throw new Error("Private startup diagnostic"); };
+    const refused = await blocked.invoke("maintenance.factoryReset", { confirmation: "DELETE" });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.maintenanceRetryable, true);
+    assert.match(refused.error, /not ready for Fresh start/);
+    assert.doesNotMatch(refused.error, /Private startup diagnostic/);
+    assert.equal(blocked.admission.closed, false);
+    assert.equal(blocked.effects.helpers.length, 0);
+    assert.deepEqual(blocked.effects.stops, []);
+    assertNoResetWrites(blocked);
+    blocked.context.serverHandle = blocked.handle;
+    blocked.state.pid = 1235;
+    blocked.state.alive = true;
+    blocked.context.ensurePlatformServer = async () => blocked.handle;
+    const recovered = await blocked.invoke("maintenance.factoryReset", { confirmation: "DELETE" });
+    assert.equal(recovered.ok, true, recovered.error);
+    assert.equal(blocked.effects.helpers.length, 1);
+    assertNoResetWrites(blocked);
+  }
 });
 
 test("main reset retries safely cancelled cleanup without reopening work or bypassing the renderer handoff", async (t) => {

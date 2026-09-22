@@ -267,7 +267,7 @@ function WorkspaceProblemNote({ problem, onRetry }: { problem: WorkspaceProblem;
         <Button variant="ghost" className="text-xs" onClick={onRetry}>Try again</Button>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-mist">If this keeps happening, restart the AI service from AI &amp; local setup.</p>
-      <TechnicalText text={problem.technical} testId="coworker-workspace-problem-technical" />
+      {problem.technical ? <TechnicalText text={problem.technical} testId="coworker-workspace-problem-technical" /> : null}
     </div>
   );
 }
@@ -405,11 +405,12 @@ export function ThreadsPanel({
   /** The Workers themselves, for the decision cards in the discussion. */
   const [workerRecords, setWorkerRecords] = useState<WorkerSummary[]>([]);
   const threads = useMemo(
-    () =>
-      runtime.engineManaged && coworker.workspaceId
+    () => {
+      const activeWorkspaceId = coworker.workspaceId || runtime.teamWorkspaceId || "";
+      return runtime.engineManaged && activeWorkspaceId
         ? createCoworkerThreads({
             serverUrl: runtime.serverUrl,
-            workspaceId: coworker.workspaceId,
+            workspaceId: activeWorkspaceId,
             token: runtime.ownerToken,
             model: coworker.model,
             modelVariant: coworker.modelVariant,
@@ -418,20 +419,22 @@ export function ThreadsPanel({
             workerThreadIds,
             owner: { slug: coworker.slug, createdAt: coworker.createdAt },
           })
-        : null,
-    [runtime.engineManaged, runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.slug, coworker.createdAt, coworker.model, coworker.modelVariant, discussionThreadId, discussionThreadIds, workerThreadIds],
+        : null;
+    },
+    [runtime.engineManaged, runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, runtime.teamWorkspaceId, coworker.slug, coworker.createdAt, coworker.model, coworker.modelVariant, discussionThreadId, discussionThreadIds, workerThreadIds],
   );
   const [openThreadId, setOpenThreadId] = useState("");
   const [preparationAttempt, setPreparationAttempt] = useState(0);
   const preparationOwner = openThreadId ? { ...coworker, useAppModelDefaults: false } : coworker;
   const preparationScope = workspacePreparationScope(runtime, preparationOwner, session);
   const readiness = useMemo(() => workspaceReadinessCache.get(preparationScope, async (signal) => {
-    if (!runtime.engineManaged || !coworker.workspaceId || !runtime.readinessKey) throw new Error("AI is unavailable. Restart AI in Settings. Your draft is kept.");
-    const expected = { workspaceId: coworker.workspaceId, createdAt: coworker.createdAt, readinessKey: runtime.readinessKey, workspaceRevision: runtime.workspaceReadinessRevisions?.[`coworker:${coworker.slug}`] ?? runtime.workspaceReadinessRevisions?.[coworker.workspaceId] ?? 0 };
+    if (!runtime.engineManaged || !runtime.readinessKey) throw new Error("AI is unavailable. Restart AI in Settings. Your draft is kept.");
+    const workspaceId = coworker.workspaceId || runtime.teamWorkspaceId || "";
+    const expected = { workspaceId, createdAt: coworker.createdAt, readinessKey: runtime.readinessKey, workspaceRevision: runtime.workspaceReadinessRevisions?.[`coworker:${coworker.slug}`] ?? runtime.workspaceReadinessRevisions?.[workspaceId] ?? 0 };
     const [prepared, settings] = await Promise.all([coworkerBridge.coworkers.ensureWorkspace(coworker.slug, expected), coworkerBridge.settings.get()]);
     signal.throwIfAborted();
-    if (prepared.readinessKey !== expected.readinessKey || (prepared.workspaceRevision ?? 0) !== expected.workspaceRevision || prepared.workspaceId !== expected.workspaceId || prepared.createdAt !== expected.createdAt) throw new Error("The AI workspace changed. Retry preparation; your draft is kept.");
-    await createCoworkerThreads({ serverUrl: runtime.serverUrl, token: runtime.ownerToken, workspaceId: coworker.workspaceId, owner: { slug: coworker.slug, createdAt: coworker.createdAt } }).prepare(signal, { coworker: preparationOwner, defaults: settings.modelDefaults });
+    if (prepared.readinessKey !== expected.readinessKey || (prepared.workspaceRevision ?? 0) !== expected.workspaceRevision || prepared.createdAt !== expected.createdAt || (coworker.workspaceId && prepared.workspaceId !== coworker.workspaceId)) throw new Error("The AI service changed. Retry preparation; your draft is kept.");
+    await createCoworkerThreads({ serverUrl: runtime.serverUrl, token: runtime.ownerToken, workspaceId: prepared.workspaceId || workspaceId, owner: { slug: coworker.slug, createdAt: coworker.createdAt } }).prepare(signal, { coworker: preparationOwner, defaults: settings.modelDefaults });
   }), [preparationScope.runtimeKey, preparationScope.workspaceKey, preparationScope.configurationKey, preparationAttempt]);
   const retryPreparation = useCallback(() => {
     workspaceReadinessCache.invalidate(preparationScope, readiness);
@@ -465,7 +468,7 @@ export function ThreadsPanel({
   // While the AI service is unavailable the header note already says so; a raw
   // listing error underneath it would only repeat the fact in technical words.
   const workspaceProblem: WorkspaceProblem | null = preparation.state === "error"
-    ? { message: preparation.error, technical: "" }
+    ? { message: preparation.error, technical: runtime.engineError }
     : error && runtime.engineManaged && !warmingUp
       ? { message: `${coworker.name}'s workspace is not answering right now.`, technical: error }
       : null;
@@ -558,7 +561,7 @@ export function ThreadsPanel({
 
   /** Open a new native thread as this coworker's current discussion and register it. */
   const startDiscussion = useCallback(async (prepare?: { isCurrent: () => boolean; beforeOpen: (threadId: string) => void; signal?: AbortSignal }) => {
-    if (!threads) throw new Error("This coworker needs a workspace before it can chat.");
+    if (!threads) throw new Error("AI is unavailable. Restart AI in Settings. Your draft is kept.");
     const selection = ++discussionSelection.current;
     await readiness.wait(prepare?.signal);
     if (prepare && !prepare.isCurrent()) throw new Error("Starting cancelled. Your draft is kept.");
@@ -644,7 +647,7 @@ export function ThreadsPanel({
   }, [coworker.slug, discussionThreadId, openDiscussion, openThreadRequest]);
 
   const createAssignment = useCallback(async (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => {
-    if (!threads) throw new Error("This coworker needs a workspace before it can take an assignment.");
+    if (!threads) throw new Error("AI is unavailable. Restart AI in Settings. Your draft is kept.");
     const thread = await threads.client.createThread({
       title: assignmentTitle(outcome),
     });
@@ -663,24 +666,8 @@ export function ThreadsPanel({
     return (
       <div className="flex h-full items-center justify-center p-8">
         <div className="max-w-sm space-y-4 text-center">
-          <Empty>This coworker needs a workspace before it can start.</Empty>
-          {workspaceProblem ? <WorkspaceProblemNote problem={workspaceProblem} onRetry={() => void refresh()} /> : null}
-          <Button
-            variant="primary"
-            onClick={() => {
-              void (async () => {
-                try {
-                  const repaired = await coworkerBridge.coworkers.ensureWorkspace(coworker.slug);
-                  await onRefreshRuntime();
-                  onCoworkerChanged(repaired);
-                } catch (cause) {
-                  setError(cause instanceof Error ? cause.message : String(cause));
-                }
-              })();
-            }}
-          >
-            Prepare workspace
-          </Button>
+          <Empty>OpenCode should start right away before this coworker can work.</Empty>
+          {workspaceProblem ? <WorkspaceProblemNote problem={workspaceProblem} onRetry={() => { void onRefreshRuntime(); retryPreparation(); }} /> : null}
         </div>
       </div>
     );

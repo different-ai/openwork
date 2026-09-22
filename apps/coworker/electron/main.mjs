@@ -343,6 +343,9 @@ let deepLinkListenerReady = false;
 let denSession = null;
 // In-memory receipts only: a renderer account is not proof the embedded server applied it.
 let denSessionHandoff = Promise.resolve();
+let denAccountHandoff = Promise.resolve();
+let denAccountGeneration = 0;
+let denAccountReady = false;
 let storedSkillSession = null;
 let appliedSkillSession = null;
 const voice = createVoice({ getSession: () => denSession, getBaseUrl: configuredDenApiBase, systemPreferences });
@@ -437,6 +440,14 @@ async function issueOwnerToken(baseUrl, hostToken) {
   return token;
 }
 
+function describeNativeStartupFailure(error) {
+  if (error instanceof AggregateError) return "The native AI service failed to start and cleanup is unconfirmed. Quit and reopen Open Coworker before continuing.";
+  const line = (error instanceof Error ? error.message : "").split(/\r?\n/, 1)[0]?.trim() ?? "";
+  const detail = line.slice(0, 400);
+  if (!detail || detail === "The native AI service is not running.") return "The native AI service could not start. Check the v2 binary and native plugin bundles, then restart.";
+  return detail;
+}
+
 async function startPlatformServer() {
   maintenanceAdmission.assertOpen();
   engineError = "";
@@ -477,7 +488,11 @@ async function startPlatformServer() {
     });
     if (!serverHandle.managedOpencodeV2?.isAlive()) throw new Error("The native AI service is not running.");
     ownerToken = await resolveOwnerToken(serverHandle.url, tokens);
-    await registerCoworkerWorkspace(teamWorkspace(), serverHandle);
+    // OpenWork is running once the native process is alive. Workspace
+    // registration is later work and must not stop or fail this start.
+    await registerCoworkerWorkspace(teamWorkspace(), serverHandle).catch((error) => {
+      console.warn("[open-coworker] OpenWork is running; workspace registration can finish later", error);
+    });
     if (denSession) {
       // A fresh server starts with no account context; hand the session back so
       // the signed-in user's providers keep flowing into this engine.
@@ -487,9 +502,7 @@ async function startPlatformServer() {
     }
     return serverHandle;
   } catch (error) {
-    engineError = error instanceof AggregateError
-      ? "The native AI service failed to start and cleanup is unconfirmed. Quit and reopen Open Coworker before continuing."
-      : "The native AI service could not start. Check the v2 binary and native plugin bundles, then restart.";
+    engineError = describeNativeStartupFailure(error);
     if (serverHandle) {
       try {
         await serverHandle.stop();
@@ -512,6 +525,25 @@ function queueDenSessionHandoff(work) {
   const result = denSessionHandoff.then(() => { appliedSkillSession = null; return work(); });
   denSessionHandoff = result.catch(() => undefined);
   return result;
+}
+
+// Account mutations and Connect registration share one admission queue. Fence
+// immediately, before awaiting server startup, so late renderer work cannot
+// restore a departing account. Keep failed teardown retryable.
+function queueDenAccountHandoff(work) {
+  const result = denAccountHandoff.then(work);
+  denAccountHandoff = result.catch(() => undefined);
+  return result;
+}
+
+function invalidateDenAccount() {
+  denAccountReady = false;
+  // Revoke account/skill admission immediately; renderer persistence is only
+  // cleared after the server confirms teardown, so failure remains retryable.
+  denSession = null;
+  appliedSkillSession = null;
+  storedSkillSession = null;
+  return ++denAccountGeneration;
 }
 
 function confirmSkillSession(handle, session, result) {
@@ -3045,12 +3077,13 @@ const commands = {
       let coworker = await getCoworker(coworkersDir, slug);
       const generation = readinessKey();
       const revision = workspaceRevision(coworker.workspaceId, coworker.slug);
+      const hadWorkspace = Boolean(coworker.workspaceId);
       const assertCurrent = (current) => {
         signal.throwIfAborted();
         if (handle !== serverHandle || !handle.managedOpencodeV2?.isAlive() || generation !== readinessKey() || revision !== workspaceRevision(current.workspaceId, current.slug)
           || current.createdAt !== coworker.createdAt || current.path !== coworker.path || current.workspaceId !== coworker.workspaceId
           || current.model !== coworker.model || current.modelVariant !== coworker.modelVariant || pendingWorkspaceReadinessChanges(current).length > 0
-          || (expected && (expected.createdAt !== current.createdAt || expected.workspaceId !== current.workspaceId || expected.readinessKey !== generation || (expected.workspaceRevision ?? 0) !== revision))) {
+          || (expected && (expected.createdAt !== current.createdAt || (hadWorkspace && expected.workspaceId !== current.workspaceId) || expected.readinessKey !== generation || (expected.workspaceRevision ?? 0) !== revision))) {
           throw new Error("The coworker or AI configuration changed. Refresh before sending; your draft is kept.");
         }
       };
@@ -3337,26 +3370,60 @@ const commands = {
   /** Signed-in account → embedded server → engine providers. Returns the sync outcome. */
   "den.session.set": async (payload) => {
     const session = parseDenSessionPayload(payload);
+    const generation = invalidateDenAccount();
     voice.reset();
-    denSession = session;
-    const handle = await ensurePlatformServer();
-    const tokens = await loadOrCreateTokens();
-    return applyDenSession(handle, tokens.hostToken, session);
+    return queueDenAccountHandoff(async () => {
+      if (generation !== denAccountGeneration) throw new Error("The OpenWork account changed. Try again.");
+      const handle = await ensurePlatformServer();
+      const tokens = await loadOrCreateTokens();
+      await clearDenSession(handle, tokens.hostToken);
+      if (generation !== denAccountGeneration) throw new Error("The OpenWork account changed. Try again.");
+      denSession = session;
+      const result = await applyDenSession(handle, tokens.hostToken, session);
+      if (generation !== denAccountGeneration) {
+        appliedSkillSession = null;
+        throw new Error("The OpenWork account changed. Try again.");
+      }
+      denAccountReady = true;
+      return { ...result, accountGeneration: generation };
+    });
   },
   "den.session.clear": async () => {
+    invalidateDenAccount();
     voice.reset();
-    denSession = null;
-    const handle = await ensurePlatformServer();
-    const tokens = await loadOrCreateTokens();
-    await clearDenSession(handle, tokens.hostToken);
-    return { ok: true };
+    return queueDenAccountHandoff(async () => {
+      const handle = await ensurePlatformServer();
+      const tokens = await loadOrCreateTokens();
+      await clearDenSession(handle, tokens.hostToken);
+      denSession = null;
+      return { ok: true };
+    });
+  },
+  "den.connect.reconcile": async ({ accountGeneration, workspaceId, config }) => {
+    const current = () => denAccountReady && denSession && accountGeneration === denAccountGeneration;
+    if (!current()) throw new Error("The OpenWork account changed. Connect again after signing in.");
+    return queueDenAccountHandoff(async () => {
+      if (!current()) throw new Error("The OpenWork account changed. Connect again after signing in.");
+      const handle = await ensurePlatformServer();
+      if (!current()) throw new Error("The OpenWork account changed. Connect again after signing in.");
+      const result = await fetchJson(`${handle.url}/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify(config),
+      }, 90_000);
+      if (!current()) throw new Error("The OpenWork account changed. Connect again after signing in.");
+      return result;
+    });
   },
   /** Re-read the account's providers now (after org changes, new keys, or a failed pass). */
   "den.providers.sync": async () => {
-    if (!denSession) return { status: "no_session", message: "" };
-    const handle = await ensurePlatformServer();
-    const tokens = await loadOrCreateTokens();
-    return runCloudProviderSync(handle, tokens.hostToken, "manual_refresh");
+    const generation = denAccountGeneration;
+    return queueDenAccountHandoff(async () => {
+      if (!denAccountReady || !denSession || generation !== denAccountGeneration) return { status: "no_session", message: "" };
+      const handle = await ensurePlatformServer();
+      const tokens = await loadOrCreateTokens();
+      return runCloudProviderSync(handle, tokens.hostToken, "manual_refresh");
+    });
   },
   "voice.status": () => voice.status(),
   "voice.transcribe": (input) => voice.transcribe(input),
@@ -3537,6 +3604,20 @@ commands["maintenance.factoryReset"] = async (input) => {
   const attempt = { handoff: null, ready: false, consumed: false, preparing: false, commitAttempted: false };
   resetHandoff = attempt;
   try {
+    // Background startup may still be assigning serverHandle. Join it before
+    // closing admission or retaining the process identity for shutdown. A retry
+    // behind closed admission must keep its original owner and stop receipt.
+    if (!maintenanceAdmission.closed) {
+      try {
+        const handle = await withAbort(ensurePlatformServer(), AbortSignal.timeout(60_000));
+        const native = handle?.managedOpencodeV2;
+        if (serverHandle !== handle || !Number.isSafeInteger(native?.pid) || native.pid < 2 || !native.isAlive()) {
+          throw new Error("Native ownership is not ready.");
+        }
+      } catch {
+        throw Object.assign(new Error("The AI service is not ready for Fresh start. Wait for startup or restart the AI service, then try again. No reset was performed."), { maintenanceRetryable: true });
+      }
+    }
     attempt.previousProcesses = captureMaintenanceProcesses(app.getAppMetrics().map((metric) => metric.pid));
     const scope = maintenanceScope();
     attempt.preparing = true;

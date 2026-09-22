@@ -22,8 +22,7 @@ import {
 import {
   connectReconcilePayload,
   connectStateFromHealth,
-  reconcileConnect,
-  removeConnect,
+  parseConnectHealth,
   type ConnectState,
 } from "@/lib/connect";
 import { projectWorkspaceReadiness, readCoworkerActivity, runtimeWorkspaceReadinessKey, workspacePreparationScope, workspaceReadinessCache, type CoworkerActivity, type WorkspacePreparationScope } from "@/lib/threads";
@@ -261,6 +260,10 @@ export default function App() {
   /** OpenWork Connect (the `openwork-cloud` gateway) state per coworker, while signed in. */
   const [connectBySlug, setConnectBySlug] = useState<Record<string, ConnectState>>({});
   const connectTokenRef = useRef<{ sessionKey: string; token: ConnectToken } | null>(null);
+  const accountEpochRef = useRef(0);
+  const accountTransitionRef = useRef(false);
+  const connectGenerationRef = useRef<{ key: string; generation: number } | null>(null);
+  const [connectGeneration, setConnectGeneration] = useState(0);
   const connectedWorkspacesRef = useRef<Set<string>>(new Set());
   /** Automatic retries per coworker while the AI service is still coming up; cleared on success. */
   const connectRetryRef = useRef<Record<string, { attempts: number; timer: number }>>({});
@@ -481,29 +484,32 @@ export default function App() {
   /**
    * Hand the signed-in account to the embedded server so the member's
    * authorized providers become available to every coworker. Runs on boot for a stored
-   * session and again after every sign-in; the server ignores a repeat.
+   * session and again after every sign-in; main returns a fresh account generation.
    */
-  const pushSession = useCallback(async (next: DenSession): Promise<ProviderSyncRun> => {
+  const pushSession = useCallback(async (next: DenSession): Promise<ProviderSyncRun & { accountGeneration?: number }> => {
+    const epoch = accountEpochRef.current;
     pushedSessionKeyRef.current = sessionKey(next);
     try {
       const run = await coworkerBridge.den.setSession(providerSyncSession(next));
-      if (pushedSessionKeyRef.current !== sessionKey(next)) return run;
+      if (epoch !== accountEpochRef.current || pushedSessionKeyRef.current !== sessionKey(next)) return run;
+      connectGenerationRef.current = { key: sessionKey(next), generation: run.accountGeneration };
+      setConnectGeneration(run.accountGeneration);
       setProviderSync(run);
       setTemplateSync(null);
       setTemplateError("");
       try {
         const result = await coworkerBridge.templates.sync({ userEmail: next.userEmail, automatic: true });
-        if (pushedSessionKeyRef.current === sessionKey(next)) receiveTemplates(result);
+        if (epoch === accountEpochRef.current && pushedSessionKeyRef.current === sessionKey(next)) receiveTemplates(result);
       } catch (cause) {
-        if (pushedSessionKeyRef.current === sessionKey(next)) setTemplateError(cause instanceof Error ? cause.message : "Your team's coworkers could not be loaded. Refresh them in Account settings.");
+        if (epoch === accountEpochRef.current && pushedSessionKeyRef.current === sessionKey(next)) setTemplateError(cause instanceof Error ? cause.message : "Your team's coworkers could not be loaded. Refresh them in Account settings.");
       }
       return run;
     } catch (cause) {
       const failed: ProviderSyncRun = { status: "failed", message: cause instanceof Error ? cause.message : String(cause) };
-      if (pushedSessionKeyRef.current === sessionKey(next)) setProviderSync(failed);
+      if (epoch === accountEpochRef.current && pushedSessionKeyRef.current === sessionKey(next)) setProviderSync(failed);
       return failed;
     } finally {
-      if (pushedSessionKeyRef.current === sessionKey(next)) void refreshRuntime();
+      if (epoch === accountEpochRef.current && pushedSessionKeyRef.current === sessionKey(next)) void refreshRuntime();
     }
   }, [receiveTemplates, refreshRuntime]);
 
@@ -529,12 +535,15 @@ export default function App() {
   }, []);
 
   const signInWithGrant = useCallback(async (grant: string, baseUrl?: string) => {
-    if (!runtime) return;
+    if (!runtime || accountTransitionRef.current) return;
+    accountTransitionRef.current = true;
     const firstRun = Boolean(onboardingStepFor(onboardingDraftRef.current)) || (!onboardingReady && coworkersRef.current.length === 0);
     setSignInBusy(true);
     setSignInError("");
     try {
       const next = await exchangeGrant(baseUrl ?? runtime.denBaseUrl, grant);
+      accountEpochRef.current += 1;
+      connectGenerationRef.current = null;
       const previous = onboardingDraftRef.current;
       const scoped = onboardingDraftForContext(next.userEmail ? previous : emptyOnboardingDraft(), onboardingContext(next));
       if (firstRun) {
@@ -545,12 +554,14 @@ export default function App() {
       writeDenSession(next);
       sessionRef.current = next;
       setSession(next);
-      await pushSession(next);
+      const run = await pushSession(next);
+      if (run.accountGeneration === undefined) throw new Error(run.message || "The OpenWork account could not be applied. Try signing in again.");
       if (sessionRef.current === next) setConnecting(false);
     } catch (cause) {
       setSignInError(cause instanceof Error ? cause.message : String(cause));
       setConnecting(true);
     } finally {
+      accountTransitionRef.current = false;
       setSignInBusy(false);
     }
   }, [clearAccountPresentation, onboardingReady, pushSession, runtime, updateOnboardingDraft]);
@@ -570,21 +581,27 @@ export default function App() {
   }, [runtime, signInWithGrant]);
 
   const signOut = useCallback(async () => {
-    const account = sessionRef.current;
-    // The organization's capabilities leave with the account.
-    if (runtime) {
-      const workspaces = new Set([runtime.teamWorkspaceId, ...coworkers.map((coworker) => coworker.workspaceId)].filter((id): id is string => Boolean(id)));
-      await Promise.all([...workspaces].map((id) => removeConnect(runtime, id).catch(() => undefined)));
+    if (accountTransitionRef.current) throw new Error("An account change is already in progress. Try again when it finishes.");
+    accountTransitionRef.current = true;
+    accountEpochRef.current += 1;
+    connectGenerationRef.current = null;
+    for (const pending of Object.values(connectRetryRef.current)) window.clearTimeout(pending.timer);
+    connectRetryRef.current = {};
+    try {
+      // Main owns teardown across every workspace, including registrations
+      // still pending in the native host. A rejection keeps this account visible.
+      await coworkerBridge.den.clearSession();
+      clearAccountPresentation();
+      updateOnboardingDraft(onboardingDraftForContext(onboardingDraftRef.current, "local"));
+      writeDenSession(null);
+      sessionRef.current = null;
+      setSession(null);
+      pushedSessionKeyRef.current = "";
+      await refreshRuntime();
+    } finally {
+      accountTransitionRef.current = false;
     }
-    await coworkerBridge.den.clearSession();
-    clearAccountPresentation();
-    updateOnboardingDraft(onboardingDraftForContext(onboardingDraftRef.current, "local"));
-    writeDenSession(null);
-    sessionRef.current = null;
-    setSession(null);
-    pushedSessionKeyRef.current = "";
-    await refreshRuntime();
-  }, [clearAccountPresentation, coworkers, refreshRuntime, runtime, updateOnboardingDraft]);
+  }, [clearAccountPresentation, refreshRuntime, updateOnboardingDraft]);
 
   const syncProviders = useCallback(async (): Promise<ProviderSyncRun> => {
     const key = pushedSessionKeyRef.current;
@@ -610,7 +627,11 @@ export default function App() {
   const syncConnect = useCallback(async (options: { force?: boolean; remint?: boolean; slug?: string } = {}) => {
     if (!runtime?.engineManaged || !session) return;
     const key = sessionKey(session);
-    const isCurrentAccount = () => sessionRef.current !== null && sessionKey(sessionRef.current) === key;
+    const epoch = accountEpochRef.current;
+    const generation = connectGenerationRef.current;
+    const isCurrentAccount = () => !accountTransitionRef.current && epoch === accountEpochRef.current
+      && generation !== null && connectGenerationRef.current === generation && generation.key === key
+      && sessionRef.current !== null && sessionKey(sessionRef.current) === key;
     if (!isCurrentAccount()) return;
     const targets = coworkers.filter((coworker) =>
       coworker.workspaceId
@@ -655,8 +676,9 @@ export default function App() {
         pending = (async (): Promise<ConnectState> => {
           const payload = connectReconcilePayload({ workspaceId, session, token: minted, appVersion: runtime.version });
           try {
+            if (!isCurrentAccount() || !generation) throw new Error("The OpenWork account changed.");
             if (!payload) throw new Error("OpenWork did not name a gateway for this organization.");
-            const state = connectStateFromHealth(await reconcileConnect(runtime, workspaceId, payload));
+            const state = connectStateFromHealth(parseConnectHealth(await coworkerBridge.den.reconcileConnect(generation.generation, workspaceId, payload)));
             if (isCurrentAccount()) connectedWorkspacesRef.current.add(`${key}\u0000${workspaceId}`);
             return state;
           } catch (cause) {
@@ -679,7 +701,7 @@ export default function App() {
         return;
       }
       const attempts = previous + 1;
-      const timer = window.setTimeout(() => void syncConnect({ force: true, slug: coworker.slug }), Math.min(60_000, 5_000 * attempts));
+      const timer = window.setTimeout(() => { if (isCurrentAccount()) void syncConnect({ force: true, slug: coworker.slug }); }, Math.min(60_000, 5_000 * attempts));
       connectRetryRef.current[coworker.slug] = { attempts, timer };
     }));
   }, [coworkers, runtime, session]);
@@ -690,7 +712,7 @@ export default function App() {
     // Tokens are short-lived: refresh before they lapse while the app stays open.
     const timer = window.setInterval(() => void syncConnect({ force: true, remint: true }), 20 * 60_000);
     return () => window.clearInterval(timer);
-  }, [runtime?.engineManaged, session, syncConnect]);
+  }, [runtime?.engineManaged, session, syncConnect, connectGeneration, signInBusy]);
 
   const activityEnabled = Boolean(runtime) && bootReady && !factoryResetOpen;
   useEffect(() => {
@@ -699,13 +721,14 @@ export default function App() {
     const readActivity = async (coworker: CoworkerSummary, info: RuntimeInfo, preparationScope: WorkspacePreparationScope): Promise<CoworkerActivity | null> => {
       const isCurrent = () => !cancelled && samePreparationScope(currentPreparationScope(coworker.slug), preparationScope);
       if (!isCurrent()) return null;
-      if (!coworker.workspaceId) return { state: "offline", label: "Setting up", detail: "Workspace is not ready", updatedAt: 0 };
-      if (!info.engineManaged) return { state: "offline", label: "AI unavailable", detail: info.engineError, updatedAt: 0 };
+      if (!info.engineManaged) return { state: "offline", label: "AI unavailable", detail: "OpenCode should start right away.", updatedAt: 0 };
+      const workspaceId = coworker.workspaceId || info.teamWorkspaceId;
+      if (!workspaceId) return null;
       const workers = await coworkerBridge.workers.list(coworker.slug).catch(() => []);
       if (!isCurrent()) return null;
       const [threadActivity, localResponsibilities] = await Promise.all([
         readCoworkerActivity({
-          serverUrl: info.serverUrl, workspaceId: coworker.workspaceId, token: info.ownerToken,
+          serverUrl: info.serverUrl, workspaceId, token: info.ownerToken,
           owner: { slug: coworker.slug, createdAt: coworker.createdAt },
           conversationThreadId: coworker.conversationThreadId,
           workerThreadIds: workers.map((worker) => worker.threadId).filter(Boolean), preparationScope,
@@ -1043,8 +1066,8 @@ export default function App() {
     const cloudRun = activityForScope(cloudRunBySlug[coworker.slug], scope);
     const attention = activityForScope(attentionBySlug[coworker.slug], scope);
     const fallback: CoworkerActivity | null = !runtime.engineManaged
-      ? { state: "offline", label: "AI unavailable", detail: runtime.engineError, updatedAt: 0 }
-      : !coworker.workspaceId ? { state: "offline", label: "Setting up", detail: "Workspace is not ready", updatedAt: 0 } : null;
+      ? { state: "offline", label: "AI unavailable", detail: "OpenCode should start right away.", updatedAt: 0 }
+      : null;
     visibleActivityBySlug[coworker.slug] = visibleCoworkerActivity(scope, activity ?? fallback, liveActivity, cloudRun, attention);
   }
 

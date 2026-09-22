@@ -60,6 +60,7 @@ const config = () => JSON.parse(readFileSync(join(process.env.OPENCODE_CONFIG_DI
 log({ spawn: true, args: process.argv.slice(2), serverUrl: process.env.OPENWORK_SERVER_URL,
   bridge: process.env.NATIVE_BRIDGE, secret: process.env.OPENWORK_ENCRYPTION_KEY ?? null });
 const mcps = new Map();
+const mcpControl = () => process.env.FIXTURE_MCP_CONTROL ? JSON.parse(readFileSync(process.env.FIXTURE_MCP_CONTROL, "utf8")) : {};
 const cleanup = process.env.FIXTURE_CLEANUP_STATE ? JSON.parse(readFileSync(process.env.FIXTURE_CLEANUP_STATE, "utf8")) : {};
 const sessions = new Map(Object.entries(cleanup.sessions ?? {}));
 const inboxes = new Map(Object.entries(cleanup.inboxes ?? {}));
@@ -86,11 +87,16 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
     return Response.json({ data: url.pathname === "/api/model" ? models : models.find((model) => model.providerID === preferred?.providerID && model.id === preferred?.model) ?? null });
   }
   if (url.pathname === "/api/integration") return Response.json({ data: [{ id: "fixture-integration", connections: [{ type: "env", name: "FIXTURE_CONNECTED" }] }] });
-  if (url.pathname === "/api/mcp") return Response.json({ data: [...mcps.keys()].map((name) => ({ name, status: { status: "connected" } })) });
+  if (url.pathname === "/api/mcp") return Response.json({ data: [...mcps.keys()].map((name) => ({ name, status: { status: mcpControl().pending ? "pending" : "connected" } })) });
   if (url.pathname.startsWith("/api/mcp/")) {
     const name = decodeURIComponent(url.pathname.slice("/api/mcp/".length));
-    if (request.method === "PUT") mcps.set(name, await request.json());
-    else if (request.method === "DELETE") mcps.delete(name);
+    if (request.method === "PUT") {
+      while (mcpControl().holdRegistration) await new Promise(resolve => setTimeout(resolve, 20));
+      mcps.set(name, await request.json());
+    } else if (request.method === "DELETE") {
+      if (mcpControl().failRemoval) return new Response(null, { status: 503 });
+      mcps.delete(name);
+    }
     return new Response(null, { status: 204 });
   }
   if (url.pathname === "/api/skill" && process.env.FIXTURE_CLOUD_SKILLS === "1") return Response.json({ data: (config().skills ?? []).flatMap(root =>
@@ -153,6 +159,78 @@ process.on("SIGTERM", () => { log({ stopped: true }); server.stop(true); process
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
+
+  test("Connect signout waits for delayed native registration and pending registry before confirming removal", async () => {
+    const item = await fixture();
+    const control = join(item.root, "mcp-control.json");
+    await writeFile(control, JSON.stringify({ holdRegistration: true, pending: true }));
+    const handle = await startEmbeddedServer({ ...item.options, opencodeV2: { ...item.options.opencodeV2,
+      env: { ...item.options.opencodeV2.env, FIXTURE_MCP_CONTROL: control } } });
+    try {
+      const workspace = handle.config.workspaces[0]!;
+      const engine = engineV2ByConfig.get(handle.config)!;
+      await writeGlobalRuntimeOpencodeConfig(handle.config, (current) => ({ ...current, mcp: {
+        "openwork-cloud": { type: "remote", url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer synthetic-old" } },
+        "openwork-direct-fixture": { type: "remote", url: "http://127.0.0.1:1/direct" },
+      } }));
+      const registration = engine.syncWorkspaceMcp(workspace.id, workspace.path);
+      await waitFor(async () => (await readFile(item.log, "utf8")).includes('"method":"PUT","path":"/api/mcp/'));
+      let finished = false;
+      const clearing = fetch(`${handle.url}/den-session`, { method: "DELETE", headers: { "X-OpenWork-Host-Token": "fixture-host" } }).then((response) => { finished = true; return response; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(finished).toBe(false);
+      await writeFile(control, JSON.stringify({ pending: true }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(finished).toBe(false);
+      await writeFile(control, "{}");
+      await registration;
+      expect((await clearing).status).toBe(204);
+      expect(await engine.request(workspace.path, "/api/mcp")).toEqual({ status: 200, json: { data: [] } });
+      const { readEffectiveRuntimeOpencodeConfig } = await import("./runtime-opencode-config-store.js");
+      expect((await readEffectiveRuntimeOpencodeConfig(handle.config, workspace.id)).mcp ?? {}).toEqual({});
+      const late = await fetch(`${handle.url}/workspace/${workspace.id}/mcp/openwork-cloud/reconcile`, {
+        method: "POST", headers: { Authorization: "Bearer fixture-client", "Content-Type": "application/json" }, body: "{}",
+      });
+      expect(late.status).toBe(409);
+    } finally { await writeFile(control, "{}"); await handle.stop(); }
+  }, 15_000);
+
+  test("Connect signout fails truthfully and retries native removal after desired state is already absent", async () => {
+    const item = await fixture();
+    const control = join(item.root, "mcp-control.json");
+    await writeFile(control, "{}");
+    const handle = await startEmbeddedServer({ ...item.options, opencodeV2: { ...item.options.opencodeV2,
+      env: { ...item.options.opencodeV2.env, FIXTURE_MCP_CONTROL: control } } });
+    try {
+      const workspace = handle.config.workspaces[0]!;
+      const engine = engineV2ByConfig.get(handle.config)!;
+      await writeGlobalRuntimeOpencodeConfig(handle.config, (current) => ({ ...current, mcp: {
+        "openwork-cloud": { type: "remote", url: "http://127.0.0.1:1/mcp" },
+        "local-fixture": { type: "remote", url: "http://127.0.0.1:1/local" },
+      } }));
+      await engine.syncWorkspaceMcp(workspace.id, workspace.path);
+      await writeFile(control, JSON.stringify({ failRemoval: true }));
+      const clear = () => fetch(`${handle.url}/den-session`, { method: "DELETE", headers: { "X-OpenWork-Host-Token": "fixture-host" } });
+      expect((await clear()).status).toBe(500);
+      const { readEffectiveRuntimeOpencodeConfig } = await import("./runtime-opencode-config-store.js");
+      expect((await readEffectiveRuntimeOpencodeConfig(handle.config, workspace.id)).mcp).not.toHaveProperty("openwork-cloud");
+      await writeFile(control, "{}");
+      expect((await clear()).status).toBe(204);
+      expect(await engine.request(workspace.path, "/api/mcp")).toEqual({ status: 200, json: { data: [{ name: "local-fixture", status: { status: "connected" } }] } });
+    } finally { await writeFile(control, "{}"); await handle.stop(); }
+  }, 15_000);
+
+  test("Connect signout preserves Desktop session deletion behavior", async () => {
+    const item = await fixture();
+    const handle = await startEmbeddedServer({ ...item.options, engine: "v1", manageOpencode: false });
+    try {
+      const gateway = { type: "remote", url: "http://127.0.0.1:1/mcp" };
+      await writeGlobalRuntimeOpencodeConfig(handle.config, (current) => ({ ...current, mcp: { "openwork-cloud": gateway } }));
+      expect((await fetch(`${handle.url}/den-session`, { method: "DELETE", headers: { "X-OpenWork-Host-Token": "fixture-host" } })).status).toBe(204);
+      const { readEffectiveRuntimeOpencodeConfig } = await import("./runtime-opencode-config-store.js");
+      expect((await readEffectiveRuntimeOpencodeConfig(handle.config, handle.config.workspaces[0]!.id)).mcp).toEqual({ "openwork-cloud": gateway });
+    } finally { await handle.stop(); }
+  }, 10_000);
 
   test("host-only skill origin snapshots avoid duplicate sync without authorizing native input", async () => {
     const { CLOUD_NATIVE_SKILLS_SCOPE_HEADER, cloudNativeSkillId } = await import("./cloud-native-skills.js");

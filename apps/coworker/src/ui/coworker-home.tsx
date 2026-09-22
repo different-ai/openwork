@@ -946,7 +946,7 @@ function AiUnavailableNote({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-rose/25 bg-rose/5 px-3 py-2.5">
         <p className="min-w-0 flex-1 text-xs leading-relaxed text-snow">
           <span className="font-semibold">AI is unavailable</span>
-          <span className="text-mist">, so {coworkerName} cannot work right now.</span>
+          <span className="text-mist">, so {coworkerName} cannot work right now. OpenCode should start right away.</span>
         </p>
         <Button
           variant="ghost"

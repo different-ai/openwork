@@ -378,7 +378,11 @@ export function createDenAutomationsClient(session: DenSession) {
       const payload = await denRequest(baseUrl, "/v1/automations?limit=50", { token, orgId });
       return automationListSchema.parse(payload);
     },
-    /** Models a Cloud run may use: Den's member-scoped provider list. */
+    /**
+     * Automation authority accepts legacy lpr records, openwork, and the free
+     * model only. The desktop's inference-providers?scope=usable inventory is
+     * not an Automation authorization contract for Gateway ipr records.
+     */
     async listCloudProviders(): Promise<DenLlmProvider[]> {
       return parseDenLlmProviders(await denRequest(baseUrl, "/v1/llm-providers", { token, orgId }));
     },
