@@ -67,6 +67,8 @@ export interface ServerOptions {
    * trusted, so a test that stands one up has to name it here.
    */
   trustedOrigins?: readonly string[];
+  /** Exact externally routed origins for a private co-located preview. */
+  publicOrigins?: { web: string; api: string };
 }
 
 export interface Den extends AsyncDisposable {
@@ -211,14 +213,15 @@ function spawnService(
 ): SpawnedService {
   const logFd = openSync(logPath, "a");
   const prepared = process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1";
-  const args = prepared
+  const preparedApi = prepared || process.env.OPENWORK_EVAL_DEN_API_PREPARED === "1";
+  const args = (label === "den-api" ? preparedApi : prepared)
     ? label === "den-api"
       ? ["--filter", "@openwork-ee/den-api", "exec", "tsx", "src/main.ts"]
       : ["--filter", "@openwork-ee/den-web", "exec", "next", "start", "--hostname", "127.0.0.1", "--port", String(port)]
     : [script];
   const child = spawn("pnpm", args, {
     cwd: REPO_ROOT,
-    env: prepared && label === "den-api" ? { ...env, PORT: String(port) } : env,
+    env: preparedApi && label === "den-api" ? { ...env, PORT: String(port), NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --conditions=development` } : env,
     detached: true,
     stdio: ["ignore", logFd, logFd],
   });
@@ -834,9 +837,9 @@ export async function server(options: ServerOptions): Promise<Den> {
       DATABASE_URL: database.url,
       DEN_DB_ENCRYPTION_KEY: DATABASE_ENCRYPTION_KEY,
       BETTER_AUTH_SECRET,
-      BETTER_AUTH_URL: ref.webUrl,
-      DEN_BASE_URL: ref.webUrl,
-      DEN_API_PUBLIC_URL: ref.apiUrl,
+      BETTER_AUTH_URL: options.publicOrigins?.web ?? ref.webUrl,
+      DEN_BASE_URL: options.publicOrigins?.web ?? ref.webUrl,
+      DEN_API_PUBLIC_URL: options.publicOrigins?.api ?? ref.apiUrl,
       DEN_API_PORT: String(apiPort),
       DEN_WEB_PORT: String(webPort),
       DEN_BETTER_AUTH_TRUSTED_ORIGINS: origins,
@@ -868,8 +871,8 @@ export async function server(options: ServerOptions): Promise<Den> {
           DEN_WEB_HOST: "127.0.0.1",
           ...commonEnv,
           DEN_API_BASE: `http://127.0.0.1:${apiPort}`,
-          DEN_BASE_URL: ref.webUrl,
-          DEN_AUTH_ORIGIN: ref.webUrl,
+          DEN_BASE_URL: options.publicOrigins?.web ?? ref.webUrl,
+          DEN_AUTH_ORIGIN: options.publicOrigins?.web ?? ref.webUrl,
           DEN_AUTH_FALLBACK_BASE: `http://127.0.0.1:${apiPort}`,
         }, join(logsDir, "web.log"));
     const webStep = web ? steps.step("den-web", "den-web", { log: web.logPath }) : null;

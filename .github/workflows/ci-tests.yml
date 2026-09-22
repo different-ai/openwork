@@ -71,7 +71,7 @@ jobs:
       - name: Run core product regressions
         run: pnpm test:core
       - name: Check journey selection, reporting, and alerts
-        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs
+        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs .github/scripts/warden-report.test.mjs
 
   workflow-authoring:
     needs: classify-changes
