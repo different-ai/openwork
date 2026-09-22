@@ -77,7 +77,7 @@ node /opt/openwork-preview/tools/node_modules/opencode-ai/postinstall.mjs
 export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
 opencode --version
 systemctl daemon-reload
-${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null" : `mysqladmin -uroot -ppassword ping
+${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null\nnode /opt/openwork-preview/health.mjs" : `mysqladmin -uroot -ppassword ping
 redis-cli ping
 systemctl start openwork-preview-runtime
 for attempt in $(seq 1 240); do
