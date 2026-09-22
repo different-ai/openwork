@@ -795,6 +795,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     view.webContents.setWindowOpenHandler(({ url: targetUrl, disposition }) => {
       if (!/^https?:\/\//i.test(targetUrl)) return { action: "deny" };
+      if (browserTabs.size >= MAX_BROWSER_TABS) return { action: "deny" };
       // The shared all-request policy hook checks popup requests too. Never
       // fall back to an external browser when that policy denies a request.
       return { action: "allow", overrideBrowserWindowOptions: { webPreferences: BROWSER_SECURITY_PREFERENCES }, createWindow: (options) => {
