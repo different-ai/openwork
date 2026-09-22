@@ -193,13 +193,7 @@ pnpm world down app-web
 
 World teardown deletes its owned VM, with a resource ledger for interrupted
 teardown. The access URL is a secret world output. Freestyle placement currently
-supports `app-web` and the co-located `acme-web` demo. ACME snapshots also start the real OpenWork desktop
-app (Linux build from the report's commit, signed out) on a virtual display.
-**Open Desktop app** streams it through noVNC; the viewer, VNC
-server and display listen only inside the VM, and every request and websocket
-goes through the same per-sandbox access check as the other services. The app
-boots in the background, so build and readiness timing are unchanged; if the
-display cannot start, the web, Den and gateway preview launch without the link. The reviewer offers a world selector and a visible personal sandbox panel with service URLs and sign-in details. Developer credentials expand below; copying always returns usable values. Desktop recipes retain their existing placements.
+supports `app-web` and the co-located `acme-web` demo. The reviewer offers a world selector and a visible personal sandbox panel with service URLs and sign-in details. Developer credentials expand below; copying always returns usable values. Desktop recipes retain their existing placements.
 
 Validate with `pnpm --filter @openwork/freestyle test`, the world package tests,
 and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,

@@ -5,8 +5,8 @@ import { setTimeout as delay } from "node:timers/promises";
 // Controller-owned: a virtual display, a VNC server bound to loopback, and the
 // noVNC web client, all behind the preview gateway's own access check. The
 // OpenWork desktop app itself comes from the reviewed commit in /workspace.
-export const DESKTOP_DISPLAY = ":99";
-export const NOVNC_PORT = 6080;
+const DESKTOP_DISPLAY = ":99";
+const NOVNC_PORT = 6080;
 const VNC_PORT = 5900;
 const LOGS = "/opt/openwork-preview/desktop";
 
