@@ -14,6 +14,12 @@ test("ACME review connects demo sign-in, real services, and revealable world out
   expect(signedIn.status).toBe(200);
   const account: unknown = await signedIn.json();
   expect(typeof account).toBe("object");
+  const capabilities = await fetch(`${world.den.ref.apiUrl}/v1/admin/organizations/${world.model.orgId}/capabilities`, {
+    headers: { authorization: `Bearer ${world.den.admin.token}` },
+  });
+  expect(capabilities.status).toBe(200);
+  expect(await capabilities.json()).toMatchObject({ capabilities: { gatewayDashboard: true } });
+  evidence.recordAssertionEvidence("AI Gateway is enabled for the seeded organization", "The ACME owner receives the gateway dashboard capability automatically, alongside the enabled gateway deployment.", true);
   const orgs = await fetch(`${world.den.ref.apiUrl}/v1/me/orgs`, { headers: { authorization: `Bearer ${world.den.admin.token}` } });
   expect(orgs.status).toBe(200);
   evidence.recordAssertionEvidence("The demo account signs in and reads its organization", "A real seeded Den accepted the world password and served the account's organizations. Credentials are omitted from public evidence.", true);

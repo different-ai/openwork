@@ -1,3 +1,6 @@
+import { pipeline } from "node:stream";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
+import { originReplacements, replaceOrigins, originTransform } from "./origins.mjs";
 import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, request } from "node:http";
@@ -40,11 +43,32 @@ async function target(req, auth) {
   return { hostname: "127.0.0.1", port: Number(url.port), path };
 }
 
-function headers(req, port = upstreamPort) {
+function headers(req, port = upstreamPort, pairs = []) {
   // The access credential belongs to this gateway, never to the app or its logs.
   const { cookie, ...rest } = req.headers;
   const remaining = cookie?.split(";").filter((part) => !part.trim().startsWith(`${cookieName}=`)).join(";");
-  return { ...rest, ...(remaining ? { cookie: remaining } : {}), host: `127.0.0.1:${port}`, "x-forwarded-host": req.headers.host, "x-forwarded-proto": "https" };
+  return { ...rest, ...(remaining ? { cookie: remaining } : {}),
+    ...(typeof rest.origin === "string" ? { origin: replaceOrigins(rest.origin, pairs) } : {}),
+    ...(typeof rest.referer === "string" ? { referer: replaceOrigins(rest.referer, pairs) } : {}),
+    "accept-encoding": "identity", host: `127.0.0.1:${port}`,
+    "x-forwarded-host": replaceOrigins(req.headers.host ?? "", pairs), "x-forwarded-proto": "https" };
+}
+
+function relay(response, res, pairs) {
+  const outgoing = Object.fromEntries(Object.entries(response.headers).map(([key, value]) =>
+    [key, Array.isArray(value) ? value.map((item) => replaceOrigins(item, pairs)) : typeof value === "string" ? replaceOrigins(value, pairs) : value]));
+  const text = /^(?:text\/(?:html|javascript|x-component)|application\/(?:json|javascript|x-javascript))(?:;|$)/i.test(String(outgoing["content-type"]));
+  const transform = pairs.length > 0 && text;
+  const encoding = outgoing["content-encoding"];
+  const decompress = encoding === "gzip" ? createGunzip() : encoding === "br" ? createBrotliDecompress() : encoding === "deflate" ? createInflate() : null;
+  if (transform) {
+    delete outgoing["content-length"]; delete outgoing.etag; delete outgoing["content-encoding"];
+  }
+  res.writeHead(response.statusCode ?? 502, { ...outgoing, "cache-control": "private, no-store", "referrer-policy": "no-referrer" });
+  if (!transform) { response.pipe(res); return; }
+  const done = (error) => { if (error) res.destroy(error); };
+  if (decompress) pipeline(response, decompress, originTransform(pairs), res, done);
+  else pipeline(response, originTransform(pairs), res, done);
 }
 
 export const server = createServer(async (req, res) => {
@@ -71,12 +95,16 @@ export const server = createServer(async (req, res) => {
   let destination;
   try { destination = await target(req, auth); }
   catch { res.writeHead(503); res.end("This world is not ready. Try launching again from the review."); return; }
-  const upstream = request({ ...destination, path: destination.path ?? req.url, method: req.method, headers: headers(req, destination.port) }, (response) => {
-    res.writeHead(response.statusCode ?? 502, { ...response.headers, "cache-control": "private, no-store", "referrer-policy": "no-referrer" });
-    response.pipe(res);
-  });
+  const inward = originReplacements(auth.config.origins, auth.config.templateOrigins);
+  const outward = originReplacements(auth.config.templateOrigins, auth.config.origins);
+  const requestHeaders = headers(req, destination.port, inward);
+  const rewriteBody = inward.length > 0 && /^(?:\/api\/den)?\/api\/auth\//.test(req.url)
+    && String(req.headers["content-type"]).startsWith("application/json");
+  if (rewriteBody) delete requestHeaders["content-length"];
+  const upstream = request({ ...destination, path: destination.path ?? req.url, method: req.method, headers: requestHeaders }, (response) => relay(response, res, outward));
   upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end("Sandbox unavailable. Launch a fresh sandbox from the review."); });
-  req.pipe(upstream);
+  if (rewriteBody) req.pipe(originTransform(inward)).pipe(upstream);
+  else req.pipe(upstream);
 });
 
 server.on("upgrade", async (req, socket, head) => {
@@ -89,7 +117,7 @@ server.on("upgrade", async (req, socket, head) => {
   let destination;
   try { destination = await target(req, auth); }
   catch { socket.destroy(); return; }
-  const upstream = request({ ...destination, path: destination.path ?? req.url, headers: headers(req, destination.port) });
+  const upstream = request({ ...destination, path: destination.path ?? req.url, headers: headers(req, destination.port, originReplacements(auth.config.origins, auth.config.templateOrigins)) });
   upstream.on("upgrade", (response, peer, upstreamHead) => {
     socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join("\r\n")}\r\n\r\n`);
     if (head.length) peer.write(head);

@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { bootAcmeWeb, acmeWebOutputs } from "/workspace/worlds/acme-web.ts";
 import { probeAcmeGateway } from "/workspace/worlds/lib/acme-gateway-probe.ts";
 
-const access = JSON.parse(await readFile("/opt/openwork-preview/access.json", "utf8"));
+import { templateOrigins } from "./origins.mjs";
 process.env.OPENWORK_WORLD_PLACE = "local";
 process.env.OPENWORK_EVAL_DEN_API_PREPARED = "1";
 process.env.pnpm_config_verify_deps_before_run = "false";
@@ -11,15 +11,34 @@ process.env.DATABASE_REDIS_URL = "redis://127.0.0.1:6379";
 const stack = new AsyncDisposableStack();
 for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, async () => { await stack.disposeAsync(); process.exit(0); });
 try {
-  const world = await bootAcmeWeb(stack, { app: access.origins.app, den: access.origins.den, api: access.origins.api });
+  const world = await bootAcmeWeb(stack, { app: templateOrigins.app, den: templateOrigins.den, api: templateOrigins.api });
   const proof = await probeAcmeGateway(world);
   const { web, den, gatewayUrl } = world;
   const outputs = Object.fromEntries(Object.entries(acmeWebOutputs(world)).map(([key, entry]) => [key, typeof entry === "string" ? { value: entry } : entry]));
+  outputs.orgId = { value: world.model.orgId, group: "Org" };
   outputs.verifiedReply = { value: proof.reply, group: "Verification" };
+  // Compile the browser entry points while warming, including the gateway UI.
+  for (const path of ["/", "/dashboard", "/dashboard/gateway-providers"]) {
+    const response = await fetch(`${den.ref.webUrl}${path}`);
+    if (!response.ok) throw new Error(`Den warmup failed: ${path} (${response.status})`);
+    await response.text();
+  }
+  // Warm Vite's transitive module graph, not just its HTML entry point.
+  const seen = new Set();
+  async function warmModule(path) {
+    if (seen.has(path) || !path.startsWith("/") || path.startsWith("//")) return;
+    seen.add(path);
+    const response = await fetch(`${web.manifest.webUrl}${path}`);
+    if (!response.ok) throw new Error(`App warmup failed: ${path}`);
+    const source = await response.text();
+    const imports = [...source.matchAll(/(?:from\s*|import\s*|src=)["'](\/[^"']+)["']/g)].map((match) => match[1]);
+    for (const dependency of imports) await warmModule(dependency);
+  }
+  await warmModule("/");
   const services = { app: web.manifest.webUrl, den: den.ref.webUrl, api: den.ref.apiUrl, engine: web.manifest.openworkUrl, gateway: gatewayUrl };
   await writeFile("/opt/openwork-preview/services.json", JSON.stringify(services), { mode: 0o600 });
   await writeFile("/opt/openwork-preview/outputs.json", JSON.stringify(outputs), { mode: 0o600 });
-  await writeFile("/opt/openwork-preview/ready-world", "ready");
+  await writeFile("/opt/openwork-preview/ready-world", JSON.stringify({ warmedAt: new Date().toISOString(), pid: process.pid, modules: seen.size }));
 } catch (error) {
   console.error(error);
   await writeFile("/opt/openwork-preview/failed-world", "failed");

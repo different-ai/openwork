@@ -1,4 +1,4 @@
-import { setTimeout as delay } from "node:timers/promises";
+import { templateOrigins } from "./origins.mjs";
 import { parsePreviewOutputs, type PreviewOutputs } from "./outputs.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { Freestyle, FreestyleApiError } from "freestyle";
@@ -21,7 +21,7 @@ export function previewWorld(value: unknown): PreviewWorld {
 
 export function snapshotSlug(sha: string, world: PreviewWorld = "app-web"): string {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
-  return `openwork-${previewWorld(world)}-v3-${sha}`;
+  return `openwork-${previewWorld(world)}-v4-${sha}`;
 }
 
 export function isMissing(error: unknown): boolean {
@@ -79,19 +79,13 @@ export async function launchPreview(
   });
   try {
     const expiresAt = new Date(Date.parse(data.createdAt) + minutes * 60_000).toISOString();
-    await vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token, expiresAt, origins }));
+    await vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token, expiresAt, origins, ...(origins ? { templateOrigins } : {}) }));
     await execChecked(vm, "chmod 600 /opt/openwork-preview/access.json");
     let outputs: PreviewOutputs = {};
     if (world === "acme-web") {
-      await execChecked(vm, "systemctl start openwork-preview-runtime");
-      const deadline = Date.now() + 9 * 60_000;
-      while (true) {
-        const status = await execChecked(vm, "if test -f /opt/openwork-preview/failed-world; then echo failed; elif test -f /opt/openwork-preview/ready-world; then echo ready; fi");
-        if (status.trim() === "failed") throw new Error("ACME world startup failed; inspect its private runtime logs.");
-        if (status.trim() === "ready") break;
-        if (Date.now() > deadline) throw new Error("ACME world startup timed out.");
-        await delay(2000);
-      }
+      // Processes, DB state, and compiled pages resume from CI's live snapshot.
+      // This only renews the demo session and checks the restored services.
+      await execChecked(vm, "node /opt/openwork-preview/resume.mjs", 60_000);
       outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
       const serviceKeys = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
       for (const [name, key] of Object.entries(serviceKeys)) {
