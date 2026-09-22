@@ -707,12 +707,12 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
     ['{"linkOpenDestination":"openwork"}', false], ['{"linkOpenDestination":"chrome"}', false],
     ["invalid JSON", false], ["null", false],
   ]) {
-    window.localStorage = { getItem(key) { assert.equal(key, "openwork.preferences"); return stored; } };
+    Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem(key) { assert.equal(key, "openwork.preferences"); return stored; } } });
     preloadCalls.length = 0;
     assert.equal(click({ detail: 0 }), true);
     assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external }] }]);
   }
-  window.localStorage = { getItem() { throw new Error("Storage unavailable"); } };
+  Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem() { throw new Error("Storage unavailable"); } } });
   preloadCalls.length = 0;
   assert.equal(click(), true);
   assert.equal(preloadCalls[0].args[0].external, false);

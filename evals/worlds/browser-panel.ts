@@ -113,7 +113,8 @@ function parseBrowserState(value: unknown): BrowserState {
       return {
         id: stringField(tab.id),
         label: stringField(tab.label),
-        url: stringField(tab.url),
+        // Electron can report an empty URL while a newly created page starts loading.
+        url: stringValue(tab.url),
         ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null,
       };
     }),
@@ -126,6 +127,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringField(value: unknown): string {
   if (typeof value !== "string" || !value) throw new Error("Expected a non-empty string from the desktop bridge.");
+  return value;
+}
+
+function stringValue(value: unknown): string {
+  if (typeof value !== "string") throw new Error("Expected a string from the desktop bridge.");
   return value;
 }
 
