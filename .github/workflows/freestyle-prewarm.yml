@@ -30,7 +30,7 @@ jobs:
           # Trusted, reviewed controller only. PR source is fetched inside the
           # credential-free guest VM; never checked out on this runner.
           # Update this pin only after reviewing controller/dependency changes.
-          ref: 2a757b9e4f82788aabef87d8857718a0ee0d1ba2
+          ref: dd3b3f6396d59260c975250635d36839d8708a85
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -48,3 +48,17 @@ jobs:
         run: |
           node scripts/prepare-freestyle-preview.ts "$PREVIEW_SHA" "$PREVIEW_WORLD"
           echo "Prepared $PREVIEW_WORLD snapshot for $PREVIEW_SHA. Every launch still creates a separate VM." >> "$GITHUB_STEP_SUMMARY"
+      - name: Measure and verify two independent running clones
+        if: matrix.world == 'acme-web'
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/verify-freestyle-preview.ts "$PREVIEW_SHA"
+      - name: Save sanitized launch measurements
+        if: matrix.world == 'acme-web'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freestyle-launch-proof
+          path: freestyle-launch-proof.json
+          retention-days: 7
+          if-no-files-found: error
