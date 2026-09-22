@@ -106,6 +106,45 @@ export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvide
   return changed
 }
 
+/** Add catalog models to one existing group without replacing its membership or narrowing an unrestricted provider. Caller holds the provider lock. */
+export async function enableGatewayGroupModels(tx: GatewayTx, provider: GatewayProvider, catalog: ModelsDevProvider, groupId: typeof GatewayModelGroupTable.$inferSelect.id, modelIds: string[]) {
+  if (provider.status !== "active") throw new GatewayWriteError(409, "provider_disabled")
+  if (catalog.id !== provider.provider_id || catalog.npm !== readProviderConfigNpm(provider.provider_config)) throw new GatewayWriteError(409, "provider_catalog_changed")
+  const [group] = await tx.select().from(GatewayModelGroupTable)
+    .where(and(eq(GatewayModelGroupTable.id, groupId), eq(GatewayModelGroupTable.gateway_provider_id, provider.id)))
+  if (!group) throw new GatewayWriteError(404, "model_group_not_found")
+  if (group.status !== "active") throw new GatewayWriteError(409, "model_group_disabled")
+  const requested = [...new Set(modelIds)]
+  const selected = resolveGatewayCatalog(catalog, requested, provider.provider_config).models
+  const existing = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
+  const links = await tx.select().from(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, group.id))
+  const added: string[] = []
+  let changed = false
+  for (const model of selected) {
+    const row = existing.find((candidate) => candidate.model_id === model.id)
+    const rowId = row?.id ?? createDenTypeId("inferenceProviderModel")
+    if (!row) {
+      await tx.insert(GatewayProviderModelTable).values({ id: rowId, gateway_provider_id: provider.id, model_id: model.id, name: model.name, model_config: model.config })
+      changed = true
+    } else if (row.name !== model.name || !isDeepStrictEqual(row.model_config, model.config)) {
+      await tx.update(GatewayProviderModelTable).set({ name: model.name, model_config: model.config }).where(eq(GatewayProviderModelTable.id, rowId))
+      changed = true
+    }
+    if (!links.some((link) => link.gateway_provider_model_id === rowId)) {
+      await tx.insert(GatewayModelGroupModelTable).values({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: group.id, gateway_provider_model_id: rowId })
+      added.push(model.id)
+      changed = true
+    }
+  }
+  const policy = provider.model_ids.length ? [...new Set([...provider.model_ids, ...requested])] : provider.model_ids
+  const groupModelIds = [...new Set([...links.map((link) => existing.find((row) => row.id === link.gateway_provider_model_id)?.model_id).filter((id): id is string => Boolean(id)), ...requested])]
+  if (policy.length > 500 || groupModelIds.length > 500) throw new GatewayWriteError(400, "too_many_models")
+  if (changed || policy.length !== provider.model_ids.length) {
+    await tx.update(GatewayProviderTable).set({ model_ids: policy, updated_at: new Date() }).where(eq(GatewayProviderTable.id, provider.id))
+  }
+  return { inferenceProviderId: provider.id, modelGroupId: group.id, modelIds: policy, groupModelIds, addedModelIds: added }
+}
+
 export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider, input: GatewayModelGroupPatch, groupId?: typeof GatewayModelGroupTable.$inferSelect.id) {
   const [existing] = groupId ? await tx.select().from(GatewayModelGroupTable)
     .where(and(eq(GatewayModelGroupTable.id, groupId), eq(GatewayModelGroupTable.gateway_provider_id, provider.id))) : []

@@ -416,13 +416,14 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
   await db.update(schema.GatewayProviderTable).set({ created_by_org_membership_id: memberId }).where(drizzle.eq(schema.GatewayProviderTable.id, id))
   await db.update(schema.GatewayCredentialSetTable).set({ created_by_org_membership_id: memberId }).where(drizzle.eq(schema.GatewayCredentialSetTable.id, setId))
   await db.update(schema.LlmProviderTable).set({ createdByOrgMembershipId: memberId }).where(drizzle.eq(schema.LlmProviderTable.id, sourceId))
-  const reads = ["/v1/inference-providers?scope=manageable", base, `${base}/models`, `${base}/model-groups`, `${base}/credential-sets`, `${base}/access-grants`, "/v1/inference-providers/usage"]
+  const reads = ["/v1/inference-providers?scope=manageable", "/v1/inference-providers/model-management", base, `${base}/models`, `${base}/available-models`, `${base}/model-groups`, `${base}/credential-sets`, `${base}/access-grants`, "/v1/inference-providers/usage"]
   const writes: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [
     { path: "/v1/inference-providers", method: "POST", body: input },
     { path: base, method: "PATCH", body: { name: "Denied rename" } },
     { path: base, method: "DELETE" },
     { path: `${base}/model-groups`, method: "POST", body: { name: "Denied group", modelIds: input.modelIds } },
     { path: `${base}/model-groups/${groupId}`, method: "PATCH", body: { name: "Denied group edit" } },
+    { path: `${base}/enable-models`, method: "POST", body: { modelGroupId: groupId, modelIds: ["claude-haiku-4"] } },
     { path: `${base}/model-groups/${groupId}`, method: "DELETE" },
     { path: `${base}/credential-sets`, method: "POST", body: { name: "Denied shared key", credentialMode: "org", credential: input.credential } },
     { path: `${base}/credential-sets/${setId}`, method: "PATCH", body: { credential: { kind: "api_key", secret: "fake-denied-replacement" } } },
@@ -1151,6 +1152,80 @@ test("matrix CRUD keeps overlapping groups, explicit equal-priority choices, cat
   expect((await request(ownerCookie, `${base}/access-grants/${secondGrantId}`, { method: "DELETE" })).status).toBe(204)
   expect((await request(ownerCookie, `${base}/credential-sets/${secondSetId}`, { method: "DELETE" })).status).toBe(204)
   expect((await request(ownerCookie, base, { method: "DELETE" })).status).toBe(204)
+})
+
+test("an owner can add a new upstream model to one granted group without narrowing policy or changing other groups", async () => {
+  const create = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({
+    name: "Model enablement", providerId: "anthropic", modelIds: ["claude-sonnet-4"],
+    credential: { kind: "api_key", secret: "fake-model-enablement-key" }, memberIds: [memberId],
+  }) })
+  expect(create.status).toBe(201)
+  const provider = readProvider(await create.json())
+  const id = readString(provider, "id")
+  const groupId = readString(firstRow(provider, "modelGroups"), "id")
+  const base = `/v1/inference-providers/${id}`
+  const other = await request(ownerCookie, `${base}/model-groups`, { method: "POST", body: JSON.stringify({ name: "Other group", modelIds: ["claude-sonnet-4"] }) })
+  expect(other.status).toBe(201)
+  const otherGroupId = readString(readResource(await other.json(), "modelGroup"), "id")
+  const newModel = { id: "claude-new", name: "Claude New", config: { id: "claude-new", name: "Claude New" } }
+  catalog.anthropic.models.push(newModel)
+  try {
+    const beforeRows = await db.select().from(schema.GatewayProviderModelTable).where(drizzle.eq(schema.GatewayProviderModelTable.gateway_provider_id, id))
+    const beforeProvider = await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, id))
+    const selection = await request(ownerCookie, "/v1/inference-providers/model-management")
+    expect(selection.status).toBe(200)
+    expect(readProviderList(await selection.json()).find((entry) => entry.id === id)).toMatchObject({ modelIds: ["claude-sonnet-4"], modelGroups: [{ id: groupId, modelIds: ["claude-sonnet-4"] }, { id: otherGroupId, modelIds: ["claude-sonnet-4"] }] })
+    const available = await request(ownerCookie, `${base}/available-models`)
+    expect(available.status).toBe(200)
+    expect(readRows(await available.json(), "models").map((row) => row.id)).toContain(newModel.id)
+    expect(await db.select().from(schema.GatewayProviderModelTable).where(drizzle.eq(schema.GatewayProviderModelTable.gateway_provider_id, id))).toEqual(beforeRows)
+    expect(await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, id))).toEqual(beforeProvider)
+
+    const write = (modelGroupId: string, modelIds: string[]) => request(ownerCookie, `${base}/enable-models`, { method: "POST", body: JSON.stringify({ modelGroupId, modelIds }) })
+    expect((await request(memberCookie, `${base}/enable-models`, { method: "POST", body: JSON.stringify({ modelGroupId: groupId, modelIds: [newModel.id] }) })).status).toBe(403)
+    const rejected = await write(otherGroupId, [newModel.id, "nonexistent"])
+    expect(rejected.status).toBe(404)
+    expect((await db.select().from(schema.GatewayModelGroupModelTable).where(drizzle.eq(schema.GatewayModelGroupModelTable.model_group_id, otherGroupId)))).toHaveLength(1)
+    expect((await db.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, id)))[0]?.model_ids).toEqual(["claude-sonnet-4"])
+    const enabled = await write(groupId, [newModel.id])
+    expect(enabled.status).toBe(200)
+    expect(await enabled.json()).toMatchObject({ inferenceProviderId: id, modelGroupId: groupId, modelIds: ["claude-sonnet-4", newModel.id], groupModelIds: ["claude-sonnet-4", newModel.id], addedModelIds: [newModel.id] })
+    const repeated = await write(groupId, [newModel.id, newModel.id])
+    expect(repeated.status).toBe(200)
+    expect(await repeated.json()).toMatchObject({ addedModelIds: [], groupModelIds: ["claude-sonnet-4", newModel.id] })
+    const details = readProvider(await (await request(ownerCookie, base)).json())
+    expect(readRows(details, "modelGroups").find((entry) => entry.id === otherGroupId)?.modelIds).toEqual(["claude-sonnet-4"])
+    expect(readRows(details, "accessGrants")).toHaveLength(1)
+    const usable = readProviderList(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).json()).find((entry) => entry.id === id)
+    if (!usable) throw new Error("Granted provider missing")
+    expect(readRows(usable, "models").map((model) => model.upstreamModelId).sort()).toEqual([newModel.id, "claude-sonnet-4"])
+
+    const foreign = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Other", providerId: "anthropic", modelIds: ["claude-sonnet-4"] }) })
+    expect(foreign.status).toBe(201)
+    const foreignGroupId = readString(firstRow(readProvider(await foreign.json()), "modelGroups"), "id")
+    expect((await write(foreignGroupId, ["claude-haiku-4"])).status).toBe(404)
+    expect((await request(ownerCookie, `${base}/model-groups/${otherGroupId}`, { method: "PATCH", body: JSON.stringify({ status: "disabled" }) })).status).toBe(200)
+    const disabled = await write(otherGroupId, [newModel.id])
+    expect(disabled.status).toBe(409)
+    expect(await disabled.json()).toMatchObject({ error: "model_group_disabled" })
+    expect((await request(ownerCookie, `${base}/enable-models`, { method: "POST", body: JSON.stringify({ modelIds: ["claude-haiku-4"] }) })).status).toBe(400)
+  } finally {
+    catalog.anthropic.models.pop()
+  }
+})
+
+test("enabling a model keeps an empty provider policy unrestricted and does not add grants", async () => {
+  const response = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Unrestricted", providerId: "anthropic" }) })
+  expect(response.status).toBe(201)
+  const provider = readProvider(await response.json())
+  const id = readString(provider, "id")
+  const groupId = readString(firstRow(provider, "modelGroups"), "id")
+  const enabled = await request(ownerCookie, `/v1/inference-providers/${id}/enable-models`, { method: "POST", body: JSON.stringify({ modelGroupId: groupId, modelIds: ["claude-haiku-4"] }) })
+  expect(enabled.status).toBe(200)
+  expect(await enabled.json()).toMatchObject({ modelIds: [], addedModelIds: [] })
+  const details = readProvider(await (await request(ownerCookie, `/v1/inference-providers/${id}`)).json())
+  expect(details.modelIds).toEqual([])
+  expect(readRows(details, "accessGrants")).toEqual([])
 })
 
 test("Gateway key issuance is atomic, encrypted, and rotates invalid material in the same membership row", async () => {
