@@ -63,6 +63,10 @@ test("no token or ready models still supports Connect, revision-confirmed author
   try {
     await fixture(async ({ container, button }) => {
       expect(container.textContent).toContain("Sign-in required");
+      expect(container.querySelector("h1")?.textContent).toBe("My model connections");
+      expect(container.querySelector("[data-dashboard-hero]")).toBeNull();
+      expect(container.querySelector("details")?.open).toBe(false);
+      expect(container.querySelector("details > summary")?.textContent).toBe("Technical details");
       await act(async () => button("Connect with Google").click());
       await flush();
       expect(container.querySelector('a[target="_blank"]')?.getAttribute("href")).toBe("https://den.example.test/gateway/connect?attempt=fixture");
@@ -77,6 +81,8 @@ test("no token or ready models still supports Connect, revision-confirmed author
       expect(container.querySelector('a[target="_blank"]')).toBeNull();
       expect(button("Reconnect with Google")).toBeDefined();
       await act(async () => button("Disconnect").click());
+      expect(container.textContent).toContain("Other connections sharing this Google grant may be revoked too; reconnect to restore access.");
+      expect(button("Confirm disconnect").closest("details")).toBeNull();
       expect(calls.some((call) => call.method === "DELETE")).toBe(false);
       await act(async () => button("Confirm disconnect").click());
       await flush();
@@ -99,8 +105,13 @@ test("reconnect captures a fresh pre-start revision and ignores unchanged readin
       await act(async () => button("Reconnect with Google").click());
       await flush();
       expect(container.textContent).toContain("Waiting for Google sign-in");
-      expect(container.textContent).toContain("cleanup revocation may affect your previous connection");
-      expect(container.textContent).toContain("You may need to reconnect them.");
+      const risk = [...container.querySelectorAll("p")].find((item) => item.textContent?.startsWith("Authorize Google Cloud access for OpenWork"));
+      expect(risk?.textContent).toContain("failed sign-in cleanup may revoke previous or other connections");
+      expect(risk?.closest("details")).toBeNull();
+      const securityHint = [...container.querySelectorAll("p")].find((item) => item.textContent?.startsWith("Waiting for Google sign-in"));
+      expect(securityHint?.textContent).toContain("Use the OpenWork account that started Connect.");
+      expect(securityHint?.closest("details")).toBeNull();
+      expect(container.querySelector("details")?.open).toBe(false);
       await act(async () => button("Refresh status").click());
       await flush();
       expect(container.textContent).not.toContain("Google authorization completed");
@@ -132,7 +143,10 @@ test("retained credentials after access loss or provider disable remain disconne
     await fixture(async ({ container, button }) => {
       expect(container.textContent).toContain("Access removed");
       expect(container.textContent).toContain("Connected as member@example.test");
-      expect([...container.querySelectorAll("button")].some((item) => item.textContent?.includes("with Google"))).toBe(false);
+      expect(button("Reconnect with Google").disabled).toBe(true);
+      expect(container.textContent).toContain("Ask your administrator to restore model access.");
+      expect(container.querySelector('[data-notice-tone="error"]')).toBeNull();
+      await act(async () => button("Reconnect with Google").click());
       await act(async () => button("Disconnect").click());
       await act(async () => button("Confirm disconnect").click());
       await flush();
@@ -197,6 +211,8 @@ test("client configuration failure requires administrator repair and blocks Reco
       expect(container.textContent).not.toContain("Google token ready");
       expect(container.textContent).toContain("Connected as member@example.test");
       expect(button("Reconnect with Google").disabled).toBe(true);
+      expect(container.textContent).toContain("Ask your administrator to repair the Google OAuth client, then refresh status.");
+      expect(container.querySelector('[data-notice-tone="error"]')).toBeNull();
       await act(async () => button("Reconnect with Google").click());
       expect(starts).toBe(0);
       expect(button("Disconnect").disabled).toBe(false);

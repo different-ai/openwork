@@ -146,6 +146,11 @@ describe("Gateway provider form", () => {
 
   test("member sign-in is gated to Google Vertex and collects the org OAuth client", () => {
     expect(editor).toContain("supportsMemberCredentialMode(providerId)");
+    expect(editor).toContain('<DenSegmented<"org" | "member">');
+    expect(editor).toContain('label: "Shared API key"');
+    expect(editor).toContain('label: "Each member signs in", disabled: !memberSignInSupported');
+    expect(editor).toContain("Google sign-in is unavailable for this provider.");
+    expect(editor).toContain("onChange={changeCredentialMode}");
     expect(editor).toContain('data-testid="gateway-oauth-client-id"');
     expect(editor).toContain('data-testid="gateway-oauth-client-secret"');
     expect(editor).toContain("Saved — enter a replacement to change it");
@@ -153,12 +158,36 @@ describe("Gateway provider form", () => {
 });
 
 describe("Google Web OAuth onboarding", () => {
+  test("keeps setup instructions collapsed while fields, callback copy and rotation consent remain visible", () => {
+    const start = editor.indexOf('<details className="group');
+    const end = editor.indexOf("</details>", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const setup = editor.slice(start, end);
+    expect(setup).toContain("Setup instructions");
+    expect(setup).toContain("group-open:rotate-90");
+    expect(setup).toContain("motion-reduce:transition-none");
+    expect(setup).not.toMatch(/<details[^>]*\sopen(?:[\s=>])/);
+    for (const text of ["Web application, not Desktop app", "Secrets are write-only", "roles/aiplatform.user", "invalid_rapt", "Saving configuration is not an inference test"]) {
+      expect(setup).toContain(text);
+    }
+    const fields = editor.slice(editor.indexOf('{credentialMode === "member" ? ('), start);
+    expect(fields).toContain("OAuth client ID");
+    expect(fields).toContain("OAuth client secret");
+    expect(fields).toContain("Copy callback URL");
+    expect(fields).not.toContain("Create a Google OAuth client");
+    expect(fields).toContain('tone="neutral"');
+    expect(editor.slice(0, start)).toContain("Revoke this set’s credentials and pending sign-ins on save; members must reconnect.");
+    expect(editor).not.toContain("<Dialog.Description");
+    expect(editor).not.toContain("Give this a friendly name");
+  });
+
   test("ports callback, scopes, IAM, session limits and secret lifecycle into the provider form", () => {
     for (const text of ["Web application, not Desktop app", "Copy callback URL", "navigator.clipboard.writeText(callback)", "cloud-platform", "openid and email", "roles/aiplatform.user", "aiplatform.endpoints.predict", "seven days", "invalid_rapt", "Blank does not clear it", "Disabling a set", "Saving configuration is not an inference test"]) {
       expect(editor).toContain(text);
     }
     expect(editor).toContain("{provider.oauthCallbackUrl}");
-    expect(editor).toContain("do not guess a redirect URI");
+    expect(editor).toContain("Callback unavailable. Ask your deployment administrator to configure the public Den API origin.");
     expect(editor).toContain("Save this provider to obtain its exact OAuth callback URL");
     expect(editor).toContain("Clipboard access is unavailable");
     expect(editor).toContain("Could not copy the callback");

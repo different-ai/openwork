@@ -507,14 +507,14 @@ describe("cloud provider sync in gateway mode", () => {
     }
   });
 
-  test("rereads hosted runtime providers without client-side materialization behind the gateway", async () => {
+  test.each(["settings_cloud_opened", "manual"] as const)("rereads hosted runtime providers without client-side materialization on %s", async (reason) => {
     const storage = installWindow({ origin: "https://web.openworklabs.com", gateway: true });
     installCloudSession(storage);
     const requests: RecordedRequest[] = [];
     installProviderSyncFetch(requests);
     const { store } = createProviderAuthTestStore();
 
-    const outcome = await store.runCloudProviderSync("settings_cloud_opened");
+    const outcome = await store.runCloudProviderSync(reason);
 
     expect(outcome).toEqual({ outcome: "handled_server_side" });
     expect(requests.some((request) => new URL(request.url).pathname === "/provider")).toBe(true);

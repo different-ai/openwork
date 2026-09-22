@@ -212,6 +212,7 @@ export type OAuthTokenExchangeFailureCode =
   | "oauth_scope_required"
   | "oauth_refresh_token_required"
   | "oauth_identity_invalid"
+  | "oauth_identity_unavailable"
   | "oauth_reauthentication_required"
   | "oauth_token_endpoint_unavailable"
 

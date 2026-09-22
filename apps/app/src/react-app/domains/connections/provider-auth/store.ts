@@ -2366,9 +2366,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           `[cloud-provider-sync:${reason}] Provider materialization is handled server-side in gateway mode.`,
         );
       }
-      const contextKey = getCloudProviderSyncContextKey();
-      const isCurrent = () => !disposed && contextKey === getCloudProviderSyncContextKey();
-      await refreshProvidersAfterCloudSync({ force: true }, isCurrent);
+      if (reason === "manual" || reason === "settings_cloud_opened") {
+        await refreshProvidersAfterCloudSync({ force: true }, isCurrent);
+      }
       return { outcome: "handled_server_side" };
     }
 

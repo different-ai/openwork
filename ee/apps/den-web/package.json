@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "test:vertex-auth": "bun test --conditions development tests/gateway-member-connections.test.ts && bun test --conditions development tests/gateway-member-connections-screen.test.tsx",
+    "test:vertex-auth": "bun test --conditions development tests/gateway-member-connections.test.ts && bun test --conditions development tests/gateway-member-connections-screen.test.tsx && bun test --conditions development tests/gateway-connect-screen.test.tsx",
     "dev": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
     "dev:local": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname ${DEN_WEB_HOST:-0.0.0.0} --port ${DEN_WEB_PORT:-3005}",
     "prebuild": "pnpm --filter @openwork/types build && pnpm --dir ../../../packages/ui build && pnpm --dir ../../packages/utils build",
