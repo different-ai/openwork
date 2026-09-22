@@ -21,7 +21,7 @@ export function previewWorld(value: unknown): PreviewWorld {
 
 export function snapshotSlug(sha: string, world: PreviewWorld = "app-web"): string {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
-  return `openwork-${previewWorld(world)}-v2-${sha}`;
+  return `openwork-${previewWorld(world)}-v3-${sha}`;
 }
 
 export function isMissing(error: unknown): boolean {
@@ -61,10 +61,10 @@ export async function launchPreview(
   const minutes = input.lifetimeMinutes ?? 120;
   if (!Number.isInteger(minutes) || minutes < 10 || minutes > 1430) throw new Error("Preview lifetime must be 10–1430 minutes.");
   const launchId = randomUUID().replaceAll("-", "");
-  const domain = `ow-${launchId}.style.dev`;
+  const domain = `ow-${launchId}.preview.openwork.software`;
   const origins = world === "acme-web" ? {
-    app: `https://${domain}`, den: `https://den-${launchId}.style.dev`, api: `https://api-${launchId}.style.dev`,
-    engine: `https://engine-${launchId}.style.dev`, gateway: `https://gateway-${launchId}.style.dev`,
+    app: `https://${domain}`, den: `https://den-${launchId}.preview.openwork.software`, api: `https://api-${launchId}.preview.openwork.software`,
+    engine: `https://engine-${launchId}.preview.openwork.software`, gateway: `https://gateway-${launchId}.preview.openwork.software`,
   } : undefined;
   const domains = origins ? Object.values(origins).map((value) => new URL(value).hostname) : [domain];
   const token = randomBytes(32).toString("base64url");

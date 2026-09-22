@@ -14,7 +14,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
     let created;
     try {
       created = await api.vms.create({
-        slug: `ow-build-${world}-v2-${sha}`, snapshotId: "freestyle/ubuntu",
+        slug: `ow-build-${world}-v3-${sha}`, snapshotId: "freestyle/ubuntu",
         displayName: `OpenWork snapshot ${sha.slice(0, 7)}`, ttlSeconds: 1800,
         metadata: { kind: "openwork-snapshot-builder-v1", gitSha: sha },
         firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
@@ -22,7 +22,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
     } catch (error) {
       if (!(error instanceof FreestyleApiError) || error.status !== 409) throw error;
       // Capacity failures also use 409. Only wait when our builder actually exists.
-      const builder = await api.vms.get(`ow-build-${world}-v2-${sha}`).catch((cause: unknown) => {
+      const builder = await api.vms.get(`ow-build-${world}-v3-${sha}`).catch((cause: unknown) => {
         if (isMissing(cause)) return null;
         throw cause;
       });

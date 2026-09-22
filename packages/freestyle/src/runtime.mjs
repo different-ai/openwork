@@ -7,7 +7,7 @@ for (const dir of ["home", "cache", "config/openwork", "config/opencode", "data/
 }
 const runtime = await launchHeadlessWeb({
   repoRoot: "/workspace", name: "freestyle-preview", state: "isolated",
-  workspace: `${root}/workspace`, browserHostSuffix: ".style.dev",
+  workspace: `${root}/workspace`, browserHostSuffix: ".preview.openwork.software",
   env: {
     PATH: process.env.PATH,
     // Dependencies were verified before snapshotting; changing HOME must not trigger a reinstall.

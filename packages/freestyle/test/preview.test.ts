@@ -38,6 +38,7 @@ test("concurrent launches from one report get separate VMs, credentials and prov
   assert.notEqual(first.url, second.url);
   assert.notEqual(new URL(first.url).searchParams.get("token"), new URL(second.url).searchParams.get("token"));
   assert.equal(first.snapshotId, second.snapshotId);
+  assert.ok(new URL(first.url).hostname.endsWith(".preview.openwork.software"));
   assert.equal(creates.length, 2);
   for (const body of creates) {
     assert.equal(body.snapshotId, "sh-template");

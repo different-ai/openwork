@@ -24,7 +24,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
       if (typeof data !== "object" || data === null || !("url" in data) || typeof data.url !== "string"
         || !("expiresAt" in data) || typeof data.expiresAt !== "string") throw new Error("The launch could not be verified. Try again.");
       const url = new URL(data.url);
-      if (url.protocol !== "https:" || !/^ow-[a-f0-9]{32}\.style\.dev$/.test(url.hostname)) throw new Error("The launch could not be verified. Try again.");
+      if (url.protocol !== "https:" || !/^ow-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/.test(url.hostname)) throw new Error("The launch could not be verified. Try again.");
       setSession({ url: data.url, expiresAt: data.expiresAt, outputs: parsePreviewOutputs("outputs" in data ? data.outputs : {}) });
       setReveal(false); setCopied(false);
     } catch (failure) {

@@ -54,7 +54,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     name,
     workspace,
     state: "isolated",
-    browserHostSuffix: preview ? ".style.dev" : undefined,
+    browserHostSuffix: preview ? `.${new URL(preview.app).hostname.split(".").slice(1).join(".")}` : undefined,
     env: {
       ...process.env,
       OPENWORK_WEB_PORT: String(webPort),

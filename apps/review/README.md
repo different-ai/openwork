@@ -187,3 +187,5 @@ Status describes selected evidence: a failed assertion or visual judgment is
 Failed; skipped/unknown tests, missing assertion evidence, pending judgments,
 and declared gaps are Incomplete. An image-only document is Reference. Human
 approval and discussion stay in GitHub.
+
+Freestyle previews use the verified `preview.openwork.software` wildcard: `*.preview` CNAME to `beta-web.freestyle.sh`, `_acme-challenge.preview` NS to `beta-dns.freestyle.sh`, and Freestyle ownership verification. Keep its wildcard certificate active. This avoids the permanent free `style.dev` hostname claim limit; TLS routes still expire with each VM.
