@@ -1496,9 +1496,9 @@ export async function backgroundUpdateWorld(seed: Seed) {
   };
 }
 
-/** A desktop signed in to a real Den whose organization pins allowed desktop
- * versions. The updater feed is faked; the version policy is Den's own. */
-export async function revokedUpdateWorld(seed: Seed) {
+/** A desktop signed in to a real Den with a saved version policy. Desktop
+ * enforcement is suspended; the fake feed must not change the saved policy. */
+export async function savedUpdatePolicyWorld(seed: Seed) {
   const den = await seed.den({
     org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },
   });

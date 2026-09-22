@@ -150,7 +150,19 @@ export async function configureProvider(
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       });
       const text = await response.text();
-      if (!response.ok && !(path.endsWith("/engine/reload") && response.status === 504)) {
+      let reloadPending = response.status === 504;
+      if (path.endsWith("/engine/reload") && response.status === 503) {
+        try {
+          const error: unknown = JSON.parse(text);
+          reloadPending = typeof error === "object" && error !== null && "code" in error
+            && error.code === "opencode_engine_unreachable";
+        } catch {
+          reloadPending = false;
+        }
+      }
+      // Initial engine startup can race config reload. The readiness check
+      // below must still observe the configured model in the live composer.
+      if (!response.ok && !(path.endsWith("/engine/reload") && reloadPending)) {
         return path + " failed: " + response.status + " " + text.slice(0, 500);
       }
       return "ok";
