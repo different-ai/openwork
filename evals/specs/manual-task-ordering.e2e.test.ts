@@ -39,13 +39,18 @@ test("a workspace member keeps new tasks visible and chooses an order that survi
     const label = await probe.eval(browserScript((workspaceId) => document.querySelector(
       `[data-sidebar-workspace-id="${workspaceId}"] [data-workspace-new-task]`)?.getAttribute("aria-label"), [world.workspace.workspaceId]));
     if (!label) throw new Error("Workspace new-task action is missing");
-    await user.hover({ text: label.split(" · ")[1]! });
+    await user.hover({ role: "button", label: label.split(" · ")[1]! });
+    await user.see({ role: "button", label });
     await user.click({ role: "button", label });
     await user.see("composer", { editable: true, text: "" });
     await user.type("composer", world.prompt, { verify: true });
     await seeOrder(original.slice(0, 6));
-    const inventory = (await agent.list()).map(session => session.sessionId).sort();
-    expect(inventory).toEqual([...original, world.pinned.sessionId].sort());
+    const expectedInventory = [...original, world.pinned.sessionId].sort();
+    const inventory = await probe.eventually(async () => (await agent.list()).map(session => session.sessionId).sort(), {
+      within: 10_000, label: "complete inventory after opening a draft",
+      until: value => JSON.stringify(value) === JSON.stringify(expectedInventory),
+    });
+    expect(inventory).toEqual(expectedInventory);
     evidence.recordAssertionEvidence("Opening and typing a new task creates no session, including beyond Show more", JSON.stringify(inventory), true);
     await user.screenshot();
   });
@@ -177,13 +182,19 @@ groupedTest("a workspace member orders grouped tasks without disturbing other gr
   });
 
   await step("after: a first send in the group is visible above its saved order", async () => {
-    await user.hover({ text: "Planned tasks" });
+    await user.hover({ role: "button", label: /^Planned tasks/ });
+    await user.see({ role: "button", label: "Group actions", nth: 0 });
     await user.hover({ role: "button", label: "Group actions", nth: 0 });
     await user.click({ role: "button", label: "New session in group" });
     await user.see("composer", { editable: true, text: "" });
     await user.type("composer", world.prompt, { verify: true });
     await seeOrder(original.slice(0, 6));
-    expect((await agent.list()).map(session => session.sessionId).sort()).toEqual([...original, world.pinned.sessionId].sort());
+    const expectedInventory = [...original, world.pinned.sessionId].sort();
+    const inventory = await probe.eventually(async () => (await agent.list()).map(session => session.sessionId).sort(), {
+      within: 10_000, label: "complete inventory after opening a grouped draft",
+      until: value => JSON.stringify(value) === JSON.stringify(expectedInventory),
+    });
+    expect(inventory).toEqual(expectedInventory);
     await user.press("Enter");
     await user.see({ text: world.reply }, { timeoutMs: 90_000 });
     createdId = (await route()).split("/session/")[1]?.split(/[/?#]/)[0] ?? "";

@@ -18,6 +18,9 @@ async function taskOrdering(seed: Seed, grouped: boolean) {
   const workspacePath = seed.tmpPath("task-ordering");
   const app = await seed.appWeb({
     name: grouped ? "grouped-task-ordering" : "manual-task-ordering", workspacePath,
+    // Use CI's Xvfb display for desktop hover controls, while allowing local
+    // runs on hosts without a display server to keep their headless browser.
+    headless: !process.env.DISPLAY,
     mocks: { agent: seed.mock({ isolatedProcessEnv: true, agentWorkloads: [
       { promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] },
       { promptMarker: followup, latestUserTurn: true, finalReply: followupReply, steps: [] },

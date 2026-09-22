@@ -1,4 +1,4 @@
-import { addInitScript, browserScript, reattachSurface, type Surface } from "@openwork/cdp";
+import { addInitScript, browserScript, reattachSurface, reload, type Surface } from "@openwork/cdp";
 import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
@@ -177,7 +177,9 @@ export async function configureProvider(
     return "ok";
   }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
-  await seed.evalIn(app, () => { location.reload(); return true; });
+  // Wait for navigation before starting the model-readiness evaluation;
+  // scheduling location.reload() can run that evaluation in the old document.
+  await reload(app);
   // The display name the app gives the configured model once its provider list
   // contains it; a fixture provider declares it in opencode.json, a live one is
   // read from the engine catalog.
