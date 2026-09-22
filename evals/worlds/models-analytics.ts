@@ -67,6 +67,8 @@ async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean, usageSet
     ...(usageSettlement ? { MODELS_USAGE_FIXTURE: "1", INFERENCE_WEBHOOK_SECRET: "paid-usage-fixture-secret" } : {}),
     MODELS_DPA_ORG_ID: orgId,
     OPENROUTER_UPSTREAM_URL: `http://127.0.0.1:${witnessPort}`,
+    // The Gateway egress guard refuses loopback upstreams unless the operator allows the origin.
+    GATEWAY_EGRESS_ALLOWED_ORIGINS: `http://127.0.0.1:${witnessPort}`,
   };
   async function remoteExec(script: string, context: string) {
     if (!remote) throw new Error("Missing isolated server sandbox");

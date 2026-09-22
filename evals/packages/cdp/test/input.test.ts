@@ -174,6 +174,64 @@ test("the browser-side miss report lists every rendered element of the requested
   );
 });
 
+test("role targets locate labelled progress bars such as usage meters", async () => {
+  class Element {
+    tagName: string;
+    attributes: Record<string, string>;
+    innerText = "";
+    textContent = "";
+    parentElement: Element | null = null;
+    children: Element[] = [];
+    labels = [];
+    constructor(tagName: string, attributes: Record<string, string>) {
+      this.tagName = tagName.toUpperCase();
+      this.attributes = attributes;
+    }
+    getAttribute(name: string) { return this.attributes[name] ?? null; }
+    hasAttribute(name: string) { return name in this.attributes; }
+    closest() { return null; }
+    contains(other: Element) { return other === this; }
+    matches() { return false; }
+    scrollIntoView() {}
+    getBoundingClientRect() { return { left: 100, top: 200, width: 300, height: 6, x: 100, y: 200 }; }
+  }
+  class HTMLElement extends Element { isContentEditable = false; }
+  class HTMLInputElement extends HTMLElement {}
+  class HTMLTextAreaElement extends HTMLElement {}
+  class HTMLSelectElement extends HTMLElement {}
+  class HTMLButtonElement extends HTMLElement {}
+  const meters = ["5 hour", "Weekly", "Monthly"].map((window) => new HTMLElement("div", { role: "progressbar", "aria-label": `${window} usage limit remaining` }));
+  const document = {
+    // Mirror the browser: an element is only a candidate when the selector names its role.
+    querySelectorAll(selector: string) { return selector.includes('[role="progressbar"]') ? meters : []; },
+    querySelector() { return null; },
+    getElementById() { return null; },
+    elementFromPoint() { return meters[0]; },
+  };
+  const surface = surfaceReturning(null);
+  surface.client.send = async (method, params) => {
+    if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+    assert.equal(method, "Runtime.callFunctionOn");
+    assert.ok(params && typeof params.functionDeclaration === "string" && Array.isArray(params.arguments));
+    const [argument] = params.arguments;
+    assert.ok(argument && typeof argument === "object" && "value" in argument && typeof argument.value === "string");
+    const value = runInNewContext(`(${params.functionDeclaration})(${JSON.stringify(argument.value)})`, {
+      document,
+      location: { hash: "", pathname: "/dashboard/ai-gateway" },
+      innerWidth: 1440,
+      innerHeight: 1100,
+      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+      Element, HTMLElement, HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement, HTMLButtonElement,
+      JSON, String, Number, Boolean, Array, Object, RegExp,
+    });
+    return { result: { value } };
+  };
+  const located = await locate(surface, { role: "progressbar", label: "5 hour usage limit remaining" });
+  assert.equal(located.name, "5 hour usage limit remaining");
+  assert.equal(located.visible, true);
+  assert.equal(located.hitTestOk, true);
+});
+
 test("key dispatch leaves native codes to Chrome and retains explicit editing commands", async () => {
   const surface = surfaceReturning(null);
   const events: unknown[] = [];
