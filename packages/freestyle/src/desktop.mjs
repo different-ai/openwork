@@ -29,7 +29,7 @@ async function waitFor(check, label, timeoutMs = 60_000) {
 }
 
 /**
- * Starts the display and viewer (seconds), then boots the real desktop app in
+ * Starts the display and viewer (seconds), then boots the real desktop app (signed out) in
  * the background so the world's existing readiness and build timing are unchanged.
  */
 export async function startDesktop(stack, world) {
@@ -50,7 +50,9 @@ export async function startDesktop(stack, world) {
   void (async () => {
     const { app } = await import("/workspace/evals/packages/env/src/desktop-app.ts");
     const { resolvePlace } = await import("/workspace/evals/packages/env/src/place.ts");
-    stack.use(await app({ den: world.den, place: resolvePlace(), as: "admin", workspacePath: "/root/openwork-desktop" }));
+    // Signed out: the snapshot's Den answers on internal template origins that the
+    // in-VM desktop cannot reach yet. The app itself, its workspace and UI are real.
+    stack.use(await app({ den: world.den, place: resolvePlace(), signIn: false, workspacePath: "/root/openwork-desktop" }));
     status("ready");
   })().catch((error) => {
     console.error("Desktop app did not start:", error);
