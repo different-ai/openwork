@@ -205,6 +205,7 @@ test('registered case metadata names exact files, supported execution axes, and 
     },
     { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-ATTACH', engines: ['v1', 'v2'] },
     { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-MISSING', engines: ['v2'] },
+    { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-DENIED', engines: ['v2'] },
     {
       spec: 'opencode-v2-skill-jit.e2e.test.ts',
       id: 'SKILL-CLOUD-01',
