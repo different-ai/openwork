@@ -17,18 +17,18 @@ try {
   });
   assert.equal(page.status, 200);
   assert.match(await page.text(), /OpenWork/);
-  const appHtmlMs = Math.round(performance.now() - pageStart);
+  const repeatHtmlMs = Math.round(performance.now() - pageStart);
   const health = await api.vms.ref(preview.id).exec({ command: "node /opt/openwork-preview/health.mjs", linuxUser: "root", timeoutMs: 60_000 });
   assert.equal(health.statusCode, 0, "Restored engine and OpenCode workspace must respond");
   const proof = {
-    gitSha: sha, world: "app-web", measuredAt: new Date().toISOString(), launchMs, appHtmlMs,
-    scope: "Controller launch through private gateway authorization; app HTML and engine health are checked separately after the link is returned. Excludes reviewer HTTP overhead and browser rendering.",
+    gitSha: sha, world: "app-web", measuredAt: new Date().toISOString(), launchMs, repeatHtmlMs,
+    scope: "Controller launch includes first authorized app HTML readiness; the repeat HTML fetch and engine health are checked after the link is returned. Excludes reviewer HTTP overhead and browser rendering.",
     appAndEngineReady: true,
   };
   await writeFile("freestyle-app-launch-proof.json", JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY,
-    `\n## Live OpenWork web snapshot verification\n\nCommit: \`${sha}\`\n\nLink ready: ${(launchMs / 1000).toFixed(2)} s · app HTML after link: ${(appHtmlMs / 1000).toFixed(2)} s.\n\n${proof.scope}\n\nVerified: private app HTML, restored engine, and OpenCode workspace. Test VM deleted.\n`);
+    `\n## Live OpenWork web snapshot verification\n\nCommit: \`${sha}\`\n\nLink and first app HTML ready: ${(launchMs / 1000).toFixed(2)} s · repeat HTML fetch: ${(repeatHtmlMs / 1000).toFixed(2)} s.\n\n${proof.scope}\n\nVerified: private app HTML, restored engine, and OpenCode workspace. Test VM deleted.\n`);
 } finally {
   await api.vms.delete(preview.id);
 }

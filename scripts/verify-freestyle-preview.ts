@@ -8,7 +8,7 @@ const sha = process.argv[2];
 if (!sha) throw new Error("Usage: node scripts/verify-freestyle-preview.ts <full-pushed-sha>");
 const api = client();
 const sessions: PreviewSession[] = [];
-const launches: { launchMs: number; appHtmlMs: number }[] = [];
+const launches: { launchMs: number; repeatHtmlMs: number }[] = [];
 async function json(session: PreviewSession, service: string, path: string, init: RequestInit = {}): Promise<unknown> {
   const response = await fetch(new URL(path, session.outputs[service].value), {
     ...init, headers: { cookie: session.outputs.previewCookie.value, ...init.headers },
@@ -32,7 +32,7 @@ try {
     });
     assert.equal(page.status, 200);
     assert.match(await page.text(), /OpenWork/);
-    launches.push({ launchMs, appHtmlMs: Math.round(performance.now() - appStart) });
+    launches.push({ launchMs, repeatHtmlMs: Math.round(performance.now() - appStart) });
   }
   const [first, second] = sessions;
   assert.notEqual(first.id, second.id);
@@ -77,14 +77,14 @@ try {
   assert.ok(response.parts.some((part: unknown) => record(part) && part.type === "text" && part.text === "Acme AI Gateway is working."));
   const proof = {
     gitSha: sha, world: "acme-web", measuredAt: new Date().toISOString(), launches,
-    scope: "Controller launch through public readiness, followed by app HTML fetch. Excludes reviewer HTTP overhead and browser rendering; not a click-to-usable benchmark.",
+    scope: "Controller launch includes first authorized app HTML readiness, followed by a repeat HTML fetch. Excludes reviewer HTTP overhead and browser rendering; not a click-to-usable benchmark.",
     restoredRunningProcess: true, independentDatabases: true, independentUrlsAndCredentials: true,
     demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true,
   };
   await writeFile("freestyle-launch-proof.json", JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY,
-    `\n## Live ACME snapshot verification\n\nCommit: \`${sha}\`\n\n| Clone | Launch through public readiness | App HTML fetch |\n| --- | --- | --- |\n${launches.map((item, index) => `| ${index + 1} | ${(item.launchMs / 1000).toFixed(2)} s | ${(item.appHtmlMs / 1000).toFixed(2)} s |`).join("\n")}\n\n${proof.scope}\n\nVerified: restored running process, independent databases and access, demo sign-in, enabled AI Gateway dashboard, and a fresh reply through the resumed gateway. Test VMs are deleted after verification.\n`);
+    `\n## Live ACME snapshot verification\n\nCommit: \`${sha}\`\n\n| Clone | Link and first app HTML ready | Repeat HTML fetch |\n| --- | --- | --- |\n${launches.map((item, index) => `| ${index + 1} | ${(item.launchMs / 1000).toFixed(2)} s | ${(item.repeatHtmlMs / 1000).toFixed(2)} s |`).join("\n")}\n\n${proof.scope}\n\nVerified: restored running process, independent databases and access, demo sign-in, enabled AI Gateway dashboard, and a fresh reply through the resumed gateway. Test VMs are deleted after verification.\n`);
 } finally {
   await Promise.all(sessions.map((session) => api.vms.delete(session.id)));
 }

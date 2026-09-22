@@ -27,7 +27,9 @@ function mockApi(snapshotCreatedAt = new Date().toISOString()) {
   return { api, creates, writes, deleted, commands };
 }
 
-const reachable: typeof fetch = async () => new Response(null, { status: 303, headers: { "set-cookie": "__Host-openwork-preview=synthetic" } });
+const reachable: typeof fetch = async (input) => new URL(String(input)).pathname === "/__openwork_launch"
+  ? new Response(null, { status: 303, headers: { "set-cookie": "__Host-openwork-preview=synthetic" } })
+  : new Response("<title>OpenWork</title>", { status: 200 });
 
 test("concurrent launches from one report get separate VMs, credentials and provider expiry", async () => {
   const { api, creates, writes } = mockApi();
@@ -63,9 +65,23 @@ test("new public routes can recover from propagation errors without allocating a
     if (attempts === 1) return new Response(null, { status: 502 });
     return reachable(input);
   });
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 3);
   assert.equal(creates.length, 1);
   assert.deepEqual(deleted, []);
+});
+
+test("launch waits through the restored app's first transient 502", async () => {
+  const { api, creates } = mockApi();
+  let pageRequests = 0;
+  await launchPreview({ gitSha: sha }, api, async (input) => {
+    if (new URL(String(input)).pathname === "/") {
+      pageRequests++;
+      if (pageRequests === 1) return new Response("starting", { status: 502 });
+    }
+    return reachable(input);
+  });
+  assert.equal(pageRequests, 2);
+  assert.equal(creates.length, 1);
 });
 
 test("fresh ACME clones skip guest startup while old snapshots rotate their demo session", async () => {

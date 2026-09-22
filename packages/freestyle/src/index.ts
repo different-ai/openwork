@@ -62,16 +62,25 @@ export class PreviewLaunchError extends Error {
   }
 }
 
-/** New TLS routes can briefly return 404/502 before the restored VM is reachable. */
+/** The private gateway can answer before the restored app accepts its first request. */
 export async function waitForPublicAccess(url: string, probe: typeof fetch = fetch, pause = delay): Promise<void> {
   let status = 0;
   for (let attempt = 0; attempt < 8; attempt++) {
     try {
       const response = await probe(url, { redirect: "manual", signal: AbortSignal.timeout(3_000) });
       status = response.status;
-      const ready = status === 303 && response.headers.get("set-cookie")?.startsWith("__Host-openwork-preview=");
+      const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
       await response.body?.cancel();
-      if (ready) return;
+      if (status === 303 && cookie?.startsWith("__Host-openwork-preview=")) {
+        const page = await probe(new URL("/", url), {
+          headers: { cookie }, signal: AbortSignal.timeout(3_000),
+        });
+        status = page.status;
+        const html = status === 200 ? await page.text() : "";
+        if (status !== 200) await page.body?.cancel();
+        if (status === 200 && html.includes("OpenWork")) return;
+        if (status === 200) status = 502; // A proxy warmup page is not the app.
+      }
       if (![404, 408, 425, 429].includes(status) && status < 500) break;
     } catch (error) {
       if (!(error instanceof TypeError) && !(error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name))) throw error;
