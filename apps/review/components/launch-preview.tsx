@@ -36,7 +36,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
 
   const services: [string, { value: string }][] = session ? Object.entries(session.outputs).filter(([, entry]) => entry.group === "Services") : [];
   if (session && !services.length) services.push(["webUrl", { value: session.url }]);
-  const serviceNames: Record<string, string> = { webUrl: "OpenWork", denWeb: "Den dashboard", denApi: "Den API", openworkUrl: "OpenWork engine", gatewayUrl: "AI Gateway" };
+  const serviceNames: Record<string, string> = { webUrl: "OpenWork", denWeb: "Den dashboard", denApi: "Den API", openworkUrl: "OpenWork engine", gatewayUrl: "AI Gateway", desktopUrl: "Desktop app" };
   async function copy(value: string) {
     try { await navigator.clipboard.writeText(value); setCopied(true); }
     catch { setError("Could not copy. Select the visible value to copy it manually."); }

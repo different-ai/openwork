@@ -75,16 +75,32 @@ try {
   });
   assert.ok(record(response) && Array.isArray(response.parts));
   assert.ok(response.parts.some((part: unknown) => record(part) && part.type === "text" && part.text === "Acme AI Gateway is working."));
+  // The real desktop app renders into the display the access-checked viewer streams.
+  assert.ok(outputs.desktopUrl, "ACME snapshots must link the desktop viewer");
+  const viewer = new URL("/vnc.html", outputs.desktopUrl.value);
+  const opened = await fetch(viewer, { headers: { cookie: outputs.previewCookie.value }, signal: AbortSignal.timeout(30_000) });
+  assert.equal(opened.status, 200);
+  assert.match(await opened.text(), /noVNC/);
+  assert.equal((await fetch(viewer, { signal: AbortSignal.timeout(30_000) })).status, 401, "The viewer requires this sandbox's access");
+  const desktopStart = performance.now();
+  let desktop = "";
+  while (performance.now() - desktopStart < 240_000) {
+    desktop = (await execChecked(firstVm, "cat /opt/openwork-preview/desktop/status")).trim();
+    if (desktop !== "starting") break;
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+  assert.equal(desktop, "ready", "The desktop app must finish booting");
+  const desktopReadyMs = Math.round(performance.now() - desktopStart);
   const proof = {
     gitSha: sha, world: "acme-web", measuredAt: new Date().toISOString(), launches,
     scope: "Controller launch includes first authorized app HTML readiness, followed by a repeat HTML fetch. Excludes reviewer HTTP overhead and browser rendering; not a click-to-usable benchmark.",
     restoredRunningProcess: true, independentDatabases: true, independentUrlsAndCredentials: true,
-    demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true,
+    demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true, desktopViewer: true, desktopReadyMs,
   };
   await writeFile("freestyle-launch-proof.json", JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY,
-    `\n## Live ACME snapshot verification\n\nCommit: \`${sha}\`\n\n| Clone | Link and first app HTML ready | Repeat HTML fetch |\n| --- | --- | --- |\n${launches.map((item, index) => `| ${index + 1} | ${(item.launchMs / 1000).toFixed(2)} s | ${(item.repeatHtmlMs / 1000).toFixed(2)} s |`).join("\n")}\n\n${proof.scope}\n\nVerified: restored running process, independent databases and access, demo sign-in, enabled AI Gateway dashboard, and a fresh reply through the resumed gateway. Test VMs are deleted after verification.\n`);
+    `\n## Live ACME snapshot verification\n\nCommit: \`${sha}\`\n\n| Clone | Link and first app HTML ready | Repeat HTML fetch |\n| --- | --- | --- |\n${launches.map((item, index) => `| ${index + 1} | ${(item.launchMs / 1000).toFixed(2)} s | ${(item.repeatHtmlMs / 1000).toFixed(2)} s |`).join("\n")}\n\n${proof.scope}\n\nVerified: restored running process, independent databases and access, demo sign-in, enabled AI Gateway dashboard, a fresh reply through the resumed gateway, and the real desktop app behind the access-checked viewer (ready ${(desktopReadyMs / 1000).toFixed(1)} s after checks began). Test VMs are deleted after verification.\n`);
 } finally {
   await Promise.all(sessions.map((session) => api.vms.delete(session.id)));
 }
