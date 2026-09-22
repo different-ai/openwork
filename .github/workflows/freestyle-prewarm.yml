@@ -1,0 +1,50 @@
+name: Freestyle preview prewarm
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prewarm:
+    # Repository secrets are never supplied to fork or Dependabot PRs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        world: [app-web, acme-web]
+    concurrency:
+      group: freestyle-prewarm-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.world }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          # Trusted, reviewed controller only. PR source is fetched inside the
+          # credential-free guest VM; never checked out on this runner.
+          # Update this pin only after reviewing controller/dependency changes.
+          ref: c03319c765a959197512aa6b320110d14c550651
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Install snapshot controller only
+        run: pnpm --filter @openwork/freestyle... install --frozen-lockfile --ignore-scripts
+      - name: Prepare reusable snapshot
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PREVIEW_WORLD: ${{ matrix.world }}
+        run: |
+          node scripts/prepare-freestyle-preview.ts "$PREVIEW_SHA" "$PREVIEW_WORLD"
+          echo "Prepared $PREVIEW_WORLD snapshot for $PREVIEW_SHA. Every launch still creates a separate VM." >> "$GITHUB_STEP_SUMMARY"

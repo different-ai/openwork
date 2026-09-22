@@ -132,6 +132,19 @@ Anonymous report, JSON, and image requests must redirect to Vercel Authenticatio
 
 ## Interactive Freestyle previews
 
+The **Freestyle preview prewarm** workflow prepares both `app-web` and `acme-web`
+snapshots for each same-repository PR head targeting `dev`. Configure the repository
+secret `FREESTYLE_API_KEY` as well as the Vercel secret below. Fork and Dependabot
+PRs do not receive this credential. A manual workflow run prepares its selected ref.
+The CI runner checks out the reviewed controller pinned to an immutable commit, never
+the PR source. Only the guest VM fetches and executes PR code, without the provider
+credential. Update the controller pin after reviewing its code and dependencies.
+Each world/commit is serialized in CI; the provider snapshot cache and builder lock
+also deduplicate reruns and concurrent reviewer launches. Existing snapshots are
+reused until their seven-day expiry. Prewarming does not create a shared reviewer VM:
+each click still clones separately. ACME starts and seeds its services after cloning,
+so prewarming removes installation/build time, not all startup time.
+
 Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
 offers **Launch in Freestyle**. The server reads the commit from the stored report;
 the browser cannot select another revision. On the first launch it checks out that

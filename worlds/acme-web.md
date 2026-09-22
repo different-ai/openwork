@@ -82,9 +82,9 @@ pnpm world outputs acme-web --reveal
 pnpm world down acme-web
 ```
 
-The private review exposes grouped service links and **Reveal outputs** for demo
-passwords, bearer tokens and connection strings. **Copy outputs** copies masked
-values until reveal is enabled. Each HTTP service has its own access link; API
+The private review exposes grouped service links and visible demo passwords, service URLs, and expandable developer credentials.
+**Copy all connection details** always copies usable values; **Hide credentials**
+is available for screen sharing. Each HTTP service has its own access link; API
 clients can use the revealed preview cookie plus the service's bearer token.
 MySQL and Redis addresses are VM-local, not publicly reachable. Freestyle account
 credentials never appear in world outputs. All connections expire with the VM.

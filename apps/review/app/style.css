@@ -424,3 +424,23 @@ footer {
 .preview-outputs th:nth-child(2), .preview-outputs td:nth-child(2) { width: 22%; }
 .preview-outputs small, .preview-outputs td a { display: block; }
 .preview-outputs code { user-select: all; }
+
+/* The personal sandbox stays beside evidence, and moves above it on narrow screens. */
+.report { max-width: 1600px; display: grid; grid-template-columns: minmax(0, 1fr) 390px; column-gap: 40px; }
+.report > .intro, .report > .report-body, .report > footer { grid-column: 1; }
+.sandbox-sidebar { grid-column: 2; grid-row: 1 / span 3; border-left: 1px solid var(--border); padding: 40px 0 0 24px; min-width: 0; }
+.sandbox-sidebar .preview-launch { margin: 0; padding: 0; border: 0; }
+.sandbox-sidebar h2 { font-size: 20px; margin: 0; }
+.sandbox-sidebar h3 { font-size: 14px; margin: 0 0 12px; }
+.sandbox-sidebar select { max-width: 100%; }
+.sandbox-sidebar .preview-launch-actions { margin-top: 12px; flex-wrap: wrap; }
+.connection-group { margin-top: 24px; }
+.connection-field { padding: 10px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.connection-field code { display: block; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; user-select: all; margin-top: 6px; }
+.connection-field strong { font-size: 13px; }
+.connection-field a { text-decoration: underline; }
+.sandbox-sidebar .preview-launch-row { flex-wrap: wrap; gap: 8px; }
+@media (max-width: 1100px) {
+  .report { display: block; }
+  .sandbox-sidebar { border-left: 0; border-bottom: 1px solid var(--border); padding: 24px 0; }
+}

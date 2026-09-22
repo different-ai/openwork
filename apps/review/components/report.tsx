@@ -25,6 +25,9 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
   const evidenceById = new Map(report.evidence.map((item) => [item.id, item]));
   return (
     <main className="report">
+      <aside className="sandbox-sidebar" aria-label="Your sandbox">
+        <LaunchPreview id={id} connected={Boolean(process.env.FREESTYLE_API_KEY?.trim())} />
+      </aside>
       <div className="intro">
         <p className="eyebrow">
           Change verification <span> / {report.gitSha.slice(0, 7)}</span>
@@ -58,7 +61,6 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
             UTC
           </time>
         </p>
-        <LaunchPreview id={id} connected={Boolean(process.env.FREESTYLE_API_KEY?.trim())} />
         {(report.gaps.length > 0 || summary.pendingVisual > 0) && (
           <aside className="gaps">
             <strong>Still to verify</strong>
