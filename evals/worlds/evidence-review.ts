@@ -14,6 +14,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 /** Synthetic report inputs exercise the real publisher and production HTTP app. */
 export async function reviewWorld(
   environment: "preview" | "production" = "preview",
+  options: { connected?: boolean } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-review-world-"));
   const storage = join(directory, "reports");
@@ -199,7 +200,7 @@ export async function reviewWorld(
       env: {
         ...process.env,
         // This isolated HTTP fixture must never inherit live sandbox access.
-        FREESTYLE_API_KEY: "",
+        FREESTYLE_API_KEY: options.connected ? "synthetic-test-key" : "",
         OPENWORK_REVIEW_LOCAL_DIR: storage,
         VERCEL: "1",
         VERCEL_ENV: environment,
