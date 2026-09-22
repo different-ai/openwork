@@ -1,10 +1,11 @@
-import { InferenceProviderEditorScreen } from "../../../../_components/inference-provider-editor-screen";
+import { GatewayProviderForm } from "../../../../_components/gateway-provider-form";
 
+/** Old "/edit" links land on the same form: there is no separate edit mode. */
 export default async function EditGatewayProviderPage({
   params,
 }: {
   params: Promise<{ inferenceProviderId: string }>;
 }) {
   const { inferenceProviderId } = await params;
-  return <InferenceProviderEditorScreen inferenceProviderId={inferenceProviderId} />;
+  return <GatewayProviderForm inferenceProviderId={inferenceProviderId} />;
 }

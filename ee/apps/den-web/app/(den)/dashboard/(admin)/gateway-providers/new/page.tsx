@@ -1,5 +1,5 @@
-import { InferenceProviderEditorScreen } from "../../../_components/inference-provider-editor-screen";
+import { GatewayProviderCatalogScreen } from "../../../_components/gateway-provider-catalog-screen";
 
 export default function NewGatewayProviderPage() {
-  return <InferenceProviderEditorScreen />;
+  return <GatewayProviderCatalogScreen />;
 }

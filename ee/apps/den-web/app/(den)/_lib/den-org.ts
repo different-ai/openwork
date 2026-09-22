@@ -628,6 +628,11 @@ export function getNewGatewayProviderRoute(orgSlug?: string | null): string {
   return `${getGatewayProvidersRoute(orgSlug)}/new`;
 }
 
+/** The add form for one catalog provider, reached from "Add a provider". */
+export function getNewGatewayProviderForCatalogRoute(orgSlug: string | null | undefined, catalogProviderId: string): string {
+  return `${getNewGatewayProviderRoute(orgSlug)}/${encodeURIComponent(catalogProviderId)}`;
+}
+
 export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }

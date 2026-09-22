@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite } from "@openwork/types/den/gateway";
+import type { GatewayAccessGrantWrite, GatewayCredentialSetPatch, GatewayCredentialSetWrite, GatewayModelGroupWrite } from "@openwork/types/den/gateway";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import {
@@ -137,6 +137,36 @@ export async function saveGatewayResource(providerId: string, id: string | null,
     method: id ? "PATCH" : "POST", body: JSON.stringify(input.body),
   }, 20000);
   if (!response.ok) throw getRequestError(payload, response, `Could not save ${input.resource} (${response.status}).`);
+}
+
+/** Partial PATCH of one matrix entry; omitted fields (and stored secrets) are kept. */
+export async function patchGatewayResource(
+  providerId: string,
+  id: string,
+  input:
+    | { resource: "model-groups"; body: Partial<GatewayModelGroupWrite> }
+    | { resource: "credential-sets"; body: GatewayCredentialSetPatch },
+) {
+  const { response, payload } = await requestJson(
+    `/v1/inference-providers/${encodeURIComponent(providerId)}/${input.resource}/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: JSON.stringify(input.body) },
+    20000,
+  );
+  if (!response.ok) throw getRequestError(payload, response, `Could not save ${input.resource} (${response.status}).`);
+}
+
+/** Catalog models inside the provider's saved universe (all of them when it follows the catalog). */
+export async function requestGatewayCatalogModelIds(orgId: string, inferenceProviderId: string): Promise<string[]> {
+  const { response, payload } = await requestJson(
+    `/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}/models`,
+    { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } },
+    15000,
+  );
+  if (!response.ok) throw new Error(getErrorMessage(payload, "Could not load this provider's models."));
+  const models = typeof payload === "object" && payload !== null && "models" in payload && Array.isArray(payload.models) ? payload.models : [];
+  return models.flatMap((model: unknown) =>
+    typeof model === "object" && model !== null && "id" in model && typeof model.id === "string" ? [model.id] : [],
+  );
 }
 
 export async function deleteGatewayResource(providerId: string, resource: GatewayResourceWrite["resource"], id: string) {
