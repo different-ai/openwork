@@ -1,20 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { FreestyleApiError } from "freestyle";
-import { client, execChecked, findSnapshot, isMissing, snapshotSlug } from "./index.ts";
+import { client, execChecked, findSnapshot, isMissing, snapshotSlug, type PreviewWorld } from "./index.ts";
 
 /** Build once per exact source revision, then clone the running, empty app. */
-export async function ensureSnapshot(sha: string, api = client(), log: (message: string) => void = () => {}) {
-  const slug = snapshotSlug(sha);
+export async function ensureSnapshot(sha: string, api = client(), log: (message: string) => void = () => {}, world: PreviewWorld = "app-web") {
+  const slug = snapshotSlug(sha, world);
   const deadline = Date.now() + 11 * 60_000;
   // The provider's unique slug is the distributed lock: works across Vercel instances.
   while (Date.now() < deadline) {
-    const existing = await findSnapshot(sha, api);
+    const existing = await findSnapshot(sha, api, world);
     if (existing) return existing;
     let created;
     try {
       created = await api.vms.create({
-        slug: `ow-build-v1-${sha}`, snapshotId: "freestyle/ubuntu",
+        slug: `ow-build-${world}-v2-${sha}`, snapshotId: "freestyle/ubuntu",
         displayName: `OpenWork snapshot ${sha.slice(0, 7)}`, ttlSeconds: 1800,
         metadata: { kind: "openwork-snapshot-builder-v1", gitSha: sha },
         firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
@@ -22,12 +22,12 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
     } catch (error) {
       if (!(error instanceof FreestyleApiError) || error.status !== 409) throw error;
       // Capacity failures also use 409. Only wait when our builder actually exists.
-      const builder = await api.vms.get(`ow-build-v1-${sha}`).catch((cause: unknown) => {
+      const builder = await api.vms.get(`ow-build-${world}-v2-${sha}`).catch((cause: unknown) => {
         if (isMissing(cause)) return null;
         throw cause;
       });
       if (!builder) {
-        const completed = await findSnapshot(sha, api);
+        const completed = await findSnapshot(sha, api, world);
         if (completed) return completed;
         throw error;
       }
@@ -40,7 +40,8 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
       log(`Building snapshot for ${sha} in ${vm.id}`);
       await execChecked(vm, "mkdir -p /opt/openwork-preview");
       await vm.fs.writeTextFile("/opt/openwork-preview/gateway.mjs", await readFile(new URL("./gateway.mjs", import.meta.url), "utf8"));
-      await vm.fs.writeTextFile("/opt/openwork-preview/runtime.mjs", await readFile(new URL("./runtime.mjs", import.meta.url), "utf8"));
+      await vm.fs.writeTextFile("/opt/openwork-preview/runtime.mjs", await readFile(new URL(world === "acme-web" ? "./acme-runtime.mjs" : "./runtime.mjs", import.meta.url), "utf8"));
+      await vm.fs.writeTextFile("/opt/openwork-preview/health.mjs", await readFile(new URL("./health.mjs", import.meta.url), "utf8"));
       // Only public repository bytes enter the VM. No host credentials or environment are forwarded.
       const setup = `#!/bin/bash
 set -euo pipefail
@@ -54,7 +55,14 @@ git checkout --detach FETCH_HEAD
 test "$(git rev-parse HEAD)" = "${sha}"
 corepack enable
 corepack prepare pnpm@11.4.0 --activate
-pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world...
+${world === "acme-web" ? `apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server
+systemctl enable --now mysql redis-server
+mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"
+pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway...
+pnpm --dir evals install --frozen-lockfile --ignore-scripts
+pnpm --filter @openwork-ee/den-db build
+pnpm --filter @openwork/email build` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
 pnpm --filter @openwork/types build
 pnpm --filter @openwork/sdk build
 pnpm --filter @openwork/enterprise-mcp-client build
@@ -65,9 +73,8 @@ node /opt/openwork-preview/tools/node_modules/opencode-ai/postinstall.mjs
 export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
 opencode --version
 systemctl daemon-reload
-systemctl start openwork-preview-runtime
+${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null" : "mysqladmin -uroot -ppassword ping\nredis-cli ping"}
 systemctl enable --now openwork-preview-gateway
-curl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null
 touch /opt/openwork-preview/ready
 `;
       await vm.fs.writeTextFile("/opt/openwork-preview/setup.sh", setup);
@@ -76,8 +83,8 @@ touch /opt/openwork-preview/ready
       await vm.fs.writeTextFile("/etc/systemd/system/openwork-preview-runtime.service", `[Unit]
 Description=OpenWork isolated preview runtime
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=${world === "app-web" ? "oneshot" : "simple"}
+RemainAfterExit=${world === "app-web" ? "yes" : "no"}
 WorkingDirectory=/workspace
 Environment=PATH=/opt/openwork-preview/tools/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/usr/bin/env node /opt/openwork-preview/runtime.mjs

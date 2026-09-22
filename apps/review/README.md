@@ -166,7 +166,7 @@ pnpm world down app-web
 
 World teardown deletes its owned VM, with a resource ledger for interrupted
 teardown. The access URL is a secret world output. Freestyle placement currently
-supports `app-web`; Desktop and Den recipes retain their existing placements.
+supports `app-web` and the co-located `acme-web` demo. The reviewer offers a world selector and grouped, explicitly revealed connection outputs. Desktop recipes retain their existing placements.
 
 Validate with `pnpm --filter @openwork/freestyle test`, the world package tests,
 and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,

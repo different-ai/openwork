@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./builder": "./src/builder.ts"
+    "./builder": "./src/builder.ts",
+    "./outputs": "./src/outputs.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts test/*.test.mjs"

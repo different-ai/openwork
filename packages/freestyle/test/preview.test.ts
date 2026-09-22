@@ -86,3 +86,18 @@ test("an existing immutable snapshot is reused without creating a builder", asyn
   assert.equal((await ensureSnapshot(sha, api)).id, "sh-template");
   assert.equal(creates.length, 0);
 });
+
+test("snapshot identity separates worlds and rejects unknown recipes", async () => {
+  const { previewWorld } = await import("../src/index.ts");
+  assert.notEqual(snapshotSlug(sha, "app-web"), snapshotSlug(sha, "acme-web"));
+  assert.throws(() => previewWorld("arbitrary-command"), /Unsupported/);
+});
+
+test("world outputs accept disposable credentials but reject malformed values", async () => {
+  const { parsePreviewOutputs } = await import("../src/outputs.ts");
+  assert.deepEqual(parsePreviewOutputs({ password: { value: "synthetic", secret: true, group: "Accounts" } }), {
+    password: { value: "synthetic", secret: true, group: "Accounts" },
+  });
+  assert.throws(() => parsePreviewOutputs({ password: { value: {}, secret: true } }), /Invalid/);
+  assert.throws(() => parsePreviewOutputs({ password: { value: "synthetic", secret: "false" } }), /Invalid/);
+});

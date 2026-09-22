@@ -416,3 +416,11 @@ footer {
     scroll-behavior: auto;
   }
 }
+
+.preview-outputs { margin-top: 1rem; }
+.preview-outputs table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.preview-outputs th, .preview-outputs td { text-align: left; vertical-align: top; padding: .5rem; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.preview-outputs th:first-child, .preview-outputs td:first-child { width: 18%; }
+.preview-outputs th:nth-child(2), .preview-outputs td:nth-child(2) { width: 22%; }
+.preview-outputs small, .preview-outputs td a { display: block; }
+.preview-outputs code { user-select: all; }

@@ -1,6 +1,6 @@
 import { readReview } from "@openwork/review/storage";
 import { ensureSnapshot } from "@openwork/freestyle/builder";
-import { launchPreview } from "@openwork/freestyle";
+import { launchPreview, previewWorld } from "@openwork/freestyle";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -25,10 +25,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   const report = await readReview(id);
   if (!report) return Response.json({ error: "Review not found." }, { status: 404, headers });
+  let world;
+  try {
+    const body: unknown = await request.text().then((text) => text ? JSON.parse(text) : {});
+    world = previewWorld(typeof body === "object" && body !== null && "world" in body ? body.world : "app-web");
+  } catch { return Response.json({ error: "Choose OpenWork web or ACME web." }, { status: 400, headers }); }
   try {
     // The immutable stored report, never request input, chooses the source commit.
-    await ensureSnapshot(report.gitSha);
-    const preview = await launchPreview({ gitSha: report.gitSha, reportId: id });
+    await ensureSnapshot(report.gitSha, undefined, undefined, world);
+    const preview = await launchPreview({ gitSha: report.gitSha, reportId: id, world });
     return Response.json(preview, { status: 201, headers });
   } catch (error) {
     // Do not serialize provider responses, logs, environment, or access links.

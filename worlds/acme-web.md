@@ -64,7 +64,27 @@ Tests can import `bootAcmeWeb` and `probeAcmeGateway` and own teardown with an
 pnpm world down acme-web --stage gateway-demo
 ```
 
-This world currently runs co-located (`--place local`), including inside a
-prepared Daytona machine. Host-driven `--place daytona` provisioning is not
-implemented. It exercises organization AI Gateway providers, not the separate
+This world runs co-located (`--place local`) or inside a private Freestyle VM.
+Host-driven `--place daytona` provisioning is not implemented. It exercises organization AI Gateway providers, not the separate
 OpenWork Models subscription/credit-billing flow.
+
+## Private Freestyle review
+
+The reviewer can launch **ACME web · Full stack** from the report's exact commit.
+Its snapshot prepares the repository, MySQL and Redis; each clone boots and seeds
+its own full world, then verifies a real OpenCode request through AI Gateway.
+The model upstream alone is deterministic. This is an isolated demo, not production
+accounts or billing. Initial preparation can take several minutes.
+
+```sh
+pnpm world up acme-web --place freestyle --detach --timeout 800000 -- --ref <full-pushed-sha>
+pnpm world outputs acme-web --reveal
+pnpm world down acme-web
+```
+
+The private review exposes grouped service links and **Reveal outputs** for demo
+passwords, bearer tokens and connection strings. **Copy outputs** copies masked
+values until reveal is enabled. Each HTTP service has its own access link; API
+clients can use the revealed preview cookie plus the service's bearer token.
+MySQL and Redis addresses are VM-local, not publicly reachable. Freestyle account
+credentials never appear in world outputs. All connections expire with the VM.

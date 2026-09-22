@@ -23,11 +23,21 @@ async function access(req) {
   } catch { return null; }
 }
 
-function headers(req) {
+async function target(req, auth) {
+  if (!auth?.config.origins) return { hostname: "127.0.0.1", port: upstreamPort };
+  const name = Object.entries(auth.config.origins).find(([, origin]) => origin === `https://${req.headers.host}`)?.[0];
+  if (!name) throw new Error("Unknown preview service");
+  const services = JSON.parse(await readFile("/opt/openwork-preview/services.json", "utf8"));
+  const url = new URL(services[name]);
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") throw new Error("Invalid local service");
+  return { hostname: "127.0.0.1", port: Number(url.port) };
+}
+
+function headers(req, port = upstreamPort) {
   // The access credential belongs to this gateway, never to the app or its logs.
   const { cookie, ...rest } = req.headers;
   const remaining = cookie?.split(";").filter((part) => !part.trim().startsWith(`${cookieName}=`)).join(";");
-  return { ...rest, ...(remaining ? { cookie: remaining } : {}), host: `127.0.0.1:${upstreamPort}` };
+  return { ...rest, ...(remaining ? { cookie: remaining } : {}), host: `127.0.0.1:${port}`, "x-forwarded-host": req.headers.host, "x-forwarded-proto": "https" };
 }
 
 export const server = createServer(async (req, res) => {
@@ -51,7 +61,10 @@ export const server = createServer(async (req, res) => {
     res.end("Open this sandbox from your review launch link. If it has expired, launch a fresh sandbox.");
     return;
   }
-  const upstream = request({ hostname: "127.0.0.1", port: upstreamPort, path: req.url, method: req.method, headers: headers(req) }, (response) => {
+  let destination;
+  try { destination = await target(req, auth); }
+  catch { res.writeHead(503); res.end("This world is not ready. Try launching again from the review."); return; }
+  const upstream = request({ ...destination, path: req.url, method: req.method, headers: headers(req, destination.port) }, (response) => {
     res.writeHead(response.statusCode ?? 502, { ...response.headers, "cache-control": "private, no-store", "referrer-policy": "no-referrer" });
     response.pipe(res);
   });
@@ -66,7 +79,10 @@ server.on("upgrade", async (req, socket, head) => {
     socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     return;
   }
-  const upstream = request({ hostname: "127.0.0.1", port: upstreamPort, path: req.url, headers: headers(req) });
+  let destination;
+  try { destination = await target(req, auth); }
+  catch { socket.destroy(); return; }
+  const upstream = request({ ...destination, path: req.url, headers: headers(req, destination.port) });
   upstream.on("upgrade", (response, peer, upstreamHead) => {
     socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join("\r\n")}\r\n\r\n`);
     if (head.length) peer.write(head);
