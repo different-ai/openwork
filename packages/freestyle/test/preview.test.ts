@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Freestyle } from "freestyle";
-import { deletePreview, findSnapshot, launchPreview, snapshotSlug } from "../src/index.ts";
+import { deletePreview, findSnapshot, launchPreview, snapshotSlug, waitForPublicAccess } from "../src/index.ts";
 import { ensureSnapshot } from "../src/builder.ts";
 
 const sha = "a".repeat(40);
@@ -52,6 +52,34 @@ test("failed public readiness cleans up the newly allocated VM", async () => {
   const { api, deleted } = mockApi();
   await assert.rejects(launchPreview({ gitSha: sha }, api, async () => new Response(null, { status: 401 })), /could not be reached/);
   assert.deepEqual(deleted, ["/v5/vms/vm-1"]);
+});
+
+test("new public routes can recover from propagation errors without allocating another VM", async () => {
+  const { api, creates, deleted } = mockApi();
+  let attempts = 0;
+  await launchPreview({ gitSha: sha }, api, async () => {
+    attempts++;
+    if (attempts === 1) return new Response(null, { status: 502 });
+    return reachable("https://unused.example");
+  });
+  assert.equal(attempts, 2);
+  assert.equal(creates.length, 1);
+  assert.deepEqual(deleted, []);
+});
+
+test("public readiness retries are bounded and do not conceal denied access", async () => {
+  let attempts = 0;
+  await assert.rejects(waitForPublicAccess("https://unused.example", async () => {
+    attempts++;
+    throw new TypeError("fetch failed");
+  }, async () => undefined), /Public sandbox readiness failed/);
+  assert.equal(attempts, 8);
+  attempts = 0;
+  await assert.rejects(waitForPublicAccess("https://unused.example", async () => {
+    attempts++;
+    return new Response(null, { status: 401 });
+  }, async () => undefined), /HTTP 401/);
+  assert.equal(attempts, 1);
 });
 
 test("unknown snapshots and invalid revisions never allocate VMs", async () => {

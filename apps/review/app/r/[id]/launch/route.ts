@@ -1,6 +1,6 @@
 import { readReview } from "@openwork/review/storage";
 import { ensureSnapshot } from "@openwork/freestyle/builder";
-import { launchPreview, previewWorld } from "@openwork/freestyle";
+import { launchPreview, previewWorld, PreviewLaunchError } from "@openwork/freestyle";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -37,7 +37,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json(preview, { status: 201, headers });
   } catch (error) {
     // Do not serialize provider responses, logs, environment, or access links.
-    console.error("Freestyle review launch failed", { reportId: id, error: error instanceof Error ? error.name : "UnknownError" });
+    console.error("Freestyle review launch failed", {
+      reportId: id, world, error: error instanceof Error ? error.name : "UnknownError",
+      ...(error instanceof PreviewLaunchError ? { stage: error.stage, vmId: error.vmId,
+        // Only these locally constructed errors have messages safe for logs.
+        reason: error.cause instanceof Error && /^(?:Public sandbox readiness failed \(HTTP |Freestyle guest command failed \()/.test(error.cause.message) ? error.cause.message : undefined,
+      } : {}),
+    });
     return Response.json({ error: "The sandbox could not launch. Try again; if it continues, ask the review app owner to check Freestyle." }, { status: 502, headers });
   }
 }
