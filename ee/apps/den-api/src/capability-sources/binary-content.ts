@@ -10,6 +10,28 @@ export function truncateText(text: string, maxCharacters: number): { text: strin
   return { text: text.slice(0, maxCharacters), truncated: true }
 }
 
+export type TextWindow = {
+  text: string
+  offset: number
+  totalCharacters: number
+  nextOffset: number | null
+  truncated: boolean
+}
+
+/** Returns one page of text so long files can be read in bounded windows. */
+export function textWindow(text: string, offset: number, maxCharacters: number): TextWindow {
+  const start = Math.min(Math.max(0, offset), text.length)
+  const end = Math.min(text.length, start + Math.max(1, maxCharacters))
+  const nextOffset = end < text.length ? end : null
+  return {
+    text: text.slice(start, end),
+    offset: start,
+    totalCharacters: text.length,
+    nextOffset,
+    truncated: nextOffset !== null,
+  }
+}
+
 export function decodeFileContent(
   bytes: Uint8Array,
   options: { maxTextCharacters: number; maxBinaryBytes: number },
