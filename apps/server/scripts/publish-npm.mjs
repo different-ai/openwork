@@ -1,12 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SERVER_BINARY_TARGETS, serverBinaryName } from "../bin/platform.mjs";
 
-async function main() {
-  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const outputRoot = resolve(packageRoot, "dist/npm");
+export async function stageNpmPackage(packageRoot, outputRoot = resolve(packageRoot, "dist/npm")) {
   const sourcePackage = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8")
   );
@@ -28,14 +27,17 @@ async function main() {
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(resolve(outputRoot, "bin"), { recursive: true });
   await mkdir(resolve(outputRoot, "dist/bin"), { recursive: true });
-  await cp(
-    resolve(packageRoot, "bin/openwork-server.mjs"),
-    resolve(outputRoot, "bin/openwork-server.mjs")
-  );
-  await cp(
-    resolve(packageRoot, "dist/bin/openwork-server"),
-    resolve(outputRoot, "dist/bin/openwork-server")
-  );
+  await cp(resolve(packageRoot, "bin/openwork-server.mjs"), resolve(outputRoot, "bin/openwork-server.mjs"));
+  await cp(resolve(packageRoot, "bin/platform.mjs"), resolve(outputRoot, "bin/platform.mjs"));
+  for (const { platform, arch } of SERVER_BINARY_TARGETS) {
+    const binaryName = serverBinaryName(platform, arch);
+    const source = resolve(packageRoot, "dist/bin", binaryName);
+    const info = await stat(source);
+    if (!info.isFile() || info.size < 1_000_000) {
+      throw new Error(`Missing or incomplete OpenWork server binary: ${binaryName}`);
+    }
+    await cp(source, resolve(outputRoot, "dist/bin", binaryName));
+  }
   // `openwork-server web` serves this bundle and hands these plugins to the engine.
   const webDist = resolve(packageRoot, "..", "app", "dist");
   if (!existsSync(resolve(webDist, "index.html"))) {
@@ -55,7 +57,12 @@ async function main() {
     resolve(outputRoot, "package.json"),
     `${JSON.stringify(publishedPackage, null, 2)}\n`
   );
+  return outputRoot;
+}
 
+async function main() {
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const outputRoot = await stageNpmPackage(packageRoot);
   const args = process.argv.slice(2);
   if (args.includes("--prepare-only")) return;
 
@@ -71,7 +78,9 @@ async function main() {
   process.exit(result.status ?? 1);
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}

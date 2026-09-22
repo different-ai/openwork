@@ -1176,14 +1176,59 @@ jobs:
           path: apps/server/dist/npm
           if-no-files-found: error
 
+  verify-npm-hosts:
+    name: Verify npm server (${{ matrix.target }})
+    needs: [resolve-release, prepare-npm]
+    if: needs.prepare-npm.outputs.publish_server == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x64
+            arch: x64
+          - os: macos-15-intel
+            target: darwin-x64
+            arch: x64
+          - os: macos-15
+            target: darwin-arm64
+            arch: arm64
+          - os: windows-2022
+            target: windows-x64
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Download npm package
+        uses: actions/download-artifact@v4
+        with:
+          name: openwork-server-npm-${{ needs.resolve-release.outputs.release_version }}
+          path: ${{ runner.temp }}/openwork-server-npm
+      - name: Run packaged binary on its host
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-release.outputs.release_version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.arch')" = "${{ matrix.arch }}"
+          package="$RUNNER_TEMP/openwork-server-npm"
+          chmod 755 "$package/dist/bin/openwork-server-bun-$TARGET"*
+          actual="$(node "$package/bin/openwork-server.mjs" --version)"
+          test "$actual" = "$RELEASE_VERSION"
+
   publish-npm:
     name: Publish openwork-server
-    needs: [resolve-release, verify-release, prepare-npm]
+    needs: [resolve-release, verify-release, prepare-npm, verify-npm-hosts]
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       needs.prepare-npm.result == 'success' &&
+      needs.verify-npm-hosts.result == 'success' &&
       needs.prepare-npm.outputs.publish_server == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -1208,8 +1253,10 @@ jobs:
         run: |
           set -euo pipefail
           chmod 755 "$RUNNER_TEMP/openwork-server-npm/bin/openwork-server.mjs" \
-            "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server"
-          test -x "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server"
+            "$RUNNER_TEMP/openwork-server-npm"/dist/bin/openwork-server-bun-*
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 windows-arm64.exe windows-x64.exe; do
+            test -x "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server-bun-$target"
+          done
 
       - name: Pack and verify executable permissions
         id: npm-pack
@@ -1222,7 +1269,12 @@ jobs:
           unpacked="$(mktemp -d)"
           tar -xzf "$tarball" -C "$unpacked"
           test -x "$unpacked/package/bin/openwork-server.mjs"
-          test -x "$unpacked/package/dist/bin/openwork-server"
+          test -f "$unpacked/package/bin/platform.mjs"
+          test -f "$unpacked/package/web/index.html"
+          test -d "$unpacked/package/dist/opencode-plugins"
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 windows-arm64.exe windows-x64.exe; do
+            test -x "$unpacked/package/dist/bin/openwork-server-bun-$target"
+          done
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Publish openwork-server
