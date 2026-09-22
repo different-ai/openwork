@@ -6,7 +6,9 @@ import { browserBackgroundWorld } from "../worlds/browser-webmcp.ts";
 
 const test = spec.world(browserBackgroundWorld);
 const lifecycleTest = spec.world((seed) => createBuiltinBrowserWorld(seed));
-const linkTest = spec.world(transcriptLinkWorld);
+const linkTest = spec.world(transcriptLinkWorld, {
+  resources: { surfaces: ["desktop"], services: [], nativeReason: "Link clicks use Electron's preload, native context menu, embedded browser and OS opener." },
+});
 const artifactTest = spec.world((seed) => createBuiltinBrowserWorld(seed));
 const tabButton = (name: string): Target => ({ role: "button", label: `Select tab: Project ${name}` });
 const lifecycleTabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
@@ -456,7 +458,7 @@ test("a background conversation reads its owned page silently and requests atten
   });
 });
 
-linkTest("a transcript link's menu copies its exact address and opens only its own conversation's browser", async ({ world, user, agent, step }) => {
+linkTest("a member opens transcript links in their saved destination and can override it per link", async ({ world, user, agent, probe, step, evidence }) => {
   const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
   const link: Target = { role: "link", label: world.linkUrl };
   const menuItem = (label: string): Target => ({ role: "menuitem", label });
@@ -507,11 +509,10 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
   await step("Right-click and Escape leave the transcript and every browser page unchanged", async () => {
     const popup = await openMenu(link);
     const entries = labels(popup);
-    expect(entries.slice(0, 2)).toEqual(["Open in OpenWork", "Open in Default Browser"]);
-    expect(entries.at(-1)).toBe("Copy Link Address");
-    for (const installed of entries.slice(2, -1)) expect(installed).toMatch(/^Open in .+/);
+    expect(entries).toEqual(["Open in OpenWork", "Open in external browser", "Copy Link Address"]);
     expect(entries).not.toContain("Edit message");
     expect(popup.items.filter(item => item.type === "item").every(item => item.enabled)).toBe(true);
+    evidence.recordAssertionEvidence("Only two link destinations are offered", entries.join("; "), true);
     // A native popup renders no HTML menu in the app document.
     await user.notSee(menuItem("Open in OpenWork"));
     await user.notSee(menuItem("Edit message"));
@@ -536,7 +537,9 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     expect(entries).toEqual(expect.arrayContaining(["Edit message", "Copy"]));
     expect(entries).not.toContain("Open in OpenWork");
     await user.notSee(menuItem("Edit message"));
-    expect(await world.dismissMenu()).toBe(true);
+    // macOS can dismiss the native popup during the DOM absence observation.
+    // Closing an already-dismissed popup is still a cancellation, not a choice.
+    await world.dismissMenu();
     expect((await menuOpen(false)).last).toMatchObject({ selectedId: null });
     await unchanged();
   });
@@ -612,6 +615,8 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     await user.notSee({ role: "button", label: "Allow for this thread" });
     await user.notSee({ role: "button", label: "Take over" });
     await user.notSee({ role: "button", label: "Resume browser" });
+    expect(await world.externalOpens()).toEqual([]);
+    await user.screenshot();
     if (!state.activeTabId) throw new Error("The manual link did not select a tab.");
     return state.activeTabId;
   });
@@ -630,6 +635,82 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
     expect(typeof observed.text).toBe("string");
     await user.notSee({ role: "button", label: "Allow for this thread" });
     await user.see({ role: "button", label: "Take over" });
+  });
+
+  const destination: Target = { role: "combobox", label: "Open links in" };
+  const preferences = async () => {
+    await agent.run("settings.panel.open", { panel: "preferences" });
+    await user.see(destination);
+  };
+  const savedDestination = async () => {
+    const prefs = await probe.storage("openwork.preferences");
+    return prefs && typeof prefs === "object" ? Reflect.get(prefs, "linkOpenDestination") : null;
+  };
+
+  await step("before: links open in OpenWork by default", async () => {
+    await preferences();
+    await user.see(destination, { text: /OpenWork/ });
+    expect(await savedDestination()).toBe("openwork");
+    await user.screenshot();
+  });
+
+  await step("after: choosing External browser with the keyboard survives a reload", async () => {
+    await user.click(destination);
+    await user.see({ role: "option", label: "External browser" });
+    await user.press("End");
+    await user.press("Enter");
+    await user.see(destination, { text: /External browser/ });
+    expect(await savedDestination()).toBe("external");
+    await user.reload();
+    // Wait until the setting is interactive, not merely mounted under startup.
+    await user.hover(destination);
+    await user.see(destination, { text: /External browser/ });
+    expect(await savedDestination()).toBe("external");
+    await user.screenshot();
+  });
+
+  await step("a normal click opens the external browser once and leaves every OpenWork tab alone", async () => {
+    await user.click({ role: "button", label: "Back to app" });
+    await user.see(link);
+    const before = await world.readBrowserState();
+    await user.click(link);
+    await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 1, label: "the external browser receives one link" });
+    expect(await world.externalOpens()).toEqual([world.linkUrl]);
+    expect((await world.readBrowserState()).tabs).toEqual(before.tabs);
+    expect((await world.nativeMenu()).open).toBe(false);
+    await user.see(link);
+    await user.screenshot();
+  });
+
+  await step("Open in OpenWork overrides the saved external destination for just this link", async () => {
+    const before = await world.readBrowserState();
+    await choose(await openMenu(link), "Open in OpenWork");
+    const after = await eventually(() => world.readBrowserState(), {
+      within: 15_000, until: state => state.tabs.length === before.tabs.length + 1,
+      label: "the one-time OpenWork choice adds exactly one owned tab",
+    });
+    expect(after.tabs.filter(tab => before.tabs.some(previous => previous.id === tab.id))).toEqual(before.tabs);
+    expect(after.tabs.find(tab => !before.tabs.some(previous => previous.id === tab.id))).toMatchObject({ url: world.linkUrl, ownerSessionId: world.reading.sessionId });
+    expect(await world.externalOpens()).toEqual([world.linkUrl]);
+    expect(await savedDestination()).toBe("external");
+    await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
+    await user.screenshot();
+  });
+
+  await step("Open in external browser overrides OpenWork without changing the saved default", async () => {
+    await preferences();
+    await user.click(destination);
+    await user.click({ role: "option", label: "OpenWork" });
+    expect(await savedDestination()).toBe("openwork");
+    await user.click({ role: "button", label: "Back to app" });
+    const before = await world.readBrowserState();
+    await choose(await openMenu(link), "Open in external browser");
+    await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 2, label: "the external override opens exactly once" });
+    expect(await world.externalOpens()).toEqual([world.linkUrl, world.linkUrl]);
+    expect((await world.readBrowserState()).tabs).toEqual(before.tabs);
+    expect(await savedDestination()).toBe("openwork");
+    await user.see(link);
+    await user.screenshot();
   });
 });
 

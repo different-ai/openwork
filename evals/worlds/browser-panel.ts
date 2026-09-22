@@ -3,6 +3,7 @@ import { control, readBrowserTabMetrics } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { browserScriptValue, runBrowserHost } from "../packages/env/src/browser-task.ts";
 
 export const CAPTURE_VIEWPORT = { width: 1440, height: 900 };
 
@@ -538,8 +539,10 @@ export async function browserLoginSyncWorld(seed: Seed) {
 
 /** Arrange a persisted transcript link and its neighboring conversation. */
 export async function transcriptLinkWorld(seed: Seed) {
-  const world = await createBuiltinBrowserWorld(seed);
+  const world = await createBuiltinBrowserWorld(seed, { OPENWORK_DEV_MODE: "1", OPENWORK_EVAL_CAPTURE_EXTERNAL_OPENS: "1" });
   const { app, workspace } = world;
+  const profileDir = app.handle.profileDir;
+  if (!profileDir) throw new Error("The link fixture desktop did not expose its isolated profile.");
   const reading = { ...world.session, title: "Reading a shared link" };
   await world.renameSession(reading.sessionId, reading.title);
   const neighbor = await world.openSession("Unrelated browser research");
@@ -572,6 +575,23 @@ export async function transcriptLinkWorld(seed: Seed) {
     neighborTab,
     linkUrl,
     note,
+
+    // Observe the shipping external-open boundary using its existing dev-only
+    // capture, so the test never opens a browser in the person's real profile.
+    async externalOpens(): Promise<string[]> {
+      const text = await runBrowserHost(app, `
+        const { readFile } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        try { return await readFile(join(${browserScriptValue(profileDir)}, "electron-userdata", "openwork-eval-external-opens.jsonl"), "utf8"); }
+        catch (error) { if (error.code === "ENOENT") return ""; throw error; }
+      `);
+      if (typeof text !== "string") throw new Error("External-open capture did not return text.");
+      return text.trim() ? text.trim().split("\n").map((line) => {
+        const value: unknown = JSON.parse(line);
+        if (typeof value !== "string") throw new Error("Invalid external-open capture.");
+        return value;
+      }) : [];
+    },
 
     async readLink() {
       return evaluate(app.client, browserScript((linkUrl) => {
