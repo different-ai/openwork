@@ -1,5 +1,6 @@
 import { summarizeReview } from "@openwork/review";
 import type { ReviewEvidence, ReviewReport } from "@openwork/review";
+import { LaunchPreview } from "./launch-preview";
 
 function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
   return (
@@ -24,6 +25,9 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
   const evidenceById = new Map(report.evidence.map((item) => [item.id, item]));
   return (
     <main className="report">
+      <aside className="sandbox-sidebar" aria-label="Your sandbox">
+        <LaunchPreview id={id} connected={Boolean(process.env.FREESTYLE_API_KEY?.trim())} />
+      </aside>
       <div className="intro">
         <p className="eyebrow">
           Change verification <span> / {report.gitSha.slice(0, 7)}</span>

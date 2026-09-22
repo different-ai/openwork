@@ -64,7 +64,32 @@ Tests can import `bootAcmeWeb` and `probeAcmeGateway` and own teardown with an
 pnpm world down acme-web --stage gateway-demo
 ```
 
-This world currently runs co-located (`--place local`), including inside a
-prepared Daytona machine. Host-driven `--place daytona` provisioning is not
-implemented. It exercises organization AI Gateway providers, not the separate
+This world runs co-located (`--place local`) or inside a private Freestyle VM.
+Host-driven `--place daytona` provisioning is not implemented. It exercises organization AI Gateway providers, not the separate
 OpenWork Models subscription/credit-billing flow.
+
+## Private Freestyle review
+
+The reviewer can launch **ACME web · Full stack** from the report's exact commit.
+CI starts and seeds the whole world, enables AI Gateway in the owner sidebar,
+verifies an OpenCode request through the gateway, and warms browser entry points
+before capturing the running memory snapshot. Each clone resumes those processes
+with independent database and file state; it does not reseed or restart them.
+The private edge maps the snapshot’s virtual origins to each clone’s unique URLs.
+Launch checks restored services and renews expired demo sessions when necessary.
+The model upstream alone is deterministic. This is an isolated demo, not production
+accounts or billing. Initial preparation can take several minutes.
+
+```sh
+pnpm world up acme-web --place freestyle --detach --timeout 800000 -- --ref <full-pushed-sha>
+pnpm world outputs acme-web --reveal
+pnpm world down acme-web
+```
+
+The private review shows personal service URLs and demo sign-in credentials by
+default. Developer tokens and connections expand below. Copying always returns
+usable values; Hide credentials is available for screen sharing. Each HTTP service
+has its own access link; API clients can use the preview cookie plus the service's
+bearer token. MySQL and Redis addresses are VM-local, not publicly reachable.
+Freestyle account credentials never appear in world outputs. All connections expire
+with the VM.

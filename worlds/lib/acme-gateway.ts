@@ -120,6 +120,10 @@ export async function seedAcmeGateway(admin: DenSession, upstream: Awaited<Retur
   if (!orgs.response.ok || !org || typeof org.id !== "string") throw new Error("Acme organization missing.");
   const orgId = org.id;
   const orgHeaders = { ...headers, "x-openwork-org-id": orgId };
+  const capability = await denFetch(admin, `/v1/admin/organizations/${orgId}/capabilities`, {
+    method: "PUT", headers, body: JSON.stringify({ capabilities: { gatewayDashboard: true } }),
+  });
+  if (!capability.response.ok) throw new Error(`Acme gateway dashboard setup failed: HTTP ${capability.response.status}`);
   const created = await denFetch(admin, "/v1/inference-providers", {
     method: "POST", headers: orgHeaders,
     body: JSON.stringify({ name: "Acme AI Gateway", providerId: "anthropic", modelIds: [ACME_MODEL],
