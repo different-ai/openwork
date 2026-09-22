@@ -25,7 +25,7 @@ for (const mismatch of [false, true]) {
 
     await step(mismatch ? "the actual IdP identity cannot claim another person's invitation" : "the actual IdP identity joins once, without an email OTP or role downgrade", async () => {
       if (mismatch) {
-        await user.see({ text: "Switch accounts to continue." }, { timeoutMs: 90_000 });
+        await user.see({ text: /Switch accounts to continue\./ }, { timeoutMs: 90_000 });
         await user.see({ text: world.mismatchedEmail });
         await user.notSee({ role: "button", label: /^Join / });
         const org = await witnesses.org(world.organizationId);

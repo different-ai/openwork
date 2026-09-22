@@ -23,6 +23,16 @@ test("organization invitation HTML focuses on joining without desktop download p
   expect(html).not.toContain(downloadUrl)
 })
 
+test("verification email includes an absolute code-entry recovery link", async () => {
+  const recoveryUrl = "https://app.example.test/verify?email=member%40example.test"
+  const html = await renderEmailHtml("verification", { verificationCode: "123456", recoveryUrl })
+  expect(htmlText(html)).toContain("123456")
+  expect(html).toContain(`href="${recoveryUrl}"`)
+  expect(htmlText(html)).toContain("Return to enter your verification code")
+  expect(new URL(recoveryUrl).protocol).toBe("https:")
+  expect(new URL(recoveryUrl).searchParams.has("token")).toBe(false)
+})
+
 function htmlText(value: string) {
   return DomUtils.textContent(parseDocument(value))
     .replace(/\s+/g, " ")

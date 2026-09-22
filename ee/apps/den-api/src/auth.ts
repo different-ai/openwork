@@ -391,7 +391,7 @@ async function hasPendingInvitationForEmail(input: { invitationIdOrToken: string
       sql`(${schema.InvitationTable.id} = ${input.invitationIdOrToken} or ${schema.InvitationTable.inviteToken} = ${input.invitationIdOrToken})`,
       eq(schema.InvitationTable.status, "pending"),
       gt(schema.InvitationTable.expiresAt, new Date()),
-      sql`lower(${schema.InvitationTable.email}) = ${input.email.trim().toLowerCase()}`,
+      sql`lower(${schema.InvitationTable.email}) = ${normalizeLoginEmail(input.email)}`,
     ))
     .limit(1);
 
@@ -1102,6 +1102,14 @@ export const auth = betterAuth({
   emailVerification: {
     sendOnSignUp: env.requireEmailVerification,
     sendOnSignIn: env.requireEmailVerification,
+    autoSignInAfterVerification: true,
+    beforeEmailVerification: async (user) => {
+      if (await findEnterpriseAuthRequirementForEmail(normalizeLoginEmail(user.email))) {
+        throw new APIError("FORBIDDEN", {
+          message: "This account is managed by an organization. Use SSO to sign in.",
+        });
+      }
+    },
     afterEmailVerification: async (user) => {
       await syncDenSignupContact({
         email: user.email,
@@ -1129,11 +1137,18 @@ export const auth = betterAuth({
       otpLength: 6,
       expiresIn: 600,
       allowedAttempts: 5,
-      async sendVerificationOTP({ email, otp, type }) {
+      async sendVerificationOTP({ email, otp, type }, context) {
+        if (type === "email-verification") {
+          const account = await context?.context.internalAdapter.findUserByEmail(email);
+          if (account?.user.emailVerified) return;
+        }
         await sendEmail({
           to: email,
           template: "verification",
-          props: { verificationCode: otp },
+          props: {
+            verificationCode: otp,
+            recoveryUrl: new URL(`/verify?email=${encodeURIComponent(normalizeLoginEmail(email))}`, env.webUrl).toString(),
+          },
         });
       },
     }),
