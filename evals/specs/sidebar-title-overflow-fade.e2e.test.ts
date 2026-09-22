@@ -67,10 +67,11 @@ async function listState(app: Surface): Promise<ListState> {
 }
 
 /** Nothing in the sidebar list is hidden sideways, so there is nothing to scroll to. */
-async function expectListFits(app: Surface): Promise<void> {
+async function expectListFits(app: Surface): Promise<ListState> {
   const list = await listState(app);
   expect(list.scrollWidth).toBeLessThanOrEqual(list.clientWidth);
   expect(list.scrollLeft).toBe(0);
+  return list;
 }
 
 async function titleState(app: Surface, title: string): Promise<TitleState> {
@@ -102,7 +103,7 @@ const test = spec.world(async seed => {
 
 describe("title overflow", () => {
 beforeEach(() => { selectedMode = "overflow"; });
-test("the sidebar title fade follows only the edges with hidden text", async ({ world, user, seed, probe, step }) => {
+test("the sidebar title fade follows only the edges with hidden text", async ({ world, user, seed, probe, step, evidence }) => {
   if (world.mode !== "overflow") throw new Error("Unexpected sidebar fixture");
   const workspaceName = world.workspacePath.split("/").at(-1) ?? world.workspacePath;
   const resting = await probe.eventually(() => titleState(world.app, world.longTitle), {
@@ -111,6 +112,7 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     until: (state) => state.scrollWidth > state.clientWidth && state.hiddenEdges === "end",
   });
   expect(resting.maskImage).not.toBe("none");
+  const observations: Record<string, unknown> = { resting };
 
   await step("collapsing the macOS sidebar aligns the pane with the window controls, and reopening restores its inset", async () => {
     await user.see({ text: world.longTitle });
@@ -161,12 +163,14 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
       label: "reopened sidebar restores the original pane inset",
       until: (value) => isRecord(value) && value.state === "expanded" && value.left === expanded.left,
     });
-    expect(await geometry()).toMatchObject({ top: expanded.top, left: expanded.left });
+    const reopened = await geometry();
+    expect(reopened).toMatchObject({ top: expanded.top, left: expanded.left });
+    observations.chrome = { expanded, collapsed, reopened };
     await seed.evalIn(world.app, browserScript((classes) => { document.documentElement.className = classes; }, [platformClasses]));
   });
 
   await step("the list fits the sidebar and does not scroll sideways", async () => {
-    await expectListFits(world.app);
+    observations.list = await expectListFits(world.app);
   });
 
   await step("a fitting workspace row stays fully visible on hover", async () => {
@@ -184,6 +188,7 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     });
     expect(hovered.scrollWidth).toBeLessThanOrEqual(hovered.clientWidth);
     expect(hovered.maskImage).toBe("none");
+    observations.workspaceHover = { fitting, hovered };
   });
 
   await step("hover reveals the clipped ending without fading it", async () => {
@@ -200,6 +205,7 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
       until: (state) => state.hiddenEdges === "start",
     });
     expect(revealed.maskImage).not.toBe("none");
+    observations.titleReveal = { moving, revealed };
     await user.screenshot();
   });
 
@@ -218,11 +224,12 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     const workspaceAfterResize = await titleState(world.app, workspaceName);
     expect(workspaceAfterResize.hiddenEdges).toBe("none");
     expect(workspaceAfterResize.maskImage).toBe("none");
+    observations.widened = { fitting, workspaceAfterResize };
     await user.screenshot();
   });
 
   await step("the widened list still fits and does not scroll sideways", async () => {
-    await expectListFits(world.app);
+    observations.widenedList = await expectListFits(world.app);
   });
 
   await step("below the hover breakpoint, titles stop before the always-visible row actions", async () => {
@@ -242,6 +249,11 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
       until: (rows) => rows.length > 0 && rows.every((row) => row.actionsOpacity === "1"),
     });
     for (const row of rows) expect(row.titleRight, row.title).toBeLessThanOrEqual(row.actionsLeft);
+    observations.narrowRows = rows;
+    evidence.recordAssertionEvidence(
+      "Title fades track clipped edges while collapse, resizing, and mobile opening preserve usable row geometry",
+      JSON.stringify(observations), true,
+    );
     await user.screenshot();
   });
 });
@@ -253,7 +265,7 @@ for (const mode of expansionModes) {
   describe(mode, () => {
   beforeEach(() => { selectedMode = mode; });
   const dragClaim = "still permits reordering";
-  test(`${mode} Show more keeps old rows anchored through every frame and ${dragClaim}`, async ({ world, user, probe, step }) => {
+  test(`${mode} Show more keeps old rows anchored through every frame and ${dragClaim}`, async ({ world, user, probe, step, evidence }) => {
     if (world.mode === "overflow") throw new Error("Unexpected sidebar fixture");
     const first = world.sessions[0];
     if (!first) throw new Error("Missing expansion anchor session");
@@ -266,6 +278,7 @@ for (const mode of expansionModes) {
     const listRows = (rows: typeof initial.current.rows) => rows.filter(row => expectedIds.includes(row.id));
     expect(listRows(initial.current.rows).map(row => row.id)).toEqual(expectedIds.slice(0, 6));
     let scrolledExpansions = 0;
+    const expansions: Record<string, unknown>[] = [];
 
     for (const [index, count] of [12, 18, expectedIds.length].entries()) {
       await step(`${mode} expansion ${index + 1} reveals ${count} rows without a scroll jump, floating rows, navigation, or reorder`, async () => {
@@ -289,7 +302,12 @@ for (const mode of expansionModes) {
         expect(capture.frames[0]!.at - capture.before.at, "first expansion frame captured promptly").toBeLessThan(100);
         let previousAt = capture.before.at;
         let revealed = false;
+        let maxFrameGapMs = 0;
+        let maxAnchorMovementPx = 0;
+        let maxScrollMovementPx = 0;
         for (const frame of capture.frames) {
+          maxFrameGapMs = Math.max(maxFrameGapMs, frame.at - previousAt);
+          maxScrollMovementPx = Math.max(maxScrollMovementPx, Math.abs(frame.scrollTop - capture.before.scrollTop));
           expect(frame.at - previousAt, "no unobserved animation-sized frame gap").toBeLessThan(150);
           previousAt = frame.at;
           expect(frame.hash).toBe(capture.before.hash);
@@ -299,6 +317,7 @@ for (const mode of expansionModes) {
           for (const anchor of anchors) {
             const row = frame.rows.find(row => row.id === anchor.id);
             expect(row, `old row ${anchor.id} remains rendered`).toBeDefined();
+            maxAnchorMovementPx = Math.max(maxAnchorMovementPx, Math.abs(row!.top - anchor.top));
             expect(Math.abs(row!.top - anchor.top), `old row ${anchor.id} remains stationary: before ${JSON.stringify({
               top: anchor.top, bottom: anchor.bottom, projectionY: anchor.projectionY, lane: capture.before.lane,
               viewport: capture.before.viewport, scrollTop: capture.before.scrollTop,
@@ -318,6 +337,8 @@ for (const mode of expansionModes) {
         }
         expect(revealed, "new batch appears within the observed frames").toBe(true);
         expect(listRows(observed.current.rows).map(row => row.id)).toEqual(expectedIds.slice(0, count));
+        expansions.push({ count, frameCount: capture.frames.length, maxFrameGapMs, maxAnchorMovementPx, maxScrollMovementPx,
+          before: listRows(capture.before.rows).map(row => row.id), after: listRows(observed.current.rows).map(row => row.id) });
       });
     }
     expect(scrolledExpansions, "exercise expansion in an already-scrolled sidebar").toBeGreaterThan(0);
@@ -397,6 +418,12 @@ for (const mode of expansionModes) {
         sessionOrder.splice(sessionOrder.indexOf(preceding.sessionId), 0, last.sessionId);
         expect(management).toMatchObject({ state: { orderByWorkspace: { [world.workspace.workspaceId]: sessionOrder } } });
       }
+      const after = (await world.observation.read()).current;
+      evidence.recordAssertionEvidence(
+        `${mode} expansion preserves existing rows and drag reordering saves the chosen order without changing the conversation`,
+        JSON.stringify({ expansions, sourceId, targetId, before: idsBefore, after: after.rows.map(row => row.id),
+          selectionBefore: initial.current.selected, selectionAfter: after.selected, saved: management }), true,
+      );
     });
   });
   });
