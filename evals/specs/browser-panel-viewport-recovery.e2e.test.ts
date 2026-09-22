@@ -40,8 +40,8 @@ test("a visible built-in browser tab left with an automation viewport snaps back
   });
 });
 
-geometryTest("the native browser follows app zoom and keyboard panel resizing without replacing its page or losing input", async ({ world, user, probe, step }) => {
-  const { tab, page, session } = world;
+geometryTest("the native browser survives zoom, resizing, overlays and conversation changes without losing input", async ({ world, user, probe, step, evidence }) => {
+  const { tab, page, session, neighbor } = world;
   const field: Target = { role: "textbox" };
   const draft = "Keep this browser input through layout changes";
   const budgetMs = 5_000;
@@ -53,7 +53,6 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
     label: "the seeded browser tab is visible in its panel before typing",
   });
   await user.on(page).see({ role: "button", label: "hit" });
-  await user.on(page).type(field, draft);
   const original = await probe.browserTabMetrics(tab.targetId);
   expect(original).toMatchObject({ url: INPUT_PROBE_PAGE, title: "input-probe" });
   const identity = { url: original.url, title: original.title, timeOrigin: original.timeOrigin };
@@ -61,7 +60,7 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
   // This is the actual contentRef div, not the surrounding toolbar/panel shell.
   const container = '[data-slot="resizable-panel"]:has(button[aria-label="Reload page"]) .relative.min-h-0.flex-1.overflow-hidden > .h-full.overflow-hidden';
   // This bound includes CDP round trips; it is not a renderer latency measurement.
-  const aligned = async (expectedZoom: number) => {
+  const aligned = async (expectedZoom: number, expectedInput = draft) => {
     const started = performance.now();
     let consecutive = 0;
     const sample = await probe.eventually(async () => {
@@ -91,6 +90,17 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
         for (const key of edges) {
           expect(Math.abs(view.bounds[key] - expected[key]), `${key}: native vs current container at zoom ${zoom}`).toBeLessThanOrEqual(1);
         }
+        // Matching the child rectangle alone cannot prove containment when that
+        // child overflows. The native sibling must not cover the chat or toolbar.
+        const panel = await probe.dom('[data-slot="resizable-panel"]:has(button[aria-label="Reload page"])');
+        const toolbar = await probe.dom('button[aria-label="Reload page"]');
+        expect(panel.elements).toHaveLength(1);
+        expect(toolbar.elements).toHaveLength(1);
+        const paneRect = panel.elements[0].rect;
+        expect(view.bounds.x).toBeGreaterThanOrEqual(Math.round(paneRect.left * zoom) - 1);
+        expect(view.bounds.x + view.bounds.width).toBeLessThanOrEqual(Math.round(paneRect.right * zoom) + 1);
+        expect(view.bounds.y).toBeGreaterThanOrEqual(Math.round(toolbar.elements[0].rect.bottom * zoom) - 1);
+        expect(view.bounds.y + view.bounds.height).toBeLessThanOrEqual(Math.round(paneRect.bottom * zoom) + 1);
         const metrics = await probe.browserTabMetrics(tab.targetId);
         expect(metrics).toMatchObject({ ...identity, width: view.bounds.width, height: view.bounds.height });
         expect(await probe.zoom()).toBe(zoom);
@@ -103,7 +113,7 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
     }, { within: budgetMs, intervalMs: 50, until: () => consecutive >= 3, label: "three aligned native/container/viewport samples within five seconds" });
     // Keep the observation bounded even if eventually finishes a probe after its deadline.
     expect(performance.now() - started).toBeLessThanOrEqual(budgetMs);
-    await user.on(page).see(field, { value: draft, timeoutMs: budgetMs });
+    await user.on(page).see(field, { value: expectedInput, timeoutMs: budgetMs });
     return sample;
   };
 
@@ -112,6 +122,31 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
     expect((await probe.dom('[data-slot="resizable-handle"][role="separator"]')).elements.map(element => element.focused))
       .toEqual([true]);
   };
+
+  await step("Initial resizing recovers the viewport before any interaction with the page", async () => {
+    if (await probe.has("Not now")) {
+      await user.click({ role: "button", label: "Not now" });
+    }
+    await focusSeparator();
+    await user.press("Control+0");
+    const before = await aligned(1, "");
+    const initialFocus = (await probe.browserTabMetrics(tab.targetId)).hasFocus;
+    for (let key = 0; key < 3; key++) await user.press("ArrowLeft");
+    const after = await aligned(1, "");
+    expect(after.rect.width).toBeGreaterThan(before.rect.width + 10);
+    const separator = await probe.dom('[data-slot="resizable-handle"][role="separator"]');
+    expect(separator.elements.map(element => element.focused)).toEqual([true]);
+    // CDP routes input to the chosen renderer; on Linux that renderer's DOM
+    // focus and the native sibling's document.hasFocus() can both remain true.
+    // Prove the divider owned these keys, without clicking/typing in the page.
+    evidence.recordJsonArtifact("Initial resize focus and geometry", {
+      initialPageHasFocus: initialFocus,
+      finalPageHasFocus: (await probe.browserTabMetrics(tab.targetId)).hasFocus,
+      separatorFocused: true, before: before.rect, after: after.rect,
+    });
+    evidence.recordAssertionEvidence("Browser resizing converges before the first page interaction", "Three keys went to the focused divider before any page click or typing. The native view and page matched the resized container in three consecutive samples, with the same document and empty input.", true);
+  });
+  await user.on(page).type(field, draft);
 
   // The single separator resizes the side panel through trusted keyboard events.
   await user.click({ role: "separator" });
@@ -151,7 +186,62 @@ geometryTest("the native browser follows app zoom and keyboard panel resizing wi
     await user.press("Control+0");
     await aligned(1);
   });
+  const noNativeOverlay = async () => {
+    const state = await probe.eventually(() => probe.browserState(), {
+      within: budgetMs,
+      until: value => value.nativeViews.every(view => !view.aboveApp || !view.visible),
+      label: "no native browser is painted over the app",
+    });
+    expect(state.tabs.map(item => item.id)).toEqual([tab.tabId]);
+    expect(await probe.browserTabMetrics(tab.targetId)).toMatchObject(identity);
+  };
+  const palette = { placeholder: "Search actions, settings, and sessions…" };
+  await step("A dialog hides the native sibling, and sidebar position changes restore the same page", async () => {
+    const before = await aligned(1);
+    for (let toggle = 0; toggle < 2; toggle++) {
+      await focusSeparator();
+      await user.press("Control+K");
+      await user.see(palette);
+      await noNativeOverlay();
+      await user.type(palette, "> Toggle sidebar", { replace: true });
+      await user.click({ role: "option", label: /^Toggle sidebar/ });
+      await user.notSee(palette);
+      const after = await aligned(1);
+      if (toggle === 0) expect(after.rect.left).not.toBe(before.rect.left);
+      else expect(Math.abs(after.rect.left - before.rect.left)).toBeLessThanOrEqual(1);
+    }
+  });
+  await step("Repeated panel close and reopen cannot leave a native overlay or replace the document", async () => {
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await user.click({ role: "button", label: "Close side panel" });
+      await noNativeOverlay();
+      await user.click({ role: "button", label: "Open side panel" });
+      await aligned(1);
+    }
+  });
+  await step("Repeated conversation round trips preserve the page and keep background geometry off screen", async () => {
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await user.click({ text: neighbor.title });
+      await noNativeOverlay();
+      const parked = await probe.eventually(() => probe.browserState(), {
+        within: budgetMs,
+        until: value => value.visibleSessionId === neighbor.sessionId
+          && value.nativeViews.every(view => !view.aboveApp),
+        label: "the neighbor owns the screen without a browser overlay",
+      });
+      expect(parked.nativeViews).toHaveLength(1);
+      expect(parked.nativeViews[0]).toMatchObject({ tabId: tab.tabId, attached: false, aboveApp: false });
+      await probe.eventually(() => probe.browserTabMetrics(tab.targetId), {
+        within: budgetMs,
+        until: value => value.width === 1280 && value.height === 800,
+        label: "background viewport emulation remains usable after each round trip",
+      });
+      await user.click({ text: session.title });
+      await aligned(1);
+    }
+  });
   await user.on(page).type(field, " and still editable");
   await user.on(page).see(field, { value: `${draft} and still editable`, timeoutMs: budgetMs });
   expect(await probe.browserTabMetrics(tab.targetId)).toMatchObject(identity);
+  evidence.recordAssertionEvidence("Browser geometry and page state survive layout and ownership transitions", "Native and page dimensions remained aligned at 90–120% zoom, through keyboard resizing, modal/sidebar transitions, two panel close/reopen cycles and three conversation round trips. Hidden views never painted over the app, and the original page retained its input and accepted further typing.", true);
 });

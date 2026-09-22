@@ -2,7 +2,7 @@ import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
 import type { CdpClient } from "./cdp.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {

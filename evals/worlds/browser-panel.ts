@@ -677,10 +677,14 @@ export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?:
 /** Real native tab and deterministic document, with no viewport emulation. */
 export async function browserGeometryWorld(seed: Seed) {
   const world = await createBuiltinBrowserWorld(seed);
-  const tab = await world.openTab("geometry", world.session.sessionId);
+  const session = { ...world.session, title: "Browser geometry" };
+  await world.renameSession(session.sessionId, session.title);
+  const neighbor = await world.openSession("Browser neighbor");
+  await world.showSession(session.sessionId);
+  const tab = await world.openTab("geometry", session.sessionId);
   await world.loadInputProbe(tab);
   const page = await attachBuiltinTab(world.app, tab.targetId);
-  return { app: world.app, session: world.session, tab, page,
+  return { app: world.app, session, neighbor, tab, page,
     async [Symbol.asyncDispose]() { await page.stop(); } };
 }
 
