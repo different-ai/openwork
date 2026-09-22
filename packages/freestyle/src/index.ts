@@ -23,7 +23,7 @@ export function previewWorld(value: unknown): PreviewWorld {
 
 export function snapshotSlug(sha: string, world: PreviewWorld = "app-web"): string {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
-  return `openwork-${previewWorld(world)}-v4-${sha}`;
+  return `openwork-${previewWorld(world)}-v5-${sha}`;
 }
 
 export function isMissing(error: unknown): boolean {
@@ -106,6 +106,7 @@ export async function launchPreview(
   const origins = world === "acme-web" ? {
     app: `https://${domain}`, den: `https://den-${launchId}.preview.openwork.software`, api: `https://api-${launchId}.preview.openwork.software`,
     engine: `https://engine-${launchId}.preview.openwork.software`, gateway: `https://gateway-${launchId}.preview.openwork.software`,
+    desktop: `https://desktop-${launchId}.preview.openwork.software`,
   } : undefined;
   const domains = origins ? Object.values(origins).map((value) => new URL(value).hostname) : [domain];
   const token = randomBytes(32).toString("base64url");
@@ -138,7 +139,9 @@ export async function launchPreview(
       }
       stage = "read-outputs";
       outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
-      const serviceKeys = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
+      const serviceKeys: Record<string, string> = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
+      // Only link the desktop viewer when the snapshot actually booted it.
+      if (outputs.desktopStatus?.value === "ready") serviceKeys.desktop = "desktopUrl";
       for (const [name, key] of Object.entries(serviceKeys)) {
         const origin = Object.entries(origins ?? {}).find(([service]) => service === name)?.[1];
         if (!origin) throw new Error("Missing private service origin");

@@ -6,7 +6,8 @@ import { client, execChecked, findSnapshot, isMissing, snapshotSlug, type Previe
 /** Build once per exact source revision, then clone the running, verified world. */
 export async function ensureSnapshot(sha: string, api = client(), log: (message: string) => void = () => {}, world: PreviewWorld = "app-web") {
   const slug = snapshotSlug(sha, world);
-  const deadline = Date.now() + 11 * 60_000;
+  // ACME now boots the real desktop app as well; its first compile needs headroom.
+  const deadline = Date.now() + 20 * 60_000;
   // The provider's unique slug is the distributed lock: works across Vercel instances.
   while (Date.now() < deadline) {
     const existing = await findSnapshot(sha, api, world);
@@ -14,7 +15,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
     let created;
     try {
       created = await api.vms.create({
-        slug: `ow-build-${world}-v4-${sha}`, snapshotId: "freestyle/ubuntu",
+        slug: `ow-build-${world}-v5-${sha}`, snapshotId: "freestyle/ubuntu",
         displayName: `OpenWork snapshot ${sha.slice(0, 7)}`, ttlSeconds: 1800,
         metadata: { kind: "openwork-snapshot-builder-v1", gitSha: sha },
         firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
@@ -22,7 +23,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
     } catch (error) {
       if (!(error instanceof FreestyleApiError) || error.status !== 409) throw error;
       // Capacity failures also use 409. Only wait when our builder actually exists.
-      const builder = await api.vms.get(`ow-build-${world}-v4-${sha}`).catch((cause: unknown) => {
+      const builder = await api.vms.get(`ow-build-${world}-v5-${sha}`).catch((cause: unknown) => {
         if (isMissing(cause)) return null;
         throw cause;
       });
@@ -42,7 +43,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
       await vm.fs.writeTextFile("/opt/openwork-preview/gateway.mjs", await readFile(new URL("./gateway.mjs", import.meta.url), "utf8"));
       await vm.fs.writeTextFile("/opt/openwork-preview/runtime.mjs", await readFile(new URL(world === "acme-web" ? "./acme-runtime.mjs" : "./runtime.mjs", import.meta.url), "utf8"));
       await vm.fs.writeTextFile("/opt/openwork-preview/health.mjs", await readFile(new URL("./health.mjs", import.meta.url), "utf8"));
-      for (const file of ["origins.mjs", "resume.mjs"]) {
+      for (const file of ["origins.mjs", "resume.mjs", "desktop.mjs"]) {
         await vm.fs.writeTextFile(`/opt/openwork-preview/${file}`, await readFile(new URL(`./${file}`, import.meta.url), "utf8"));
       }
       // Only public repository bytes enter the VM. No host credentials or environment are forwarded.
@@ -59,10 +60,12 @@ test "$(git rev-parse HEAD)" = "${sha}"
 corepack enable
 corepack prepare pnpm@11.4.0 --activate
 ${world === "acme-web" ? `apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server
+DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server xvfb x11vnc novnc websockify fluxbox dbus-x11 xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
+# Open the viewer connected and scaled to the reviewer's window.
+printf '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;reconnect_delay=2000"><title>OpenWork desktop</title>' > /usr/share/novnc/index.html
 systemctl enable --now mysql redis-server
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"
-pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway...
+pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway... --filter @openwork/desktop...
 pnpm --dir evals install --frozen-lockfile --ignore-scripts
 pnpm --filter @openwork-ee/den-db build
 pnpm --filter @openwork/email build` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
@@ -80,7 +83,7 @@ systemctl daemon-reload
 ${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null\nnode /opt/openwork-preview/health.mjs" : `mysqladmin -uroot -ppassword ping
 redis-cli ping
 systemctl start openwork-preview-runtime
-for attempt in $(seq 1 240); do
+for attempt in $(seq 1 540); do
   test ! -f /opt/openwork-preview/failed-world
   if test -f /opt/openwork-preview/ready-world; then break; fi
   sleep 2
@@ -121,7 +124,7 @@ WantedBy=multi-user.target
         }
         await delay(3_000);
       }
-      throw new Error("Snapshot build exceeded 11 minutes. Try again after checking the builder logs.");
+      throw new Error("Snapshot build exceeded 20 minutes. Try again after checking the builder logs.");
     } catch (error) {
       log(await vm.fs.readTextFile("/opt/openwork-preview/build.log").then((value) => value.slice(-6000), () => "Builder log unavailable."));
       throw error;

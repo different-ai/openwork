@@ -36,7 +36,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
 
   const services: [string, { value: string }][] = session ? Object.entries(session.outputs).filter(([, entry]) => entry.group === "Services") : [];
   if (session && !services.length) services.push(["webUrl", { value: session.url }]);
-  const serviceNames: Record<string, string> = { webUrl: "OpenWork", denWeb: "Den dashboard", denApi: "Den API", openworkUrl: "OpenWork engine", gatewayUrl: "AI Gateway" };
+  const serviceNames: Record<string, string> = { webUrl: "OpenWork", denWeb: "Den dashboard", denApi: "Den API", openworkUrl: "OpenWork engine", gatewayUrl: "AI Gateway", desktopUrl: "Desktop app" };
   async function copy(value: string) {
     try { await navigator.clipboard.writeText(value); setCopied(true); }
     catch { setError("Could not copy. Select the visible value to copy it manually."); }
@@ -54,7 +54,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
       <p className="preview-state">Your own URLs, workspace, and data. Teammates get separate sandboxes.</p>
       <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => setWorld(event.target.value)}>
         <option value="app-web">OpenWork web</option>
-        <option value="acme-web">ACME web · Full stack</option>
+        <option value="acme-web">ACME web · Full stack + desktop</option>
       </select></label>
       <div className="preview-launch-actions">
         {session && <a className="preview-open" href={session.url} target="_blank" rel="noreferrer">Open sandbox</a>}
@@ -94,7 +94,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         </details>
       </section>}
       <details className="preview-details"><summary>Sandbox details</summary>
-        <p>OpenWork web runs the OpenWork web app and its local engine. ACME web adds isolated Den, MySQL, Redis, and AI Gateway services with demo accounts and a simulated model upstream. Each launch restores this commit’s snapshot into a separate sandbox. Sandboxes expire after two hours; work is not saved.</p>
+        <p>OpenWork web runs the OpenWork web app and its local engine. ACME web adds isolated Den, MySQL, Redis, and AI Gateway services with demo accounts and a simulated model upstream, plus the real desktop app in your browser, already signed in as the demo owner. Each launch restores this commit’s snapshot into a separate sandbox. Sandboxes expire after two hours; work is not saved.</p>
       </details>
     </div>
   );

@@ -35,7 +35,18 @@ try {
     for (const dependency of imports) await warmModule(dependency);
   }
   await warmModule("/");
-  const services = { app: web.manifest.webUrl, den: den.ref.webUrl, api: den.ref.apiUrl, engine: web.manifest.openworkUrl, gateway: gatewayUrl };
+  // The real desktop app, viewed through noVNC. Optional: a desktop failure
+  // leaves the web, Den and gateway preview usable and says so in its outputs.
+  let desktop = null;
+  try {
+    const { startDesktop } = await import("./desktop.mjs");
+    desktop = await startDesktop(stack, world);
+    outputs.desktopStatus = { value: "ready", group: "Desktop", note: "Real OpenWork desktop app signed in as the demo owner" };
+  } catch (error) {
+    console.error("Desktop preview unavailable:", error);
+    outputs.desktopStatus = { value: "unavailable", group: "Desktop", note: "The web preview is unaffected; see /opt/openwork-preview/desktop logs" };
+  }
+  const services = { app: web.manifest.webUrl, den: den.ref.webUrl, api: den.ref.apiUrl, engine: web.manifest.openworkUrl, gateway: gatewayUrl, ...(desktop ? { desktop: desktop.url } : {}) };
   await writeFile("/opt/openwork-preview/services.json", JSON.stringify(services), { mode: 0o600 });
   await writeFile("/opt/openwork-preview/outputs.json", JSON.stringify(outputs), { mode: 0o600 });
   await writeFile("/opt/openwork-preview/ready-world", JSON.stringify({ warmedAt: new Date().toISOString(), pid: process.pid, modules: seen.size }));
