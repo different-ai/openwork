@@ -188,6 +188,7 @@
       {
         "tab": "AI Gateway",
         "pages": [
+          "ai-gateway/google-agent-platform",
           "ai-gateway/counting-usage",
           "ai-gateway/token-costs"
         ]

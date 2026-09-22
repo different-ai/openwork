@@ -24,6 +24,7 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getModelConnectionsRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
   getManagedDashboardsRoute,
@@ -245,6 +246,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
+  }
+  if (pathname.startsWith(getModelConnectionsRoute(orgSlug))) {
+    return "My Model Connections";
   }
   if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
     return "AI Gateway";

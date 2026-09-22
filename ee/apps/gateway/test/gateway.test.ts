@@ -66,6 +66,7 @@ type TestServerOptions = {
   access?: boolean
   fetch?: typeof fetch
   now?: Date
+  clock?: () => Date
   refreshGoogleOauthToken?: RefreshGoogleOauthToken
   mintGcpAccessToken?: MintGcpAccessToken
   loadProviderCredential?: LoadProviderCredential
@@ -207,7 +208,7 @@ function createTestServer(options: TestServerOptions = {}) {
     gateway: {
       checkUsage: options.checkUsage ?? (async () => null),
       catalog,
-      now: options.now ? () => options.now ?? new Date() : undefined,
+      now: options.clock ?? (options.now ? () => options.now ?? new Date() : undefined),
       refreshGoogleOauthToken: async (input) => {
         tokenCalls.refresh++
         if (options.refreshGoogleOauthToken) return options.refreshGoogleOauthToken(input)
@@ -245,6 +246,22 @@ function gatewayRequest(input: { path: string; method?: string; body?: unknown; 
     headers,
     body,
   })
+}
+
+function delayedBodyRequest(path: string, body: unknown, onRead: () => void) {
+  const init = {
+    method: "POST",
+    headers: { authorization: `Bearer ${gatewayKey}`, "content-type": "application/json" },
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        onRead()
+        controller.enqueue(new TextEncoder().encode(JSON.stringify(body)))
+        controller.close()
+      },
+    }, { highWaterMark: 0 }),
+    duplex: "half",
+  }
+  return new Request(gatewayRequest({ path }).url, init)
 }
 
 async function assertRejectedBeforeCredentials(fixture: ReturnType<typeof createTestServer>, request: Request, code: string, status = 400) {
@@ -435,7 +452,7 @@ test("adaptive thinking compatibility uses the granted model behind opaque alias
         const vertex = providerName === "google-vertex-anthropic"
         const fixture = createTestServer({
           provider: { provider_id: providerName, settings: vertex ? { project: "test-project", location: "global" } : {} },
-          credential: vertex ? { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }) } : undefined,
+          credential: vertex ? { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }), expires_at: new Date(Date.now() + 600_000) } : undefined,
         })
         const selected = fixture.accessRows[0]
         assert.ok(selected?.model)
@@ -577,7 +594,7 @@ test("google vertex (gemini): path rewritten under the project/location publishe
       provider_config: { npm: "@ai-sdk/google-vertex" },
       settings: { project: "acme-proj", location: "us-central1" },
     },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }) },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }), expires_at: new Date(Date.now() + 600_000) },
   })
   const response = await app.fetch(gatewayRequest({
     path: "/v1beta/models/gemini-2.5-pro:generateContent",
@@ -603,7 +620,7 @@ test("google vertex (anthropic): rawPredict path, model removed, anthropic_versi
       provider_config: { npm: "@ai-sdk/google-vertex/anthropic" },
       settings: { project: "acme-proj", location: "global" },
     },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }) },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }), expires_at: new Date(Date.now() + 600_000) },
   })
   const response = await app.fetch(gatewayRequest({
     path: "/messages",
@@ -628,10 +645,130 @@ test("google vertex (anthropic): rawPredict path, model removed, anthropic_versi
   assert.equal(row.upstream_path, "/v1/projects/acme-proj/locations/global/publishers/anthropic/models/claude-sonnet-4-5:streamRawPredict")
 })
 
+for (const providerName of ["google-vertex", "google-vertex-anthropic"]) {
+  for (const location of ["global", "us-central1"]) {
+    for (const stream of [false, true]) test(`${providerName} ${location} stream=${stream} constrains routing, bearer, quota and protocol`, async () => {
+      const anthropic = providerName === "google-vertex-anthropic"
+      const model = anthropic ? "claude" : "gemini"
+      const operation = anthropic ? stream ? "streamRawPredict" : "rawPredict" : stream ? "streamGenerateContent" : "generateContent"
+      const content = stream ? 'data: {"fixture":true}\n\n' : '{"fixture":true}'
+      const fixture = createTestServer({
+        provider: { provider_id: providerName, provider_config: { api: "https://attacker.example", options: { baseURL: "https://attacker.example" } },
+          settings: { project: "test-project", location, upstreamBaseUrl: "https://attacker.example" } },
+        credentialSet: { credential_mode: "member" },
+        credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "MEMBER_TOKEN" }), expires_at: new Date(Date.now() + 600_000) },
+        fetch: async (_input, init) => {
+          assert.equal(init?.redirect, "error")
+          return new Response(content, { headers: { "content-type": stream ? "text/event-stream" : "application/json" } })
+        },
+      })
+      const path = anthropic ? "/v1/messages" : `/v1beta/models/${model}:${operation}`
+      const response = await fixture.app.fetch(gatewayRequest({
+        path: `${path}?alt=sse&userProject=CALLER_PROJECT&quotaUser=CALLER_USER&access_token=CALLER_TOKEN&key=${gatewayKey}`,
+        body: anthropic ? { model, messages: [], max_tokens: 32, stream, anthropic_version: "caller-version" } : { contents: [] },
+        headers: { "x-api-key": gatewayKey, "x-goog-api-key": gatewayKey, "api-key": gatewayKey, "x-goog-user-project": "CALLER_PROJECT",
+          "x-goog-request-params": "project=CALLER_PROJECT", "anthropic-version": "caller-version", "anthropic-beta": "fixture-beta" },
+      }))
+      assert.equal(response.status, 200)
+      assert.equal(await response.text(), content)
+      const upstream = fixture.upstreamRequests[0]
+      assert.ok(upstream)
+      const host = location === "global" ? "aiplatform.googleapis.com" : "us-central1-aiplatform.googleapis.com"
+      assert.equal(upstream.url, `https://${host}/v1/projects/test-project/locations/${location}/publishers/${anthropic ? "anthropic" : "google"}/models/${model}:${operation}?alt=sse`)
+      assert.equal(upstream.headers.get("authorization"), "Bearer MEMBER_TOKEN")
+      for (const name of ["x-api-key", "x-goog-api-key", "api-key", "x-goog-user-project", "x-goog-request-params", "anthropic-version"]) assert.equal(upstream.headers.get(name), null)
+      assert.doesNotMatch(JSON.stringify([...upstream.headers]), /CALLER_|ow_gw_/)
+      const body = parseJsonObject(upstream.body)
+      if (anthropic) {
+        assert.equal(body.model, undefined)
+        assert.equal(body.anthropic_version, "vertex-2023-10-16")
+        assert.equal(body.stream, stream)
+      } else assert.deepEqual(body, { contents: [] })
+      assert.equal(fixture.tokenCalls.refresh, 0)
+      const logged = await waitForRows(fixture.logRows)
+      assert.equal(logged.stream, stream)
+      assert.doesNotMatch(JSON.stringify([logged, fixture.handledErrors]), /MEMBER_TOKEN|CALLER_TOKEN|CALLER_KEY/)
+    })
+  }
+
+  for (const carrier of ["x-api-key", "x-goog-api-key", "api-key", "query"]) test(`${providerName} rejects conflicting ${carrier} credentials before upstream routing`, async () => {
+    const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName } })
+    const path = providerName === "google-vertex" ? "/models/gemini:generateContent" : "/messages"
+    const response = await fixture.app.fetch(gatewayRequest({
+      path: carrier === "query" ? `${path}?key=CALLER_KEY` : path,
+      headers: carrier === "query" ? {} : { [carrier]: "CALLER_KEY" },
+      body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [] },
+    }))
+    assert.equal(response.status, 401)
+    assert.equal((await readError(response)).code, "invalid_api_key")
+    assert.equal(fixture.upstreamRequests.length, 0)
+    assert.equal(fixture.credentialLookups.length, 0)
+    assert.deepEqual(fixture.tokenCalls, { mint: 0, refresh: 0 })
+  })
+
+  test(`${providerName} query filtering does not conceal forbidden model selection`, async () => {
+    const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName } })
+    await assertRejectedBeforeCredentials(fixture, gatewayRequest({
+      path: providerName === "google-vertex" ? "/models/gemini:generateContent?model=other" : "/messages?model=other",
+      body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [] },
+    }), "unsupported_model_selection")
+  })
+
+  for (const status of [401, 403]) test(`${providerName} upstream ${status} is safely classified without replay or refreshing`, async () => {
+    let cancelled = false
+    const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName }, credentialSet: { credential_mode: "member" },
+      credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "MEMBER_TOKEN", refreshToken: "REFRESH_TOKEN" }), expires_at: new Date(Date.now() + 600_000) },
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode("SECRET_MARKER")) }, cancel() { cancelled = true } }), { status }),
+    })
+    const response = await fixture.app.fetch(gatewayRequest({ path: providerName === "google-vertex" ? "/models/gemini:streamGenerateContent" : "/messages",
+      body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [], stream: true } }))
+    assert.equal(response.status, status)
+    assert.equal(response.headers.get("x-openwork-auth-required"), null)
+    const error = await readError(response)
+    assert.equal(error.code, status === 401 ? "provider_authentication_failed" : "provider_permission_denied")
+    assert.equal(cancelled, true)
+    assert.equal(fixture.upstreamRequests.length, 1)
+    assert.equal(fixture.tokenCalls.refresh, 0)
+    const logged = await waitForRows(fixture.logRows)
+    assert.equal(logged.outcome, "upstream_error")
+    assert.equal(logged.error_code, error.code)
+    assert.doesNotMatch(JSON.stringify([error, logged, fixture.handledErrors]), /SECRET_MARKER|MEMBER_TOKEN|REFRESH_TOKEN/)
+  })
+
+  test(`${providerName} never replays an interrupted stream or follows an upstream redirect`, async () => {
+    for (const redirect of [false, true]) {
+      const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName }, credentialSet: { credential_mode: "member" },
+        credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "MEMBER_TOKEN", refreshToken: "REFRESH_TOKEN" }), expires_at: new Date(Date.now() + 600_000) },
+        fetch: async (_input, init) => {
+          assert.equal(init?.redirect, "error")
+          if (redirect) throw new TypeError("SECRET_MARKER redirect")
+          let sent = false
+          return new Response(new ReadableStream<Uint8Array>({ pull(controller) {
+            if (sent) controller.error(new Error("SECRET_MARKER stream"))
+            else { sent = true; controller.enqueue(new TextEncoder().encode('data: {"fixture":true}\n\n')) }
+          } }), { headers: { "content-type": "text/event-stream" } })
+        },
+      })
+      const response = await fixture.app.fetch(gatewayRequest({ path: providerName === "google-vertex" ? "/models/gemini:streamGenerateContent" : "/messages",
+        body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [], stream: true } }))
+      if (redirect) {
+        assert.equal(response.status, 502)
+        assert.equal((await readError(response)).code, "upstream_unreachable")
+      } else {
+        assert.equal(response.status, 200)
+        await assert.rejects(response.text())
+      }
+      assert.equal(fixture.upstreamRequests.length, 1)
+      assert.equal(fixture.tokenCalls.refresh, 0)
+      assert.doesNotMatch(JSON.stringify([await waitForRows(fixture.logRows), fixture.handledErrors]), /SECRET_MARKER|MEMBER_TOKEN|REFRESH_TOKEN/)
+    }
+  })
+}
+
 test("google vertex: non-stream anthropic uses rawPredict; missing project/location → 502 provider_misconfigured", async () => {
   const ok = createTestServer({
     provider: { provider_id: "google-vertex-anthropic", provider_config: {}, settings: { project: "test-project", location: "europe-west1" } },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "t" }) },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "t" }), expires_at: new Date(Date.now() + 600_000) },
   })
   await ok.app.fetch(gatewayRequest({ path: "/messages", body: { model: "claude", messages: [] } }))
   assert.ok(ok.upstreamRequests[0]?.url.endsWith("/publishers/anthropic/models/claude:rawPredict"))
@@ -758,6 +895,98 @@ test("org mode without a credential → 502 provider_credential_missing", async 
   assert.equal(row.error_code, "provider_credential_missing")
 })
 
+for (const expires_at of [null, new Date(NaN)]) test(`member Google credential with ${expires_at === null ? "null" : "invalid"} expiry fails closed before refresh`, async () => {
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: { credential_mode: "member" },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "LEGACY_TOKEN", refreshToken: "LEGACY_REFRESH" }), expires_at } })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+  assert.equal(response.status, 401)
+  assert.equal((await readError(response)).code, "openwork_auth_required")
+  assert.equal(fixture.tokenCalls.refresh, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("a delayed request body cannot reuse the request-start clock to dispatch an expired Google token", async () => {
+  const startedAt = new Date("2026-09-03T12:00:00Z")
+  let currentTime = startedAt
+  let clockReads = 0
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: { credential_mode: "member" },
+    clock: () => { clockReads++; return currentTime },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "EXPIRED_TOKEN" }), expires_at: new Date(startedAt.getTime() + 90_000) } })
+  const request = delayedBodyRequest("/models/gemini:generateContent", { contents: [] }, () => {
+    assert.ok(clockReads > 0)
+    currentTime = new Date(startedAt.getTime() + 120_000)
+  })
+  const response = await fixture.app.fetch(request)
+  assert.equal(response.status, 401)
+  assert.equal((await readError(response)).code, "openwork_auth_required")
+  assert.equal(fixture.upstreamRequests.length, 0)
+  const logged = await waitForRows(fixture.logRows)
+  assert.equal(logged.started_at.getTime(), startedAt.getTime())
+})
+
+test("body preparation delay uses a live Google refresh lease and preserves request accounting time", async () => {
+  const startedAt = new Date("2026-09-03T12:00:00Z")
+  let currentTime = startedAt
+  let clockReads = 0
+  const currentSet = { ...matrixRow().credentialSet, gateway_provider_id: providerId }
+  const { state, store } = memoryStore(oauthRow({ id: credentialId, gateway_provider_id: providerId, organization_id: organizationId,
+    subject: memberId, org_membership_id: memberId, updated_at: startedAt, expires_at: new Date(startedAt.getTime() + 90_000) }))
+  state.client = currentSet
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => {
+    assert.equal(state.row?.refreshing_until?.getTime(), currentTime.getTime() + 30_000)
+    return Response.json({ access_token: "CURRENT_TOKEN", token_type: "Bearer", expires_in: 3600 })
+  } })
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: currentSet, clock: () => { clockReads++; return currentTime },
+    loadProviderCredential: async () => state.row ? structuredClone(state.row) : null, refreshGoogleOauthToken: refresh })
+  const request = delayedBodyRequest("/models/gemini:generateContent", { contents: [] }, () => {
+    assert.ok(clockReads > 0)
+    currentTime = new Date(startedAt.getTime() + 120_000)
+  })
+  const response = await fixture.app.fetch(request)
+  assert.equal(response.status, 200)
+  await response.text()
+  assert.equal(fixture.tokenCalls.refresh, 1)
+  assert.equal(state.saves, 1)
+  assert.equal(state.row?.expires_at?.getTime(), currentTime.getTime() + 3600_000)
+  assert.equal(fixture.upstreamRequests[0]?.headers.get("authorization"), "Bearer CURRENT_TOKEN")
+  assert.equal((await waitForRows(fixture.logRows)).started_at.getTime(), startedAt.getTime())
+})
+
+test("invalid Google client returns administrator repair rather than member consent or transient retry", async () => {
+  const currentSet = { ...matrixRow().credentialSet, gateway_provider_id: providerId }
+  const { state, store } = memoryStore(oauthRow({ id: credentialId, gateway_provider_id: providerId, organization_id: organizationId,
+    subject: memberId, org_membership_id: memberId }))
+  state.client = currentSet
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: currentSet,
+    loadProviderCredential: async () => state.row ? structuredClone(state.row) : null,
+    refreshGoogleOauthToken: createGoogleOauthRefresher({ store, tokenFetch: async () => Response.json({ error: "invalid_client", error_description: "SECRET_MARKER" }, { status: 401 }) }),
+  })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+  assert.equal(response.status, 502)
+  assert.equal(response.headers.get("x-openwork-auth-required"), null)
+  assert.equal(response.headers.get("retry-after"), null)
+  const error = await readError(response)
+  assert.equal(error.code, "provider_misconfigured")
+  assert.match(String(error.message), /administrator/)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.equal(state.row?.status, "active")
+  assert.equal(state.lastError, "invalid_client")
+  assert.doesNotMatch(JSON.stringify([error, fixture.handledErrors, await waitForRows(fixture.logRows)]), /SECRET_MARKER/)
+  const originalSecret = state.row?.secret
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const repeated = await fixture.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+    assert.equal(repeated.status, 502)
+    assert.equal((await readError(repeated)).code, "provider_misconfigured")
+    assert.equal(repeated.headers.get("x-openwork-auth-required"), null)
+  }
+  assert.equal(fixture.tokenCalls.refresh, 1)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.equal(state.failures, 1)
+  assert.equal(state.row?.last_error, "invalid_client")
+  assert.equal(state.row?.secret, originalSecret)
+  await waitForRows(fixture.logRows, 3)
+})
+
 test("member oauth_google near expiry is refreshed under the lock and the fresh bearer is forwarded", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const refreshCalls: Array<Parameters<RefreshGoogleOauthToken>[0]> = []
@@ -771,7 +1000,7 @@ test("member oauth_google near expiry is refreshed under the lock and the fresh 
     assert.ok(init?.body instanceof URLSearchParams)
     assert.equal(init.body.get("refresh_token"), "rt")
     assert.equal(init.body.get("client_id"), "cid")
-    return Response.json({ access_token: "fresh", expires_in: 3600 })
+    return Response.json({ access_token: "fresh", token_type: "Bearer", expires_in: 3600 })
   } })
   const { app, upstreamRequests, logRows } = createTestServer({
     provider: currentProvider,

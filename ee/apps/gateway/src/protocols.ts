@@ -119,8 +119,9 @@ export function isAllowedRequestHeader(family: ProtocolFamily, name: string) {
   return familyHeaderAllowlist[family].includes(lower)
 }
 
-export function filterQuery(_family: ProtocolFamily, search: string) {
+export function filterQuery(family: ProtocolFamily, search: string) {
   const params = new URLSearchParams(search)
+  if (family === "google_vertex" || family === "google_vertex_anthropic") return params.get("alt") === "sse" ? "?alt=sse" : ""
   for (const name of [...params.keys()]) {
     if (["key", "api_key", "api-key", "apikey", "access_token", "token", "authorization"].includes(name.toLowerCase())) params.delete(name)
   }

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { serializeSignedCookie } from "better-call"
+import { createLocalJWKSet, errors, exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose"
 
 const API_ORIGIN = "http://127.0.0.1:8790"
 const PROXY_BASE_URL = "https://inference.example.test"
@@ -48,12 +49,18 @@ function defaultSet(provider: Record<string, unknown>) {
   return provider.credentialSets[0]
 }
 
-function request(cookie: string, path: string, init: RequestInit = {}) {
+async function request(cookie: string, path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers)
   headers.set("cookie", cookie)
   headers.set("origin", API_ORIGIN)
   if (init.body) headers.set("content-type", "application/json")
-  return app.fetch(new Request(`${API_ORIGIN}${path}`, { ...init, headers, redirect: "manual" }))
+  const response = await app.fetch(new Request(`${API_ORIGIN}${path}`, { ...init, headers, redirect: "manual" }))
+  if (!path.includes("/oauth/start") || !response.ok && response.status !== 302) return response
+  const payload: unknown = response.status === 200 ? await response.json() : null
+  const entry = new URL(response.status === 302 ? response.headers.get("location") ?? "" : isRecord(payload) ? readString(payload, "authUrl") : "")
+  expect(entry.pathname).toBe("/gateway/connect")
+  const attempt = entry.searchParams.get("attempt") ?? ""
+  return publicRequest(`/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`, headers)
 }
 
 function publicRequest(path: string, headers?: HeadersInit) {
@@ -76,7 +83,19 @@ const vertexCatalog = {
   models: [{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", config: { id: "gemini-2.5-pro" } }],
 }
 
+const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+const GOOGLE_SCOPES = "openid email https://www.googleapis.com/auth/cloud-platform"
+const googleKeyPair = generateKeyPair("RS256")
+const googlePublicJwk = googleKeyPair.then(async ({ publicKey }) => ({ ...await exportJWK(publicKey), kid: "fixture-google", alg: "RS256", use: "sig" }))
+
 type GoogleCall = { url: string; body: URLSearchParams }
+
+async function googleIdToken(claims: JWTPayload = {}) {
+  const now = Math.floor(Date.now() / 1000)
+  return new SignJWT({ iss: "https://accounts.google.com", aud: OAUTH_CLIENT_ID, sub: "fixture-google-subject", email: "google-account@example.test", email_verified: true, iat: now, exp: now + 3600, ...claims })
+    .setProtectedHeader({ alg: "RS256", kid: "fixture-google" })
+    .sign((await googleKeyPair).privateKey)
+}
 
 /** Replaces global fetch for Google's token/revoke endpoints; everything else fails loudly. */
 function withFakeGoogle<T>(
@@ -87,6 +106,7 @@ function withFakeGoogle<T>(
   const realFetch = globalThis.fetch
   const fake = async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+    if (url === GOOGLE_JWKS_URL) return Response.json({ keys: [await googlePublicJwk] })
     if (url !== GOOGLE_TOKEN_URL && url !== GOOGLE_REVOKE_URL) {
       throw new Error(`unexpected fetch ${url}`)
     }
@@ -94,7 +114,14 @@ function withFakeGoogle<T>(
     const params = body instanceof URLSearchParams ? body : new URLSearchParams(typeof body === "string" ? body : "")
     const call = { url, body: params }
     calls.push(call)
-    return handler(call)
+    const pending = url === GOOGLE_TOKEN_URL ? await db.select().from(schema.GatewayProviderOauthStateTable) : []
+    const { googleOAuthNonce, readGoogleOAuthAttempt } = await import("../src/llm/inference-provider-google-oauth.js")
+    const state = pending.find((row) => readGoogleOAuthAttempt(row.code_verifier)?.verifier === params.get("code_verifier"))
+    const response = await handler(call)
+    if (url !== GOOGLE_TOKEN_URL || !response.ok) return response
+    const payload: unknown = await response.json()
+    if (!isRecord(payload) || !state) throw new Error("Fixture token exchange missing state")
+    return Response.json({ token_type: "Bearer", ...payload, scope: payload.scope ?? GOOGLE_SCOPES, id_token: payload.id_token ?? await googleIdToken({ aud: params.get("client_id") ?? "", nonce: googleOAuthNonce(params.get("code_verifier") ?? "", state.state) }) })
   }
   globalThis.fetch = Object.assign(fake, { preconnect: realFetch.preconnect })
   return run(calls).finally(() => {
@@ -131,7 +158,7 @@ beforeAll(async () => {
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
   mock.module("../src/llm/models-dev.js", () => ({
-    getModelsDevProvider: async (providerId: string) => (providerId === "google-vertex" ? vertexCatalog : null),
+    getModelsDevProvider: async (providerId: string) => providerId === "google-vertex" ? vertexCatalog : providerId === "google-vertex-anthropic" ? { ...vertexCatalog, id: providerId, npm: "@ai-sdk/google-vertex/anthropic", config: { id: providerId, npm: "@ai-sdk/google-vertex/anthropic" }, models: [{ id: "claude-sonnet-4", name: "Claude Sonnet 4", config: { id: "claude-sonnet-4" } }] } : null,
     listModelsDevProviders: async () => [],
     getModelsDevProviders: async (providerIds: readonly string[]) => providerIds.includes(vertexCatalog.id) ? [vertexCatalog] : [],
   }))
@@ -341,7 +368,7 @@ test("batch offboarding waits for every OAuth state before locking credentials, 
   expect((await loadMemberCredential())?.status).toBe("revoked")
 })
 
-test("oauth/start redirects to Google with PKCE + offline params and records a state row; JSON variant returns authUrl", async () => {
+test("browser-start continues the entry with Google PKCE, OIDC and offline consent; JSON returns authUrl", async () => {
   const startResponse = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
   expect(startResponse.status).toBe(302)
   const location = startResponse.headers.get("location")
@@ -350,13 +377,14 @@ test("oauth/start redirects to Google with PKCE + offline params and records a s
   expect(authorize.origin + authorize.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth")
   expect(authorize.searchParams.get("client_id")).toBe(OAUTH_CLIENT_ID)
   expect(authorize.searchParams.get("response_type")).toBe("code")
-  expect(authorize.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/cloud-platform")
+  expect(authorize.searchParams.get("scope")).toBe(GOOGLE_SCOPES)
+  expect(authorize.searchParams.get("nonce")).toMatch(/^[A-Za-z0-9_-]{43}$/)
   expect(authorize.searchParams.get("access_type")).toBe("offline")
   expect(authorize.searchParams.get("prompt")).toBe("consent")
   expect(authorize.searchParams.get("include_granted_scopes")).toBe("true")
   expect(authorize.searchParams.get("code_challenge_method")).toBe("S256")
   expect(authorize.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/)
-  expect(authorize.searchParams.get("hd")).toBe("example.test")
+  expect(authorize.searchParams.get("hd")).toBeNull()
   const redirectUri = authorize.searchParams.get("redirect_uri")
   expect(redirectUri).toMatch(/^https?:\/\/.+\/v1\/inference-providers\/oauth\/callback$/)
   expect(location).not.toContain(OAUTH_CLIENT_SECRET)
@@ -367,7 +395,11 @@ test("oauth/start redirects to Google with PKCE + offline params and records a s
   if (!stateRow) throw new Error("state row missing")
   expect(stateRow).toMatchObject({ gateway_provider_id: inferenceProviderId, credential_set_id: credentialSetId, org_membership_id: memberId, redirect_to: null, used_at: null })
   expect(stateRow.expires_at.getTime() - Date.now()).toBeGreaterThan(9 * 60 * 1000)
-  expect(stateRow.code_verifier).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  const { readGoogleOAuthAttempt, googleOAuthNonce } = await import("../src/llm/inference-provider-google-oauth.js")
+  const attempt = readGoogleOAuthAttempt(stateRow.code_verifier)
+  expect(attempt?.verifier).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  expect(attempt?.userId).toBe(memberUserId)
+  expect(authorize.searchParams.get("nonce")).toBe(googleOAuthNonce(attempt?.verifier ?? "", state))
   // The verifier is stored encrypted at rest.
   const [raw] = await db.execute(drizzle.sql`select code_verifier from gateway_provider_oauth_states where state = ${state}`)
   expect(JSON.stringify(raw)).not.toContain(stateRow.code_verifier)
@@ -405,7 +437,7 @@ test("callback exchanges the code, stores the encrypted member token, marks the 
   const redirectUri = authorize.searchParams.get("redirect_uri")
 
   await withFakeGoogle(
-    () => Response.json({ access_token: "ya29.access", refresh_token: "1//refresh", token_type: "Bearer", expires_in: 3600, scope: "https://www.googleapis.com/auth/cloud-platform" }),
+    () => Response.json({ access_token: "ya29.access", refresh_token: "1//refresh", token_type: "Bearer", expires_in: 3600, scope: GOOGLE_SCOPES }),
     async (calls) => {
       const callback = await browserRequest(`/v1/inference-providers/oauth/callback?code=4/auth-code&state=${encodeURIComponent(state)}`)
       expect(callback.status).toBe(200)
@@ -437,9 +469,10 @@ test("callback exchanges the code, stores the encrypted member token, marks the 
     org_membership_id: memberId,
     kind: "oauth_google",
     status: "active",
-    scopes: "https://www.googleapis.com/auth/cloud-platform",
+    scopes: GOOGLE_SCOPES,
   })
-  expect(JSON.parse(credential.secret)).toEqual({ accessToken: "ya29.access", refreshToken: "1//refresh", tokenType: "Bearer" })
+  expect(JSON.parse(credential.secret)).toEqual({ accessToken: "ya29.access", refreshToken: "1//refresh", tokenType: "Bearer", googleIdentity: { subject: "fixture-google-subject", email: "google-account@example.test", emailVerified: true, clientId: OAUTH_CLIENT_ID, authorizationRevision: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) } })
+  expect(credential.secret).not.toContain("id_token")
   const expiresIn = (credential.expires_at?.getTime() ?? 0) - Date.now()
   expect(expiresIn).toBeGreaterThan(3500 * 1000)
   expect(expiresIn).toBeLessThanOrEqual(3600 * 1000)
@@ -462,6 +495,70 @@ test("callback exchanges the code, stores the encrypted member token, marks the 
       expect(calls).toHaveLength(0)
     },
   )
+})
+
+for (const failure of ["wrong_nonce", "wrong_verifier", "invalid_signature"]) {
+  test.each(["succeeded", "rejected", "unavailable"])(`callback cleans up issued tokens after ${failure} with revocation=%s without replacing the stored DB credential (not proof of Google grant validity)`, async (revocation) => {
+    const existing = await loadMemberCredential()
+    expect(existing?.status).toBe("active")
+    const start = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
+    expect(start.status).toBe(302)
+    const authorize = new URL(start.headers.get("location") ?? "")
+    const state = authorize.searchParams.get("state") ?? ""
+    const { googleOAuthNonce, readGoogleOAuthAttempt } = await import("../src/llm/inference-provider-google-oauth.js")
+    const attempt = readGoogleOAuthAttempt((await loadState(state))?.code_verifier ?? "")
+    expect(attempt).not.toBeNull()
+    const nonce = failure === "wrong_nonce" ? "fixture-wrong-nonce"
+      : failure === "wrong_verifier" ? googleOAuthNonce("fixture-other-verifier", state)
+      : authorize.searchParams.get("nonce")
+    const idToken = failure === "invalid_signature"
+      ? await new SignJWT({ iss: "https://accounts.google.com", aud: OAUTH_CLIENT_ID, sub: "fixture-subject", email: "fixture@example.test", email_verified: true, nonce })
+        .setProtectedHeader({ alg: "RS256", kid: "fixture-google" }).setIssuedAt().setExpirationTime("1h").sign((await generateKeyPair("RS256")).privateKey)
+      : await googleIdToken({ nonce })
+    await withFakeGoogle((call) => {
+      if (call.url === GOOGLE_REVOKE_URL) {
+        expect(call.body.get("token")).toBe("fixture-unverified-refresh")
+        if (revocation === "unavailable") throw new Error("FIXTURE_REVOCATION_PRIVATE_DETAIL")
+        return new Response(null, { status: revocation === "rejected" ? 503 : 200 })
+      }
+      expect(call.body.get("code_verifier")).toBe(attempt?.verifier)
+      return Response.json({ access_token: "fixture-unverified-access", refresh_token: "fixture-unverified-refresh", expires_in: 3600, id_token: idToken })
+    }, async (calls) => {
+      const callback = await browserRequest(`/v1/inference-providers/oauth/callback?code=fixture&state=${encodeURIComponent(state)}`)
+      expect(callback.status).toBe(400)
+      const html = await callback.text()
+      expect(html).toContain("Google account verification failed")
+      expect(html).toContain("Cleanup revocation may affect existing Google connections")
+      expect(html).toContain("including your previous connection")
+      expect(html).toContain("You may need to reconnect those connections")
+      for (const privateValue of ["fixture-unverified-access", "fixture-unverified-refresh", idToken, "FIXTURE_REVOCATION_PRIVATE_DETAIL"]) expect(html).not.toContain(privateValue)
+      expect(calls.map((call) => call.url)).toEqual([GOOGLE_TOKEN_URL, GOOGLE_REVOKE_URL])
+      expect(calls[1]?.body.get("token")).toBe("fixture-unverified-refresh")
+      expect(await loadMemberCredential()).toEqual(existing)
+      expect((await loadState(state))?.used_at).not.toBeNull()
+      const replay = await browserRequest(`/v1/inference-providers/oauth/callback?code=fixture&state=${encodeURIComponent(state)}`)
+      expect(replay.status).toBe(400)
+      expect(calls).toHaveLength(2)
+    })
+  })
+}
+
+test.each([
+  { expires_in: 0, refresh_token: "fixture-unvalidated-refresh" },
+  { expires_in: 3600, refresh_token: "fixture-invalid\r\nrefresh" },
+  { expires_in: 3600, refresh_token: "fixture-unvalidated-refresh", scope: "openid email" },
+])("callback does not take cleanup ownership of an unvalidated token response: %j", async (fields) => {
+  const existing = await loadMemberCredential()
+  const start = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
+  expect(start.status).toBe(302)
+  const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+  await withFakeGoogle(() => Response.json({ access_token: "fixture-unvalidated-access", ...fields }), async (calls) => {
+    const callback = await browserRequest(`/v1/inference-providers/oauth/callback?code=fixture&state=${encodeURIComponent(state)}`)
+    expect(callback.status).toBe(400)
+    expect(calls.map((call) => call.url)).toEqual([GOOGLE_TOKEN_URL])
+    expect(await loadMemberCredential()).toEqual(existing)
+    expect((await loadState(state))?.used_at).not.toBeNull()
+  })
 })
 
 test("callback rejects expired and unknown state, and redirects failures with error= when redirectTo was given", async () => {
@@ -500,11 +597,12 @@ test("callback rejects expired and unknown state, and redirects failures with er
       const failed = await browserRequest(`/v1/inference-providers/oauth/callback?code=bad&state=${encodeURIComponent(failedState)}`)
       expect(failed.status).toBe(302)
       const location = new URL(failed.headers.get("location") ?? "")
-      expect(location.searchParams.get("error")).toContain("OpenWork could not finish Google sign-in")
+      expect(location.searchParams.get("error")).toContain("Google could not complete authorization")
       expect(location.toString()).not.toContain("FAKE_TOKEN_MUST_NOT_ECHO")
     },
   )
 
+  const credentialBeforeMissingRefresh = await loadMemberCredential()
   const successStart = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start?redirectTo=${encodeURIComponent("openwork://inference/connected")}`)
   const successState = new URL(successStart.headers.get("location") ?? "").searchParams.get("state") ?? ""
   await withFakeGoogle(
@@ -512,13 +610,10 @@ test("callback rejects expired and unknown state, and redirects failures with er
     async () => {
       const success = await browserRequest(`/v1/inference-providers/oauth/callback?code=ok&state=${encodeURIComponent(successState)}`)
       expect(success.status).toBe(302)
-      expect(success.headers.get("location")).toBe("openwork://inference/connected")
+      expect(new URL(success.headers.get("location") ?? "").searchParams.get("error")).toContain("offline access")
     },
   )
-  // Re-consent updates the member row (unique per set+subject) and keeps a single credential.
-  const credential = await loadMemberCredential()
-  expect(JSON.parse(credential?.secret ?? "{}")).toEqual({ accessToken: "ya29.second" })
-  expect(credential?.scopes).toBe("https://www.googleapis.com/auth/cloud-platform")
+  expect(await loadMemberCredential()).toEqual(credentialBeforeMissingRefresh)
 })
 
 test.each([true, false])("DELETE oauth revokes the refresh token at Google with deployment management enabled=%s", async (enabled) => {
@@ -659,7 +754,7 @@ test("named member sets coexist with ready models and fence in-flight consent in
       expect(calls).toHaveLength(0)
     },
   )
-  expect((await request(memberCookie, `${base}/oauth?credentialSetId=${secondSetId}`, { method: "DELETE" })).status).toBe(403)
+  expect((await request(memberCookie, `${base}/oauth?credentialSetId=${secondSetId}`, { method: "DELETE" })).status).toBe(204)
   expect(readProvider(await (await request(memberCookie, `${base}/connect`)).json()).models).toMatchObject([{ credentialSetId: firstSetId }])
 })
 
@@ -749,12 +844,13 @@ test("personal OAuth requires a current same-org member grant, never permits sha
     await withFakeGoogle(() => { throw new Error("Revoked grants must not exchange or revoke credentials") }, async (calls) => {
       expect((await callback(pending)).status).toBe(400)
       expect((await request(memberCookie, `${base}/oauth/start?credentialSetId=${setId}`)).status).toBe(403)
-      expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(403)
+      expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(204)
       expect(calls).toHaveLength(0)
     })
     expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
     expect(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).text()).not.toContain(id)
-    expect(await credentials()).toEqual(afterRevocation)
+    expect((await credentials()).filter((row) => row.org_membership_id !== memberId)).toEqual(afterRevocation.filter((row) => row.org_membership_id !== memberId))
+    expect((await credentials()).find((row) => row.org_membership_id === memberId)).toMatchObject({ status: "revoked", secret: "{}" })
     expect((await request(ownerCookie, `${base}/connect`)).status).toBe(200)
   } finally {
     await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
@@ -785,7 +881,14 @@ test.each(["browser", "desktop"])("OAuth callback binds %s initiation to the ind
     expect(response.status).toBe(200)
     const payload: unknown = await response.json()
     if (!isRecord(payload)) throw new Error("OAuth start response missing")
-    const url = new URL(readString(payload, "authUrl"))
+    const entry = new URL(readString(payload, "authUrl"))
+    expect(entry.pathname).toBe("/gateway/connect")
+    expect(entry.href).not.toContain(memberSessionToken)
+    const browserStart = await publicRequest(`/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(entry.searchParams.get("attempt") ?? "")}`, { cookie: browserCookie, accept: "application/json" })
+    expect(browserStart.status).toBe(200)
+    const browserPayload: unknown = await browserStart.json()
+    if (!isRecord(browserPayload)) throw new Error("Browser start missing")
+    const url = new URL(readString(browserPayload, "authUrl"))
     expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth")
     expect(url.href).not.toContain(memberSessionToken)
     const state = url.searchParams.get("state")
@@ -802,6 +905,7 @@ test.each(["browser", "desktop"])("OAuth callback binds %s initiation to the ind
     for (const headers of nonSessionHeaders) {
       const statesBefore = await db.select().from(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.gateway_provider_id, inferenceProviderId))
       expect((await publicRequest(startPath, headers)).status).toBe(403)
+      expect((await publicRequest("/v1/inference-providers/member-connections", headers)).status).toBe(403)
       expect(await db.select().from(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.gateway_provider_id, inferenceProviderId))).toEqual(statesBefore)
     }
     for (const outcome of ["code=fake-browser-bound-code", "error=access_denied"]) {
@@ -845,7 +949,7 @@ test.each(["browser", "desktop"])("OAuth callback binds %s initiation to the ind
       else {
         const credential = await loadMemberCredential()
         expect(credential?.status).toBe("active")
-        expect(JSON.parse(credential?.secret ?? "{}")).toEqual({ accessToken: "fake-bound-access", refreshToken: "fake-bound-refresh" })
+        expect(JSON.parse(credential?.secret ?? "{}")).toMatchObject({ accessToken: "fake-bound-access", refreshToken: "fake-bound-refresh", tokenType: "Bearer", googleIdentity: { subject: "fixture-google-subject" } })
       }
       expect((await credentials()).filter((row) => row.org_membership_id !== memberId)).toEqual(credentialsBefore.filter((row) => row.org_membership_id !== memberId))
     }
@@ -914,5 +1018,322 @@ test.each(["expired", "revoked"])("OAuth callback rejects a %s signed browser se
     expect(await loadMemberCredential()).toEqual(credentialBefore)
   } finally {
     await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, sessionId))
+  }
+})
+
+test("default start returns a non-authenticating browser entry and browser-start requires the original live signed user", async () => {
+  const path = `/v1/inference-providers/${inferenceProviderId}/oauth/start?credentialSetId=${credentialSetId}&redirectTo=${encodeURIComponent("openwork://inference/connected")}`
+  const response = await publicRequest(path, { authorization: `Bearer ${memberSessionToken}`, accept: "application/json" })
+  expect(response.status).toBe(200)
+  const payload: unknown = await response.json()
+  if (!isRecord(payload)) throw new Error("Entry missing")
+  const entry = new URL(readString(payload, "authUrl"))
+  expect(entry.origin).toBe(API_ORIGIN)
+  expect(entry.pathname).toBe("/gateway/connect")
+  expect([...entry.searchParams.keys()]).toEqual(["attempt"])
+  expect(entry.href).not.toContain(memberSessionToken)
+  const attempt = entry.searchParams.get("attempt") ?? ""
+  const before = await loadState(attempt)
+  expect(before?.redirect_to).toBe("openwork://inference/connected")
+  const browserPath = `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`
+  for (const headers of [{}, { authorization: `Bearer ${memberSessionToken}` }, { cookie: `better-auth.session_token=${memberSessionToken}` }]) {
+    expect((await publicRequest(browserPath, headers)).status).toBe(401)
+    expect(await loadState(attempt)).toEqual(before)
+  }
+  const wrong = await publicRequest(browserPath, { cookie: ownerCookie, authorization: `Bearer ${memberSessionToken}` })
+  expect(wrong.status).toBe(403)
+  expect(await wrong.json()).toMatchObject({ error: "browser_account_mismatch" })
+  expect(await loadState(attempt)).toEqual(before)
+  expect((await browserRequest(`/v1/inference-providers/oauth/callback?code=unused&state=${attempt}`)).status).toBe(400)
+  expect(await loadState(attempt)).toEqual(before)
+  const continued = await publicRequest(browserPath, { cookie: memberCookie, accept: "application/json" })
+  expect(continued.status).toBe(200)
+  expect(continued.headers.get("cache-control")).toBe("no-store")
+  const next: unknown = await continued.json()
+  if (!isRecord(next)) throw new Error("Google URL missing")
+  const google = new URL(readString(next, "authUrl"))
+  const state = google.searchParams.get("state") ?? ""
+  expect(state).toMatch(/^google\./)
+  expect(await loadState(attempt)).toBeNull()
+  expect((await loadState(state))?.id).toBe(before?.id)
+  expect((await publicRequest(browserPath, { cookie: memberCookie })).status).toBe(400)
+  await db.delete(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, state))
+})
+
+test("browser entry expires and client configuration cannot change before browser consent", async () => {
+  for (const change of ["expiry", "client"]) {
+    const response = await publicRequest(`/v1/inference-providers/${inferenceProviderId}/oauth/start`, { cookie: memberCookie, accept: "application/json" })
+    const payload: unknown = await response.json()
+    if (!isRecord(payload)) throw new Error("Entry missing")
+    const attempt = new URL(readString(payload, "authUrl")).searchParams.get("attempt") ?? ""
+    if (change === "expiry") await db.update(schema.GatewayProviderOauthStateTable).set({ expires_at: new Date(Date.now() - 1000) }).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, attempt))
+    else await db.update(schema.GatewayCredentialSetTable).set({ oauth_client_secret: "fixture-changed-client" }).where(drizzle.eq(schema.GatewayCredentialSetTable.id, credentialSetId))
+    try {
+      const started = await publicRequest(`/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`, { cookie: memberCookie })
+      expect(started.status).toBe(change === "expiry" ? 400 : 403)
+      expect((await loadState(attempt))?.used_at).toBeNull()
+    } finally {
+      await db.update(schema.GatewayCredentialSetTable).set({ oauth_client_secret: OAUTH_CLIENT_SECRET }).where(drizzle.eq(schema.GatewayCredentialSetTable.id, credentialSetId))
+      await db.delete(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, attempt))
+    }
+  }
+})
+
+test("Google token parsing requires durable offline access, bounded positive expiry, bearer and requested scopes", async () => {
+  const { parseGoogleAuthorizationTokens } = await import("../src/llm/inference-provider-google-oauth.js")
+  const valid = { access_token: "fixture-access", refresh_token: "fixture-refresh", token_type: "Bearer", expires_in: 3600, id_token: "fixture-id-token" }
+  expect(parseGoogleAuthorizationTokens(valid).scope).toBe(GOOGLE_SCOPES)
+  expect(parseGoogleAuthorizationTokens({ ...valid, expires_in: 86400 }).expires_in).toBe(86400)
+  expect(parseGoogleAuthorizationTokens({ ...valid, access_token: "Az09-._~+/==" }).access_token).toBe("Az09-._~+/==")
+  expect(parseGoogleAuthorizationTokens({ ...valid, scope: "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/cloud-platform" }).refresh_token).toBe("fixture-refresh")
+  const invalid = [
+    { access_token: "" }, { access_token: " " }, { access_token: "bad token" }, { access_token: "non-ascii-é" }, { access_token: "control\u0000byte" }, { access_token: "bad=padding=value" }, { access_token: "bad!token" }, { access_token: "bad\r\nheader" }, { refresh_token: "non-ascii-é" }, { token_type: undefined }, { token_type: "Basic" },
+    { expires_in: undefined }, { expires_in: 0 }, { expires_in: -1 }, { expires_in: Infinity }, { expires_in: NaN }, { expires_in: 86401 }, { expires_in: "3600" },
+    { refresh_token: undefined }, { refresh_token: "" }, { id_token: undefined }, { scope: "" }, { scope: "openid email" },
+    { scope: "https://www.googleapis.com/auth/cloud-platform" },
+  ]
+  for (const fields of invalid) expect(() => parseGoogleAuthorizationTokens({ ...valid, ...fields })).toThrow()
+})
+
+test("Google OIDC verifies signature, issuer, audience, expiry, nonce, verified email and authorized party", async () => {
+  const { verifyGoogleIdentity, googleOAuthNonce } = await import("../src/llm/inference-provider-google-oauth.js")
+  const nonce = googleOAuthNonce("fixture-secret-verifier", "fixture-state")
+  expect(nonce).not.toBe(googleOAuthNonce("other-verifier", "fixture-state"))
+  expect(nonce).not.toBe(googleOAuthNonce("fixture-secret-verifier", "other-state"))
+  const keyResolver = createLocalJWKSet({ keys: [await googlePublicJwk] })
+  const verify = async (claims: JWTPayload) => verifyGoogleIdentity({ idToken: await googleIdToken({ nonce, ...claims }), clientId: OAUTH_CLIENT_ID, nonce, keyResolver })
+  expect(await verify({})).toEqual({ subject: "fixture-google-subject", email: "google-account@example.test", emailVerified: true, clientId: OAUTH_CLIENT_ID })
+  expect(await verify({ iss: "accounts.google.com" })).toMatchObject({ subject: "fixture-google-subject" })
+  expect(await verify({ aud: [OAUTH_CLIENT_ID, "second-client"], azp: OAUTH_CLIENT_ID })).toMatchObject({ clientId: OAUTH_CLIENT_ID })
+  for (const claims of [
+    { iss: "https://untrusted.example.test" }, { aud: "wrong-client" }, { nonce: "wrong-nonce" }, { exp: 1 }, { sub: "" },
+    { iat: Math.floor(Date.now() / 1000) + 3600 }, { email_verified: false }, { email_verified: "true" }, { email: "" },
+    { aud: [OAUTH_CLIENT_ID, "second-client"] }, { azp: "second-client" }, { nonce: undefined }, { exp: undefined },
+  ]) await expect(verify(claims)).rejects.toMatchObject({ code: "oauth_identity_invalid" })
+  const wrongKey = await generateKeyPair("RS256")
+  const wrongToken = await new SignJWT({ iss: "https://accounts.google.com", aud: OAUTH_CLIENT_ID, nonce, sub: "fixture", email: "test@example.test", email_verified: true })
+    .setIssuedAt().setExpirationTime("1h").setProtectedHeader({ alg: "RS256", kid: "fixture-google" }).sign(wrongKey.privateKey)
+  await expect(verifyGoogleIdentity({ idToken: wrongToken, clientId: OAUTH_CLIENT_ID, nonce, keyResolver })).rejects.toMatchObject({ code: "oauth_identity_invalid" })
+})
+
+test("Google OIDC distinguishes recognizable key-fetch outages without exposing infrastructure details", async () => {
+  const { verifyGoogleIdentity } = await import("../src/llm/inference-provider-google-oauth.js")
+  const idToken = await googleIdToken({ nonce: "fixture-nonce" })
+  for (const failure of [new errors.JWKSTimeout("PRIVATE_JWKS_DETAIL"), new TypeError("PRIVATE_JWKS_DETAIL"), new DOMException("PRIVATE_JWKS_DETAIL", "AbortError")]) {
+    await expect(verifyGoogleIdentity({ idToken, clientId: OAUTH_CLIENT_ID, nonce: "fixture-nonce", keyResolver: async () => { throw failure } })).rejects.toMatchObject({
+      code: "oauth_identity_unavailable", message: "Google account verification is temporarily unavailable. Try Connect again later.",
+    })
+  }
+})
+
+test("Google exchange classifies safe repair reasons without provider payloads", async () => {
+  const { exchangeGoogleAuthorizationCode } = await import("../src/llm/inference-provider-google-oauth.js")
+  for (const [status, error, subtype, code] of [
+    [400, "invalid_client", "", "oauth_invalid_client"], [400, "invalid_grant", "invalid_rapt", "oauth_reauthentication_required"],
+    [400, "invalid_grant", "", "oauth_invalid_grant"], [429, "limited", "", "oauth_token_endpoint_unavailable"], [503, "failed", "", "oauth_token_endpoint_unavailable"],
+  ] as const) {
+    await expect(exchangeGoogleAuthorizationCode({ clientId: OAUTH_CLIENT_ID, clientSecret: "fixture", code: "fixture", codeVerifier: "fixture", redirectUri: `${API_ORIGIN}/v1/inference-providers/oauth/callback`,
+      fetchImpl: async () => Response.json({ error, error_subtype: subtype, error_description: "PRIVATE_PROVIDER_PAYLOAD" }, { status }),
+    })).rejects.toMatchObject({ code })
+  }
+})
+
+test.each(["google-vertex", "google-vertex-anthropic"])("%s supports verified authorization, safe reconnect and disconnect after access loss", async (providerId) => {
+  const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Lifecycle fixture", providerId, modelIds: [providerId === "google-vertex" ? "gemini-2.5-pro" : "claude-sonnet-4"], settings: { project: "test-project", location: "us-central1" }, credentialMode: "member", oauthClientId: OAUTH_CLIENT_ID, oauthClientSecret: OAUTH_CLIENT_SECRET, allMembers: true }) })
+  expect(created.status).toBe(201)
+  const provider = readProvider(await created.json())
+  const id = readString(provider, "id")
+  const setId = readString(defaultSet(provider), "id")
+  const base = `/v1/inference-providers/${id}`
+  const credentials = () => db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, id))
+  const authorize = async (cookie: string, subject: string, refreshToken?: string) => {
+    const start = await request(cookie, `${base}/oauth/start?credentialSetId=${setId}`)
+    expect(start.status).toBe(302)
+    const url = new URL(start.headers.get("location") ?? "")
+    const state = url.searchParams.get("state") ?? ""
+    return withFakeGoogle(async () => Response.json({ access_token: "fixture-new-access", refresh_token: refreshToken, expires_in: 3600, id_token: await googleIdToken({ sub: subject, nonce: url.searchParams.get("nonce") }) }), async () => browserRequest(`/v1/inference-providers/oauth/callback?code=fixture&state=${state}`, cookie))
+  }
+  expect((await authorize(memberCookie, "fixture-initial", undefined)).status).toBe(400)
+  expect(await credentials()).toEqual([])
+  expect((await authorize(memberCookie, "fixture-initial", "fixture-initial-refresh")).status).toBe(200)
+  const before = await credentials()
+  for (const subject of ["fixture-initial", "fixture-switched"]) {
+    const reconnect = await authorize(memberCookie, subject, undefined)
+    expect(reconnect.status).toBe(400)
+    expect(await reconnect.text()).toContain("offline access")
+    expect(await credentials()).toEqual(before)
+  }
+  expect((await authorize(memberCookie, "fixture-switched", "fixture-switched-refresh")).status).toBe(200)
+  const switched = (await credentials())[0]
+  expect(JSON.parse(switched?.secret ?? "{}")).toMatchObject({ refreshToken: "fixture-switched-refresh", googleIdentity: { subject: "fixture-switched" } })
+  if (!switched) throw new Error("Credential missing")
+  const { gatewayMemberConnectionsResponseSchema } = await import("@openwork/types/den/inference")
+  const memberConnection = async () => {
+    const response = await request(memberCookie, "/v1/inference-providers/member-connections")
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    for (const hidden of ["last_error", "invalid_client", "fixture-new-access", "fixture-switched-refresh", OAUTH_CLIENT_SECRET]) expect(text).not.toContain(hidden)
+    return gatewayMemberConnectionsResponseSchema.parse(JSON.parse(text)).connections.find((connection) => connection.providerId === id && connection.credentialSetId === setId)
+  }
+  for (const expires_at of [switched.expires_at, new Date(Date.now() - 1000)]) {
+    await db.update(schema.GatewayProviderCredentialTable).set({ status: "active", last_error: "invalid_client", expires_at }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, switched.id))
+    expect(await memberConnection()).toMatchObject({ configurationRequired: true, ready: false, hasAccess: true, hasCredential: true })
+    const blockedSummary = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+    expect(blockedSummary).toMatchObject({ credentialStatus: "member_auth_required", models: [] })
+    expect((await credentials()).find((row) => row.id === switched.id)?.status).toBe("active")
+  }
+  expect((await authorize(memberCookie, "fixture-switched", "fixture-switched-refresh")).status).toBe(200)
+  expect((await credentials()).find((row) => row.id === switched.id)?.last_error).toBeNull()
+  expect(await memberConnection()).toMatchObject({ configurationRequired: false, ready: true, hasCredential: true })
+  expect(readProvider(await (await request(memberCookie, `${base}/connect`)).json()).credentialStatus).toBe("ready")
+  await db.update(schema.GatewayProviderCredentialTable).set({ last_error: "invalid_client" }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, switched.id))
+  await withFakeGoogle(() => new Response(null, { status: 200 }), async () => {
+    expect((await request(ownerCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ oauthClientSecret: "fixture-repaired-client-secret" }) })).status).toBe(200)
+  })
+  expect(await memberConnection()).toMatchObject({ configurationRequired: false, ready: false, hasAccess: true, hasCredential: false })
+  expect((await credentials()).find((row) => row.id === switched.id)).toMatchObject({ status: "revoked", last_error: null })
+  expect((await authorize(memberCookie, "fixture-switched", "fixture-switched-refresh")).status).toBe(200)
+  await db.update(schema.GatewayProviderCredentialTable).set({ expires_at: null }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, switched.id))
+  const legacy = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+  expect(legacy.credentialStatus).toBe("member_auth_required")
+  await db.update(schema.GatewayProviderCredentialTable).set({ expires_at: switched.expires_at }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, switched.id))
+  expect((await authorize(ownerCookie, "fixture-other-member", "fixture-other-refresh")).status).toBe(200)
+  const other = (await credentials()).find((row) => row.org_membership_id === ownerMemberId)
+  await db.delete(schema.GatewayProviderAccessTable).where(drizzle.eq(schema.GatewayProviderAccessTable.gateway_provider_id, id))
+  await db.update(schema.GatewayProviderTable).set({ status: "disabled" }).where(drizzle.eq(schema.GatewayProviderTable.id, id))
+  await withFakeGoogle(() => new Response("PRIVATE_REVOCATION_PAYLOAD", { status: 503 }), async (calls) => {
+    expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(204)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.body.get("token")).toBe("fixture-switched-refresh")
+  })
+  expect((await credentials()).find((row) => row.org_membership_id === memberId)).toMatchObject({ status: "revoked", secret: "{}", expires_at: null, scopes: null })
+  expect((await credentials()).find((row) => row.org_membership_id === ownerMemberId)).toEqual(other)
+})
+
+test("member inventory isolates mixed sets, verified identity and completed-authorization revisions through access loss", async () => {
+  const { gatewayMemberConnectionsResponseSchema, inferenceOauthTokenSecretSchema } = await import("@openwork/types/den/inference")
+  const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Mixed inventory fixture", providerId: "google-vertex", modelIds: ["gemini-2.5-pro"], settings: { project: "test-project", location: "us-central1" }, credentialMode: "member", oauthClientId: OAUTH_CLIENT_ID, oauthClientSecret: OAUTH_CLIENT_SECRET, allMembers: true }) })
+  expect(created.status).toBe(201)
+  const provider = readProvider(await created.json())
+  const id = readString(provider, "id")
+  const firstSetId = readString(defaultSet(provider), "id")
+  if (!Array.isArray(provider.modelGroups) || !isRecord(provider.modelGroups[0])) throw new Error("Group missing")
+  const groupId = readString(provider.modelGroups[0], "id")
+  const base = `/v1/inference-providers/${id}`
+  const addSet = async (name: string, mode: "org" | "member", ownerOnly = false) => {
+    const response = await request(ownerCookie, `${base}/credential-sets`, { method: "POST", body: JSON.stringify({ name, credentialMode: mode, ...(mode === "org" ? { credential: { kind: "api_key", secret: "fixture-org-only-secret" } } : { oauthClientId: OAUTH_CLIENT_ID, oauthClientSecret: OAUTH_CLIENT_SECRET }) }) })
+    expect(response.status).toBe(201)
+    const payload: unknown = await response.json()
+    if (!isRecord(payload) || !isRecord(payload.credentialSet)) throw new Error("Set missing")
+    const setId = readString(payload.credentialSet, "id")
+    expect((await request(ownerCookie, `${base}/access-grants`, { method: "POST", body: JSON.stringify({ modelGroupId: groupId, credentialSetId: setId, audience: ownerOnly ? { type: "member", memberId: ownerMemberId } : { type: "organization" } }) })).status).toBe(201)
+    return setId
+  }
+  const pendingSetId = await addSet("Pending member set", "member")
+  const orgSetId = await addSet("Shared set", "org")
+  const privateSetId = await addSet("Other member private set", "member", true)
+  const foreignOrg = createDenTypeId("organization")
+  const foreignCredential = createDenTypeId("inferenceProviderCredential")
+  await db.insert(schema.OrganizationTable).values({ id: foreignOrg, name: "Foreign inventory fixture", slug: foreignOrg })
+  await db.insert(schema.GatewayProviderCredentialTable).values([
+    { id: createDenTypeId("inferenceProviderCredential"), gateway_provider_id: id, credential_set_id: privateSetId, organization_id: organizationId, subject: ownerMemberId, org_membership_id: ownerMemberId, kind: "oauth_google", status: "active", secret: JSON.stringify({ accessToken: "fixture-private-access", refreshToken: "fixture-private-refresh", googleIdentity: { subject: "fixture-private-sub", email: "private@example.test", emailVerified: true, clientId: OAUTH_CLIENT_ID } }), expires_at: new Date(Date.now() + 3600_000) },
+    { id: foreignCredential, gateway_provider_id: id, credential_set_id: pendingSetId, organization_id: foreignOrg, subject: memberId, org_membership_id: memberId, kind: "oauth_google", status: "active", secret: JSON.stringify({ accessToken: "fixture-foreign-access", refreshToken: "fixture-foreign-refresh", googleIdentity: { subject: "fixture-foreign-sub", email: "foreign@example.test", emailVerified: true, clientId: OAUTH_CLIENT_ID } }), expires_at: new Date(Date.now() + 3600_000) },
+  ])
+  const inventory = async (cookie = memberCookie) => {
+    const response = await request(cookie, "/v1/inference-providers/member-connections")
+    expect(response.status).toBe(200)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    const text = await response.text()
+    for (const hidden of [OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, "fixture-private-access", "fixture-foreign-access", "fixture-inventory-access", "fixture-inventory-refresh", "fixture-inventory-sub", "fixture-private-sub", "fixture-foreign-sub", "fixture-org-only-secret"]) expect(text).not.toContain(hidden)
+    if (cookie === memberCookie) {
+      for (const hidden of [privateSetId, "private@example.test", "foreign@example.test"]) expect(text).not.toContain(hidden)
+    }
+    const payload = gatewayMemberConnectionsResponseSchema.parse(JSON.parse(text))
+    return payload.connections.filter((connection) => connection.providerId === id)
+  }
+  const authorize = async () => {
+    const start = await request(memberCookie, `${base}/oauth/start?credentialSetId=${firstSetId}`)
+    const url = new URL(start.headers.get("location") ?? "")
+    const state = url.searchParams.get("state") ?? ""
+    await withFakeGoogle(async () => Response.json({ access_token: "fixture-inventory-access", refresh_token: "fixture-inventory-refresh", expires_in: 3600, id_token: await googleIdToken({ sub: "fixture-inventory-sub", nonce: url.searchParams.get("nonce"), email: "connected@example.test" }) }), async () => {
+      expect((await browserRequest(`/v1/inference-providers/oauth/callback?code=fixture&state=${state}`)).status).toBe(200)
+    })
+  }
+  const { env } = await import("../src/env.js")
+  const previousEnabled = env.gatewayEnabled
+  try {
+    expect((await publicRequest("/v1/inference-providers/member-connections")).status).toBe(401)
+    env.gatewayEnabled = false
+    const empty = await inventory()
+    expect(empty).toHaveLength(2)
+    for (const connection of empty) expect(connection).toMatchObject({ ready: false, hasAccess: true, hasCredential: false, authorizationRevision: null, accountEmail: null })
+    expect(empty.some((connection) => connection.credentialSetId === orgSetId)).toBe(false)
+    await authorize()
+    const connected = await inventory()
+    const first = connected.find((connection) => connection.credentialSetId === firstSetId)
+    expect(first).toEqual({ providerId: id, credentialSetId: firstSetId, providerName: "Mixed inventory fixture", name: "Default credentials", ready: true, hasAccess: true, hasCredential: true, configurationRequired: false, authorizationRevision: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/), accountEmail: "connected@example.test" })
+    expect(connected.find((connection) => connection.credentialSetId === pendingSetId)).toMatchObject({ ready: false, hasCredential: false, authorizationRevision: null, accountEmail: null })
+    const ownerView = await inventory(ownerCookie)
+    expect(ownerView.find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: false, hasCredential: false, accountEmail: null, authorizationRevision: null })
+    expect(ownerView.find((connection) => connection.credentialSetId === privateSetId)).toMatchObject({ ready: true, hasCredential: true, accountEmail: "private@example.test", authorizationRevision: null })
+    const [credential] = await db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.and(drizzle.eq(schema.GatewayProviderCredentialTable.credential_set_id, firstSetId), drizzle.eq(schema.GatewayProviderCredentialTable.subject, memberId)))
+    if (!credential) throw new Error("Credential missing")
+    const token = inferenceOauthTokenSecretSchema.parse(JSON.parse(credential.secret))
+    await db.update(schema.GatewayProviderCredentialTable).set({ last_error: "invalid_client" }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, credential.id))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: false, configurationRequired: true, hasCredential: true })
+    expect((await inventory()).find((connection) => connection.credentialSetId === pendingSetId)).toMatchObject({ configurationRequired: false })
+    expect((await inventory(ownerCookie)).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ configurationRequired: false, hasCredential: false })
+    const mixedSummary = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+    if (!Array.isArray(mixedSummary.models)) throw new Error("Models missing")
+    expect(mixedSummary.models.some((model: unknown) => isRecord(model) && model.credentialSetId === firstSetId)).toBe(false)
+    expect(mixedSummary.models.some((model: unknown) => isRecord(model) && model.credentialSetId === orgSetId)).toBe(true)
+    await db.update(schema.GatewayProviderCredentialTable).set({ last_error: "temporarily_unavailable" }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, credential.id))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: true, configurationRequired: false })
+    await db.update(schema.GatewayProviderCredentialTable).set({ last_error: null, expires_at: null }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, credential.id))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: false, hasCredential: true })
+    await db.update(schema.GatewayProviderCredentialTable).set({ expires_at: credential.expires_at, secret: JSON.stringify({ ...token, accessToken: "invalid-ascii-é" }) }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, credential.id))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: false, hasCredential: true })
+    await db.update(schema.GatewayProviderCredentialTable).set({ secret: JSON.stringify({ ...token, googleIdentity: { ...token.googleIdentity, emailVerified: false } }) }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, credential.id))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: false, hasCredential: true, accountEmail: null, authorizationRevision: null })
+    await db.update(schema.GatewayProviderCredentialTable).set({ secret: JSON.stringify({ ...token, accessToken: "fixture-refreshed-access", refreshToken: "fixture-rotated-refresh" }), last_refreshed_at: new Date(), updated_at: new Date(), expires_at: new Date(Date.now() + 3500_000) }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, credential.id))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)?.authorizationRevision).toBe(first?.authorizationRevision)
+    await authorize()
+    const reconnected = (await inventory()).find((connection) => connection.credentialSetId === firstSetId)
+    expect(reconnected?.authorizationRevision).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(reconnected?.authorizationRevision).not.toBe(first?.authorizationRevision)
+    await db.update(schema.GatewayProviderCredentialTable).set({ status: "refresh_failed", last_error: "invalid_grant" }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, credential.id))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: false, configurationRequired: false, hasAccess: true, hasCredential: true, accountEmail: "connected@example.test", authorizationRevision: reconnected?.authorizationRevision })
+    await db.delete(schema.GatewayProviderAccessTable).where(drizzle.eq(schema.GatewayProviderAccessTable.credential_set_id, firstSetId))
+    expect((await inventory()).find((connection) => connection.credentialSetId === firstSetId)).toMatchObject({ ready: false, hasAccess: false, hasCredential: true })
+    await db.update(schema.GatewayProviderTable).set({ status: "disabled" }).where(drizzle.eq(schema.GatewayProviderTable.id, id))
+    expect(await inventory()).toEqual([{ ...reconnected, ready: false, hasAccess: false, hasCredential: true }])
+    await withFakeGoogle(() => new Response(null, { status: 200 }), async () => {
+      expect((await request(memberCookie, `${base}/oauth?credentialSetId=${firstSetId}`, { method: "DELETE" })).status).toBe(204)
+    })
+    expect(await inventory()).toEqual([])
+    expect((await inventory(ownerCookie)).find((connection) => connection.credentialSetId === privateSetId)).toMatchObject({ hasCredential: true, hasAccess: false })
+  } finally {
+    env.gatewayEnabled = previousEnabled
+    await db.delete(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, foreignCredential))
+    await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, foreignOrg))
+  }
+})
+
+test("revoked browser session during exchange cannot persist a replacement", async () => {
+  const start = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
+  const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+  const before = await loadMemberCredential()
+  try {
+    await withFakeGoogle(async (call) => {
+      if (call.url === GOOGLE_REVOKE_URL) return new Response(null, { status: 200 })
+      await db.update(schema.AuthSessionTable).set({ expiresAt: new Date(Date.now() - 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+      return Response.json({ access_token: "fixture-session-loss", refresh_token: "fixture-session-loss-refresh", expires_in: 3600 })
+    }, async (calls) => {
+      expect((await browserRequest(`/v1/inference-providers/oauth/callback?code=fixture&state=${state}`)).status).toBe(400)
+      expect(calls.some((call) => call.url === GOOGLE_REVOKE_URL)).toBe(true)
+    })
+    expect(await loadMemberCredential()).toEqual(before)
+  } finally {
+    await db.update(schema.AuthSessionTable).set({ expiresAt: new Date(Date.now() + 300_000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
   }
 })

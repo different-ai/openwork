@@ -61,6 +61,8 @@ export type AiSettingsViewProps = {
   /** Provider whose sign-in is currently open in the browser / being polled. */
   connectingGatewayProviderId?: string | null;
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  onCancelGatewayConnect?: () => void;
+  onOpenModelConnections?: () => void;
   showOpenWorkModelsSubscribe?: boolean;
   /** Subtle fallback row when OpenWork Models is not connected and the banner was dismissed. */
   showOpenWorkModelsConnect?: boolean;
@@ -100,6 +102,7 @@ export function GatewayConnectRow(props: {
   provider: GatewayConnectProvider;
   busy: boolean;
   onConnect?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  onCancel?: () => void;
 }) {
   const { provider } = props;
   return (
@@ -126,6 +129,7 @@ export function GatewayConnectRow(props: {
         <LogIn className="mr-1.5 size-3.5" />
         {props.busy ? "Waiting for sign-in…" : "Connect"}
       </Button>
+      {props.busy && props.onCancel ? <Button variant="outline" onClick={props.onCancel}>Stop waiting</Button> : null}
     </LayoutSectionItem>
   );
 }
@@ -138,6 +142,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
 
   return (
     <LayoutStack>
+      {props.onOpenModelConnections ? <Button variant="outline" onClick={props.onOpenModelConnections}>My Model Connections</Button> : null}
       {/* ---- Providers ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
@@ -298,6 +303,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             provider={provider}
             busy={props.connectingGatewayProviderId === gatewayConnectProviderKey(provider)}
             onConnect={props.onConnectGatewayProvider}
+            onCancel={props.onCancelGatewayConnect}
           />
         ))}
 

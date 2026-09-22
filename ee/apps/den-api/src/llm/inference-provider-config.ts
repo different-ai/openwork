@@ -206,6 +206,12 @@ export function buildGatewayProviderConfig(
 
 export function buildGatewayModelConfig(model: { id: string; name: string; config: JsonRecord }): JsonRecord & { id: string } {
   const config = nonSecretProviderConfig(model.config)
+  const swap = typeof config.npm === "string" ? vertexDesktopSwap[config.npm] : undefined
+  if (swap) config.npm = swap.npm
+  if (isRecord(config.provider)) {
+    const providerSwap = typeof config.provider.npm === "string" ? vertexDesktopSwap[config.provider.npm] : undefined
+    if (providerSwap) config.provider = { ...config.provider, npm: providerSwap.npm }
+  }
   const headers = Object.fromEntries(Object.entries(isRecord(config.headers) ? config.headers : {})
     .filter(([name]) => name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER))
   return { ...config, id: model.id, name: model.name, headers: {

@@ -732,6 +732,9 @@ importers:
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0
+      jose:
+        specifier: 6.2.8
+        version: 6.2.8
       jsonc-parser:
         specifier: ^3.2.1
         version: 3.3.1

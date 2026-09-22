@@ -1,0 +1,241 @@
+---
+title: "Google Agent Platform (Vertex AI)"
+description: "Set up Gemini and Claude on Google's Gemini Enterprise Agent Platform with your own OAuth app and per-member Google sign-in through OpenWork AI Gateway."
+---
+
+Connect Google's **Gemini Enterprise Agent Platform (formerly Vertex AI)** to OpenWork AI Gateway. Your organization creates a Google OAuth application, and each member signs in with their own Google account to use the models you assign.
+
+Google has [officially renamed Vertex AI](https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes). Its console now uses names such as **Agent Platform**, **Agent Platform API**, and **Agent Platform Model Garden**. OpenWork's provider catalog still uses the following identifiers:
+
+| Models you want | OpenWork provider |
+| --- | --- |
+| Gemini through Google Cloud | **Google Vertex AI** — `google-vertex` |
+| Claude through Google Cloud | **Google Vertex Anthropic** — `google-vertex-anthropic` |
+
+This guide uses **Agent Platform** for the Google product and retains the provider identifiers you need to select in OpenWork.
+
+<Info>
+  You do not need gcloud, local Application Default Credentials (ADC), a service-account key, or an Anthropic API key for this sign-in mode. This is separate from a Google Workspace connection for Gmail, Drive, or Calendar, and from signing in to OpenWork itself.
+</Info>
+
+## Before you begin
+
+You need:
+
+- A Google Cloud project with billing enabled and permission to configure its APIs, IAM access, and OAuth app.
+- A Google account with access to that project's models. For a team, use a Google group to manage inference access.
+- An OpenWork deployment that supports AI Gateway and member Google sign-in, with Gateway administration available to your organization.
+- An OpenWork organization owner/admin to configure the provider and its access rules.
+
+For self-hosted deployments, first complete [Enable OpenWork Gateway](/self-host/gateway). Keep the deployment running while configuring OAuth: the callback must point to the instance where members will sign in.
+
+## 1. Select a project and enable billing
+
+Open the [Google Cloud console](https://console.cloud.google.com/) and use the project selector to choose an existing project or create a dedicated test project. Select your Google Workspace/Cloud Identity organization when appropriate.
+
+Record the **Project ID**, not just the display name or numeric project number. You will enter this ID in OpenWork.
+
+Open **Billing** and link the project to a billing account. Gemini and Claude requests through this integration are billed through Google Cloud. You do not need a separate Anthropic API billing account to use Claude here.
+
+For testing, consider setting a small budget alert under **Billing → Budgets & alerts**. A budget alert is a notification, **not a spending cap**.
+
+## 2. Enable the Agent Platform API
+
+1. In the selected project, open **APIs & Services → Library**.
+2. Search for **Gemini Enterprise Agent Platform API**. Some console pages may still label it **Vertex AI API**.
+3. Confirm the service identifier is `aiplatform.googleapis.com`.
+4. Select **Enable**.
+
+You do not need to create a VM or deploy a custom serving endpoint for the managed Gemini and Claude models covered here. See Google's [getting-started guide](https://cloud.google.com/vertex-ai/generative-ai/docs/start/quickstarts/quickstart-multimodal) for project prerequisites; skip its local gcloud/ADC instructions when using OpenWork's member sign-in flow.
+
+## 3. Grant Google users inference access
+
+Open **IAM & Admin → IAM → Grant access**:
+
+1. Enter the Google email address or Google group that should run inference.
+2. Select the role with identifier **`roles/aiplatform.user`**. Google may label it **Agent Platform User** or **Vertex AI User**.
+3. Save.
+
+A security administrator can use a narrower reviewed custom role instead. It must include the permissions needed for inference, such as `aiplatform.endpoints.predict`. See Google's [access-control documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/access-control).
+
+<Note>
+  Grant access to the Google user or group, not the OAuth client ID. Creating an OAuth app does not grant its users IAM access. OpenWork membership, OpenWork model access rules, Google consent, and Google IAM are separate checks; end users do not need Project Owner or Editor just to run inference.
+</Note>
+
+## 4. Choose a model and location
+
+Start with one model so it is easy to verify the configuration. You can add more later.
+
+### Gemini
+
+Open **Agent Platform → Model Garden**, choose a managed Gemini text/chat model, and check its model ID and supported locations. Record the location you will use in OpenWork.
+
+Use `global` only if that model supports it and it meets your organization's data-location requirements. Otherwise choose a supported region.
+
+### Claude
+
+In **Model Garden**, search for **Anthropic Claude** and open the desired model card:
+
+1. Select **Enable**, **Manage access**, or the access action shown for that model.
+2. Complete any required access form and review/accept the applicable terms.
+3. Check its supported locations and model ID.
+
+Use the managed API offering, not an option that provisions custom infrastructure. Model access, availability, and quota depend on the selected project, model, and location. See [Claude on Google Cloud](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude).
+
+## 5. Configure the Google OAuth consent app
+
+Open **Google Auth Platform** in the console. In older layouts, start at **APIs & Services → OAuth consent screen**.
+
+### Branding
+
+Enter an application name your members will recognize, such as **OpenWork model access**, a support email, and developer contact details. Members will see this app during Google consent.
+
+### Audience
+
+- Choose **Internal** when eligible and all intended users belong to your Google Workspace/Cloud Identity organization. Internal apps do not require Google's external-app verification.
+- Choose **External** for personal Google accounts or users outside that organization. For initial testing, keep the app in **Testing** and add each tester's Google account under **Test users**. Complete Google's publishing and verification requirements before broader rollout.
+
+An External app in Testing generally receives refresh tokens that expire after **seven days** for this scope set. The identity-only exception does not apply because this integration requests Cloud access. See Google's [production-readiness guidance](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview).
+
+### Data access
+
+Add these scopes in the consent configuration:
+
+```text
+openid
+https://www.googleapis.com/auth/userinfo.email
+https://www.googleapis.com/auth/cloud-platform
+```
+
+Google may display the email scope as account-email access. OpenWork requests its equivalent short form, `email`, alongside `openid` and `cloud-platform`.
+
+Do not add Gmail, Drive, or Calendar scopes for this integration. Cloud-platform consent permits delegated Cloud API access; IAM still controls what the user can do in your project.
+
+## 6. Create a Web OAuth client
+
+Open **Google Auth Platform → Clients → Create client**:
+
+| Field | Value |
+| --- | --- |
+| Application type | **Web application** |
+| Name | A recognizable name, such as **OpenWork model access — test** |
+| Authorized JavaScript origins | Not required for this server-side authorization flow |
+| Authorized redirect URIs | The exact callback displayed by your OpenWork deployment |
+
+<Warning>
+  Choose **Web application**, not **Desktop app**. Even when a member starts from OpenWork Desktop, Den handles Google's callback and the Gateway holds the Google credentials. A Desktop OAuth client for a local loopback listener is a different architecture.
+</Warning>
+
+### Register the correct callback
+
+In OpenWork, open **Models → Gateway** and create the appropriate provider as described in the next step. Its credential-set editor displays the OAuth callback URL. Copy that **exact** value into Google's **Authorized redirect URIs** before starting member sign-in.
+
+For a typical HTTPS deployment, the callback has this shape:
+
+```text
+https://<den-api-host>/v1/inference-providers/oauth/callback
+```
+
+The displayed value is authoritative, including any deployment path prefix. It is the **Den API callback**, not the Gateway inference URL, web dashboard URL, or `/gateway/connect` entry page. Do not add a trailing slash or substitute another hostname.
+
+For local development, Google permits loopback redirect URIs. Use the complete URL displayed by the running development instance, including its current API port. Keep that port stable or update Google's registration when it changes. Use the same hostname consistently when signing in locally; `localhost` and `127.0.0.1` are not interchangeable for browser sessions.
+
+Google's redirect-domain policies also apply: your organization must be authorized to use the callback domain, including for a hosted deployment. See [Google's Web OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server) and [OAuth policies](https://developers.google.com/identity/protocols/oauth2/policies).
+
+Create the client and save its **Client ID** and **Client secret** securely. Capture the secret when Google shows it; it may only be available at creation. Store it in a password manager and enter it directly into OpenWork's secret field, not into chat, screenshots, source code, or a public repository.
+
+## 7. Add the provider and credential set in OpenWork
+
+As an organization owner/admin, open **Models → Gateway** and add a provider:
+
+1. Choose `google-vertex` for Gemini or `google-vertex-anthropic` for Claude.
+2. Give the provider a recognizable name.
+3. Enter the **Project ID** and supported **location** recorded earlier.
+4. Select your initial test model and save the provider.
+
+The project/location destination is fixed on that provider. Create a separate provider if you need to change its destination.
+
+### Create the credential set
+
+1. Open the provider's credential sets and create one, such as **Google member sign-in**.
+2. Choose **Each Member Signs In**.
+3. Enter the Google **Web OAuth client ID** and **client secret**.
+4. Confirm that the displayed callback matches Google's registration exactly.
+5. Save.
+
+The client secret is write-only. Leave it unchanged for routine edits; replacing the OAuth client configuration requires affected members to reconnect.
+
+### Assign model access
+
+Create or select a **model group** containing the models members should use. Then create an **access rule** linking:
+
+- That model group.
+- Your member-sign-in credential set.
+- The intended OpenWork members, teams, or organization audience.
+
+Creating a provider or credential set does **not** automatically grant inference access, even to its administrator. Assign yourself access if you will test it.
+
+## 8. Sign in as a member
+
+In Den, open **Model connections** at `/dashboard/model-connections`. In Desktop, you can also use the assigned provider's **Connect** action in AI provider settings.
+
+1. Find the intended provider and credential set and select **Connect with Google**.
+2. Open the browser sign-in link.
+3. On the OpenWork connection page, sign in to Den in that browser with the **same OpenWork account that started Connect**. If sign-in opens another tab, finish there and return to the connection tab.
+4. Select **Continue to Google**.
+5. Choose the Google account you granted project IAM access to and approve the requested permissions.
+6. Return to Model connections and refresh status if necessary. Confirm the displayed connected Google email.
+7. Refresh/sync models in open Desktop or Web sessions as needed.
+
+Your Google email and OpenWork email can differ. The OpenWork member owns the connection; the Google principal supplies permission to call models in the configured Google project.
+
+<Info>
+  OAuth client configuration, Google consent, and successful inference are different milestones. A connected/token-ready status does not prove that the Google account has model entitlement, IAM permissions, or sufficient quota. Complete a test request next.
+</Info>
+
+## 9. Test a request
+
+Select the assigned model in OpenWork and send a short, non-sensitive prompt, for example:
+
+> Reply with exactly: Connection works.
+
+This is a billable Google Cloud inference request. Confirm that a response arrives, then test a longer response to exercise streaming.
+
+If you want both Gemini and Claude, repeat the provider, credential-set, and access-rule setup for the other provider. Connect and test each separately. You may reuse a Google OAuth client, but Google-side grant revocation can affect other connections sharing it; separate local credential rows do not guarantee independent Google grants.
+
+Before a team rollout, verify both Desktop and Web where used, reconnect after token revocation, and denial for a Google account without the required IAM access. Do not assume a successful test on one model/location establishes access to all others.
+
+## Token refresh, reconnect, and disconnect
+
+OpenWork stores the OAuth client secret and each member's Google token material encrypted on the server. Clients receive OpenWork Gateway credentials, not Google refresh tokens or a local ADC file. Each request uses a valid Google access token; Gateway reuses unexpired tokens and refreshes them when needed rather than minting a token for every request.
+
+- **Reconnect:** use this when Google revokes/expires the authorization or requires a new interactive session. Google Cloud session-control policies can require reauthentication; member sign-in does not guarantee indefinite unattended operation. The current flow requires a new refresh token when connecting or reconnecting.
+- **Rotate the client:** changing the OAuth client ID or secret in a credential set cancels pending sign-ins and revokes/erases affected local credentials. Members must reconnect. Renaming the set alone does not revoke them.
+- **Disconnect:** cancels pending sign-ins and removes the selected member's local credential. Google-side revocation is best effort and may affect other connections sharing the same Google grant. Disconnect does not delete the organization's OAuth app.
+- **Remove access:** disabling a provider or removing an OpenWork access rule blocks inference; it is not equivalent to revoking Google's authorization. Disabling a credential set revokes its local credentials. See the [Gateway operations guide](/self-host/gateway#session-policy-rotation-and-disconnect) for details.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Gateway administration is unavailable | Ask your deployment/platform administrator to enable Gateway and grant your organization dashboard access. See [Enable OpenWork Gateway](/self-host/gateway). |
+| No connection appears for a member | Check the OpenWork model-group, credential-set, and access-rule assignment. Google IAM alone does not create that assignment. |
+| `redirect_uri_mismatch` | Compare the entire displayed callback with Google's registration, including scheme, hostname, port, path prefix, and trailing slash. |
+| `invalid_client` / Administrator action required | Repair the Web OAuth client ID/secret in the credential set. Repeated member consent does not fix an invalid client. |
+| Google blocks a tester | Check Internal audience restrictions, External test-user membership, and your organization's app-access policies. Do not bypass an administrator's restriction. |
+| Browser account mismatch | Sign in to Den in that browser with the OpenWork account that initiated Connect, then retry. Desktop sign-in does not automatically sign the browser in. |
+| Consent succeeded, inference is denied | Check the Google user's IAM, the configured project/location, model access/terms, and quota. Not every upstream `401` or `403` is an expired token. |
+| Sign-in is required again after a few hours or days | Check Google Cloud session policy, grant revocation, and External Testing token expiry. |
+| Google did not grant offline access | Start Connect again and approve consent. If removing the app's Google authorization is necessary, first consider other connections sharing that grant. |
+| Models are missing after connecting | Refresh/sync the client, then check model-group assignments and supported model/location combinations. |
+| A local preview stopped | Restart the development instance and verify its callback port. Disposable previews may delete local configuration on expiry; Google Cloud configuration is separate. |
+
+### Explicit quota projects and other limits
+
+The OAuth-client project and inference project can differ. Neither automatically selects a separate quota project.
+
+<Warning>
+  Gateway does not currently offer an administrator-configured quota project or inject `x-goog-user-project`. Caller-supplied quota headers and Vertex quota query parameters are stripped. If Google requires an explicit quota project for your setup, this is a current integration limitation—not something to work around with client headers or local ADC. Contact your OpenWork administrator before proceeding.
+</Warning>
+
+This setup covers the Google and Anthropic provider adapters above. It does not automatically enable every mixed-SDK partner model listed under Google's catalog, or Workforce Identity Federation for users without Google identities.

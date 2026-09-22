@@ -169,17 +169,12 @@ export const resolveGatewayConnectProviders = (
     }));
 
 export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
-export const GATEWAY_CONNECT_POLL_ATTEMPTS = 6;
+export const GATEWAY_CONNECT_POLL_ATTEMPTS = 60;
+export const GATEWAY_CONNECT_TIMEOUT_MESSAGE = "Sign-in has not been confirmed. Check the browser, then refresh AI Providers. If consent expired or was canceled, retry sign-in.";
 
-/**
- * Starts OAuth over the authenticated local server, then re-syncs cloud
- * providers a few times (~60s by default) so the provider appears once the
- * member finishes the grant in the browser. Stops early when `isConnected`
- * reports the provider is no longer waiting on sign-in.
- */
 export async function connectGatewayProvider(input: {
   provider: GatewayConnectProvider;
-  startOAuth: (providerId: string, credentialSetId?: string) => Promise<{ authorizationUrl: string }>;
+  startOAuth: (providerId: string, credentialSetId?: string, signal?: AbortSignal) => Promise<{ authorizationUrl: string }>;
   signal: AbortSignal;
   openUrl: (url: string) => void | Promise<void>;
   resync: () => Promise<unknown>;
@@ -190,9 +185,10 @@ export async function connectGatewayProvider(input: {
   attempts?: number;
 }): Promise<boolean> {
   if (input.signal.aborted) return false;
-  const { authorizationUrl } = await input.startOAuth(input.provider.cloudProviderId, input.provider.credentialSetId);
+  const { authorizationUrl } = await input.startOAuth(input.provider.cloudProviderId, input.provider.credentialSetId, input.signal);
   if (input.signal.aborted) return false;
   await input.openUrl(authorizationUrl);
+  if (input.signal.aborted) return false;
   const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => {
     const finish = () => {
       clearTimeout(timer);
@@ -206,6 +202,7 @@ export async function connectGatewayProvider(input: {
   const attempts = input.attempts ?? GATEWAY_CONNECT_POLL_ATTEMPTS;
   const interval = input.pollIntervalMs ?? GATEWAY_CONNECT_POLL_INTERVAL_MS;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (input.signal.aborted) return false;
     await wait(interval);
     if (input.signal.aborted) return false;
     try {
@@ -216,7 +213,7 @@ export async function connectGatewayProvider(input: {
     if (input.signal.aborted) return false;
     if (input.isConnected()) return true;
   }
-  return input.isConnected();
+  return !input.signal.aborted && input.isConnected();
 }
 
 export const resolveGatewayProviderIds = (

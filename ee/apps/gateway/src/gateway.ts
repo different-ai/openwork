@@ -333,7 +333,7 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
   if (["openai-organization", "openai-project", "x-amzn-bedrock-guardrailidentifier", "x-amzn-bedrock-guardrailversion"].some((name) => request.headers.has(name))) {
     return invalid(400, "unsupported_gateway_resource", "Caller-selected provider accounts and resources are not authorized by a Gateway model grant.")
   }
-  if ([...url.searchParams.keys()].some((name) => name.toLowerCase() === GATEWAY_GRANT_HEADER || /model|deployment|preset|fallback|route/i.test(name))) {
+  if ([...new URL(request.url).searchParams.keys()].some((name) => name.toLowerCase() === GATEWAY_GRANT_HEADER || /model|deployment|preset|fallback|route/i.test(name))) {
     return invalid(400, "unsupported_model_selection", "Model selection in query parameters is not supported.")
   }
   let bytes: Uint8Array<ArrayBuffer>
@@ -727,7 +727,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       loadProviderCredential: dependencies.loadProviderCredential,
       refreshGoogleOauthToken: dependencies.refreshGoogleOauthToken,
       mintGcpAccessToken: dependencies.mintGcpAccessToken,
-      now: startedAt,
+      clock: dependencies.now,
     })
     if (credential.kind !== "secret" && credential.kind !== "aws_keys") {
       startRecorder({
@@ -753,6 +753,12 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           response.headers.set("x-openwork-auth-required", "1")
           return reject(response, "member_auth_required", "Member credential required")
         }
+        case "configuration_required":
+          return reject(
+            gatewayError(502, "provider_misconfigured", "The Google OAuth client requires administrator repair. Contact your organization administrator.", { provider_id: provider.id }),
+            "provider_misconfigured",
+            "Google OAuth client configuration requires repair",
+          )
         case "org_credential_missing":
           return reject(
             gatewayError(502, "provider_credential_missing", "No active credential is configured for this inference provider.", { provider_id: provider.id }),
@@ -780,7 +786,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       }
     }
 
-    const auth = materializeAuth(credential, provider, resolved.family, startedAt)
+    const auth = materializeAuth(credential, provider, resolved.family, dependencies.now())
     if ("error" in auth) {
       startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: prepared.requestedModel, stream: prepared.stream, credentialId: credential.credentialId })
       return reject(gatewayError(502, "provider_misconfigured", auth.error, { provider_id: provider.id }), "provider_misconfigured", "Misconfigured inference provider")
@@ -870,6 +876,21 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
         status: upstream.status,
       })
+    }
+
+    if ((resolved.family === "google_vertex" || resolved.family === "google_vertex_anthropic") && (upstream.status === 401 || upstream.status === 403)) {
+      const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
+      const message = upstream.status === 401
+        ? selection.row.credentialSet.credential_mode === "member"
+          ? "Google rejected the provider credential. Sign in again; if the problem persists, contact your organization administrator."
+          : "Google rejected the provider credential. Ask your organization administrator to check provider authentication."
+        : "Google Cloud denied access. Ask your administrator to check project IAM and model access."
+      const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
+      response.headers.set("x-openwork-request-id", openworkRequestId)
+      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode })
+      lifetime.dispose()
+      await upstream.body?.cancel().catch(() => {})
+      return response
     }
 
     const responseHeaders = relayHeaders(upstream, openworkRequestId)

@@ -507,7 +507,7 @@ describe("cloud provider sync in gateway mode", () => {
     }
   });
 
-  test("returns a server-handled outcome without network calls or error state behind the gateway", async () => {
+  test("rereads hosted runtime providers without client-side materialization behind the gateway", async () => {
     const storage = installWindow({ origin: "https://web.openworklabs.com", gateway: true });
     installCloudSession(storage);
     const requests: RecordedRequest[] = [];
@@ -517,8 +517,34 @@ describe("cloud provider sync in gateway mode", () => {
     const outcome = await store.runCloudProviderSync("settings_cloud_opened");
 
     expect(outcome).toEqual({ outcome: "handled_server_side" });
-    expect(requests).toEqual([]);
+    expect(requests.some((request) => new URL(request.url).pathname === "/provider")).toBe(true);
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+    expect(requests.some((request) => request.url.includes("/cloud-provider-sync/run"))).toBe(false);
     expect(store.getSnapshot().providerAuthError).toBeNull();
+  });
+
+  test.each(["session delivery", "OAuth response"])("does not use an OAuth result after an organization switch during %s", async (phase) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests);
+    const fixtureFetch = globalThis.fetch;
+    const starts: string[] = [];
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = getRequestUrl(input);
+      if (url.endsWith("/den-session") && phase === "session delivery") {
+        storage.setItem("openwork.den.activeOrgId", "org_other");
+      }
+      if (url.endsWith("/oauth/start")) {
+        starts.push(url);
+        if (phase === "OAuth response") storage.setItem("openwork.den.activeOrgId", "org_other");
+        return jsonResponse({ authorizationUrl: "https://den.example/gateway/connect?attempt=fixture" });
+      }
+      return fixtureFetch(input, init);
+    } });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    await expect(store.startGatewayProviderOAuth("ipr_fixture", "gcs_fixture", new AbortController().signal)).rejects.toThrow("changed");
+    expect(starts).toHaveLength(phase === "session delivery" ? 0 : 1);
   });
 
   test("keeps the client materialization path active outside gateway mode", async () => {

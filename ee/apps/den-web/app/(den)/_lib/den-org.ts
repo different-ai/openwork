@@ -610,6 +610,10 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
+export function getModelConnectionsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/model-connections`;
+}
+
 export function getAiGatewayRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/ai-gateway`;
 }

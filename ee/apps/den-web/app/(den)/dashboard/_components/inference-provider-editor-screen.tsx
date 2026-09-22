@@ -58,6 +58,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [serviceAccountJson, setServiceAccountJson] = useState("");
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
+  const [rotationAcknowledged, setRotationAcknowledged] = useState(false);
+  const [callbackCopied, setCallbackCopied] = useState(false);
   const [replacingKey, setReplacingKey] = useState(false);
   const [access, setAccess] = useState<ProviderAccessValue>({ allMembers: true, memberIds: [], teamIds: [] });
   const [adding, setAdding] = useState<"person" | "team" | null>(null);
@@ -77,8 +79,15 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     setModelIds(provider.modelIds ?? provider.catalogModels.map((model) => model.id));
     setAllowAllModels(provider.modelIds !== null && provider.modelIds.length === 0);
     setSettings(provider.settings);
-    setCredentialMode(provider.credentialMode);
-    setOauthClientId(provider.oauthClientId ?? provider.credentialSets[0]?.oauthClientId ?? "");
+    setCredentialMode(provider.credentialSets[0]?.credentialMode ?? provider.credentialMode);
+    setOauthClientId(provider.credentialSets[0]?.oauthClientId ?? provider.oauthClientId ?? "");
+    setOauthClientSecret("");
+    setApiKey("");
+    setApiKeyValues({});
+    setServiceAccountJson("");
+    setReplacingKey(false);
+    setRotationAcknowledged(false);
+    setCallbackCopied(false);
     setAccess(accessFromGrants(provider.accessGrants));
   }, [provider]);
 
@@ -102,7 +111,11 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const envNames = detail ? getProviderEnvNames(detail.config) : [];
   const memberSignInSupported = supportsMemberCredentialMode(providerId);
   const configuredSet = provider?.credentialSets[0] ?? null;
-  const keySaved = Boolean(configuredSet?.configured) && !replacingKey;
+  const invalidatesCredentials = Boolean(configuredSet && (
+    configuredSet.credentialMode !== credentialMode ||
+    (credentialMode === "member" && (oauthClientId.trim() !== (configuredSet.oauthClientId ?? "") || oauthClientSecret.trim()))
+  ));
+  const keySaved = Boolean(configuredSet?.configured && configuredSet.credentialMode === credentialMode) && !replacingKey;
   const displayName = detail?.name ?? provider?.name ?? "provider";
   const formInput = {
     name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active" as const,
@@ -117,6 +130,15 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     const grant = provider?.accessGrants.find((entry) => JSON.stringify(entry.audience) === JSON.stringify(audience));
     return grant ? "assigned" : "will be assigned when you save";
   };
+
+  function changeCredentialMode(mode: "org" | "member") {
+    setCredentialMode(mode);
+    setOauthClientSecret("");
+    setApiKey("");
+    setApiKeyValues({});
+    setServiceAccountJson("");
+    setRotationAcknowledged(false);
+  }
 
   /** Edits go through the matrix routes: first group, first set, and one grant per audience. */
   async function syncAccessAndCredential() {
@@ -152,6 +174,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
 
   async function save() {
     setSaveError(null);
+    if (invalidatesCredentials && !rotationAcknowledged) return setSaveError("Confirm that members will need to reconnect before saving this change.");
     if (!detail || detail.id !== providerId) return setSaveError("Wait for the provider catalog to load.");
     if (!isSupportedGatewayNpm(npm)) return setSaveError("This provider is not supported by AI Gateway.");
     if (!allowAllModels && !modelIds.length) return setSaveError("Pick at least one model, or choose all models.");
@@ -226,8 +249,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         <h2 id="gateway-key-heading" className={CARD_TITLE}>Key</h2>
         {memberSignInSupported ? (
           <div className="mt-3 flex gap-2">
-            <Radio testId="gateway-credential-org" checked={credentialMode === "org"} label="One key for the organization" onSelect={() => setCredentialMode("org")} />
-            <Radio testId="gateway-credential-member" checked={credentialMode === "member"} label="People sign in with Google" onSelect={() => setCredentialMode("member")} />
+            <Radio testId="gateway-credential-org" checked={credentialMode === "org"} label="One key for the organization" onSelect={() => changeCredentialMode("org")} />
+            <Radio testId="gateway-credential-member" checked={credentialMode === "member"} label="People sign in with Google" onSelect={() => changeCredentialMode("member")} />
           </div>
         ) : null}
         {getRequiredSettingKeys(npm).map((key) => (
@@ -237,11 +260,30 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
               onChange={(event) => setSettings((current) => ({ ...current, [key]: key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value }))} />
           </label>
         ))}
+        {invalidatesCredentials ? <label className="mt-3 flex items-center gap-3"><DenSwitch checked={rotationAcknowledged} onChange={setRotationAcknowledged} aria-label="Confirm credential invalidation" /><span>I understand this cancels pending sign-ins and revokes affected credentials. Members must reconnect after this change.</span></label> : null}
         {credentialMode === "member" ? (
           <>
-            <label className={LABEL}>OAuth client ID<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-id" value={oauthClientId} onChange={(event) => setOauthClientId(event.target.value)} /></label>
-            <label className={LABEL}>OAuth client secret<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" data-testid="gateway-oauth-client-secret" value={oauthClientSecret} onChange={(event) => setOauthClientSecret(event.target.value)} placeholder={configuredSet?.hasOauthClientSecret ? "Saved — enter a replacement to change it" : undefined} /></label>
-            {provider?.oauthCallbackUrl ? <p className="mt-2 text-[12px] text-gray-500">Add this URL to the allowed redirect URIs in your OAuth client configuration. <code className="font-mono">{provider.oauthCallbackUrl}</code></p> : null}
+            <DenNotice className="mt-3" tone="info" message="Create a Google OAuth client with application type Web application, not Desktop app. No gcloud, local ADC or service-account key is needed. Configure the consent screen, then register the exact HTTPS callback below as an Authorized redirect URI. The OAuth client's project may differ from the inference project." />
+            {provider?.oauthCallbackUrl ? <div className="mt-3 flex flex-col gap-2">
+              <p className="text-sm font-medium">OAuth callback URL</p>
+              <code className="break-all text-xs text-muted-foreground">{provider.oauthCallbackUrl}</code>
+              <p className="text-sm text-muted-foreground">Add this URL to the allowed redirect URIs in your OAuth client configuration.</p>
+              <DenButton variant="secondary" onClick={() => {
+                const callback = provider.oauthCallbackUrl;
+                if (!callback) return;
+                if (!navigator.clipboard) { setSaveError("Clipboard access is unavailable. Select and copy the displayed URL manually."); return; }
+                void navigator.clipboard.writeText(callback).then(() => setCallbackCopied(true)).catch(() => setSaveError("Could not copy the callback. Select and copy the displayed URL manually."));
+              }}>{callbackCopied ? "Callback copied" : "Copy callback URL"}</DenButton>
+            </div> : <DenNotice className="mt-3" tone="warning" message={provider ? "The server did not provide a callback URL. Ask your deployment administrator to check the canonical public Den API origin; do not guess a redirect URI." : "Save this provider to obtain its exact OAuth callback URL, then register it in your Google Web OAuth client before members connect."} />}
+            <label className={LABEL}>OAuth client ID<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-id" value={oauthClientId} autoComplete="off" onChange={(event) => { setOauthClientId(event.target.value); setRotationAcknowledged(false); }} /></label>
+            <label className={LABEL}>OAuth client secret {configuredSet?.hasOauthClientSecret ? "(configured)" : ""}<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" data-testid="gateway-oauth-client-secret" value={oauthClientSecret} autoComplete="new-password" onChange={(event) => { setOauthClientSecret(event.target.value); setRotationAcknowledged(false); }} placeholder={configuredSet?.hasOauthClientSecret ? "Saved — enter a replacement to change it" : undefined} /></label>
+            <p className="mt-3 text-sm text-muted-foreground">Secrets are write-only and encrypted on the server. Leave the secret blank to keep it unchanged; entering a value replaces it. Blank does not clear it. Member sets require a client ID and secret: to remove the configuration, remove this provider. Disabling a set revokes its credentials but retains its OAuth app configuration.</p>
+            <DenNotice className="mt-3" tone="neutral" message={<span className="flex flex-col gap-3">
+              <span>Consent: allow cloud-platform access (https://www.googleapis.com/auth/cloud-platform). Identity scopes openid and email identify the Google account; no Google Workspace scopes are needed. Prefer an Internal audience where eligible. External production apps may need Google verification; External apps in Testing generally expire refresh grants after seven days for cloud-platform access. Verify that your organization is allowed to use this callback domain.</span>
+              <span>IAM: enable the Vertex AI API in the inference project, grant each Google account roles/aiplatform.user or a reviewed role with aiplatform.endpoints.predict, and enable partner-model access where needed. Validate project, location and model availability. If a quota project is configured, check serviceusage.services.use on that project. Project and location are fixed after provider creation.</span>
+              <span>Saving configuration is not an inference test. Choose models and who can use them, then have each member connect from My Model Connections. Google session-control policy, revocation or invalid_grant / invalid_rapt can require interactive sign-in again; member OAuth does not promise indefinite unattended operation.</span>
+              <span>Diagnostics: redirect_uri_mismatch means check the exact callback and Web client type; invalid_client means check the client ID/secret. Permission denied after consent usually needs IAM or model-access review, not repeated consent. Replacing either OAuth client field cancels pending sign-ins and invalidates existing Google credentials for this set.</span>
+            </span>} />
           </>
         ) : vertex ? (
           <label className={LABEL}>Service account JSON<DenTextarea className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-service-account" value={serviceAccountJson} onChange={(event) => setServiceAccountJson(event.target.value)} placeholder={configuredSet?.configured ? "Saved — paste a replacement to change it" : "Paste the key file"} /></label>

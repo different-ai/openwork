@@ -236,7 +236,7 @@ export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, 
   }
   if (modeChanged || clientChanged || disabled) await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id))
   const revoked = credentials.filter((row) => row.status !== "revoked" && (modeChanged || input.status === "disabled" || clientChanged && row.kind === "oauth_google"))
-  if (revoked.length) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", refreshing_until: null, updated_at: new Date() }).where(inArray(GatewayProviderCredentialTable.id, revoked.map((row) => row.id)))
+  if (revoked.length) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", expires_at: null, scopes: null, refreshing_until: null, last_error: null, updated_at: new Date() }).where(inArray(GatewayProviderCredentialTable.id, revoked.map((row) => row.id)))
   const values = { name, credential_mode: mode, oauth_client_id: clientId, oauth_client_secret: clientSecret, status: input.status ?? existing?.status ?? "active", updated_at: new Date() }
   if (existing) await tx.update(GatewayCredentialSetTable).set(values).where(eq(GatewayCredentialSetTable.id, id))
   else await tx.insert(GatewayCredentialSetTable).values({ id, gateway_provider_id: provider.id, created_by_org_membership_id: creatorId, ...values })
@@ -320,7 +320,9 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
       try {
         const parsed = parseGatewayProviderSecret(token.kind, token.secret)
         usable = isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
-          && (set.credential_mode !== "member" || parsed.kind === "oauth_google")
+          && (parsed.kind !== "oauth_google" || token.last_error !== "invalid_client")
+          && (set.credential_mode !== "member" || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken))
+          && (parsed.kind !== "oauth_google" || Boolean(token.expires_at && Number.isFinite(token.expires_at.getTime())))
           && (parsed.kind !== "api_key_map" || Boolean(pickInferenceApiKeyFromMap(parsed.apiKeys, readProviderEnvNames(provider.provider_config))))
           && (!token.expires_at || token.expires_at.getTime() > Date.now() || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken && set.oauth_client_id && set.oauth_client_secret))
       } catch { usable = false }

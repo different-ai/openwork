@@ -152,6 +152,38 @@ describe("Gateway provider form", () => {
   });
 });
 
+describe("Google Web OAuth onboarding", () => {
+  test("ports callback, scopes, IAM, session limits and secret lifecycle into the provider form", () => {
+    for (const text of ["Web application, not Desktop app", "Copy callback URL", "navigator.clipboard.writeText(callback)", "cloud-platform", "openid and email", "roles/aiplatform.user", "aiplatform.endpoints.predict", "seven days", "invalid_rapt", "Blank does not clear it", "Disabling a set", "Saving configuration is not an inference test"]) {
+      expect(editor).toContain(text);
+    }
+    expect(editor).toContain("{provider.oauthCallbackUrl}");
+    expect(editor).toContain("do not guess a redirect URI");
+    expect(editor).toContain("Save this provider to obtain its exact OAuth callback URL");
+    expect(editor).toContain("Clipboard access is unavailable");
+    expect(editor).toContain("Could not copy the callback");
+    expect(editor).not.toContain("denApiEndpoint(getOauthCallbackPath())");
+    expect(editor).toContain("readOnly={Boolean(provider)}");
+  });
+
+  test("requires acknowledgement before rotating the first credential set through its current owner", () => {
+    expect(editor).toContain("const configuredSet = provider?.credentialSets[0] ?? null");
+    expect(editor).toContain("configuredSet.credentialMode !== credentialMode");
+    expect(editor).toContain('oauthClientId.trim() !== (configuredSet.oauthClientId ?? "")');
+    expect(editor).toContain("if (invalidatesCredentials && !rotationAcknowledged)");
+    expect(editor.indexOf("if (invalidatesCredentials && !rotationAcknowledged)")).toBeLessThan(editor.indexOf('runReauthableAction("save-inference-provider"'));
+    expect(editor).toContain("setRotationAcknowledged(false)");
+    expect(editor).toContain('aria-label="Confirm credential invalidation"');
+    expect(editor).toContain('setOauthClientSecret("")');
+    expect(editor).not.toContain("configuredSet.oauthClientSecret");
+    expect(editor).toContain('autoComplete="new-password"');
+    expect(editor).toContain("if (clientSecret !== undefined) body.oauthClientSecret = clientSecret");
+    const request = read("dashboard", "_components", "inference-provider-request.ts");
+    expect(request).toContain("if (oauthClientSecret) {");
+    expect(request).toContain("body.oauthClientSecret = oauthClientSecret");
+  });
+});
+
 describe("Users & Teams", () => {
   test("reads access and limits without editing them in place", () => {
     expect(subjects).toContain("directoryAccess(providerList, subject)");

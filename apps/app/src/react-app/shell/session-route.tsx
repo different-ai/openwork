@@ -161,6 +161,7 @@ import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-works
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
 import {
   connectGatewayProvider,
+  GATEWAY_CONNECT_TIMEOUT_MESSAGE,
   isGatewaySetConnected,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
@@ -1052,12 +1053,12 @@ export function SessionRoute() {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
     try {
-      await connectGatewayProvider({
+      const connected = await connectGatewayProvider({
         provider,
         signal: controller.signal,
         startOAuth: sessionProviderAuthStore.startGatewayProviderOAuth,
@@ -1065,6 +1066,11 @@ export function SessionRoute() {
         resync: () => refreshCloudProviderSync("manual"),
         isConnected: () => isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders),
       });
+      if (!connected && !controller.signal.aborted) {
+        toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
+          if (!controller.signal.aborted) void connect(provider);
+        } } });
+      }
     } catch (error) {
       if (!controller.signal.aborted) toast.error(describeRouteError(error));
     }

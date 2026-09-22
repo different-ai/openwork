@@ -209,6 +209,11 @@ export type OAuthTokenExchangeFailureCode =
   | "oauth_token_response_oversized"
   | "oauth_token_endpoint_unreachable"
   | "oauth_token_exchange_failed"
+  | "oauth_scope_required"
+  | "oauth_refresh_token_required"
+  | "oauth_identity_invalid"
+  | "oauth_reauthentication_required"
+  | "oauth_token_endpoint_unavailable"
 
 export class OAuthTokenExchangeError extends Error {
   readonly phase = "AUTH_TOKEN_ACQUISITION"

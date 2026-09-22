@@ -449,6 +449,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
         {/* Footer */}
         <DialogFooter className="shrink-0">
+          {denAuth.isSignedIn ? <Button variant="outline" onClick={() => platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString())}>My Model Connections</Button> : null}
           <DialogClose render={<Button variant="outline" />}>
             {t("models.done")}
           </DialogClose>

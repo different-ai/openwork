@@ -72,6 +72,7 @@ import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mc
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
 import {
   connectGatewayProvider,
+  GATEWAY_CONNECT_TIMEOUT_MESSAGE,
   gatewayConnectProviderKey,
   isGatewaySetConnected,
   type GatewayConnectProvider,
@@ -193,7 +194,7 @@ import { CommandPalette, type PaletteItem } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
-import { getDenInferenceUrl, type DenSettings } from "@/app/lib/den";
+import { getDenInferenceUrl, readDenSettings, type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { useUiStateStore } from "./ui-state-store";
 import {
@@ -874,13 +875,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
     setConnectingGatewayProviderId(gatewayConnectProviderKey(provider));
     try {
-      await connectGatewayProvider({
+      const connected = await connectGatewayProvider({
         provider,
         signal: controller.signal,
         startOAuth: providerAuthStore.startGatewayProviderOAuth,
@@ -890,6 +891,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           return isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders);
         },
       });
+      if (!connected && !controller.signal.aborted) {
+        toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
+          if (!controller.signal.aborted) void connect(provider);
+        } } });
+      }
     } catch (error) {
       if (!controller.signal.aborted) toast.error(describeRouteError(error));
     } finally {
@@ -2434,6 +2440,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             gatewayProviderIds={gatewayProviderIds}
             gatewayConnectProviders={gatewayConnectProviders}
             connectingGatewayProviderId={connectingGatewayProviderId}
+            onOpenModelConnections={cloudSession.isSignedIn ? () => { void platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString()); } : undefined}
+            onCancelGatewayConnect={() => {
+              gatewayConnectAbort.current?.abort();
+              setConnectingGatewayProviderId(null);
+              toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
+            }}
             onConnectGatewayProvider={handleConnectGatewayProvider}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             showOpenWorkModelsConnect={showOpenWorkModelsConnect}
