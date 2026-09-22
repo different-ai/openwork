@@ -77,8 +77,7 @@ before capturing the running memory snapshot. Each clone resumes those processes
 with independent database and file state; it does not reseed or restart them.
 The private edge maps the snapshot’s virtual origins to each clone’s unique URLs.
 Launch checks restored services and renews expired demo sessions when necessary.
-The model upstream alone is deterministic. The private sandbox also runs the real
-desktop app, streamed through noVNC and signed in as `alex@acme.test`. This is an isolated demo, not production
+The model upstream alone is deterministic. This is an isolated demo, not production
 accounts or billing. Initial preparation can take several minutes.
 
 ```sh

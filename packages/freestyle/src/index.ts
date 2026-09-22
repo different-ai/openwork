@@ -23,7 +23,7 @@ export function previewWorld(value: unknown): PreviewWorld {
 
 export function snapshotSlug(sha: string, world: PreviewWorld = "app-web"): string {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
-  return `openwork-${previewWorld(world)}-v5-${sha}`;
+  return `openwork-${previewWorld(world)}-v4-${sha}`;
 }
 
 export function isMissing(error: unknown): boolean {
@@ -140,8 +140,8 @@ export async function launchPreview(
       stage = "read-outputs";
       outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
       const serviceKeys: Record<string, string> = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
-      // Only link the desktop viewer when the snapshot actually booted it.
-      if (outputs.desktopStatus?.value === "ready") serviceKeys.desktop = "desktopUrl";
+      // Link the noVNC viewer only when this snapshot started the desktop display.
+      if (outputs.desktopStatus && outputs.desktopStatus.value !== "unavailable") serviceKeys.desktop = "desktopUrl";
       for (const [name, key] of Object.entries(serviceKeys)) {
         const origin = Object.entries(origins ?? {}).find(([service]) => service === name)?.[1];
         if (!origin) throw new Error("Missing private service origin");

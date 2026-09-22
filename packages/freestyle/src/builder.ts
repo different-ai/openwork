@@ -6,8 +6,7 @@ import { client, execChecked, findSnapshot, isMissing, snapshotSlug, type Previe
 /** Build once per exact source revision, then clone the running, verified world. */
 export async function ensureSnapshot(sha: string, api = client(), log: (message: string) => void = () => {}, world: PreviewWorld = "app-web") {
   const slug = snapshotSlug(sha, world);
-  // ACME now boots the real desktop app as well; its first compile needs headroom.
-  const deadline = Date.now() + 20 * 60_000;
+  const deadline = Date.now() + 11 * 60_000;
   // The provider's unique slug is the distributed lock: works across Vercel instances.
   while (Date.now() < deadline) {
     const existing = await findSnapshot(sha, api, world);
@@ -15,7 +14,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
     let created;
     try {
       created = await api.vms.create({
-        slug: `ow-build-${world}-v5-${sha}`, snapshotId: "freestyle/ubuntu",
+        slug: `ow-build-${world}-v4-${sha}`, snapshotId: "freestyle/ubuntu",
         displayName: `OpenWork snapshot ${sha.slice(0, 7)}`, ttlSeconds: 1800,
         metadata: { kind: "openwork-snapshot-builder-v1", gitSha: sha },
         firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
@@ -23,7 +22,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
     } catch (error) {
       if (!(error instanceof FreestyleApiError) || error.status !== 409) throw error;
       // Capacity failures also use 409. Only wait when our builder actually exists.
-      const builder = await api.vms.get(`ow-build-${world}-v5-${sha}`).catch((cause: unknown) => {
+      const builder = await api.vms.get(`ow-build-${world}-v4-${sha}`).catch((cause: unknown) => {
         if (isMissing(cause)) return null;
         throw cause;
       });
@@ -83,7 +82,7 @@ systemctl daemon-reload
 ${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null\nnode /opt/openwork-preview/health.mjs" : `mysqladmin -uroot -ppassword ping
 redis-cli ping
 systemctl start openwork-preview-runtime
-for attempt in $(seq 1 540); do
+for attempt in $(seq 1 240); do
   test ! -f /opt/openwork-preview/failed-world
   if test -f /opt/openwork-preview/ready-world; then break; fi
   sleep 2
@@ -124,7 +123,7 @@ WantedBy=multi-user.target
         }
         await delay(3_000);
       }
-      throw new Error("Snapshot build exceeded 20 minutes. Try again after checking the builder logs.");
+      throw new Error("Snapshot build exceeded 11 minutes. Try again after checking the builder logs.");
     } catch (error) {
       log(await vm.fs.readTextFile("/opt/openwork-preview/build.log").then((value) => value.slice(-6000), () => "Builder log unavailable."));
       throw error;

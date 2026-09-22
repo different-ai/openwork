@@ -41,7 +41,7 @@ try {
   try {
     const { startDesktop } = await import("./desktop.mjs");
     desktop = await startDesktop(stack, world);
-    outputs.desktopStatus = { value: "ready", group: "Desktop", note: "Real OpenWork desktop app signed in as the demo owner" };
+    outputs.desktopStatus = { value: "starting", group: "Desktop", note: "Real OpenWork desktop app, signed in as the demo owner; it may still be loading when the viewer opens" };
   } catch (error) {
     console.error("Desktop preview unavailable:", error);
     outputs.desktopStatus = { value: "unavailable", group: "Desktop", note: "The web preview is unaffected; see /opt/openwork-preview/desktop logs" };

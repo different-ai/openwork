@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 
 // Controller-owned: a virtual display, a VNC server bound to loopback, and the
@@ -28,7 +28,10 @@ async function waitFor(check, label, timeoutMs = 60_000) {
   throw new Error(`Desktop ${label} did not become ready`);
 }
 
-/** Starts the display stack, then the real desktop app signed in to the world's Den. */
+/**
+ * Starts the display and viewer (seconds), then boots the real desktop app in
+ * the background so the world's existing readiness and build timing are unchanged.
+ */
 export async function startDesktop(stack, world) {
   mkdirSync(LOGS, { recursive: true, mode: 0o700 });
   mkdirSync("/tmp/.X11-unix", { recursive: true, mode: 0o1777 });
@@ -38,13 +41,20 @@ export async function startDesktop(stack, world) {
   service(stack, "x11vnc", ["-display", DESKTOP_DISPLAY, "-localhost", "-rfbport", String(VNC_PORT), "-forever", "-shared", "-nopw", "-quiet"], "x11vnc");
   service(stack, "websockify", ["--web", "/usr/share/novnc", `127.0.0.1:${NOVNC_PORT}`, `127.0.0.1:${VNC_PORT}`], "novnc");
   await waitFor(async () => (await fetch(`http://127.0.0.1:${NOVNC_PORT}/vnc.html`, { signal: AbortSignal.timeout(2_000) })).ok, "viewer");
+  const status = (value) => writeFileSync(`${LOGS}/status`, value, { mode: 0o600 });
+  status("starting");
   // Same launch path as Linux CI desktop proofs: Chromium's SUID sandbox is
   // unavailable to the guest's root services, so container mode passes --no-sandbox.
   process.env.DISPLAY = DESKTOP_DISPLAY;
   process.env.OPENWORK_EVAL_CONTAINER_ELECTRON = "1";
-  const { app } = await import("/workspace/evals/packages/env/src/desktop-app.ts");
-  const { resolvePlace } = await import("/workspace/evals/packages/env/src/place.ts");
-  const desktop = await app({ den: world.den, place: resolvePlace(), as: "admin", workspacePath: "/root/openwork-desktop" });
-  stack.use(desktop);
-  return { url: `http://127.0.0.1:${NOVNC_PORT}`, workspaceId: desktop.workspaceId };
+  void (async () => {
+    const { app } = await import("/workspace/evals/packages/env/src/desktop-app.ts");
+    const { resolvePlace } = await import("/workspace/evals/packages/env/src/place.ts");
+    stack.use(await app({ den: world.den, place: resolvePlace(), as: "admin", workspacePath: "/root/openwork-desktop" }));
+    status("ready");
+  })().catch((error) => {
+    console.error("Desktop app did not start:", error);
+    status("failed");
+  });
+  return { url: `http://127.0.0.1:${NOVNC_PORT}` };
 }

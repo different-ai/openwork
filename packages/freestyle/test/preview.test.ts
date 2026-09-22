@@ -162,8 +162,8 @@ test("world outputs accept disposable credentials but reject malformed values", 
   assert.throws(() => parsePreviewOutputs({ password: { value: "synthetic", secret: "false" } }), /Invalid/);
 });
 
-test("ACME clones route the real desktop viewer only when the snapshot booted it", async () => {
-  const ready = mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "ready", group: "Desktop" } }) });
+test("ACME clones link the desktop viewer only when the snapshot started the desktop", async () => {
+  const ready = mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "starting", group: "Desktop" } }) });
   const session = await launchPreview({ gitSha: sha, world: "acme-web" }, ready.api, reachable);
   const desktop = new URL(session.outputs.desktopUrl?.value ?? "https://missing.invalid");
   assert.match(desktop.hostname, /^desktop-[a-f0-9]{32}\.preview\.openwork\.software$/);
@@ -178,8 +178,6 @@ test("ACME clones route the real desktop viewer only when the snapshot booted it
   const web = await launchPreview({ gitSha: sha, world: "acme-web" }, unavailable.api, reachable);
   assert.equal(web.outputs.desktopUrl, undefined, "a failed desktop never produces a dead link");
   assert.ok(web.outputs.webUrl?.value.includes("__openwork_launch"), "the web preview still launches");
-});
-
-test("desktop-capable snapshots use a new recipe version so older snapshots are rebuilt", () => {
-  assert.match(snapshotSlug(sha, "acme-web"), /^openwork-acme-web-v5-/);
+  const older = mockApi();
+  assert.equal((await launchPreview({ gitSha: sha, world: "acme-web" }, older.api, reachable)).outputs.desktopUrl, undefined, "snapshots from before this change are unaffected");
 });

@@ -16,8 +16,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
-    # ACME snapshots also compile and launch the real desktop app.
-    timeout-minutes: 28
+    timeout-minutes: 16
     strategy:
       fail-fast: false
       matrix:
