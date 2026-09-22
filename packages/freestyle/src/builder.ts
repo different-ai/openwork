@@ -68,9 +68,9 @@ pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-serve
 pnpm --dir evals install --frozen-lockfile --ignore-scripts
 pnpm --filter @openwork-ee/den-db build
 pnpm --filter @openwork/email build
-# Desktop build: fetch the app's sidecars and helpers once so launches skip it.
-node apps/desktop/scripts/prepare-sidecar.mjs --force --outdir apps/desktop/resources/sidecars
-node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/desktop/resources/helpers` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
+# Desktop build runs alongside the remaining builds; launches then skip it.
+(node apps/desktop/scripts/prepare-sidecar.mjs --force --outdir apps/desktop/resources/sidecars && node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/desktop/resources/helpers) &
+DESKTOP_BUILD=$!` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
 pnpm --filter @openwork/types build
 pnpm --filter @openwork/sdk build
 pnpm --filter @openwork/enterprise-mcp-client build
@@ -84,6 +84,7 @@ opencode --version
 systemctl daemon-reload
 ${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null\nnode /opt/openwork-preview/health.mjs" : `mysqladmin -uroot -ppassword ping
 redis-cli ping
+wait "$DESKTOP_BUILD"
 systemctl start openwork-preview-runtime
 for attempt in $(seq 1 240); do
   test ! -f /opt/openwork-preview/failed-world

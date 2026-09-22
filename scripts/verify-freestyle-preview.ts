@@ -89,18 +89,19 @@ try {
     if (desktop !== "starting") break;
     await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
-  assert.equal(desktop, "ready", "The desktop app must finish booting");
+  assert.ok(desktop === "ready" || desktop === "ready-signed-out", "The desktop app must finish booting");
+  const desktopSignedIn = desktop === "ready";
   const desktopReadyMs = Math.round(performance.now() - desktopStart);
   const proof = {
     gitSha: sha, world: "acme-web", measuredAt: new Date().toISOString(), launches,
     scope: "Controller launch includes first authorized app HTML readiness, followed by a repeat HTML fetch. Excludes reviewer HTTP overhead and browser rendering; not a click-to-usable benchmark.",
     restoredRunningProcess: true, independentDatabases: true, independentUrlsAndCredentials: true,
-    demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true, desktopViewer: true, desktopReadyMs,
+    demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true, desktopViewer: true, desktopReadyMs, desktopSignedIn,
   };
   await writeFile("freestyle-launch-proof.json", JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY,
-    `\n## Live ACME snapshot verification\n\nCommit: \`${sha}\`\n\n| Clone | Link and first app HTML ready | Repeat HTML fetch |\n| --- | --- | --- |\n${launches.map((item, index) => `| ${index + 1} | ${(item.launchMs / 1000).toFixed(2)} s | ${(item.repeatHtmlMs / 1000).toFixed(2)} s |`).join("\n")}\n\n${proof.scope}\n\nVerified: restored running process, independent databases and access, demo sign-in, enabled AI Gateway dashboard, a fresh reply through the resumed gateway, and the real desktop app behind the access-checked viewer (ready ${(desktopReadyMs / 1000).toFixed(1)} s after checks began). Test VMs are deleted after verification.\n`);
+    `\n## Live ACME snapshot verification\n\nCommit: \`${sha}\`\n\n| Clone | Link and first app HTML ready | Repeat HTML fetch |\n| --- | --- | --- |\n${launches.map((item, index) => `| ${index + 1} | ${(item.launchMs / 1000).toFixed(2)} s | ${(item.repeatHtmlMs / 1000).toFixed(2)} s |`).join("\n")}\n\n${proof.scope}\n\nVerified: restored running process, independent databases and access, demo sign-in, enabled AI Gateway dashboard, a fresh reply through the resumed gateway, and the real desktop app behind the access-checked viewer (${desktopSignedIn ? "signed in as the demo owner" : "signed out"}, ready ${(desktopReadyMs / 1000).toFixed(1)} s after checks began). Test VMs are deleted after verification.\n`);
 } finally {
   await Promise.all(sessions.map((session) => api.vms.delete(session.id)));
 }

@@ -29,8 +29,27 @@ async function waitFor(check, label, timeoutMs = 60_000) {
   throw new Error(`Desktop ${label} did not become ready`);
 }
 
+// Signs the running window in as the demo owner with the harness's own handoff,
+// over the launcher's debug port. Any failure leaves the real app signed out.
+async function signIn(world) {
+  try {
+    // The handoff goes through Den web's /api/den proxy; compile that route first.
+    await fetch(`${world.den.ref.webUrl}/api/den/health`, { signal: AbortSignal.timeout(120_000) }).catch(() => undefined);
+    const { attachSurface } = await import("/workspace/evals/packages/cdp/src/index.ts");
+    const { signInDesktopAs } = await import("/workspace/evals/packages/behaviors/src/index.ts");
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const surface = await attachSurface({ name: "preview-desktop", kind: "electron", hostKind: "local", cdpUrl: `http://127.0.0.1:${CDP_PORT}` }, { timeoutMs: 60_000 });
+      try { await signInDesktopAs(surface, world.den.ref, world.den.admin); return true; }
+      catch (error) { console.error(`Desktop sign-in attempt ${attempt} failed:`, error); }
+      finally { await surface.stop().catch(() => undefined); }
+    }
+  } catch (error) { console.error("Desktop sign-in unavailable:", error); }
+  return false;
+}
+
 /**
- * Starts the display and viewer (seconds), then boots the real desktop app (signed out).
+ * Starts the display and viewer (seconds), then boots the real desktop app and
+ * signs it in as the demo owner when possible (otherwise it stays signed out).
  * `ready` resolves once its window is up, so the caller can snapshot a running desktop.
  */
 export async function startDesktop(stack, world) {
@@ -67,10 +86,12 @@ export async function startDesktop(stack, world) {
     while (true) {
       try {
         const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`, { signal: AbortSignal.timeout(2_000) })).json();
-        if (Array.isArray(targets) && targets.some((target) => target.type === "page")) { status("ready"); return true; }
+        if (Array.isArray(targets) && targets.some((target) => target.type === "page")) break;
       } catch { /* still booting */ }
       await delay(3_000);
     }
+    status(await signIn(world) ? "ready" : "ready-signed-out");
+    return true;
   })();
   return { url: `http://127.0.0.1:${NOVNC_PORT}`, ready };
 }

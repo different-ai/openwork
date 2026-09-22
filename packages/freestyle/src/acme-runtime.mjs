@@ -46,8 +46,8 @@ try {
     // a slower first boot still snapshots and finishes starting in the clone.
     const running = await Promise.race([desktop.ready, new Promise((resolve) => setTimeout(resolve, 180_000, false))]);
     outputs.desktopStatus = running
-      ? { value: "ready", group: "Desktop", note: "Real OpenWork desktop app (signed out), resumed running from the snapshot" }
-      : { value: "starting", group: "Desktop", note: "Real OpenWork desktop app (signed out); still loading when the viewer opens" };
+      ? { value: "ready", group: "Desktop", note: "Real OpenWork desktop app, resumed running from the snapshot; signed in as the demo owner when available" }
+      : { value: "starting", group: "Desktop", note: "Real OpenWork desktop app; still loading when the viewer opens" };
   } catch (error) {
     console.error("Desktop preview unavailable:", error);
     outputs.desktopStatus = { value: "unavailable", group: "Desktop", note: "The web preview is unaffected; see /opt/openwork-preview/desktop logs" };
