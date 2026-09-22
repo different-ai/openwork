@@ -76,11 +76,15 @@ test("retains every security severity and omits identity text and locations from
 
 test("escapes model-authored HTML and bounds summary size", () => {
   const raw = analysis(Array.from({ length: 30 }, (_, index) => ({
-    ...finding, id: `SEC-${index}`, title: "<script>unsafe</script>", description: "<img onerror=unsafe>" + "x".repeat(5000),
+    ...finding, id: `SEC-${index}`,
+    title: index % 2 === 0 ? "<script>unsafe</script>" : "<ScRiPt>unsafe</ScRiPt>",
+    description: (index % 2 === 0 ? "<img onerror=unsafe>" : "<IMG onerror=unsafe>") + "x".repeat(5000),
   })));
   const summary = renderSummary(buildReport(raw, metadata, now), raw);
-  assert.doesNotMatch(summary, /<script>|<img/);
+  assert.doesNotMatch(summary, /<script\b|<img\b/i);
   assert.match(summary, /&lt;script&gt;/);
+  assert.match(summary, /&lt;ScRiPt&gt;/);
+  assert.match(summary, /&lt;IMG onerror=unsafe&gt;/);
   assert.match(summary, /10 additional finding/);
   assert.ok(summary.length < 90000);
 });
