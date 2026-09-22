@@ -198,6 +198,7 @@ import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory"
 import { useUiStateStore } from "./ui-state-store";
 import {
   automationsRoute,
+  createWorkspaceRoute,
   globalExtensionsRoute,
   settingsReturnRoute,
   workspaceExtensionsRoute,
@@ -2395,6 +2396,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerStatusStyle={providerStatusStyle}
             providerSummary={providerSummary}
             providerLoadState={activeClient ? providerAuthSnapshot.providerLoadState : { status: "idle", error: null }}
+            hasWorkspace={loading ? undefined : workspaces.length > 0}
+            onCreateWorkspace={() => navigate(createWorkspaceRoute())}
             onRetryProviders={async () => { await providerAuthStore.refreshProviders({ force: true }); }}
             connectedProviders={connectedProviders}
             disconnectingProviderId={null}

@@ -268,6 +268,7 @@ import { useSessionControlActions } from "@/react-app/domains/session/control/se
 import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
+  CREATE_WORKSPACE_SEARCH_PARAM,
   globalExtensionsRoute,
   legacySessionRoute,
   mergeWorkspaceRouteSession,
@@ -2283,6 +2284,19 @@ export function SessionRoute() {
     setCreateWorkspaceRemoteError(null);
     setCreateWorkspaceOpen(true);
   }, [checkDesktopRestriction, restrictionNotice, workspaces.length]);
+
+  // Surfaces outside this route (Settings › AI providers without a workspace)
+  // arrive with `?createWorkspace=1`. Open the flow once and drop the param so
+  // a refresh or back navigation does not reopen it.
+  const createWorkspaceRequested = new URLSearchParams(location.search).has(CREATE_WORKSPACE_SEARCH_PARAM);
+  useEffect(() => {
+    if (!createWorkspaceRequested) return;
+    const params = new URLSearchParams(location.search);
+    params.delete(CREATE_WORKSPACE_SEARCH_PARAM);
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ""}`, { replace: true });
+    handleOpenCreateWorkspace();
+  }, [createWorkspaceRequested, handleOpenCreateWorkspace, location.pathname, location.search, navigate]);
 
   const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);

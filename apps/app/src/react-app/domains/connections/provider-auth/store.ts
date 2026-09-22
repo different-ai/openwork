@@ -967,7 +967,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
     const canUseManagedRuntime = Boolean(openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local");
     if (!c && !canUseManagedRuntime) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
     const config = c ? unwrap(await c.config.get()) : {};
     const next = fallbackUpdate(config);
@@ -1373,7 +1373,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const removeProviderAuthCredentials = async (providerId: string) => {
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
 
     const authClient = c.auth as unknown as {
@@ -1401,6 +1401,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     throw new Error(t("providers.removal_unsupported"));
+  };
+
+  /**
+   * Why there is no engine client. A member who signed in before creating a
+   * workspace has nothing for the engine to attach to; telling them the
+   * server is "not connected" sends them to network diagnostics for what is
+   * really a missing workspace.
+   */
+  const notConnectedError = () => {
+    const hasWorkspace = Boolean(options.selectedWorkspaceRoot().trim() || options.runtimeWorkspaceId()?.trim());
+    return new Error(t(hasWorkspace ? "providers.not_connected" : "providers.workspace_required"));
   };
 
   const describeProviderError = (error: unknown, fallback: string) => {
@@ -1549,7 +1560,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
     const methods = unwrap(await c.provider.auth());
     return buildProviderAuthMethods(
@@ -1566,7 +1577,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     setStateField("providerAuthError", null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
     try {
       const cachedMethods = state.providerAuthMethods;
@@ -1748,7 +1759,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     setStateField("providerAuthError", null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
 
     const resolved = providerId?.trim();
@@ -1826,7 +1837,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     setStateField("providerAuthError", null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
 
     const trimmed = apiKey.trim();
@@ -1861,7 +1872,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
 
     const settings = readDenSettings();
@@ -2433,7 +2444,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     setStateField("providerAuthError", null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw notConnectedError();
     }
 
     const resolved = providerId.trim();

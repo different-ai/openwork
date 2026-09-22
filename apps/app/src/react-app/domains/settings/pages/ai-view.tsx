@@ -51,6 +51,13 @@ export type AiSettingsViewProps = {
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
   canAddProviders: boolean;
+  /**
+   * False when the member has no workspace yet (for example right after an
+   * organization sign-in). Providers cannot load without one, so the view
+   * explains that instead of showing a perpetual loading state.
+   */
+  hasWorkspace?: boolean;
+  onCreateWorkspace?: () => void;
   organizationName?: string;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
@@ -132,8 +139,10 @@ export function GatewayConnectRow(props: {
 
 export function AiSettingsView(props: AiSettingsViewProps) {
   const organizationProviderLabel = props.organizationName?.trim() || t("settings.provider_source_organization");
+  const workspaceRequired = props.hasWorkspace === false;
   const providersReady = props.providerLoadState.status === "ready";
-  const providersLoading = props.providerLoadState.status === "loading" || props.providerLoadState.status === "idle";
+  const providersLoading = !workspaceRequired
+    && (props.providerLoadState.status === "loading" || props.providerLoadState.status === "idle");
   const providerLoadError = props.providerLoadState.error;
 
   return (
@@ -148,9 +157,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>
-              {providerLoadError
-                ? t("providers.load_failed")
-                : providersLoading ? t("settings.loading_providers") : props.providerSummary}
+              {workspaceRequired
+                ? t("settings.providers_workspace_required_title")
+                : providerLoadError
+                  ? t("providers.load_failed")
+                  : providersLoading ? t("settings.loading_providers") : props.providerSummary}
               {providersReady ? (
                 <SettingsStatusBadge
                   tone={providerStatusTone(props.providerStatusLabel)}
@@ -158,7 +169,15 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 />
               ) : null}
             </LayoutSectionItemTitle>
-            {props.canAddProviders ? (
+            {workspaceRequired ? (
+              props.onCreateWorkspace ? (
+                <LayoutSectionItemHeaderActions>
+                  <Button onClick={() => props.onCreateWorkspace?.()} disabled={props.busy}>
+                    {t("settings.providers_workspace_required_action")}
+                  </Button>
+                </LayoutSectionItemHeaderActions>
+              ) : null
+            ) : props.canAddProviders ? (
               <LayoutSectionItemHeaderActions>
                 <Button
                   onClick={() => void props.onOpenProviderAuth()}
@@ -173,7 +192,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
 
-        {providerLoadError ? (
+        {providerLoadError && !workspaceRequired ? (
           <SettingsNotice tone="error" className="flex flex-wrap items-center justify-between gap-3">
             <div role="alert" className="min-w-0 flex-1 space-y-1">
               <p>{providerLoadError}</p>

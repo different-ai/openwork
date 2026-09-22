@@ -1,5 +1,16 @@
 import type { SettingsTab } from "../../app/types";
 
+/**
+ * Search param that asks the session route to open the create-workspace
+ * flow on arrival. Used by surfaces that need a workspace but live outside
+ * the session route, such as Settings › AI providers with no workspace yet.
+ */
+export const CREATE_WORKSPACE_SEARCH_PARAM = "createWorkspace";
+
+export function createWorkspaceRoute() {
+  return `/session?${CREATE_WORKSPACE_SEARCH_PARAM}=1`;
+}
+
 export function workspaceSessionRoute(workspaceId: string, sessionId?: string | null) {
   const workspace = encodeURIComponent(workspaceId.trim());
   const session = sessionId?.trim();
