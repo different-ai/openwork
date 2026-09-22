@@ -33,8 +33,6 @@ async function waitFor(check, label, timeoutMs = 60_000) {
 // over the launcher's debug port. Any failure leaves the real app signed out.
 async function signIn(world) {
   try {
-    // The handoff goes through Den web's /api/den proxy; compile that route first.
-    await fetch(`${world.den.ref.webUrl}/api/den/health`, { signal: AbortSignal.timeout(120_000) }).catch(() => undefined);
     const { attachSurface } = await import("/workspace/evals/packages/cdp/src/index.ts");
     const { signInDesktopAs } = await import("/workspace/evals/packages/behaviors/src/index.ts");
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -66,7 +64,9 @@ export async function startDesktop(stack, world) {
   // Upstream's Linux desktop launcher (used by Daytona previews) runs the real
   // app from the reviewed commit. A relaunch loop and a deadline-free readiness
   // poll keep it working across the snapshot's pause and resume.
-  writeFileSync(`${LOGS}/bootstrap.json`, JSON.stringify({ baseUrl: world.den.ref.webUrl, requireSignin: false }), { mode: 0o600 });
+  // Den web's /api/den proxy redirects to the snapshot's template origin, which
+  // does not resolve in the VM; point the app straight at the local Den API.
+  writeFileSync(`${LOGS}/bootstrap.json`, JSON.stringify({ baseUrl: world.den.ref.webUrl, apiBaseUrl: world.den.ref.apiUrl, requireSignin: false }), { mode: 0o600 });
   const env = {
     ...process.env, DISPLAY: DESKTOP_DISPLAY, OPENWORK_WORKSPACE_DIR: "/workspace", PORT: "5186",
     OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: String(CDP_PORT), OPENWORK_DESKTOP_BOOTSTRAP_PATH: `${LOGS}/bootstrap.json`,
