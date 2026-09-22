@@ -30,8 +30,8 @@ async function waitFor(check, label, timeoutMs = 60_000) {
 }
 
 /**
- * Starts the display and viewer (seconds), then boots the real desktop app (signed out)
- * in the background so the world's existing readiness and build timing are unchanged.
+ * Starts the display and viewer (seconds), then boots the real desktop app (signed out).
+ * `ready` resolves once its window is up, so the caller can snapshot a running desktop.
  */
 export async function startDesktop(stack, world) {
   mkdirSync(LOGS, { recursive: true, mode: 0o700 });
@@ -53,6 +53,8 @@ export async function startDesktop(stack, world) {
     OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: String(CDP_PORT), OPENWORK_DESKTOP_BOOTSTRAP_PATH: `${LOGS}/bootstrap.json`,
     OPENWORK_ELECTRON_USERDATA: "/root/.openwork-desktop", OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
     OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
+    // The snapshot builder already fetched the sidecars and helpers.
+    OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
   };
   const launcher = existsSync("/workspace/.devcontainer/start-daytona-electron.sh")
     ? "bash /workspace/.devcontainer/start-daytona-electron.sh" : "pnpm --filter @openwork/desktop dev:electron";
@@ -61,14 +63,14 @@ export async function startDesktop(stack, world) {
   closeSync(log);
   app.unref();
   stack.defer(() => { try { process.kill(-app.pid, "SIGTERM"); } catch { /* already exited */ } });
-  void (async () => {
+  const ready = (async () => {
     while (true) {
       try {
         const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`, { signal: AbortSignal.timeout(2_000) })).json();
-        if (Array.isArray(targets) && targets.some((target) => target.type === "page")) { status("ready"); return; }
+        if (Array.isArray(targets) && targets.some((target) => target.type === "page")) { status("ready"); return true; }
       } catch { /* still booting */ }
       await delay(3_000);
     }
   })();
-  return { url: `http://127.0.0.1:${NOVNC_PORT}` };
+  return { url: `http://127.0.0.1:${NOVNC_PORT}`, ready };
 }
