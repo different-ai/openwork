@@ -151,7 +151,15 @@ jobs:
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: opencode run --agent changelog "$(cat /tmp/changelog_prompt.txt)"
+        # The agent pins openai/gpt-6-luna. If that model is unavailable to this
+        # key, discard any partial output and retry once on gpt-5.6-luna.
+        run: |
+          if ! opencode run --agent changelog "$(cat /tmp/changelog_prompt.txt)"; then
+            echo "::warning::Changelog agent failed on its pinned model; retrying with openai/gpt-5.6-luna."
+            git checkout -- packages/docs/changelog.mdx changelog/
+            git clean -fd changelog/
+            opencode run --agent changelog -m openai/gpt-5.6-luna "$(cat /tmp/changelog_prompt.txt)"
+          fi
 
       - name: Discard opencode runtime churn
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
