@@ -152,16 +152,21 @@ if (!env.corsHandledByEdge) {
 // preflights before the credentialed browser allowlist can intercept OPTIONS.
 registerCloudWorkerCompatibilityPreflightRoute(app)
 
-if (env.corsOrigins.length > 0 && !env.corsHandledByEdge) {
+const strictCorsOrigins = Array.from(new Set([
+  ...env.corsOrigins,
+  ...Array.from(env.webHandoffReturnOriginsByOrg.values()).flat(),
+]))
+
+if (strictCorsOrigins.length > 0 && !env.corsHandledByEdge) {
   app.use(
     "*",
-      cors({
-        origin: env.corsOrigins,
-        credentials: true,
-        allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id"],
-        allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        exposeHeaders: ["Content-Length"],
-        maxAge: 600,
+    cors({
+      origin: strictCorsOrigins,
+      credentials: true,
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      exposeHeaders: ["Content-Length"],
+      maxAge: 600,
     }),
   )
 }

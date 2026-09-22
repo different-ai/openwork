@@ -1,4 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
+import { typeId } from "@openwork-ee/utils/typeid"
+
+const WEB_ORIGIN = "https://web.selfhost.example.test"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -8,6 +11,9 @@ function seedRequiredEnv() {
   process.env.DEN_API_PUBLIC_URL = process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://localhost:3005"
   process.env.DEN_CORS_HANDLED_BY_EDGE = "true"
+  process.env.DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG = JSON.stringify({
+    [typeId.generator("organization")]: [WEB_ORIGIN],
+  })
 }
 
 let app: typeof import("../src/app.js")["default"]
@@ -30,6 +36,20 @@ describe("DEN_CORS_HANDLED_BY_EDGE", () => {
     const res = await app.request("/health", { headers: { Origin: allowlisted } })
     expect(res.headers.get("access-control-allow-origin")).toBeNull()
     expect(res.headers.get("access-control-allow-credentials")).toBeNull()
+  })
+
+  test.each(["/v1/me", "/v1/me/orgs"])("den-api leaves trusted web origin preflights on %s to the edge", async (path) => {
+    const res = await app.request(path, {
+      method: "OPTIONS",
+      headers: {
+        Origin: WEB_ORIGIN,
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+      },
+    })
+    expect(res.headers.get("access-control-allow-origin")).toBeNull()
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull()
+    expect(res.headers.get("access-control-allow-headers")).toBeNull()
   })
 
   test("the handoff exchange route stops reflecting origins too", async () => {

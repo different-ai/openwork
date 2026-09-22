@@ -36,6 +36,16 @@ The request access log records request id, method, normalized route, status, and
 
 Builds generate source maps. Sentry source maps are uploaded only when `DEN_OBSERVABILITY_BACKEND=sentry` and `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_RELEASE` are present; `SENTRY_DIST` is passed through when set. The auth token must stay in secret storage and is never written to env examples or logs.
 
+## Approving a self-hosted web origin for Cloud sign-in
+
+An organization-owned HTTPS OpenWork Web instance needs an explicit return-origin approval before Den can hand a signed-in session back to `/signin`. Set `DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG` on Den API to a JSON object mapping the organization's Den ID to an array of **exact origins** (including any non-default port), for example:
+
+```text
+DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG={"org_EXAMPLE_ID":["https://workspace.example.test:8787"]}
+```
+
+Use an actual organization TypeID in place of the illustrative key. Only HTTPS origins without a path, query, fragment, credentials, or wildcard are accepted. Den rejects invalid configuration at startup. An origin approved for one organization cannot receive handoff grants for another active organization. This is independent of `DEN_GATEWAY_ORIGIN` and the Den Web dashboard link. When Den API owns CORS, these origins also allow authenticated browser requests to Den; if `DEN_CORS_HANDLED_BY_EDGE=true`, configure the **same exact origin** and `Authorization` preflight at the edge as well. Do not use `*` or treat the self-hosted server's `OPENWORK_CORS_ORIGINS` as Den's CORS policy.
+
 ## Current routes
 
 - `GET /` -> `302 https://openworklabs.com`
