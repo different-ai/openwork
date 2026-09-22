@@ -156,3 +156,18 @@ export function resolveWorkspaceEndpoint(
     opencodeBaseUrl: `${mountedBaseUrl}/opencode`,
   };
 }
+
+/**
+ * The local server's managed engine, addressed without a workspace. The
+ * server runs its engine before the first workspace exists and proxies
+ * `<server>/opencode/*` to it, so providers can be listed and connected
+ * right after sign-in. Returns null without a connected local server.
+ */
+export function resolveEngineRootEndpoint(
+  localServer: LocalServerHandle,
+): { opencodeBaseUrl: string; token: string } | null {
+  const baseUrl = (localServer.baseUrl ?? "").trim().replace(/\/+$/, "");
+  const token = (localServer.token ?? "").trim();
+  if (!baseUrl || !token) return null;
+  return { opencodeBaseUrl: `${baseUrl}/opencode`, token };
+}

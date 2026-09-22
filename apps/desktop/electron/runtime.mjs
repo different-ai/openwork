@@ -2096,6 +2096,22 @@ export function createRuntimeManager({
     assertOpenworkServerReady(openworkServer);
   }
 
+  function adoptManagedEngineConnection() {
+    const config = inProcessServer?.config;
+    const baseUrl = String(config?.opencodeBaseUrl ?? "").trim();
+    if (!baseUrl || !inProcessServer?.managedOpencode?.isAlive?.()) return;
+    const url = new URL(baseUrl);
+    engineState.runtime = DIRECT_RUNTIME;
+    engineState.hostname = url.hostname;
+    engineState.port = Number(url.port) || null;
+    engineState.baseUrl = baseUrl;
+    engineState.opencodeUsername = config.opencodeUsername ?? null;
+    engineState.opencodePassword = config.opencodePassword ?? null;
+    engineState.execution = inProcessServer.managedOpencodeExecution ?? null;
+    engineState.child = null;
+    engineState.childExited = false;
+  }
+
   async function engineStart(projectDir, options = {}) {
     const rawProjectDir = String(projectDir ?? "").trim();
     if (!rawProjectDir) {
@@ -2146,6 +2162,9 @@ export function createRuntimeManager({
           engineState.projectDir = safeProjectDir;
           await persistPreferredOpenworkPort(safeProjectDir, openworkServerState.port);
         }
+        // A server started before any workspace existed never learned its
+        // engine connection from a workspace; adopt it from the server.
+        if (!engineState.baseUrl) adoptManagedEngineConnection();
         return snapshotEngineState(engineState);
       }
     }
@@ -2242,7 +2261,7 @@ export function createRuntimeManager({
     const shouldManageOpencode = Boolean(
       openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath || !engineState.baseUrl,
     );
-    return startOpenworkServer({
+    const info = await startOpenworkServer({
       workspacePaths,
       opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
       opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
@@ -2251,6 +2270,12 @@ export function createRuntimeManager({
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });
+    // The server now runs its managed engine even before the first
+    // workspace exists. Report that runtime as healthy so a later
+    // engineStart(firstWorkspace) retargets it — the same join a workspace
+    // switch uses — instead of tearing the running engine down.
+    if (inProcessServer?.managedOpencode?.isAlive?.()) lifecycleState = "healthy";
+    return info;
   }
 
   async function engineInstall() {

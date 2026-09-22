@@ -163,6 +163,15 @@ describe("resolveOpenworkServerReuse", () => {
     );
   });
 
+  it("joins a server started before any workspace existed instead of restarting it", () => {
+    // The server runs its managed engine with no workspace; the first
+    // workspace must take the same retarget path as a workspace switch.
+    assert.deepEqual(
+      resolveOpenworkServerReuse({ ...healthy, currentProjectDir: null, requestedProjectDir: "/Users/person/OpenWork Chat" }),
+      { reuse: true, retarget: true },
+    );
+  });
+
   it("treats case-only path differences as the same workspace on win32", () => {
     assert.deepEqual(
       resolveOpenworkServerReuse({

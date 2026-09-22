@@ -445,6 +445,11 @@ export class EnginePool {
     this.hooks = input.hooks;
   }
 
+  /** Directory every generation of this engine starts in. */
+  cwd(): string {
+    return this.template.cwd;
+  }
+
   /**
    * Register the engine spawned during startup as the first generation, so a
    * later rollover knows what it is replacing.
