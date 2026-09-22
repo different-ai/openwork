@@ -1,5 +1,6 @@
 import { summarizeReview } from "@openwork/review";
 import type { ReviewEvidence, ReviewReport } from "@openwork/review";
+import { LaunchPreview } from "./launch-preview";
 
 function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
   return (
@@ -57,6 +58,7 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
             UTC
           </time>
         </p>
+        <LaunchPreview id={id} connected={Boolean(process.env.FREESTYLE_API_KEY?.trim())} />
         {(report.gaps.length > 0 || summary.pendingVisual > 0) && (
           <aside className="gaps">
             <strong>Still to verify</strong>

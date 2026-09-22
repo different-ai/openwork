@@ -420,6 +420,9 @@ importers:
 
   apps/review:
     dependencies:
+      '@openwork/freestyle':
+        specifier: workspace:*
+        version: link:../../packages/freestyle
       '@openwork/review':
         specifier: workspace:*
         version: link:../../packages/review
@@ -1380,6 +1383,12 @@ importers:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
+
+  packages/freestyle:
+    dependencies:
+      freestyle:
+        specifier: 0.2.13
+        version: 0.2.13
 
   packages/handsfree: {}
 
@@ -7020,6 +7029,10 @@ packages:
         optional: true
       react-dom:
         optional: true
+
+  freestyle@0.2.13:
+    resolution: {integrity: sha512-+rJOPBKiQrC6/gCe4Nmj38hEIc2tqW9BNAV1rOxeSb4JyGfLs8ByV+kXXnmuc13d7VQ/wSsKRahOcJ+qGBnrwQ==}
+    hasBin: true
 
   fresh@2.0.0:
     resolution: {integrity: sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==}
@@ -16425,6 +16438,17 @@ snapshots:
     optionalDependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
+
+  freestyle@0.2.13:
+    dependencies:
+      dotenv: 17.4.2
+      ws: 8.21.0
+      yargs: 17.7.2
+    optionalDependencies:
+      undici: 7.29.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   fresh@2.0.0: {}
 

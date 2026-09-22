@@ -7,7 +7,22 @@
   --green: #32724d;
   --red: #a13c35;
   --amber: #946621;
+  --control-radius: 0.45rem;
+  --control-height: 40px;
+  --space: 12px;
 }
+.preview-launch { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 16px; font-size: 13px; }
+.preview-launch-row, .preview-launch-actions { display: flex; align-items: center; gap: var(--space); flex-wrap: wrap; }
+.preview-launch-row { justify-content: space-between; min-height: var(--control-height); }
+.preview-launch button { font: inherit; font-weight: 600; min-height: var(--control-height); padding: 0 16px; border: 1px solid var(--ink); border-radius: var(--control-radius); background: var(--ink); color: var(--paper); cursor: pointer; }
+.preview-launch button:disabled { cursor: default; opacity: 0.55; }
+.preview-launch button[aria-busy="true"] { cursor: progress; }
+.preview-launch button:focus-visible { outline: 3px solid var(--green); outline-offset: 3px; }
+.preview-open { font-weight: 600; text-decoration: underline; }
+.preview-state, .preview-error { margin: 8px 0; font-size: 12px; color: var(--muted); }
+.preview-error { color: var(--red); }
+.preview-details { color: var(--muted); font-size: 12px; }
+.preview-details p { max-width: 65ch; }
 * {
   box-sizing: border-box;
 }
