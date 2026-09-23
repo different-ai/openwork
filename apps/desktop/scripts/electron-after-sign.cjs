@@ -58,11 +58,20 @@ function verifyComputerUseHelper(appPath, requireDistributionSignature) {
   }
 }
 
-function verifyAppCanLaunch(appPath) {
+// Electron ignores `--version` and boots the full app, so a healthy build is
+// still running when the deadline hits. Staying alive until the timeout is a
+// successful launch; signing/dyld failures die immediately with a non-zero
+// status or a crash signal.
+function verifyAppCanLaunch(appPath, { spawn = spawnSync, timeoutMs = 20_000 } = {}) {
   const executable = path.join(appPath, "Contents", "MacOS", "OpenWork");
-  const result = spawnSync(executable, ["--version"], { stdio: "inherit", timeout: 30_000 });
-  if (result.error || result.status !== 0) {
-    throw new Error(`Signed OpenWork app failed to launch (status ${result.status}, signal ${result.signal}).`);
+  const result = spawn(executable, [], { stdio: "inherit", timeout: timeoutMs, killSignal: "SIGTERM" });
+  const stayedAlive = result.error && result.error.code === "ETIMEDOUT";
+  if (stayedAlive) return;
+  if (result.error || result.status !== 0 || result.signal) {
+    const reason = result.error ? `${result.error.code ?? result.error.message}, ` : "";
+    throw new Error(
+      `Signed OpenWork app failed to launch (${reason}status ${result.status}, signal ${result.signal}).`,
+    );
   }
 }
 
