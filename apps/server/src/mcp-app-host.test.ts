@@ -36,6 +36,7 @@ import {
   resolveMcpAppResource,
   resolveSameServerMcpAppResource,
   releaseMcpAppLaunch,
+  stringHeaders,
   toolUiResourceUri,
   supportsHostConnectionActions,
 } from "./mcp-app-host.js";
@@ -562,6 +563,17 @@ describe("connection action host authorization", () => {
 });
 
 describe("MCP Apps host transport", () => {
+  test("resolves OpenCode environment substitutions in remote MCP headers", () => {
+    expect(stringHeaders({
+      authorization: "Bearer {env:MCP_APP_TEST_TOKEN}",
+      "x-empty-value": "{env:MISSING_MCP_APP_TEST_VALUE}",
+      ignored: 42,
+    }, { MCP_APP_TEST_TOKEN: "fixture-token" })).toEqual({
+      authorization: "Bearer fixture-token",
+      "x-empty-value": "",
+    });
+  });
+
   test("uses OpenCode's exact projected MCP tool naming", () => {
     expect(projectedMcpToolName("sales force", "render.pipeline")).toBe("sales_force_render_pipeline");
     expect(toolUiResourceUri({ _meta: { ui: { resourceUri: RESOURCE_URI } } })).toBe(RESOURCE_URI);
