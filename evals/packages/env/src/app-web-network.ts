@@ -4,8 +4,11 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
   const origin = new URL(webUrl).origin;
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
-  const requests = new Map<string, { path: string; startedMs: number; status?: number; mimeType?: string }>();
-  const failures: Array<{ path: string; atMs: number; status?: number; mimeType?: string; error?: string; canceled?: boolean; blockedReason?: string; type?: string }> = [];
+  const requests = new Map<string, { path: string; startedMs: number; query: string; status?: number; mimeType?: string }>();
+  // How often each path was requested: a duplicate fetch of one module would
+  // explain Chrome cancelling one of them.
+  const requestedPaths = new Map<string, number>();
+  const failures: Array<{ path: string; atMs: number; startedMs: number; query: string; requestedTimes: number; status?: number; mimeType?: string; error?: string; canceled?: boolean; blockedReason?: string; type?: string }> = [];
   const browserErrors: string[] = [];
   // Page lifecycle, renderer crashes and the Vite client's own console lines
   // tell apart a navigation, a reload, a crash and a server disconnect.
@@ -69,7 +72,9 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
           const url = new URL(params.request.url);
           if (url.origin === origin) {
             counts.started += 1;
-            requests.set(params.requestId, { path: url.pathname, startedMs: elapsed() });
+            requestedPaths.set(url.pathname, (requestedPaths.get(url.pathname) ?? 0) + 1);
+            // Parameter names only; values are not retained.
+            requests.set(params.requestId, { path: url.pathname, startedMs: elapsed(), query: [...url.searchParams.keys()].join(",") });
           } else if (url.protocol.startsWith("http")) counts.crossOrigin += 1;
         }
         const request = requests.get(params.requestId);
@@ -78,12 +83,14 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
           && typeof params.response.status === "number") {
           request.status = params.response.status;
           if (typeof params.response.mimeType === "string") request.mimeType = params.response.mimeType;
-          if (params.response.status >= 400 && failures.length < 20) failures.push({ path: request.path, atMs: elapsed(), status: request.status, mimeType: request.mimeType });
+          if (params.response.status >= 400 && failures.length < 20) failures.push({ path: request.path, atMs: elapsed(), startedMs: request.startedMs, query: request.query,
+            requestedTimes: requestedPaths.get(request.path) ?? 0, status: request.status, mimeType: request.mimeType });
         }
         if (method === "Network.loadingFailed") {
           counts.failed += 1;
           if (params.canceled === true) counts.canceled += 1;
-          if (failures.length < 20) failures.push({ path: request.path, atMs: elapsed(), status: request.status, mimeType: request.mimeType,
+          if (failures.length < 20) failures.push({ path: request.path, atMs: elapsed(), startedMs: request.startedMs, query: request.query,
+            requestedTimes: requestedPaths.get(request.path) ?? 0, status: request.status, mimeType: request.mimeType,
             canceled: params.canceled === true,
             ...(typeof params.blockedReason === "string" ? { blockedReason: params.blockedReason } : {}),
             ...(typeof params.type === "string" ? { type: params.type } : {}),
@@ -99,6 +106,7 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
     });
     const summary = () => ({
       counts,
+      duplicatePaths: [...requestedPaths].filter(([, times]) => times > 1).slice(0, 8),
       lastFinished,
       pending: [...requests.values()].slice(0, 8).map(request => ({ path: request.path, startedMs: request.startedMs, status: request.status })),
       lifecycle,
