@@ -197,3 +197,6 @@ placeholder, or test id. Bound every wait; declare external requirements in
 - In CI the spec runs on `PR change proof`, one job per spec; the trusted
   publisher aggregates every changed spec's records into one report. Failed,
   skipped, and cancelled runs stay visible as such; nothing substitutes for them.
+- A spec whose `evals/scripts/journey-catalog.mjs` entry `needs` what that job
+  never provides (a packaged binary, macOS) is listed as skipped with the need,
+  not run; `packaged-*` specs prove themselves in `packaged-smoke`.

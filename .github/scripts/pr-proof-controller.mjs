@@ -14,7 +14,7 @@ function api(path) {
 const current = api(`repos/${repo}/pulls/${pr}`);
 if (current.head.sha !== event.pull_request.head.sha) throw new Error("PR head changed; rerun proof selection on the current head.");
 const files = await changedFiles(api, repo, pr, current.changed_files);
-const { specs } = selectProof(files);
+const { specs, excluded } = selectProof(files);
 if (specs.length > 32) throw new Error("More than 32 changed E2E specs; bounded CI selection unavailable. Split the change.");
 const trust = { event, repo, actor: process.env.GITHUB_ACTOR, triggeringActor: process.env.GITHUB_TRIGGERING_ACTOR };
 proofLanes(specs, { ...trust, current });
@@ -26,9 +26,14 @@ if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
   `matrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\nliveMatrix=${matrix(liveSpecs)}\nliveSelected=${liveSpecs.length > 0}\n`);
 const summary = specs.length
   ? `## PR proof selection\n\n${specs.length} added or changed E2E spec(s) will run on this head; their records are the PR's proof.\n\n${specs.map(spec => `- \`${spec}\``).join("\n")}\n`
-  : "## PR proof selection\n\nThis PR adds or changes no `evals/specs/**/*.e2e.test.ts`. No proof was executed and no evidence will be published for it.\n";
+  : excluded.length
+    ? "## PR proof selection\n\nThis PR adds or changes no `evals/specs/**/*.e2e.test.ts` this lane can run. No proof was executed and no evidence will be published for it.\n"
+    : "## PR proof selection\n\nThis PR adds or changes no `evals/specs/**/*.e2e.test.ts`. No proof was executed and no evidence will be published for it.\n";
+const excludedSummary = excluded.length
+  ? `\n${excluded.length} changed E2E spec(s) skipped (prerequisites unmet) — this lane cannot satisfy them, so they are not run and not counted as proof.\n\n${excluded.map(entry => `- \`${entry.spec}\` — needs: ${entry.reason}`).join("\n")}\n`
+  : "";
 const liveSummary = liveSpecs.length
   ? "\nLive proof requires reviewer approval of the `pr-slow-specs` environment and executes the whole selected file with real OpenAI on local v1 appWeb. Ordinary proof remains unprotected and secret-free.\n"
   : "";
-if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary + liveSummary);
-console.log(summary + liveSummary);
+if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary + excludedSummary + liveSummary);
+console.log(summary + excludedSummary + liveSummary);

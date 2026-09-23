@@ -133,3 +133,8 @@ export function unmetLaneNeeds(entry, lane = ciLane) {
   if (entry.needs?.platform && entry.needs.platform !== lane.platform) missing.push(`run on ${entry.needs.platform}`);
   return missing;
 }
+
+// The same check for one spec file (relative to evals/specs/) from its registration alone, without reading spec sources.
+export function unmetSpecNeeds(spec, lane = ciLane) {
+  return unmetLaneNeeds(Object.hasOwn(definitions, spec) ? definitions[spec] : {}, lane);
+}

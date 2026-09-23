@@ -25,6 +25,19 @@ test("a PR without spec changes selects nothing instead of failing", () => {
   assert.deepEqual(selectProof([]).specs, []);
 });
 
+test("changed specs whose journey needs a packaged binary or another platform are excluded with the reason", () => {
+  const selection = selectProof([
+    file("evals/specs/packaged-activated-launch.e2e.test.ts"),
+    file("evals/specs/computer-use-window-scope.e2e.test.ts"),
+    file("evals/specs/change.e2e.test.ts", "added"),
+  ]);
+  assert.deepEqual(selection.specs, ["evals/specs/change.e2e.test.ts"]);
+  assert.deepEqual(selection.excluded, [
+    { spec: "evals/specs/computer-use-window-scope.e2e.test.ts", reason: "run on darwin" },
+    { spec: "evals/specs/packaged-activated-launch.e2e.test.ts", reason: "set OPENWORK_EVAL_ELECTRON_BINARY" },
+  ]);
+});
+
 test("normal Git paths are accepted while traversal, controls, backslashes and duplicates fail closed", () => {
   assert.deepEqual(selectProof([
     file("ee/apps/den-web/app/(den)/dashboard/a file.ts"),
@@ -183,6 +196,17 @@ test("controller emits disjoint complete matrices with publisher-compatible keys
     }
     if (live.length) assert.match(result.summary, /reviewer approval.*pr-slow-specs/);
   }
+});
+
+test("controller schedules no proof for a packaged-only spec change and names what it needs", async () => {
+  const packaged = "evals/specs/packaged-activated-launch.e2e.test.ts";
+  const trust = trustFixture();
+  trust.current.changed_files = 1;
+  const result = await runController(trust, [file(packaged)]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.output, /^selected=false$/m);
+  assert.match(result.output, /^matrix=\{"include":\[\]\}$/m);
+  assert.ok(result.summary.includes(`\`${packaged}\` — needs: set OPENWORK_EVAL_ELECTRON_BINARY`));
 });
 
 test("controller refuses untrusted live selection without emitting runnable outputs", async () => {

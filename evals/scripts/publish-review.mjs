@@ -99,7 +99,9 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
     } catch {
       return skip("current PR changed-file listing is unsafe");
     }
-    if (selection.specs.length === 0) return skip("PR adds or changes no E2E spec; no proof evidence to publish");
+    if (selection.specs.length === 0) return { ...skip(selection.excluded.length
+      ? `PR changes only E2E specs this lane cannot run (${selection.excluded.map(entry => `${entry.spec} needs: ${entry.reason}`).join("; ")}); no proof evidence to publish`
+      : "PR adds or changes no E2E spec; no proof evidence to publish"), noEvidence: true };
     if (selection.specs.length > 32) return skip("source run has no bounded PR proof selection");
     const artifacts = await api(`repos/${repo}/actions/runs/${source.id}/artifacts?per_page=100`);
     if (!Array.isArray(artifacts.artifacts) || artifacts.total_count !== artifacts.artifacts.length)
@@ -219,7 +221,7 @@ export async function publicationJob(env, dependencies = {}) {
     const result = await publish({ repo: env.GITHUB_REPOSITORY, runId: env.REVIEW_RUN_ID, runAttempt: env.REVIEW_RUN_ATTEMPT });
     if (result.skipped) {
       await summary(`## Evidence publication: skipped\n\n${result.skipped}. No new report was published; any existing report is unchanged.\n`);
-      await receipt({ state: "skipped", noEvidence: result.skipped === "PR adds or changes no E2E spec; no proof evidence to publish" });
+      await receipt({ state: "skipped", noEvidence: result.noEvidence === true });
       return { state: "skipped", exitCode: 0 };
     }
     if (!result.posted) {
