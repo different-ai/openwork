@@ -1267,7 +1267,8 @@ export async function listMemberUsableConnectionFacts(input: {
     toConnectionResponse(row, {
       callerOrgMembershipId: member.id,
       createdByName: resolveCreatorName(input.context.organizationContext, row.createdByOrgMembershipId),
-      includeAccess: false,
+      // The member who added a connection manages who can use it.
+      includeAccess: row.createdByOrgMembershipId === member.id,
       requiredBy: provenance.requiredBy.get(row.id) ?? [],
       identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
       requiredAuthTypes: provenance.requiredAuthTypes.get(row.id) ?? new Set(),
@@ -1514,6 +1515,35 @@ async function handleExternalMcpOAuthCallback(input: {
 
 type McpConnectionOrganizationContext = NonNullable<OrgRouteVariables["organizationContext"]>
 type CreateExternalConnectionBody = z.infer<typeof createExternalConnectionBodySchema>
+type ConnectionAccessInput = z.infer<typeof accessInputSchema>
+
+function isOrganizationAdmin(payload: McpConnectionOrganizationContext): boolean {
+  return verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })
+}
+
+/**
+ * Members add connectors for themselves from My Library. They can only add a
+ * server that signs each person in with their own account (or needs no
+ * sign-in), never an organization secret, and never for everyone.
+ */
+function memberConnectionCreateDenial(body: z.infer<typeof createConnectionBodySchema>): string | null {
+  if (body.kind === "native_provider") return "Only workspace owners and admins can set up this service."
+  if (body.externalKey) return "Only workspace owners and admins can add connections with a stable key."
+  if (body.authType === "apikey" || body.apiKey !== undefined) return "Only workspace owners and admins can add a connection that uses a key."
+  if (body.oauthClient) return "Only workspace owners and admins can add OAuth app credentials."
+  if (body.authType === "oauth" && body.credentialMode !== "per_member") return "Connections you add sign each person in with their own account."
+  if (body.access.orgWide) return "Only workspace owners and admins can share a connection with everyone."
+  return null
+}
+
+/** A member-managed connection always keeps its creator, and never reaches everyone. */
+function memberManagedAccess(access: ConnectionAccessInput, creatorId: string): ConnectionAccessInput {
+  return {
+    orgWide: false,
+    memberIds: [...new Set([creatorId, ...access.memberIds])],
+    teamIds: [...new Set(access.teamIds)],
+  }
+}
 type UpdateConnectionBody = z.infer<typeof updateConnectionBodySchema>
 type McpConnectionResponseContext = Pick<Context, "json">
 
@@ -2600,12 +2630,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       // (connect/start, callbacks, client secrets) stays agent-blocked.
       tags: ["Capability Sources"],
       summary: "Register a new External MCP Connection for the org",
-      description: "Admin-only. Registers a third-party MCP server by name + URL and grants access (org-wide, teams, or members). Use GET /v1/mcp-connections/presets for known server URLs (Notion, Linear, Stripe, Sentry, Slack, Context7). For credentialMode per_member, each member connects their own account afterwards — share links.yourConnections from the response so teammates know where to sign in. For servers with pre-registered OAuth apps, whitelist links.oauthCallback. API-key and OAuth-client credentials cannot be created through the agent surface; use the dashboard.",
+      description: "Owners and admins can register any server. Other members can add one for themselves: an OAuth server where each person signs in (credentialMode per_member) or a server with no sign-in, shared with specific members or teams but never org-wide; the caller is always kept in its access. Registers a third-party MCP server by name + URL and grants access (org-wide, teams, or members). Use GET /v1/mcp-connections/presets for known server URLs (Notion, Linear, Stripe, Sentry, Slack, Context7). For credentialMode per_member, each member connects their own account afterwards — share links.yourConnections from the response so teammates know where to sign in. For servers with pre-registered OAuth apps, whitelist links.oauthCallback. API-key and OAuth-client credentials cannot be created through the agent surface; use the dashboard.",
       responses: {
         200: jsonResponse("Connection created.", connectionCreatedResponseSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can add MCP connections.", forbiddenSchema),
+        403: jsonResponse("The caller cannot add this kind of connection.", forbiddenSchema),
         409: jsonResponse("The external key is already in use.", externalKeyExistsSchema),
         502: jsonResponse("The upstream MCP server could not be reached.", connectionValidationFailedSchema),
       },
@@ -2614,10 +2644,17 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     jsonValidator(createConnectionBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can add MCP connections.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
-
-      const body = c.req.valid("json")
+      const parsedBody = c.req.valid("json")
+      let body = parsedBody
+      if (!isOrganizationAdmin(payload)) {
+        const denial = !memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+          ? "Connections are not enabled for this organization."
+          : memberConnectionCreateDenial(parsedBody)
+        if (denial || parsedBody.kind === "native_provider") {
+          return c.json({ error: "forbidden", message: denial ?? "Only workspace owners and admins can set up this service." }, 403)
+        }
+        body = { ...parsedBody, access: memberManagedAccess(parsedBody.access, payload.currentMember.id) }
+      }
       const sessionId = c.get("session")?.id
       if (body.kind === "native_provider") {
         if (isAgentOAuthClientConnection({ oauthClient: body.oauthClient, sessionId })) {
@@ -2854,12 +2891,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       // credentials involved — lets an admin reshape access from chat.
       tags: ["Capability Sources"],
       summary: "Replace who can use an External MCP Connection",
-      description: "Admin-only. Full-replace semantics: send the complete desired access set (orgWide, or memberIds + teamIds). Team and member ids come from GET /v1/org.",
+      description: "Owners, admins, and the member who added the connection. Full-replace semantics: send the complete desired access set (orgWide, or memberIds + teamIds). Team and member ids come from GET /v1/org. A non-admin creator cannot grant org-wide access and always keeps their own access.",
       responses: {
         200: jsonResponse("Access updated.", connectionResponseSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can change connection access.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners, admins, or the member who added the connection can change its access, and only admins can grant org-wide access.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
       },
     }),
@@ -2868,24 +2905,29 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     jsonValidator(replaceAccessBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can change connection access.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
-
       const { connectionId } = c.req.valid("param")
       const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
       const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: externalMcpConnectionId })
+      const isAdmin = isOrganizationAdmin(payload)
+      if (!isAdmin && connection?.createdByOrgMembershipId !== payload.currentMember.id) {
+        return c.json({ error: "forbidden", message: "Only workspace owners, admins, or the person who added this connection can change who can use it." }, 403)
+      }
       if (!connection) {
         return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
       }
 
-      const body = c.req.valid("json")
+      const requested = c.req.valid("json").access
+      if (!isAdmin && requested.orgWide) {
+        return c.json({ error: "forbidden", message: "Only workspace owners and admins can share a connection with everyone." }, 403)
+      }
+      const access = isAdmin ? requested : memberManagedAccess(requested, payload.currentMember.id)
       await replaceExternalMcpConnectionAccess({
         organizationId: payload.organization.id,
         connectionId: externalMcpConnectionId,
         access: {
-          orgWide: body.access.orgWide,
-          memberIds: body.access.memberIds.map((id) => normalizeDenTypeId("member", id)),
-          teamIds: body.access.teamIds.map((id) => normalizeDenTypeId("team", id)),
+          orgWide: access.orgWide,
+          memberIds: access.memberIds.map((id) => normalizeDenTypeId("member", id)),
+          teamIds: access.teamIds.map((id) => normalizeDenTypeId("team", id)),
         },
         createdByOrgMembershipId: payload.currentMember.id,
       })

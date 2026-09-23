@@ -2746,9 +2746,6 @@ export async function createPluginBundle(input: {
   }> = []
   for (const component of input.components ?? []) {
     if (component.connectionId !== undefined) {
-      if (!isPluginArchOrgAdmin(input.context)) {
-        throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
-      }
       if (component.type !== "mcp") {
         throw new PluginArchRouteFailure(400, "invalid_request", "connectionId is only allowed on mcp components.")
       }
@@ -2767,6 +2764,10 @@ export async function createPluginBundle(input: {
       })
       if (!connection || connection.kind !== "external_mcp") {
         throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "That connector was not found in this organization.")
+      }
+      // Members bundle only connectors they added themselves from My Library.
+      if (!isPluginArchOrgAdmin(input.context) && connection.createdByOrgMembershipId !== input.context.organizationContext.currentMember.id) {
+        throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
       }
       const value: ConfigObjectInput = {
         normalizedPayloadJson: connectionBackedMcpPayload({

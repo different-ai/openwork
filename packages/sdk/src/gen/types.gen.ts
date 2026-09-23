@@ -19881,7 +19881,7 @@ export type PostV1McpConnectionsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can add MCP connections.
+   * The caller cannot add this kind of connection.
    */
   403: ForbiddenError;
   /**
@@ -20403,7 +20403,7 @@ export type PutV1McpConnectionsByConnectionIdAccessErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can change connection access.
+   * Only workspace owners, admins, or the member who added the connection can change its access, and only admins can grant org-wide access.
    */
   403: ForbiddenError;
   /**
