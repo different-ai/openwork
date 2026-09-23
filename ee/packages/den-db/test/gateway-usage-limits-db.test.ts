@@ -360,6 +360,21 @@ dbTest("organization policy edits, member removal, archive and deletion preserve
   assert.equal((await f.db.select().from(A).where(eq(A.organizationId, future.organizationId))).length, 0)
 })
 
+dbTest("restoring an archived policy brings back its assignments and limits", async () => {
+  const f = await fixture()
+  const policy = await f.service.savePolicy(f.admin, f.body)
+  const assigned = await f.service.assign(f.admin, policy.id, { organization: true })
+  assert.notEqual((await f.service.getStatus(f.member)).state, "unlimited")
+  const archived = await f.service.archivePolicy(f.admin, policy.id, assigned.revision)
+  assert.equal((await f.service.getStatus(f.member)).state, "unlimited")
+  await assert.rejects(f.service.restorePolicy(f.admin, policy.id, assigned.revision), (error: unknown) => error instanceof GatewayUsageError && error.code === "policy_revision_conflict")
+  const restored = await f.service.restorePolicy(f.admin, policy.id, archived.revision)
+  assert.equal(restored.archivedAt, null)
+  assert.equal(restored.revision, archived.revision + 1)
+  assert.deepEqual(restored.assignments.map((row) => row.organization), [true])
+  assert.notEqual((await f.service.getStatus(f.member)).state, "unlimited")
+})
+
 dbTest(
   "fresh and 0104-applied databases migrate; old E/C/S/R and spend survive unchanged",
   async () => {

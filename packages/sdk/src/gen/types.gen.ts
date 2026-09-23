@@ -12309,6 +12309,7 @@ export type GetV1InferenceProvidersUsageData = {
     groupBy?: "model" | "team" | "person";
     days?: string;
     filterIds?: string;
+    memberId?: string;
   };
   url: "/v1/inference-providers/usage";
 };
@@ -12745,6 +12746,92 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses = {
 
 export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponse =
   PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreData = {
+  body: {
+    revision: number;
+  };
+  path: {
+    policyId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}/restore";
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreError =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses = {
+  /**
+   * Restore archived usage limit policy
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponse =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses];
 
 export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
   body?: never;

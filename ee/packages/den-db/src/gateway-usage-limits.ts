@@ -230,6 +230,34 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         ),
       )
     },
+    restorePolicy(scope: GatewayUsageScope, id: string, revision: number) {
+      return transaction(async (tx, now) =>
+        withGatewayUsageEntitlementMutation(
+          tx,
+          scope.organizationId,
+          async () => {
+            await activeUsageMember(tx, scope, true, true)
+            const policy = await policyById(tx, scope, id)
+            if (policy.revision !== revision)
+              return fail(
+                "policy_revision_conflict",
+                409,
+                "Policy changed. Reload before restoring.",
+              )
+            if (policy.archivedAt) {
+              await tx
+                .update(P)
+                .set({ archivedAt: null, updatedAt: now, revision: revision + 1 })
+                .where(eq(P.id, id))
+              await audit(tx, scope, id, "policy_restored", { revision }, now)
+            }
+            return policyView(tx, scope, id)
+          },
+          await usagePolicyMembers(tx, scope.organizationId, id),
+          now,
+        ),
+      )
+    },
     assign(
       scope: GatewayUsageScope,
       policyId: string,
