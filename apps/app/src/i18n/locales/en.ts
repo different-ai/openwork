@@ -784,7 +784,7 @@ export default {
   "extensions.row_one_capability": "1 thing inside",
   "extensions.row_capabilities": "{count} things inside",
   "extensions.row_locked": "Sign in to use",
-  "extensions.section_mac": "On this Mac",
+  "extensions.section_mac": "On this computer",
   "extensions.section_mine": "Added by you",
   "extensions.section_openwork": "From OpenWork",
   "extensions.section_openwork_locked": "From OpenWork · Sign in to use",

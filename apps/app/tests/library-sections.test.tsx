@@ -109,7 +109,7 @@ const libraryRows: Row[] = [
 ];
 
 describe("Library sections", () => {
-  test("one list: On this Mac, Added by you, then From OpenWork, each with its own caption", async () => {
+  test("one list: On this computer, Added by you, then From OpenWork, each with its own caption", async () => {
     const host = await mount(
       <LibraryInventory
         rows={rowsFor(libraryRows)}
@@ -121,7 +121,7 @@ describe("Library sections", () => {
     );
     const sections = [...host.querySelectorAll<HTMLElement>("[data-library-section]")];
     expect(sections.map((section) => section.dataset.librarySection)).toEqual(["mac", "mine", "openwork"]);
-    expect(sections[0]?.textContent).toContain("On this Mac");
+    expect(sections[0]?.textContent).toContain("On this computer");
     expect(sections[0]?.textContent).toContain("Weekly status report");
     expect(sections[0]?.textContent).toContain("Filesystem");
     expect(sections[1]?.textContent).toContain("Added by you");

@@ -38,7 +38,7 @@ test(title, async ({ evidence, world, user, probe, step }) => {
   const rowNames = async (section: string) => (await probe.dom(`[data-library-section="${section}"] [data-library-row]`)).elements.map((element) => element.text);
 
   // Lane 1 · Browse
-  await step("before: signed out, the Library shows what is on this Mac and what signing in unlocks", async () => {
+  await step("before: signed out, the Library shows what is on this computer and what signing in unlocks", async () => {
     await signedOutUser.see({ testId: "library-sign-up-banner" }, { timeoutMs: 90_000 });
     await signedOutUser.see({ text: "Sign up to share your skills and connectors with your team." });
     const locked = (await signedOutProbe.dom("[data-library-locked]")).elements.length;

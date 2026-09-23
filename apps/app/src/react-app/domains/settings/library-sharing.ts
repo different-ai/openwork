@@ -7,7 +7,7 @@ import type {
 import { t } from "../../../i18n";
 import type { ExtensionTaxonomy } from "./extension-taxonomy";
 
-/** Where a Library row sits: on this Mac, added by the member, or shared by OpenWork. */
+/** Where a Library row sits: on this computer, added by the member, or shared by OpenWork. */
 export type LibrarySection = "mac" | "mine" | "openwork";
 
 export type LibraryAudience = {

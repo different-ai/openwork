@@ -43,7 +43,7 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     }, { within: 15_000, label: "the mock witnessed a successful MCP initialize" });
   });
 
-  await step("On this Mac lists every hand-written server, and only the connected mock reads as ready", async () => {
+  await step("On this computer lists every hand-written server, and only the connected mock reads as ready", async () => {
     await user.see({ text: "ready-helper" }, { timeoutMs: 60_000 });
     for (const name of ["docs-helper", "files-helper", "remote-helper"]) await user.see({ text: name });
     const servers = ["ready-helper", "docs-helper", "files-helper", "remote-helper"];
@@ -63,7 +63,7 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     await user.screenshot();
     evidence.recordAssertionEvidence(
       "Library readiness follows a real MCP connection",
-      `The fixture wrote ready-helper into opencode.json before opening the workspace, without an MCP registration API call. It completed MCP initialize and the workspace engine reported connected. On this Mac lists all four servers; ready: ${ready.join(", ")}; the three disabled entries carry no ready mark.`,
+      `The fixture wrote ready-helper into opencode.json before opening the workspace, without an MCP registration API call. It completed MCP initialize and the workspace engine reported connected. On this computer lists all four servers; ready: ${ready.join(", ")}; the three disabled entries carry no ready mark.`,
       ready.includes("ready-helper"),
     );
   });
@@ -75,7 +75,7 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     expect(body.length).toBeGreaterThan(200);
     evidence.recordAssertionEvidence(
       "A Claude-style string command no longer blanks Settings",
-      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and the Library listed all three as local items under On this Mac while Advanced kept only workspace MCP creation.",
+      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and the Library listed all three as local items under On this computer while Advanced kept only workspace MCP creation.",
       true,
     );
   });
