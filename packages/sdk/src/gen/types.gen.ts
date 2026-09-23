@@ -19427,10 +19427,6 @@ export type PostV1McpConnectionsDiscoverErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can discover MCP requirements.
-   */
-  403: ForbiddenError;
-  /**
    * Requirements discovery failed.
    */
   502: ExternalMcpRequirementsDiscoveryFailedError;

@@ -9316,7 +9316,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Discover external MCP connection requirements
    *
-   * Admin-only, side-effect-free requirements discovery. It performs no client registration, credential write, or connection creation.
+   * Side-effect-free requirements discovery for any organization member, through the same guarded fetch as connection setup. It performs no client registration, credential write, or connection creation.
    */
   public postV1McpConnectionsDiscover<ThrowOnError extends boolean = false>(
     parameters: {
