@@ -16,6 +16,7 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { DEFAULT_AUTH_NAME } from "../../_lib/den-flow";
 import {
   formatRoleLabel,
+  getAiGatewayRoute,
   getAnalyticsRoute,
   getAutomationsRoute,
   getBackgroundAgentsRoute,
@@ -23,13 +24,11 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
-  getGatewayProvidersRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
   getManagedDashboardsRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
-  getInferenceRoute,
   getLibraryRoute,
   getMcpConnectionsRoute,
   getManagedBrandIconUrl,
@@ -60,7 +59,6 @@ import {
   type DenSearchBarHandle,
 } from "./command-palette/den-search-bar";
 import { UserProfileDialog } from "./user-profile-dialog";
-import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import { DashboardHeaderActionsProvider, DashboardHeaderActionsSlot } from "./dashboard-header-actions";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
@@ -248,8 +246,8 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
   }
-  if (pathname.startsWith(getGatewayProvidersRoute(orgSlug))) {
-    return "Gateway";
+  if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
+    return "AI Gateway";
   }
   if (
     pathname.startsWith(getDesktopPoliciesRoute(orgSlug))
@@ -260,9 +258,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";
-  }
-  if (pathname.startsWith(getInferenceRoute(orgSlug))) {
-    return "OpenWork Models";
   }
   if (pathname.startsWith(getWebRoute(orgSlug))) {
     return "OpenWork Web";
@@ -302,7 +297,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 }
 
 export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
-  const gatewayAccess = useGatewayDashboardAccess();
   const pathname = usePathname();
   const onboardingRoute = getMarketplaceOnboardingRoute();
   const isOnboarding = pathname === onboardingRoute || pathname.startsWith(`${onboardingRoute}/`);
@@ -436,18 +430,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const navSections = buildDashboardNavSections({
     orgSlug: activeOrg?.slug ?? null,
     access,
-    capabilities: {
-      ...(orgContext?.capabilities ?? {
-        cloud: false,
-        installLinks: false,
-        mcpConnections: false,
-        openworkWeb: false,
-        orgManagedDashboards: false,
-        workflows: false,
-      }),
-      gatewayDashboard: orgContext?.capabilities.gatewayDashboard === true,
+    capabilities: orgContext?.capabilities ?? {
+      cloud: false,
+      installLinks: false,
+      mcpConnections: false,
+      openworkWeb: false,
+      orgManagedDashboards: false,
+      workflows: false,
     },
-    gatewayAccess,
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
   });
@@ -646,7 +636,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                     Boolean(activeOrg && item.href === getLibraryRoute(activeOrg.slug));
                   const childActive = (child: DashboardNavChild) =>
                     pathname === child.href || pathname.startsWith(`${child.href}/`);
-                  const groupActive = (item.children ?? []).some(childActive);
+                  const groupActive = (item.href !== "#" && (
+                    pathname === item.href || (!isDashboardRoot && pathname.startsWith(`${item.href}/`))
+                  )) || (item.children ?? []).some(childActive);
                   const selected =
                     item.href !== "#" &&
                     (item.children

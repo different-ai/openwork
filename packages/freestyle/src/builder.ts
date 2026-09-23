@@ -42,7 +42,7 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
       await vm.fs.writeTextFile("/opt/openwork-preview/gateway.mjs", await readFile(new URL("./gateway.mjs", import.meta.url), "utf8"));
       await vm.fs.writeTextFile("/opt/openwork-preview/runtime.mjs", await readFile(new URL(world === "acme-web" ? "./acme-runtime.mjs" : "./runtime.mjs", import.meta.url), "utf8"));
       await vm.fs.writeTextFile("/opt/openwork-preview/health.mjs", await readFile(new URL("./health.mjs", import.meta.url), "utf8"));
-      for (const file of ["origins.mjs", "resume.mjs"]) {
+      for (const file of ["origins.mjs", "resume.mjs", "desktop.mjs"]) {
         await vm.fs.writeTextFile(`/opt/openwork-preview/${file}`, await readFile(new URL(`./${file}`, import.meta.url), "utf8"));
       }
       // Only public repository bytes enter the VM. No host credentials or environment are forwarded.
@@ -59,13 +59,18 @@ test "$(git rev-parse HEAD)" = "${sha}"
 corepack enable
 corepack prepare pnpm@11.4.0 --activate
 ${world === "acme-web" ? `apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server
+DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server xvfb x11vnc novnc websockify fluxbox dbus-x11 xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
+# Open the viewer connected and scaled to the reviewer's window.
+printf '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;reconnect_delay=2000"><title>OpenWork desktop</title>' > /usr/share/novnc/index.html
 systemctl enable --now mysql redis-server
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"
-pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway...
+pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway... --filter @openwork/desktop...
 pnpm --dir evals install --frozen-lockfile --ignore-scripts
 pnpm --filter @openwork-ee/den-db build
-pnpm --filter @openwork/email build` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
+pnpm --filter @openwork/email build
+# Desktop build runs alongside the remaining builds; launches then skip it.
+(node apps/desktop/scripts/prepare-sidecar.mjs --force --outdir apps/desktop/resources/sidecars && node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/desktop/resources/helpers) &
+DESKTOP_BUILD=$!` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
 pnpm --filter @openwork/types build
 pnpm --filter @openwork/sdk build
 pnpm --filter @openwork/enterprise-mcp-client build
@@ -79,6 +84,7 @@ opencode --version
 systemctl daemon-reload
 ${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null\nnode /opt/openwork-preview/health.mjs" : `mysqladmin -uroot -ppassword ping
 redis-cli ping
+wait "$DESKTOP_BUILD"
 systemctl start openwork-preview-runtime
 for attempt in $(seq 1 240); do
   test ! -f /opt/openwork-preview/failed-world

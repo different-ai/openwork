@@ -18,7 +18,7 @@ try {
   outputs.orgId = { value: world.model.orgId, group: "Org" };
   outputs.verifiedReply = { value: proof.reply, group: "Verification" };
   // Compile the browser entry points while warming, including the gateway UI.
-  for (const path of ["/", "/dashboard", "/dashboard/gateway-providers"]) {
+  for (const path of ["/", "/dashboard", "/dashboard/ai-gateway"]) {
     const response = await fetch(`${den.ref.webUrl}${path}`);
     if (!response.ok) throw new Error(`Den warmup failed: ${path} (${response.status})`);
     await response.text();
@@ -35,7 +35,24 @@ try {
     for (const dependency of imports) await warmModule(dependency);
   }
   await warmModule("/");
-  const services = { app: web.manifest.webUrl, den: den.ref.webUrl, api: den.ref.apiUrl, engine: web.manifest.openworkUrl, gateway: gatewayUrl };
+  // The real desktop app, viewed through noVNC. Optional: a desktop failure
+  // leaves the web, Den and gateway preview usable and says so in its outputs.
+  let desktop = null;
+  try {
+    const { startDesktop } = await import("./desktop.mjs");
+    desktop = await startDesktop(stack, world);
+    // Wait for the window so Freestyle snapshots a running desktop and every clone
+    // resumes it instantly. Bounded well inside the builder's existing deadline;
+    // a slower first boot still snapshots and finishes starting in the clone.
+    const running = await Promise.race([desktop.ready, new Promise((resolve) => setTimeout(resolve, 180_000, false))]);
+    outputs.desktopStatus = running
+      ? { value: "ready", group: "Desktop", note: "Real OpenWork desktop app, resumed running from the snapshot; signed in as the demo owner when available" }
+      : { value: "starting", group: "Desktop", note: "Real OpenWork desktop app; still loading when the viewer opens" };
+  } catch (error) {
+    console.error("Desktop preview unavailable:", error);
+    outputs.desktopStatus = { value: "unavailable", group: "Desktop", note: "The web preview is unaffected; see /opt/openwork-preview/desktop logs" };
+  }
+  const services = { app: web.manifest.webUrl, den: den.ref.webUrl, api: den.ref.apiUrl, engine: web.manifest.openworkUrl, gateway: gatewayUrl, ...(desktop ? { desktop: desktop.url } : {}) };
   await writeFile("/opt/openwork-preview/services.json", JSON.stringify(services), { mode: 0o600 });
   await writeFile("/opt/openwork-preview/outputs.json", JSON.stringify(outputs), { mode: 0o600 });
   await writeFile("/opt/openwork-preview/ready-world", JSON.stringify({ warmedAt: new Date().toISOString(), pid: process.pid, modules: seen.size }));

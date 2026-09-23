@@ -1,26 +1,63 @@
-import { and, eq, gt, inArray, or } from "drizzle-orm"
-import { MemberTable } from "./schema/org"
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm"
+import { MemberTable, OrganizationTable } from "./schema/org"
 import { TeamMemberTable } from "./schema/teams"
 import {
   GatewayUsageAssignmentTable as A,
   GatewayUsageBucketTable as B,
   GatewayUsageResetTable as R,
 } from "./schema/gateway-usage-limits"
-import { effectiveUsagePolicies, type GatewayUsageScope, type UsageTx } from "./gateway-usage-read"
+import {
+  effectiveUsagePolicies,
+  usageFail,
+  type GatewayUsageScope,
+  type UsageTx,
+} from "./gateway-usage-read"
 
 type MemberId = GatewayUsageScope["memberId"]
 type OrganizationId = GatewayUsageScope["organizationId"]
+
+export async function lockUsageOrganization(tx: UsageTx, organizationId: OrganizationId) {
+  const [organization] = await tx
+    .select({ id: OrganizationTable.id })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, organizationId))
+    .for("update")
+  if (!organization) return usageFail("organization_not_found", 404, "Organization not found.")
+}
+
+export async function usageOrganizationMembers(tx: UsageTx, organizationId: OrganizationId) {
+  await lockUsageOrganization(tx, organizationId)
+  const members = await tx
+    .select({ id: MemberTable.id })
+    .from(MemberTable)
+    .where(
+      and(
+        eq(MemberTable.organizationId, organizationId),
+        isNull(MemberTable.removedAt),
+        isNotNull(MemberTable.userId),
+      ),
+    )
+    .orderBy(asc(MemberTable.id))
+    .for("update")
+  return members.map((member) => member.id)
+}
 
 export async function usagePolicyMembers(
   tx: UsageTx,
   organizationId: OrganizationId,
   policyId: string,
 ) {
+  await lockUsageOrganization(tx, organizationId)
   const assignments = await tx
     .select()
     .from(A)
     .where(and(eq(A.organizationId, organizationId), eq(A.policyId, policyId)))
-  const members = new Set<MemberId>()
+    .for("share")
+  const members = new Set<MemberId>(
+    assignments.some((assignment) => assignment.organization === true)
+      ? await usageOrganizationMembers(tx, organizationId)
+      : [],
+  )
   for (const assignment of assignments) if (assignment.memberId) members.add(assignment.memberId)
   const teams = assignments.flatMap((assignment) => (assignment.teamId ? [assignment.teamId] : []))
   if (teams.length) {
@@ -28,6 +65,7 @@ export async function usagePolicyMembers(
       .select({ memberId: TeamMemberTable.orgMembershipId })
       .from(TeamMemberTable)
       .where(inArray(TeamMemberTable.teamId, teams))
+      .for("share")
     for (const row of rows) if (row.memberId) members.add(row.memberId)
   }
   return [...members]
@@ -53,6 +91,7 @@ export async function withGatewayUsageEntitlementMutation<T>(
   memberIds: MemberId[],
   now = new Date(),
 ): Promise<T> {
+  await lockUsageOrganization(tx, organizationId)
   const members = [...new Set(memberIds)].sort()
   await lockUsageMembers(tx, organizationId, members)
   const before = new Map<MemberId, Awaited<ReturnType<typeof effectiveUsagePolicies>>>()

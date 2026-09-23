@@ -2,21 +2,16 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ChevronRight, KeyRound, Layers3, Plus, Search, Shield } from "lucide-react";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { ChevronRight, KeyRound, Layers3, Plus, Search } from "lucide-react";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenCard } from "../../_components/ui/card";
 import { buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { getGatewayProviderRoute, getNewGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useOrgInferenceProviders } from "./inference-provider-data";
-import { GatewayUsageSection } from "./gateway-usage-section";
-import { GatewayUsageLimitsSection } from "./gateway-usage-limits-section";
-import { GatewayUsageResetRequests } from "./gateway-usage-reset-requests";
-import { getOrgAccessFlags } from "../../_lib/den-org";
 import {
   getCredentialStatusLabel,
   getCredentialStatusTone,
@@ -38,13 +33,16 @@ export function InferenceCredentialStatusBadge({
   );
 }
 
-function GatewayProviderCard({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
+function GatewayProviderCard({ provider, orgSlug }: {
+  provider: DenInferenceProvider;
+  orgSlug: string | null;
+}) {
   const keyCount = provider.credentialSets?.filter((set) => set.credentialMode === "org" && set.configured).length;
   const groupCount = provider.modelGroups?.length;
 
   return (
     <Link
-      href={getGatewayProviderRoute(orgSlug, provider.id)}
+      href={getAiGatewayProviderRoute(orgSlug, provider.id)}
       aria-label={`Open ${provider.name}`}
       data-testid="gateway-provider-open"
       className="group block min-w-0 rounded-[30px] outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
@@ -87,9 +85,8 @@ function GatewayProviderCard({ provider, orgSlug }: { provider: DenInferenceProv
   );
 }
 
-export function InferenceProvidersScreen() {
-  const { orgId, orgSlug, orgContext } = useOrgDashboard();
-  const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.roles);
+export function GatewayProvidersSection() {
+  const { orgId, orgSlug } = useOrgDashboard();
   const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);
   const [query, setQuery] = useState("");
 
@@ -107,16 +104,7 @@ export function InferenceProvidersScreen() {
   }, [inferenceProviders, query]);
 
   return (
-    <DashboardPageTemplate
-      icon={Shield}
-      title="Gateway"
-      description="Configure your organizations AI Model Providers once, track and control each user's access and usage individually"
-      colors={["#F1F5FF", "#1D4ED8", "#60A5FA", "#A7F3D0"]}
-    >
-      {orgId && orgContext && access.isAdmin ? <GatewayUsageResetRequests key={`resets-${orgId}`} orgId={orgId} members={orgContext.members} /> : null}
-      {orgId ? <GatewayUsageSection key={orgId} orgId={orgId} /> : null}
-
-      <section aria-labelledby="gateway-providers-heading" className="mb-10">
+    <section aria-labelledby="gateway-providers-heading">
         <h2 id="gateway-providers-heading" className="mb-4 text-lg font-semibold tracking-tight text-gray-950">Providers</h2>
         <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <DenInput
@@ -127,7 +115,7 @@ export function InferenceProvidersScreen() {
             placeholder="Search providers or models..."
           />
           <Link
-            href={getNewGatewayProviderRoute(orgSlug)}
+            href={getNewAiGatewayProviderRoute(orgSlug)}
             data-testid="gateway-provider-create"
             className={buttonVariants({ variant: "primary" })}
           >
@@ -162,9 +150,6 @@ export function InferenceProvidersScreen() {
             )}
           </section>
         )}
-      </section>
-
-      {orgId && orgContext && access.isAdmin ? <GatewayUsageLimitsSection key={`limits-${orgId}`} orgId={orgId} teams={orgContext.teams} members={orgContext.members} /> : null}
-    </DashboardPageTemplate>
+    </section>
   );
 }

@@ -15,3 +15,8 @@ test("a live snapshot's origins map to independent clones, including encoded han
   assert.equal(replaceOrigins(output, originReplacements(first, templateOrigins)), payload);
   assert.ok(!replaceOrigins(payload, originReplacements(templateOrigins, second)).includes(new URL(first.den).hostname));
 });
+
+test("the desktop viewer has its own template origin, distinct from every other service", () => {
+  assert.equal(new URL(templateOrigins.desktop).hostname, `desktop-${"0".repeat(32)}.preview.openwork.software`);
+  assert.equal(new Set(Object.values(templateOrigins)).size, Object.keys(templateOrigins).length);
+});

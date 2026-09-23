@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "ec36c008-f7cc-42ce-b2f3-11d878e4e565",
+  "id": "c0440824-756f-464c-b4a4-d7d9a600224d",
   "prevId": "aa59af63-ceaa-49d2-aad7-90c5b6f61b55",
   "tables": {
     "account": {
@@ -4382,6 +4382,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "organization": {
+          "name": "organization",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp(3)",
@@ -4404,6 +4411,15 @@
           "columns": [
             "policy_id",
             "team_id"
+          ],
+          "isUnique": true
+        },
+        "gateway_usage_assignment_organization": {
+          "name": "gateway_usage_assignment_organization",
+          "columns": [
+            "organization_id",
+            "policy_id",
+            "organization"
           ],
           "isUnique": true
         },
@@ -4444,7 +4460,7 @@
       "checkConstraint": {
         "gateway_usage_assignment_target": {
           "name": "gateway_usage_assignment_target",
-          "value": "(`gateway_usage_limit_assignment`.`member_id` is null) <> (`gateway_usage_limit_assignment`.`team_id` is null)"
+          "value": "(`gateway_usage_limit_assignment`.`organization` is null and ((`gateway_usage_limit_assignment`.`member_id` is null) <> (`gateway_usage_limit_assignment`.`team_id` is null))) or (`gateway_usage_limit_assignment`.`organization` is not null and `gateway_usage_limit_assignment`.`organization` = 1 and `gateway_usage_limit_assignment`.`member_id` is null and `gateway_usage_limit_assignment`.`team_id` is null)"
         }
       }
     },
@@ -14897,75 +14913,6 @@
       "compositePrimaryKeys": {
         "telemetry_session_dimension_id": {
           "name": "telemetry_session_dimension_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "organization_web_origin": {
-      "name": "organization_web_origin",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "origin": {
-          "name": "origin",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_org_member_id": {
-          "name": "created_by_org_member_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        }
-      },
-      "indexes": {
-        "organization_web_origin_org_origin": {
-          "name": "organization_web_origin_org_origin",
-          "columns": [
-            "organization_id",
-            "origin"
-          ],
-          "isUnique": true
-        },
-        "organization_web_origin_origin": {
-          "name": "organization_web_origin_origin",
-          "columns": [
-            "origin"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "organization_web_origin_id": {
-          "name": "organization_web_origin_id",
           "columns": [
             "id"
           ]

@@ -8,6 +8,7 @@ GlobalRegistrator.register();
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 afterAll(() => GlobalRegistrator.unregister());
 const { act } = await import("react");
+const { DenCombobox } = await import("../app/(den)/_components/ui/combobox");
 const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const requests = await import("../app/(den)/_lib/den-flow");
@@ -250,38 +251,19 @@ test("archive confirms the consequence and sends the displayed revision", async 
   } finally { await view.close(); }
 });
 
-test("assigns organization membership and team IDs separately and removes assignments", async () => {
-  const current = policy();
-  const view = await mount(section(), (call) => {
-    if (call.path === policiesPath) return { payload: { policies: [current] } };
-    if (call.path.endsWith("/assignments")) {
-      if (call.init.method === "POST") {
-        const body = JSON.parse(String(call.init.body));
-        current.assignments.push({ id: `assignment-${current.assignments.length}`, memberId: body.memberId ?? null, teamId: body.teamId ?? null });
-        return { payload: current };
-      }
-      return { payload: { assignments: current.assignments } };
-    }
-    if (call.init.method === "DELETE") { current.assignments = current.assignments.slice(1); return { payload: current }; }
-    return defaultReply(call);
-  });
+test("centralized assignment transport keeps membership, team and organization targets distinct", async () => {
+  const view = await mount(section(), (call) => call.init.method === "POST" || call.init.method === "DELETE" ? { payload: policy() } : defaultReply(call));
   try {
-    await click("Assignments for Standard");
-    expect(view.container.textContent).toContain("Allowances are never pooled");
-    await fill('[aria-label="Find person to assign"]', "Example & member");
-    const results = document.querySelector('[aria-label="Find person to assign results"]');
-    if (!results) throw new Error("Missing people results");
-    await click("Example Member (member@example.test)", results);
-    await click("Assign policy");
-    expect(JSON.parse(String(view.calls.find((call) => call.init.method === "POST")?.init.body))).toEqual({ memberId: person.id });
-    expect(view.calls.some((call) => call.path === `${membersPath}?query=Example+%26+member`)).toBe(true);
-    await choose("Assignment type", "Team");
-    await choose("Team to assign", "Example Team");
-    await click("Assign policy");
-    expect(JSON.parse(String(view.calls.filter((call) => call.init.method === "POST")[1]?.init.body))).toEqual({ teamId: team.id });
-    await click("Unassign Example Member (member@example.test)");
-    expect(view.calls.some((call) => call.path === `${policiesPath}/policy-fixture/assignments/assignment-0` && call.init.method === "DELETE")).toBe(true);
-    expect(view.calls.filter((call) => call.path.endsWith("/assignments") && call.init.method === "GET").length).toBeGreaterThan(3);
+    const targets: ({ memberId: string } | { teamId: string } | { organization: true })[] = [{ memberId: person.id }, { teamId: team.id }, { organization: true }];
+    for (const target of targets) await mutateGatewayLimits(orgId, { type: "assign", policyId: "policy/id", target });
+    await mutateGatewayLimits(orgId, { type: "unassign", policyId: "policy/id", assignmentId: "assignment/id" });
+    const writes = view.calls.filter((call) => call.init.method !== "GET");
+    expect(writes.slice(0, 3).map((call) => JSON.parse(String(call.init.body)))).toEqual(targets);
+    for (const call of writes.slice(0, 3)) expect(call.path).toBe(`${policiesPath}/policy%2Fid/assignments`);
+    expect(writes[3]).toMatchObject({ path: `${policiesPath}/policy%2Fid/assignments/assignment%2Fid`, init: { method: "DELETE" } });
+    const { ORG_SCOPE_HEADER } = await import("../app/(den)/_lib/org-scope");
+    for (const call of writes) expect(new Headers(call.init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
+    expect(view.container.querySelector('[aria-label="Assignments for Standard"]')).toBeNull();
   } finally { await view.close(); }
 });
 
@@ -297,7 +279,7 @@ test("member inspection distinguishes loading, failures and unlimited and never 
   });
   try {
     expect(view.container.textContent).not.toContain("Unlimited");
-    await click("Example Member (member@example.test)");
+    await choose("Find person to inspect", "Example Member");
     expect(view.container.textContent).toContain("No usage limit policy assigned");
     expect(view.container.textContent).toContain("Accounting is incomplete");
     state = "error";
@@ -311,19 +293,22 @@ test("member inspection distinguishes loading, failures and unlimited and never 
   } finally { await view.close(); }
 });
 
-test("effective usage shows estimates, overage, extension, reset state and direct/team candidates", async () => {
-  const direct = { ...policy(), id: "lower-policy", name: "Smaller direct policy", limits: [{ timeframe: "month", costLimitMicroUsd: 50_000_000 }], assignments: [{ id: "direct", memberId: person.id, teamId: null }] } satisfies GatewayUsageLimitPolicy;
-  const inherited = { ...policy(), assignments: [{ id: "team-assignment", memberId: null, teamId: team.id }] };
-  const view = await mount(<GatewayMemberUsageDetails status={status()} policies={[direct, inherited]} teams={[team]} />);
+test("effective usage shows estimates, overage, extension, reset state and direct/team/organization candidates", async () => {
+  const direct = { ...policy(), id: "lower-policy", name: "Smaller direct policy", limits: [{ timeframe: "month", costLimitMicroUsd: 50_000_000 }], assignments: [{ id: "direct", memberId: person.id, teamId: null, organization: false }] } satisfies GatewayUsageLimitPolicy;
+  const inherited = { ...policy(), assignments: [{ id: "team-assignment", memberId: null, teamId: team.id, organization: false }] };
+  const everyone = { ...policy(), id: "org-policy", name: "Organization baseline", limits: [{ timeframe: "month", costLimitMicroUsd: 25_000_000 }], assignments: [{ id: "org-assignment", memberId: null, teamId: null, organization: true }] } satisfies GatewayUsageLimitPolicy;
+  const view = await mount(<GatewayMemberUsageDetails status={status()} policies={[direct, inherited, everyone]} teams={[team]} />);
   try {
-    expect(view.container.textContent).toContain("$130.000001 used / $125.00 allowance");
+    expect(view.container.textContent).toContain("$130.000001 used");
+    expectField(view.container, "Total", "$125.00");
     expect(view.container.textContent).toContain("$5.000001 over allowance");
     expectField(view.container, "Base", "$100.00");
     expectField(view.container, "Extension", "$25.00");
     expectField(view.container, "Increase requests", "Allowed");
     expectField(view.container, "Request status", "approved");
     expect(view.container.textContent).not.toContain("·");
-    expect(view.container.querySelector("h4")?.textContent).toBe("Standard - 1 month");
+    expect(view.container.querySelector("tbody tr")?.textContent).toContain("Standard - 1 month");
+    expect([...view.container.querySelectorAll("th")].map((cell) => cell.textContent)).toEqual(["Policy", "Usage"]);
     const blocked = [...view.container.querySelectorAll("span")].find((element) => element.textContent === "Blocked");
     expect(blocked?.classList.contains("bg-gray-100")).toBe(true);
     expect(blocked?.classList.contains("text-red-600")).toBe(false);
@@ -334,36 +319,54 @@ test("effective usage shows estimates, overage, extension, reset state and direc
     expect(view.container.querySelector("details")?.open).toBe(true);
     expect(view.container.textContent).toContain("Direct assignment");
     expect(view.container.textContent).toContain("Team: Example Team");
+    expect(view.container.textContent).toContain("Organization baseline");
+    expect(view.container.textContent).toContain("Everyone in the org");
     expect(view.container.textContent).toContain("Not selected");
     expect(view.container.textContent).toContain("highest allowance wins");
   } finally { await view.close(); }
 });
 
-test("member inspector groups all bucket details with flat named sections and dividers", async () => {
+test("policies and selected usage use two-column rows with collapsed per-bucket context", async () => {
   const usage = status();
   const timeframes: GatewayUsageStatus["buckets"][number]["timeframe"][] = ["day", "week", "month"];
   usage.buckets = timeframes.map((timeframe) => ({ ...usage.buckets[0], id: `bucket-${timeframe}`, timeframe }));
   const view = await mount(section(), (call) => call.path === `${membersPath}/${person.id}` ? { payload: usage } : defaultReply(call));
   try {
-    const policyRow = view.container.querySelector("tbody tr");
+    const policies = view.container.querySelector('[aria-labelledby="gateway-usage-limits-heading"]');
+    if (!policies) throw new Error("Missing policies section");
+    expect([...policies.querySelectorAll("th")].map((cell) => cell.textContent)).toEqual(["Policy", "Actions"]);
+    const policyRow = policies.querySelector("tbody tr");
     if (!policyRow) throw new Error("Missing policy row");
-    expectField(policyRow, "Revision", "7");
-    expectField(policyRow, "Assignments", "0");
-    await click("Example Member (member@example.test)");
-    const buckets = view.container.querySelectorAll('section[aria-label$=" usage"]');
-    expect([...buckets].map((bucket) => bucket.getAttribute("aria-label"))).toEqual(["Standard - 1 day usage", "Standard - 1 week usage", "Standard - 1 month usage"]);
-    for (const bucket of buckets) {
-      expect(bucket.classList.contains("border-t")).toBe(true);
-      expect(bucket.classList.contains("border-[var(--ow-line)]")).toBe(true);
-      expect(bucket.classList.contains("border")).toBe(false);
-      expect([...bucket.classList].some((name) => name.startsWith("rounded"))).toBe(false);
-      const card = bucket.closest(".border");
-      expect(card).not.toBeNull();
-      expect(card?.parentElement?.closest(".border")).toBeNull();
-      expect(bucket.querySelector("details")?.open).toBe(false);
-      expectField(bucket, "Base", "$100.00");
-      expectField(bucket, "Extension", "$25.00");
+    expect(policyRow.querySelectorAll("td")).toHaveLength(2);
+    expectField(policyRow, "1 month", "$100.000001");
+    expect(policyRow.textContent).toContain("Hard");
+    expect(policyRow.textContent).toContain("Increase requests on");
+    expect(button("Edit Standard", policyRow).disabled).toBe(false);
+    expect(button("Archive Standard", policyRow).disabled).toBe(false);
+    await choose("Find person to inspect", "Example Member");
+    expect(view.container.querySelector('[aria-label="Find person to inspect"]')).toBeNull();
+    const inspector = view.container.querySelector('[aria-label="Usage for Example Member"]');
+    if (!inspector) throw new Error("Missing member usage");
+    expect([...inspector.querySelectorAll("th")].map((cell) => cell.textContent)).toEqual(["Policy", "Usage"]);
+    const rows = inspector.querySelectorAll("tbody tr:nth-child(odd)");
+    expect(rows).toHaveLength(3);
+    for (const [index, row] of [...rows].entries()) {
+      expect(row.querySelectorAll("td")).toHaveLength(2);
+      expect(row.textContent).toContain(`Standard - 1 ${timeframes[index]}`);
+      expectField(row, "Base", "$100.00");
+      expectField(row, "Extension", "$25.00");
+      expectField(row, "Total", "$125.00");
+      expect(row.textContent).toContain("$130.000001 used");
+      expect(row.querySelector("time")?.dateTime).toBe(usage.buckets[index].resetAt);
+      const context = row.nextElementSibling;
+      expect(context?.querySelector("td")?.colSpan).toBe(2);
+      expect(context?.querySelector("details")?.open).toBe(false);
+      expect(context?.querySelector("summary")?.getAttribute("aria-label")).toBe(`Effective policy and assignment context for Standard - 1 ${timeframes[index]}`);
     }
+    await click("Change person");
+    expect(view.container.querySelector('[aria-label="Usage for Example Member"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Find person to inspect"]')).not.toBeNull();
+    expect(view.container.textContent).not.toContain("$130.000001 used");
   } finally { await view.close(); }
 });
 
@@ -490,9 +493,9 @@ test("no active policies hides the queue and member inspector without fetching p
     try {
       expect(view.container.textContent).toContain("No usage limits configured");
       expect(button("Create policy").disabled).toBe(false);
-      expect(view.container.querySelector('[aria-label="Search usage limit policies"]')).toBeNull();
+      expect(view.container.querySelector('[aria-label="Search usage limit policies"]')).not.toBeNull();
       expect(view.container.textContent).not.toContain("Usage Limit Increase Requests");
-      expect(view.container.textContent).not.toContain("Inspect member usage");
+      expect(view.container.querySelector('[aria-label="Find person to inspect"]')).toBeNull();
       expect(view.calls.every((call) => call.path === policiesPath)).toBe(true);
     } finally { await view.close(); }
   }
@@ -565,23 +568,26 @@ test("unknown create outcome keeps the draft and blocks accidental resubmission"
   } finally { await view.close(); }
 });
 
-test("assignment and people failures remain actionable and disable unsafe assignment", async () => {
-  let failAssignments = true;
+test("remote people failures remain retryable without exposing stale usage or a false empty state", async () => {
+  let failPeople = true;
   const view = await mount(section(), (call) => {
-    if (call.path.endsWith("/assignments") && failAssignments) return { status: 503, payload: { error: "unavailable", message: "Assignments unavailable" } };
-    if (call.path.startsWith(`${membersPath}?`)) return { status: 503, payload: { error: "unavailable", message: "People unavailable" } };
+    if (call.path.startsWith(`${membersPath}?`) && failPeople) return { status: 503, payload: { error: "unavailable", message: "People unavailable" } };
     return defaultReply(call);
   });
   try {
-    await click("Assignments for Standard");
-    expect(view.container.textContent).toContain("Assignments unavailable");
+    const input = view.container.querySelector<HTMLInputElement>('[aria-label="Find person to inspect"]');
+    if (!input) throw new Error("Missing member search");
+    await act(async () => { input.focus(); input.click(); });
+    await tick();
     expect(view.container.textContent).toContain("People unavailable");
-    expect(button("Assign policy").disabled).toBe(true);
-    failAssignments = false;
-    await click("Retry assignments");
-    expect(view.container.textContent).toContain("No people or teams assigned");
-    expect(button("Assign policy").disabled).toBe(true);
-    expect(view.container.textContent).not.toContain("No people match this search");
+    expect(view.container.querySelector('[role="option"]')).toBeNull();
+    expect(view.container.textContent).not.toContain("No people match");
+    expect(view.calls.some((call) => call.path === `${membersPath}/${person.id}`)).toBe(false);
+    failPeople = false;
+    await click("Retry people");
+    await choose("Find person to inspect", "Example Member");
+    expect(view.container.textContent).toContain("$130.000001 used");
+    expect(view.calls.every((call) => call.init.method === "GET")).toBe(true);
   } finally { await view.close(); }
 });
 
@@ -755,8 +761,8 @@ test("inspector preserves server-selected provenance/revision and reports quaran
   ] })) };
   const view = await mount(section(), (call) => call.path === `${membersPath}/${person.id}` ? { payload: usage } : defaultReply(call));
   try {
-    await click("Example Member (member@example.test)");
-    const summary = view.container.querySelector("summary");
+    await choose("Find person to inspect", "Example Member");
+    const summary = view.container.querySelector<HTMLElement>('summary[aria-label="Effective policy and assignment context for Standard - 1 month"]');
     await act(async () => summary?.click());
     const snapshot = view.container.querySelector('[aria-label="Server-selected assignment snapshot"]');
     if (!snapshot) throw new Error("Missing server-selected snapshot");
@@ -800,11 +806,82 @@ test.each([
   const usage: GatewayUsageStatus = { ...status(), state: "unlimited", buckets: [], coverage };
   const view = await mount(section(), (call) => call.path === `${membersPath}/${person.id}` ? { payload: usage } : defaultReply(call));
   try {
-    await click("Example Member (member@example.test)");
+    await choose("Find person to inspect", "Example Member");
     for (const text of shown) expect(view.container.textContent).toContain(text);
     for (const text of hidden) expect(view.container.textContent).not.toContain(text);
     expect(view.container.textContent).toContain("No usage limit policy assigned");
     expect(view.container.textContent).not.toContain("request_settled");
+  } finally { await view.close(); }
+});
+
+test("remote combobox retains the selected label but never selects pending, removed or failed results", async () => {
+  const selected: string[] = [];
+  const searches: string[] = [];
+  const option = { value: person.id, label: person.name, description: person.email };
+  const node = (options: typeof option[], optionsDisabled = false, value = person.id) => <DenCombobox ariaLabel="Remote person" value={value} options={options} optionsDisabled={optionsDisabled} serverFiltered maxSearchLength={200} onSearchChange={(query) => searches.push(query)} onChange={(id) => selected.push(id)} />;
+  const view = await mount(node([option]));
+  try {
+    await view.rerender(node([]));
+    const input = view.container.querySelector<HTMLInputElement>('[aria-label="Remote person"]');
+    if (!input) throw new Error("Missing remote picker");
+    expect(input.value).toBe(person.name);
+    await act(async () => { input.focus(); input.click(); });
+    await fill('[aria-label="Remote person"]', "not a local match");
+    await view.rerender(node([option], true));
+    expect(input.getAttribute("aria-activedescendant")).toBeNull();
+    expect(view.container.querySelector<HTMLButtonElement>('[role="option"]')?.disabled).toBe(true);
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      view.container.querySelector('[role="option"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(selected).toEqual([]);
+    await view.rerender(node([option]));
+    expect(view.container.querySelector('[role="option"]')?.textContent).toContain(person.name);
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(selected).toEqual([person.id]);
+    await tick();
+    await view.rerender(node([], true));
+    await act(async () => { input.focus(); input.click(); });
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(selected).toEqual([person.id]);
+    expect(searches).toContain("not a local match");
+    await view.rerender(node([], false, "different-member"));
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(input.value).toBe("");
+  } finally { await view.close(); }
+});
+
+test("member lookup pins encoded search to the latest response and cannot select an earlier request", async () => {
+  let resolveEarlier: ((reply: Reply) => void) | undefined;
+  let resolveLatest: ((reply: Reply) => void) | undefined;
+  const view = await mount(section(), (call) => {
+    if (call.path === `${membersPath}?query=Earlier`) return new Promise<Reply>((resolve) => { resolveEarlier = resolve; });
+    if (call.path === `${membersPath}?query=Example+%26+member`) return new Promise<Reply>((resolve) => { resolveLatest = resolve; });
+    return defaultReply(call);
+  });
+  try {
+    const input = view.container.querySelector<HTMLInputElement>('[aria-label="Find person to inspect"]');
+    if (!input) throw new Error("Missing member search");
+    await act(async () => { input.focus(); input.click(); });
+    expect(input.maxLength).toBe(200);
+    await fill('[aria-label="Find person to inspect"]', "Earlier");
+    await fill('[aria-label="Find person to inspect"]', "Example & member");
+    expect(resolveEarlier).toBeDefined();
+    expect(resolveLatest).toBeDefined();
+    await act(async () => resolveEarlier?.({ payload: { members: [{ ...person, id: "stale-member", name: "Stale person" }] } }));
+    await tick();
+    expect(view.container.textContent).not.toContain("Stale person");
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(view.calls.some((call) => call.path.startsWith(`${membersPath}/`))).toBe(false);
+    await act(async () => resolveLatest?.({ payload: { members: [person] } }));
+    await tick();
+    await choose("Find person to inspect", "Example Member");
+    expect(view.calls.some((call) => call.path === `${membersPath}/${person.id}`)).toBe(true);
+    expect(view.container.querySelector('[aria-label="Find person to inspect"]')).toBeNull();
+    expect(view.container.textContent).toContain("$130.000001 used");
+    const { ORG_SCOPE_HEADER } = await import("../app/(den)/_lib/org-scope");
+    for (const call of view.calls) expect(new Headers(call.init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
   } finally { await view.close(); }
 });
 
@@ -813,7 +890,7 @@ test("soft exhaustion explicitly leaves requests allowed with complete estimated
   const view = await mount(<GatewayMemberUsageDetails status={usage} policies={[]} teams={[]} />);
   try {
     expect(view.container.textContent).toContain("Requests are still allowed");
-    expect(view.container.textContent).toContain("Accounting coverage complete");
+    expect(view.container.textContent).toContain("Recorded accounting complete. All costs are estimates.");
     expect(view.container.textContent).not.toContain("blocks further");
   } finally { await view.close(); }
 });

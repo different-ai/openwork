@@ -2,7 +2,10 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const [tag, previousTag] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const factsIndex = args.indexOf("--facts");
+const factsPath = factsIndex === -1 ? null : args[factsIndex + 1];
+const [tag, previousTag] = args.filter((arg, index) => !arg.startsWith("--") && args[index - 1] !== "--facts");
 
 function fail(message) {
   console.error(`Changelog output check failed: ${message}`);
@@ -10,7 +13,7 @@ function fail(message) {
 }
 
 if (!tag || !previousTag) {
-  fail("usage: node scripts/check-changelog-output.mjs <tag> <prev>");
+  fail("usage: node scripts/check-changelog-output.mjs <tag> <prev> [--facts <release-facts.json>]");
 }
 
 const cwd = process.cwd();
@@ -107,18 +110,9 @@ const requiredHeadings = [
   "#### Released at",
   "#### Title",
   "#### One-line summary",
-  "#### Main changes",
+  "#### Pull requests",
+  "#### Behavior changes and removals",
   "#### Lines of code changed since previous release",
-  "#### Release importance",
-  "#### Major improvements",
-  "#### Number of major improvements",
-  "#### Major improvement details",
-  "#### Major bugs resolved",
-  "#### Number of major bugs resolved",
-  "#### Major bug fix details",
-  "#### Deprecated features",
-  "#### Number of deprecated features",
-  "#### Deprecated details",
 ];
 let previousHeadingIndex = -1;
 for (const heading of requiredHeadings) {
@@ -132,3 +126,82 @@ for (const heading of requiredHeadings) {
   previousHeadingIndex = headingIndex;
 }
 console.log(`${tagHeading} appears once with the exact LOC line and all required headings in order.`);
+
+// ---------------------------------------------------------------------------
+// Content checks: the docs entry must read as user-facing release notes.
+// ---------------------------------------------------------------------------
+
+const docsLines = docs.split("\n");
+const entryStart = docsLines.findIndex((line) => line.includes(compareLink));
+const entryLines = [docsLines[entryStart]];
+for (const line of docsLines.slice(entryStart + 1)) {
+  if (/^\s*## \[v/.test(line) || /^\s*<\/?Update\b/.test(line)) break;
+  entryLines.push(line);
+}
+const entry = entryLines.join("\n");
+const title = docsLines[entryStart].split("):").slice(1).join("):").trim();
+if (!title) fail(`${tag} docs entry has no title after the compare link`);
+
+const bullets = entryLines.filter((line) => /^\s*- /.test(line));
+if (bullets.length < 2 || bullets.length > 6) {
+  fail(`${tag} docs entry must have 2–6 bullets, found ${bullets.length}`);
+}
+if (/(^|[\s(])#[0-9]{2,}\b/.test(entry)) {
+  fail(`${tag} docs entry mentions a PR number; keep PR numbers in the tracker table`);
+}
+
+// Repo jargon that means nothing to people using OpenWork.
+const jargon = [
+  /\bACME\b/i,
+  /\bworlds\b/i,
+  /\bWarden\b/i,
+  /\bFreestyle\b/i,
+  /\bevals?\b/i,
+  /\btestkit\b/i,
+  /\btypecheck/i,
+  /\bCI\b/,
+  /\bprewarm/i,
+  /\bsnapshots?\b/i,
+  /\bDaytona\b/i,
+  /\bMCP Apps?\b/i,
+  /\brefactor/i,
+];
+const jargonHits = jargon.map((pattern) => entry.match(pattern)?.[0]).filter(Boolean);
+if (jargonHits.length > 0) {
+  fail(`${tag} docs entry uses internal jargon end users will not understand: ${[...new Set(jargonHits)].join(", ")}`);
+}
+console.log(`${tag} docs entry has ${bullets.length} bullets, no PR numbers, and no internal jargon.`);
+
+// ---------------------------------------------------------------------------
+// Coverage: every product and website PR gets an explicit decision.
+// ---------------------------------------------------------------------------
+
+const rows = new Map();
+for (const line of section.split("\n")) {
+  const match = line.match(/^\|\s*#([0-9]+)\s*\|\s*([^|]*?)\s*\|\s*(Included|Omitted)\s*\|\s*([^|]*?)\s*\|\s*$/);
+  if (match) rows.set(Number(match[1]), { audience: match[2], decision: match[3], reason: match[4] });
+}
+if (rows.size === 0) fail(`${tagHeading} Pull requests table has no rows in the | #PR | Audience | Included/Omitted | Reason | format`);
+for (const [number, row] of rows) {
+  if (!row.reason) fail(`${tagHeading} Pull requests row for #${number} has no reason`);
+}
+
+if (factsPath) {
+  const facts = JSON.parse(readFileSync(resolve(cwd, factsPath), "utf8"));
+  const required = facts.prs.filter((pr) => pr.audience === "product" || pr.audience === "website");
+  const missing = required.filter((pr) => !rows.has(pr.number)).map((pr) => `#${pr.number}`);
+  if (missing.length > 0) {
+    fail(`${tagHeading} Pull requests table is missing product/website PR(s): ${missing.join(", ")}`);
+  }
+  const includedInternal = facts.prs
+    .filter((pr) => pr.audience === "internal" && rows.get(pr.number)?.decision === "Included")
+    .map((pr) => `#${pr.number}`);
+  if (includedInternal.length > 0) {
+    fail(`${tagHeading} marks internal-only PR(s) as Included: ${includedInternal.join(", ")}`);
+  }
+  const included = [...rows.values()].filter((row) => row.decision === "Included").length;
+  if (required.length > 0 && included === 0) {
+    fail(`${tagHeading} omits every product/website PR; include at least one user-visible change`);
+  }
+  console.log(`${tagHeading} decides every product/website PR (${required.length}); ${included} included.`);
+}
