@@ -4,54 +4,61 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
-import { readAutoConfig, freeRequestReservation } from "../src/free-config.js"
+import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
+  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
+import { readAutoConfig, freeRequestReservation, freeUsageAmount, FREE_OPENAI_CHAT_URL } from "../src/free-config.js"
 import { desktopFreeHash, verifyDesktopFreeProof } from "../src/desktop-free-proof.js"
 import { createDesktopFreeVersionSource, desktopFreeVersionError } from "../src/desktop-free-version.js"
 import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, canonicalizeAnonymousAddress } from "../src/anonymous-identity.js"
 import { prepareFreeRequest, readFreeRequest } from "../src/free-request.js"
 import { FreeResponseReceipt, meterFreeResponse } from "../src/free-response.js"
-import type { FreePrincipal } from "../src/free-principal.js"
+import type { FreePrincipal, MemberPrincipal } from "../src/free-principal.js"
 import type { FreeAllowanceStore, FreeUsageReceipt } from "../src/free-allowance.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DEN_DB_ENCRYPTION_KEY = "test-only-free-auto-encryption-key-000000000000"
 process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/free_auto_test_unused"
 const { registerAnonymousInferenceRoutes } = await import("../src/anonymous.js")
+const { createFreeMemberHandler } = await import("../src/free-member.js")
+const { registerProxyRoutes } = await import("../src/proxy.js")
 const { freeSettlementDecision } = await import("../src/free-allowance.js")
 
 const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
-  INFERENCE_FREE_UPSTREAM_API_KEY: "fixture-upstream-key", ANONYMOUS_OPENROUTER_PROVIDER: "fixture-provider",
-  ANONYMOUS_OPENROUTER_BYOK_ONLY_VERIFIED: "true", ANONYMOUS_TOKEN_SECRET: "test-only-token-secret-00000000000000000000",
+  INFERENCE_FREE_OPENAI_API_KEY: "sk-fixture-dedicated-free-key", ANONYMOUS_TOKEN_SECRET: "test-only-token-secret-00000000000000000000",
   ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111" })
-const keys = generateKeyPairSync("ed25519")
-const publicKey = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64")
-const binding = { keyThumbprint: desktopFreeHash(Uint8Array.from(keys.publicKey.export({ format: "der", type: "spki" }))),
-  appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/desktop-free-proof.js").DesktopFreeBinding
-const identities = createAnonymousIdentities(binding, "127.0.0.1", config)
-const guest = () => issueAnonymousToken(identities, binding, config).token
-const memberKey = `ow_auto_${"a".repeat(43)}`
-const member: Extract<FreePrincipal, { kind: "member" }> = { kind: "member", id: createDenTypeId("user"), keyId: randomUUID(),
-  memberId: createDenTypeId("member"), organizationId: createDenTypeId("organization") }
+const machineId = "c".repeat(64)
+function signer(machine = machineId) {
+  const keys = generateKeyPairSync("ed25519")
+  const der = keys.publicKey.export({ format: "der", type: "spki" })
+  const binding = { keyThumbprint: desktopFreeHash(Uint8Array.from(der)), machineId: machine, appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/desktop-free-proof.js").DesktopFreeBinding
+  return { keys, publicKey: der.toString("base64"), binding }
+}
+const device = signer()
+const guest = (source = device) => issueAnonymousToken(createAnonymousIdentities(source.binding, "127.0.0.1", config), source.binding, config).token
+const memberKey = "ow_inf_fixture-member-key"
+const keyRow = { id: createDenTypeId("inferenceKey"), organization_id: createDenTypeId("organization"), org_membership_id: createDenTypeId("member") }
+const member: MemberPrincipal = { kind: "member", id: createDenTypeId("user"), inferenceKeyId: keyRow.id, memberId: keyRow.org_membership_id, organizationId: keyRow.organization_id }
 const prompt = JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] })
-function signed(path: string, authorization = "", body?: string, version = "1.2.3") {
+function signed(path: string, authorization = "", body?: string, options: { version?: string; source?: typeof device } = {}) {
+  const source = options.source ?? device
   const method = body === undefined ? "GET" : "POST"
-  const claims: DesktopFreeProofClaims = { version: 1, publicKey, appVersion: version, platform: "darwin", arch: "arm64", timestamp: Date.now(), nonce: randomUUID() }
+  const claims: DesktopFreeProofClaims = { version: 2, publicKey: source.publicKey, machineId: source.binding.machineId, appVersion: options.version ?? "1.2.3",
+    platform: "darwin", arch: "arm64", timestamp: Date.now(), nonce: randomUUID() }
   const message = desktopFreeProofMessage({ ...claims, method, path, bodyHash: desktopFreeHash(body ?? ""), authorizationHash: desktopFreeHash(authorization) })
-  const proof = Buffer.from(JSON.stringify({ ...claims, signature: sign(null, Buffer.from(message), keys.privateKey).toString("base64url") })).toString("base64url")
+  const proof = Buffer.from(JSON.stringify({ ...claims, signature: sign(null, Uint8Array.from(Buffer.from(message)), source.keys.privateKey).toString("base64url") })).toString("base64url")
   return new Request(`https://free.test${path}`, { method, body, headers: { "x-openwork-desktop-proof": proof,
     ...(authorization ? { authorization } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) } })
 }
-function responseValue(id = "generation-1") {
-  return { id, model: INFERENCE_FREE_MODEL_ID, choices: [{ index: 0, finish_reason: "stop", message: { content: "ok" } }],
-    usage: { cost: 0.00005, is_byok: true, cost_details: { upstream_inference_cost: 0.001 }, prompt_tokens: 10, completion_tokens: 2 } }
+function openAiResponse(id = "chatcmpl-1") {
+  return { id, object: "chat.completion", model: `${config.upstreamModel}-2026-08-01`, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+    usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, completion_tokens_details: { reasoning_tokens: 0 } } }
 }
-function fixture(overrides: Partial<import("../src/anonymous.js").FreeRouteDependencies> = {}) {
+const expectedAmount = freeUsageAmount(config, 10, 2)
+type Upstream = { url: string; headers: Headers; body: Record<string, unknown> }
+function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt | null>, calls: { session: number; cancelled: number; released: number }): FreeAllowanceStore {
   const nonces = new Set<string>()
-  const principals: FreePrincipal[] = []
-  const receipts: Array<FreeUsageReceipt | null> = []
-  const calls = { fetch: 0, session: 0, cancelled: 0 }
-  const store: FreeAllowanceStore = {
+  return {
+    family: "anonymous",
     async consumeNonce(proof) { const key = `${proof.keyThumbprint}:${proof.nonce}`; if (nonces.has(key)) return "replay"; nonces.add(key); return "accepted" },
     async consumeSession() { calls.session++; return true },
     async read(principal) { return { state: "ready", code: null, allowance: { limitUsd: principal.kind === "member" ? 5 : 1,
@@ -59,176 +66,280 @@ function fixture(overrides: Partial<import("../src/anonymous.js").FreeRouteDepen
     async reserve(principal, _ip, requestId, deadlineAt) { principals.push(principal); return { ok: true, requestId, deadlineAt } },
     async dispatch() { return true },
     async cancelUndispatched() { calls.cancelled++; return true },
+    async release() { calls.released++; return true },
     async settle(_id, receipt) { receipts.push(receipt); return true },
   }
+}
+function fixture(overrides: Partial<import("../src/anonymous.js").FreeRouteDependencies> = {}, upstream: (request: Upstream) => Response = () => Response.json(openAiResponse())) {
+  const principals: FreePrincipal[] = []
+  const receipts: Array<FreeUsageReceipt | null> = []
+  const requests: Upstream[] = []
+  const calls = { session: 0, cancelled: 0, released: 0 }
+  const store = fakeStore(principals, receipts, calls)
+  const fetch: typeof globalThis.fetch = async (url, init) => {
+    const request = { url: String(url), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) }
+    assert.equal(init?.redirect, "error")
+    requests.push(request)
+    return upstream(request)
+  }
   const app = new Hono()
-  registerAnonymousInferenceRoutes(app, { config, store, latestVersion: async () => "1.2.3", clientAddress: () => "127.0.0.1",
-    findMember: async (key) => key === memberKey ? member : null,
-    fetch: async (url, init) => {
-      calls.fetch++
-      assert.equal(String(url), "https://openrouter.ai/api/v1/chat/completions")
-      assert.equal(init?.redirect, "error")
-      const headers = new Headers(init?.headers)
-      assert.equal(headers.get("authorization"), "Bearer fixture-upstream-key")
-      assert.equal(headers.get("x-openwork-desktop-proof"), null)
-      return Response.json(responseValue())
-    }, ...overrides })
-  return { app, principals, receipts, calls, store }
+  registerAnonymousInferenceRoutes(app, { config, store, latestVersion: async () => "1.2.3", clientAddress: () => "127.0.0.1", fetch, ...overrides })
+  const memberApp = new Hono()
+  const handler = createFreeMemberHandler({ config, store: { ...store, family: "member" }, fetch, findMember: async (key) => key.id === keyRow.id ? member : null })
+  memberApp.all("/api/v1/*", (c) => handler(c, { ...keyRow, key_hash: "", key_prefix: null, name: null, encrypted_key: null, status: "active", revoked_at: null, created_at: new Date(), updated_at: new Date() }))
+  return { app, memberApp, principals, receipts, requests, calls, store }
 }
 
-test("free Auto remains disabled and member default is larger than device", () => {
+test("free Auto stays off without the dedicated OpenAI key and never reads OpenRouter settings", () => {
   const defaults = readAutoConfig({})
   assert.equal(defaults.memberEnabled, false)
   assert.equal(defaults.anonymousEnabled, false)
   assert.equal(defaults.member.weeklyBudgetUsd, 5)
   assert.equal(defaults.deviceWeeklyAmount / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
+  const withoutKey = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true", ANONYMOUS_TOKEN_SECRET: "t".repeat(40),
+    ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "a".repeat(40), ANONYMOUS_OPENROUTER_API_KEY: "legacy", INFERENCE_FREE_UPSTREAM_API_KEY: "legacy" })
+  assert.equal(withoutKey.memberEnabled, false)
+  assert.equal(withoutKey.anonymousEnabled, false)
+  assert.equal(config.memberEnabled, true)
+  assert.equal(config.anonymousEnabled, true)
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_WEEKLY_BUDGET_USD: "1" }))
+  assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-5.6-luna" }))
   assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "paid-model" }))
   assert.deepEqual(managedModelCatalog().map((model) => model.modelID), [INFERENCE_FREE_MODEL_ID])
 })
 
 test("disabled endpoints do not verify metadata, write accounting, or dispatch", async () => {
-  const f = fixture({ config: readAutoConfig({}), latestVersion: async () => { throw new Error("must not call") } })
-  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", JSON.stringify({ installationId: randomUUID() })))).status, 503)
-  assert.equal((await f.app.fetch(signed(MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt))).status, 503)
-  assert.equal(f.calls.fetch, 0)
+  const off = readAutoConfig({})
+  const f = fixture({ config: off, latestVersion: async () => { throw new Error("must not call") } })
+  const handler = createFreeMemberHandler({ config: off, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => member })
+  const memberApp = new Hono().all("/api/v1/*", (c) => handler(c, { ...keyRow } as never))
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))).status, 503)
+  assert.equal((await memberApp.fetch(new Request(`https://free.test${MEMBER_FREE_CHAT_PATH}`, { method: "POST", body: prompt, headers: { "content-type": "application/json" } }))).status, 403)
+  assert.equal(f.requests.length, 0)
   assert.equal(f.calls.session, 0)
   assert.equal(f.principals.length, 0)
 })
 
-test("proof binds raw body, actual bearer, route and installation metadata", () => {
-  const request = signed(MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt)
-  const input = { header: request.headers.get("x-openwork-desktop-proof"), method: "POST", path: MEMBER_FREE_CHAT_PATH,
-    bodyHash: desktopFreeHash(prompt), authorization: `Bearer ${memberKey}` }
-  assert.ok(verifyDesktopFreeProof(input))
+test("proof binds raw body, actual bearer, route, key and machine", () => {
+  const token = `Bearer ${guest()}`
+  const request = signed(DESKTOP_FREE_CHAT_PATH, token, prompt)
+  const input = { header: request.headers.get("x-openwork-desktop-proof"), method: "POST", path: DESKTOP_FREE_CHAT_PATH,
+    bodyHash: desktopFreeHash(prompt), authorization: token }
+  assert.equal(verifyDesktopFreeProof(input)?.machineId, machineId)
   assert.equal(verifyDesktopFreeProof({ ...input, bodyHash: desktopFreeHash(prompt + " ") }), null)
-  assert.equal(verifyDesktopFreeProof({ ...input, authorization: "Bearer another-member" }), null)
-  assert.equal(verifyDesktopFreeProof({ ...input, path: DESKTOP_FREE_CHAT_PATH }), null)
+  assert.equal(verifyDesktopFreeProof({ ...input, authorization: "Bearer another" }), null)
+  assert.equal(verifyDesktopFreeProof({ ...input, path: DESKTOP_FREE_STATUS_PATH }), null)
   assert.equal(verifyDesktopFreeProof({ ...input, now: Date.now() + 61000 }), null)
+  assert.equal(verifyDesktopFreeProof({ ...input, binding: { ...device.binding, machineId: "d".repeat(64) } }), null)
+  const unsigned = JSON.parse(Buffer.from(input.header ?? "", "base64url").toString("utf8"))
+  for (const machine of ["C".repeat(64), "c".repeat(63), "machine"]) {
+    const header = Buffer.from(JSON.stringify({ ...unsigned, machineId: machine })).toString("base64url")
+    assert.equal(verifyDesktopFreeProof({ ...input, header }), null)
+  }
 })
 
-test("guest token is bound to key, IP and metadata; mapped IPv6 cannot rotate IP identity", () => {
+test("the allowance follows the machine: a reinstall with a new key keeps the same identity", () => {
+  const reinstall = signer()
+  const other = signer("e".repeat(64))
+  const first = createAnonymousIdentities(device.binding, "127.0.0.1", config)
+  assert.equal(createAnonymousIdentities(reinstall.binding, "127.0.0.1", config).installationHash, first.installationHash)
+  assert.notEqual(createAnonymousIdentities(other.binding, "127.0.0.1", config).installationHash, first.installationHash)
+})
+
+test("guest token is bound to key, machine and IP; mapped IPv6 cannot rotate IP identity", () => {
   const token = guest()
-  assert.ok(verifyAnonymousToken(token, "127.0.0.1", config))
+  assert.equal(verifyAnonymousToken(token, "127.0.0.1", config)?.machineId, machineId)
   assert.equal(verifyAnonymousToken(token, "127.0.0.2", config), null)
-  assert.equal(verifyAnonymousToken(token.replace("v2", "v1"), "127.0.0.1", config), null)
+  assert.equal(verifyAnonymousToken(token.replace("v3", "v2"), "127.0.0.1", config), null)
   assert.equal(canonicalizeAnonymousAddress("::ffff:127.0.0.1"), "127.0.0.1")
   assert.equal(canonicalizeAnonymousAddress("::ffff:7f00:1"), "127.0.0.1")
 })
 
-test("session rejects authenticated downgrade and replay", async () => {
+test("session rejects authenticated downgrade, extra body fields and replay", async () => {
   const f = fixture()
-  const body = JSON.stringify({ installationId: randomUUID() })
-  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, `Bearer ${memberKey}`, body))).status, 401)
-  const request = signed(DESKTOP_FREE_SESSION_PATH, "", body)
-  assert.equal((await f.app.fetch(request.clone())).status, 200)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, `Bearer ${memberKey}`, "{}"))).status, 401)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", JSON.stringify({ installationId: randomUUID() })))).status, 400)
+  const request = signed(DESKTOP_FREE_SESSION_PATH, "", "{}")
+  const response = await f.app.fetch(request.clone())
+  assert.equal(response.status, 200)
+  assert.ok(verifyAnonymousToken((await response.json()).token, "127.0.0.1", config))
   assert.equal((await f.app.fetch(request)).status, 401)
   assert.equal(f.calls.session, 1)
 })
 
-test("member endpoint spends member allowance and guest endpoint remains device-scoped", async () => {
+test("a guest token cannot be used with another machine's proof", async () => {
   const f = fixture()
-  for (const [path, auth] of [[MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`], [DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`]]) {
-    const response = await f.app.fetch(signed(path, auth, prompt))
-    assert.equal(response.status, 200)
-    assert.equal((await response.json()).usage.cost, undefined)
-  }
-  assert.deepEqual(f.principals.map((principal) => principal.kind), ["member", "installation"])
-  assert.equal(f.principals[0].id, member.id)
-  assert.equal(f.receipts.length, 2)
-  assert.equal(f.receipts[0]?.amount, 105000)
-  const status = await f.app.fetch(signed(MEMBER_FREE_STATUS_PATH, `Bearer ${memberKey}`))
-  assert.equal((await status.json()).allowance.limitUsd, 5)
-  const guestStatus = await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))
-  const value = await guestStatus.json()
-  assert.equal(value.allowance.limitUsd, 1)
-  assert.deepEqual(value.catalog.map((item: { modelID: string }) => item.modelID), [INFERENCE_FREE_MODEL_ID])
+  const stranger = signer("f".repeat(64))
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { source: stranger }))).status, 401)
+  assert.equal(f.requests.length, 0)
 })
 
-test("bad member credentials never become guest requests or paid requests", async () => {
+test("guest chat calls OpenAI directly with the dedicated key and no routing fields", async () => {
   const f = fixture()
-  for (const token of [guest(), "ow_inf_existing-paid-key", "ow_auto_revoked"]) {
-    assert.equal((await f.app.fetch(signed(MEMBER_FREE_CHAT_PATH, `Bearer ${token}`, prompt))).status, 401)
+  const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))
+  assert.equal(response.status, 200)
+  const value = await response.json()
+  assert.equal(value.model, INFERENCE_FREE_MODEL_ID)
+  assert.deepEqual(Object.keys(value.usage).sort(), ["completion_tokens", "prompt_tokens", "total_tokens"])
+  assert.equal(f.requests.length, 1)
+  const [upstream] = f.requests
+  assert.equal(upstream.url, FREE_OPENAI_CHAT_URL)
+  assert.equal(upstream.headers.get("authorization"), "Bearer sk-fixture-dedicated-free-key")
+  assert.equal(upstream.headers.get("x-openwork-desktop-proof"), null)
+  assert.equal(upstream.body.model, config.upstreamModel)
+  assert.equal(upstream.body.store, false)
+  assert.equal(upstream.body.reasoning_effort, "none")
+  for (const field of ["provider", "usage", "reasoning", "max_tokens"]) assert.equal(upstream.body[field], undefined, field)
+  assert.deepEqual(f.principals.map((principal) => principal.kind), ["installation"])
+  assert.deepEqual(f.receipts.map((receipt) => receipt?.amount), [expectedAmount])
+  const status = await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).json()
+  assert.equal(status.allowance.limitUsd, 1)
+  assert.deepEqual(status.catalog.map((item: { modelID: string }) => item.modelID), [INFERENCE_FREE_MODEL_ID])
+})
+
+test("members use the regular OpenWork Models routes: Auto only, member allowance, same OpenAI key", async () => {
+  const f = fixture()
+  const call = (path: string, init: RequestInit = {}) => f.memberApp.fetch(new Request(`https://free.test${path}`, init))
+  const chat = await call(MEMBER_FREE_CHAT_PATH, { method: "POST", body: prompt, headers: { "content-type": "application/json" } })
+  assert.equal(chat.status, 200)
+  assert.equal((await chat.json()).model, INFERENCE_FREE_MODEL_ID)
+  assert.deepEqual(f.principals, [member])
+  assert.equal(f.requests[0].url, FREE_OPENAI_CHAT_URL)
+  assert.equal(f.requests[0].headers.get("authorization"), "Bearer sk-fixture-dedicated-free-key")
+  assert.deepEqual((await (await call(MEMBER_FREE_MODELS_PATH)).json()).data.map((model: { id: string }) => model.id), [INFERENCE_FREE_MODEL_ID])
+  assert.equal((await (await call(MEMBER_FREE_STATUS_PATH)).json()).allowance.limitUsd, 5)
+  const paid = await call(MEMBER_FREE_CHAT_PATH, { method: "POST", body: prompt.replace(INFERENCE_FREE_MODEL_ID, "anthropic/claude-sonnet-4"), headers: { "content-type": "application/json" } })
+  assert.equal(paid.status, 400)
+  assert.equal((await call("/api/v1/responses", { method: "POST", body: prompt, headers: { "content-type": "application/json" } })).status, 404)
+  assert.equal(f.requests.length, 1)
+})
+
+test("the proxy sends unsubscribed organizations to free Auto and keeps subscribed ones on paid Models", async () => {
+  for (const [metadata, free] of [[{}, true], [{ inference: { enabled: false } }, true], [{ inference: { enabled: true, tier: "tier1" } }, false]] as const) {
+    const served: string[] = []
+    const app = new Hono()
+    registerProxyRoutes(app, {
+      async findActiveInferenceKey() { return { id: keyRow.id, organization_id: keyRow.organization_id, org_membership_id: keyRow.org_membership_id } as never },
+      async assertOrganizationManagedModelsAllowed() {},
+      async getOpenRouterProviderKey() { return null },
+      async ensureUsableBuckets() { return { ok: true, admittedAt: new Date(), bucketIds: {}, bucketLimits: {} } as never },
+      async fetch() { throw new Error("paid upstream must not be reached") },
+      async loadOrganization(id) { return { id, metadata } },
+      async insertRequestLog() {},
+      async freeMember(c) { served.push("free"); return c.json({ ok: true }) },
+    })
+    const response = await app.fetch(new Request(`https://gateway.test${MEMBER_FREE_CHAT_PATH}`, { method: "POST", body: prompt,
+      headers: { authorization: `Bearer ${memberKey}`, "content-type": "application/json" } }))
+    assert.deepEqual(served, free ? ["free"] : [], JSON.stringify(metadata))
+    if (!free) assert.notEqual(response.status, 200)
   }
+})
+
+test("a member key never reaches the guest routes and a guest token never reaches the member handler", async () => {
+  const f = fixture()
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt))).status, 401)
-  assert.equal(f.calls.fetch, 0)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_MODELS_PATH, `Bearer ${memberKey}`))).status, 401)
+  const handler = createFreeMemberHandler({ config, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => null })
+  const response = await new Hono().all("/api/v1/*", (c) => handler(c, { ...keyRow } as never)).fetch(new Request(`https://free.test${MEMBER_FREE_CHAT_PATH}`,
+    { method: "POST", body: prompt, headers: { "content-type": "application/json", authorization: `Bearer ${guest()}` } }))
+  assert.equal(response.status, 403)
+  assert.equal(f.requests.length, 0)
   assert.equal(f.principals.length, 0)
 })
 
 test("version failure and unsupported model deny before reservation", async () => {
   const f = fixture()
-  assert.equal((await f.app.fetch(signed(MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt, "1.2.2"))).status, 426)
-  assert.equal((await f.app.fetch(signed(MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt.replace(INFERENCE_FREE_MODEL_ID, "paid-model")))).status, 400)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { version: "1.2.2" }))).status, 401)
+  const old = signer()
+  const oldToken = issueAnonymousToken(createAnonymousIdentities(old.binding, "127.0.0.1", config), { ...old.binding, appVersion: "1.2.2" }, config).token
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${oldToken}`, prompt, { version: "1.2.2", source: old }))).status, 426)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt.replace(INFERENCE_FREE_MODEL_ID, "paid-model")))).status, 400)
   assert.equal(f.principals.length, 0)
-  assert.equal(f.calls.fetch, 0)
+  assert.equal(f.requests.length, 0)
   const unavailable = fixture({ latestVersion: async () => null })
-  assert.equal((await unavailable.app.fetch(signed(MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt))).status, 503)
+  assert.equal((await unavailable.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 503)
 })
 
-test("policy flip before dispatch cancels admission without upstream fallback", async () => {
+test("policy flip before dispatch cancels admission without an upstream call", async () => {
   const base = fixture()
   const f = fixture({ store: { ...base.store, dispatch: async () => false } })
-  assert.equal((await f.app.fetch(signed(MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt))).status, 403)
-  assert.equal(f.calls.fetch, 0)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 403)
+  assert.equal(f.requests.length, 0)
 })
 
-test("uncertain upstream failure retains liability instead of refunding", async () => {
-  const f = fixture({ fetch: async () => { throw new Error("uncertain transport") } })
-  assert.equal((await f.app.fetch(signed(MEMBER_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt))).status, 502)
-  assert.equal(f.calls.cancelled, 0)
-  assert.deepEqual(f.receipts, [null])
+test("a revoked or rate-limited OpenAI key releases the hold; an uncertain failure retains it", async () => {
+  for (const status of [401, 403, 429]) {
+    const f = fixture({}, () => Response.json({ error: { message: "no" } }, { status }))
+    const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))
+    assert.equal(response.status, 503)
+    assert.equal(f.calls.released, 1)
+    assert.deepEqual(f.receipts, [])
+  }
+  const server = fixture({}, () => Response.json({ error: { message: "no" } }, { status: 500 }))
+  assert.equal((await server.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 502)
+  assert.deepEqual(server.receipts, [null])
+  const transport = fixture({ fetch: async () => { throw new Error("uncertain transport") } })
+  assert.equal((await transport.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 502)
+  assert.equal(transport.calls.cancelled, 0)
+  assert.deepEqual(transport.receipts, [null])
 })
 
 test("request validation preserves tools but denies routing, media and expanded schemas", async () => {
-  const value = { model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }], tools: [{ type: "function", function: { name: "run", parameters: { type: "object" } } }] }
-  const prepared = prepareFreeRequest(value, config)
-  assert.deepEqual(JSON.parse(prepared.body).tools, value.tools)
-  assert.equal(JSON.parse(prepared.body).provider.allow_fallbacks, false)
-  assert.throws(() => prepareFreeRequest({ ...value, provider: { allow_fallbacks: true } }, config))
+  const value = { model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }], stream: true, max_tokens: 64000,
+    tools: [{ type: "function", function: { name: "run", parameters: { type: "object" } } }] }
+  const body = JSON.parse(prepareFreeRequest(value, config).body)
+  assert.deepEqual(body.tools, value.tools)
+  assert.deepEqual(body.stream_options, { include_usage: true })
+  assert.equal(body.max_completion_tokens, config.maxCompletionTokens)
+  for (const extra of [{ provider: { allow_fallbacks: true } }, { usage: { include: true } }, { reasoning: { effort: "none" } }, { models: ["x"] }]) {
+    assert.throws(() => prepareFreeRequest({ ...value, ...extra }, config), JSON.stringify(extra))
+  }
   assert.throws(() => prepareFreeRequest({ ...value, tools: [{ type: "function", function: { name: "run", parameters: { $ref: "remote" } } }] }, config))
   assert.throws(() => prepareFreeRequest({ ...value, messages: [{ role: "user", content: [{ type: "image_url", image_url: "remote" }] }] }, config))
   await assert.rejects(readFreeRequest(new Request("https://free.test", { method: "POST", headers: { "content-type": "application/json" }, body: prompt }), 1, new AbortController().signal))
 })
 
-test("terminal receipt requires matching identity, final choice and full BYOK cost", () => {
-  const parser = new FreeResponseReceipt()
-  parser.accept(responseValue())
-  assert.equal(parser.complete()?.amount, 105000)
+test("cost comes from OpenAI token counts; a dated snapshot of the model is accepted", () => {
+  const parser = new FreeResponseReceipt(config)
+  parser.accept(openAiResponse())
+  assert.equal(parser.complete()?.amount, expectedAmount)
+  assert.equal(expectedAmount, Math.ceil((10 * config.inputPrice + 2 * config.outputPrice) * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000))
   assert.throws(() => parser.complete())
-  const incomplete = new FreeResponseReceipt()
-  incomplete.accept({ ...responseValue(), choices: [{ index: 0, finish_reason: null }] })
+  const incomplete = new FreeResponseReceipt(config)
+  incomplete.accept({ ...openAiResponse(), choices: [{ index: 0, finish_reason: null }] })
   assert.throws(() => incomplete.complete())
-  const missingCost = new FreeResponseReceipt()
-  missingCost.accept({ ...responseValue(), usage: {} })
-  assert.equal(missingCost.complete(), null)
-  assert.throws(() => new FreeResponseReceipt().accept({ ...responseValue(), model: "another-model" }))
+  const missingUsage = new FreeResponseReceipt(config)
+  missingUsage.accept({ ...openAiResponse(), usage: {} })
+  assert.equal(missingUsage.complete(), null)
+  assert.throws(() => new FreeResponseReceipt(config).accept({ ...openAiResponse(), model: "gpt-4o" }))
+  assert.throws(() => new FreeResponseReceipt(config).accept({ ...openAiResponse(), model: `${config.upstreamModel}x` }))
 })
 
-test("SSE settles before DONE without waiting for EOF and releases upstream", async () => {
+test("OpenAI SSE settles from the trailing usage chunk before DONE and releases upstream", async () => {
   const events: string[] = []
   const encoder = new TextEncoder()
-  const text = `data: ${JSON.stringify(responseValue())}\n\ndata: [DONE]\n\n`
+  const model = `${config.upstreamModel}-2026-08-01`
+  const chunks = [
+    { id: "chatcmpl-2", model, choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: null }], usage: null },
+    { id: "chatcmpl-2", model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: null },
+    { id: "chatcmpl-2", model, choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
+  ]
+  const text = `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("")}data: [DONE]\n\n`
   const upstream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode(text)) }, cancel() { events.push("cancel") } })
-  const body = meterFreeResponse(upstream, { streaming: true, maxBytes: 10000, signal: new AbortController().signal,
-    settle: async (receipt) => { assert.equal(receipt?.amount, 105000); events.push("settle") } })
-  const reader = body.getReader()
-  let output = ""
-  for (;;) {
-    const chunk = await reader.read()
-    if (chunk.done) break
-    const value = new TextDecoder().decode(chunk.value)
-    if (value.includes("[DONE]")) assert.ok(events.includes("settle"))
-    output += value
-  }
+  const body = meterFreeResponse(upstream, { config, streaming: true, maxBytes: 10000, signal: new AbortController().signal,
+    settle: async (receipt) => { assert.equal(receipt?.amount, expectedAmount); events.push("settle") } })
+  const output = await new Response(body).text()
   assert.ok(output.includes("[DONE]"))
+  assert.ok(!output.includes(model))
+  assert.ok(output.includes(`"model":"${INFERENCE_FREE_MODEL_ID}"`))
   assert.deepEqual(events, ["settle", "cancel"])
 })
 
 test("usage followed by error or truncated EOF retains full hold", async () => {
   for (const suffix of ["", 'data: {"error":{"message":"interrupted"}}\n\n']) {
     const receipts: Array<FreeUsageReceipt | null> = []
-    const upstream = new Response(`data: ${JSON.stringify(responseValue())}\n\n${suffix}`).body!
-    const body = meterFreeResponse(upstream, { streaming: true, maxBytes: 10000, signal: new AbortController().signal,
+    const upstream = new Response(`data: ${JSON.stringify(openAiResponse())}\n\n${suffix}`).body!
+    const body = meterFreeResponse(upstream, { config, streaming: true, maxBytes: 10000, signal: new AbortController().signal,
       settle: async (receipt) => { receipts.push(receipt) } })
     await assert.rejects(new Response(body).text())
     assert.deepEqual(receipts, [null])

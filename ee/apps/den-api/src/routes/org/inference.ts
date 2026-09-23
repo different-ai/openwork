@@ -53,7 +53,7 @@ const managedModelsPolicyErrorSchema = z.object({
 const freeAccessSchema = z.object({
   access: z.object({ kind: z.enum(["free", "paid", "exhausted", "unavailable"]), modelID: z.string().nullable(),
     weeklyLimitUsd: z.number().nullable(), usedUsd: z.number().nullable(), reservedUsd: z.number().nullable(),
-    remainingUsd: z.number().nullable(), resetsAt: z.string().nullable(), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+    remainingUsd: z.number().nullable(), resetsAt: z.string().datetime().nullable(), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
     canUpgrade: z.literal(false), catalog: z.array(z.object({ modelID: z.string(), displayName: z.string(), providerName: z.string(),
       summary: z.string(), recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()) })).optional() }),
 }).meta({ ref: "InferenceAccessResponse" })
@@ -73,8 +73,8 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
       userId: normalizeDenTypeId("user", user.id) })
     return c.json({ access })
   })
-  app.post("/v1/inference/free/credential", describeRoute({ tags: ["Inference"], summary: "Get my native Auto credential",
-    description: "Issues or reuses a member-only free Auto credential. It cannot authorize paid or customer-key inference and requires native request proof at the gateway.",
+  app.post("/v1/inference/free/credential", describeRoute({ tags: ["Inference"], summary: "Get my free Auto credential",
+    description: "Issues or reuses the member's OpenWork Models key for an organization without a Models subscription. Until the organization subscribes, the Gateway serves only free Auto on it, within the member's weekly allowance. Subscribed organizations and admin opt-outs are refused.",
     responses: { 200: jsonResponse("Member Auto credential returned.", freeCredentialSchema),
       401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Auto access denied.", forbiddenSchema),
       503: jsonResponse("Auto unavailable.", z.object({ error: z.string() })) },
