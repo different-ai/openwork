@@ -33,7 +33,11 @@ test(`PARITY-GATEWAY ${resolveEvalEngine()}: use an assigned model, then see and
     const prompt = `Give me a short answer using the selected model. Gateway request ${++turn}.`;
     const reply = `Gateway answer ${turn} arrived through the real proxy.`;
     await world.prepareTurn(prompt, reply);
-    await user.type("composer", prompt);
+    await user.type("composer", prompt, { verify: true });
+    await probe.eventually(() => probe.composer(), {
+      within: 30_000, label: "the selected model and draft are ready to send",
+      until: (composer) => composer.runTaskEnabled && composer.draftText === prompt,
+    });
     await user.click("Run task");
     await user.see({ text: reply }, { timeoutMs: 30_000 }).catch(async (error: unknown) => {
       evidence.recordJsonArtifact("Gateway answer failure", { screen: await probe.text(), calls: await world.mock.agentRequests(), runtime: await world.runtime(), errors: await world.serverErrors() });

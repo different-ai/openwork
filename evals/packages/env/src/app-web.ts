@@ -299,9 +299,19 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
             status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
       })).catch(() => null);
       const viteEvents = remote ? [] : (await readFile(join(runtime.runtimeDirectory, "web.log"), "utf8").catch(() => ""))
-        .split("\n").filter(line => /Re-optimizing dependencies|new dependencies optimized|optimized dependencies changed|Pre-transform error|Internal server error|Outdated Optimize Dep/.test(line))
+        .split("\n").filter(line => /error|warn|optim|ready|restart|reload|terminated|closed/i.test(line))
         .slice(-20).map(line => line.replace(/https?:\/\/\S+/g, "[url]").slice(0, 500));
-      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)} Vite events: ${JSON.stringify(viteEvents)}`, { cause: error });
+      const webUrl = runtime.webUrl;
+      const moduleProbes = remote ? [] : await Promise.all([...new Set(network.failures.map(failure => failure.path))].slice(0, 3).map(async path => {
+        try {
+          const response = await fetch(new URL(path, webUrl), { signal: AbortSignal.timeout(5_000) });
+          const bytes = (await response.arrayBuffer()).byteLength;
+          return { path, status: response.status, type: response.headers.get("content-type"), bytes };
+        } catch {
+          return { path, unavailable: true };
+        }
+      }));
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)} Vite events: ${JSON.stringify(viteEvents)} Module probes: ${JSON.stringify(moduleProbes)}`, { cause: error });
     } finally {
       network.close();
     }
