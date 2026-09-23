@@ -1,8 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { constants, existsSync, openSync } from "node:fs";
-import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { allocateFreePort, allocateFreePorts, listTargets, waitForCdp } from "@openwork/cdp";
 import type { SurfaceExit } from "@openwork/cdp";
 import {
@@ -664,6 +664,35 @@ export async function removeOwnedSurfaceFiles(handle: SurfaceHandle): Promise<vo
   }
 }
 
+/** Copy only a host-owned Electron log when a caller explicitly opts into retention. */
+export async function retainOwnedElectronLog(
+  handle: SurfaceHandle,
+  retentionDir = process.env.OPENWORK_EVAL_ELECTRON_LOGS_DIR,
+): Promise<string | null> {
+  if (
+    !retentionDir?.trim()
+    || handle.kind !== "electron"
+    || !handle.profileDir
+    || handle.meta?.profileOwner !== "host"
+    || !handle.meta?.log
+    || resolve(handle.meta.log) !== resolve(handle.profileDir, "electron.log")
+  ) return null;
+
+  const profileRoot = resolve(handle.profileDir);
+  const outputRoot = resolve(retentionDir);
+  const relativeOutput = relative(profileRoot, outputRoot);
+  const firstRelativeSegment = relativeOutput.split(sep, 1)[0];
+  if (relativeOutput === "" || (firstRelativeSegment !== ".." && !isAbsolute(relativeOutput))) {
+    return null;
+  }
+  if (!(await lstat(handle.meta.log)).isFile()) return null;
+
+  const retainedPath = join(outputRoot, `${sanitizeSlug(handle.name)}-${handle.pid ?? "unknown"}`, "electron.log");
+  await mkdir(dirname(retainedPath), { recursive: true });
+  await copyFile(handle.meta.log, retainedPath);
+  return retainedPath;
+}
+
 /** Stop a detached eval Electron only when its process environment still names its isolated profile. */
 export async function stopOwnedElectronSurface(pid: number, profileDir: string): Promise<void> {
   if (!Number.isInteger(pid) || pid <= 1 || !profileDir.trim()) {
@@ -978,6 +1007,10 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       if (handle.pid !== undefined) {
         await killLocalPid(handle.pid, { log });
       }
+      await retainOwnedElectronLog(handle).catch((error: unknown) => {
+        log(`Could not retain Electron log for ${handle.name}: ${messageText(error)}`);
+        return null;
+      });
       await disposeKnownPorts(handle);
       await removeOwnedSurfaceFiles(handle);
       if (handle.meta?.profileOwner !== "caller" && handle.meta?.profileRoot) unregisterLiveProfileRoot(handle.meta.profileRoot);
