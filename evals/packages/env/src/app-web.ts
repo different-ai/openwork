@@ -287,9 +287,34 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       });
     });
     const network = await observeAppWebNetwork(browser.client.webSocketDebuggerUrl, runtime.webUrl);
+    // Chrome occasionally fails the cold dev-server entry graph with no failed
+    // response, console error or navigation. Static imports mean no app module
+    // has evaluated yet, so one reload is the user's own recovery, not a retry
+    // of app behaviour. The first failure stays in the log for diagnosis.
+    const surface = browser;
+    const appUrl = runtime.webUrl;
+    let entryReloaded = false;
+    const watching = new AbortController();
+    const watchEntry = (async () => {
+      while (!watching.signal.aborted && !entryReloaded) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (watching.signal.aborted) return;
+        const failed = await evaluate(surface.client, () => (window.__openworkEvalBootErrors ?? [])
+          .some(error => error.endsWith("(/src/index.react.tsx)")), { timeoutMs: 5_000 }).catch(() => false);
+        if (failed !== true) continue;
+        entryReloaded = true;
+        console.error(`[openwork/testkit] App-web entry module graph failed before any app code ran; reloading once. Network failures: ${JSON.stringify(network.failures)} Page timeline: ${JSON.stringify(network.summary())}`);
+        await navigate(surface.client, appUrl).catch(() => undefined);
+      }
+    })();
     try {
       await navigate(browser.client, runtime.webUrl);
-      await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+      try {
+        await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+      } finally {
+        watching.abort();
+        await watchEntry;
+      }
     } catch (error) {
       const boot = await evaluate(browser.client, () => ({
         errors: (window.__openworkEvalBootErrors ?? []).slice(0, 10),

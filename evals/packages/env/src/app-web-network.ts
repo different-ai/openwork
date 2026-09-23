@@ -14,6 +14,10 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
   // tell apart a navigation, a reload, a crash and a server disconnect.
   const lifecycle: string[] = [];
   const counts = { started: 0, finished: 0, failed: 0, canceled: 0, crossOrigin: 0 };
+  // Script responses Chrome can reject without a network failure: a non-JS
+  // type, an empty body, or a reuse of an earlier in-memory resource.
+  const suspicious: string[] = [];
+  const suspect = (line: string) => { if (suspicious.length < 12) suspicious.push(`${elapsed()}ms ${line}`); };
   let lastFinished: { path: string; atMs: number } | null = null;
   const socket = new WebSocket(debuggerUrl);
   const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
@@ -67,6 +71,7 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
           && params.entry.level === "error" && typeof params.entry.text === "string" && browserErrors.length < 20) {
           browserErrors.push(params.entry.text.replace(/https?:\/\/\S+/g, "[url]").slice(0, 500));
         }
+        if (method === "Network.requestServedFromMemoryCache" && record(params)) suspect(`memory-cache ${typeof params.requestId === "string" ? requests.get(params.requestId)?.path ?? "unobserved" : ""}`);
         if (!record(params) || typeof params.requestId !== "string") return;
         if (method === "Network.requestWillBeSent" && record(params.request) && typeof params.request.url === "string") {
           const url = new URL(params.request.url);
@@ -83,6 +88,8 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
           && typeof params.response.status === "number") {
           request.status = params.response.status;
           if (typeof params.response.mimeType === "string") request.mimeType = params.response.mimeType;
+          if (params.type === "Script" && request.status < 400 && !/javascript/.test(request.mimeType ?? "")) suspect(`mime ${request.path} ${request.status} ${request.mimeType ?? ""}`);
+          if (params.response.fromDiskCache === true || params.response.fromPrefetchCache === true) suspect(`cache ${request.path}`);
           if (params.response.status >= 400 && failures.length < 20) failures.push({ path: request.path, atMs: elapsed(), startedMs: request.startedMs, query: request.query,
             requestedTimes: requestedPaths.get(request.path) ?? 0, status: request.status, mimeType: request.mimeType });
         }
@@ -99,6 +106,7 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
         }
         if (method === "Network.loadingFinished") {
           counts.finished += 1;
+          if (params.encodedDataLength === 0 && request.status !== 304 && /javascript/.test(request.mimeType ?? "")) suspect(`empty ${request.path} ${request.status ?? ""}`);
           lastFinished = { path: request.path, atMs: elapsed() };
           requests.delete(params.requestId);
         }
@@ -108,6 +116,7 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
       counts,
       duplicatePaths: [...requestedPaths].filter(([, times]) => times > 1).slice(0, 8),
       lastFinished,
+      suspicious,
       pending: [...requests.values()].slice(0, 8).map(request => ({ path: request.path, startedMs: request.startedMs, status: request.status })),
       lifecycle,
     });
