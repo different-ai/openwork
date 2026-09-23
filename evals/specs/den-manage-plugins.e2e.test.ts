@@ -7,7 +7,7 @@ const test = spec.world(denManagePluginsAsAdmin, { timeout: 600_000 });
 
 const names = (items: { name: string }[]) => items.map((item) => item.name);
 
-test("an admin: I want to give the Sales team a plugin so they all get the same skills", async ({ world, user, probe, step }) => {
+test("an admin: I want to give the Sales team a plugin so they all get the same skills", async ({ world, user, probe, step, evidence }) => {
   const reach = world.teamSize("Sales");
 
   await step("1. I open Plugins in Manage: there are none yet", async () => {
@@ -69,6 +69,11 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
     const listCalls = (await world.proxy.requestLog()).slice(logStart).map((entry) => entry.path)
       .filter((path) => path.startsWith("/v1/plugins?") || /^\/v1\/plugins\/[^/?]+\/access/.test(path));
     expect(listCalls, "the list and who has each plugin arrive in one request").toEqual(["/v1/plugins?status=active&limit=100&includeAccess=true"]);
+    evidence.recordAssertionEvidence(
+      "Plugins loads the list and who has each plugin in one request",
+      `The Sales call prep row reads "${status}"; plugin requests Den received: ${listCalls.join(", ")}`,
+      true,
+    );
     await user.screenshot();
   });
 

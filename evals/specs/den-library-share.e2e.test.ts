@@ -183,4 +183,21 @@ withSlack("a member: I want Sales to use my plugin so every sales call starts wi
     );
     await user.screenshot();
   });
+
+  await step("after: My Library shows who has Sales call prep without asking Den about each plugin", async () => {
+    const logStart = (await world.proxy.requestLog()).length;
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/library`);
+    const status = await probe.eventually(async () => (await probe.dom('[data-library-item="Sales call prep"] [data-item-status]')).elements[0]?.text ?? "", {
+      within: 60_000, label: "who has the plugin in My Library", until: (text) => text.includes("Sales"),
+    });
+    const pluginCalls = (await world.proxy.requestLog()).slice(logStart).map((entry) => entry.path)
+      .filter((path) => path.startsWith("/v1/plugins?") || /^\/v1\/plugins\/[^/?]+\/access/.test(path));
+    expect(pluginCalls, "who has each plugin arrives with the plugin list").toEqual(["/v1/plugins?status=active&limit=100&includeAccess=true"]);
+    evidence.recordAssertionEvidence(
+      "My Library shows who has each of my plugins from one request",
+      `The Sales call prep row reads "${status}"; plugin requests Den received: ${pluginCalls.join(", ")}`,
+      true,
+    );
+    await user.screenshot();
+  });
 });
