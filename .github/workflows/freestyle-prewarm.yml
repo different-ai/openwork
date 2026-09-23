@@ -30,7 +30,7 @@ jobs:
           # Trusted, reviewed controller only. PR source is fetched inside the
           # credential-free guest VM; never checked out on this runner.
           # Update this pin only after reviewing controller/dependency changes.
-          ref: d53c98555196ac2a70b90d76e56f653ab0ffa5ab
+          ref: aee28b3d102d89f9410c6e41c794a7d5e1bc9355
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -51,12 +51,6 @@ jobs:
         run: |
           node scripts/prepare-freestyle-preview.ts "$PREVIEW_SHA" "$PREVIEW_WORLD"
           echo "Prepared $PREVIEW_WORLD snapshot for $PREVIEW_SHA. Every launch still creates a separate VM." >> "$GITHUB_STEP_SUMMARY"
-      - name: Measure and verify two independent running clones
-        if: matrix.world == 'acme-web'
-        env:
-          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
-          PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: node scripts/verify-freestyle-preview.ts "$PREVIEW_SHA"
       - name: Save sanitized snapshot preparation timings
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -64,6 +58,12 @@ jobs:
           path: freestyle-build-proof-${{ matrix.world }}.json
           retention-days: 7
           if-no-files-found: error
+      - name: Measure and verify two independent running clones
+        if: matrix.world == 'acme-web'
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/verify-freestyle-preview.ts "$PREVIEW_SHA"
       - name: Measure and verify a restored OpenWork web clone
         if: matrix.world == 'app-web'
         env:
