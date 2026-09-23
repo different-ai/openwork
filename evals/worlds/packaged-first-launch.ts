@@ -180,6 +180,8 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
     }),
     /** Text React actually mounted, as opposed to the body chrome. */
     rootText: () => evaluateOnSurface(attached, () => document.getElementById("root")?.innerText ?? ""),
+    /** The boot overlay's collapsed Technical details, which innerText skips. */
+    bootError: () => evaluateOnSurface(attached, () => document.querySelector('[data-testid="boot-error-detail"]')?.textContent?.trim() || null),
     /** One fresh final observation; never heal a lost observer into a green run. */
     async health() {
       observed.assertConnected();
