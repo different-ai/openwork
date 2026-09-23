@@ -36,6 +36,7 @@ import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
+import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import {
@@ -97,6 +98,7 @@ import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstra
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
+import { cimd } from "@better-auth/cimd";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
@@ -1387,6 +1389,25 @@ export const auth = betterAuth({
         opaqueAccessToken: DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
         refreshToken: DEN_MCP_REFRESH_TOKEN_PREFIX,
         clientSecret: "ow_mcp_cs_",
+      },
+    }),
+    // Client ID Metadata Documents (MCP authorization spec): an MCP client may
+    // present the HTTPS URL of a JSON document it hosts as its client_id. The
+    // plugin fetches and validates the document, stores it as a public client,
+    // and advertises `client_id_metadata_document_supported` in discovery, so
+    // spec-following clients no longer need dynamic registration. DCR stays on
+    // as the fallback for clients that do not support this yet.
+    cimd({
+      // Redirect URIs are matched exactly at authorize time and Den's MCP
+      // redirect policy still applies; native clients legitimately redirect to
+      // loopback or another origin than the one hosting their document.
+      originBoundFields: ["post_logout_redirect_uris", "client_uri"],
+      allowFetch: (url) => isCimdClientIdUrlAllowed(url),
+      onClientCreated: ({ client }) => {
+        logger.info("Registered MCP client from its client ID metadata document", {
+          clientId: client.clientId,
+          clientName: client.name ?? null,
+        });
       },
     }),
     scim({

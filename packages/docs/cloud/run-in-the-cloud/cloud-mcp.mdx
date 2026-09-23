@@ -171,7 +171,8 @@ OpenWork Connect is a remote Streamable HTTP MCP server with OAuth:
 - Clients discover OAuth metadata with RFC9728 protected-resource discovery.
 - The authorization server and browser sign-in origin is `https://app.openworklabs.com/api/auth`.
 - OAuth authorize and token requests must include exactly one `resource` value: `https://api.openworklabs.com/mcp/agent`.
-- Clients that need registration use dynamic client registration as a fallback during discovery.
+- The authorization server advertises `client_id_metadata_document_supported: true`. A client can identify itself with the HTTPS URL of a Client ID Metadata Document it hosts (MCP authorization spec); the document must include `client_id` equal to that URL, `client_name`, and `redirect_uris`, and use `token_endpoint_auth_method: "none"`. Nothing needs to be registered ahead of time.
+- Clients that do not support Client ID Metadata Documents fall back to dynamic client registration during discovery.
 - PKCE is required for public/dynamic clients, and only the `S256` code challenge method is supported.
 - Redirect URIs must be HTTPS callbacks or HTTP loopback callbacks such as `http://127.0.0.1:<port>/callback`. Private-use callback schemes are not accepted for public OAuth clients, except exact allowlisted callbacks for known native clients — currently Cursor Desktop's `cursor://anysphere.cursor-mcp/oauth/callback` — with PKCE S256 enforced.
 
