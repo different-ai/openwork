@@ -8,8 +8,8 @@ import type { DesktopFreeBinding } from "./desktop-free-proof.js"
 
 export type AnonymousIdentities = { installationHash: string; ipHash: string; globalHash: string }
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
-const tokenSchema = z.strictObject({ version: z.literal(2), installationHash: hash, ipHash: hash, globalHash: hash,
-  keyThumbprint: hash, appVersion: z.string().min(1).max(128), platform: z.enum(["darwin", "win32", "linux"]),
+const tokenSchema = z.strictObject({ version: z.literal(3), installationHash: hash, ipHash: hash, globalHash: hash,
+  keyThumbprint: hash, machineId: hash, appVersion: z.string().min(1).max(128), platform: z.enum(["darwin", "win32", "linux"]),
   arch: z.enum(["arm64", "x64"]), issuedAt: z.number().int().nonnegative(), expiresAt: z.number().int().nonnegative() })
 function hashIdentity(config: AutoConfig, kind: string, value: string) {
   if (config.accountingIdentityKey.length < 32) throw new Error("Free accounting identity unavailable")
@@ -54,9 +54,11 @@ export function resolveAnonymousClientAddress(c: Context, config: AutoConfig) {
   const address = chain[index]
   return address ? quotaAddress(address) : null
 }
-export function createAnonymousIdentities(proof: Pick<DesktopFreeBinding, "keyThumbprint">, address: string, config: AutoConfig): AnonymousIdentities {
-  return { installationHash: hashIdentity(config, "installation", `ed25519:${proof.keyThumbprint}`),
-    ipHash: hashIdentity(config, "ip", address), globalHash: hashIdentity(config, "global", "openwork-free-allowance") }
+export function anonymousIpHash(address: string, config: AutoConfig) { return hashIdentity(config, "ip", address) }
+/** The allowance follows the machine, so reinstalling or clearing app data does not reset it. */
+export function createAnonymousIdentities(proof: Pick<DesktopFreeBinding, "machineId">, address: string, config: AutoConfig): AnonymousIdentities {
+  return { installationHash: hashIdentity(config, "installation", `machine:${proof.machineId}`),
+    ipHash: anonymousIpHash(address, config), globalHash: hashIdentity(config, "global", "openwork-free-allowance") }
 }
 function tokenKey(config: AutoConfig) {
   if (config.tokenSecret.length < 32) throw new Error("Free token secret unavailable")
@@ -64,17 +66,17 @@ function tokenKey(config: AutoConfig) {
 }
 export function issueAnonymousToken(identities: AnonymousIdentities, binding: DesktopFreeBinding, config: AutoConfig, now = Date.now()) {
   const expiresAt = now + config.tokenTtlSeconds * 1000
-  const payload = JSON.stringify({ version: 2, ...identities, keyThumbprint: binding.keyThumbprint,
+  const payload = JSON.stringify({ version: 3, ...identities, keyThumbprint: binding.keyThumbprint, machineId: binding.machineId,
     appVersion: binding.appVersion, platform: binding.platform, arch: binding.arch, issuedAt: now, expiresAt })
   const iv = Uint8Array.from(randomBytes(12))
   const cipher = createCipheriv("aes-256-gcm", tokenKey(config), iv)
   const encrypted = [Uint8Array.from(cipher.update(payload, "utf8")), Uint8Array.from(cipher.final())]
-  return { token: `ow_guest_v2.${Buffer.concat([iv, Uint8Array.from(cipher.getAuthTag()), ...encrypted]).toString("base64url")}`, expiresAt }
+  return { token: `ow_guest_v3.${Buffer.concat([iv, Uint8Array.from(cipher.getAuthTag()), ...encrypted]).toString("base64url")}`, expiresAt }
 }
 export function verifyAnonymousToken(token: string, address: string, config: AutoConfig, now = Date.now()) {
-  if (!token.startsWith("ow_guest_v2.") || token.length > 2048) return null
+  if (!token.startsWith("ow_guest_v3.") || token.length > 2048) return null
   try {
-    const encoded = token.slice("ow_guest_v2.".length)
+    const encoded = token.slice("ow_guest_v3.".length)
     const packed = Buffer.from(encoded, "base64url")
     if (packed.length <= 28 || packed.toString("base64url") !== encoded) return null
     const decipher = createDecipheriv("aes-256-gcm", tokenKey(config), Uint8Array.from(packed.subarray(0, 12)))

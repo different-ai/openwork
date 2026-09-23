@@ -2,14 +2,13 @@ import { DESKTOP_FREE_PROOF_HEADER } from "@openwork/types/desktop-free-access"
 import { verifyDesktopFreeProof, type DesktopFreeBinding } from "./desktop-free-proof.js"
 import { desktopFreeVersionError } from "./desktop-free-version.js"
 import type { FreeAllowanceStore } from "./free-allowance.js"
+import { freeError } from "./free-dispatch.js"
 
 export type DesktopFreeGateDependencies = {
   latestVersion: () => Promise<string | null>;
   consumeNonce: FreeAllowanceStore["consumeNonce"];
 }
-export function desktopFreeGateError(status: number, code: string, message = "Auto is unavailable. No request was sent.") {
-  return Response.json({ error: { code, message } }, { status, headers: { "cache-control": "no-store" } })
-}
+export const desktopFreeGateError = freeError
 export async function checkDesktopFreeRequest(request: Request, bodyHash: string, ipHash: string,
   dependencies: DesktopFreeGateDependencies, binding?: DesktopFreeBinding) {
   const url = new URL(request.url)

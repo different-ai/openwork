@@ -9,20 +9,20 @@ const schema = z.strictObject({
   messages: z.array(z.strictObject({
     role: z.enum(["system", "developer", "user", "assistant", "tool"]),
     content: z.union([z.string(), z.array(z.strictObject({ type: z.literal("text"), text: z.string() }))]).nullish(),
-    name: z.string().optional(), tool_call_id: z.string().optional(), refusal: z.string().nullish(), annotations: z.array(z.never()).nullish(),
+    name: z.string().optional(), tool_call_id: z.string().optional(), refusal: z.string().nullish(),
     tool_calls: z.array(z.strictObject({ id: z.string().min(1).max(256), type: z.literal("function"),
       function: z.strictObject({ name, arguments: z.string() }) })).max(64).nullish(),
   })).min(1).max(256),
   tools: z.array(z.strictObject({ type: z.literal("function"), function: z.strictObject({ name,
     description: z.string().max(8192).nullish(), parameters: z.record(z.string(), z.unknown()).nullish(), strict: z.boolean().nullish() }) })).max(64).nullish(),
   tool_choice: z.union([z.enum(["auto", "none", "required"]), z.strictObject({ type: z.literal("function"), function: z.strictObject({ name }) })]).nullish(),
+  parallel_tool_calls: z.boolean().nullish(),
   max_tokens: z.number().int().positive().max(128000).nullish(),
   max_completion_tokens: z.number().int().positive().max(128000).nullish(),
   stream: z.boolean().optional(), stream_options: z.strictObject({ include_usage: z.boolean().optional() }).nullish(),
-  usage: z.strictObject({ include: z.boolean() }).nullish(), n: z.literal(1).nullish(),
-  reasoningEffort: z.literal("none").optional(), reasoning_effort: z.literal("none").nullish(),
-  reasoning: z.strictObject({ effort: z.literal("none"), mode: z.literal("standard").optional(), exclude: z.boolean().optional() }).nullish(),
-  textVerbosity: z.enum(["low", "medium", "high"]).optional(), verbosity: z.enum(["low", "medium", "high"]).nullish(),
+  n: z.literal(1).nullish(),
+  reasoning_effort: z.literal("none").nullish(),
+  verbosity: z.enum(["low", "medium", "high"]).nullish(),
   response_format: z.union([z.strictObject({ type: z.enum(["text", "json_object"]) }), z.strictObject({ type: z.literal("json_schema"),
     json_schema: z.strictObject({ name: z.string(), description: z.string().optional(), schema: z.record(z.string(), z.unknown()), strict: z.boolean().optional() }) })]).nullish(),
 })
@@ -39,15 +39,16 @@ export function prepareFreeRequest(value: unknown, config: AutoConfig) {
   const parsed = schema.safeParse(value)
   if (!parsed.success || !boundedSchema(value)) throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto supports text and ordinary function tools. This input was not sent.")
   const request = parsed.data
-  const body = JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: request.messages,
+  // OpenAI Chat Completions with the dedicated free key; the client never chooses the model or routing.
+  const messages = request.messages.map(({ refusal, ...message }) => refusal == null ? message : { ...message, refusal })
+  const body = JSON.stringify({ model: config.upstreamModel, messages,
     ...(request.tools != null ? { tools: request.tools } : {}), ...(request.tool_choice != null ? { tool_choice: request.tool_choice } : {}),
+    ...(request.parallel_tool_calls != null ? { parallel_tool_calls: request.parallel_tool_calls } : {}),
     ...(request.response_format != null ? { response_format: request.response_format } : {}),
-    ...(request.textVerbosity ?? request.verbosity ? { verbosity: request.textVerbosity ?? request.verbosity } : {}),
+    ...(request.verbosity != null ? { verbosity: request.verbosity } : {}),
     stream: request.stream === true, ...(request.stream ? { stream_options: { include_usage: true } } : {}),
-    max_tokens: Math.min(request.max_tokens ?? config.maxCompletionTokens, request.max_completion_tokens ?? config.maxCompletionTokens, config.maxCompletionTokens),
-    reasoning: { effort: "none", mode: "standard", exclude: true }, usage: { include: true },
-    provider: { order: [config.provider], only: [config.provider], allow_fallbacks: false, require_parameters: true,
-      data_collection: "deny", zdr: true, max_price: { prompt: config.maxInputPrice, completion: config.maxCompletionPrice, request: 0, image: 0 } },
+    max_completion_tokens: Math.min(request.max_tokens ?? config.maxCompletionTokens, request.max_completion_tokens ?? config.maxCompletionTokens, config.maxCompletionTokens),
+    reasoning_effort: "none", store: false,
   })
   if (Buffer.byteLength(body, "utf8") > config.maxInputTokens - 2048) throw new FreeRequestError(413, "free_inference_input_too_large", "Auto's text and tool context is too large. Nothing was trimmed or sent.")
   return { body, stream: request.stream === true }
