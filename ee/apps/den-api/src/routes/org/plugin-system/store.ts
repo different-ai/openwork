@@ -1794,12 +1794,19 @@ export async function getLatestConfigObjectVersion(input: { context: PluginArchA
   return serializeVersion(rows[0])
 }
 
-export async function createConfigObjectVersion(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; reason?: string; value: ConfigObjectInput }) {
+export async function createConfigObjectVersion(input: {
+  context: PluginArchActorContext
+  configObjectId: ConfigObjectId
+  reason?: string
+  requireFreshSession?: boolean
+  value: ConfigObjectInput
+}) {
   const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
+  const requireFreshSession = input.requireFreshSession
+    ?? await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
   await requirePluginArchResourceRole({
     context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
     sessionMaxAgeMs: row.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined,

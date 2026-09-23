@@ -743,6 +743,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             context: libraryContext,
             configObjectId,
             reason,
+            requireFreshSession: false,
             value: { rawSourceText: skillMarkdown },
           })
           const memberships = await listConfigObjectPlugins({ context: libraryContext, configObjectId })
