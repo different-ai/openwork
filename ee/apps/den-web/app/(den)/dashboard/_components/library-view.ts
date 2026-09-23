@@ -1,143 +1,89 @@
-import type { LibraryItem, LibraryPluginItem } from "./library-data";
-import { getMcpConnectionsRoute, getNewPluginRoute, getYourConnectionsRoute } from "../../_lib/den-org";
+import { firstName, joinNames } from "./access-summary";
+import type { LibraryAccessEdge, LibraryItem } from "./library-data";
 
-export type LibraryKind = "mcps" | "skills" | "plugins";
-export type LibraryState = "ready" | "needs_signin" | "needs_admin_setup" | "needs_setup";
-export type LibraryLayout = "grid" | "list";
+export type LibraryFilter = "all" | "connectors" | "skills" | "plugins";
 
-export const LIBRARY_DEFAULT_KIND: LibraryKind = "mcps";
-export const LIBRARY_DEFAULT_STATE: LibraryState = "ready";
-export const LIBRARY_LAYOUT_KEY = "openwork:den:library:layout";
-export const LIBRARY_KINDS: readonly { value: LibraryKind; label: string }[] = [
-  { value: "mcps", label: "MCPs" },
+export const LIBRARY_FILTERS: readonly { value: LibraryFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "connectors", label: "Connectors" },
   { value: "skills", label: "Skills" },
   { value: "plugins", label: "Plugins" },
 ];
-// Match Desktop's wording, but only show states supplied by Den's member
-// inventory. Local/hidden/disabled workspace items are not Den records.
-export const LIBRARY_STATES: readonly { value: LibraryState; label: string }[] = [
-  { value: "ready", label: "Ready to use" },
-  { value: "needs_signin", label: "Needs your sign-in" },
-  { value: "needs_admin_setup", label: "Needs admin setup" },
-  { value: "needs_setup", label: "Ready to set up" },
-];
 
-export type LibraryEmptyState = {
-  title: string;
-  description: string;
-  action: "add" | "clear_filters" | LibraryState;
+export function parseLibraryFilter(value: string | null): LibraryFilter {
+  return LIBRARY_FILTERS.find((entry) => entry.value === value)?.value ?? "all";
+}
+
+/** A plugin made of one skill is a skill to the person using it. */
+export function isSingleSkill(item: LibraryItem): boolean {
+  return item.type === "plugin"
+    && item.componentCount === 1
+    && item.componentKinds.length > 0
+    && item.componentKinds.every((kind) => kind.toLowerCase() === "skill");
+}
+
+export function libraryFilterOf(item: LibraryItem): Exclude<LibraryFilter, "all"> | null {
+  if (item.type === "connection") return "connectors";
+  if (item.type === "plugin") return isSingleSkill(item) ? "skills" : "plugins";
+  return null;
+}
+
+/**
+ * Something is the viewer's when they made it. Den marks plugins the viewer
+ * created as "mine", and a connector the viewer added comes back with its
+ * access list, which Den only returns to the person who added it.
+ */
+export function isOwnedByViewer(item: LibraryItem, viewerId: string | null, ownedConnectionIds: ReadonlySet<string>): boolean {
+  if (item.edges.some((edge) => edge.kind === "mine")) return true;
+  if (item.type !== "connection") return false;
+  if (ownedConnectionIds.has(item.id)) return true;
+  return viewerId !== null && item.edges.some((edge) => edge.kind === "person" && edge.sharedBy?.orgMembershipId === viewerId);
+}
+
+/** Where something the organization gave the viewer came from, in a few words. */
+export function receivedStatus(edges: readonly LibraryAccessEdge[]): string {
+  if (edges.some((edge) => edge.kind === "org_wide")) return "Everyone";
+  const teams = edges.flatMap((edge) => edge.kind === "team" ? [edge.team.name] : []);
+  if (teams.length > 0) return joinNames(teams);
+  const sharer = edges.find((edge) => edge.kind === "person" && edge.sharedBy);
+  if (sharer?.kind === "person" && sharer.sharedBy) return `From ${firstName(sharer.sharedBy.name)}`;
+  return "Your organization";
+}
+
+export type LibraryGroups = {
+  mine: LibraryItem[];
+  received: LibraryItem[];
+  total: number;
 };
 
-export function parseLibraryLayout(value: string | null): LibraryLayout {
-  return value === "list" ? "list" : "grid";
-}
-
-export function hasLibraryComponent(item: LibraryPluginItem, kind: "skill" | "mcp"): boolean {
-  return item.componentKinds.some((value) => value.toLowerCase() === kind);
-}
-
-export function getLibraryState(item: LibraryItem): LibraryState {
-  if (item.type === "connection") {
-    if (item.state === "available") return "needs_setup";
-    return item.state === "connected" ? "ready" : item.state;
-  }
-  if (item.type === "workflow") return item.state;
-  return "ready";
-}
-
-export function getLibraryKind(item: LibraryItem): LibraryKind {
-  if (item.type === "connection") return "mcps";
-  if (item.type === "plugin" && hasLibraryComponent(item, "mcp")) return "plugins";
-  if (item.type === "plugin" && hasLibraryComponent(item, "skill")) return "skills";
-  return "plugins";
-}
-
-export function getLibraryFocus(items: readonly LibraryItem[], requestedFocus: string | null) {
-  if (!requestedFocus) return null;
-  const requested = items.find((item) => `${item.type}-${item.id}` === requestedFocus);
-  const item = requested?.type === "workflow"
-    ? items.find((candidate) => candidate.type === "plugin" && candidate.id === requested.plugin?.id) ?? requested
-    : requested;
-  if (!item) return null;
-  const kind: LibraryKind = requested?.type === "workflow" ? "plugins" : getLibraryKind(item);
-  return { item, kind, state: getLibraryState(item), key: `${item.type}-${item.id}` };
-}
-
-export function getLibraryKindItems(items: readonly LibraryItem[], kind: LibraryKind): LibraryItem[] {
+export function groupLibrary(input: {
+  items: readonly LibraryItem[];
+  filter: LibraryFilter;
+  query: string;
+  isMine: (item: LibraryItem) => boolean;
+}): LibraryGroups {
+  const needle = input.query.trim().toLowerCase();
   const seen = new Set<string>();
-  const pluginIds = new Set(items.filter((item) => item.type === "plugin").map((item) => item.id));
-  return items.filter((item) => {
-    // Plugin summaries do not establish MCP readiness. Keep bundles in Plugins;
-    // only actual member-visible connections (including native ones) go in MCPs.
-    const matches = item.type === "connection"
-      ? kind === "mcps"
-      : item.type === "workflow"
-        ? kind === "plugins" && (!item.plugin || !pluginIds.has(item.plugin.id))
-        : kind === "plugins" || (kind === "skills" && hasLibraryComponent(item, "skill"));
-    const key = `${item.type}-${item.id}`;
-    if (!matches || seen.has(key)) return false;
+  const visible = input.items.filter((item) => {
+    const key = `${item.type}:${item.id}`;
+    if (seen.has(key)) return false;
     seen.add(key);
-    return true;
+    if (input.filter !== "all" && libraryFilterOf(item) !== input.filter) return false;
+    if (!needle) return true;
+    return `${item.name} ${item.description ?? ""}`.toLowerCase().includes(needle);
   });
+  const byName = (left: LibraryItem, right: LibraryItem) => left.name.localeCompare(right.name);
+  return {
+    mine: visible.filter(input.isMine).sort(byName),
+    received: visible.filter((item) => !input.isMine(item)).sort(byName),
+    total: input.items.length,
+  };
 }
 
-export function getLibraryView(items: readonly LibraryItem[], kind: LibraryKind, state: LibraryState, query: string) {
-  const kindItems = getLibraryKindItems(items, kind);
-  const counts: Record<LibraryState, number> = { ready: 0, needs_signin: 0, needs_admin_setup: 0, needs_setup: 0 };
-  for (const item of kindItems) counts[getLibraryState(item)] += 1;
-  const tabs = LIBRARY_STATES.filter((tab) => tab.value === "ready" || tab.value === state || counts[tab.value] > 0);
-  const activeState = state;
-  const normalizedQuery = query.trim().toLowerCase();
-  const visibleItems = kindItems.filter((item) => getLibraryState(item) === activeState
-    && (!normalizedQuery || item.name.toLowerCase().includes(normalizedQuery) || item.description?.toLowerCase().includes(normalizedQuery)));
-  const label = kind === "mcps" ? "MCPs" : kind;
-  const nextState = LIBRARY_STATES.find((tab) => counts[tab.value] > 0)?.value ?? "ready";
-  const empty: LibraryEmptyState = normalizedQuery
-    ? { title: "No library items match these filters.", description: "Try changing your search or filters.", action: "clear_filters" }
-    : kindItems.length === 0
-      ? {
-          title: `No ${label} yet`,
-          description: kind === "mcps"
-            ? "Connect a cloud MCP to give your agents access to your tools and services."
-            : kind === "skills"
-              ? "Add reusable instructions for work your agents do often."
-              : "Add a plugin to bring related skills and MCPs into your Library.",
-          action: "add",
-        }
-      : activeState === "ready"
-        ? {
-            title: `No ${label} ready to use`,
-            description: "Your items need attention before they are ready. Choose a status to review the next step.",
-            action: nextState,
-          }
-        : {
-            title: "No items in this state",
-            description: "Try changing your search or filters.",
-            action: nextState,
-          };
-  return { counts, tabs, activeState, visibleItems, empty };
-}
-
-export function getLibraryAddAction({ kind, isAdmin, mcpConnections, orgSlug }: {
-  kind: LibraryKind;
-  isAdmin: boolean;
-  mcpConnections: boolean;
-  orgSlug: string | null;
-}): { label: string; href: string } | null {
-  if (kind === "mcps") {
-    if (!mcpConnections) return null;
-    return isAdmin
-      ? { label: "Add MCP", href: getMcpConnectionsRoute(orgSlug) }
-      : { label: "View available MCPs", href: getYourConnectionsRoute(orgSlug) };
-  }
-  // These authoring pages are admin-gated; a member's plugin grant does not
-  // grant access to the admin dashboard.
-  if (!isAdmin) return null;
-  if (kind === "skills") {
-    return {
-      label: "Create skill",
-      href: `${getNewPluginRoute(orgSlug)}?component=skill`,
-    };
-  }
-  return { label: "Add plugin", href: getNewPluginRoute(orgSlug) };
+export function libraryItemDescription(item: LibraryItem): string {
+  const text = item.description?.split(/\s[—–-]\s|—/)[0]?.trim();
+  if (text) return text.replace(/\.$/, "");
+  if (item.type === "connection") return "Connector";
+  if (item.type === "workflow") return "Workflow";
+  return isSingleSkill(item) ? "Skill" : "Plugin";
 }

@@ -1,13 +1,11 @@
 import {
-  BarChart3,
   Box,
   CalendarClock,
   Globe,
-  Home,
+  Laptop,
   LayoutDashboard,
   LibraryBig,
   Plug,
-  Settings2,
   SlidersHorizontal,
   Sparkles,
   Users,
@@ -21,7 +19,6 @@ import {
   getApiKeysRoute,
   getAutomationsRoute,
   getBillingRoute,
-  getBrandAppearanceRoute,
   getModelConnectionsRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
@@ -30,7 +27,6 @@ import {
   getMarketplacesRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
-  getOrgDashboardRoute,
   getOrgSettingsRoute,
   getPluginsRoute,
   getScimRoute,
@@ -90,11 +86,6 @@ export function buildDashboardNavSections({
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
     {
-      href: orgSlug ? getOrgDashboardRoute(orgSlug) : "#",
-      label: "Dashboard",
-      icon: Home,
-    },
-    {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
       label: "My Library",
       icon: LibraryBig,
@@ -110,41 +101,23 @@ export function buildDashboardNavSections({
       : []),
   ];
 
-  const aiGatewayItem: DashboardNavItem | null = access.isAdmin && orgSlug
-    ? {
-        href: getAiGatewayRoute(orgSlug),
-        label: "AI Gateway",
-        icon: Sparkles,
-        badge: "Models",
-      }
-    : null;
   const manageItems: DashboardNavItem[] = access.isAdmin && orgSlug
     ? [
-        { href: getPluginsRoute(orgSlug), label: "Plugin Directory", icon: Box },
-        {
-          href: getMcpConnectionsRoute(orgSlug),
-          label: "Connectors",
-          icon: Plug,
-          badge: "MCPs",
-        },
+        { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
+        { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug },
         ...(capabilities.orgManagedDashboards
           ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
           : []),
-        ...(aiGatewayItem ? [aiGatewayItem] : []),
         {
-          href: getMarketplacesRoute(orgSlug),
-          label: "Advanced",
-          icon: Settings2,
-          matchHrefs: [
-            getDesktopPoliciesRoute(orgSlug),
-            getBrandAppearanceRoute(orgSlug),
+          href: getAiGatewayRoute(orgSlug),
+          label: "Models",
+          icon: Sparkles,
+          children: [
+            { href: getAiGatewayRoute(orgSlug), label: "AI Gateway" },
+            { href: getAnalyticsRoute(orgSlug), label: "Analytics" },
           ],
         },
-      ]
-    : [];
-  const observabilityItems: DashboardNavItem[] = access.isAdmin && orgSlug
-    ? [
-        { href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 },
+        { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
       ]
     : [];
   const settingsChildren: DashboardNavChild[] = orgSlug
@@ -158,6 +131,9 @@ export function buildDashboardNavSections({
               { href: getSsoRoute(orgSlug), label: "SSO" },
               { href: getScimRoute(orgSlug), label: "SCIM" },
             ]
+          : []),
+        ...(access.isAdmin
+          ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
         ...(capabilities.mcpConnections && access.isAdmin
           ? [{ href: getToolTesterRoute(orgSlug), label: "Tool Tester" }]
@@ -182,21 +158,20 @@ export function buildDashboardNavSections({
   return [
     { label: "Work", items: workItems },
     ...(manageItems.length > 0 ? [{ label: "Manage", items: manageItems }] : []),
-    ...(observabilityItems.length > 0 ? [{ label: "Observability", items: observabilityItems }] : []),
     ...(teamItems.length > 0 ? [{ label: "Team", items: teamItems }] : []),
   ];
 }
 
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
-  Advanced: ["policy", "desktop policies", "mdm", "lock", "marketplace", "branding"],
-  Gateway: ["llm", "provider", "gateway", "inference", "usage"],
+  Advanced: ["marketplace", "collections", "branding", "brand appearance"],
+  "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
   Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
   "API Keys": ["token", "secret"],
   Billing: ["plan", "invoice", "payment"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
-  Dashboard: ["home", "overview"],
+  "Desktop policies": ["policy", "mdm", "lock", "desktop"],
   Dashboards: ["boards", "apps"],
   Diagnostics: ["health", "debug", "troubleshooting"],
   General: ["organization", "workspace"],
@@ -206,7 +181,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
-  "Plugin Directory": ["skills", "plugins", "marketplace"],
+  Plugins: ["skills", "commands", "plugin directory"],
   SCIM: ["provisioning", "directory", "users"],
   Settings: ["organization", "workspace"],
   SSO: ["single sign on", "saml", "oidc"],

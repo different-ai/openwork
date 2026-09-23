@@ -772,6 +772,31 @@ export function getLibraryPluginRoute(orgSlug: string | null | undefined, plugin
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
 }
 
+export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, pluginId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/share`;
+}
+
+export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill"): string {
+  return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
+}
+
+export function getLibraryConnectorRoute(orgSlug: string | null | undefined, connectionId: string): string {
+  return `${getLibraryRoute(orgSlug)}/connectors/${encodeURIComponent(connectionId)}`;
+}
+
+export function getLibraryConnectorShareRoute(orgSlug: string | null | undefined, connectionId: string): string {
+  return `${getLibraryConnectorRoute(orgSlug, connectionId)}/share`;
+}
+
+/** The connector catalog, or one entry's setup checks when a catalog id is given. */
+export function getLibraryAddConnectorRoute(orgSlug?: string | null, catalogId?: string): string {
+  return `${getLibraryRoute(orgSlug)}/connectors/new${catalogId ? `/${encodeURIComponent(catalogId)}` : ""}`;
+}
+
+export function getAddConnectorRoute(orgSlug?: string | null, catalogId?: string): string {
+  return `${getMcpConnectionsRoute(orgSlug)}/new${catalogId ? `/${encodeURIComponent(catalogId)}` : ""}`;
+}
+
 export function getGithubIntegrationSetupRoute(orgSlug: string | null | undefined, connectorInstanceId: string): string {
   return `${getGithubIntegrationRoute(orgSlug)}?connectorInstanceId=${encodeURIComponent(connectorInstanceId)}`;
 }

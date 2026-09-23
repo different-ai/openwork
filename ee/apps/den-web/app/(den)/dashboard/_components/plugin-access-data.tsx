@@ -97,7 +97,7 @@ export function usePluginAccess(pluginId: string) {
   });
 }
 
-type GrantPluginAccessBody =
+export type GrantPluginAccessBody =
   | { orgMembershipId: string; teamId?: never; orgWide?: never; role: PluginAccessRole }
   | { orgMembershipId?: never; teamId: string; orgWide?: never; role: PluginAccessRole }
   | { orgMembershipId?: never; teamId?: never; orgWide: true; role: PluginAccessRole };
