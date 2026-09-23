@@ -73,7 +73,6 @@ jobs:
       REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
       REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
-      EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -92,6 +91,7 @@ jobs:
       - name: Publish only live PR proof evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
           BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
           OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
           REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
@@ -99,6 +99,8 @@ jobs:
         run: node evals/scripts/publish-review.mjs
       - name: Publish native check and deployment result
         if: always()
+        env:
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
         run: node .github/scripts/evidence-presentation.mjs complete
 
   required-verification:

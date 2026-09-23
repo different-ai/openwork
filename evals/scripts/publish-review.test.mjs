@@ -180,6 +180,6 @@ test("native workflow writes use only trusted code and require completion before
   assert.match(workflow, /types: \[requested, in_progress, completed\]/);
   assert.match(workflow, /github.event.action == 'completed'/);
   assert.match(workflow, /checks: write/); assert.match(workflow, /deployments: write/);
-  assert.match(workflow, /if: always\(\)\n        run: node .github\/scripts\/evidence-presentation.mjs complete/);
+  assert.match(workflow, /if: always\(\)\n        env:[\s\S]*?run: node .github\/scripts\/evidence-presentation.mjs complete/);
   assert.doesNotMatch(workflow, /ref:.*head.sha|pull_request_target/);
 });
