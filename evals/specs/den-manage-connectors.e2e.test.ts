@@ -32,18 +32,24 @@ test("an admin: I want Sales and Support to have Slack so nobody sets it up alon
     await user.screenshot();
   });
 
-  await step("3. I sign in with Slack once to try it", async () => {
+  await step("3. I sign in with Slack once to try it, and all four checks stay on screen until I continue", async () => {
     await user.click({ role: "button", label: "Sign in with Slack" });
     await user.see({ role: "heading", label: "Slack passed all 4 checks" }, { timeoutMs: 120_000 });
     const tab = await world.signInTab({ timeoutMs: 1_000 });
     if (tab?.client.targetId) await world.web.client.send("Target.closeTarget", { targetId: tab.client.targetId });
-    await user.see({ role: "radio", label: /Each person signs in/ });
-    const chosen = await probe.dom('input[name="sign-in-mode"][value="per_member"]:checked');
-    expect(chosen.elements, "each person signs in is the default").toHaveLength(1);
+    const done = await probe.dom('[data-testid^="setup-check-"][data-status="done"]');
+    expect(done.elements, "every check is ticked").toHaveLength(4);
+    await user.see({ testId: "step-footer-note" }, { text: "Next, choose who can use it." });
+    await user.see({ role: "button", label: "Continue" });
+    await user.notSee({ role: "radio", label: /Each person signs in/ });
     await user.screenshot();
   });
 
-  await step("4. I let each person sign in and give it to Sales and Support", async () => {
+  await step("4. I continue, let each person sign in and give it to Sales and Support", async () => {
+    await user.click({ role: "button", label: "Continue" });
+    await user.see({ role: "radio", label: /Each person signs in/ }, { timeoutMs: 30_000 });
+    const chosen = await probe.dom('input[name="sign-in-mode"][value="per_member"]:checked');
+    expect(chosen.elements, "each person signs in is the default").toHaveLength(1);
     for (const team of ["Sales", "Support"]) {
       await user.click({ role: "button", label: "Add team" });
       await user.click({ role: "option", label: new RegExp(team) });
