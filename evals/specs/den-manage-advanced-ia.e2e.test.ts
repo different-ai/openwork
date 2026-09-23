@@ -4,8 +4,8 @@ import { adminDashboardWeb } from "../worlds/den-admin-navigation.ts";
 
 // The Den admin sidebar has two jobs: Work for everyone, and Manage plus Team
 // for admins. Collections and Brand appearance live in Settings › Advanced,
-// Desktop policies is its own Manage entry, and Plugins owns Sources while the
-// legacy integrations URL redirects to that selected tab.
+// Desktop policies is its own Manage entry, and Plugins lists plugins without
+// GitHub sources while the legacy integrations URL still opens its old tab.
 const test = spec.world(adminDashboardWeb, { timeout: 420_000 });
 
 test("the Den admin sidebar groups Manage and moves Advanced into Settings", async ({ world, user, probe, evidence }) => {
@@ -62,18 +62,13 @@ test("the Den admin sidebar groups Manage and moves Advanced into Settings", asy
   const pluginsPath = await probe.eventually(() => world.location(), {
     within: 30_000, label: "Plugins route", until: (path) => path === "/dashboard/plugins",
   });
-  await user.see({ role: "tab", label: /^Sources/ }, { timeoutMs: 30_000 });
-  await user.see({ text: "Create plugin" }, { timeoutMs: 30_000 });
-  await user.click({ role: "tab", label: /^Sources/ });
-  const sourceTabs = await probe.eventually(() => world.selectedTabs(), {
-    within: 30_000, label: "Sources tab selected", until: (tabs) => tabs.length === 1 && tabs[0] === "Sources",
-  });
-  await user.see({ text: "GitHub" }, { timeoutMs: 30_000 });
-  await user.see({ role: "button", label: "Connect" }, { timeoutMs: 30_000 });
-  await user.notSee({ text: "Create plugin" }, { timeoutMs: 3_000 });
-  const sourcesOk = pluginsPath === "/dashboard/plugins" && sourceTabs.length === 1 && sourceTabs[0] === "Sources";
-  expect(sourcesOk).toBe(true);
-  evidence.recordAssertionEvidence("Plugins Sources shows GitHub Connect and hides Create plugin", `path=${pluginsPath}; selected=${JSON.stringify(sourceTabs)}; GitHub and Connect visible; Create plugin absent`, sourcesOk);
+  await user.see({ testId: "admin-plugins" }, { timeoutMs: 30_000 });
+  await user.see({ role: "link", label: "Create a plugin" }, { timeoutMs: 30_000 });
+  await user.notSee({ role: "tab", label: /^Sources/ }, { timeoutMs: 3_000 });
+  await user.notSee({ text: "GitHub" }, { timeoutMs: 3_000 });
+  const pluginsOk = pluginsPath === "/dashboard/plugins";
+  expect(pluginsOk).toBe(true);
+  evidence.recordAssertionEvidence("Plugins lists plugins with Create a plugin and no GitHub Sources tab", `path=${pluginsPath}; Create a plugin visible; Sources and GitHub absent`, pluginsOk);
   await user.screenshot();
 
   await user.navigate(new URL("/dashboard/integrations", world.den.ref.webUrl).toString());
