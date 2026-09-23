@@ -52,7 +52,7 @@ test("a member gets setup links without starting OAuth or creating connections",
       expect(before.response.ok).toBe(true);
       const modelRequests = await world.den.mocks.connector.agentRequests();
       const authRequests = (await world.den.mocks.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
-      await webUser.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections`);
+      await webUser.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections/all`);
       await webUser.see({ testId: "connector-add-slack" }, { timeoutMs: 90_000 });
       await webUser.see({ testId: "connector-chat-slack" });
       const catalogLink = (await webProbe.connectorCatalog()).chatLinks.find((link) => link.testId === "connector-chat-slack");

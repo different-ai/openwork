@@ -39,7 +39,7 @@ const slackTools: MockMcpTool[] = [
  * answers, so the catalog's Slack entry points at a local mock that signs
  * people in and serves tools; no real provider is contacted.
  */
-export async function denLibraryManage(seed: Seed, ctx: { place: Place }, options: { samHasSlack?: boolean } = {}) {
+export async function denLibraryManage(seed: Seed, ctx: { place: Place }, options: { samHasSlack?: boolean; asAdmin?: boolean } = {}) {
   if (ctx.place.kind !== "local") throw new Error("This world fixes a local proxy in front of den-api before boot; run it on the local lane.");
   const [apiPort, webPort] = await allocateFreePorts(2);
   const denApiUrl = `http://127.0.0.1:${apiPort}`;
@@ -111,7 +111,9 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
   }
 
   const viewport = { width: 1440, height: 1000 };
-  const web = await seed.web({ den, signedInAs: den.members.sam, startPath: "/dashboard/library", headless: true, viewport });
+  const web = options.asAdmin
+    ? await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/mcp-connections", headless: true, viewport })
+    : await seed.web({ den, signedInAs: den.members.sam, startPath: "/dashboard/library", headless: true, viewport });
   const denWebOrigin = new URL(den.ref.webUrl).origin;
 
   async function library(session: DenSession): Promise<{ type: string; name: string }[]> {
@@ -171,3 +173,6 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
 
 /** The same organization after Sam has added Slack for himself. */
 export const denLibraryWithSamsSlack = (seed: Seed, ctx: { place: Place }) => denLibraryManage(seed, ctx, { samHasSlack: true });
+
+/** The same organization, with the admin signed in on Manage › Connectors. */
+export const denManageAsAdmin = (seed: Seed, ctx: { place: Place }) => denLibraryManage(seed, ctx, { asAdmin: true });

@@ -8,7 +8,7 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
   const admin = user.on(world.web);
   const member = user.on(world.memberWeb);
   const catalog = probe.on(world.web);
-  const catalogUrl = `${world.den.ref.webUrl}/dashboard/mcp-connections`;
+  const catalogUrl = `${world.den.ref.webUrl}/dashboard/mcp-connections/all`;
   const presetResponse = await probe.api(world.den.admin, "/v1/mcp-connections/presets");
   expect(presetResponse.response.ok).toBe(true);
   if (!isRecord(presetResponse.body)) throw new Error("Den returned no preset inventory.");
@@ -75,9 +75,9 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
     await admin.see({ testId: "configured-connector-matches" }, { text: /Configured \(1\)/ });
     expect((await catalog.connectorCatalog()).entries.map((entry) => entry.id)).toEqual([world.connection.id]);
     await admin.click({ testId: `connector-open-${world.connection.id}` });
-    await admin.see({ testId: "connector-detail-title" }, { text: /^Catalog Notes\b/ });
-    await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
-    await admin.notSee({ testId: "connector-detail-setup" });
+    await admin.see({ testId: "admin-connector-page" });
+    await admin.see({ role: "heading", label: "Catalog Notes" });
+    await admin.see({ role: "button", label: "Sign in" });
     await admin.navigate(catalogUrl);
     await admin.type({ testId: "connector-smart-bar" }, "granola", { replace: true });
     await admin.see({ testId: "connector-catalog-count" }, { text: `1 of ${expectedIds.length} integrations match` });
@@ -184,7 +184,7 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
   });
 
   await step("the configured list keeps each row to its name, state and one menu", async () => {
-    await admin.navigate(`${catalogUrl}/configured`);
+    await admin.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections/configured`);
     await admin.see({ testId: `mcp-connection-row-${world.connection.id}` }, { text: /Catalog Notes/, timeoutMs: 60_000 });
     await admin.notSee({ text: /^Issuer: / });
     await admin.notSee({ role: "button", label: "Disconnect Catalog Notes" });
@@ -216,9 +216,9 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
     expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authBefore);
     expect(await probe.toolCalls(world.connector)).toEqual([]);
     await admin.click({ role: "link", label: "Review connection" });
-    await admin.see({ testId: "connector-detail-title" }, { text: /^Catalog Recovery\b/ });
-    await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
-    await admin.notSee({ testId: "connector-detail-test-tools" });
+    await admin.see({ testId: "admin-connector-page" });
+    await admin.see({ role: "heading", label: "Catalog Recovery" });
+    await admin.see({ role: "button", label: "Sign in" });
     const state = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
     if (!isRecord(state.body)) throw new Error("Den returned no connections after the failed sign-in.");
     expect(records(state.body.connections).find((entry) => entry.id === world.rejectedConnection.id)).toMatchObject({ connectedForMe: false, connected: false });
