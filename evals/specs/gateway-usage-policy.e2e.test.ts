@@ -314,9 +314,13 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
       },
     });
     expect(native.ok).toBe(true);
+    const nativeErrors = usageRecords(Array.isArray(native.body) ? native.body : usageRecord(native.body).data)
+      .map((entry) => usageRecord(entry.info ?? entry)).filter((info) => Boolean(info.error)).map((info) => info.error);
+    evidence.recordAssertionEvidence("Native engine reports the Gateway rejection", JSON.stringify(nativeErrors).slice(0, 2000), nativeErrors.length > 0);
     expect(world.upstreamCount()).toBe(1);
     expect((await own()).buckets).toEqual(exhausted.buckets);
     await member.see({ testId: "gateway-usage-notice" }, { text: /used this month’s \$1\.00/ });
+    await member.notSee({ text: /receiving too many requests/ });
     expect((await memberProbe.dom('[data-testid="gateway-usage-notice"]')).elements).toHaveLength(1);
     expect(await memberProbe.composer()).toMatchObject({ composerEditable: true, modelUnavailable: false });
     await capture("Desktop blocked composer", member, memberProbe, '[data-testid="gateway-usage-notice"]');
@@ -389,6 +393,7 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     await backToSession();
     await member.notSee({ testId: "gateway-usage-notice" }, { timeoutMs: 60_000 });
     await member.see({ testId: "gateway-usage-approved-notice" }, { text: /You got \$0\.25 more this month/ });
+    await member.notSee({ text: /receiving too many requests/ });
     expect(await memberProbe.composer()).toMatchObject({ selectedModelLabel: world.modelName, composerEditable: true, modelUnavailable: false });
     await capture("Desktop approved increase", member, memberProbe, '[data-testid="gateway-usage-approved-notice"]');
     expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });

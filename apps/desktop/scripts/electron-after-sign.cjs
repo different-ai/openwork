@@ -58,6 +58,14 @@ function verifyComputerUseHelper(appPath, requireDistributionSignature) {
   }
 }
 
+function verifyAppCanLaunch(appPath) {
+  const executable = path.join(appPath, "Contents", "MacOS", "OpenWork");
+  const result = spawnSync(executable, ["--version"], { stdio: "inherit", timeout: 30_000 });
+  if (result.error || result.status !== 0) {
+    throw new Error(`Signed OpenWork app failed to launch (status ${result.status}, signal ${result.signal}).`);
+  }
+}
+
 async function afterSign(context) {
   if (context.electronPlatformName !== "darwin") return;
 
@@ -93,6 +101,7 @@ async function afterSign(context) {
     // Notarization tickets can take minutes to propagate to Apple's CDN after acceptance; stapler can transiently fail with status 65 ("CloudKit query failed").
     await runWithRetry("xcrun", ["stapler", "staple", appPath], 5);
     run("xcrun", ["stapler", "validate", appPath]);
+    verifyAppCanLaunch(appPath);
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });
   }
@@ -101,3 +110,4 @@ async function afterSign(context) {
 module.exports = afterSign;
 module.exports.default = afterSign;
 module.exports.runWithRetry = runWithRetry;
+module.exports.verifyAppCanLaunch = verifyAppCanLaunch;

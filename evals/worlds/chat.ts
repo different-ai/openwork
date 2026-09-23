@@ -704,9 +704,9 @@ export async function connectionsMenu(seed: Seed) {
   const connector = seed.mock();
   const den = await seed.den({ mocks: { connector } });
   const connections: { id: string; name: string }[] = [];
-  for (let index = 1; index <= 14; index += 1) {
+  for (const name of ["HubSpot", "GitHub", "Slack"]) {
     connections.push(await seed.orgConnection(den.admin, {
-      name: `Composer connection ${String(index).padStart(2, "0")}`,
+      name,
       url: den.mocks.connector.mcpUrl,
       authType: "oauth",
       credentialMode: "per_member",
@@ -715,14 +715,6 @@ export async function connectionsMenu(seed: Seed) {
   }
   const app = await seed.desktop({ den, as: "admin" });
   const session = await seedSessionRetry(seed, app);
-  // TODO(primitive): click a button by its title when it has no accessible name.
-  const opened = await seed.evalIn(app, () => {
-    const trigger = document.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
-    if (!(trigger instanceof HTMLButtonElement)) return false;
-    trigger.click();
-    return true;
-  });
-  if (opened !== true) throw new Error("Composer capability menu did not open.");
   return { app, den, session, connections };
 }
 

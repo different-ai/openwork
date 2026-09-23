@@ -1473,6 +1473,8 @@ interface MessageListProps {
   retryStatus?: RetryStatus | null
   syncHealth?: RunSyncHealth
   viewport?: MessageListViewport
+  /** The turn's error is explained elsewhere (a confirmed usage block); do not render it again. */
+  sessionErrorHandled?: boolean
 }
 
 export function shouldShowMessageListLoading(
@@ -1489,7 +1491,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport }: MessageListProps) {
+export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false }: MessageListProps) {
   const { workspaceId, sessionId } = useMessageList()
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
@@ -1618,7 +1620,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
-        {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
+        {error && !hasSessionErrorMessage && !sessionErrorHandled ? <ErrorMessage error={error} /> : null}
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
     </ParentRunActiveContext.Provider>
