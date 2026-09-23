@@ -16,7 +16,7 @@ mkdir -p /opt/openwork-preview/tools
 printf 'allowBuilds:\\n  opencode-ai: true\\n${world === "desktop" ? "  bun: true\\n" : ""}' > /opt/openwork-preview/tools/pnpm-workspace.yaml
 pnpm --dir /opt/openwork-preview/tools add opencode-ai@1.18.15${world === "desktop" ? " bun@1.3.14" : ""}
 node /opt/openwork-preview/tools/node_modules/opencode-ai/postinstall.mjs
-/opt/openwork-preview/tools/node_modules/.bin/opencode --version${world === "desktop" ? "\n/opt/openwork-preview/tools/node_modules/.bin/bun --version" : ""}`;
+/opt/openwork-preview/tools/node_modules/.bin/opencode --version${world === "desktop" ? "\nnode /opt/openwork-preview/tools/node_modules/bun/install.js\n/opt/openwork-preview/tools/node_modules/.bin/bun --version" : ""}`;
 }
 
 export function dependencyRecipe(world: PreviewWorld): string {

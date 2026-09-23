@@ -161,6 +161,7 @@ test("desktop recipes contain only desktop dependencies and never install world 
   assert.match(tools, /build-essential python3/);
   assert.match(tools, /Node 24 or newer/);
   assert.match(tools, /bun@1\.3\.14/);
+  assert.match(tools, /node \/opt\/openwork-preview\/tools\/node_modules\/bun\/install\.js\n\/opt\/openwork-preview\/tools\/node_modules\/\.bin\/bun --version/);
   assert.match(tools, /corepack prepare pnpm@11\.4\.0 --activate/);
   assert.match(tools, /corepack prepare pnpm@10\.27\.0/);
   const dependencies = dependencyRecipe("desktop");
