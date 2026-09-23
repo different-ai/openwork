@@ -18,7 +18,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/r/${id}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ world }) });
+      const response = await fetch(`/r/${id}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ world: world === "desktop" ? "acme-web" : world }) });
       if (!response.ok) throw new Error("The sandbox could not launch. Try again.");
       const data: unknown = await response.json();
       if (typeof data !== "object" || data === null || !("url" in data) || typeof data.url !== "string"
@@ -55,9 +55,10 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
       <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => setWorld(event.target.value)}>
         <option value="app-web">OpenWork web</option>
         <option value="acme-web">ACME web · Full stack</option>
+        <option value="desktop">OpenWork desktop</option>
       </select></label>
       <div className="preview-launch-actions">
-        {session && <a className="preview-open" href={session.url} target="_blank" rel="noreferrer">Open sandbox</a>}
+        {session && <a className="preview-open" href={world === "desktop" && session.outputs.desktopUrl ? session.outputs.desktopUrl.value : session.url} target="_blank" rel="noreferrer">{world === "desktop" && session.outputs.desktopUrl ? "Open desktop" : "Open sandbox"}</a>}
         <button type="button" onClick={launch} disabled={!connected || busy} aria-busy={busy} aria-describedby="preview-state">Launch in Freestyle</button>
       </div>
       <p id="preview-state" className={error ? "preview-error" : "preview-state"} role={error ? "alert" : "status"}>
@@ -94,7 +95,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         </details>
       </section>}
       <details className="preview-details"><summary>Sandbox details</summary>
-        <p>OpenWork web runs the OpenWork web app and its local engine. ACME web adds isolated Den, MySQL, Redis, and AI Gateway services with demo accounts and a simulated model upstream. Each launch restores this commit’s snapshot into a separate sandbox. Sandboxes expire after two hours; work is not saved.</p>
+        <p>OpenWork web runs the OpenWork web app and its local engine. ACME web adds isolated Den, MySQL, Redis, and AI Gateway services with demo accounts and a simulated model upstream. OpenWork desktop opens the real desktop app from this commit in your browser, running inside the same full-stack world. Each launch restores this commit’s snapshot into a separate sandbox. Sandboxes expire after two hours; work is not saved.</p>
       </details>
     </div>
   );
