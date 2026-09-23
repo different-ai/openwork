@@ -264,7 +264,7 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
     assert.equal((await bucket(member.principal)).used_amount, hold)
   })
 
-  await t.test("a guest's allowance is small for the machine's first 30 minutes; each IP may introduce only a few new machines a day", async () => {
+  await t.test("a guest's allowance unlocks over the machine's first hour; each IP may introduce only a few new machines a day", async () => {
     const minute = 60000
     const newIp = "9".repeat(64)
     // Five fresh machines fit under the daily cap; the sixth does not, but a known machine still may.
@@ -278,12 +278,17 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
     assert.equal((await bucket(guest)).limit_amount, rampedDeviceAmount(config, 0))
     assert.equal((await guests.read(guest, ip)).allowance?.limitUsd, 0.1)
     await guests.cancelUndispatched(fresh.requestId)
-    // Half an hour later the same weekly bucket allows the full amount; the stored limit only ever rises.
+    // Later the same weekly bucket allows more; the stored limit only ever rises.
     await db.update(AnonymousInferenceIdentityTable).set({ first_seen_at: new Date(Date.now() - 31 * minute) }).where(eq(AnonymousInferenceIdentityTable.id, machines[0]))
-    assert.equal((await otherGuests.read(guest, ip)).allowance?.limitUsd, 1)
+    assert.equal((await otherGuests.read(guest, ip)).allowance?.limitUsd, 0.5)
     const aged = await admit(guest)
     assert.equal((await bucket(guest)).limit_amount, rampedDeviceAmount(config, 31 * minute))
     await guests.cancelUndispatched(aged.requestId)
+    await db.update(AnonymousInferenceIdentityTable).set({ first_seen_at: new Date(Date.now() - 61 * minute) }).where(eq(AnonymousInferenceIdentityTable.id, machines[0]))
+    assert.equal((await guests.read(guest, ip)).allowance?.limitUsd, 1, "the full device allowance after an hour")
+    const full = await admit(guest)
+    await guests.cancelUndispatched(full.requestId)
+    // The stored limit rose to the full amount with that reservation and does not fall if the age is later disputed.
     await db.update(AnonymousInferenceIdentityTable).set({ first_seen_at: new Date() }).where(eq(AnonymousInferenceIdentityTable.id, machines[0]))
     assert.equal((await guests.read(guest, ip)).allowance?.limitUsd, 1, "a bucket never shrinks within its week")
     // A machine first met through a reservation (not a mint) is recorded too.

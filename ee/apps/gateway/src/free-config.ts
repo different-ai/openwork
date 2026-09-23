@@ -20,8 +20,8 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
   const deviceWeeklyAmount = integer("ANONYMOUS_INSTALL_WEEKLY_MICRO_USD", 1000000, 1, 100000000) * 100
   if (member.enabled && member.weeklyLimitAmount <= deviceWeeklyAmount) throw new Error("Member free budget must exceed the device budget")
-  // A machine seen minutes ago is worth little; the full device allowance arrives with age. "minutes:microUsd,…" ascending.
-  const rampSource = environment.ANONYMOUS_INSTALL_RAMP?.trim() || "0:100000,30:1000000"
+  // A machine seen minutes ago is worth little; the full device allowance arrives after an hour. "minutes:microUsd,…" ascending.
+  const rampSource = environment.ANONYMOUS_INSTALL_RAMP?.trim() || "0:100000,10:200000,30:500000,60:1000000"
   const installRamp = rampSource.split(",").map((entry) => {
     const [minutes, micro] = entry.split(":").map((value) => Number(value.trim()))
     if (!Number.isSafeInteger(minutes) || minutes < 0 || minutes > 525600 || !Number.isSafeInteger(micro) || micro < 1) throw new Error("Invalid ANONYMOUS_INSTALL_RAMP")

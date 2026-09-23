@@ -227,15 +227,17 @@ test("minting a guest session costs a proof of work bound to the proof's own non
   assert.equal((await response.json()).error.code, "anonymous_new_identity_capped")
 })
 
-test("the guest allowance is small for a machine's first 30 minutes and never exceeds the device budget", () => {
+test("the guest allowance unlocks over a machine's first hour and never exceeds the device budget", () => {
   const defaults = readAutoConfig({})
-  assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 30, amount: 100000000 }])
+  assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 10, amount: 20000000 }, { minutes: 30, amount: 50000000 }, { minutes: 60, amount: 100000000 }])
   assert.equal(defaults.ipNewIdentitiesPerDay, 5)
   assert.equal(defaults.sessionPowBits, 23)
   const minute = 60000
   assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
-  assert.equal(rampedDeviceAmount(defaults, 30 * minute - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
-  assert.equal(rampedDeviceAmount(defaults, 30 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
+  assert.equal(rampedDeviceAmount(defaults, 10 * minute - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
+  assert.equal(rampedDeviceAmount(defaults, 10 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.2)
+  assert.equal(rampedDeviceAmount(defaults, 45 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.5)
+  assert.equal(rampedDeviceAmount(defaults, 60 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
   assert.equal(rampedDeviceAmount(defaults, 7 * 24 * 60 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
   const custom = readAutoConfig({ ANONYMOUS_INSTALL_RAMP: "0:50000,10:250000,120:5000000", ANONYMOUS_INSTALL_WEEKLY_MICRO_USD: "2000000" })
   assert.equal(rampedDeviceAmount(custom, 15 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.25)
