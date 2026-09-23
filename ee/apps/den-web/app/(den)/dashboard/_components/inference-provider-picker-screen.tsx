@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ChevronRight, Plus, Search } from "lucide-react";
+import { CUSTOM_GATEWAY_PROVIDER_ID } from "@openwork/types/den/gateway-custom-provider";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
@@ -27,6 +28,13 @@ const TAGLINES: Record<string, string> = {
   xai: "Grok models",
 };
 const FEATURED = Object.keys(TAGLINES);
+const CUSTOM_KEYWORDS = ["custom", "openai-compatible", "openai compatible", "compatible", "self-hosted", "self hosted", "other", "another", "endpoint", "own"];
+
+/** The custom row stays visible unless a filter is typed that clearly isn't asking for it. */
+export function customProviderMatches(query: string) {
+  const normalized = query.trim().toLowerCase();
+  return !normalized || CUSTOM_KEYWORDS.some((keyword) => keyword.startsWith(normalized) || normalized.includes(keyword));
+}
 const INITIAL_ROWS = 10;
 
 export function providerTagline(provider: Pick<DenModelsDevProviderSummary, "id" | "modelCount">) {
@@ -63,7 +71,7 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
   }, [catalog, query]);
   const visible = showAll || query.trim() ? providers : providers.slice(0, INITIAL_ROWS);
   const hidden = providers.length - visible.length;
-  const compatible = catalog.find((item) => item.npm === "@ai-sdk/openai-compatible");
+  const showCustom = customProviderMatches(query);
 
   return (
     <div className={embedded ? undefined : "mx-auto max-w-[860px] px-6 py-6"}>
@@ -81,6 +89,18 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
           </div>
         </div>
         <ul className="divide-y divide-gray-100 border-t border-gray-100">
+          {showCustom ? (
+            <li>
+              <Link href={getNewAiGatewayProviderRoute(orgSlug, CUSTOM_GATEWAY_PROVIDER_ID)} data-testid="gateway-provider-pick-custom" aria-label="Add a custom provider" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-dashed border-gray-300 text-gray-500"><Plus className="h-3.5 w-3.5" aria-hidden="true" /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium text-gray-900">Custom provider</span>
+                  <span className="block text-[12px] text-gray-500">Your own endpoint with an OpenAI-compatible API</span>
+                </span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" aria-hidden="true" />
+              </Link>
+            </li>
+          ) : null}
           {visible.map((item) => (
             <li key={item.id}>
               <Link href={getNewAiGatewayProviderRoute(orgSlug, item.id)} data-testid={`gateway-provider-pick-${item.id}`} aria-label={`Add ${item.name}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
@@ -96,24 +116,12 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
               </Link>
             </li>
           ))}
-          {catalog.length > 0 && providers.length === 0 ? <li className="px-4 py-4 text-[13px] text-gray-500">No providers match that filter.</li> : null}
+          {catalog.length > 0 && providers.length === 0 && !showCustom ? <li className="px-4 py-4 text-[13px] text-gray-500">No providers match that filter. Add a custom provider for any OpenAI-compatible endpoint.</li> : null}
           {hidden > 0 ? (
             <li>
               <button type="button" onClick={() => setShowAll(true)} data-testid="gateway-provider-catalog-more" className="w-full py-2.5 text-center text-[12px] font-medium text-gray-600 hover:bg-gray-50">
                 Show {hidden} more {hidden === 1 ? "provider" : "providers"}
               </button>
-            </li>
-          ) : null}
-          {compatible && !visible.some((item) => item.id === compatible.id) ? (
-            <li className="border-t border-gray-100">
-              <Link href={getNewAiGatewayProviderRoute(orgSlug, compatible.id)} data-testid="gateway-provider-pick-compatible" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-dashed border-gray-300 text-gray-400"><Plus className="h-3.5 w-3.5" aria-hidden="true" /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium text-gray-900">Another provider</span>
-                  <span className="block text-[12px] text-gray-500">Anything with an OpenAI-compatible API, self-hosted included</span>
-                </span>
-                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" aria-hidden="true" />
-              </Link>
             </li>
           ) : null}
         </ul>

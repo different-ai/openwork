@@ -93,6 +93,12 @@
       "development": "./src/den/gateway.ts",
       "default": "./dist/den/gateway.js"
     },
+    "./den/gateway-custom-provider": {
+      "types": "./src/den/gateway-custom-provider.ts",
+      "development": "./src/den/gateway-custom-provider.ts",
+      "bun": "./src/den/gateway-custom-provider.ts",
+      "default": "./dist/den/gateway-custom-provider.js"
+    },
     "./den/gateway-usage-limits": {
       "types": "./src/den/gateway-usage-limits.ts",
       "development": "./src/den/gateway-usage-limits.ts",

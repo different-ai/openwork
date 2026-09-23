@@ -34,6 +34,7 @@ import type { AuthHeader, ProtocolFamily } from "./protocols.js"
 import { accessibleGatewayModels, loadGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
 import type { GatewayGrantSelection, LoadGatewayAccess } from "./provider-access.js"
 import { hasAlternateModelSelection } from "./model-selection.js"
+import { CUSTOM_GATEWAY_PROVIDER_ENV, CUSTOM_GATEWAY_PROVIDER_ID, CUSTOM_GATEWAY_PROVIDER_NPM } from "@openwork/types/den/gateway-custom-provider"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
@@ -610,7 +611,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return gatewayError(404, "provider_not_found", `Unknown inference provider: ${inferenceProviderId}.`)
     }
 
-    const catalog = dependencies.catalog.getCatalogProvider(provider.provider_id)
+    // A custom provider is not in models.dev; its protocol and key name are fixed and its endpoint is saved on the provider.
+    const catalog = provider.provider_id === CUSTOM_GATEWAY_PROVIDER_ID
+      ? { npm: CUSTOM_GATEWAY_PROVIDER_NPM, api: null, env: [...CUSTOM_GATEWAY_PROVIDER_ENV] }
+      : dependencies.catalog.getCatalogProvider(provider.provider_id)
     const rest = restOfPath(requestUrl.pathname, inferenceProviderId)
     const scope = { ...identity, gatewayProviderId: provider.id }
     const accessRows = await dependencies.loadGatewayAccess(scope)

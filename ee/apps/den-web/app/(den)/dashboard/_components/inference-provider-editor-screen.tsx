@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Check, Globe, LockKeyhole, Plus, Search, User, Users } from "lucide-react";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite } from "@openwork/types/den/gateway";
+import { CUSTOM_GATEWAY_PROVIDER_ENV, CUSTOM_GATEWAY_PROVIDER_ID, CUSTOM_GATEWAY_PROVIDER_NPM } from "@openwork/types/den/gateway-custom-provider";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCombobox } from "../../_components/ui/combobox";
@@ -22,7 +23,7 @@ import {
   accessFromGrants, buildInferenceProviderRequestBody, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
   isGoogleVertexNpm, isSupportedGatewayNpm, supportsMemberCredentialMode,
 } from "./inference-provider-request";
-import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
+import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, requestLlmProviderTestConnection, type DenModelsDevProviderDetail } from "./llm-provider-data";
 import { normalizeAzureResourceNameInput } from "./llm-provider-guided";
 import type { ProviderAccessValue } from "./llm-provider-pickers";
 
@@ -50,7 +51,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [providerId, setProviderId] = useState(catalogProviderId ?? "");
   const [name, setName] = useState("");
   const [modelIds, setModelIds] = useState<string[]>([]);
-  const [allowAllModels, setAllowAllModels] = useState(true);
+  const [allowAllModels, setAllowAllModels] = useState(catalogProviderId !== CUSTOM_GATEWAY_PROVIDER_ID);
   const [modelQuery, setModelQuery] = useState("");
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [credentialMode, setCredentialMode] = useState<"org" | "member">("org");
@@ -67,6 +68,9 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [discoveredModelIds, setDiscoveredModelIds] = useState<string[]>([]);
+  const [modelDraft, setModelDraft] = useState("");
+  const [endpointCheck, setEndpointCheck] = useState<{ state: "checking" } | { state: "ok"; found: number } | { state: "failed"; message: string } | null>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
   const initializedProviderId = useRef<string | null>(null);
   const initializedNewProviderId = useRef<string | null>(null);
@@ -95,7 +99,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
 
   useEffect(() => {
     setDetail(null);
-    if (!orgId || !providerId) return;
+    if (!orgId || !providerId || providerId === CUSTOM_GATEWAY_PROVIDER_ID) return;
     let cancelled = false;
     setCatalogError(null);
     void requestLlmProviderCatalogDetail(orgId, providerId)
@@ -114,9 +118,18 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     return () => { cancelled = true; };
   }, [orgId, providerId, inferenceProviderId]);
 
-  const npm = detail ? getProviderNpmPackage(detail.config) : null;
+  const custom = providerId === CUSTOM_GATEWAY_PROVIDER_ID;
+  // A custom provider's catalog is the endpoint and model IDs entered here.
+  const customModelIds = [...new Set([...discoveredModelIds, ...modelIds])];
+  const catalog: DenModelsDevProviderDetail | null = custom ? {
+    id: CUSTOM_GATEWAY_PROVIDER_ID, name: "Custom provider", npm: CUSTOM_GATEWAY_PROVIDER_NPM, env: [...CUSTOM_GATEWAY_PROVIDER_ENV], doc: null,
+    api: settings.upstreamBaseUrl ?? null, modelCount: customModelIds.length,
+    config: { npm: CUSTOM_GATEWAY_PROVIDER_NPM, env: [...CUSTOM_GATEWAY_PROVIDER_ENV] },
+    models: customModelIds.map((id) => ({ id, name: id, config: {} })),
+  } : detail;
+  const npm = catalog ? getProviderNpmPackage(catalog.config) : null;
   const vertex = isGoogleVertexNpm(npm);
-  const envNames = detail ? getProviderEnvNames(detail.config) : [];
+  const envNames = catalog ? getProviderEnvNames(catalog.config) : [];
   const memberSignInSupported = supportsMemberCredentialMode(providerId);
   const configuredSet = provider?.credentialSets[0] ?? null;
   const invalidatesCredentials = Boolean(configuredSet && (
@@ -124,12 +137,12 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     (credentialMode === "member" && (oauthClientId.trim() !== (configuredSet.oauthClientId ?? "") || oauthClientSecret.trim()))
   ));
   const keySaved = Boolean(configuredSet?.configured && configuredSet.credentialMode === credentialMode) && !replacingKey;
-  const displayName = detail?.name ?? provider?.name ?? "provider";
+  const displayName = custom ? "Custom provider" : detail?.name ?? provider?.name ?? "provider";
   const formInput = {
     name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active" as const,
     settings, envNames, apiKey, apiKeyValues, serviceAccountJson, oauthClientId, oauthClientSecret, access,
   };
-  const models = detail?.models ?? [];
+  const models = catalog?.models ?? [];
   const filteredModels = useMemo(() => {
     const normalized = modelQuery.trim().toLowerCase();
     return normalized ? models.filter((model) => model.name.toLowerCase().includes(normalized) || model.id.toLowerCase().includes(normalized)) : models;
@@ -138,6 +151,30 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     const grant = provider?.accessGrants.find((entry) => JSON.stringify(entry.audience) === JSON.stringify(audience));
     return grant ? "assigned" : "will be assigned when you save";
   };
+
+  async function checkEndpoint() {
+    const api = settings.upstreamBaseUrl?.trim();
+    if (!api) return setEndpointCheck({ state: "failed", message: "Enter the endpoint URL first." });
+    setEndpointCheck({ state: "checking" });
+    try {
+      const result = await requestLlmProviderTestConnection({ api, apiKey: apiKey.trim() || undefined });
+      if (!result.ok) return setEndpointCheck({ state: "failed", message: result.hint ?? `The endpoint did not answer${result.status ? ` (${result.status})` : ""}. Check the URL and key.` });
+      if (result.normalizedApi) setSettings((current) => ({ ...current, upstreamBaseUrl: result.normalizedApi ?? current.upstreamBaseUrl ?? "" }));
+      const found = result.models.map((model) => model.id);
+      setDiscoveredModelIds(found);
+      setModelIds((current) => current.length ? current : found);
+      setEndpointCheck({ state: "ok", found: found.length });
+    } catch (cause) {
+      setEndpointCheck({ state: "failed", message: cause instanceof Error ? cause.message : "Could not check the endpoint." });
+    }
+  }
+
+  function addModelDraft() {
+    const id = modelDraft.trim();
+    if (!id) return;
+    setModelIds((current) => current.includes(id) ? current : [...current, id]);
+    setModelDraft("");
+  }
 
   function changeCredentialMode(mode: "org" | "member") {
     setCredentialMode(mode);
@@ -154,7 +191,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     const [group] = provider.modelGroups;
     const [set] = provider.credentialSets;
     if (!group || !set) return;
-    const groupModels = allowAllModels ? (detail?.models ?? []).map((model) => model.id) : modelIds;
+    const groupModels = allowAllModels ? (catalog?.models ?? []).map((model) => model.id) : modelIds;
     if (groupModels.length) {
       await saveGatewayResource(provider.id, group.id, { resource: "model-groups", body: { name: group.name, description: group.description, modelIds: groupModels, status: "active" } });
     }
@@ -183,9 +220,14 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   async function save() {
     setSaveError(null);
     if (invalidatesCredentials && !rotationAcknowledged) return setSaveError("Confirm that members will need to reconnect before saving this change.");
-    if (!detail || detail.id !== providerId) return setSaveError("Wait for the provider catalog to load.");
+    if (custom && !provider) {
+      if (!name.trim()) return setSaveError("Name this provider.");
+      if (!settings.upstreamBaseUrl?.trim()) return setSaveError("Enter the endpoint URL.");
+      if (!modelIds.length) return setSaveError("Add at least one model ID the endpoint serves.");
+    }
+    if (!catalog || catalog.id !== providerId) return setSaveError("Wait for the provider catalog to load.");
     if (!isSupportedGatewayNpm(npm)) return setSaveError("This provider is not supported by AI Gateway.");
-    if (!allowAllModels && !modelIds.length) return setSaveError("Pick at least one model, or choose all models.");
+    if (!allowAllModels && !modelIds.length) return setSaveError(custom ? "Add at least one model ID the endpoint serves." : "Pick at least one model, or choose all models.");
     for (const key of getRequiredSettingKeys(npm)) if (!settings[key]?.trim()) return setSaveError(`${getSettingLabel(key)} is required.`);
     const granting = access.allMembers || access.teamIds.length > 0 || access.memberIds.length > 0;
     if (!provider && granting && credentialMode === "org") {
@@ -246,20 +288,41 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         <span className="mx-1.5 text-gray-300">/</span><span className="text-gray-900">{displayName}</span>
       </nav>
       <div className="mt-3 flex items-center gap-3">
-        <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? (provider ? getProviderDocUrl(provider.providerConfig) : null)} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />
-        <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider ? provider.name : `Add ${displayName}`}</Heading>
+        <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={catalog?.doc ?? (provider ? getProviderDocUrl(provider.providerConfig) : null)} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />
+        <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider ? provider.name : custom ? "Add a custom provider" : `Add ${displayName}`}</Heading>
       </div>
       {saveError ? <DenNotice tone="error" message={saveError} className="mt-4" /> : null}
       {catalogError ? <DenNotice tone="error" message={catalogError} className="mt-4" /> : null}
       {provider?.catalogWarning ? <DenNotice tone="warning" message={provider.catalogWarning} className="mt-4" /> : null}
 
       <section className={`${CARD} mt-5`} aria-labelledby="gateway-key-heading">
-        <h2 id="gateway-key-heading" className={CARD_TITLE}>Key</h2>
-        <DenSegmented<"org" | "member"> className="mt-3" aria-label="Credential mode" value={credentialMode} options={[
+        <h2 id="gateway-key-heading" className={CARD_TITLE}>{custom ? "Endpoint and key" : "Key"}</h2>
+        {custom ? (
+          <>
+            <label className={LABEL}>
+              Name
+              <DenInput className="mt-1.5" data-testid="gateway-custom-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Our model server" />
+            </label>
+            <label className={LABEL}>
+              Endpoint URL
+              <span className="mt-1.5 flex items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <DenInput className={MONO_INPUT} data-testid="gateway-custom-endpoint" readOnly={Boolean(provider)} value={settings.upstreamBaseUrl ?? ""}
+                    onChange={(event) => { setSettings((current) => ({ ...current, upstreamBaseUrl: event.target.value })); setEndpointCheck(null); }} placeholder="https://llm.example.com/v1" />
+                </span>
+                {!provider ? <DenButton size="sm" variant="secondary" type="button" data-testid="gateway-custom-check" loading={endpointCheck?.state === "checking"} onClick={() => void checkEndpoint()}>Check endpoint</DenButton> : null}
+                {endpointCheck?.state === "ok" ? <Check className="h-4 w-4 text-emerald-600" aria-label="Endpoint answered" /> : null}
+              </span>
+            </label>
+            {endpointCheck?.state === "ok" ? <p className="mt-1.5 text-[12px] text-gray-500" data-testid="gateway-custom-check-result">{endpointCheck.found ? `Found ${endpointCheck.found} ${endpointCheck.found === 1 ? "model" : "models"}.` : "The endpoint answered but listed no models. Add model IDs below."}</p> : null}
+            {endpointCheck?.state === "failed" ? <p className="mt-1.5 text-[12px] text-red-700" role="alert" data-testid="gateway-custom-check-result">{endpointCheck.message}</p> : null}
+          </>
+        ) : null}
+        {custom ? null : <DenSegmented<"org" | "member"> className="mt-3" aria-label="Credential mode" value={credentialMode} options={[
           { value: "org", label: "Shared API key" },
           { value: "member", label: "Each member signs in", disabled: !memberSignInSupported },
-        ]} onChange={changeCredentialMode} />
-        {!memberSignInSupported ? <p className="mt-3 flex items-center gap-2 text-sm text-[var(--dls-text-secondary)]"><LockKeyhole aria-hidden="true" className="size-4" strokeWidth={1.5} />Google sign-in is unavailable for this provider.</p> : null}
+        ]} onChange={changeCredentialMode} />}
+        {!memberSignInSupported && !custom ? <p className="mt-3 flex items-center gap-2 text-sm text-[var(--dls-text-secondary)]"><LockKeyhole aria-hidden="true" className="size-4" strokeWidth={1.5} />Google sign-in is unavailable for this provider.</p> : null}
         {getRequiredSettingKeys(npm).map((key) => (
           <label key={key} className={LABEL}>
             {getSettingLabel(key)}
@@ -369,6 +432,28 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
 
       <section className={`${CARD} mt-3`} aria-labelledby="gateway-models-heading">
         <h2 id="gateway-models-heading" className={CARD_TITLE}>Models</h2>
+        {custom ? (
+          <div className="mt-3 rounded-[10px] bg-gray-50 p-2">
+            <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); addModelDraft(); }}>
+              <div className="min-w-0 flex-1"><DenInput className={`h-8 bg-white ${MONO_INPUT}`} data-testid="gateway-custom-model-input" value={modelDraft} onChange={(event) => setModelDraft(event.target.value)} placeholder="Model ID, e.g. llama-3.1-70b" aria-label="Model ID" /></div>
+              <DenButton size="sm" variant="secondary" type="submit" data-testid="gateway-custom-model-add" disabled={!modelDraft.trim()}>Add model</DenButton>
+            </form>
+            <ul className="mt-2 max-h-[320px] overflow-y-auto">
+              {models.map((model) => {
+                const checked = modelIds.includes(model.id);
+                return (
+                  <li key={model.id}>
+                    <label className="flex items-center gap-3 rounded-[8px] px-2 py-1.5 hover:bg-white">
+                      <input type="checkbox" checked={checked} onChange={() => setModelIds((current) => checked ? current.filter((id) => id !== model.id) : [...current, model.id])} className="h-4 w-4 accent-emerald-600" data-testid={`gateway-model-${model.id}`} />
+                      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-gray-900">{model.id}</span>
+                    </label>
+                  </li>
+                );
+              })}
+              {!models.length ? <li className="px-2 py-3 text-[12px] text-gray-500">Check the endpoint to list its models, or add a model ID.</li> : null}
+            </ul>
+          </div>
+        ) : <>
         <div className="mt-3 flex gap-2">
           <Radio testId="gateway-models-all" checked={allowAllModels} label={`All ${displayName} models`} onSelect={() => setAllowAllModels(true)} />
           <Radio testId="gateway-models-pick" checked={!allowAllModels} label="Only the ones I pick" onSelect={() => { setAllowAllModels(false); if (!provider) setModelIds([]); }} />
@@ -390,7 +475,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
                   <li key={model.id}>
                     <label className="flex items-center gap-3 rounded-[8px] px-2 py-1.5 hover:bg-white">
                       <input type="checkbox" checked={checked} onChange={() => setModelIds((current) => checked ? current.filter((id) => id !== model.id) : [...current, model.id])} className="h-4 w-4 accent-emerald-600" data-testid={`gateway-model-${model.id}`} />
-                      <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? null} className="h-5 w-5 rounded-[5px]" imageClassName="h-3 w-3" />
+                      <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={catalog?.doc ?? null} className="h-5 w-5 rounded-[5px]" imageClassName="h-3 w-3" />
                       <span className="min-w-0 flex-1 truncate text-[13px] text-gray-900">{model.name}</span>
                       <span className="text-[11px] text-gray-400">{displayName}</span>
                     </label>
@@ -401,6 +486,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
             </ul>
           </div>
         ) : null}
+        </>}
       </section>
 
       <DenStickyActionBar summary={<span>{allowAllModels ? `All ${displayName} models` : `${modelIds.length} models`} · {access.allMembers ? "everyone" : `${access.teamIds.length + access.memberIds.length} teams or people`}{provider?.updatedAt ? ` · saved ${formatProviderTimestamp(provider.updatedAt)}` : ""}</span>}>
@@ -423,7 +509,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         ) : (
           <Link href={getAiGatewayProvidersRoute(orgSlug)} className={buttonVariants({ variant: "secondary" })}>Cancel</Link>
         )}
-        <DenButton data-testid="gateway-provider-save" loading={saving} onClick={() => void save()}>{provider ? "Save changes" : `Add ${displayName}`}</DenButton>
+        <DenButton data-testid="gateway-provider-save" loading={saving} onClick={() => void save()}>{provider ? "Save changes" : custom ? "Add provider" : `Add ${displayName}`}</DenButton>
       </DenStickyActionBar>
     </div>
   );

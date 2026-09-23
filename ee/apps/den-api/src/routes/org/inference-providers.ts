@@ -14,7 +14,7 @@ import { env } from "../../env.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
-import { GatewayWriteError, enableGatewayGroupModels, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
+import { GatewayWriteError, enableGatewayGroupModels, gatewayCatalog, trustedGatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
@@ -203,7 +203,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   app.get("/v1/inference-providers/:inferenceProviderId/available-models", route("List available upstream models for inference gateway provider", "Read-only trusted models.dev catalog for this provider, including models outside its current policy. Does not enable models or modify saved configuration; unsupported Gateway SDK models are excluded. Requires owner/admin and Gateway management.", z.object({ models: z.array(z.object({ id: z.string(), name: z.string() })) }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["find new OpenAI models", "available models to add to provider"] }), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const provider = await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true)
-      const catalog = await getModelsDevProvider(provider.provider_id)
+      const catalog = await trustedGatewayCatalog(provider)
       if (!catalog || catalog.id !== provider.provider_id || catalog.npm !== readProviderConfigNpm(provider.provider_config)) throw new GatewayWriteError(409, "provider_catalog_changed")
       return c.json({ models: resolveGatewayCatalog(catalog, [], provider.provider_config).models.map((model) => ({ id: model.id, name: model.name })) })
     } catch (error) { return respond(c, error) }
@@ -215,7 +215,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const params = c.req.valid("param")
       const input = c.req.valid("json")
       const before = await getProvider(db, actor, params.inferenceProviderId, true)
-      const catalog = await getModelsDevProvider(before.provider_id)
+      const catalog = await trustedGatewayCatalog({ ...before, model_ids: [...before.model_ids, ...input.modelIds] })
       if (!catalog) throw new GatewayWriteError(409, "provider_catalog_unavailable")
       const result = await db.transaction(async (tx) => {
         const provider = await getProvider(tx, actor, params.inferenceProviderId, true, true)
@@ -295,7 +295,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
-      const catalog = await gatewayCatalog(input.providerId, input.modelIds)
+      const catalog = await gatewayCatalog(input.providerId, input.modelIds, { name: input.name, settings: input.settings ?? {} })
       validateGatewaySettings(catalog.config, input.settings ?? {})
       const now = new Date()
       const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
@@ -317,7 +317,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         throw new GatewayWriteError(409, "matrix_write_required", "Edit credential-sets and access-grants explicitly. Flat PATCH cannot replace the access matrix.")
       }
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
-      const trusted = await getModelsDevProvider(before.provider_id)
+      const trusted = await trustedGatewayCatalog({ ...before, model_ids: input.modelIds === undefined ? before.model_ids : [...new Set(input.modelIds)] })
       const provider = await db.transaction(async (tx) => {
         const existing = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true, true)
         if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
@@ -423,7 +423,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const actor = c.get("organizationContext")
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
-      const trusted = await getModelsDevProvider(before.provider_id)
+      const trusted = await trustedGatewayCatalog(before)
       const result = await db.transaction(async (tx) => {
         const provider = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true, true)
         if (!trusted || trusted.id !== provider.provider_id) throw new GatewayWriteError(400, "provider_requires_configuration")
@@ -442,7 +442,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const actor = c.get("organizationContext")
       const params = c.req.valid("param")
       const before = await getProvider(db, actor, params.inferenceProviderId, true)
-      const trusted = await getModelsDevProvider(before.provider_id)
+      const trusted = await trustedGatewayCatalog(before)
       const result = await db.transaction(async (tx) => {
         const provider = await getProvider(tx, actor, params.inferenceProviderId, true, true)
         if (!trusted || trusted.id !== provider.provider_id) throw new GatewayWriteError(400, "provider_requires_configuration")
