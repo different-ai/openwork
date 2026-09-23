@@ -3440,6 +3440,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         messageIdReplacements={pendingReconciliation.messageIdReplacements}
                         viewport={messageViewport}
                         messages={visibleMessages}
+                        sessionErrorHandled={hideGatewayError}
                         status={status}
                         activityStatus={effectiveActivityStatus}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
