@@ -711,8 +711,25 @@ export class EnginePool {
     for (const waiter of waiters) waiter.resolve({ action: "skipped", reason: "disposed" });
   }
 
+  /**
+   * Callers pass a copy of the workspace, so a request that waited behind a
+   * flip still names the previous generation's endpoint. Use the connection
+   * the config serves now.
+   */
+  private withCurrentConnection(workspace: WorkspaceInfo): WorkspaceInfo {
+    const live = this.config.workspaces.find((entry) => entry.id === workspace.id);
+    if (!live || live === workspace || live.workspaceType === "remote") return workspace;
+    return {
+      ...workspace,
+      baseUrl: live.baseUrl,
+      opencodeUsername: live.opencodeUsername,
+      opencodePassword: live.opencodePassword,
+    };
+  }
+
   private async runRollover(request: RolloverRequest): Promise<RolloverOutcome> {
-    const { workspace, reason, manual, awaitPostRefreshSync, forceStandby } = request;
+    const { reason, manual, awaitPostRefreshSync, forceStandby } = request;
+    const workspace = this.withCurrentConnection(request.workspace);
     // The standby reads config from disk at spawn, so make sure the file is
     // current before deciding anything.
     await this.hooks.writeRuntimeConfigFile(this.config).catch(() => undefined);
@@ -1319,7 +1336,7 @@ export class EnginePool {
   }
 
   private detachPostRefreshSync(workspace: WorkspaceInfo): void {
-    void this.hooks.postRefreshSync(this.config, workspace).catch((error) => {
+    void this.hooks.postRefreshSync(this.config, this.withCurrentConnection(workspace)).catch((error) => {
       this.hooks.logger?.log("error", "Engine post-refresh MCP sync failed.", {
         "workspace.id": workspace.id,
         "engine.post_refresh.failure": error instanceof Error ? error.message : String(error),
