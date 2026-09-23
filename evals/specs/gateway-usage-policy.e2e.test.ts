@@ -133,8 +133,11 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     await admin.notSee({ testId: "gateway-limit-new" });
     await admin.notSee({ role: "combobox", label: "Find a person" });
     await admin.notSee({ role: "button", label: "Refresh requests" });
-    await admin.see({ testId: "gateway-directory-person-row" }, { text: /Usage Member[\s\S]*\$1\.00 a month[\s\S]*Their own limit/, timeoutMs: 30_000 });
-    await admin.see({ testId: "gateway-directory-person-row" }, { text: /Usage Control[\s\S]*No limit/ });
+    const personRow = (memberId: string) => adminProbe.eventually(() => adminProbe.dom(`[data-testid="gateway-directory-person-row"][data-member-id="${memberId}"]`), {
+      within: 30_000, intervalMs: 250, label: `directory row for ${memberId}`, until: (value) => value.elements.length === 1,
+    });
+    expect((await personRow(world.memberId)).elements[0]?.text).toMatch(/Usage Member[\s\S]*\$1\.00 a month[\s\S]*Their own limit/);
+    expect((await personRow(world.controlId)).elements[0]?.text).toMatch(/Usage Control[\s\S]*No limit/);
     await admin.notSee({ role: "button", label: `Unassign ${policyName} from Usage Member` });
     expect((await adminProbe.dom('[data-testid="gateway-directory-person-row"]')).elements).toHaveLength(3);
     expect((await adminProbe.dom('[data-testid="gateway-directory-everyone"] [aria-label="Can use Usage journey provider"]')).elements).toHaveLength(1);
