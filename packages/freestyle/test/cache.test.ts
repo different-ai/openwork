@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Freestyle } from "freestyle";
-import { compiledFingerprint, dependencyFingerprint, ensureLayer, sourceTree, startBuildUnit, type BuildStage } from "../src/cache.ts";
+import { compiledFingerprint, runningFingerprint, dependencyFingerprint, ensureLayer, sourceTree, startBuildUnit, type BuildStage } from "../src/cache.ts";
 
 const sha = "a".repeat(40);
 const entry = (path: string, hash = sha) => ({ path, sha: hash, type: "blob" });
@@ -93,7 +93,8 @@ test("an interrupted build launch is retried through a guarded unit, and bounded
   let alwaysInterrupted = false;
   const api = new Freestyle({ apiKey: "synthetic", fetch: async (_input, init) => {
     calls++;
-    const body = JSON.parse(String(init?.body));
+    const body: unknown = JSON.parse(String(init?.body));
+    assert.ok(body && typeof body === "object" && "command" in body && typeof body.command === "string");
     assert.match(body.command, /test -f .*world.ready/);
     assert.match(body.command, /systemctl is-active --quiet openwork-world.service/);
     return Response.json({ statusCode: alwaysInterrupted || calls === 1 ? null : 0, stdout: "" });
@@ -104,4 +105,15 @@ test("an interrupted build launch is retried through a guarded unit, and bounded
   alwaysInterrupted = true;
   await assert.rejects(startBuildUnit(api.vms.ref("builder"), "world"), /could not start after resume/);
   assert.equal(calls, 3);
+});
+
+
+test("running templates only survive frontend edits; backend, seed and controller changes invalidate", () => {
+  const source = ["apps/app/src/main.tsx", "ee/apps/den-web/components/nav.tsx", "ee/apps/den-web/app/api/den/route.ts", "apps/server/src/cli.ts", "ee/apps/den-api/src/auth.ts", "ee/packages/den-db/src/schema.ts", "worlds/acme-web.ts", "evals/packages/env/src/den.ts", "packages/freestyle/src/desktop.mjs", "pnpm-lock.yaml"].map((path) => entry(path));
+  const before = runningFingerprint(source);
+  for (const [index, item] of source.entries()) {
+    const changed = runningFingerprint(source.map((value) => value === item ? { ...value, sha: "b".repeat(40) } : value));
+    if (index < 2) assert.equal(changed, before, item.path);
+    else assert.notEqual(changed, before, item.path);
+  }
 });

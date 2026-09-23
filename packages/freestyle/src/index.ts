@@ -23,7 +23,7 @@ export function previewWorld(value: unknown): PreviewWorld {
 
 export function snapshotSlug(sha: string, world: PreviewWorld = "app-web"): string {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
-  return `openwork-${previewWorld(world)}-v5-${sha}`;
+  return `openwork-${previewWorld(world)}-v6-${sha}`;
 }
 
 export function isMissing(error: unknown): boolean {

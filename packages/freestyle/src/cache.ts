@@ -102,7 +102,9 @@ export async function ensureLayer(input: {
       input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: false });
       return result.snapshot;
     } finally {
+      const cleanupStart = performance.now();
       await created.vm.delete().catch(() => undefined); // TTL bounds failed cleanup.
+      input.observe({ stage: `${input.stage}-cleanup`, durationMs: Math.round(performance.now() - cleanupStart) });
     }
   }
   throw new Error(`${input.stage} cache build timed out`);
@@ -130,4 +132,12 @@ export async function startBuildUnit(vm: Vm, stage: string, diagnostic?: (stage:
     await delay(250);
   }
   throw new Error(`Snapshot ${stage} unit could not start after resume`);
+}
+
+
+/** These files run in development servers that reload them after checkout. */
+export function runningFingerprint(entries: SourceEntry[]): string {
+  const refreshed = /^(apps\/app\/(src|public)\/|ee\/apps\/den-web\/(components|public|styles)\/|\.github\/|docs\/)/;
+  return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && !refreshed.test(entry.path))
+    .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha }) => [path, sha])));
 }

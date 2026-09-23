@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Vm } from "freestyle";
 import { client, execChecked, findSnapshot, snapshotSlug, type PreviewWorld } from "./index.ts";
-import { compiledFingerprint, dependencyFingerprint, dependencyInput, digest, ensureLayer, sourceTree, startBuildUnit, type ObserveBuild } from "./cache.ts";
+import { compiledFingerprint, runningFingerprint, dependencyFingerprint, dependencyInput, digest, ensureLayer, sourceTree, startBuildUnit, type ObserveBuild } from "./cache.ts";
 import { checkoutRecipe, compiledRecipe, dependencyRecipe, toolsRecipe } from "./build-recipes.ts";
 
 export interface BuildOptions {
@@ -26,12 +26,10 @@ touch ${root}.ready
   await startBuildUnit(vm, stage, options.diagnostic);
   const deadline = Date.now() + 11 * 60_000;
   while (Date.now() < deadline) {
-    const probe = await vm.exec({ command: `if test -f ${root}.failed; then echo failed; elif test -f ${root}.ready; then echo ready; else echo building; fi`, timeoutMs: 10_000, linuxUser: "root" });
-    // Guest exec can be interrupted while a cloned VM finishes resuming. This
-    // read-only probe is safe to repeat; it never launches another build.
-    if (probe.statusCode === null) { await delay(500); continue; }
-    if (probe.statusCode !== 0) throw new Error(`Snapshot ${stage} status probe failed (${probe.statusCode})`);
-    const state = (probe.stdout ?? "").trim();
+    // Poll files directly: spawning a shell for every check can be interrupted
+    // while a restored guest settles, even when the build itself is healthy.
+    const [failed, ready] = await Promise.all([vm.fs.exists(`${root}.failed`), vm.fs.exists(`${root}.ready`)]);
+    const state = failed ? "failed" : ready ? "ready" : "building";
     if (state === "ready") return;
     if (state === "failed") {
       if (options.diagnostic) {
@@ -85,16 +83,16 @@ ${dependencies}`, options);
     parent: async () => deps.id,
     prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
   }, api);
-  return ensureLayer({ slug, stage: "world", observe, ttlSeconds: 7 * 86400,
+  const controllerFiles = ["builder.ts", "cache.ts", "build-recipes.ts", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs"];
+  const controller = (await Promise.all(controllerFiles.map((name) => readFile(new URL(`./${name}`, import.meta.url), "utf8")))).join("\n");
+  const runningSlug = `ow-warm-v1-${world}-${digest(compiledSlug + controller + runningFingerprint(entries))}`;
+  const running = await ensureLayer({ slug: runningSlug, stage: "running-template", observe, ttlSeconds: 86400,
     parent: async () => compiled.id,
     prepare: async (vm) => {
-      // ACME includes two development frontends and a real Electron window.
-      // The base VM's 8 GiB thrashes when their compilers run together.
-      if (world === "acme-web") await vm.resize({ cpu: 8, memory: 16384 });
       log(`Preparing ${world} at ${sha} from cached dependencies`);
       for (const [target, source] of [
         ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
-        ["health.mjs", "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
+        ["health.mjs", "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"], ["refresh.mjs", "refresh.mjs"],
       ]) {
         await vm.fs.writeTextFile(`/opt/openwork-preview/${target}`, await readFile(new URL(`./${source}`, import.meta.url), "utf8"));
       }
@@ -132,6 +130,7 @@ ${world === "app-web" ? "curl --retry 20 --retry-delay 1 --retry-all-errors -fsS
 done
 test -f /opt/openwork-preview/ready-world`}
 node /opt/openwork-preview/health.mjs
+${world === "app-web" ? `node /opt/openwork-preview/refresh.mjs ${sha}` : ""}
 systemctl enable --now openwork-preview-gateway
 mark boot-and-verify
 `, options);
@@ -146,4 +145,17 @@ mark boot-and-verify
       }
     },
   }, api);
+  return ensureLayer({ slug, stage: "world", observe, ttlSeconds: 7 * 86400,
+    parent: async () => running.id,
+    prepare: async (vm) => {
+      log(`Refreshing ${world} at ${sha} from an isolated running template`);
+      const start = performance.now();
+      // Keep the isolated database and running processes. Only tracked frontend
+      // source (or inert docs/CI files) may differ from this immutable template.
+      await runScript(vm, "refresh", `${checkoutRecipe(sha).replace("git clean -ffdx -e node_modules/", "")}
+node /opt/openwork-preview/refresh.mjs ${sha}`, options);
+      observe({ stage: "source-refresh", durationMs: Math.round(performance.now() - start) });
+    },
+  }, api);
+
 }
