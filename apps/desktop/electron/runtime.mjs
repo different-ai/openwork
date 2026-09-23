@@ -311,6 +311,25 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
   return /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
 }
 
+/**
+ * Sidecars from this bundle that no other live instance owns. Another instance
+ * of the same bundle (a second profile, or concurrent packaged smoke checks)
+ * spawns its engine as a direct child of its own main process; killing that
+ * engine fails its startup with "OpenWork server did not finish starting".
+ * `ps` rows are `{ pid, ppid, command }`.
+ */
+export function orphanedPackagedSidecarPids(rows, { sidecarDirs = [], appExecutables = [], selfPid } = {}) {
+  const executables = appExecutables.map((value) => String(value ?? "").trim()).filter(Boolean);
+  const isAppInstance = (command) =>
+    executables.some((executable) => command === executable || command.startsWith(`${executable} `));
+  const liveInstances = new Set(
+    rows.filter((row) => row.pid !== selfPid && isAppInstance(row.command)).map((row) => row.pid),
+  );
+  return rows
+    .filter((row) => commandMatchesPackagedSidecar(row.command, sidecarDirs) && !liveInstances.has(row.ppid))
+    .map((row) => row.pid);
+}
+
 export function embeddedServerImportUrl(embeddedPath) {
   const url = pathToFileURL(embeddedPath);
   try {
@@ -1788,10 +1807,6 @@ export function createRuntimeManager({
     return `curl -fsSL https://opencode.ai/install | bash -s -- --version ${version} --no-modify-path`;
   }
 
-  function processMatchesSidecar(command) {
-    return commandMatchesPackagedSidecar(command, sidecarDirs);
-  }
-
   function killProcessId(pid, signal = "SIGTERM") {
     if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return;
     try {
@@ -1807,16 +1822,18 @@ export function createRuntimeManager({
     // Safety net: an unclean Electron quit can orphan sidecars. Packaged builds
     // should always own a fresh runtime per app launch, so remove any leftover
     // sidecars from this app bundle before choosing ports for the new runtime.
-    const result = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
-    const rows = String(result.stdout ?? "").split(/\r?\n/);
-    const pids = [];
-    for (const row of rows) {
-      const match = row.match(/^\s*(\d+)\s+(.+)$/);
+    const result = spawnSync("ps", ["-Ao", "pid=,ppid=,command="], { encoding: "utf8" });
+    const rows = [];
+    for (const row of String(result.stdout ?? "").split(/\r?\n/)) {
+      const match = row.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
       if (!match) continue;
-      const pid = Number(match[1]);
-      const command = match[2] ?? "";
-      if (processMatchesSidecar(command)) pids.push(pid);
+      rows.push({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] ?? "" });
     }
+    const pids = orphanedPackagedSidecarPids(rows, {
+      sidecarDirs,
+      appExecutables: [process.execPath, process.argv[0]],
+      selfPid: process.pid,
+    });
     for (const pid of pids) killProcessId(pid, "SIGTERM");
     if (pids.length > 0) {
       await new Promise((resolve) => setTimeout(resolve, 500));
