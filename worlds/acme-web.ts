@@ -116,6 +116,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     await hold({ name: ACME_WEB_NAME, outputs: { ...preview.outputs, webUrl: secret(preview.url), expires: preview.expiresAt, snapshotId: preview.snapshotId } });
     return;
   }
+  const place = resolvePlace();
+  if (place.kind === "daytona") {
+    const { bootAcmeWebOnDaytona } = await import("./lib/acme-web-daytona.ts");
+    await hold({ name: ACME_WEB_NAME, outputs: await bootAcmeWebOnDaytona(stack, place) });
+    return;
+  }
   const world = await bootAcmeWeb(stack);
   await probeAcmeGateway(world);
   await hold({

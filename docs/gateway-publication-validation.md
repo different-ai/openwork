@@ -1,5 +1,12 @@
 # Gateway publication validation
 
+> Superseded organization opt-in: the `gatewayDashboard` flag and platform-admin
+> grant described below are retired. Gateway is GA for every organization's admins
+> when configured; the old API input is a deprecated no-op and responses return
+> constant `true` for compatibility. Stored `false` is ignored; no migration or
+> backfill is required. Deployment configuration and authorization still apply.
+> The original evidence below is preserved, not current enablement guidance.
+
 Date: 2026-09-10. PR #4358. These are pre-publication checks on the combined
 working tree based on `dc297aefe4be74c95ab42ea29f31f2c75e03989a`, not immutable
 final-head receipts. Final-head results belong in the PR verification record.

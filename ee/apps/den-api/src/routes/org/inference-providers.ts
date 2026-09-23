@@ -12,7 +12,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
-import { GatewayWriteError, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
+import { GatewayWriteError, enableGatewayGroupModels, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, GOOGLE_CLOUD_PLATFORM_SCOPE, revokeGoogleToken } from "../../llm/inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
@@ -33,6 +33,9 @@ const setParams = paramsSchema.extend(idParamSchema("credentialSetId", "gatewayC
 const grantParams = paramsSchema.extend(idParamSchema("grantId", "inferenceProviderAccess").shape)
 const nameSchema = z.string().trim().min(1).max(255)
 const modelIdsSchema = z.array(nameSchema).max(500)
+const enableModelsSchema = z.object({ modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelIds: modelIdsSchema.min(1) }).strict()
+const modelManagementGroupSchema = z.object({ id: denTypeIdSchema("gatewayModelGroup"), name: z.string(), status: z.enum(GATEWAY_PROVIDER_STATUSES), modelIds: modelIdsSchema })
+const modelManagementProviderSchema = z.object({ id: denTypeIdSchema("inferenceProvider"), name: z.string(), providerId: z.string(), status: z.enum(GATEWAY_PROVIDER_STATUSES), modelIds: modelIdsSchema, modelGroups: z.array(modelManagementGroupSchema) })
 const credentialSchema = z.object({ kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), secret: z.string().trim().min(1).max(65535) }).strict()
 const apiKeysSchema = z.record(nameSchema, z.string().trim().max(65535))
 const oauthFields = { oauthClientId: z.string().trim().max(255).optional(), oauthClientSecret: z.string().trim().max(4096).optional() }
@@ -70,8 +73,8 @@ const detailsResponse = z.object({ inferenceProvider: detailsSchema })
 const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ apiKey: z.string(), apiKeys: z.record(z.string(), z.string()) }) })
 const gatewayErrorSchema = z.object({ error: z.string(), message: z.string().optional() })
 
-function route(summary: string, description: string, schema?: z.ZodType, status: 200 | 201 | 204 = 200, secret = false, metadata: Pick<DescribeRouteOptions, "security" | "responses"> = {}) {
-  const options: DescribeRouteOptions & { "x-mcp"?: false } = {
+function route(summary: string, description: string, schema?: z.ZodType, status: 200 | 201 | 204 = 200, secret = false, metadata: Pick<DescribeRouteOptions, "security" | "responses"> & { "x-mcp"?: boolean; "x-mcp-search-aliases"?: string[] } = {}) {
+  const options: DescribeRouteOptions & { "x-mcp"?: boolean; "x-mcp-search-aliases"?: string[] } = {
     ...metadata,
     tags: ["Inference Providers"], summary, description,
     responses: { [status]: schema ? jsonResponse(summary, schema) : emptyResponse(summary), 400: jsonResponse("Invalid request or provider configuration.", z.union([invalidRequestSchema, gatewayErrorSchema])), 401: jsonResponse("Sign-in required.", unauthorizedSchema), 403: jsonResponse("Access denied or Gateway management disabled.", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])), 404: jsonResponse("Resource not found.", notFoundSchema), 409: jsonResponse("Selection or resource conflict.", gatewayErrorSchema), ...metadata.responses },
@@ -175,6 +178,50 @@ async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMember
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgGatewayUsageRoutes(app)
   registerOrgGatewayUsageLimitRoutes(app)
+  // Agent-facing management reads never refresh or change the catalog. The existing provider summaries do.
+  app.get("/v1/inference-providers/model-management", route("List inference gateway providers and model groups for model enablement", "Read-only organization Gateway provider and group selection. Returns saved upstream model IDs, not picker aliases or credentials. An empty provider modelIds policy means all supported catalog models. Requires owner/admin and Gateway management.", z.object({ inferenceProviders: z.array(modelManagementProviderSchema) }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["find OpenAI provider model groups", "manage provider models", "choose model group to add models"] }), orgMemberRoute(), managementRead, async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      await liveMember(db, actor, false, true)
+      const providers = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id))
+      const inferenceProviders = []
+      for (const provider of providers) {
+        const groups = await db.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
+        const models = await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
+        const links = groups.length ? await db.select().from(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id))) : []
+        inferenceProviders.push({ id: provider.id, name: provider.name, providerId: provider.provider_id, status: provider.status, modelIds: provider.model_ids,
+          modelGroups: groups.map((group) => ({ id: group.id, name: group.name, status: group.status,
+            modelIds: links.filter((link) => link.model_group_id === group.id).flatMap((link) => models.find((model) => model.id === link.gateway_provider_model_id)?.model_id ?? []) })) })
+      }
+      return c.json({ inferenceProviders })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.get("/v1/inference-providers/:inferenceProviderId/available-models", route("List available upstream models for inference gateway provider", "Read-only trusted models.dev catalog for this provider, including models outside its current policy. Does not enable models or modify saved configuration; unsupported Gateway SDK models are excluded. Requires owner/admin and Gateway management.", z.object({ models: z.array(z.object({ id: z.string(), name: z.string() })) }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["find new OpenAI models", "available models to add to provider"] }), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+    try {
+      const provider = await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true)
+      const catalog = await getModelsDevProvider(provider.provider_id)
+      if (!catalog || catalog.id !== provider.provider_id || catalog.npm !== readProviderConfigNpm(provider.provider_config)) throw new GatewayWriteError(409, "provider_catalog_changed")
+      return c.json({ models: resolveGatewayCatalog(catalog, [], provider.provider_config).models.map((model) => ({ id: model.id, name: model.name })) })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/:inferenceProviderId/enable-models", route("Add models to inference gateway provider group", "Add upstream catalog model IDs to one explicitly selected existing model group without removing other models or changing access grants. Empty provider modelIds policy stays unrestricted; nonempty policy widens. Repeated calls are idempotent. Requires owner/admin and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProviderId: denTypeIdSchema("inferenceProvider"), modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelIds: modelIdsSchema, groupModelIds: modelIdsSchema, addedModelIds: modelIdsSchema }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["add model to OpenAI provider", "enable models in provider", "add Luna and Sol to model group"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(enableModelsSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const params = c.req.valid("param")
+      const input = c.req.valid("json")
+      const before = await getProvider(db, actor, params.inferenceProviderId, true)
+      const catalog = await getModelsDevProvider(before.provider_id)
+      if (!catalog) throw new GatewayWriteError(409, "provider_catalog_unavailable")
+      const result = await db.transaction(async (tx) => {
+        const provider = await getProvider(tx, actor, params.inferenceProviderId, true, true)
+        return enableGatewayGroupModels(tx, provider, catalog, normalizeDenTypeId("gatewayModelGroup", input.modelGroupId), input.modelIds)
+      })
+      return c.json(result)
+    } catch (error) { return respond(c, error) }
+  })
+
   app.get("/v1/inference-providers", route("List organization inference gateway providers", "Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires owner/admin permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned.", z.object({ inferenceProviders: z.array(z.union([detailsSchema, summarySchema])) })), orgMemberRoute(), queryValidator(z.object({ scope: z.enum(["usable", "manageable"]).default("usable") })), async (c) => {
     try {
     const actor = c.get("organizationContext")

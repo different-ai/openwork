@@ -89,6 +89,7 @@ async function pageWinners(tx: Transaction, scope: Scope, memberIds: Scope["memb
       and(
         eq(Assignment.organizationId, scope.organizationId),
         or(
+          eq(Assignment.organization, true),
           inArray(Assignment.memberId, memberIds),
           teamIds.length > 0 ? inArray(Assignment.teamId, teamIds) : undefined,
         ),
@@ -103,6 +104,7 @@ async function pageWinners(tx: Transaction, scope: Scope, memberIds: Scope["memb
     const candidates = new Map<string, GatewayUsageLimitPolicy>()
     for (const { assignment, policy, limit } of rows) {
       if (
+        assignment.organization !== true &&
         assignment.memberId !== memberId &&
         (assignment.teamId === null || !teams.has(assignment.teamId))
       )

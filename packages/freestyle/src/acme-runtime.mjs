@@ -18,7 +18,7 @@ try {
   outputs.orgId = { value: world.model.orgId, group: "Org" };
   outputs.verifiedReply = { value: proof.reply, group: "Verification" };
   // Compile the browser entry points while warming, including the gateway UI.
-  for (const path of ["/", "/dashboard", "/dashboard/gateway-providers"]) {
+  for (const path of ["/", "/dashboard", "/dashboard/ai-gateway"]) {
     const response = await fetch(`${den.ref.webUrl}${path}`);
     if (!response.ok) throw new Error(`Den warmup failed: ${path} (${response.status})`);
     await response.text();

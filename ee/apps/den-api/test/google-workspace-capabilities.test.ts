@@ -1895,6 +1895,21 @@ test("drive text retains the existing retrieval limit before MCP serialization",
   expect(file.truncated).toBe(true)
 })
 
+test("Code Mode scripts read a Drive doc past the model-visible limit", async () => {
+  driveDocumentText = `${"x".repeat(30_000)}END_OF_DOCUMENT`
+  const search = await mcpToolCall("search_capabilities", { query: "read google drive file content", limit: 10 })
+  const matches = expectRecord(search.structuredContent, "search result").matches
+  if (!Array.isArray(matches)) throw new Error("Expected capability matches")
+  const read = expectRecord(matches.find((match) => isRecord(match)
+    && match.name === "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFile"), "drive read capability")
+  const scriptPath = expectString(read.scriptPath, "drive read script path")
+  const script = await mcpToolCall("execute_capability_script", {
+    code: `const r = await ${scriptPath}({ path: { fileId: "doc_1" } }); return { length: r.file.content.length, tail: r.file.content.slice(-15) };`,
+  })
+  expect(script.isError).not.toBe(true)
+  expect(JSON.parse(mcpText(script))).toEqual({ length: 30_015, tail: "END_OF_DOCUMENT" })
+})
+
 test("direct Drive upload preserves exact multipart bytes and returns the user-facing link", async () => {
   await seedConnectedAccount([DRIVE_FILE_SCOPE])
   resetFakeGoogle()
@@ -2065,7 +2080,7 @@ test("existing MCP search and execute path enforces Drive scope and bounds model
     path: { fileId: "doc_1" },
   })
   const modelText = mcpText(textResult)
-  expect(modelText).toContain("[truncated]")
+  expect(modelText).toContain("of 25000 characters. Call this capability from execute_capability_script")
   expect(modelText).not.toContain("d".repeat(20_001))
   expect(Buffer.byteLength(modelText, "utf8")).toBeLessThan(22_000)
 
@@ -2076,7 +2091,7 @@ test("existing MCP search and execute path enforces Drive scope and bounds model
     path: { messageId: "msg_1" },
   })
   const gmailModelText = mcpText(gmailTextResult)
-  expect(gmailModelText).toContain("[truncated]")
+  expect(gmailModelText).toContain("of 25000 characters. Call this capability from execute_capability_script")
   expect(gmailModelText).not.toContain("g".repeat(20_001))
   expect(Buffer.byteLength(gmailModelText, "utf8")).toBeLessThan(22_000)
 

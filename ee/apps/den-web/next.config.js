@@ -100,4 +100,12 @@ if (allowedDevOrigins.length > 0) {
   nextConfig.allowedDevOrigins = allowedDevOrigins;
 }
 
+// Next sizes its build workers from the host CPU count, which inside a cgroup
+// limited sandbox (Daytona: 4 CPUs, 8 GB) spawns ~95 workers and gets OOM
+// killed while collecting page data. Sandboxes opt in to a fixed cap.
+const buildCpus = Number.parseInt(process.env.DEN_WEB_BUILD_CPUS ?? "", 10);
+if (Number.isInteger(buildCpus) && buildCpus > 0) {
+  nextConfig.experimental = { ...nextConfig.experimental, cpus: buildCpus };
+}
+
 module.exports = withObservabilityNextConfig(nextConfig);

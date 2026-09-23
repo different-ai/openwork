@@ -93,3 +93,21 @@ has its own access link; API clients can use the preview cookie plus the service
 bearer token. MySQL and Redis addresses are VM-local, not publicly reachable.
 Freestyle account credentials never appear in world outputs. All connections expire
 with the VM.
+
+## Daytona
+
+```sh
+OPENWORK_EVAL_REF=$(git rev-parse HEAD) pnpm world up acme-web --place daytona --stage gateway-demo --detach --timeout 1500000
+pnpm world outputs acme-web --stage gateway-demo --reveal
+```
+
+Push the commit first; the sandboxes build that ref. Den provisioning starts
+the real `ee/apps/gateway` beside Den when Den env sets `GATEWAY_ENABLED=true`,
+and the deterministic upstream (`evals/packages/labs/src/acme-upstream.mjs`)
+is uploaded into the same sandbox so gateway → upstream stays on loopback.
+Startup completes only after one message through the public gateway URL
+returns the fixed reply. The OpenWork web runtime runs on its own private
+sandbox proxying this Den, and the launcher signs it into Den as alex so every
+AI Gateway provider, including ones added later in Den, reaches the model
+picker after a reload. `aiGateway` links to the AI Providers tab.
+

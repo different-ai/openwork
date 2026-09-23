@@ -76,6 +76,23 @@ describe("agent-configurable org connections policy", () => {
     expect(allowed("getV1McpConnectionsByConnectionIdTools")).toBe(true)
   })
 
+  test("Gateway model enablement is discoverable without exposing credential or destructive routes", () => {
+    const path = "/v1/inference-providers/{inferenceProviderId}/enable-models"
+    const selectionPath = "/v1/inference-providers/model-management"
+    const availablePath = "/v1/inference-providers/{inferenceProviderId}/available-models"
+    const catalog = buildMcpCatalog(document)
+    for (const candidate of [path, selectionPath, availablePath]) {
+      expect(catalog.some((operation) => operation.path === candidate)).toBe(true)
+    }
+    expect(searchCapabilities(catalog, "add model to OpenAI provider", 5)[0]).toMatchObject({ method: "POST", path, hasBody: true,
+      bodySchema: expect.objectContaining({ required: expect.arrayContaining(["modelGroupId", "modelIds"]) }) })
+    expect(catalog.filter((operation) => operation.path.startsWith("/v1/inference-providers"))
+      .map((operation) => `${operation.method} ${operation.path}`).sort()).toEqual([
+        `GET ${availablePath}`, `GET ${selectionPath}`, `POST ${path}`,
+      ].sort())
+    expect(requiredScopeForMethod("POST")).toBe("mcp:write")
+  })
+
   test("manual MCP tool execution stays outside the agent API catalog", () => {
     const operation = document.paths["/v1/mcp-connections/{connectionId}/tools/call"]?.post
     expect(operation).toBeDefined()

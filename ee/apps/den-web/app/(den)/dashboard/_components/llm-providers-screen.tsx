@@ -18,41 +18,93 @@ import {
   getNewLlmProviderRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import {
-  createDesktopPolicy,
-  updateDesktopPolicy,
-  useOrgDesktopPolicies,
-  type DenDesktopPolicy,
-  type DenDesktopPolicyRole,
-} from "./desktop-policy-data";
+import { useOrgDesktopPolicies } from "./desktop-policy-data";
+import { readModelAccessState, saveModelAccess, type ModelAccessMode } from "./model-access-policy";
 import {
   formatProviderTimestamp,
   getProviderDocUrl,
   getProviderIconSlug,
   useOrgLlmProviders,
+  type DenLlmProvider,
 } from "./llm-provider-data";
-
-type ModelAccessMode = "open" | "managed";
-
-const ADMIN_EXCEPTION_POLICY_NAME = "Admins may add providers";
-const ADMIN_EXCEPTION_ROLES: DenDesktopPolicyRole[] = ["owner", "admin"];
 
 function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-function getPolicyMemberIds(policy: DenDesktopPolicy) {
-  return policy.assignments.flatMap((assignment) => (assignment.orgMemberId ? [assignment.orgMemberId] : []));
+function LlmProviderList({ providers, orgSlug }: { providers: DenLlmProvider[]; orgSlug: string | null }) {
+  return (
+    <DenList>
+      {providers.map((provider) => {
+        const members = provider.access.members.length;
+        const teams = provider.access.teams.length;
+        const accessText = provider.access.allMembers
+          ? "Everyone in the org"
+          : `${members} ${members === 1 ? "person" : "people"} · ${plural(teams, "team")}`;
+        return (
+          <DenListRow
+            key={provider.id}
+            href={getLlmProviderRoute(orgSlug, provider.id)}
+            dataAttributes={{ "data-testid": "llm-provider-card" }}
+            leading={
+              <DenBrandMark
+                name={provider.name}
+                simpleIconSlug={getProviderIconSlug(provider.providerId)}
+                serviceUrl={getProviderDocUrl(provider.providerConfig)}
+              />
+            }
+            title={provider.name}
+            chips={
+              <>
+                <DenChip>{plural(provider.models.length, "model")}</DenChip>
+                {!provider.hasApiKey ? (
+                  <DenChip tone="warning" icon={KeyRound}>
+                    Credential missing
+                  </DenChip>
+                ) : null}
+              </>
+            }
+            meta={`${provider.providerId} · ${accessText} · Updated ${formatProviderTimestamp(provider.updatedAt)}`}
+            action={<ChevronRight aria-hidden className="h-4 w-4 text-gray-400" />}
+          />
+        );
+      })}
+    </DenList>
+  );
 }
 
-function getPolicyTeamIds(policy: DenDesktopPolicy) {
-  return policy.assignments.flatMap((assignment) => (assignment.teamId ? [assignment.teamId] : []));
-}
+export function LegacyProvidersSection({ orgId, orgSlug }: { orgId: string; orgSlug: string | null }) {
+  const { llmProviders, busy, error, reloadProviders } = useOrgLlmProviders(orgId);
+  const legacyProviders = llmProviders.filter((provider) => provider.source !== "openwork" && provider.organizationId === orgId);
 
-function getPolicyRoles(policy: DenDesktopPolicy) {
-  return policy.roles.length > 0
-    ? policy.roles
-    : policy.assignments.flatMap((assignment) => (assignment.role ? [assignment.role] : []));
+  return (
+    <section aria-label="Legacy Providers" data-testid="gateway-legacy-providers" className="mt-10 grid gap-4">
+      <DenSectionHeader
+        title="Legacy Providers"
+        description="Bring Your Own Key (Legacy System) providers send the API key directly to users’ desktop applications. Usage tracking and usage limit policies are not available with this feature. If you want usage tracking and usage limits, use the provider section above."
+      />
+      <div>
+        <Link
+          href={getNewLlmProviderRoute(orgSlug)}
+          data-testid="legacy-provider-create"
+          className={buttonVariants({ variant: "secondary" })}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          Add legacy provider
+        </Link>
+      </div>
+      {busy ? (
+        <p role="status" className="text-sm text-gray-500">Loading legacy providers...</p>
+      ) : error ? (
+        <div className="flex flex-col items-start gap-4">
+          <DenNotice tone="error" message={`Could not load legacy providers: ${error}`} />
+          <DenButton variant="secondary" onClick={() => void reloadProviders()}>Retry legacy providers</DenButton>
+        </div>
+      ) : legacyProviders.length > 0 ? (
+        <LlmProviderList providers={legacyProviders} orgSlug={orgSlug} />
+      ) : null}
+    </section>
+  );
 }
 
 export function LlmProvidersScreen() {
@@ -72,22 +124,14 @@ export function LlmProvidersScreen() {
   const [accessError, setAccessError] = useState<string | null>(null);
   const [accessSaved, setAccessSaved] = useState<string | null>(null);
 
-  const defaultPolicy = useMemo(
-    () => desktopPolicies.find((policy) => policy.isDefault) ?? null,
-    [desktopPolicies],
-  );
-
-  const adminExceptionPolicies = useMemo(
-    () => desktopPolicies.filter((policy) => !policy.isDefault && policy.policyName === ADMIN_EXCEPTION_POLICY_NAME),
-    [desktopPolicies],
-  );
+  const accessState = useMemo(() => readModelAccessState(desktopPolicies), [desktopPolicies]);
+  const defaultPolicy = accessState.defaultPolicy;
 
   useEffect(() => {
-    const defaultAllowsCustomProviders = defaultPolicy?.policy.allowCustomProviders !== false;
-    setAccessMode(defaultAllowsCustomProviders ? "open" : "managed");
-    setAdminExceptionChecked(defaultAllowsCustomProviders ? true : adminExceptionPolicies.some((policy) => policy.isEnabled));
-    setZenAllowed(defaultPolicy?.policy.allowZenModel !== false);
-  }, [defaultPolicy, adminExceptionPolicies]);
+    setAccessMode(accessState.mode);
+    setAdminExceptionChecked(accessState.adminException);
+    setZenAllowed(accessState.zenAllowed);
+  }, [accessState]);
 
   const customProviders = useMemo(
     () => llmProviders.filter((provider) => provider.source !== "openwork"),
@@ -121,100 +165,13 @@ export function LlmProvidersScreen() {
       : "Members may add their own providers. No org models are defined yet.";
   const accessFormDisabled = policiesBusy || accessSaving || !defaultPolicy;
 
-  const updateDefaultPolicy = async (allowCustomProviders: boolean, allowZenModel: boolean) => {
-    if (!defaultPolicy) throw new Error("Default desktop policy not found.");
-    await updateDesktopPolicy(defaultPolicy.id, {
-      policyName: defaultPolicy.policyName,
-      policy: {
-        ...defaultPolicy.policy,
-        allowCustomProviders,
-        allowZenModel,
-      },
-      priority: 0,
-      isEnabled: true,
-      memberIds: [],
-      teamIds: [],
-      roles: [],
-    });
-  };
-
-  const updateAdminExceptionPolicy = async (policy: DenDesktopPolicy, isEnabled: boolean) => {
-    await updateDesktopPolicy(policy.id, {
-      policyName: ADMIN_EXCEPTION_POLICY_NAME,
-      policy: {
-        ...policy.policy,
-        allowCustomProviders: true,
-      },
-      priority: policy.priority,
-      isEnabled,
-      memberIds: [],
-      teamIds: [],
-      roles: ADMIN_EXCEPTION_ROLES,
-    });
-  };
-
-  const disablePolicy = async (policy: DenDesktopPolicy) => {
-    if (!policy.isEnabled) return;
-    await updateDesktopPolicy(policy.id, {
-      policyName: policy.policyName,
-      policy: policy.policy,
-      priority: policy.priority,
-      isEnabled: false,
-      memberIds: getPolicyMemberIds(policy),
-      teamIds: getPolicyTeamIds(policy),
-      roles: getPolicyRoles(policy),
-    });
-  };
-
-  const ensureAdminExceptionPolicy = async () => {
-    const primaryPolicy = adminExceptionPolicies[0] ?? null;
-    if (primaryPolicy) {
-      await updateAdminExceptionPolicy(primaryPolicy, true);
-    } else {
-      await createDesktopPolicy({
-        policyName: ADMIN_EXCEPTION_POLICY_NAME,
-        policy: { allowCustomProviders: true },
-        priority: 0,
-        isEnabled: true,
-        memberIds: [],
-        teamIds: [],
-        roles: ADMIN_EXCEPTION_ROLES,
-      });
-    }
-
-    for (const policy of adminExceptionPolicies.slice(1)) {
-      await disablePolicy(policy);
-    }
-  };
-
-  const disableAdminExceptionPolicies = async () => {
-    for (const policy of adminExceptionPolicies) {
-      await disablePolicy(policy);
-    }
-  };
-
-  const saveModelAccess = async () => {
+  const saveModelAccessPolicy = async () => {
     setAccessError(null);
     setAccessSaved(null);
-    if (!defaultPolicy) {
-      setAccessError("Default desktop policy not found.");
-      return;
-    }
-
     try {
       setAccessSaving(true);
       await runReauthableAction("save-model-access", async () => {
-        if (accessMode === "managed") {
-          await updateDefaultPolicy(false, zenAllowed);
-          if (adminExceptionChecked) {
-            await ensureAdminExceptionPolicy();
-          } else {
-            await disableAdminExceptionPolicies();
-          }
-        } else {
-          await updateDefaultPolicy(true, true);
-          await disableAdminExceptionPolicies();
-        }
+        await saveModelAccess(accessState, { mode: accessMode, adminException: adminExceptionChecked, zenAllowed });
         await reloadPolicies();
       });
       setAccessSaved("Model access saved.");
@@ -240,7 +197,7 @@ export function LlmProvidersScreen() {
             <DenButton
               type="button"
               data-testid="models-access-save"
-              onClick={() => void saveModelAccess()}
+              onClick={() => void saveModelAccessPolicy()}
               loading={accessSaving}
               disabled={accessFormDisabled}
             >
@@ -366,42 +323,7 @@ export function LlmProvidersScreen() {
             </p>
           </div>
         ) : (
-          <DenList>
-            {filteredProviders.map((provider) => {
-              const members = provider.access.members.length;
-              const teams = provider.access.teams.length;
-              const accessText = provider.access.allMembers
-                ? "Everyone in the org"
-                : `${members} ${members === 1 ? "person" : "people"} · ${plural(teams, "team")}`;
-              return (
-                <DenListRow
-                  key={provider.id}
-                  href={getLlmProviderRoute(orgSlug, provider.id)}
-                  dataAttributes={{ "data-testid": "llm-provider-card" }}
-                  leading={
-                    <DenBrandMark
-                      name={provider.name}
-                      simpleIconSlug={getProviderIconSlug(provider.providerId)}
-                      serviceUrl={getProviderDocUrl(provider.providerConfig)}
-                    />
-                  }
-                  title={provider.name}
-                  chips={
-                    <>
-                      <DenChip>{plural(provider.models.length, "model")}</DenChip>
-                      {!provider.hasApiKey ? (
-                        <DenChip tone="warning" icon={KeyRound}>
-                          Credential missing
-                        </DenChip>
-                      ) : null}
-                    </>
-                  }
-                  meta={`${provider.providerId} · ${accessText} · Updated ${formatProviderTimestamp(provider.updatedAt)}`}
-                  action={<ChevronRight aria-hidden className="h-4 w-4 text-gray-400" />}
-                />
-              );
-            })}
-          </DenList>
+          <LlmProviderList providers={filteredProviders} orgSlug={orgSlug} />
         )}
       </section>
       )}

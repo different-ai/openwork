@@ -100,7 +100,7 @@ async function withShell(
       organization: { id: "org-one", name: "Workspace", slug: "workspace" },
       currentMember: { id: "member-one", userId: "user-one", role, isOwner: false },
       capabilities: {
-        gatewayDashboard: false, cloud: true, installLinks: true,
+        cloud: true, installLinks: true,
         mcpConnections: options.mcpConnections ?? true,
         openworkWeb: true, orgManagedDashboards: true, workflows: true,
       },

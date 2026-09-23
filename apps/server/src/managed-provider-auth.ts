@@ -150,9 +150,9 @@ function resolveManagedProviderAuthTarget(
   config: ServerConfig,
   standby?: ManagedProviderAuthStandbyTarget,
 ): ManagedProviderAuthTarget | null {
-  const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
-  if (!workspace) return null;
-
+  // The managed engine is one process for every workspace and runs before
+  // the first one exists, so its credentials are keyed by engine generation.
+  // Only an attached engine (no pool) is reached through a workspace.
   const pool = enginePoolForConfig(config);
   if (standby) {
     // Same scope shape as the primary branch below, so the flip that promotes
@@ -161,7 +161,7 @@ function resolveManagedProviderAuthTarget(
     if (!pool || !baseUrl) return null;
     const authHeader = basicAuthHeader(standby.username, standby.password);
     return {
-      scope: `workspace:${workspace.id}\u0000generation:${standby.generationId}`,
+      scope: `managed-engine\u0000generation:${standby.generationId}`,
       ownershipScope: "managed-engine",
       baseUrl,
       ...(authHeader ? { authHeader } : {}),
@@ -174,7 +174,7 @@ function resolveManagedProviderAuthTarget(
     if (!primary || !baseUrl) return null;
     const authHeader = basicAuthHeader(primary.username, primary.password);
     return {
-      scope: `workspace:${workspace.id}\u0000generation:${primary.generationId}`,
+      scope: `managed-engine\u0000generation:${primary.generationId}`,
       ownershipScope: "managed-engine",
       baseUrl,
       ...(authHeader ? { authHeader } : {}),
@@ -188,6 +188,8 @@ function resolveManagedProviderAuthTarget(
     };
   }
 
+  const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
+  if (!workspace) return null;
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = normalizeBaseUrl(connection.baseUrl);
   if (!baseUrl) return null;

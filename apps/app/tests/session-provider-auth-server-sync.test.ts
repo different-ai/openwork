@@ -766,7 +766,7 @@ describe("session-route cloud provider sync wiring", () => {
   });
 
   for (const trigger of ["startup/options", "sign_in"]) {
-    for (const missing of ["engine", "workspace", "engine and workspace"]) {
+    for (const missing of ["engine", "engine and workspace"]) {
       test(`${trigger} delivers the local Den session without ${missing} readiness and syncs only after recovery`, async () => {
         const storage = installWindow();
         const requests: RecordedRequest[] = [];
@@ -817,6 +817,43 @@ describe("session-route cloud provider sync wiring", () => {
         }
       });
     }
+
+    test(`${trigger} syncs organization providers into a ready engine before the first workspace exists`, async () => {
+      // The local server runs its managed engine before any workspace and
+      // materializes providers itself, so a member who signed in but has not
+      // created a workspace still receives the organization's providers.
+      const storage = installWindow();
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests);
+      let providerStateWrites = 0;
+      const store = createSessionRouteStore({
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+        engineReady: true,
+        workspaceReady: false,
+        onProviderStateWrite: () => { providerStateWrites += 1; },
+      });
+      try {
+        if (trigger === "startup/options") {
+          installCloudSession(storage);
+          store.start();
+          store.syncFromOptions();
+        } else {
+          store.start();
+          installCloudSession(storage);
+          window.dispatchEvent(new CustomEvent(denSessionUpdatedEvent, { detail: { status: "success" } }));
+        }
+        await waitFor(() => syncRuns(requests).length > 0 && providerStateWrites > 0);
+        expect(sessionPuts(requests).length).toBeGreaterThan(0);
+        expect(sessionPuts(requests)[0]).toMatchObject({
+          url: `${LOCAL_SERVER_ORIGIN}/den-session`,
+          headers: { "x-openwork-host-token": "host-token-live" },
+        });
+        expect(requests.indexOf(sessionPuts(requests)[0]!)).toBeLessThan(requests.indexOf(syncRuns(requests)[0]!));
+      } finally {
+        store.dispose();
+      }
+    });
 
     for (const target of ["remote", "hostless", "non-loopback", "gateway"]) {
       test(`${trigger} never delivers desktop credentials to ${target} with a null engine client`, async () => {

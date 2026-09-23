@@ -153,7 +153,7 @@ import {
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
-import { findManagedEngineWorkspace } from "./workspaces.js";
+import { findManagedEngineWorkspace, managedEngineRootWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import { createEngineV2Preview, type EngineV2Preview } from "./engine-v2-preview.js";
@@ -303,10 +303,12 @@ function parseRuntimeProviderPatchPayload(body: Record<string, unknown>): Record
 
 function resolveEngineRuntimeWorkspace(config: ServerConfig): WorkspaceInfo {
   const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
-  if (!workspace) {
-    throw new ApiError(400, "workspace_missing", "At least one workspace is required for engine runtime config");
-  }
-  return workspace;
+  if (workspace) return workspace;
+  // A managed engine runs before the first workspace exists. Engine-wide
+  // maintenance (provider credentials, reloads) targets its root directory.
+  const pool = enginePoolForConfig(config);
+  if (pool) return managedEngineRootWorkspace(pool.cwd());
+  throw new ApiError(400, "workspace_missing", "At least one workspace is required for engine runtime config");
 }
 
 function redactBearerTokens(value: string): string {
@@ -812,9 +814,10 @@ export async function startServer(
     logger: toManagedProviderAuthLogger(logger),
   });
   managedDesktopPolicy(config).onChange = () => {
-    // Sign-in can precede the first workspace. Its future engine reads the
-    // persisted policy at startup; there is no running workspace to reload.
-    if (config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+    // Sign-in can precede the first workspace. A managed engine is already
+    // running then and must pick up the policy; an attached server with no
+    // workspace has no engine to reload.
+    if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending();
   };
   const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true });
   const routes = createRoutes(

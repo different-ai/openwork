@@ -79,6 +79,8 @@ export interface Den extends AsyncDisposable {
   mocks: Record<string, MockHandle>;
   database?: DbHandle;
   ports?: { api: number; web: number };
+  /** Co-located AI Gateway, when the Den was booted with GATEWAY_ENABLED=true. */
+  gateway?: { publicUrl: string };
   /**
    * Raw den-api HTTP log text (JSON lines carrying http_route/timestamp).
    * Daytona lane: reads /tmp/den-api.log inside the server sandbox; local
@@ -667,8 +669,10 @@ export async function server(options: ServerOptions): Promise<Den> {
   }
 
   if (options.place.kind === "daytona") {
-    if (options.seedProfile) {
-      throw new Error('Den seedProfile "demo-org" is local-only and cannot seed a Daytona Den.');
+    // The Daytona provisioning script always seeds the demo org, so the
+    // profile only decides who the platform admin is: the seeded owner.
+    if (options.seedProfile && options.org) {
+      throw new Error('Den seedProfile "demo-org" signs in as the seeded owner; it cannot be combined with org.');
     }
     if (!daytonaAvailable()) {
       throw new SkipError("Daytona CLI is unavailable; install and authenticate daytona, then set OPENWORK_EVAL_DAYTONA=1");
@@ -693,7 +697,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     const reuseUrls = preparedSandbox && preparedWebUrl && preparedApiUrl ? { webUrl: preparedWebUrl, apiUrl: preparedApiUrl } : undefined;
     const orgShape = options.org ?? {};
     const isolatePreparedTest = Boolean(preparedSandbox && options.provision !== false);
-    const bootstrapAdmin = personDefaults("admin", orgShape.admin, runId);
+    const bootstrapAdmin = options.seedProfile === "demo-org" ? defaultReuseAdmin() : personDefaults("admin", orgShape.admin, runId);
     const provisioned = await provisionDenSandbox({
       ref: base.ref,
       reuse: preparedSandbox,
@@ -736,6 +740,7 @@ export async function server(options: ServerOptions): Promise<Den> {
         admin: organization.admin,
         members: organization.members,
         mocks: bootedMocks.handles,
+        ...(provisioned.gatewayUrl ? { gateway: { publicUrl: cleanUrl(provisioned.gatewayUrl) } } : {}),
         async apiLog(): Promise<string> {
           // den-api on the server sandbox logs to /tmp/den-api.log
           // (.devcontainer/start-daytona-server.sh:158; the provisioning
