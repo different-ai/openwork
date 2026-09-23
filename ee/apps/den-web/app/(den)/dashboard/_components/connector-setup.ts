@@ -53,6 +53,44 @@ export function toolsSentence(tools: readonly Pick<ExternalMcpTool, "name" | "ti
   return `${count}, like ${examples.join(" and ")}.`;
 }
 
+export type SignInMethod = "oauth" | "none" | "admin_setup" | "key" | "unknown";
+
+/**
+ * How the viewer signs in, from Den's discovery. Den only calls an OAuth
+ * server ready when OpenWork can register itself there (DCR or CIMD), so any
+ * other OAuth server needs an admin to register OpenWork first.
+ */
+export function signInMethod(discovery: {
+  status: McpRequirementsDiscovery["status"];
+  authentication: Pick<McpRequirementsDiscovery["authentication"], "kind">;
+}): SignInMethod {
+  switch (discovery.authentication.kind) {
+    case "none":
+      return "none";
+    case "oauth":
+      return discovery.status === "ready" ? "oauth" : "admin_setup";
+    case "manual_bearer":
+      return "key";
+    default:
+      return "unknown";
+  }
+}
+
+export function signInMethodSentence(name: string, method: SignInMethod): string {
+  switch (method) {
+    case "none":
+      return "No sign-in needed.";
+    case "oauth":
+      return `You sign in with your own ${name} account.`;
+    case "admin_setup":
+      return `An admin has to register OpenWork with ${name} first.`;
+    case "key":
+      return `${name} needs a key. Ask an admin to add it.`;
+    case "unknown":
+      return `OpenWork could not tell how to sign in to ${name}.`;
+  }
+}
+
 type SignInState =
   | { kind: "idle" }
   | { kind: "waiting" }
@@ -196,8 +234,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const name = target?.name ?? "it";
   const findDone = discovery !== null && discovery.status !== "unreachable" && discovery.status !== "unsupported";
   const findFailed = discoveryError !== null || (discovery !== null && !findDone);
-  const authKnown = findDone && (authKind === "oauth" || authKind === "none");
-  const authFailed = findDone && !authKnown;
+  const method = discovery && findDone ? signInMethod(discovery) : null;
+  const authKnown = method === "oauth" || method === "none";
+  const authFailed = method !== null && !authKnown;
   const toolList = tools.data?.tools ?? [];
 
   const checks: SetupCheck[] = [
@@ -210,11 +249,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     {
       id: "sign-in-method",
       title: "Knows how you sign in",
-      description: authFailed
-        ? authKind === "manual_bearer" ? `${name} needs a key. Ask an admin to add it.` : `OpenWork could not tell how to sign in to ${name}.`
-        : authKnown
-          ? authKind === "none" ? "No sign-in needed." : `You sign in with your own ${name} account.`
-          : "Waits for the first check.",
+      description: method ? signInMethodSentence(name, method) : "Waits for the first check.",
       status: authFailed ? "failed" : authKnown ? "done" : findDone ? "running" : "waiting",
     },
     {

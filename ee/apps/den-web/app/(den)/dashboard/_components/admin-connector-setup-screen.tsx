@@ -3,11 +3,11 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
+import { getAddConnectorRoute, getAllMcpConnectionsRoute, getMcpConnectionRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import { useConnectorSetup } from "./connector-setup";
-import { useConnectorTarget } from "./connector-setup-screen";
+import { changeAddressHref, useConnectorTarget, withCheckActions } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
 import { ConfirmDialog } from "./item-list";
@@ -56,7 +56,7 @@ function SignInChoice({ name, value, onChange, disabled }: {
   );
 }
 
-/** C3 and C4: the checks fill in, then the admin picks how people sign in and who gets it. */
+/** C3 and C4: the checks fill in, the admin continues, then picks how people sign in and who gets it. */
 export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -71,6 +71,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmSwitch, setConfirmSwitch] = useState(false);
+  const [continued, setContinued] = useState(false);
   const setup = useConnectorSetup({
     target,
     initialConnectionId: searchParams.get("connection"),
@@ -111,9 +112,11 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const switchingToShared = signsIn && chosenMode === "shared" && connection?.credentialMode === "per_member";
   const ready = setup.allDone && Boolean(connection);
 
-  const checks = setup.checks.map((check) => check.id === "sign-in" && setup.canSignIn
-    ? { ...check, action: <DenButton size="sm" onClick={() => void setup.startSignIn()}>{`Sign in with ${name}`}</DenButton> }
-    : check);
+  const checks = withCheckActions(setup, {
+    name,
+    changeAddress: changeAddressHref(getAddConnectorRoute(orgSlug), catalogId, target),
+    advancedSetup: getAllMcpConnectionsRoute(orgSlug),
+  });
 
   async function cancel() {
     setBusy(true);
@@ -155,20 +158,23 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     }
   }
 
-  if (!ready) {
+  if (!ready || !continued) {
     return (
       <ItemPage testId="connector-setup">
         <ItemHeader
           back={back}
           logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-          title={`Add ${name}`}
-          description={chosenMode === "shared" && connection?.credentialMode === "shared"
-            ? `Sign in with the ${name} account everyone will use.`
-            : `OpenWork checks ${name}, then you sign in to try it.`}
+          title={ready ? `${name} passed all ${checks.length} checks` : `Add ${name}`}
+          description={ready
+            ? undefined
+            : chosenMode === "shared" && connection?.credentialMode === "shared"
+              ? `Sign in with the ${name} account everyone will use.`
+              : `OpenWork checks ${name}, then you sign in to try it.`}
         />
         <SetupChecks checks={checks} />
-        <StepFooter note={`Step ${setup.stepNumber} of ${checks.length}`}>
+        <StepFooter note={ready ? "Next, choose who can use it." : `Step ${setup.stepNumber} of ${checks.length}`}>
           <DenButton variant="secondary" loading={busy} onClick={() => void cancel()}>Cancel</DenButton>
+          {ready ? <DenButton onClick={() => setContinued(true)}>Continue</DenButton> : null}
         </StepFooter>
       </ItemPage>
     );
@@ -179,8 +185,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={`${name} passed all ${checks.length} checks`}
-        description="Choose how people sign in and who can use it."
+        title={`Add ${name}`}
       />
       {signsIn ? (
         <section className="flex flex-col gap-2.5">

@@ -10,13 +10,14 @@ import {
   getLibraryRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { customConnectorQuery } from "./connector-catalog-screen";
 import { shortDescription } from "./connector-picker";
 import { type ConnectorTarget, useConnectorSetup } from "./connector-setup";
 import { ItemHeader, ItemPage, StepFooter } from "./item-header";
 import { LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { useMcpConnectionPresets } from "./mcp-connections-data";
-import { SetupChecks } from "./setup-checks";
+import { type SetupCheck, SetupChecks } from "./setup-checks";
 
 export function useConnectorTarget(catalogId: string): { target: ConnectorTarget | null; loading: boolean; missing: boolean; failed: boolean } {
   const searchParams = useSearchParams();
@@ -38,6 +39,31 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
       failed: false,
     };
   }, [catalogId, customName, customUrl, presets.data, presets.error, presets.isLoading]);
+}
+
+/** Back to the address form with what the person typed, for an address that did not answer. */
+export function changeAddressHref(catalogRoute: string, catalogId: string, target: ConnectorTarget): string | null {
+  return catalogId === "custom" ? `${catalogRoute}${customConnectorQuery(target)}` : null;
+}
+
+/** Puts each check's next step on its row: sign in, change the address, or finish setup in Advanced setup. */
+export function withCheckActions(
+  setup: Pick<ReturnType<typeof useConnectorSetup>, "checks" | "canSignIn" | "startSignIn">,
+  { name, changeAddress, advancedSetup }: { name: string; changeAddress: string | null; advancedSetup?: string },
+): SetupCheck[] {
+  return setup.checks.map((check) => {
+    if (check.id === "sign-in" && setup.canSignIn) {
+      return { ...check, action: <DenButton size="sm" onClick={() => void setup.startSignIn()}>{`Sign in with ${name}`}</DenButton> };
+    }
+    if (check.status !== "failed") return check;
+    if (check.id === "find" && changeAddress) {
+      return { ...check, action: <LinkButton size="sm" href={changeAddress}>Change address</LinkButton> };
+    }
+    if (check.id === "sign-in-method" && advancedSetup) {
+      return { ...check, action: <LinkButton size="sm" href={advancedSetup}>Advanced setup</LinkButton> };
+    }
+    return check;
+  });
 }
 
 /** A4 and A5: the checks fill in, the member signs in, and the connector is theirs. */
@@ -75,9 +101,10 @@ export function MemberConnectorSetupScreen({ catalogId }: { catalogId: string })
     return <ItemPage><ItemHeader back={back} title={loading ? "Loading..." : "Add a connector"} /></ItemPage>;
   }
 
-  const checks = setup.checks.map((check) => check.id === "sign-in" && setup.canSignIn
-    ? { ...check, action: <DenButton size="sm" onClick={() => void setup.startSignIn()}>{`Sign in with ${name}`}</DenButton> }
-    : check);
+  const checks = withCheckActions(setup, {
+    name,
+    changeAddress: changeAddressHref(getLibraryAddConnectorRoute(orgSlug), catalogId, target),
+  });
 
   async function cancel() {
     setLeaving(true);

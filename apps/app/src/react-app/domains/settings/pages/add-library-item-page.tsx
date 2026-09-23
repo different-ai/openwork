@@ -454,16 +454,12 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
           <p className="text-[13px] text-dls-secondary">
             {mcpCheck.status === "unavailable" ? t("extensions.mcp_check_unavailable") : t("extensions.mcp_check_hint")}
           </p>
-          <p className="truncate font-mono text-xs text-dls-secondary">{instructions.trim()}</p>
+          <p className="truncate text-xs text-dls-secondary">{instructions.trim()}</p>
         </div>
         {mcpCheck.status === "unavailable" ? null : (
           <McpServerCheckList checks={checks} onSettled={() => setChecksSettled(true)} />
         )}
-        {error ? (
-          <div role="alert" className="rounded-2xl border border-red-6 bg-red-2 px-4 py-3 text-sm text-red-11">
-            {error}
-          </div>
-        ) : null}
+        {error ? <p role="alert" className="text-sm text-red-11">{error}</p> : null}
       </LibraryPage>
     );
   }

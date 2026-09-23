@@ -20,17 +20,35 @@ type Person = keyof typeof people;
 
 const teams = { Support: ["ana", "lee", "noor"], Sales: ["omar", "tess"] } satisfies Record<string, Person[]>;
 
-const slackTools: MockMcpTool[] = [
+export function mockTools(entries: [name: string, description: string][]): MockMcpTool[] {
+  return entries.map(([name, description]) => ({
+    name,
+    description,
+    inputSchema: { type: "object", properties: { query: { type: "string" } } },
+    result: { content: [{ type: "text", text: "Done." }] },
+  }));
+}
+
+const slackTools = mockTools([
   ["send_message", "Send a message to a channel or person"],
   ["search_messages", "Search messages across channels"],
   ["list_channels", "List the channels you can see"],
   ["read_thread", "Read every reply in a thread"],
-].map(([name, description]) => ({
-  name,
-  description,
-  inputSchema: { type: "object", properties: { query: { type: "string" } } },
-  result: { content: [{ type: "text", text: "Done." }] },
-}));
+]);
+
+/** The sign-in tab Den opens next to the dashboard, once it exists. */
+export async function denSignInTab(web: Surface, denWebUrl: string, { timeoutMs = 20_000 }: { timeoutMs?: number } = {}): Promise<Surface | null> {
+  const dashboard = `${new URL(denWebUrl).origin}/dashboard`;
+  const startedAt = Date.now();
+  while (true) {
+    const target = (await listTargets(web.handle.cdpUrl)).find((entry) => (
+      entry.type === "page" && entry.id !== web.client.targetId && !entry.url.startsWith(dashboard)
+    ));
+    if (target) return { handle: web.handle, client: await connect(debuggerUrlFor(web.handle.cdpUrl, target)) };
+    if (Date.now() - startedAt >= timeoutMs) return null;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
 
 /**
  * One organization where Sam (a member) and an admin share connectors and
@@ -114,7 +132,6 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
   const web = options.asAdmin
     ? await seed.web({ den, signedInAs: den.admin, startPath: options.adminStartPath ?? "/dashboard/mcp-connections", headless: true, viewport })
     : await seed.web({ den, signedInAs: den.members.sam, startPath: "/dashboard/library", headless: true, viewport });
-  const denWebOrigin = new URL(den.ref.webUrl).origin;
 
   async function library(session: DenSession): Promise<{ type: string; name: string }[]> {
     const result = await seed.api(session, "/v1/me/library");
@@ -149,18 +166,7 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
       const value = await seed.evalIn(web, () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="den-org-sidebar"] a')).map((a) => (a.textContent ?? "").trim()));
       return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
     },
-    /** The sign-in tab Den opens next to the dashboard, once it exists. */
-    async signInTab({ timeoutMs = 20_000 }: { timeoutMs?: number } = {}): Promise<Surface | null> {
-      const startedAt = Date.now();
-      while (true) {
-        const target = (await listTargets(web.handle.cdpUrl)).find((entry) => (
-          entry.type === "page" && entry.id !== web.client.targetId && !entry.url.startsWith(`${denWebOrigin}/dashboard`)
-        ));
-        if (target) return { handle: web.handle, client: await connect(debuggerUrlFor(web.handle.cdpUrl, target)) };
-        if (Date.now() - startedAt >= timeoutMs) return null;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    },
+    signInTab: (options?: { timeoutMs?: number }) => denSignInTab(web, den.ref.webUrl, options),
     async openAs(person: Person, startPath: string) {
       return seed.web({ den, signedInAs: den.members[person], startPath, headless: true, viewport });
     },

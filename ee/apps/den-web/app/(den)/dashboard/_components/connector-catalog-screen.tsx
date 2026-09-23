@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import {
   getAddConnectorRoute,
   getAllMcpConnectionsRoute,
@@ -11,19 +12,21 @@ import {
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectionForPresetUrl } from "./connector-catalog";
-import { catalogEntriesFromPresets, ConnectorPicker } from "./connector-picker";
+import { catalogEntriesFromPresets, ConnectorPicker, type CustomConnectorInput } from "./connector-picker";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
 
 export type ConnectorFlowMode = "member" | "admin";
 
-export function customConnectorQuery(input: { name: string; url: string }): string {
+export function customConnectorQuery(input: CustomConnectorInput): string {
   return `?${new URLSearchParams({ name: input.name, url: input.url }).toString()}`;
 }
 
 /** A1 to A3 and C1 to C2: pick what to connect. */
 export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   const { orgSlug } = useOrgDashboard();
+  const searchParams = useSearchParams();
+  const typedUrl = searchParams.get("url");
   const presets = useMcpConnectionPresets();
   const connections = useMcpConnections(mode === "admin" ? "manageable" : "usable");
   const setupRoute = (catalogId?: string) => mode === "admin" ? getAddConnectorRoute(orgSlug, catalogId) : getLibraryAddConnectorRoute(orgSlug, catalogId);
@@ -57,6 +60,7 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
         loading={presets.isLoading}
         addHref={(entry) => addHref(entry.id)}
         customHref={(input) => `${setupRoute("custom")}${customConnectorQuery(input)}`}
+        initialCustom={typedUrl ? { name: searchParams.get("name") ?? "", url: typedUrl } : null}
       />
       {mode === "admin" ? (
         <p className="text-center text-[12px] leading-4 text-gray-400">

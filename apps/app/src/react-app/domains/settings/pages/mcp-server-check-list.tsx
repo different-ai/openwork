@@ -32,7 +32,7 @@ function StatusMark(props: { status: McpServerCheckStatus | "pending" }) {
     case "pass":
       return <span className={cn(base, "bg-emerald-600 text-white motion-safe:animate-in motion-safe:zoom-in-50")}><Check size={12} strokeWidth={3} /></span>;
     case "warn":
-      return <span className={cn(base, "bg-amber-3 text-amber-11")}><AlertTriangle size={11} strokeWidth={2.5} /></span>;
+      return <span className={cn(base, "bg-dls-hover text-dls-text")}><AlertTriangle size={11} strokeWidth={2.5} /></span>;
     case "fail":
       return <span className={cn(base, "bg-red-3 text-red-11")}><X size={12} strokeWidth={3} /></span>;
     case "skip":
@@ -86,7 +86,7 @@ export function McpServerCheckList(props: { checks: McpServerCheck[] | null; onS
             </span>
           </span>
           {check?.term ? (
-            <span className="mt-0.5 shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 font-mono text-[11px] text-dls-secondary">{check.term}</span>
+            <span className="shrink-0 text-[12px] leading-5 text-dls-secondary">{check.term}</span>
           ) : null}
         </li>
       ))}
