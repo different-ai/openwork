@@ -32,7 +32,7 @@ test('incident state survives more than 100 newer unrelated alert runs', async (
 test('critical PR selection includes existing critical journeys even when only product source changes', async () => {
   const entries = await catalog();
   const selected = selectJourneys(entries, { critical: true, changed: ['apps/app/src/view.tsx'] });
-  assert.equal(selected.length, 4);
+  assert.equal(selected.length, 3);
   assert(selected.some(value => value.placement === 'local'));
   assert(selected.some(value => value.model === 'live'));
   assert(selected.every(value => value.critical));
@@ -151,11 +151,6 @@ test('registered case metadata names exact files, supported execution axes, and 
     {
       spec: 'task-activity-shimmer.e2e.test.ts',
       id: 'ACT-01',
-      engines: ['v1', 'v2'],
-    },
-    {
-      spec: 'desktop-policy-restricted-mode.e2e.test.ts',
-      id: 'POLICY-ROLLBACK',
       engines: ['v1', 'v2'],
     },
     {

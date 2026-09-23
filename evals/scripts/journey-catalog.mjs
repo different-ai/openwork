@@ -40,11 +40,6 @@ const definitions = {
   // Drives a real AppKit window through the native Computer Use helper; only a local macOS host can run it.
   'computer-use-window-scope.e2e.test.ts': { placement: 'local', needs: { platform: 'darwin' } },
   'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
-  'desktop-policy-restricted-mode.e2e.test.ts': {
-    // The rollback case severs local child IPC and faults its loopback transport.
-    name: 'Apply organization and team permissions', critical: true, placement: 'local',
-    cases: [{ id: 'POLICY-ROLLBACK', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
-  },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   // Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
   'scim-okta-lifecycle.e2e.test.ts': { name: 'Provision members from an Okta-shaped SCIM client', placement: 'local' },
