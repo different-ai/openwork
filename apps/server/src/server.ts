@@ -37,7 +37,6 @@ import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plu
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { buildOpenWorkV2Instructions, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
-import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "./connect-skill-catalog.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -1325,11 +1324,10 @@ export async function proxyOpencodeV2Request(input: {
     const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
     const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
-    // Reuse v1's cached discovery metadata and fetch bodies through Connect
-    // only when a skill is used. Never download the Cloud library on send.
+    // Keep organization skill discovery on demand through Connect. The full
+    // catalog can exceed the engine's instruction-entry request limit.
     await input.syncWorkspaceSkills(input.workspace.path);
-    const remoteSkills = connectReady ? await readOpenWorkConnectSkillCatalog(input.config) : [];
-    const value = buildOpenWorkV2Instructions(connectReady, renderOpenWorkConnectSkillInstruction(remoteSkills));
+    const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
     const synced = await loopbackFetch(instructionUrl.toString(), {

@@ -289,7 +289,7 @@ describe("OpenWork Connect skill catalog", () => {
     expect(skills[0]?.name).toBe("customer-briefing");
   });
 
-  test("v1 and v2 share cached metadata without fetching a 95-skill library", async () => {
+  test("v1 exposes cached metadata while v2 keeps a 95-skill catalog out of send instructions", async () => {
     const config = await serverConfig();
     const cloud = { type: "remote", url: "https://catalog.example/mcp/agent", enabled: true, headers: { Authorization: "Bearer first" } };
     await writeConnectCloudMcp(config, cloud);
@@ -308,9 +308,9 @@ describe("OpenWork Connect skill catalog", () => {
         text: JSON.stringify({ $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json", skills }) }] } });
     };
     const v1 = renderOpenWorkConnectSkillInstruction(await readOpenWorkConnectSkillCatalog(config, fetcher));
-    const v2 = buildOpenWorkV2Instructions(true, renderOpenWorkConnectSkillInstruction(await readOpenWorkConnectSkillCatalog(config, fetcher)));
-    expect(v2.remoteSkills).toBe(v1);
-    expect(v2.remoteSkills.match(/^  <skill /gm)).toHaveLength(95);
+    const v2 = buildOpenWorkV2Instructions(true);
+    expect(v1.match(/^  <skill /gm)).toHaveLength(95);
+    expect(JSON.stringify(v2)).not.toContain("<available_remote_skills>");
     expect(calls).toHaveLength(3);
     // Switching identity must not reuse the previous principal's metadata.
     await writeConnectCloudMcp(config, { ...cloud, headers: { Authorization: "Bearer second" } });

@@ -65,11 +65,10 @@ test("skipped native files (malformed frontmatter) are neither expected nor trea
   });
 });
 
-test("v2 uses the v1 remote skill guidance and keeps local skills native", () => {
-  const catalog = "<available_remote_skills>metadata</available_remote_skills>";
-  const connected = buildOpenWorkV2Instructions(true, catalog);
+test("v2 discovers remote skills on demand and keeps local skills native", () => {
+  const connected = buildOpenWorkV2Instructions(true);
   expect(connected.operatingInstructions).toContain("remote skills");
   expect(connected.skillInstructions).toContain("OpenWork Connect");
-  expect(connected.remoteSkills).toBe(catalog);
-  expect(buildOpenWorkV2Instructions(false, catalog).remoteSkills).toBe("");
+  expect(connected.skillInstructions).toContain("on demand");
+  expect(JSON.stringify(connected)).not.toContain("<available_remote_skills>");
 });
