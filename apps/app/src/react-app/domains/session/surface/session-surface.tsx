@@ -2839,7 +2839,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (mcpConnectPushRef.current !== pushId) return;
       const freshServers = [...localServers, ...connect.mcpServers];
       const freshStatuses = { ...connect.mcpStatuses, ...localStatuses };
-      const freshStatus = freshServers.length ? null : "No MCP servers loaded.";
+      const freshStatus = freshServers.length ? null : t("context_panel.no_mcp");
       setToolMcpServers(freshServers);
       setToolMcpStatuses(freshStatuses);
       setToolMcpStatus(freshStatus);
@@ -2869,7 +2869,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     const servers = [...localServers, ...cachedConnect.mcpServers];
     const statuses = { ...cachedConnect.mcpStatuses, ...localStatuses };
-    const status = servers.length ? null : "No MCP servers loaded.";
+    const status = servers.length ? null : t("context_panel.no_mcp");
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
     setToolMcpStatus(status);
@@ -3464,16 +3464,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
             className="mx-3 mb-2 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded-lg border border-dls-border bg-dls-hover px-3 py-2 text-left text-xs text-dls-text transition-colors hover:bg-dls-active"
             onClick={() => props.onOpenSettingsSection?.("providers")}
           >
-            <span className="font-medium">No AI model connected.</span>
-            <span className="text-dls-secondary">Add a provider to run tasks.</span>
+            <span className="font-medium">{t("ui.no_ai_model_connected")}</span>
+            <span className="text-dls-secondary">{t("ui.add_provider_to_run")}</span>
           </button>
         ) : null}
         {props.cloudMcpSubmissionState.status === "failed" ? (
           <TaskRecovery testId="cloud-mcp-submission-failure"
-            title={props.cloudMcpSubmissionState.issue?.message ?? "Connected service tools could not be prepared."}
+            title={props.cloudMcpSubmissionState.issue?.message ?? t("ui.cloud_tools_not_prepared")}
             description={props.cloudMcpSubmissionState.issue?.recommendedAction}
             onRetry={props.cloudMcpSubmissionState.issue?.retryable !== false ? handleRetryCloudSubmission : undefined}
-            actions={<Button variant="ghost" size="xs" onClick={props.onOpenConnect}>Open Connect</Button>} />
+            actions={<Button variant="ghost" size="xs" onClick={props.onOpenConnect}>{t("extensions.open_connect")}</Button>} />
         ) : null}
         {archived ? (
           <Alert data-testid="archived-session">

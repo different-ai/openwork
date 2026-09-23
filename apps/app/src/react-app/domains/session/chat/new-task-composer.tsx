@@ -301,14 +301,14 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
         void connectPromise.then((connect) => {
           if (mcpConnectPushRef.current !== pushId) return;
           const freshServers = [...localServers, ...connect.mcpServers];
-          const freshStatus = freshServers.length ? null : "No MCP servers loaded.";
+          const freshStatus = freshServers.length ? null : t("context_panel.no_mcp");
           setMcpServers(freshServers);
           setMcpStatuses(connect.mcpStatuses);
           setMcpStatus(freshStatus);
         });
         const servers = [...localServers, ...cachedConnect.mcpServers];
         const statuses = cachedConnect.mcpStatuses;
-        const status = servers.length ? null : "No MCP servers loaded.";
+        const status = servers.length ? null : t("context_panel.no_mcp");
         setMcpServers(servers);
         setMcpStatuses(statuses);
         setMcpStatus(status);
@@ -454,7 +454,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       } else {
         setFailedSubmission(submitted);
       }
-      setSubmissionError(presentOpencodeSessionError(error, "Couldn’t send your message"));
+      setSubmissionError(presentOpencodeSessionError(error, t("ui.could_not_send")));
       setPendingSubmission(null);
       submittingRef.current = false;
     }
@@ -472,7 +472,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     if (source.workspaceId === destination.workspaceId && newSessionDraftSlot(source) === newSessionDraftSlot(destination)) return;
     const holder = continuationHolderRef.current;
     if (draftWorkspaceChangeBlocked(source.workspaceId, destination.workspaceId, holder.state)) {
-      setDestinationError("Remove workspace files before changing workspace.");
+      setDestinationError(t("ui.remove_workspace_files_first"));
       return;
     }
     try {
@@ -480,20 +480,20 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       holder.state = emptyNewTaskComposerState();
       props.onDraftChange("");
     } catch (error) {
-      setDestinationError(error instanceof Error ? error.message : "Could not change destination.");
+      setDestinationError(error instanceof Error ? error.message : t("ui.could_not_change_destination"));
     }
   };
 
   return (
     <div>
     {destinationError ? <div role="alert" className="mb-2 text-sm text-red-11">{destinationError}</div> : null}
-    {submissionError ? <TaskRecovery title={submissionError.kind === "generic" ? "Couldn’t send your message" : submissionError.title}
-      description={failedSubmission ? "Your unsent message is saved below." : "Your draft is still here. Try sending it again."}
+    {submissionError ? <TaskRecovery title={submissionError.kind === "generic" ? t("ui.could_not_send") : submissionError.title}
+      description={failedSubmission ? t("ui.unsent_saved_below") : t("ui.draft_still_here")}
       technicalDetails={submissionError.technicalDetails} /> : null}
     {failedSubmission ? <button type="button" disabled={Boolean(props.draft || attachments.length)} className="mb-2 text-sm disabled:opacity-50" onClick={() => {
       restoreComposer(failedSubmission);
       setFailedSubmission(null);
-    }}>Clear the current draft to restore the unsent message</button> : null}
+    }}>{t("ui.clear_draft_to_restore")}</button> : null}
     <ReactSessionComposer
       contextControl={context?.destination?.workspaceId && context.workspaceOptions ? <NewTaskDestinationMenu
         destination={context.destination}
@@ -520,7 +520,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       busy={false}
       steering={false}
       submissionPreparing={props.busy || pendingSubmission !== null || failedSubmission !== null}
-      submissionPreparingLabel={failedSubmission ? "Restore the unsent message before sending" : "Send"}
+      submissionPreparingLabel={failedSubmission ? t("ui.restore_unsent_before_send") : t("composer.steer")}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
       disabledReasons={["send_model_unavailable"]}

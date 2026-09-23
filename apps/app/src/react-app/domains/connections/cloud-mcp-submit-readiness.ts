@@ -4,6 +4,7 @@ import type {
   OpenworkCloudMcpProviderModelContext,
 } from "../../../app/lib/openwork-server";
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
+import { t } from "@/i18n";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
 export const CLOUD_MCP_SUBMISSION_ATTEMPT_TIMEOUT_MS = 12_000;
@@ -176,9 +177,9 @@ function authResolutionIssue(input?: { timedOut?: boolean }): CloudMcpSubmission
       ? "cloud_mcp_auth_resolution_timeout"
       : "cloud_mcp_auth_resolution_failed",
     message: input?.timedOut
-      ? "OpenWork timed out while restoring connected service access."
-      : "OpenWork could not finish restoring connected service access.",
-    recommendedAction: "Retry or open Settings → Connect.",
+      ? t("ui.cloud_auth_restore_timeout")
+      : t("ui.cloud_auth_restore_failed"),
+    recommendedAction: t("ui.cloud_retry_or_connect"),
   });
 }
 
@@ -237,7 +238,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "cloud_mcp_direct_tools_unverified",
         stage: "tool_registration",
-        message: "OpenWork Cloud did not prove that search_capabilities and execute_capability are available.",
+        message: t("ui.cloud_tools_unproven"),
       }),
     };
   }
@@ -253,7 +254,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "cloud_mcp_submission_context_mismatch",
         stage: "provider_projection",
-        message: "Connected service tools were checked for a different provider or model.",
+        message: t("ui.cloud_tools_context_mismatch"),
       }),
     };
   }
@@ -264,8 +265,8 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "provider_tool_projection_unverified",
         stage: "provider_projection",
-        message: "OpenWork could not read tool capability information for the selected provider and model.",
-        recommendedAction: "Retry, or check Settings → Advanced → Agent access diagnostics if the problem continues.",
+        message: t("ui.cloud_tool_projection_unreadable"),
+        recommendedAction: t("ui.cloud_retry_or_check_diagnostics"),
       }),
     };
   }
@@ -281,13 +282,13 @@ export function assessCloudMcpSubmissionReadiness(input: {
         stage: "provider_projection",
         retryable: false,
         message: modelMissing
-          ? "The selected model was not found for this provider."
+          ? t("ui.cloud_model_not_found")
           : toolCallingUnavailable
-            ? "The selected model does not support tool calling."
-            : "OpenWork could not confirm that the selected model supports tool calling.",
+            ? t("ui.cloud_model_no_tool_calling")
+            : t("ui.cloud_tool_calling_unconfirmed"),
         recommendedAction: modelMissing
-          ? "Choose a model available from this provider, or check Settings → Advanced → Agent access diagnostics."
-          : "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
+          ? t("ui.cloud_choose_available_model")
+          : t("ui.cloud_choose_tool_calling_model"),
       }),
     };
   }
@@ -299,8 +300,8 @@ export function assessCloudMcpSubmissionReadiness(input: {
         code: "provider_tool_projection_unverified",
         stage: "provider_projection",
         retryable: false,
-        message: "OpenWork received an unsupported tool capability result for the selected provider and model.",
-        recommendedAction: "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
+        message: t("ui.cloud_unsupported_capability_result"),
+        recommendedAction: t("ui.cloud_choose_tool_calling_model"),
       }),
     };
   }
@@ -316,8 +317,8 @@ export function assessCloudMcpSubmissionReadiness(input: {
         code: "provider_tool_projection_missing",
         stage: "provider_projection",
         retryable: false,
-        message: "The selected model is missing search_capabilities or execute_capability.",
-        recommendedAction: "Choose a compatible model or open Settings → Connect for diagnostics.",
+        message: t("ui.cloud_model_missing_required_tools"),
+        recommendedAction: t("ui.cloud_choose_compatible_model"),
       }),
     };
   }
@@ -327,7 +328,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
 function timeoutIssue(): CloudMcpSubmissionIssue {
   return genericSubmissionIssue({
     code: "cloud_mcp_submission_timeout",
-    message: "OpenWork timed out while preparing connected service tools.",
+    message: t("ui.cloud_prepare_timeout"),
   });
 }
 
@@ -353,7 +354,7 @@ function errorAssessment(error: unknown): CloudMcpSubmissionReadinessAssessment 
       ? timeoutIssue()
       : genericSubmissionIssue({
           code: "cloud_mcp_submission_check_failed",
-          message: "OpenWork could not check connected service tools before sending.",
+          message: t("ui.cloud_check_failed"),
         }),
   };
 }

@@ -258,7 +258,7 @@ export function WelcomeRoute() {
       } catch (error) {
         dispatch({
           type: "create:error",
-          error: error instanceof Error ? error.message : "Failed to create workspace.",
+          error: error instanceof Error ? error.message : t("ui.create_workspace_failed"),
         });
       } finally {
         dispatch({ type: "create:finish" });

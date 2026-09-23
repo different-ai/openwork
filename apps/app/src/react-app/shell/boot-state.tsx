@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { t } from "@/i18n";
+
 export type BootPhaseId =
   | "idle"
   | "bootstrapping-workspaces"
@@ -45,14 +47,25 @@ const DEFAULT_STATE: BootStateSnapshot = {
   error: null,
 };
 
-const PHASE_MESSAGES: Record<BootPhaseId, string> = {
-  idle: "",
-  "bootstrapping-workspaces": "Loading your workspaces",
-  "starting-openwork-server": "Starting the OpenWork server",
-  "starting-engine": "Preparing workspace",
-  "activating-workspace": "Activating your workspace",
-  ready: "Ready",
-  error: "Something went wrong",
+// Resolved lazily so boot messages pick up the active locale: module-level
+// t() calls would freeze the strings before initLocale() runs.
+const phaseMessage = (phase: BootPhaseId): string => {
+  switch (phase) {
+    case "bootstrapping-workspaces":
+      return t("ui.boot_loading_workspaces");
+    case "starting-openwork-server":
+      return t("ui.boot_starting_server");
+    case "starting-engine":
+      return t("ui.boot_preparing_workspace");
+    case "activating-workspace":
+      return t("ui.boot_activating_workspace");
+    case "ready":
+      return t("ui.boot_ready");
+    case "error":
+      return t("ui.boot_error");
+    default:
+      return "";
+  }
 };
 
 const BootStateContext = createContext<BootStateContextValue | null>(null);
@@ -78,7 +91,7 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
       return {
         ...current,
         phase,
-        message: PHASE_MESSAGES[phase] ?? current.message,
+        message: phaseMessage(phase) || current.message,
         detail: detail ?? null,
         startedAt: nextStartedAt,
         completedAt: phase === "ready" ? Date.now() : null,
@@ -92,7 +105,7 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
       ...current,
       error: message,
       phase: message ? "error" : current.phase,
-      message: message ? PHASE_MESSAGES.error : current.message,
+      message: message ? phaseMessage("error") : current.message,
     }));
   }, []);
 
@@ -100,7 +113,7 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
     setSnapshot((current) => ({
       ...current,
       phase: "ready",
-      message: PHASE_MESSAGES.ready,
+      message: phaseMessage("ready"),
       detail: null,
       completedAt: Date.now(),
       error: null,

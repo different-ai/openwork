@@ -21,6 +21,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { formatRelativeTime } from "@/app/utils";
+import { t } from "@/i18n";
 import {
   createSessionSearcher,
   dedupeSearchableSessions,
@@ -92,7 +93,7 @@ function SnippetLine(props: { item: ResultItem }) {
   if (item.snippet) {
     return (
       <div className="truncate text-muted-foreground text-xs">
-        {item.role === "user" ? "You: " : item.role === "assistant" ? "Agent: " : null}
+        {item.role === "user" ? `${t("ui.search_role_user")}: ` : item.role === "assistant" ? `${t("ui.search_role_agent")}: ` : null}
         {item.snippet.before}
         <span className="rounded-[3px] bg-primary/15 font-medium text-foreground">
           {item.snippet.match}
@@ -165,7 +166,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           session,
         }));
       return recent.length > 0
-        ? [{ value: "Recent sessions", kind: "recent", items: recent }]
+        ? [{ value: t("ui.search_recent_sessions"), kind: "recent", items: recent }]
         : [];
     }
 
@@ -207,10 +208,10 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
 
     const out: ResultGroup[] = [];
     if (titleItems.length > 0) {
-      out.push({ value: "Session titles", kind: "title", items: titleItems });
+      out.push({ value: t("ui.search_session_titles"), kind: "title", items: titleItems });
     }
     if (messageItems.length > 0) {
-      out.push({ value: "Messages", kind: "message", items: messageItems });
+      out.push({ value: t("ui.search_messages"), kind: "message", items: messageItems });
     }
     return out;
   }, [matches, query, sessions]);
@@ -223,18 +224,18 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
   const trimmedQuery = query.trim();
   const searching = Boolean(deepQuery) && progress !== null && !progress.done;
   const emptyText = !trimmedQuery
-    ? "No sessions yet."
+    ? t("ui.search_empty_no_sessions")
     : trimmedQuery.length < MIN_QUERY_LENGTH
-      ? "Keep typing to search message content…"
+      ? t("ui.search_keep_typing")
       : searching
-        ? "Searching messages…"
-        : "No sessions or messages match your search.";
+        ? t("ui.search_searching")
+        : t("ui.search_no_matches");
 
   const statusText = !trimmedQuery
-    ? "Recent sessions"
+    ? t("ui.search_recent_sessions")
     : searching
-      ? `Searching messages… ${progress.scanned}/${progress.total}`
-      : `${resultCount.toLocaleString()} ${resultCount === 1 ? "result" : "results"}`;
+      ? `${t("ui.search_searching")} ${progress.scanned}/${progress.total}`
+      : t("ui.search_result_count", { count: resultCount.toLocaleString() });
 
   return (
     <CommandDialog
@@ -244,7 +245,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
       }}
     >
       <CommandDialogPopup>
-        <CommandDialogTitle>Search sessions</CommandDialogTitle>
+        <CommandDialogTitle>{t("ui.search_title")}</CommandDialogTitle>
         <Command
           items={groups}
           filter={null}
@@ -254,7 +255,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           <CommandHeader>
             <CommandInput
               className="w-full"
-              placeholder="Search all sessions and messages…"
+              placeholder={t("ui.search_placeholder")}
             />
           </CommandHeader>
           <CommandPanel>

@@ -81,7 +81,7 @@ export function buildCommandPaletteSettingsItems(input: {
   const advancedItems: PaletteItem[] = tabs.includes("advanced")
     ? ADVANCED_SETTINGS_SECTIONS.map((section) => ({
         id: `settings:advanced/${section.id}`,
-        title: section.title,
+        title: section.title(),
         keywords: section.keywords,
         breadcrumb: "Settings › Advanced",
         group: "settings",

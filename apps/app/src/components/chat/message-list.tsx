@@ -1132,11 +1132,11 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
 
   return (
     <TaskRecovery state="retrying" testId="session-retrying"
-      title={`${(freeModelLimit ? "The free starter model is busy right now" : action?.title ?? presentation.title).replace(/[.!…]+$/, "")}. Retrying…`}
-      description={freeModelLimit ? "To keep working now, connect your own model provider." : action?.message}
+      title={`${(freeModelLimit ? t("ui.free_model_busy") : action?.title ?? presentation.title).replace(/[.!…]+$/, "")}. ${t("ui.retrying")}`}
+      description={freeModelLimit ? t("ui.connect_own_provider_hint") : action?.message}
       technicalDetails={[info, ...(developerMode ? [presentation.technicalDetails] : [])].join("\n")}
       actions={freeModelLimit ? <Button variant="ghost" size="xs"
-        onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect a model provider</Button>
+        onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>{t("models.connect_provider")}</Button>
         : action?.link ? <Button variant="ghost" size="xs" onClick={openDesktopUrl.bind(null, action.link)}>{action.label}</Button> : null} />
   )
 })

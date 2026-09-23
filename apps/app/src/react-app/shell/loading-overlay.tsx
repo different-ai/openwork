@@ -4,6 +4,7 @@ import type { RecoveryActionResult, RecoveryRelease } from "@/app/lib/desktop";
 import type { DenAppVersionMetadata, DenDesktopConfig } from "@/app/lib/den";
 import { readFreshDenAppVersionMetadata } from "@/app/lib/version-gate";
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
+import { t } from "@/i18n";
 import { bootOverlayCanHide, useBootState, useBootOverlayVisible } from "./boot-state";
 import { useCloudWorkspaceStatus } from "./cloud-workspace-overlay";
 import { shouldSuppressBootOverlayForGateway } from "./cloud-workspace-status";
@@ -81,14 +82,14 @@ export function LoadingOverlay() {
 
   const runRecovery = async (action: (() => Promise<RecoveryActionResult>) | undefined) => {
     if (!action) return;
-    setActionState("Preparing verified recovery…");
+    setActionState(t("ui.recovery_preparing"));
     try {
       const result = await action();
       setActionState(result.ok
-        ? result.message ?? "Recovery is ready."
-        : result.reason ?? "Recovery could not be started. Please retry.");
+        ? result.message ?? t("ui.recovery_ready")
+        : result.reason ?? t("ui.recovery_failed"));
     } catch {
-      setActionState("Recovery could not be started. Please retry.");
+      setActionState(t("ui.recovery_failed"));
     }
   };
 
@@ -110,14 +111,14 @@ export function LoadingOverlay() {
       <div className="flex w-full max-w-[320px] flex-col items-center gap-4 px-6 text-center">
         {error ? (
           <div className="flex w-full flex-col gap-3 text-[12px] leading-5">
-            <div className="text-base font-medium text-dls-primary">OpenWork couldn't start</div>
-            <div className="text-dls-secondary">Reload to try again, or return to a version that works on this computer.</div>
+            <div className="text-base font-medium text-dls-primary">{t("ui.start_failed_title")}</div>
+            <div className="text-dls-secondary">{t("ui.start_failed_reload_hint")}</div>
             <button
               type="button"
               className="rounded-md border border-dls-border px-3 py-2 font-medium text-dls-primary"
               onClick={() => window.location.reload()}
             >
-              Reload
+              {t("ui.reload")}
             </button>
             <button
               type="button"
@@ -125,14 +126,14 @@ export function LoadingOverlay() {
               className="rounded-md bg-dls-accent px-3 py-2 font-medium text-[var(--dls-accent-fg)] disabled:opacity-50"
               onClick={() => void runRecovery(window.__OPENWORK_ELECTRON__?.recovery?.restorePrevious)}
             >
-              Restore previous version
+              {t("ui.restore_previous_version")}
             </button>
             <button
               type="button"
               className="rounded-md border border-dls-border px-3 py-2 font-medium text-dls-primary"
               onClick={() => setShowPicker((value) => !value)}
             >
-              Pick another version
+              {t("ui.pick_another_version")}
             </button>
             {showPicker ? (
               <div className="flex flex-col gap-2">
@@ -152,7 +153,7 @@ export function LoadingOverlay() {
                             : undefined,
                         )}
                       >
-                        Use {release.version}
+                        {t("ui.use_version", { version: release.version })}
                       </button>
                     )}
                     {release.marking ? <span className="text-dls-secondary">{release.marking}</span> : null}
@@ -162,7 +163,7 @@ export function LoadingOverlay() {
             ) : null}
             {actionState ? <div className="text-dls-secondary">{actionState}</div> : null}
             <details className="text-left text-dls-secondary">
-              <summary className="cursor-pointer">Technical details</summary>
+              <summary className="cursor-pointer">{t("ui.technical_details")}</summary>
               <div className="mt-2 break-words">{error}</div>
             </details>
           </div>
@@ -170,7 +171,7 @@ export function LoadingOverlay() {
           <>
             <OwDotTicker size="md" />
             <div className="text-[12px] leading-5 text-dls-secondary">
-              {message || "Preparing workspace"}
+              {message || t("ui.boot_preparing_workspace")}
             </div>
             <button
               type="button"

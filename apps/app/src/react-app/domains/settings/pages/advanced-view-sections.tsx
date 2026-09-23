@@ -395,31 +395,31 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
   const copy = async () => {
     const payload = JSON.stringify({ cloudMcpHealth: safeHealth }, null, 2);
     await navigator.clipboard.writeText(payload);
-    setCopyStatus("Copied sanitized Cloud diagnostic.");
+    setCopyStatus(t("ui.cloud_diag_copied"));
   };
 
   return (
     <LayoutSection id="advanced-agent-access">
       <LayoutSectionHeader>
-        <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("ui.agent_access_diagnostics")}</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Technical details for OpenWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
+          {t("ui.agent_access_diagnostics_desc")}
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>OpenWork Cloud MCP health</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("ui.cloud_mcp_health")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Use this when support needs exact runtime state. The main Connect card stays user-facing.
+            {t("ui.cloud_mcp_health_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
               <RefreshCcw size={14} className={busy ? "animate-spin" : ""} />
-              Refresh
+              {t("common.refresh")}
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={() => void copy()} disabled={!props.cloudMcpHealth}>
-              Copy sanitized diagnostic
+              {t("ui.copy_sanitized_diagnostic")}
             </Button>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
@@ -472,14 +472,14 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
               <DiagnosticRow label="Live verification" value={props.cloudMcpHealth.checkedAt} />
             </div>
             <details className="rounded-lg bg-gray-3 p-2">
-              <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show sanitized health JSON</summary>
+              <summary className="cursor-pointer text-[11px] font-medium text-gray-11">{t("ui.show_sanitized_health_json")}</summary>
               <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
                 {JSON.stringify(safeHealth, null, 2)}
               </pre>
             </details>
           </div>
         ) : (
-          <SettingsNotice>No Cloud MCP health has been loaded for this workspace yet.</SettingsNotice>
+          <SettingsNotice>{t("ui.no_cloud_mcp_health")}</SettingsNotice>
         )}
       </LayoutSectionItem>
     </LayoutSection>
@@ -577,12 +577,12 @@ function RuntimeConfigSourceBlock(props: {
         <div className="font-medium text-gray-12">{props.title}</div>
         <div className="text-[11px] text-gray-9">{props.description}</div>
         {props.path ? <div className="mt-1 break-all font-mono text-[11px] text-gray-8">{props.path}</div> : null}
-        {props.exists !== undefined ? <div className="text-[11px] text-gray-9">{props.exists ? "Found" : "Not found"}</div> : null}
-        <div className="text-[11px] text-gray-9">Keys: {formatKeys(props.keys)}</div>
+        {props.exists !== undefined ? <div className="text-[11px] text-gray-9">{props.exists ? t("ui.source_found") : t("ui.source_not_found")}</div> : null}
+        <div className="text-[11px] text-gray-9">{t("ui.source_keys", { keys: formatKeys(props.keys) })}</div>
       </div>
       <RuntimeConfigSummary config={safeConfig} />
       <details className="rounded-lg bg-gray-3 p-2">
-        <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw JSON</summary>
+        <summary className="cursor-pointer text-[11px] font-medium text-gray-11">{t("ui.show_raw_json")}</summary>
         <pre className="mt-2 max-h-56 overflow-auto font-mono text-[11px] text-gray-11">
           {JSON.stringify(safeConfig, null, 2)}
         </pre>
@@ -599,17 +599,17 @@ export function AdvancedRuntimeConfigSourcesSection(props: AdvancedRuntimeConfig
   return (
     <LayoutSection id="advanced-config-sources">
       <LayoutSectionHeader>
-        <LayoutSectionTitle>OpenCode config sources</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("ui.opencode_config_sources")}</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Inspect what OpenWork controls at runtime versus what belongs to your workspace config. This works through the OpenWork server and does not require the OpenCode engine to be healthy.
+          {t("ui.opencode_config_sources_desc")}
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Config source snapshot</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("ui.config_source_snapshot")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Shows the OpenWork runtime database, the injected runtime config, and the workspace-owned OpenCode config files.
+            {t("ui.config_source_snapshot_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button
@@ -620,7 +620,7 @@ export function AdvancedRuntimeConfigSourcesSection(props: AdvancedRuntimeConfig
               disabled={props.busy || props.configStatusBusy || !props.canInspect}
             >
               <RefreshCcw size={14} className={props.configStatusBusy ? "animate-spin" : ""} />
-              Refresh
+              {t("common.refresh")}
             </Button>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
@@ -628,13 +628,13 @@ export function AdvancedRuntimeConfigSourcesSection(props: AdvancedRuntimeConfig
         {props.configStatus ? (
           <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
             <div className="space-y-2 rounded-xl border border-blue-6/50 bg-blue-2/40 p-3">
-              <div className="font-medium text-gray-12">Desired OpenWork runtime config</div>
+              <div className="font-medium text-gray-12">{t("ui.desired_runtime_config")}</div>
               <div className="text-[11px] text-gray-9">
-                This is the OpenWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.
+                {t("ui.desired_runtime_config_desc")}
               </div>
               <RuntimeConfigSummary config={effectiveRuntimeConfig ?? {}} />
               <details className="rounded-lg bg-gray-3 p-2">
-                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show desired JSON</summary>
+                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">{t("ui.show_desired_json")}</summary>
                 <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
                   {JSON.stringify(effectiveRuntimeConfig, null, 2)}
                 </pre>
@@ -643,36 +643,36 @@ export function AdvancedRuntimeConfigSourcesSection(props: AdvancedRuntimeConfig
             {props.configStatus.sources ? (
               <div className="space-y-3">
                 <div>
-                  <div className="font-medium text-gray-12">OpenCode source breakdown</div>
+                  <div className="font-medium text-gray-12">{t("ui.opencode_source_breakdown")}</div>
                   <div className="text-[11px] text-gray-9">
-                    OpenCode also reads its own project and global config files. OpenWork injects the runtime config separately; for OpenWork-managed keys, the injected config is the source to inspect.
+                    {t("ui.opencode_source_breakdown_desc")}
                   </div>
                 </div>
                 <RuntimeConfigSourceBlock
-                  title="Project opencode config"
-                  description="Workspace-level OpenCode config owned by the user/project."
+                  title={t("ui.source_project_opencode")}
+                  description={t("ui.source_project_opencode_desc")}
                   path={props.configStatus.sources.projectOpencode.path}
                   exists={props.configStatus.sources.projectOpencode.exists}
                   keys={props.configStatus.sources.projectOpencode.keys}
                   config={props.configStatus.sources.projectOpencode.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="Global opencode config"
-                  description="User-level OpenCode config under ~/.config/opencode."
+                  title={t("ui.source_global_opencode")}
+                  description={t("ui.source_global_opencode_desc")}
                   path={props.configStatus.sources.globalOpencode.path}
                   exists={props.configStatus.sources.globalOpencode.exists}
                   keys={props.configStatus.sources.globalOpencode.keys}
                   config={props.configStatus.sources.globalOpencode.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="OpenWork runtime DB"
-                  description="OpenWork-managed runtime values stored outside workspace files."
+                  title={t("ui.source_runtime_db")}
+                  description={t("ui.source_runtime_db_desc")}
                   keys={props.configStatus.sources.runtimeDatabase.keys}
                   config={props.configStatus.sources.runtimeDatabase.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="OpenWork injected config"
-                  description="The object OpenWork injects into OpenCode at runtime."
+                  title={t("ui.source_injected")}
+                  description={t("ui.source_injected_desc")}
                   keys={props.configStatus.sources.injected.keys}
                   config={props.configStatus.sources.injected.config}
                 />
@@ -746,14 +746,14 @@ export function AdvancedWorkspaceRunModeSection() {
   return (
     <LayoutSection id="advanced-workspace-run-mode">
       <LayoutSectionHeader>
-        <LayoutSectionTitle>Workspace run mode</LayoutSectionTitle>
-        <LayoutSectionDescription>Experimental approval controls in the composer.</LayoutSectionDescription>
+        <LayoutSectionTitle>{t("ui.workspace_run_mode")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("ui.workspace_run_mode_desc")}</LayoutSectionDescription>
       </LayoutSectionHeader>
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Show workspace run mode</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("ui.show_workspace_run_mode")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Choose when OpenWork asks before acting, using the icon beside attachments. Off by default. Available with the standard desktop engine.
+            {t("ui.show_workspace_run_mode_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Switch
@@ -876,14 +876,14 @@ export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSec
   return (
     <LayoutSection id="advanced-experimental-engine">
       <LayoutSectionHeader>
-        <LayoutSectionTitle>Experimental engine</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("ui.experimental_engine")}</LayoutSectionTitle>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Chat engine</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("ui.chat_engine")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            OpenCode v1 is the default engine. OpenCode v2 (preview) runs as a parallel sidecar with live provider updates and no engine reloads; sessions created on one engine stay in that engine's list.
+            {t("ui.chat_engine_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <ToggleGroup
