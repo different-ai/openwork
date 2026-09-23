@@ -19,7 +19,7 @@ export const DESKTOP_FREE_PROOF_MAX_BYTES = 2048;
  * around 1–3 s on a laptop instead of occasionally taking many times longer.
  * The desktop solves it in the background while the app loads.
  */
-export const DESKTOP_FREE_SESSION_POW_BITS = 20;
+export const DESKTOP_FREE_SESSION_POW_BITS = 19;
 export const DESKTOP_FREE_SESSION_POW_MAX_BITS = 24;
 export const DESKTOP_FREE_SESSION_POW_ROUNDS = 8;
 export const DESKTOP_FREE_SESSION_POW_MAX_ROUNDS = 16;
