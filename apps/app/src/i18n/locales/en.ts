@@ -1417,6 +1417,7 @@ export default {
   "plugins.title": "OpenCode plugins",
   "models.connect_provider": "Connect a provider",
   "models.done": "Done",
+  "models.manage_models": "Manage models",
   "models.manage_organization_models": "Manage organization models",
   "models.model_unavailable_short": "Model no longer available",
   "models.no_models_available": "No models available. Connect a provider to get started.",

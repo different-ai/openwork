@@ -1057,7 +1057,7 @@ export function SessionRoute() {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model?: ModelRef }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
@@ -1074,7 +1074,7 @@ export function SessionRoute() {
           await refreshCloudProviderSync("manual");
           synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
         },
-        isConnected: () => synced && (request
+        isConnected: () => synced && (request?.model
           ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
           : isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders)),
       });
@@ -1085,7 +1085,9 @@ export function SessionRoute() {
       }
       return connected && !signal.aborted;
     } catch (error) {
-      if (!signal.aborted && !request) toast.error(describeRouteError(error));
+      // In place (the picker), the caller shows why; elsewhere a toast does.
+      if (request && !signal.aborted) throw error;
+      if (!signal.aborted) toast.error(describeRouteError(error));
       return false;
     }
   }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
@@ -4082,7 +4084,10 @@ export function SessionRoute() {
       disabledProviders={disabledProviderIds}
       gatewayProviderIds={gatewayProviderIds}
       gatewayConnectProviders={gatewayConnectProviders}
-      onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
+      onManageModels={() => {
+        modelPicker.setOpen(false);
+        handleOpenExtensions("models");
+      }}
       onBehaviorChange={(model, value) => {
         if (modelPickerSessionId) {
           const store = useSessionModelStore.getState();

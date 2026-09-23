@@ -1,42 +1,58 @@
 import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { gatewayConnectProviderKey, pendingGatewayModelOptions, type GatewayConnectProvider } from "./cloud-provider-config";
+import { toast } from "@/components/ui/sonner";
+import { gatewayConnectProviderKey, gatewaySignInBrand, pendingGatewayModelOptions, type GatewayConnectProvider } from "./cloud-provider-config";
 import { beginPendingGatewayModelSelection } from "./pending-gateway-model-selection";
 import { markDisabledModelOptions } from "./assigned-model-options";
 
 const noDisabledProviders: readonly string[] = [];
 
-export type GatewayModelLogin = (provider: GatewayConnectProvider, signal: AbortSignal, model: ModelRef) => Promise<boolean>;
+/** Signs the member in for one credential set; resolves true once its models are usable. */
+export type GatewayModelLogin = (provider: GatewayConnectProvider, signal: AbortSignal, model?: ModelRef) => Promise<boolean>;
 
-type Selection = {
-  option: ModelOption;
-  provider: GatewayConnectProvider;
+/** Where a sign-in stands, shown in place on the provider group that started it. */
+export type GatewaySignInState =
+  | { kind: "waiting"; providerKey: string; modelId: string | null }
+  | { kind: "failed"; providerKey: string; message: string };
+
+type Attempt = {
+  providerKey: string;
   controller: AbortController;
-  commit: () => void;
-  isCurrent: () => boolean;
   releaseDefaultRepair: () => void;
 };
 
 type GatewayModelAccess = {
   options: ModelOption[];
   disabledProviders: readonly string[];
-  loginOpen: boolean;
+  signIn: GatewaySignInState | null;
+  /** Pick a model; one that needs the member's sign-in starts it and is picked once it succeeds. */
   select: (option: ModelOption, commit: () => void, isCurrent: () => boolean) => () => void;
+  /** Sign in for a whole provider group without changing the current model. */
+  signInProvider: (provider: GatewayConnectProvider) => void;
+  cancel: () => void;
 };
 
 export type GatewayModelSelectionHandle = Pick<GatewayModelAccess, "select">;
 
+export const GATEWAY_SIGN_IN_TIMEOUT_MESSAGE = "Sign-in didn't finish.";
+
 const GatewayModelAccessContext = createContext<GatewayModelAccess>({
-  options: [], disabledProviders: noDisabledProviders, loginOpen: false,
+  options: [], disabledProviders: noDisabledProviders, signIn: null,
   select: (option, commit, isCurrent) => {
     if (!option.disabled && !option.gatewayAuthorization && isCurrent()) commit();
     return () => undefined;
   },
+  signInProvider: () => undefined,
+  cancel: () => undefined,
 });
 
+/**
+ * Owns sign-in for gateway providers that use each member's own account.
+ * Sign-in happens where the person already is: the provider group in the
+ * model picker shows the waiting state, and the clicked model is picked once
+ * the provider confirms. No dialog.
+ */
 export function GatewayModelAccessProvider(props: {
   providers: GatewayConnectProvider[];
   disabledProviders?: readonly string[];
@@ -45,31 +61,32 @@ export function GatewayModelAccessProvider(props: {
   selectionRef?: Ref<GatewayModelSelectionHandle>;
   children: ReactNode;
 }) {
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const selectionRef = useRef<Selection | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [signIn, setSignIn] = useState<GatewaySignInState | null>(null);
+  const attemptRef = useRef<Attempt | null>(null);
   const scope = useRef(props.scopeKey);
   scope.current = props.scopeKey;
   const disabledProviders = props.disabledProviders ?? noDisabledProviders;
   const disabled = useRef(disabledProviders);
   disabled.current = disabledProviders;
+  const providersRef = useRef(props.providers);
+  providersRef.current = props.providers;
+  const loginRef = useRef(props.login);
+  loginRef.current = props.login;
   const options = useMemo(() => markDisabledModelOptions(pendingGatewayModelOptions(props.providers), disabledProviders), [props.providers, disabledProviders]);
+
   const cancel = useCallback(() => {
-    selectionRef.current?.controller.abort();
-    selectionRef.current?.releaseDefaultRepair();
-    selectionRef.current = null;
-    setSelection(null);
-    setBusy(false);
-    setError(null);
+    attemptRef.current?.controller.abort();
+    attemptRef.current?.releaseDefaultRepair();
+    attemptRef.current = null;
+    setSignIn(null);
   }, []);
 
+  useLayoutEffect(() => cancel, [props.scopeKey, cancel]);
   useLayoutEffect(() => {
-    cancel();
-    return cancel;
-  }, [props.scopeKey, cancel]);
-  useLayoutEffect(() => {
-    if (selectionRef.current && disabledProviders.includes(selectionRef.current.option.providerID)) cancel();
+    const attempt = attemptRef.current;
+    if (!attempt) return;
+    const provider = providersRef.current.find((entry) => gatewayConnectProviderKey(entry) === attempt.providerKey);
+    if (provider && disabledProviders.includes(provider.providerId)) cancel();
   }, [disabledProviders, cancel]);
   useEffect(() => {
     window.addEventListener(denSessionUpdatedEvent, cancel);
@@ -80,69 +97,61 @@ export function GatewayModelAccessProvider(props: {
     };
   }, [cancel]);
 
-  const select = useCallback<GatewayModelAccess["select"]>((option, commit, isCurrent) => {
+  const run = useCallback(async (provider: GatewayConnectProvider, model: ModelRef | null, commit: (() => void) | null, isCurrent: () => boolean) => {
     cancel();
+    const providerKey = gatewayConnectProviderKey(provider);
+    const attempt: Attempt = { providerKey, controller: new AbortController(), releaseDefaultRepair: beginPendingGatewayModelSelection() };
+    attemptRef.current = attempt;
+    setSignIn({ kind: "waiting", providerKey, modelId: model?.modelID ?? null });
+    const scopeKey = scope.current;
+    const stillCurrent = () => attemptRef.current === attempt && !attempt.controller.signal.aborted && scope.current === scopeKey
+      && !disabled.current.includes(provider.providerId) && isCurrent();
+    let connected = false;
+    let failure = GATEWAY_SIGN_IN_TIMEOUT_MESSAGE;
+    try {
+      connected = await loginRef.current(provider, attempt.controller.signal, model ?? undefined);
+    } catch (error) {
+      connected = false;
+      if (error instanceof Error && error.message.trim()) failure = error.message;
+    }
+    if (attemptRef.current !== attempt || attempt.controller.signal.aborted) return;
+    const shouldCommit = connected && commit !== null && stillCurrent();
+    attempt.releaseDefaultRepair();
+    attemptRef.current = null;
+    if (!connected) {
+      setSignIn({ kind: "failed", providerKey, message: failure });
+      return;
+    }
+    setSignIn(null);
+    toast.success(`Signed in to ${gatewaySignInBrand(provider)}`);
+    if (shouldCommit) commit?.();
+  }, [cancel]);
+
+  const select = useCallback<GatewayModelAccess["select"]>((option, commit, isCurrent) => {
     if (option.disabled || disabled.current.includes(option.providerID) || !isCurrent()) return () => undefined;
-    const provider = props.providers.find((entry) => entry.providerId === option.providerID
+    const provider = providersRef.current.find((entry) => entry.providerId === option.providerID
       && entry.models?.some((model) => model.id === option.modelID && model.credentialSetId === entry.credentialSetId));
     if (!provider) {
-      if (!option.disabled && !option.gatewayAuthorization && isCurrent()) commit();
+      if (!option.gatewayAuthorization && isCurrent()) commit();
       return () => undefined;
     }
-    const scopeKey = props.scopeKey;
-    const next: Selection = {
-      option, provider, commit, controller: new AbortController(),
-      releaseDefaultRepair: beginPendingGatewayModelSelection(),
-      isCurrent: () => scope.current === scopeKey && !disabled.current.includes(option.providerID) && isCurrent(),
-    };
-    selectionRef.current = next;
-    setSelection(next);
+    void run(provider, { providerID: option.providerID, modelID: option.modelID }, commit, isCurrent);
+    const providerKey = gatewayConnectProviderKey(provider);
     return () => {
-      if (selectionRef.current === next) cancel();
+      if (attemptRef.current?.providerKey === providerKey) cancel();
     };
-  }, [cancel, props.providers, props.scopeKey]);
+  }, [cancel, run]);
+
+  const signInProvider = useCallback((provider: GatewayConnectProvider) => {
+    if (disabled.current.includes(provider.providerId)) return;
+    void run(provider, null, null, () => true);
+  }, [run]);
 
   useImperativeHandle(props.selectionRef, () => ({ select }), [select]);
 
-  const login = async () => {
-    const pending = selectionRef.current;
-    if (!pending || busy) return;
-    if (!pending.isCurrent()) { cancel(); return; }
-    const stillAssigned = props.providers.some((provider) => gatewayConnectProviderKey(provider) === gatewayConnectProviderKey(pending.provider)
-      && provider.models?.some((model) => model.id === pending.option.modelID));
-    if (!stillAssigned) { cancel(); return; }
-    setBusy(true);
-    setError(null);
-    try {
-      const connected = await props.login(pending.provider, pending.controller.signal, pending.option);
-      if (pending.controller.signal.aborted || selectionRef.current !== pending) return;
-      if (!pending.isCurrent()) { cancel(); return; }
-      if (connected) {
-        cancel();
-        pending.commit();
-      } else {
-        setError("Sign-in has not been confirmed. Retry Login or Cancel.");
-      }
-    } catch {
-      if (!pending.controller.signal.aborted && pending.isCurrent()) setError("Sign-in failed. Retry Login or Cancel.");
-    } finally {
-      if (selectionRef.current === pending) setBusy(false);
-    }
-  };
-
   return (
-    <GatewayModelAccessContext value={{ options, disabledProviders, loginOpen: selection !== null, select }}>
+    <GatewayModelAccessContext value={{ options, disabledProviders, signIn, select, signInProvider, cancel }}>
       {props.children}
-      <Dialog open={selection !== null} onOpenChange={(open) => { if (!open) cancel(); }}>
-        <DialogContent className="lg:max-w-sm" showCloseButton={false}>
-          <DialogHeader><DialogTitle>Log in to this provider to use the models</DialogTitle></DialogHeader>
-          {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-          <DialogFooter>
-            <Button variant="outline" onClick={cancel}>Cancel</Button>
-            <Button disabled={busy} onClick={() => void login()}>Login</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </GatewayModelAccessContext>
   );
 }
@@ -152,14 +161,23 @@ export function useGatewayModelSelection(contextKey: string) {
   const epoch = useMemo(() => ({}), [contextKey]);
   const current = useRef(epoch);
   current.current = epoch;
-  const cancel = useRef<(() => void) | null>(null);
+  const release = useRef<(() => void) | null>(null);
+  // Closing the picker or changing the model it was opened for stops a sign-in
+  // that would otherwise pick a model the person has moved on from.
   useLayoutEffect(() => {
     current.current = epoch;
-    return () => { current.current = {}; cancel.current?.(); };
+    return () => { current.current = {}; release.current?.(); release.current = null; };
   }, [epoch]);
   const select = useCallback((option: ModelOption, commit: () => void) => {
-    cancel.current?.();
-    cancel.current = access.select(option, commit, () => current.current === epoch);
+    release.current?.();
+    release.current = access.select(option, commit, () => current.current === epoch);
   }, [access.select, epoch]);
-  return { options: access.options, disabledProviders: access.disabledProviders, loginOpen: access.loginOpen, select };
+  return {
+    options: access.options,
+    disabledProviders: access.disabledProviders,
+    signIn: access.signIn,
+    signInProvider: access.signInProvider,
+    cancel: access.cancel,
+    select,
+  };
 }

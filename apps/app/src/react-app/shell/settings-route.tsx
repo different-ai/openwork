@@ -883,7 +883,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model?: ModelRef }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
@@ -901,7 +901,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           const result = await providerAuthStore.runCloudProviderSync("manual");
           synced = result?.outcome === "handled_server_side";
         },
-        isConnected: () => synced && (request
+        isConnected: () => synced && (request?.model
           ? providerAuthStore.isGatewayModelAvailable(provider, request.model)
           : isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders)),
       });
@@ -912,7 +912,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
       return connected && !signal.aborted;
     } catch (error) {
-      if (!signal.aborted && !request) toast.error(describeRouteError(error));
+      // In place (the picker), the caller shows why; elsewhere a toast does.
+      if (request && !signal.aborted) throw error;
+      if (!signal.aborted) toast.error(describeRouteError(error));
       return false;
     } finally {
       if (gatewayConnectAbort.current === controller) setConnectingGatewayProviderId(null);
@@ -2473,16 +2475,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
               ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
             ])}
-            gatewayProviderIds={gatewayProviderIds}
-            gatewayConnectProviders={gatewayConnectProviders}
-            connectingGatewayProviderId={connectingGatewayProviderId}
-            onOpenModelConnections={cloudSession.isSignedIn ? () => { void platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString()); } : undefined}
-            onCancelGatewayConnect={() => {
-              gatewayConnectAbort.current?.abort();
-              setConnectingGatewayProviderId(null);
-              toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
-            }}
-            onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
@@ -3006,7 +2998,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         disabledProviders={disabledProviders}
         gatewayProviderIds={gatewayProviderIds}
         gatewayConnectProviders={gatewayConnectProviders}
-        onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
+        onManageModels={() => {
+          modelPicker.setOpen(false);
+          navigateSettingsPath("extensions/models");
+        }}
         query={modelPicker.query}
         setQuery={modelPicker.setQuery}
         target="default"
