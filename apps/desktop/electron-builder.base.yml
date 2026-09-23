@@ -31,7 +31,6 @@ asarUnpack:
   - node_modules/node-pty/**
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
-beforePack: scripts/electron-before-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
 publish:
   - provider: github
@@ -44,7 +43,7 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: false
-  entitlements: build/entitlements.mac.generated.plist
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: OpenWork uses the microphone when you allow a page to access audio input.

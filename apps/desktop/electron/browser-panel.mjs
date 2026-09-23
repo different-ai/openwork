@@ -16,7 +16,6 @@ import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
-import { chooseWebAuthnAccount } from "./web-authn.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -55,13 +54,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (!tab) return;
       tab.downloads.add(item);
       item.once("done", () => tab.downloads.delete(item));
-    });
-    browserSession.on("select-webauthn-account", (_event, details, callback) => {
-      // Chromium has already checked the relying party. A native chooser keeps
-      // the credential in the browser and gives the person the final choice.
-      Promise.resolve().then(() => chooseWebAuthnAccount({
-        details, window: window(), showMessageBox: (browserWindow, options) => dialog.showMessageBox(browserWindow, options),
-      })).then((credentialId) => callback(credentialId), () => callback(null));
     });
     browserSessionHooksInstalled = true;
     if (!checkPolicy) return;
