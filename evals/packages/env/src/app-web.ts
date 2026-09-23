@@ -298,9 +298,13 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
           .map(entry => ({ path: new URL(entry.name).pathname,
             status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
       })).catch(() => null);
-      const viteEvents = remote ? [] : (await readFile(join(runtime.runtimeDirectory, "web.log"), "utf8").catch(() => ""))
-        .split("\n").filter(line => /error|warn|optim|ready|restart|reload|terminated|closed/i.test(line))
-        .slice(-20).map(line => line.replace(/https?:\/\/\S+/g, "[url]").slice(0, 500));
+      const logTail = async (path: string | undefined, lines: number) => path
+        ? (await readFile(path, "utf8").catch(() => "")).split("\n").filter(line => line.trim())
+          .slice(-lines).map(line => line.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300))
+        : [];
+      const viteEvents = remote ? [] : await logTail(join(runtime.runtimeDirectory, "web.log"), 25);
+      const chromeLog = browser.handle.meta?.log;
+      const chromeEvents = remote ? [] : await logTail(typeof chromeLog === "string" ? chromeLog : undefined, 15);
       const webUrl = runtime.webUrl;
       const moduleProbes = remote ? [] : await Promise.all([...new Set(network.failures.map(failure => failure.path))].slice(0, 3).map(async path => {
         try {
@@ -311,7 +315,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
           return { path, unavailable: true };
         }
       }));
-      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)} Vite events: ${JSON.stringify(viteEvents)} Module probes: ${JSON.stringify(moduleProbes)}`, { cause: error });
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)} Page timeline: ${JSON.stringify(network.summary())} Vite events: ${JSON.stringify(viteEvents)} Chrome log: ${JSON.stringify(chromeEvents)} Module probes: ${JSON.stringify(moduleProbes)}`, { cause: error });
     } finally {
       network.close();
     }
