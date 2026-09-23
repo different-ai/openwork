@@ -5,7 +5,7 @@ import { deletePreview, findSnapshot, launchPreview, snapshotSlug, waitForPublic
 import { ensureSnapshot } from "../src/builder.ts";
 
 const sha = "a".repeat(40);
-function mockApi(snapshotCreatedAt = new Date().toISOString()) {
+function mockApi(snapshotCreatedAt = new Date().toISOString(), files: Record<string, string> = {}) {
   const creates: Record<string, unknown>[] = [];
   const writes: string[] = [];
   const deleted: string[] = [];
@@ -19,6 +19,9 @@ function mockApi(snapshotCreatedAt = new Date().toISOString()) {
       creates.push(Object.fromEntries(Object.entries(body)));
       return Response.json({ id: `vm-${creates.length}`, createdAt: new Date().toISOString() });
     }
+    const guestPath = new URL(String(input)).searchParams.get("path") ?? "";
+    const file = Object.entries(files).find(([name]) => guestPath.endsWith(`/${name}`));
+    if (path.includes("/fs/") && file && (init?.method ?? "GET") === "GET") return new Response(file[1]);
     if (path.includes("/fs/")) { writes.push(String(init?.body)); return Response.json({}); }
     if (path.endsWith("/exec-await")) { commands.push(String(init?.body)); return Response.json({ statusCode: 0, stdout: "" }); }
     if (init?.method === "DELETE") { deleted.push(path); return new Response(null, { status: 204 }); }
@@ -157,4 +160,24 @@ test("world outputs accept disposable credentials but reject malformed values", 
   });
   assert.throws(() => parsePreviewOutputs({ password: { value: {}, secret: true } }), /Invalid/);
   assert.throws(() => parsePreviewOutputs({ password: { value: "synthetic", secret: "false" } }), /Invalid/);
+});
+
+test("ACME clones link the desktop viewer only when the snapshot started the desktop", async () => {
+  const ready = mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "starting", group: "Desktop" } }) });
+  const session = await launchPreview({ gitSha: sha, world: "acme-web" }, ready.api, reachable);
+  const desktop = new URL(session.outputs.desktopUrl?.value ?? "https://missing.invalid");
+  assert.match(desktop.hostname, /^desktop-[a-f0-9]{32}\.preview\.openwork\.software$/);
+  assert.equal(desktop.pathname, "/__openwork_launch");
+  assert.equal(desktop.searchParams.get("token"), new URL(session.url).searchParams.get("token"));
+  assert.equal(session.outputs.desktopUrl?.group, "Services");
+  const tls = ready.creates[0].tls;
+  assert.ok(typeof tls === "object" && tls !== null && "rules" in tls && Array.isArray(tls.rules));
+  assert.ok(tls.rules.some((rule: unknown) => typeof rule === "object" && rule !== null && "domain" in rule && rule.domain === desktop.hostname));
+
+  const unavailable = mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "unavailable", group: "Desktop" } }) });
+  const web = await launchPreview({ gitSha: sha, world: "acme-web" }, unavailable.api, reachable);
+  assert.equal(web.outputs.desktopUrl, undefined, "a failed desktop never produces a dead link");
+  assert.ok(web.outputs.webUrl?.value.includes("__openwork_launch"), "the web preview still launches");
+  const older = mockApi();
+  assert.equal((await launchPreview({ gitSha: sha, world: "acme-web" }, older.api, reachable)).outputs.desktopUrl, undefined, "snapshots from before this change are unaffected");
 });

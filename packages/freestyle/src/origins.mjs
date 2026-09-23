@@ -5,7 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 // edge translates them to a clone's public origins; no process needs restarting.
 const templateId = "0".repeat(32);
 export const templateOrigins = Object.fromEntries(
-  Object.entries({ app: "ow", den: "den", api: "api", engine: "engine", gateway: "gateway" })
+  Object.entries({ app: "ow", den: "den", api: "api", engine: "engine", gateway: "gateway", desktop: "desktop" })
     .map(([service, prefix]) => [service, `https://${prefix}-${templateId}.preview.openwork.software`]),
 );
 

@@ -13,10 +13,12 @@ test("reviewers see Freestyle scope and recoverable setup without exposing sandb
   expect(html).toContain("ACME web");
   expect(html).toContain("Full stack");
   expect(html).toContain("OpenWork web app and its local engine");
+  expect(html).toContain("OpenWork desktop");
+  expect(html).toContain("real desktop app from this commit");
   expect(html).not.toContain("__openwork_launch?token=");
   evidence.recordAssertionEvidence(
     "A review offers a scoped Freestyle preview with an honest disconnected state",
-    "The production review page keeps Launch in Freestyle visible, names the missing connection and owner, explains the OpenWork web scope in collapsed details, and contains no sandbox access link before launch.",
+    "The production review page keeps Launch in Freestyle visible, names the missing connection and owner, explains the OpenWork web scope and the OpenWork desktop choice in collapsed details, and contains no sandbox access link before launch.",
     true,
   );
 

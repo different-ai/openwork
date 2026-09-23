@@ -9,7 +9,7 @@ npm install -g openwork-server
 openwork-server --workspace /path/to/workspace --approval auto
 ```
 
-`openwork-server` ships as a compiled binary, so Bun is not required at runtime.
+The npm package selects a compiled binary for the host OS and architecture (macOS, Linux, and Windows on arm64 or x64), so Bun is not required at runtime.
 
 ### Self-hosted web UI
 
