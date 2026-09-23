@@ -896,7 +896,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
           className="mb-8"
           title={configuredView ? "Configured connectors" : "Connectors"}
           description={configuredView
-            ? "Everything your team has set up: connect accounts, review tools, change access, or uninstall."
+            ? "Everything your team has set up: connect accounts, review tools, change access, or remove."
             : "Connectors is where you can add MCP servers that your whole team can use."}
           action={configuredView ? (
             <Link
