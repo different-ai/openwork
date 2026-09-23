@@ -162,6 +162,16 @@ test("world outputs accept disposable credentials but reject malformed values", 
   assert.throws(() => parsePreviewOutputs({ password: { value: "synthetic", secret: "false" } }), /Invalid/);
 });
 
+test("the review page accepts every service link an ACME launch returns, including the desktop viewer", async () => {
+  const { parsePreviewOutputs } = await import("../src/outputs.ts");
+  const ready = mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "ready", group: "Desktop" } }) });
+  const session = await launchPreview({ gitSha: sha, world: "acme-web" }, ready.api, reachable);
+  // The browser re-validates the launch response; a rejected link hides a working sandbox.
+  const parsed = parsePreviewOutputs(JSON.parse(JSON.stringify(session.outputs)));
+  assert.ok(parsed.desktopUrl, "the desktop viewer link must survive client validation");
+  assert.throws(() => parsePreviewOutputs({ desktopUrl: { value: "https://evil.example/__openwork_launch?token=x", group: "Services" } }), /Invalid private service link/);
+});
+
 test("ACME clones link the desktop viewer only when the snapshot started the desktop", async () => {
   const ready = mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "starting", group: "Desktop" } }) });
   const session = await launchPreview({ gitSha: sha, world: "acme-web" }, ready.api, reachable);
