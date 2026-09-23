@@ -47,6 +47,7 @@ test(`LIVE-CLOUD ${resolveEvalEngine()}: the real model retrieves, refreshes and
   const documentIdentity = await world.documentIdentity();
   const runtime = (await world.request("/experimental/engine-v2-preview/status")).body;
   const messageId = (message: Record<string, unknown>) => record(message.info) ? message.info.id : message.id;
+  const retrievedNames = new Set([cloud.capability]);
   const retrieve = async (expected: string) => {
     const before = new Set((await world.messages()).filter(record).map(messageId));
     const answer = await turn(ctx, "Use the live-cobalt organization skill to report the CURRENT cobalt release code. Retrieve its instructions afresh through OpenWork Connect. If retrieval fails reply UNAVAILABLE. Never use remembered instructions, shell or local files.", expected);
@@ -54,6 +55,13 @@ test(`LIVE-CLOUD ${resolveEvalEngine()}: the real model retrieves, refreshes and
       .flatMap(message => Array.isArray(message.parts) ? message.parts : Array.isArray(message.content) ? message.content : [])
       .filter(record).filter(part => part.type === "tool");
     evidence.recordJsonArtifact("Cloud skill tool calls", tools);
+    // Den accepts either the canonical capability or its returned skill name.
+    // Learn aliases only from a successful tool response for this capability.
+    for (const part of tools) {
+      const metadata = record(part.state) && part.state.status === "completed" && record(part.state.metadata) ? part.state.metadata : null;
+      const content = metadata && record(metadata.openworkMcpApp) ? metadata.openworkMcpApp.structuredContent : null;
+      if (record(content) && content.capability === cloud.capability && typeof content.name === "string") retrievedNames.add(content.name);
+    }
     // V2 may wrap the Connect call in its execute tool's code input.
     if (expected !== "UNAVAILABLE") {
       expect(tools.some(part => /get_skill|execute_capability/.test(JSON.stringify(part)) && record(part.state) && JSON.stringify(part.state).includes(cloud.capability))).toBe(true);
@@ -65,10 +73,12 @@ test(`LIVE-CLOUD ${resolveEvalEngine()}: the real model retrieves, refreshes and
       expect(tools.some(part => record(part.state) && (
         (/get_skill|execute_capability/.test(JSON.stringify(part)) && JSON.stringify(part.state).includes(cloud.capability)
           && (part.state.status === "error" || /not found|not available|unknown_capability|denied|not accessible/i.test(JSON.stringify(part.state))))
+        || (/get_skill|execute_capability/.test(String(part.tool ?? part.name)) && part.state.status === "error"
+          && record(part.state.input) && typeof part.state.input.name === "string" && retrievedNames.has(part.state.input.name))
         || (record(part.state.metadata) && Array.isArray(part.state.metadata.toolCalls)
           && part.state.metadata.toolCalls.some(call => record(call) && call.status === "error"
             && /(?:^|\.)(?:get_skill|execute_capability)$/.test(String(call.tool))
-            && record(call.input) && call.input.name === cloud.capability))
+            && record(call.input) && typeof call.input.name === "string" && retrievedNames.has(call.input.name)))
         || (/search_capabilities/.test(String(part.tool ?? part.name)) && typeof part.state.output === "string" && /"matches"\s*:\s*\[\s*\]/.test(part.state.output))
       ))).toBe(true);
     }
@@ -183,6 +193,14 @@ async function ready({ world, user, probe, step, evidence }: Context) {
   await user.see("composer", { editable: true, timeoutMs: 90_000 });
   await probe.eventually(() => probe.composer(), { within: 90_000, label: "initial boot settled with a model", until: state => !state.modelUnavailable });
   const gateway = await world.stageLiveProvider();
+  if (gateway && world.engine === "v1") {
+    await step("Apply the staged provider configuration through v1's required engine reload", async () => {
+      const workspace = /\/workspace\/([^/]+)/.exec(await world.route())?.[1];
+      expect((await world.request(`/workspace/${workspace}/engine/reload`, "POST")).status).toBe(200);
+      await user.reload();
+      await user.see("composer", { editable: true, timeoutMs: 90_000 });
+    });
+  }
   const provider = gateway?.name ?? process.env.OPENWORK_LIVE_PROVIDER;
   if (provider) await step("Connect the real provider using the app's masked API-key form", async () => {
     const keyName = process.env.OPENWORK_LIVE_KEY_ENV;

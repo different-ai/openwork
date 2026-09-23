@@ -30,9 +30,17 @@ The signed-in first-send regression is covered by `LIVE-ORG`. Native v2 create a
 
 Cloud skills now follow the same v1 path on both engines: the shared Connect metadata catalog has a 30-second in-memory cache, and the model retrieves the selected skill's current instructions through Connect on demand. V2 no longer downloads every organization skill or writes their bodies into a native skill directory before sending a message. Existing generated Cloud copies are removed when the v2 runtime starts. No Den deployment is required. This preserves v1 discovery refresh timing; instant metadata updates are future work. `LIVE-CLOUD` uses real Den and real inference to check discovery, use, edited instructions, and removal in one conversation on both engines.
 
-The earlier local v2 free-starter run received HTTP 426 despite the native beta pin. On PR commit `c170b0a58`, Linux CI subsequently passed actual free-starter inference on both engines, through both app-web and a fresh native desktop installation. The historical rejection remains recorded below; it is not the result of that CI run. Paid Gateway success is still separate evidence from first-boot parity.
+The earlier local v2 free-starter run received HTTP 426 despite the native beta pin. On PR commit `c170b0a58`, Linux CI subsequently passed actual free-starter inference on both engines, through both app-web and a fresh native desktop installation. The rejection returned on `ef503d92f` in both fresh browser and native desktop tests, so free-starter compatibility remains a migration blocker. Paid OpenAI/Gateway success is separate evidence from first-boot parity.
 
-## Local verification recorded on 2026-09-23
+## Verification recorded on 2026-09-23
+
+The first protected CI run used a real OpenAI API key and completed five of nine chat scenarios on each engine. V2 passed signed-in first send, edit/revert/restore, forking, side chats, and local skill updates. Its remaining failures led to a native model allow/deny-list fix and corrections to the connector, Cloud-skill and local-MCP tests. All four corrected v2 scenarios subsequently passed locally using real Gateway inference. This is not a claim that the complete latest-head matrix is green.
+
+`engine-provider-filters.e2e.test.ts` additionally checks the pinned native v2 catalog: remove/restore a model, apply deny-list precedence, allow no models, then remove restrictions, retaining the same engine PID. It uses a synthetic credential and makes no inference requests. Runtime model filtering applies to built-in models as well as configured aliases.
+
+The latest CI also found a v1 first-send interruption and a packaged enterprise startup recovery screen. The proof jobs remain red until these and the free-starter compatibility failure are resolved. Do not enable v2 by default on the strength of a passing subset.
+
+### Earlier development-checkout observations
 
 The development checkout completed 17 of 18 engine-specific real-model flow checks after targeted rechecks. The remaining failure was v2's free starter inference (HTTP 426). Gateway inference, conversation controls, skills, models, local MCP and Den capability execution passed on both engines. Each engine also completed three fresh native launch samples: ready-composer medians were 25,284 ms for v1 and 16,793 ms for v2. These include development build/harness overhead.
 

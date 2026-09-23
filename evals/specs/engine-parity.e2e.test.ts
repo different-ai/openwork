@@ -169,7 +169,15 @@ test(`PARITY-BOOT ${resolveEvalEngine()}: open the app and send with its first a
     await user.click("Run task");
     await user.see({ text: world.prompt }, { timeoutMs: 15_000 });
     const userRenderedMs = performance.now() - sendAt;
-    await user.see({ text: world.reply }, { timeoutMs: 90_000 });
+    try { await user.see({ text: world.reply }, { timeoutMs: 90_000 }); }
+    catch (error) {
+      evidence.recordJsonArtifact("First-send failure diagnostics", {
+        requests: await world.mock.agentRequests(), reloads: await world.reloadRequests(),
+        serverErrors: await world.serverErrors(), screen: await probe.text(),
+      });
+      await user.screenshot();
+      throw error;
+    }
     const completedMs = performance.now() - sendAt;
     await user.see("Run task", { timeoutMs: 30_000 });
     const requests = await world.mock.agentRequests({ promptMarker: world.prompt });

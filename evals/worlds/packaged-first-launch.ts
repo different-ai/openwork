@@ -149,6 +149,17 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
   let app: AttachedSurface | null = null;
   let witness: Awaited<ReturnType<typeof observeRendererExceptions>> | null = null;
   const dispose = async () => {
+    // A caught runtime bootstrap error is not a Runtime.exceptionThrown event.
+    // Preserve the recovery screen's collapsed technical details before the
+    // isolated profile is removed, without reading credentials or retrying boot.
+    if (app) {
+      const recovery = await evaluateOnSurface(app, () => {
+        const root = document.getElementById("root");
+        if (!/OpenWork couldn't start|OpenWork hit an unexpected error/.test(root?.innerText ?? "")) return null;
+        return { text: root?.textContent, details: [...document.querySelectorAll("details")].map(element => element.textContent) };
+      }, { timeoutMs: 5_000, reattachAttempts: 0 }).catch(() => null);
+      if (recovery) console.error("[packaged-startup-recovery]", JSON.stringify(recovery));
+    }
     witness?.close();
     try {
       await app?.stop();
