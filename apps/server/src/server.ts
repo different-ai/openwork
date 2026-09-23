@@ -658,6 +658,7 @@ async function assertWorkspaceOwnsProxiedSessionRead(
         realpath(sessionDirectory).catch(() => sessionDirectory),
       ])
     : [directory, sessionDirectory];
+  signal?.throwIfAborted();
   if (!actualDirectory || actualDirectory !== expectedDirectory) {
     throw new ApiError(404, "session_not_found", "Session not found");
   }
@@ -907,7 +908,7 @@ export async function startServer(
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const ownership = assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath, false,
-            request.method === "GET" ? request.signal : undefined);
+            request.method === "GET" || request.method === "HEAD" ? request.signal : undefined);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
           const send = () => proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath,
@@ -1038,7 +1039,7 @@ export async function startServer(
           const workspace = config.workspaces[0];
           const ownership = workspace
             ? assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, url.pathname, false,
-              request.method === "GET" ? request.signal : undefined)
+              request.method === "GET" || request.method === "HEAD" ? request.signal : undefined)
             : Promise.resolve();
           const send = () => proxyOpencodeRequest({ config, request, url, workspace });
           const response = await sendWithOwnershipProof(ownership,
@@ -1240,10 +1241,11 @@ export async function proxyOpencodeV2Request(input: {
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
-  const signal = method === "GET"
+  const readRequest = method === "GET" || method === "HEAD";
+  const signal = readRequest
     ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
     : input.recoverySignal;
-  if (method === "GET") signal?.throwIfAborted();
+  if (readRequest) signal?.throwIfAborted();
   if (method !== "GET" && method !== "HEAD") ensureWritable(input.config);
 
   const withoutPrefix = input.proxyPath.slice("/opencode2".length);
@@ -1622,10 +1624,11 @@ export async function proxyOpencodeRequest(input: {
   const workspace = input.workspace;
   const proxyPath = input.proxyPath ?? input.url.pathname;
   const method = input.request.method.toUpperCase();
-  const signal = method === "GET"
+  const readRequest = method === "GET" || method === "HEAD";
+  const signal = readRequest
     ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
     : input.recoverySignal;
-  if (method === "GET") signal?.throwIfAborted();
+  if (readRequest) signal?.throwIfAborted();
   // The wrapper routes enforced the server read-only mode via ensureWritable;
   // native proxy writes must honor the same guard so a read-only server never
   // forwards mutations to the engine.
@@ -1750,7 +1753,7 @@ export async function proxyOpencodeRequest(input: {
       response = await loopbackFetch(targetUrl, { method, headers, body, signal });
       enginePoolForConfig(input.config)?.reportRequestSuccess(baseUrl);
     } catch (error) {
-      if (method === "GET" && isExpectedRequestCancellation(error, signal)) throw error;
+      if (readRequest && isExpectedRequestCancellation(error, signal)) throw error;
       if (workspace) enginePoolForConfig(input.config)?.reportRequestFailure(baseUrl, error, workspace);
       if (isEngineConnectionFailure(error)) throw opencodeUnreachableError(error, proxyPath);
       throw error;
@@ -1765,7 +1768,7 @@ export async function proxyOpencodeRequest(input: {
           { method, headers: fallbackHeaders, body, signal },
         );
       } catch (error) {
-        if (method === "GET" && isExpectedRequestCancellation(error, signal)) throw error;
+        if (readRequest && isExpectedRequestCancellation(error, signal)) throw error;
         if (workspace) enginePoolForConfig(input.config)?.reportRequestFailure(route.fallback.baseUrl, error, workspace);
         if (isEngineConnectionFailure(error)) throw opencodeUnreachableError(error, proxyPath);
         throw error;

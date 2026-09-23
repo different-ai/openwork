@@ -173,7 +173,7 @@ async function chooseNativeMenu(ctx: Context, label: string) {
 async function ready({ world, user, probe, step, evidence }: Context) {
   await user.see("composer", { editable: true, timeoutMs: 90_000 });
   await probe.eventually(() => probe.composer(), { within: 90_000, label: "initial boot settled with a model", until: state => !state.modelUnavailable });
-  const gateway = await world.stageGateway();
+  const gateway = await world.stageLiveProvider();
   const provider = gateway?.name ?? process.env.OPENWORK_LIVE_PROVIDER;
   if (provider) await step("Connect the real provider using the app's masked API-key form", async () => {
     const keyName = process.env.OPENWORK_LIVE_KEY_ENV;
@@ -397,10 +397,10 @@ test(`LIVE-SKILLS ${resolveEvalEngine()}: the real model loads installed skills 
   if (world.engine === "v2") expect(await world.reloadRequests()).toEqual([]);
 });
 
-test(`LIVE-MODELS ${resolveEvalEngine()}: browse, change and hot-update real Gateway models`, async ctx => {
+test(`LIVE-MODELS ${resolveEvalEngine()}: browse, change and hot-update real provider models`, async ctx => {
   const { world, user, probe, step, evidence } = ctx;
   const gateway = await ready(ctx);
-  if (!gateway?.secondModelId) throw new Error("This real Gateway test requires OPENWORK_LIVE_INSTALLED_GATEWAY=1 and two assigned models; absence is not a pass");
+  if (!gateway?.secondModelId) throw new Error("This real provider test requires two Gateway or explicitly configured OpenAI models; absence is not a pass");
   const documentIdentity = await world.documentIdentity();
   const runtime = (await world.request("/experimental/engine-v2-preview/status")).body;
   const first = `MODEL-ONE-${randomUUID().slice(0, 8)}`;
@@ -408,14 +408,14 @@ test(`LIVE-MODELS ${resolveEvalEngine()}: browse, change and hot-update real Gat
   const route = await world.route();
   const secondModelId = gateway.secondModelId;
   for (const includeSecond of [false, true]) await step(includeSecond ? "A newly enabled model appears without restarting v2" : "A removed model disappears from the picker", async () => {
-    await world.stageGateway(includeSecond);
+    await world.stageLiveProvider(includeSecond);
     if (world.engine === "v1") {
       const workspace = /\/workspace\/([^/]+)/.exec(route)?.[1];
       expect((await world.request(`/workspace/${workspace}/engine/reload`, "POST")).status).toBe(200);
       await user.reload();
     }
     const models = await probe.eventually(() => world.readModels(), { within: 45_000, label: "visible picker reflects model update", until: rows => rows.some(row => row.id === secondModelId) === includeSecond });
-    evidence.recordJsonArtifact("Visible live Gateway model choices", models);
+    evidence.recordJsonArtifact("Visible real provider model choices", models);
     await user.screenshot();
     await user.press("Escape");
     await probe.eventually(() => probe.dom('input[placeholder="Search providers and models..."]'), {

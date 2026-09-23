@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { trackResource } from "@openwork/world";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { installedLiveGateway } from "./installed-live-gateway.ts";
+import { configuredLiveProvider } from "./installed-live-gateway.ts";
 
 export async function engineLiveDesktop(seed: Seed) {
   const bootStarted = performance.now();
@@ -156,8 +156,8 @@ export async function engineLiveDesktop(seed: Seed) {
       if (!lines.some(line => /^POST .*\/prompt\b/.test(line))) throw new Error("Server log did not observe inference requests; cannot prove absence of reloads");
       return lines.filter(line => /^POST .*\/(?:engine\/reload|instance\/dispose|global\/dispose)\b/.test(line) || /Engine rollover requested|Engine reloaded in place/.test(line));
     },
-    async stageGateway(includeSecond = true) {
-      const gateway = await installedLiveGateway();
+    async stageLiveProvider(includeSecond = true) {
+      const gateway = await configuredLiveProvider();
       if (!gateway) return null;
       const route = await seed.evalIn(app, () => location.hash || location.pathname);
       const workspace = /\/workspace\/([^/]+)/.exec(route)?.[1];

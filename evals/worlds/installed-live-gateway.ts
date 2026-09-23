@@ -30,3 +30,18 @@ export async function installedLiveGateway() {
   }
   throw new Error("No configured OpenAI-compatible OpenWork Gateway credential is available");
 }
+
+/** CI supplies an explicitly selected real OpenAI provider; local runs may use
+ * the installed Gateway. Credentials never become fixture evidence. */
+export async function configuredLiveProvider() {
+  if (process.env.OPENWORK_LIVE_INSTALLED_GATEWAY === "1") return installedLiveGateway();
+  if (process.env.OPENWORK_LIVE_PROVIDER !== "OpenAI") return null;
+  const keyName = process.env.OPENWORK_LIVE_KEY_ENV;
+  const key = keyName ? process.env[keyName]?.trim() : undefined;
+  const ids = (process.env.OPENWORK_LIVE_MODELS ?? process.env.OPENWORK_LIVE_MODEL)?.split(",").map(id => id.trim()).filter(Boolean);
+  if (!key || !ids?.length) throw new Error("Live OpenAI requires a credential and OPENWORK_LIVE_MODELS; no mock fallback is allowed");
+  return { key, baseURL: "https://api.openai.com/v1", models: ids.map((id, index) => ({ id, config: {
+    id, name: `Live model ${index === 0 ? "one" : "two"}`, tool_call: true,
+    limit: { context: 128_000, output: 16_384 },
+  } })) };
+}

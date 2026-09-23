@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { liveOpenAiEnabled } from "@openwork/behaviors";
-import { observeTranscript, readTranscriptMessages, spec, type Probe, type User } from "@openwork/testkit";
+import { browserScript, observeTranscript, readTranscriptMessages, spec, type Probe, type User } from "@openwork/testkit";
 import { skillLifecycle } from "../worlds/chat.ts";
 import { selectedSkillsWeb } from "../worlds/selected-skills.ts";
 import {
@@ -26,7 +26,9 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
   const submitted: string[] = [];
   const answer = async () => {
     const messages = await readTranscriptMessages(probe, "assistant");
-    return { count: messages.length, text: messages.at(-1) ?? "" };
+    const id = await probe.eval(browserScript(() => [...document.querySelectorAll('[data-message-role="assistant"]')].at(-1)?.getAttribute("data-message-id") ?? "", []));
+    const state = await world.conversationState();
+    return { id, text: messages.at(-1) ?? "", messages, completed: state.completed.includes(id) };
   };
   const ask = async (expected: string | null) => {
     const before = await answer();
@@ -43,14 +45,16 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     await user.see({ text: prompt }, { timeoutMs: 15_000 });
     const response = await probe.eventually(answer, {
       within: 150_000, label: "the conversation answers using the currently installed instructions",
-      until: (value) => record(value) && record(before) && Number(value.count) > Number(before.count)
+      until: (value) => record(value) && record(before) && value.id !== before.id && value.completed === true
         && typeof value.text === "string" && value.text.includes(expected ?? "UNAVAILABLE"),
     });
     await user.see("Run task", { timeoutMs: 60_000 });
     submitted.push(prompt);
-    const visibleUserMessages = await readTranscriptMessages(probe, "user");
-    expect(visibleUserMessages).toHaveLength(submitted.length);
-    visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
+    // Older groups leave the DOM as the conversation grows. Verify stored
+    // history in full and keep the current turn's visible-message observer.
+    const history = (await world.conversationState()).users;
+    expect(history).toHaveLength(submitted.length);
+    for (const sent of submitted) expect(history.filter(text => text.includes(sent))).toHaveLength(1);
     expect(await readTranscriptMessages(probe, "system")).toEqual([]);
     // A silent swap to an organization model must fail here, not as a text mismatch.
     expect(await world.usedConfiguredModel()).toBe(true);
@@ -229,7 +233,9 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
   let sessionRoute: string | null = null;
   const answer = async () => {
     const messages = await readTranscriptMessages(probe, "assistant");
-    return { count: messages.length, text: messages.at(-1) ?? "", messages };
+    const id = await probe.eval(browserScript(() => [...document.querySelectorAll('[data-message-role="assistant"]')].at(-1)?.getAttribute("data-message-id") ?? "", []));
+    const state = await world.conversationState();
+    return { id, text: messages.at(-1) ?? "", messages, completed: state.completed.includes(id) };
   };
   const mintCode = () => {
     const code = randomUUID();
@@ -258,22 +264,24 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
     if (expected !== null) {
       await probe.eventually(answer, {
         within: 150_000, label: `the conversation answers with ${expected === "UNAVAILABLE" ? "UNAVAILABLE" : "the current code"}`,
-        until: (value) => value.count > before.count && value.text.includes(expected),
+        until: (value) => value.id !== before.id && value.completed && value.text.includes(expected),
       });
     }
     await user.see("Run task", { timeoutMs: 150_000 });
     const response = await answer();
     submitted.push(prompt);
-    const visibleUserMessages = await readTranscriptMessages(probe, "user");
-    expect(visibleUserMessages).toHaveLength(submitted.length);
-    visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
+    // Older groups leave the DOM as the conversation grows. Verify stored
+    // history in full and keep the current turn's visible-message observer.
+    const history = (await world.conversationState()).users;
+    expect(history).toHaveLength(submitted.length);
+    for (const sent of submitted) expect(history.filter(text => text.includes(sent))).toHaveLength(1);
     expect(await readTranscriptMessages(probe, "system")).toEqual([]);
     expect(await transcript.finish()).toMatchObject({ seen: [true], violations: [], stopped: false });
     expect(await probe.hash()).toBe(sessionRoute);
     expect(await world.runtimeIdentity()).toBe(runtime);
     await user.screenshot();
     // Only what this turn added: earlier answers legitimately still show earlier codes.
-    const fresh = response.messages.slice(before.count).join("\n");
+    const fresh = response.text;
     return { prompt, startedAt, text: response.text, fresh };
   };
   /** Which native skill ids the model asked the `skill` tool for in one turn, in order. */
