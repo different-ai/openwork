@@ -285,11 +285,17 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
     async materializedFileExists(location: string): Promise<boolean> {
       return access(location).then(() => true, () => false);
     },
-    /** Whether a registry location sits inside the workspace or the real home directory. */
-    locationLeaks(location: string): { workspace: boolean; home: boolean } {
+    /**
+     * Where a registry location sits. The owned runtime directory lives under
+     * the checkout, which is itself often under the real home (CI runners and
+     * developer machines), so it is excluded from the home check.
+     */
+    locationLeaks(location: string): { workspace: boolean; home: boolean; runtimeState: boolean } {
+      const runtimeState = location.length > 0 && isInside(location, paths.directory);
       return {
         workspace: location.length > 0 && isInside(location, workspacePath),
-        home: location.length > 0 && isInside(location, homedir()),
+        home: location.length > 0 && !runtimeState && isInside(location, homedir()),
+        runtimeState,
       };
     },
   };

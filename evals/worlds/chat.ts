@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
@@ -1059,6 +1060,7 @@ export const streamedMarkdownAnswer = [
   "",
   "Closing paragraph epsilon.",
 ].join("\n");
+const streamedMarkdownBlocks = streamedMarkdownAnswer.split(/(?<=\n\n)/);
 
 /**
  * The answer arrives in small content deltas from the shared agent mock, which
@@ -1072,14 +1074,20 @@ export async function streamedMarkdown(seed: Seed) {
       promptMarker: streamedMarkdownMarker,
       finalReply: streamedMarkdownAnswer,
       finalReasoning: streamedMarkdownReasoning,
-      // Allow live reasoning inspection over remote CDP before the mid-turn reload.
-      finalReplyChunkSize: 1,
+      // One chunk per block; the closing block is held until releaseAnswer(), so
+      // the live answer can be inspected and reloaded mid-stream on any machine.
+      finalReplyChunks: streamedMarkdownBlocks,
+      finalReplyInitiallyReleasedChunks: streamedMarkdownBlocks.length - 1,
       finalReplyDelayMs: 1500,
       steps: [],
     }],
   });
   const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const engine = resolveEvalEngine();
+  // Desktop v1 prompts are sent by the Electron main process, out of the renderer's reach.
+  const preload = fileURLToPath(new URL("../fixtures/submission-main-fetch.cjs", import.meta.url));
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}`,
+    env: { NODE_OPTIONS: `--require ${JSON.stringify(preload)}` } });
   const workspace = await seed.workspace(app, seed.tmpPath("streamed-markdown-answer"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: {
@@ -1101,7 +1109,6 @@ export async function streamedMarkdown(seed: Seed) {
     });
     if (!response.ok) throw new Error("Video fixture write failed: " + response.status);
   }, [workspace.workspaceId, (await readFile(new URL("../fixtures/assistant-video.mp4", import.meta.url))).toString("base64")]), { awaitPromise: true });
-  const engine = resolveEvalEngine();
   const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId) => {
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
     const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
@@ -1122,8 +1129,26 @@ export async function streamedMarkdown(seed: Seed) {
   }, [workspace.workspaceId, engine, providerId, modelId]), { awaitPromise: true, timeoutMs: 65000 });
   if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
+  const mainSubmission = async (action: "hold" | "state" | "reject") => {
+    const result = await seed.evalIn(app, browserScript(async (action) => {
+      const response = await window.__OPENWORK_ELECTRON__.invokeDesktop("__fetch", "http://127.0.0.1/__openwork_submission_test_control", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+      });
+      return response.body;
+    }, [action]), { awaitPromise: true, timeoutMs: 5_000 });
+    const state: unknown = JSON.parse(result);
+    if (!isRecord(state) || state.witness !== "submission-main-fetch-v1" || typeof state.attempts !== "number") {
+      throw new Error("Main-process submission witness is missing");
+    }
+    return state.attempts;
+  };
+  if (engine === "v1") await mainSubmission("state");
   return { app, den, workspace, session,
     async holdNextSubmission() {
+      if (engine === "v1") {
+        await mainSubmission("hold");
+        return;
+      }
       await seed.evalIn(app, () => {
         const originalFetch = window.fetch;
         const fault = { attempts: 0, release: () => {} };
@@ -1147,11 +1172,17 @@ export async function streamedMarkdown(seed: Seed) {
       });
     },
     async submissionAttempts() {
+      if (engine === "v1") return mainSubmission("state");
       return seed.evalIn(app, () => window.__openworkSubmissionFault?.attempts ?? 0);
     },
     async rejectSubmission() {
+      if (engine === "v1") {
+        await mainSubmission("reject");
+        return;
+      }
       await seed.evalIn(app, () => window.__openworkSubmissionFault?.release());
     },
+    releaseAnswer: () => den.mocks.agent.releaseAgentReply(streamedMarkdownMarker),
     async videoState(play = false) {
       return seed.evalIn(app, browserScript(async (play) => {
         const video = document.querySelector<HTMLVideoElement>('video[data-openwork-video-path="clip.mp4"]');

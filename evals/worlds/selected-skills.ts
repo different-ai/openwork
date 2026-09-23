@@ -1,5 +1,5 @@
 import { addInitScript, browserScript } from "@openwork/cdp";
-import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { resolveEvalEngine, type EvalEngine, type Seed } from "@openwork/env";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -54,7 +54,15 @@ export async function startProviderWitnessProxy(upstreamUrl: string) {
 
 /** Explicit selection, not model-initiated discovery. No Den or Electron. */
 export async function selectedSkillsWeb(seed: Seed) {
-  const engine = resolveEvalEngine();
+  return arrangeSelectedSkills(seed, resolveEvalEngine());
+}
+
+/** The same fixture on the native v2 engine, regardless of the inherited engine selector. */
+export async function selectedSkillsV2Web(seed: Seed) {
+  return arrangeSelectedSkills(seed, "v2");
+}
+
+async function arrangeSelectedSkills(seed: Seed, engine: EvalEngine) {
   const skillName = "selected-briefing";
   const skillBody = "When preparing a briefing, include the exact phrase AMBER_BODY_ONLY_7391. Keep the briefing concise.";
   const prompt = "Prepare a short briefing.";
@@ -85,6 +93,16 @@ export async function selectedSkillsWeb(seed: Seed) {
       };
     });
     const workspace = await seed.workspace(app, workspacePath);
+    if (engine === "v2") {
+      const enabled = await seed.evalIn(app, async () => {
+        const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/engine-v2-preview", {
+          method: "PUT", headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: true, chatRouting: true }), signal: AbortSignal.timeout(180000),
+        });
+        return response.ok;
+      }, { awaitPromise: true, timeoutMs: 185_000 });
+      if (enabled !== true) throw new Error("Could not enable the native v2 engine for the selected-skill fixture");
+    }
     const providerId = "selected-skill-witness";
     const modelId = "briefing-model";
     await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
