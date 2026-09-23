@@ -17,8 +17,8 @@ jobs:
     # One-PR rollout demonstration. Never execute PR code with these permissions.
     if: >-
       github.repository == 'different-ai/openwork' &&
-      github.event.pull_request.number == 5275 &&
-      github.event.pull_request.head.ref == 'codex/native-evidence' &&
+      github.event.pull_request.number == 5297 &&
+      github.event.pull_request.head.ref == 'codex/evidence-preview-card' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.repo.id == github.event.repository.id &&
       github.event.pull_request.base.repo.id == github.event.repository.id &&
@@ -28,7 +28,8 @@ jobs:
     permissions:
       contents: read
       actions: read
-      pull-requests: read
+      pull-requests: write
+      statuses: write
       checks: write
       deployments: write
     env:
@@ -39,7 +40,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           # Reviewed controller and dependencies, including the bounded waiter.
-          ref: 341847fb1ed03f15afd67c28118d0d331d6fc8b0
+          ref: 135b3aa0d6b2e59df091ded8fc0c4edd817f3bca
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
