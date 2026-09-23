@@ -17,7 +17,7 @@ const test = spec.world(skillLifecycle, {
 
 // The engine is selected by the world. The journey does not inspect injected
 // instructions, catalog formatting, native tool names, or engine message shapes.
-test("workspace skills change during an ongoing conversation", async ({ world, user, agent, probe, step }) => {
+test("workspace skills change during an ongoing conversation", async ({ world, user, agent, probe, step, evidence }) => {
   const runtime = await world.runtimeIdentity();
   const sessionRoute = await probe.hash();
   const skillRoute = `/workspace/${world.workspace.workspaceId}/skills`;
@@ -40,7 +40,12 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     for (const code of [...previousCodes, ...(expected ? [expected] : [])]) expect(prompt).not.toContain(code);
     await world.prepareTurn(prompt);
     await using transcript = await observeTranscript(probe, [{ role: "user", text: prompt }]);
-    await user.type({ placeholder: "Describe your task..." }, prompt, { verify: true });
+    await user.see("composer", { editable: true });
+    await user.type("composer", prompt, { verify: true }).catch(async (error: unknown) => {
+      evidence.recordJsonArtifact("Skill conversation draft failure", { composer: await probe.composer(), screen: await probe.text() });
+      await user.screenshot();
+      throw error;
+    });
     await user.press("Enter");
     await user.see({ text: prompt }, { timeoutMs: 15_000 });
     const response = await probe.eventually(answer, {

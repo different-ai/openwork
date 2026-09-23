@@ -13,6 +13,7 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
       socket.addEventListener("open", () => {
         socket.send(JSON.stringify({ id: 1, method: "Network.enable" }));
         socket.send(JSON.stringify({ id: 2, method: "Log.enable" }));
+        socket.send(JSON.stringify({ id: 3, method: "Runtime.enable" }));
       });
       socket.addEventListener("error", () => { clearTimeout(timer); reject(new Error("App-web network observer disconnected")); });
       socket.addEventListener("message", event => {
@@ -24,6 +25,13 @@ export async function observeAppWebNetwork(debuggerUrl: string | undefined, webU
           else resolve();
         }
         const params = message.params;
+        if (message.method === "Runtime.exceptionThrown" && record(params) && record(params.exceptionDetails)
+          && browserErrors.length < 20) {
+          const details = params.exceptionDetails;
+          const description = record(details.exception) && typeof details.exception.description === "string"
+            ? details.exception.description : details.text;
+          if (typeof description === "string") browserErrors.push(description.replace(/https?:\/\/\S+/g, "[url]").slice(0, 1000));
+        }
         if (message.method === "Log.entryAdded" && record(params) && record(params.entry)
           && params.entry.level === "error" && typeof params.entry.text === "string" && browserErrors.length < 20) {
           browserErrors.push(params.entry.text.replace(/https?:\/\/\S+/g, "[url]").slice(0, 500));

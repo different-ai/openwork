@@ -2734,6 +2734,9 @@ export async function skillLifecycle(seed: Seed) {
       } } } : {}),
     }, "v2");
     const session = await seedSessionRetry(seed, app, { title: "Release report" });
+    // OAuth leaves the native app behind the browser on macOS. CDP keyboard
+    // input needs renderer focus even when this isolated test window is hidden.
+    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
     const skillName = "release-briefing";
     return {
       app, den, workspace, session, skillName, live, modelId,
