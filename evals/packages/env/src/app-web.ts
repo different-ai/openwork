@@ -18,6 +18,7 @@ import { startLocalRuntime, startRemoteRuntime } from "./app-web-runtime.ts";
 import type { AppWebRuntime } from "./app-web-runtime.ts";
 import type { MockBoot, MockHandle } from "./mock.ts";
 import type { Place } from "./place.ts";
+import { observeAppWebNetwork } from "./app-web-network.ts";
 
 declare global {
   interface Window { __openworkEvalBootErrors?: string[] }
@@ -285,8 +286,9 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         if ((window.__openworkEvalBootErrors?.length ?? 0) < 10) window.__openworkEvalBootErrors?.push(String(reason instanceof Error ? reason.message : reason).slice(0, 1000));
       });
     });
-    await navigate(browser.client, runtime.webUrl);
+    const network = await observeAppWebNetwork(browser.client.webSocketDebuggerUrl, runtime.webUrl);
     try {
+      await navigate(browser.client, runtime.webUrl);
       await waitUntilInteractive(browser, { timeoutMs: 60_000 });
     } catch (error) {
       const boot = await evaluate(browser.client, () => ({
@@ -296,7 +298,9 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
           .map(entry => ({ path: new URL(entry.name).pathname,
             status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
       })).catch(() => null);
-      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)}`, { cause: error });
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)}`, { cause: error });
+    } finally {
+      network.close();
     }
 
     const originalBrowserStop = browser.stop.bind(browser);
