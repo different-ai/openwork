@@ -2,6 +2,7 @@ import type { FilePartInput } from "@opencode-ai/sdk/v2/client";
 
 const FIRST_LINE_LOCAL_PATH_RE = /(?:file:\/\/[^\s"'`<>]+|~\/[^\s"'`<>]+|[A-Za-z]:[\\/][^\s"'`<>]+|(?<![:/])\/[A-Za-z0-9._~+%/-]*[\/.][A-Za-z0-9._~+%/-]*)/g;
 const TRAILING_PUNCTUATION_RE = /[),.;:]+$/;
+const PATH_START_RE = /^(?:file:\/\/|~\/|\/|[A-Za-z]:[\\/])/;
 
 function stripTrailingPunctuation(value: string) {
   return value.replace(TRAILING_PUNCTUATION_RE, "");
@@ -107,14 +108,35 @@ export function isReadInlineablePath(path: string) {
   return !READ_BINARY_EXTENSIONS.has(basename.slice(dot + 1).toLowerCase());
 }
 
+function hasFileExtension(name: string) {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && /^[A-Za-z0-9]{1,10}$/.test(name.slice(dot + 1));
+}
+
+// Detection stops at whitespace, so a path containing spaces
+// ("/Applications/Open Coworker.app") is cut to a prefix that does not exist,
+// and Read reports "File not found" as a session error. When the text right
+// after a match looks like the rest of that path, leave it as plain text.
+function looksCutAtWhitespace(line: string, end: number, raw: string) {
+  const next = line[end];
+  if (next === "\\") return true;
+  if (next !== " " && next !== "\t") return false;
+  const token = stripTrailingPunctuation(line.slice(end).trimStart().split(/\s/, 1)[0] ?? "");
+  if (!token || PATH_START_RE.test(token)) return false;
+  if (!hasFileExtension(filenameFromPath(raw))) return true;
+  return /[\\/]/.test(token) || hasFileExtension(token);
+}
+
 export function firstLineLocalFileParts(text: string, workspaceRoot: string): FilePartInput[] {
   const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
   const parts: FilePartInput[] = [];
   const seen = new Set<string>();
 
   for (const match of firstLine.matchAll(FIRST_LINE_LOCAL_PATH_RE)) {
-    if (!hasPathBoundary(firstLine, match.index ?? 0)) continue;
+    const start = match.index ?? 0;
+    if (!hasPathBoundary(firstLine, start)) continue;
     const raw = stripTrailingPunctuation(match[0]);
+    if (raw === match[0] && looksCutAtWhitespace(firstLine, start + match[0].length, raw)) continue;
     const absolute = toAbsolutePath(raw, workspaceRoot);
     if (!absolute || seen.has(absolute)) continue;
     seen.add(absolute);

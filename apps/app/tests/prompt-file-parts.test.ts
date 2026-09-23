@@ -85,6 +85,29 @@ describe("first-line local file parts", () => {
 
     expect(parts.map((part) => part.filename)).toEqual(["notes.md", "shot.PNG", "paper.pdf", "Makefile"]);
   });
+
+  test("leaves paths containing spaces as text instead of attaching a truncated prefix", () => {
+    // Detection stops at whitespace; attaching "/Applications/Open" made Read
+    // fail with "File not found" before the turn started.
+    for (const prompt of [
+      "/Applications/Open Coworker.app",
+      "open /Applications/Visual Studio Code.app please",
+      "summarize ~/Documents/Q3 report.md",
+      "read /Users/ben/v1.2 notes.md",
+      "read /Users/ben/My\\ Notes/todo.md",
+    ]) {
+      expect(firstLineLocalFileParts(prompt, "/Users/ben/code")).toEqual([]);
+    }
+  });
+
+  test("still attaches complete paths followed by ordinary words or other paths", () => {
+    const parts = firstLineLocalFileParts(
+      "check /Users/ben/notes.md and /Users/ben/todo.txt, then /Users/ben/Makefile",
+      "/Users/ben/code",
+    );
+
+    expect(parts.map((part) => part.filename)).toEqual(["notes.md", "todo.txt", "Makefile"]);
+  });
 });
 
 describe("read-inlineable paths", () => {
