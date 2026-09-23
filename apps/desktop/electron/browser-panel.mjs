@@ -133,6 +133,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   let browserControlEnabled = true;
   let menuRequest = null;
   let menuShowSerial = 0;
+  let linkChoiceRequest = null;
+  let linkChoiceCounter = 0;
   const webMcpRefreshTimers = new Map();
 
   function window() {
@@ -1444,6 +1446,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function destroyBrowserView() {
+    linkChoiceRequest?.finish(null);
     hideBrowserView();
     menuShowSerial += 1;
     closeAllBrowserTabs();
@@ -1581,6 +1584,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return browserControlEnabled;
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.handle("openwork:browser:chooseLinkDestination", (event, id, destination) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return false;
+      if (!linkChoiceRequest || linkChoiceRequest.id !== id) return false;
+      if (destination !== null && destination !== "openwork" && destination !== "external") return false;
+      return linkChoiceRequest.finish(destination);
+    });
     ipcMain.on("openwork:browser:linkClick", (event, payload) => {
       const contents = window()?.webContents;
       if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
@@ -1588,18 +1598,49 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return;
       const parsed = new URL(url);
       if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
+      // A second activation must not replace the link the open dialog names.
+      if (linkChoiceRequest) return;
       const ownerSessionId = normalizeSessionId(payload.sessionId) ?? registry.visibleSessionId();
       const sourceFrame = event.senderFrame;
       let navigated = false;
-      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
-        if (isMainFrame && !isInPlace) navigated = true;
+      let cancelChoice = () => {};
+      const isCurrent = () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
+        && contents.mainFrame === sourceFrame;
+      const cleanup = () => {
+        contents.removeListener("did-start-navigation", invalidate);
+        contents.removeListener("destroyed", destroyed);
       };
+      const open = (external) => runDetachedTask("open clicked browser link", () => handleMenuChoice(
+        { source: "link", url, ownerSessionId }, external ? "open-external" : "open-builtin", isCurrent,
+      ).finally(cleanup));
+      const cancel = () => {
+        navigated = true;
+        cancelChoice();
+      };
+      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) cancel();
+      };
+      const destroyed = () => cancel();
       contents.on("did-start-navigation", invalidate);
-      runDetachedTask("open clicked browser link", () => handleMenuChoice(
-        { source: "link", url, ownerSessionId }, payload.external === true ? "open-external" : "open-builtin",
-        () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
-          && contents.mainFrame === sourceFrame,
-      ).finally(() => contents.removeListener("did-start-navigation", invalidate)));
+      contents.on("destroyed", destroyed);
+      if (payload.ask === true) {
+        const id = `link_${++linkChoiceCounter}`;
+        cancelChoice = () => { if (linkChoiceRequest?.id === id) linkChoiceRequest.finish(null); };
+        linkChoiceRequest = {
+          id,
+          finish(destination) {
+            if (linkChoiceRequest?.id !== id) return false;
+            linkChoiceRequest = null;
+            sendToRenderer("openwork:browser:link-open-request", null);
+            if (destination === null || !isCurrent()) { cleanup(); return false; }
+            open(destination === "external");
+            return true;
+          },
+        };
+        sendToRenderer("openwork:browser:link-open-request", { id, url });
+      } else {
+        open(payload.external === true);
+      }
     });
     ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
       const mainContents = window()?.webContents;
