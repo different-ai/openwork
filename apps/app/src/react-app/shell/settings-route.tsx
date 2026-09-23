@@ -2476,7 +2476,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             busy={busy}
             linkOpenDestination={local.prefs.linkOpenDestination}
             onLinkOpenDestinationChange={(linkOpenDestination) => {
-              local.setPrefs((previous) => ({ ...previous, linkOpenDestination }));
+              local.setPrefs((previous) => ({ ...previous, linkOpenDestination, askBeforeOpeningLinks: false }));
             }}
             showThinking={local.prefs.showThinking}
             onToggleShowThinking={() => {

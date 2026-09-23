@@ -51,7 +51,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { usePlatform } from "../../../kernel/platform";
-import { readLinkOpenDestination } from "../../../kernel/local-preferences-storage";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./workbench-panel-group";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
@@ -687,13 +686,18 @@ export function SessionPage(props: SessionPageProps) {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
-        if (options?.external || (!options?.auto && readLinkOpenDestination() === "external")) {
+        if (options?.external) {
           void openDesktopUrl(url).catch((error: unknown) => {
             toast.error(error instanceof Error ? error.message : "Could not open this link.");
           });
           return;
         }
         const ownerSessionId = sourceSessionId ?? props.selectedSessionId ?? null;
+        const openLink = window.__OPENWORK_ELECTRON__?.browser?.openLink;
+        if (!options?.auto && openLink) {
+          openLink(url, ownerSessionId);
+          return;
+        }
         openOwnerSidePanel(ownerSessionId);
         void createBrowserTab(url, ownerSessionId);
       } else {

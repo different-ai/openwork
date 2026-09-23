@@ -67,6 +67,7 @@ export type LocalPreferences = {
    */
   desktopNotifications: DesktopNotificationPreference;
   linkOpenDestination: LinkOpenDestination;
+  askBeforeOpeningLinks: boolean;
 };
 
 type LocalContextValue = {
@@ -94,6 +95,7 @@ const INITIAL_PREFS: LocalPreferences = {
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
   linkOpenDestination: "openwork",
+  askBeforeOpeningLinks: true,
 };
 
 function readPersisted<T>(key: string, fallback: T): T {
@@ -130,6 +132,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
   );
   const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
     const persisted = readPersisted(LOCAL_PREFERENCES_KEY, INITIAL_PREFS);
+    persisted.askBeforeOpeningLinks = persisted.askBeforeOpeningLinks !== false;
     persisted.linkOpenDestination = isLinkOpenDestination(persisted.linkOpenDestination)
       ? persisted.linkOpenDestination
       : "openwork";

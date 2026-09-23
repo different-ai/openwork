@@ -691,7 +691,7 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
     return event.defaultPrevented;
   };
   assert.equal(click(), true);
-  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external: false }] }]);
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external: false, ask: true }] }]);
   assert.equal(exposed.__OPENWORK_ELECTRON__.browser.linkClick, undefined);
   for (const overrides of [{ isTrusted: false }, { button: 1 }, { button: 2 }, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }]) {
     assert.equal(click(overrides), false);
@@ -702,20 +702,27 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
   assert.equal(preloadCalls.length, 1);
   // The same listener reads a saved setting at each activation, including an
   // Enter-generated click (detail: 0). Missing/invalid storage keeps OpenWork.
-  for (const [stored, external] of [
+  for (const [stored, external, ask = true] of [
     [null, false], ["{}", false], ['{"linkOpenDestination":"external"}', true],
     ['{"linkOpenDestination":"openwork"}', false], ['{"linkOpenDestination":"chrome"}', false],
     ["invalid JSON", false], ["null", false],
+    ['{"linkOpenDestination":"external","askBeforeOpeningLinks":false}', true, false],
+    ['{"linkOpenDestination":"openwork","askBeforeOpeningLinks":false}', false, false],
+    ['{"linkOpenDestination":"external","askBeforeOpeningLinks":"false"}', true, true],
   ]) {
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem(key) { assert.equal(key, "openwork.preferences"); return stored; } } });
     preloadCalls.length = 0;
     assert.equal(click({ detail: 0 }), true);
-    assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external }] }]);
+    assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external, ask }] }]);
   }
   Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem() { throw new Error("Storage unavailable"); } } });
   preloadCalls.length = 0;
   assert.equal(click(), true);
   assert.equal(preloadCalls[0].args[0].external, false);
+  assert.equal(preloadCalls[0].args[0].ask, true);
+  preloadCalls.length = 0;
+  exposed.__OPENWORK_ELECTRON__.browser.openLink(LINK.url, "B");
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "B", external: false, ask: true }] }]);
 });
 
 test("browser manager construction before app readiness defers session hooks until the first tab", async (t) => {
@@ -1963,6 +1970,73 @@ test("human external link clicks open exactly once, respect policy, and leave ow
     assert.deepEqual(effects, denied ? [{ type: "dialog" }] : [{ type: "external", url: LINK.url }]);
     assert.deepEqual(invoke("openwork:browser:state").tabs, tabs);
     assert.equal(views().length, 1);
+  }
+});
+
+test("the link chooser waits without opening and consumes only one trusted choice for the captured link", async () => {
+  for (const destination of ["openwork", "external", null]) {
+    const { invoke, emit, mainContents, messages, policies, views } = createPanel();
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    assert.equal(request.url, LINK.url);
+    assert.deepEqual(policies, []);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, []);
+    invoke("openwork:browser:linkClick", { ...LINK, url: "https://second.example/", ask: true });
+    assert.equal(messages("openwork:browser:link-open-request").length, 1, "rapid clicks do not retarget the popup");
+    for (const event of [{ sender: {}, senderFrame: mainContents.mainFrame }, { sender: mainContents, senderFrame: {} }]) {
+      assert.equal(emit("openwork:browser:chooseLinkDestination", event, request.id, "external"), false);
+    }
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", "forged", "external"), false);
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "chrome"), false);
+    invoke("openwork:browser:setVisibleSession", "B");
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, destination), destination !== null);
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, destination), false);
+    await flush();
+    assert.equal(messages("openwork:browser:link-open-request").at(-1), null);
+    if (destination === "openwork") {
+      assert.equal(views().length, 1);
+      assert.deepEqual(views()[0].webContents.destinations, [LINK.url]);
+      assert.equal(invoke("openwork:browser:state").tabs[0].ownerSessionId, "A");
+    } else {
+      assert.deepEqual(views(), []);
+      assert.deepEqual(policies, destination === null ? [] : [{ url: LINK.url, external: true }]);
+    }
+    assert.deepEqual(effects, destination === "external" ? [{ type: "external", url: LINK.url }] : []);
+    assert.equal(mainContents.listenerCount("destroyed"), 0);
+  }
+});
+
+test("cancelled or stale chooser requests cannot be revived, including while policy is pending", async () => {
+  for (const ending of ["navigate", "destroyed", "frame", "close"]) {
+    const { invoke, mainContents, messages, views, policies } = createPanel();
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    if (ending === "destroyed") { mainContents.destroyed = true; mainContents.emit("destroyed"); }
+    if (ending === "frame") mainContents.mainFrame = {};
+    if (ending === "close") invoke("openwork:browser:destroy");
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "external"), false);
+    await flush();
+    assert.deepEqual(policies, []);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, []);
+  }
+  for (const denied of [true, false]) {
+    const held = gate();
+    const { invoke, mainContents, messages, views, policies } = createPanel(async () => {
+      if (denied) throw new Error("managed denial");
+      await held.promise;
+    });
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "external"), true);
+    if (!denied) mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    held.finish();
+    await flush();
+    assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, denied ? [{ type: "dialog" }] : []);
   }
 });
 

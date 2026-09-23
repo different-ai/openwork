@@ -521,6 +521,13 @@ linkTest("a member opens transcript links in their saved destination and can ove
   ]);
   const mainUrl = await world.readMainUrl();
   const pages = await world.pageTargets();
+  const chooser: Target = { role: "heading", label: "Where should this link open?" };
+  const chooserClosed = async () => {
+    await probe.eventually(() => probe.has("Where should this link open?"), {
+      within: 5_000, until: visible => !visible, label: "the link chooser has closed",
+    });
+    await user.notSee(chooser);
+  };
   const unchanged = async () => {
     const state = await world.readBrowserState();
     expect(state.tabs).toEqual(initial.tabs);
@@ -559,6 +566,25 @@ linkTest("a member opens transcript links in their saved destination and can ove
     await user.click({ role: "button", label: "Not now" });
     await user.notSee({ role: "button", label: "Set up sync" });
   };
+
+  await step("the first left-click has Don't ask again checked and Escape opens nothing", async () => {
+    await user.click(link);
+    await user.see(chooser);
+    await user.see({ role: "button", label: "Open in OpenWork" });
+    await user.see({ role: "button", label: "Open in external browser" });
+    await user.see({ role: "checkbox", label: "Don't ask again" });
+    expect((await probe.dom('[data-slot="dialog-content"] [role="checkbox"][aria-checked="true"]')).elements).toHaveLength(1);
+    expect((await world.readBrowserState()).tabs).toEqual(initial.tabs);
+    expect(await world.externalOpens()).toEqual([]);
+    await user.screenshot();
+    await user.click({ role: "checkbox", label: "Don't ask again" });
+    await user.press("Escape");
+    await chooserClosed();
+    expect(await probe.storage("openwork.preferences")).toMatchObject({ linkOpenDestination: "openwork", askBeforeOpeningLinks: true });
+    await unchanged();
+    evidence.recordAssertionEvidence("The first link click asks with Don't ask again checked; cancelling opens nothing",
+      `Popup offered OpenWork and external browser with the checkbox checked; after unchecking and Escape, ${initial.tabs.length} OpenWork tabs remained, external opens stayed 0, and the saved OpenWork default still asks`, true);
+  });
 
   await step("Right-click and Escape leave the transcript and every browser page unchanged", async () => {
     const popup = await openMenu(link);
@@ -658,10 +684,14 @@ linkTest("a member opens transcript links in their saved destination and can ove
     );
   });
 
-  const manualTabId = await step("Normal click loads an owned sidebar tab without browser control consent or controls", async () => {
+  const manualTabId = await step("Choosing OpenWork loads one owned sidebar tab without browser control consent", async () => {
     const before = await world.pageTargets();
     const browserBefore = await world.readBrowserState();
     await user.click(link);
+    await user.see(chooser);
+    expect((await probe.dom('[data-slot="dialog-content"] [role="checkbox"][aria-checked="true"]')).elements).toHaveLength(1);
+    await user.click({ role: "checkbox", label: "Don't ask again" });
+    await user.click({ role: "button", label: "Open in OpenWork" });
     const state = await eventually(() => world.readBrowserState(), {
       within: 30_000,
       until: value => value.tabs.some(tab => tab.url === world.linkUrl && tab.id === value.activeTabId
@@ -684,9 +714,10 @@ linkTest("a member opens transcript links in their saved destination and can ove
     await user.notSee({ role: "button", label: "Resume browser" });
     expect(await world.externalOpens()).toEqual([]);
     const openedTab = state.tabs.find(tab => tab.id === state.activeTabId);
+    expect(await probe.storage("openwork.preferences")).toMatchObject({ linkOpenDestination: "openwork", askBeforeOpeningLinks: true });
     evidence.recordAssertionEvidence(
-      "With the OpenWork default, a click opens one tab in this conversation and nothing externally",
-      `OpenWork tabs ${browserBefore.tabs.length} → ${state.tabs.length}; new tab URL ${openedTab?.url} belongs to "${world.reading.title}"; external browser opens: 0`,
+      "Choosing OpenWork opens one tab and unchecking Don't ask again keeps the chooser enabled",
+      `OpenWork tabs ${browserBefore.tabs.length} → ${state.tabs.length}; new tab URL ${openedTab?.url} belongs to "${world.reading.title}"; external browser opens: 0; askBeforeOpeningLinks remains true`,
       true,
     );
     await dismissLoginSyncOffer();
@@ -735,7 +766,35 @@ linkTest("a member opens transcript links in their saved destination and can ove
     await user.screenshot();
   });
 
-  await step("Choosing External browser with the keyboard survives a reload", async () => {
+  await step("leaving Don't ask again checked remembers the chosen destination", async () => {
+    await user.click({ role: "button", label: "Back to app" });
+    await user.click(link);
+    await user.see(chooser);
+    const before = await world.readBrowserState();
+    expect((await probe.dom('[data-slot="dialog-content"] [role="checkbox"][aria-checked="true"]')).elements).toHaveLength(1);
+    await user.screenshot();
+    await user.click({ role: "button", label: "Open in external browser" });
+    await chooserClosed();
+    await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 1, label: "the popup choice opens exactly once" });
+    expect((await world.readBrowserState()).tabs).toEqual(before.tabs);
+    expect(await probe.storage("openwork.preferences")).toMatchObject({ linkOpenDestination: "external", askBeforeOpeningLinks: false });
+    evidence.recordAssertionEvidence("The checked checkbox saves External browser and stops future prompts",
+      `The chooser appeared again after the unchecked choice; leaving it checked sent 1 external open and kept ${before.tabs.length} OpenWork tabs; saved destination=external, askBeforeOpeningLinks=false`, true);
+  });
+
+  await step("after: the popup's saved preference survives reload and keyboard changes in Settings", async () => {
+    await preferences();
+    await user.see(destination, { text: /External browser/ });
+    await user.reload();
+    await user.hover(destination);
+    await user.see(destination, { text: /External browser/ });
+    expect(await savedDestination()).toBe("external");
+    await user.screenshot();
+    await user.click(destination);
+    await user.see({ role: "option", label: "OpenWork" });
+    await user.press("Home");
+    await user.press("Enter");
+    expect(await savedDestination()).toBe("openwork");
     await user.click(destination);
     await user.see({ role: "option", label: "External browser" });
     await user.press("End");
@@ -750,8 +809,8 @@ linkTest("a member opens transcript links in their saved destination and can ove
     const afterReload = await savedDestination();
     expect(afterReload).toBe("external");
     evidence.recordAssertionEvidence(
-      "A keyboard choice of External browser is saved and survives a reload",
-      `Chosen with End + Enter; saved value before reload = ${String(beforeReload)}, after reload = ${String(afterReload)}; "Open links in" still shows External browser`,
+      "The popup choice survives reload and can be changed with the keyboard in Settings",
+      `The popup's External browser choice survived reload; Home + Enter selected OpenWork, then End + Enter restored External browser; saved value before the next reload = ${String(beforeReload)}, after = ${String(afterReload)}`,
       true,
     );
     await user.screenshot();
@@ -761,17 +820,19 @@ linkTest("a member opens transcript links in their saved destination and can ove
     await user.click({ role: "button", label: "Back to app" });
     await user.see(link);
     const before = await world.readBrowserState();
+    const opensBefore = (await world.externalOpens()).length;
     await user.click(link);
-    await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 1, label: "the external browser receives one link" });
+    await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 2, label: "the external browser receives one more link" });
     const opens = await world.externalOpens();
-    expect(opens).toEqual([world.linkUrl]);
+    expect(opens).toEqual([world.linkUrl, world.linkUrl]);
     const after = await world.readBrowserState();
     expect(after.tabs).toEqual(before.tabs);
+    await user.notSee(chooser);
     expect((await world.nativeMenu()).open).toBe(false);
     await user.see(link);
     evidence.recordAssertionEvidence(
       "The saved External browser default opens the link outside OpenWork exactly once",
-      `External browser received ${opens.length} open: ${opens.join(", ")}; OpenWork tabs ${before.tabs.length} → ${after.tabs.length} (unchanged)`,
+      `External opens ${opensBefore} → ${opens.length}, latest: ${opens.at(-1)}; OpenWork tabs ${before.tabs.length} → ${after.tabs.length} (unchanged); chooser stayed closed`,
       true,
     );
     await user.screenshot();
@@ -781,14 +842,15 @@ linkTest("a member opens transcript links in their saved destination and can ove
     const before = await world.readBrowserState();
     await choose(await openMenu(link), "Open in OpenWork");
     const after = await eventually(() => world.readBrowserState(), {
-      within: 15_000, until: state => state.tabs.length === before.tabs.length + 1,
+      within: 15_000, until: state => state.tabs.length === before.tabs.length + 1
+        && state.tabs.some(tab => tab.url === world.linkUrl && !before.tabs.some(previous => previous.id === tab.id)),
       label: "the one-time OpenWork choice adds exactly one owned tab",
     });
     expect(after.tabs.filter(tab => before.tabs.some(previous => previous.id === tab.id))).toEqual(before.tabs);
     const added = after.tabs.find(tab => !before.tabs.some(previous => previous.id === tab.id));
     expect(added).toMatchObject({ url: world.linkUrl, ownerSessionId: world.reading.sessionId });
     const opens = await world.externalOpens();
-    expect(opens).toEqual([world.linkUrl]);
+    expect(opens).toEqual([world.linkUrl, world.linkUrl]);
     const saved = await savedDestination();
     expect(saved).toBe("external");
     await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
@@ -812,9 +874,9 @@ linkTest("a member opens transcript links in their saved destination and can ove
     const before = await world.readBrowserState();
     const opensBefore = (await world.externalOpens()).length;
     await choose(await openMenu(link), "Open in external browser");
-    await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 2, label: "the external override opens exactly once" });
+    await eventually(() => world.externalOpens(), { within: 10_000, until: urls => urls.length === 3, label: "the external override opens exactly once" });
     const opens = await world.externalOpens();
-    expect(opens).toEqual([world.linkUrl, world.linkUrl]);
+    expect(opens).toEqual([world.linkUrl, world.linkUrl, world.linkUrl]);
     const after = await world.readBrowserState();
     expect(after.tabs).toEqual(before.tabs);
     const saved = await savedDestination();
@@ -848,6 +910,8 @@ artifactTest("a transcript link replaces the selected artifact with its own live
 
   const linkedTab = await step("Clicking the real transcript link selects exactly one owned sidebar page with the complete URL", async () => {
     await user.click({ role: "link", text: link.url });
+    await user.see({ role: "heading", label: "Where should this link open?" });
+    await user.click({ role: "button", label: "Open in OpenWork" });
     const state = await eventually(() => world.readBrowserState(), {
       within: 30_000,
       until: (value) => value.tabs.some((tab) => tab.url === link.url && tab.id === value.activeTabId

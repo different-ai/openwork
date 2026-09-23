@@ -71,14 +71,19 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
-function openLinksExternally() {
+function linkOpenPreferences() {
   // Read at activation so Settings changes and reloads use the same saved
   // preference as the renderer, without a second main-process preference store.
   try {
-    return JSON.parse(window.localStorage.getItem("openwork.preferences"))?.linkOpenDestination === "external";
+    const prefs = JSON.parse(window.localStorage.getItem("openwork.preferences"));
+    return { external: prefs?.linkOpenDestination === "external", ask: prefs?.askBeforeOpeningLinks !== false };
   } catch {
-    return false;
+    return { external: false, ask: true };
   }
+}
+
+function openLink(url, sessionId) {
+  ipcRenderer.send("openwork:browser:linkClick", { url, sessionId, ...linkOpenPreferences() });
 }
 
 if (process.isMainFrame) {
@@ -96,11 +101,7 @@ if (process.isMainFrame) {
     if (url.origin === location.origin && url.pathname === location.pathname && url.search === location.search) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    ipcRenderer.send("openwork:browser:linkClick", {
-      url: url.href,
-      sessionId: anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null,
-      external: openLinksExternally(),
-    });
+    openLink(url.href, anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null);
   }, { capture: true });
 }
 
@@ -256,6 +257,13 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   browser: {
+    openLink,
+    chooseLinkDestination(id, destination) { return ipcRenderer.invoke("openwork:browser:chooseLinkDestination", id, destination); },
+    onLinkOpenRequest(callback) {
+      const handler = (_event, request) => callback(request);
+      ipcRenderer.on("openwork:browser:link-open-request", handler);
+      return () => ipcRenderer.removeListener("openwork:browser:link-open-request", handler);
+    },
     show(bounds, sessionId) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId); },
     hide(options) {
       lastBrowserGeometry = null;
