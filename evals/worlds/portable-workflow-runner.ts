@@ -12,6 +12,7 @@ export const runnerUri = "ui://openwork/workflow-runner/v1/view.html";
 export const runnerTimeZone = "Pacific/Auckland";
 export const readyTitle = "Daily runtime";
 export const blockedTitle = "Needs a topic";
+const fixturePaths = ["/member/", "/outsider/", "/host.js", "/member/rpc", "/outsider/rpc"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -61,10 +62,12 @@ async function forwardLoopback(browser: Surface, origin: string): Promise<AsyncD
   }
   async function forward(params: Record<string, unknown>) {
     const request = record(params.request);
-    const url = new URL(field(request, "url"));
-    if (url.origin !== origin) throw new Error("Refused non-fixture forwarding");
+    const requested = new URL(field(request, "url"));
+    // Rebuild the fixture URL from constants so only the known loopback routes are fetched.
+    const path = fixturePaths.find(candidate => requested.origin === origin && requested.pathname === candidate);
+    if (!path) throw new Error("Refused non-fixture forwarding");
     const method = field(request, "method");
-    const response = await fetch(url, {
+    const response = await fetch(new URL(`${path}${path.endsWith("/") ? "?tool=open_workflows" : ""}`, origin), {
       method,
       headers: method === "POST" ? { origin, "content-type": "application/json" } : {},
       ...(typeof request.postData === "string" ? { body: request.postData } : {}),
@@ -269,6 +272,16 @@ export async function portableWorkflowRunner(seed: Seed, context: { place: Place
     },
     hostResourceDigest: () => evaluate(app.client, () => document.getElementById("view")?.dataset.resourceDigest ?? ""),
     clicks: (frame: Surface) => evaluate(frame.client, () => ({ trusted: Number(document.documentElement.dataset.trustedRunClicks), untrusted: Number(document.documentElement.dataset.untrustedRunClicks) })),
+    // Trusted keyboard type-ahead for the focused <select>: real keypresses change the
+    // value without opening the native popup, which CDP cannot drive inside a sandboxed frame.
+    async typeAhead(frame: Surface, text: string) {
+      if (!/^[A-Za-z]+$/.test(text)) throw new Error("Type-ahead expects a single word of letters");
+      for (const character of text) {
+        const key = { key: character, code: `Key${character.toUpperCase()}`, windowsVirtualKeyCode: character.toUpperCase().charCodeAt(0) };
+        await frame.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...key, text: character });
+        await frame.client.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+      }
+    },
     [Symbol.asyncDispose]: () => retained.disposeAsync(),
   };
 }

@@ -58,12 +58,10 @@ test("a teammate runs a shared Workflow in a reference host while unsafe and ung
   const appProbe = probe.on(frame);
   const selectWorkflow = async (title: string, ids: typeof world.ready) => {
     const options = (await appProbe.dom("select option")).elements;
-    const index = options.findIndex(option => option.text.startsWith(title));
-    expect(index).toBeGreaterThan(0);
-    await appUser.click({ role: "combobox", label: "Workflow" });
-    await appUser.press("Home");
-    for (let position = 0; position < index; position += 1) await appUser.press("ArrowDown");
-    await appUser.press("Enter");
+    expect(options.filter(option => option.text.startsWith(title.split(" ")[0]))).toHaveLength(1);
+    // Focus the picker through its label (no native popup), then choose by trusted type-ahead.
+    await appUser.click({ text: "Workflow" });
+    await world.typeAhead(frame, title.split(" ")[0]);
     await appUser.see({ role: "combobox", label: "Workflow" }, { value: JSON.stringify([ids.pluginId, ids.configObjectId, ids.configObjectVersionId]) });
   };
 
@@ -72,12 +70,15 @@ test("a teammate runs a shared Workflow in a reference host while unsafe and ung
     expect(runRequests()).toEqual([]);
     const startedAt = Date.now();
     await appUser.click({ role: "button", label: "Run workflow" });
-    await appUser.see({ role: "heading", label: `Result: ${readyTitle}` }, { timeoutMs: 90_000 });
+    // The App shows a "Result: …" placeholder while waiting, so wait for the witnessed call first.
+    await probe.eventually(() => runRequests().length, { until: count => count === 1, within: 90_000 });
+    await appUser.see({ role: "heading", label: `Result: ${readyTitle}` });
     expect(await world.clicks(frame)).toEqual({ trusted: 1, untrusted: 0 });
     expect(runRequests()).toHaveLength(1);
     const request = runRequests()[0];
     expect(request.persona).toBe("member");
-    expect(request.params).toEqual({ name: "run_workflow_readonly", arguments: { ...world.ready, timeZone: runnerTimeZone } });
+    expect(request.params.name).toBe("run_workflow_readonly");
+    expect(request.params.arguments).toEqual({ ...world.ready, timeZone: runnerTimeZone });
     expect(request.result.isError).not.toBe(true);
     const result = record(request.result.structuredContent);
     expect(result).toMatchObject({ schemaVersion: "1", kind: "workflow_result", workflow: world.ready, value: { timeZone: runnerTimeZone } });

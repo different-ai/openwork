@@ -48,12 +48,13 @@ export function WorkflowView({ payload, app, hostError }: AppViewProps<WorkflowL
       <h1>Workflows</h1>
       <span className="workflow-muted" role="status">{state.busy === "run" ? "Running" : state.busy === "search" ? "Searching" : hostError || state.error ? "Couldn’t verify" : block ? "Blocked" : "Ready"}</span>
     </header>
-    <form className="workflow-search" onSubmit={event => { event.preventDefault(); void act("search") }}>
+    <div className="workflow-search" role="search">
       <label className="sr-only" htmlFor={searchId}>Search workflows</label>
       <input id={searchId} type="search" placeholder="Search workflows" maxLength={200} value={query}
-        disabled={busy || !serverTools || Boolean(hostError)} onChange={event => setQuery(event.target.value)} />
-      <button type="submit" disabled={busy || !serverTools || Boolean(hostError)}>Search</button>
-    </form>
+        disabled={busy || !serverTools || Boolean(hostError)} onChange={event => setQuery(event.target.value)}
+        onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void act("search") } }} />
+      <button type="button" disabled={busy || !serverTools || Boolean(hostError)} onClick={() => void act("search")}>Search</button>
+    </div>
     <div className="workflow-picker">
       <label htmlFor={selectId}>Workflow</label>
       <select id={selectId} value={state.selected ? workflowKey(state.selected) : ""}
