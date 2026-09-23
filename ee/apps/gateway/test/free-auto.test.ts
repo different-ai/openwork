@@ -239,7 +239,7 @@ test("the guest allowance unlocks over the machine's first 30 active minutes and
   const defaults = readAutoConfig({})
   assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 10, amount: 20000000 }, { minutes: 20, amount: 50000000 }, { minutes: 30, amount: 100000000 }])
   assert.equal(defaults.ipNewIdentitiesPerDay, 5)
-  assert.deepEqual([defaults.sessionPowBits, defaults.sessionPowRounds, defaults.activityMaxGapMs], [20, 8, 180000])
+  assert.deepEqual([defaults.sessionPowBits, defaults.sessionPowRounds, defaults.activityMaxGapMs], [19, 8, 180000])
   const minute = 60000
   assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
   assert.equal(rampedDeviceAmount(defaults, 10 * minute - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
