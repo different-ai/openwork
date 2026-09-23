@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { changedFiles, proofArtifact, proofLanes, selectProof } from "./pr-proof.mjs";
+import { changedFiles, packagedJourney, proofArtifact, proofLanes, selectProof } from "./pr-proof.mjs";
 
 const file = (filename, status = "modified", previous_filename) => ({ filename, status, ...(previous_filename ? { previous_filename } : {}) });
 
@@ -109,7 +109,7 @@ test("only the exact supported live file is routed; the entire changed selection
   assert.deepEqual(lanes.liveSpecs, [liveSpec]);
   assert.deepEqual(lanes.normalSpecs, specs.filter(spec => spec !== liveSpec));
   assert.deepEqual([...lanes.normalSpecs, ...lanes.liveSpecs].sort(), specs);
-  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [] });
+  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [], packagedSpecs: [] });
 });
 
 test("untrusted live selection fails closed with an actionable message, even on maintainer reruns", async t => {
@@ -117,7 +117,7 @@ test("untrusted live selection fails closed with an actionable message, even on 
     const trust = trustFixture();
     mutate(trust);
     assert.throws(() => proofLanes([normalSpec, liveSpec], trust), /unsupported.*maintainer.*same-repository PR.*approve the pr-slow-specs/);
-    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [] });
+    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [], packagedSpecs: [] });
   });
 });
 
@@ -300,4 +300,41 @@ test("both proof jobs share verified Chrome setup, with system OAuth handoff onl
   const browser = await readFile(new URL("../actions/setup-browser/browser.sh", import.meta.url), "utf8");
   assert.match(browser, /exec "\$CHROME_BIN" --no-sandbox --disable-dev-shm-usage --no-first-run --no-default-browser-check/);
   assert.ok(browser.includes('--user-data-dir="${OPENWORK_PROOF_BROWSER_PROFILE:-$RUNNER_TEMP/pr-proof-browser}" "$@"'));
+});
+
+const packagedSpec = "evals/specs/packaged-activated-launch.e2e.test.ts";
+
+test("packaged specs get their own lane named after their smoke journey", () => {
+  const lanes = proofLanes([normalSpec, packagedSpec, "evals/specs/nested/packaged-x.e2e.test.ts"], trustFixture());
+  assert.deepEqual(lanes.packagedSpecs, [packagedSpec]);
+  assert.deepEqual(lanes.normalSpecs, [normalSpec, "evals/specs/nested/packaged-x.e2e.test.ts"]);
+  assert.deepEqual(lanes.liveSpecs, []);
+  assert.equal(packagedJourney(packagedSpec), "packaged-activated-launch");
+  assert.throws(() => packagedJourney(normalSpec), /Invalid packaged proof spec/);
+});
+
+test("controller emits a packaged matrix with the journey and a publisher-compatible key", async () => {
+  const trust = trustFixture();
+  trust.current.changed_files = 2;
+  const result = await runController(trust, [file(normalSpec), file(packagedSpec)]);
+  assert.equal(result.status, 0, result.stderr);
+  const outputs = Object.fromEntries(result.output.trim().split("\n").map(line => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
+  assert.equal(outputs.packagedSelected, "true");
+  assert.deepEqual(JSON.parse(outputs.matrix).include.map(row => row.spec), [normalSpec]);
+  const [row] = JSON.parse(outputs.packagedMatrix).include;
+  assert.equal(row.spec, packagedSpec);
+  assert.equal(row.journey, "packaged-activated-launch");
+  assert.equal(`pr-proof-2-${row.key}`, proofArtifact(packagedSpec, 2));
+});
+
+test("workflow runs packaged proof through the packaged smoke runner without secrets", async () => {
+  const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
+  const packaged = workflow.split("\n  packaged-proof:\n")[1]?.split("\n  live-proof:\n")[0];
+  assert.ok(packaged);
+  assert.match(packaged, /if: needs.select.outputs.packagedSelected == 'true'/);
+  assert.match(packaged, /matrix: \$\{\{ fromJSON\(needs.select.outputs.packagedMatrix\) \}\}/);
+  assert.match(packaged, /node apps\/desktop\/scripts\/packaged-smoke.mjs --server-built --journey "\$PROOF_JOURNEY"/);
+  assert.match(packaged, /name: pr-proof-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.key \}\}/);
+  assert.match(packaged, /if-no-files-found: error/);
+  assert.doesNotMatch(packaged, /environment:|secrets\.|OPENAI_API_KEY/);
 });

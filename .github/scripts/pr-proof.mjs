@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 
 const SPEC = /^evals\/specs\/.+\.e2e\.test\.ts$/;
+const PACKAGED_SPEC = /^evals\/specs\/packaged-[^/]+\.e2e\.test\.ts$/;
+
+/** The packaged smoke journey a packaged spec runs as (its file name without the suffix). */
+export function packagedJourney(spec) {
+  if (!safePath(spec) || !PACKAGED_SPEC.test(spec)) throw new Error("Invalid packaged proof spec path.");
+  return spec.slice("evals/specs/".length, -".e2e.test.ts".length);
+}
 
 export function safePath(path) {
   return typeof path === "string" && path.length > 0 && path.length <= 240
@@ -22,7 +29,10 @@ export function selectProof(files) {
 
 export function proofLanes(specs, { event, current, repo, actor, triggeringActor }) {
   const liveSpecs = specs.filter(spec => spec === "evals/specs/live-stream-continuity.e2e.test.ts");
-  const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec));
+  // Packaged specs boot a packaged desktop binary, which only the packaged
+  // smoke runner builds; running them against a dev build always fails.
+  const packagedSpecs = specs.filter(spec => PACKAGED_SPEC.test(spec));
+  const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec) && !packagedSpecs.includes(spec));
   if (liveSpecs.length) {
     const repository = event?.repository;
     const sameRepo = candidate => Number.isSafeInteger(repository?.id) && repository.id > 0
@@ -34,7 +44,7 @@ export function proofLanes(specs, { event, current, repo, actor, triggeringActor
       throw new Error("Live PR proof is unsupported for forks, untrusted repository metadata, or Dependabot. A maintainer must move the reviewed change to a same-repository PR and approve the pr-slow-specs environment; do not bypass or skip the selected live spec.");
     }
   }
-  return { normalSpecs, liveSpecs };
+  return { normalSpecs, liveSpecs, packagedSpecs };
 }
 
 export async function changedFiles(api, repo, pr, expectedCount) {

@@ -21,6 +21,8 @@ jobs:
       selected: ${{ steps.select.outputs.selected }}
       liveMatrix: ${{ steps.select.outputs.liveMatrix }}
       liveSelected: ${{ steps.select.outputs.liveSelected }}
+      packagedMatrix: ${{ steps.select.outputs.packagedMatrix }}
+      packagedSelected: ${{ steps.select.outputs.packagedSelected }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -74,6 +76,59 @@ jobs:
           set -euo pipefail
           test "$(id -u)" -ne 0
           xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  # Packaged specs need a packaged desktop binary. Build the same Linux
+  # artifacts as the packaged smoke gate and run only the changed journey.
+  packaged-proof:
+    needs: select
+    if: needs.select.outputs.packagedSelected == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.select.outputs.packagedMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - uses: ./.github/actions/setup-tests
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Run the selected packaged spec against the packaged desktop
+        timeout-minutes: 20
+        env:
+          PROOF_JOURNEY: ${{ matrix.journey }}
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Same Chromium SUID-sandbox constraint as the proof job above.
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey "$PROOF_JOURNEY"
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
