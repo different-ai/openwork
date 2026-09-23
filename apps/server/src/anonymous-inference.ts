@@ -26,6 +26,11 @@ const ERROR_BODY_LIMIT = 64 * 1024;
 const SESSION_TIMEOUT_MS = 10_000;
 const REQUEST_LIFETIME_MS = 5 * 60_000;
 const MEMBER_CREDENTIAL_CACHE_MS = 5 * 60_000;
+// Engine calls are relayed only while a task the user started from the app is live.
+const ACTIVATION_IDLE_MS = 15 * 60_000;
+const ACTIVATION_MAX_MS = 2 * 60 * 60_000;
+const TASK_PATH = /\/session\/([^/]+)\/(prompt|prompt_async|message|command|summarize)$/;
+const TASK_END_PATH = /\/session\/([^/]+)(?:\/abort)?$/;
 const MEMBER_CREDENTIAL_PATH = "/v1/inference/free/credential";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -154,10 +159,11 @@ export class AnonymousInferenceService {
   private activeControllers = new Set<AbortController>();
   private failures = new Map<string, { expiresAt: number; failure: RemoteFailure }>();
   private cachedStatus: { key: string; expiresAt: number; value: DesktopFreeAccessStatus } | null = null;
+  private activation: { openedAt: number; lastActivityAt: number; sessions: Set<string> } | null = null;
 
   constructor(private readonly config: ServerConfig, private readonly logger: {
     log: (level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) => void;
-  }, environment: NodeJS.ProcessEnv = process.env) {
+  }, environment: NodeJS.ProcessEnv = process.env, private readonly now: () => number = Date.now) {
     this.origin = resolveAnonymousInferenceOrigin(environment);
     this.allowLocalDen = environment.OPENWORK_DEV_MODE === "1" || environment.NODE_ENV === "test";
     this.enabled = Boolean(config.anonymousInference?.desktop) && !config.readOnly
@@ -188,6 +194,8 @@ export class AnonymousInferenceService {
   }
 
   private rotateRelayCredential(): void {
+    // A new engine credential means a new identity: tasks the previous identity started are over.
+    this.activation = null;
     this.localAccessToken = `owf_local_${randomBytes(32).toString("base64url")}`;
     this.cachedStatus = null;
     this.failures.clear();
@@ -378,8 +386,16 @@ export class AnonymousInferenceService {
     }
   }
 
+  /**
+   * Runs on every task request the app sends through the OpenWork server. A
+   * send with Auto selected opens (or extends) the activation window that the
+   * engine's relayed model calls need; ending the session closes it.
+   */
   async assertTaskAccess(request: Request, path: string): Promise<void> {
-    if (request.method !== "POST" || !/\/(?:prompt|prompt_async|message|command|summarize)$/.test(path)) return;
+    const ended = (request.method === "POST" || request.method === "DELETE") ? TASK_END_PATH.exec(path) : null;
+    if (ended && (request.method === "DELETE" || path.endsWith("/abort"))) { this.endSession(decodeURIComponent(ended[1])); return; }
+    const task = request.method === "POST" ? TASK_PATH.exec(path) : null;
+    if (!task) return;
     const payload: unknown = await request.clone().json().catch(() => null);
     if (!isRecord(payload)) return;
     const model = payload.model;
@@ -389,6 +405,7 @@ export class AnonymousInferenceService {
     const status = await this.status(true);
     if (status.state !== "ready") throw new ApiError(status.state === "update_required" ? 426 : status.state === "exhausted" ? 429 : 503,
       status.code ?? "anonymous_unavailable", "Auto is not available. Check desktop free access status.", status);
+    this.activate(decodeURIComponent(task[1]));
   }
 
   private async remote(path: string, method: string, body: Uint8Array<ArrayBuffer>, authenticated: boolean, requestSignal = AbortSignal.timeout(SESSION_TIMEOUT_MS), retry = true, relayToken?: string): Promise<Response> {
@@ -464,6 +481,13 @@ export class AnonymousInferenceService {
       this.assertRelayIdentity(relayToken);
       await this.assertDispatchAllowed();
       this.assertRelayIdentity(relayToken);
+      if (endpoint === "chat/completions") {
+        // Only the engine working on a task the user started from the app may spend the allowance.
+        const sessionID = request.headers.get("x-openwork-session-id");
+        if (!this.activationOpen() || (sessionID && !this.activation?.sessions.has(sessionID))) {
+          return jsonError(403, "auto_not_activated", "Auto only runs for tasks started from OpenWork. Send a message with Auto selected to continue.");
+        }
+      }
       const declaredLength = Number(request.headers.get("content-length") ?? "0");
       if (declaredLength > REQUEST_BODY_LIMIT) return jsonError(413, "anonymous_request_too_large", "The OpenWork Models request is too large.");
       const body = await readBoundedBody(request.body, REQUEST_BODY_LIMIT, AbortSignal.any([signal, AbortSignal.timeout(15_000)]));
@@ -494,7 +518,8 @@ export class AnonymousInferenceService {
       try { response = await this.remote(endpoint === "models" ? DESKTOP_FREE_MODELS_PATH : DESKTOP_FREE_CHAT_PATH, request.method, body, true, signal, true, relayToken); }
       finally { clearTimeout(headerTimeout); }
       this.cachedStatus = null;
-      if (!response.body) return new Response(null, { status: response.status, headers: responseHeaders(response.headers) });
+      const completed = () => { if (endpoint === "chat/completions" && response.ok && this.activation) this.activation.lastActivityAt = this.now(); };
+      if (!response.body) { completed(); return new Response(null, { status: response.status, headers: responseHeaders(response.headers) }); }
       const reader = response.body.getReader();
       const abort = () => { void reader.cancel(signal.reason).catch(() => undefined); cleanup(); };
       signal.addEventListener("abort", abort, { once: true });
@@ -506,7 +531,7 @@ export class AnonymousInferenceService {
             signal.throwIfAborted();
             const chunk = await reader.read();
             signal.throwIfAborted();
-            if (chunk.done) { finish(); output.close(); } else output.enqueue(chunk.value);
+            if (chunk.done) { completed(); finish(); output.close(); } else output.enqueue(chunk.value);
           } catch (error) { finish(); output.error(error); }
         },
         async cancel(reason) { controller.abort(reason); finish(); await reader.cancel(reason).catch(() => undefined); },
@@ -527,8 +552,31 @@ export class AnonymousInferenceService {
     } finally { if (!streaming) cleanup(); }
   }
 
+  /** Whether a task started from the app is still live; closes the window lazily when it is not. */
+  private activationOpen(): boolean {
+    if (!this.activation) return false;
+    const now = this.now();
+    if (now - this.activation.lastActivityAt >= ACTIVATION_IDLE_MS || now - this.activation.openedAt >= ACTIVATION_MAX_MS) {
+      this.activation = null;
+      return false;
+    }
+    return true;
+  }
+  private activate(sessionID: string): void {
+    const now = this.now();
+    if (!this.activationOpen()) this.activation = { openedAt: now, lastActivityAt: now, sessions: new Set() };
+    this.activation!.sessions.add(sessionID);
+    this.activation!.lastActivityAt = now;
+  }
+  private endSession(sessionID: string): void {
+    if (!this.activation) return;
+    this.activation.sessions.delete(sessionID);
+    if (this.activation.sessions.size === 0) this.activation = null;
+  }
+
   private disable(): void {
     this.available = false;
+    this.activation = null;
     this.memberCredential = null;
     this.memberCredentialPromise = null;
     this.sessionPromise = null;

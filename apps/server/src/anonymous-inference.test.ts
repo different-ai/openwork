@@ -39,8 +39,12 @@ async function fixture(run: (input: {
   environment: NodeJS.ProcessEnv; memberSession: CloudProviderDenSession; origin: string;
   requests: ObservedRequest[]; signed: Parameters<DesktopFreeSigner["sign"]>[0][];
   reject: (path: string, status: number, payload: unknown, headers?: HeadersInit) => void;
-  localRequest: (endpoint?: string, body?: string) => Promise<Request>;
+  localRequest: (endpoint?: string, body?: string, sessionID?: string) => Promise<Request>;
   connectMember: () => Promise<void>;
+  /** What the app does when the user presses send with Auto selected. */
+  activate: (sessionID?: string) => Promise<void>;
+  endSession: (sessionID?: string, how?: "abort" | "delete") => Promise<void>;
+  advance: (ms: number) => void;
   pauseCredential: () => { started: Promise<void>; release: () => void };
 }) => Promise<void>, native = true) {
   const root = await mkdtemp(join(tmpdir(), "openwork-free-inference-"));
@@ -119,11 +123,17 @@ async function fixture(run: (input: {
   const envPath = join(root, "env.json");
   const env = new EnvService({ path: envPath });
   const environment = { NODE_ENV: "test", OPENWORK_FREE_INFERENCE_ORIGIN: origin };
-  const service = new AnonymousInferenceService(config, { log: () => {} }, environment);
+  let clock = Date.now();
+  const service = new AnonymousInferenceService(config, { log: () => {} }, environment, () => clock);
   try {
     await run({ service, config, env, envPath, environment, memberSession, origin, requests, signed,
       reject: (path, status, payload, headers) => { rejected.set(path, { status, payload, headers }); },
       connectMember: () => service.setMemberSession(memberSession),
+      activate: (sessionID = "test") => service.assertTaskAccess(new Request(`http://localhost/session/${sessionID}/prompt_async`, { method: "POST",
+        body: JSON.stringify({ model: { providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID } }) }), `/session/${sessionID}/prompt_async`),
+      endSession: (sessionID = "test", how = "abort") => service.assertTaskAccess(new Request(`http://localhost/session/${sessionID}${how === "abort" ? "/abort" : ""}`,
+        { method: how === "abort" ? "POST" : "DELETE" }), `/session/${sessionID}${how === "abort" ? "/abort" : ""}`),
+      advance: (ms) => { clock += ms; },
       pauseCredential: () => {
         const entered = latch();
         const released = latch();
@@ -131,14 +141,14 @@ async function fixture(run: (input: {
         credentialGate = { entered, released };
         return { started: entered.promise, release: released.resolve };
       },
-      localRequest: async (endpoint = "chat/completions", body = rawChat) => {
+      localRequest: async (endpoint = "chat/completions", body = rawChat, sessionID?: string) => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
         const provider = runtime.provider?.[DESKTOP_FREE_PROVIDER_ID];
         if (!provider || typeof provider !== "object" || !("options" in provider)) throw new Error("Missing fixture provider");
         const options = provider.options;
         if (!options || typeof options !== "object" || !("apiKey" in options) || typeof options.apiKey !== "string") throw new Error("Missing fixture local key");
         return new Request(`http://127.0.0.1:9876/anonymous-inference/v1/${endpoint}`, {
-          method: endpoint === "models" ? "GET" : "POST", headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
+          method: endpoint === "models" ? "GET" : "POST", headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json", ...(sessionID ? { "x-openwork-session-id": sessionID } : {}) },
           ...(endpoint === "models" ? {} : { body }),
         });
       },
@@ -169,7 +179,7 @@ test("standalone server cannot enroll using browser headers or a client token", 
 });
 
 test("native enrollment is lazy and preserves explicit providers and defaults; BYOK admission never contacts Cloud", async () => {
-  await fixture(async ({ service, config, requests, signed, localRequest, connectMember }) => {
+  await fixture(async ({ service, config, requests, signed, localRequest, connectMember, activate }) => {
     const paid = { name: "Explicit provider", options: { apiKey: "fixture" } };
     await writeGlobalRuntimeOpencodeConfig(config, () => ({ default_agent: "custom", provider: { paid } }));
     expect(await service.initialize(9876)).toBe(true);
@@ -180,6 +190,7 @@ test("native enrollment is lazy and preserves explicit providers and defaults; B
     await service.assertTaskAccess(prompt.clone(), "/opencode2/api/session/test/prompt");
     expect(requests).toHaveLength(0);
     await service.setMemberSession(null);
+    await activate();
     const response = await service.handle(await localRequest(), "chat/completions");
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("[DONE]");
@@ -198,7 +209,7 @@ test("native enrollment is lazy and preserves explicit providers and defaults; B
 });
 
 test("HTTP exchange switches guest to member, caches only in memory, and invalidates on logout, relogin, org, token and base URL changes", async () => {
-  await fixture(async ({ service, config, env, envPath, memberSession, requests, signed, localRequest, connectMember }) => {
+  await fixture(async ({ service, config, env, envPath, memberSession, requests, signed, localRequest, connectMember, activate }) => {
     await env.upsertMany([{ key: "OPENWORK_API_KEY", value: "ow_inf_unrelated_paid_fixture" }]);
     const beforeEnv = await readFile(envPath, "utf8");
     const reads = spyOn(EnvService.prototype, "list");
@@ -208,6 +219,7 @@ test("HTTP exchange switches guest to member, caches only in memory, and invalid
       await connectMember();
       expect((await service.status()).allowance?.limitUsd).toBe(5);
       expect((await service.handle(await localRequest("models"), "models")).status).toBe(200);
+      await activate();
       const response = await service.handle(await localRequest(), "chat/completions");
       expect(await response.text()).toContain("[DONE]");
       expect(signed.at(-1)?.path).toBe(MEMBER_FREE_CHAT_PATH);
@@ -233,9 +245,10 @@ test("HTTP exchange switches guest to member, caches only in memory, and invalid
 });
 
 test("relay credentials fence tool continuations across guest, org, authority and logout transitions; reloaded config admits fresh tasks", async () => {
-  await fixture(async ({ service, config, memberSession, requests, localRequest }) => {
+  await fixture(async ({ service, config, memberSession, requests, localRequest, activate }) => {
     await service.initialize(9876);
     let previousRequest = await localRequest();
+    await activate();
     expect(await (await service.handle(previousRequest.clone(), "chat/completions")).text()).toContain("[DONE]");
     for (const next of [memberSession, { ...memberSession, orgId: "fixture-switched-org" },
       { ...memberSession, baseUrl: memberSession.baseUrl.replace("/api/den", "/alternate-den") }, null]) {
@@ -251,6 +264,7 @@ test("relay credentials fence tool continuations across guest, org, authority an
       expect(engineConfig).toMatchObject({ provider: { [DESKTOP_FREE_PROVIDER_ID]: {
         options: { apiKey: freshRequest.headers.get("authorization")!.slice(7) },
       } } });
+      await activate();
       expect(await (await service.handle(freshRequest.clone(), "chat/completions")).text()).toContain("[DONE]");
       previousRequest = freshRequest;
     }
@@ -258,10 +272,11 @@ test("relay credentials fence tool continuations across guest, org, authority an
 });
 
 test("same session is stable and refreshed bearers retain the relay token only after Den confirms the same principal", async () => {
-  await fixture(async ({ service, memberSession, requests, localRequest, connectMember }) => {
+  await fixture(async ({ service, memberSession, requests, localRequest, connectMember, activate }) => {
     await service.initialize(9876);
     await connectMember();
     expect((await service.status(true)).state).toBe("ready");
+    await activate();
     const task = await localRequest();
     await service.setMemberSession({ token: memberSession.token, orgId: memberSession.orgId, baseUrl: `${memberSession.baseUrl}/` });
     expect((await localRequest()).headers.get("authorization")).toBe(task.headers.get("authorization"));
@@ -286,12 +301,13 @@ test("same session is stable and refreshed bearers retain the relay token only a
     expect((await service.handle(task.clone(), "chat/completions")).status).toBe(401);
     expect(requests).toHaveLength(afterVerification);
     expect((await localRequest()).headers.get("authorization")).not.toBe(task.headers.get("authorization"));
+    await activate();
     expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
   });
 });
 
 test("rapid switches publish only the current relay credential and preserve explicit provider edits", async () => {
-  await fixture(async ({ service, config, memberSession, requests, localRequest }) => {
+  await fixture(async ({ service, config, memberSession, requests, localRequest, activate }) => {
     await service.initialize(9876);
     const previousRequest = await localRequest();
     await Promise.all([
@@ -300,6 +316,7 @@ test("rapid switches publish only the current relay credential and preserve expl
     ]);
     expect((await service.handle(previousRequest, "chat/completions")).status).toBe(401);
     expect(requests).toHaveLength(0);
+    await activate();
     expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
     expect(requests.find((request) => request.path === credentialPath)?.headers.get("x-openwork-org-id")).toBe("fixture-final-org");
     await writeGlobalRuntimeOpencodeConfig(config, (current) => ({ ...current,
@@ -411,9 +428,10 @@ test("member credentials reject foreign origins, wrong paths, query strings, mod
 });
 
 test("gateway member auth, policy and exhaustion failures do not fall back to guest or use a guest enrollment token", async () => {
-  await fixture(async ({ service, requests, localRequest, connectMember, reject }) => {
+  await fixture(async ({ service, requests, localRequest, connectMember, reject, activate }) => {
     await service.initialize(9876);
     await connectMember();
+    await activate();
     reject(DESKTOP_FREE_SESSION_PATH, 503, { error: { code: "anonymous_unavailable" } });
     for (const [status, code] of [[401, "invalid_free_member_key"], [403, "free_principal_rejected"], [429, "anonymous_limit_exceeded"]] satisfies [number, string][]) {
       reject(MEMBER_FREE_CHAT_PATH, status, { error: { code } });
@@ -435,9 +453,11 @@ test("gateway member auth, policy and exhaustion failures do not fall back to gu
 });
 
 test("an identity change during signing cancels dispatch rather than retrying as guest", async () => {
-  await fixture(async ({ service, config, memberSession, requests, localRequest, connectMember }) => {
+  await fixture(async ({ service, config, memberSession, requests, localRequest, connectMember, activate }) => {
     await service.initialize(9876);
     await connectMember();
+    await activate();
+    const mark = requests.length;
     const desktop = config.anonymousInference?.desktop;
     if (!desktop) throw new Error("Missing native fixture");
     const sign = desktop.sign;
@@ -447,14 +467,15 @@ test("an identity change during signing cancels dispatch rather than retrying as
       return proof;
     };
     expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(503);
-    expect(requests.map((request) => request.path)).toEqual([credentialPath, MEMBER_FREE_STATUS_PATH]);
+    expect(requests.slice(mark).map((request) => request.path)).toEqual([MEMBER_FREE_STATUS_PATH]);
   });
 });
 
 test("latest-version preflight blocks only free selection and gateway rejection is preserved", async () => {
-  await fixture(async ({ service, requests, localRequest, reject }) => {
+  await fixture(async ({ service, requests, localRequest, reject, activate }) => {
     await service.initialize(9876);
     expect((await service.status()).state).toBe("ready");
+    await activate();
     reject(DESKTOP_FREE_STATUS_PATH, 426, { error: { code: "desktop_update_required", minimumVersion: "0.21.0" } });
     const prompt = new Request("http://localhost/session/test/prompt_async", { method: "POST", body: JSON.stringify({ model: { providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID } }) });
     await expect(service.assertTaskAccess(prompt, "/session/test/prompt_async")).rejects.toMatchObject({ status: 426, code: "desktop_update_required" });
@@ -497,11 +518,86 @@ test("local disable and policy denial prevent credential issuance, and user prov
 });
 
 test("local relay refuses oversized or non-free requests before enrollment", async () => {
-  await fixture(async ({ service, requests, localRequest, connectMember }) => {
+  await fixture(async ({ service, requests, localRequest, connectMember, activate }) => {
     await service.initialize(9876);
     await connectMember();
+    await activate();
+    const mark = requests.length;
     expect((await service.handle(await localRequest("chat/completions", '{"model":"paid/model"}'), "chat/completions")).status).toBe(400);
     expect((await service.handle(await localRequest("chat/completions", "x".repeat(2 * 1024 * 1024 + 1)), "chat/completions")).status).toBe(413);
-    expect(requests).toHaveLength(0);
+    expect(requests.slice(mark)).toHaveLength(0);
+  });
+});
+
+test("the engine cannot spend Auto until the user sends with Auto selected; models and status stay reachable", async () => {
+  await fixture(async ({ service, requests, localRequest, activate }) => {
+    await service.initialize(9876);
+    const before = requests.length;
+    const blocked = await service.handle(await localRequest(), "chat/completions");
+    expect(blocked.status).toBe(403);
+    expect(await blocked.json()).toMatchObject({ error: { code: "auto_not_activated" } });
+    expect(requests.filter((request) => request.path === DESKTOP_FREE_CHAT_PATH)).toHaveLength(0);
+    expect((await service.handle(await localRequest("models"), "models")).status).toBe(200);
+    expect((await service.status(true)).state).toBe("ready");
+    const paidPrompt = new Request("http://localhost/session/test/prompt_async", { method: "POST", body: JSON.stringify({ model: { providerID: "paid", modelID: "chosen" } }) });
+    await service.assertTaskAccess(paidPrompt, "/session/test/prompt_async");
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(403);
+    await activate();
+    expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
+    expect(requests.length).toBeGreaterThan(before);
+  });
+});
+
+test("activation follows the task: it idles out after 15 minutes without completed calls, refreshes on each one, and caps at 2 hours", async () => {
+  await fixture(async ({ service, localRequest, activate, advance }) => {
+    await service.initialize(9876);
+    await activate();
+    advance(14 * 60_000);
+    expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
+    advance(14 * 60_000);
+    // Only a completed call refreshes the window: an unread stream does not.
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(200);
+    advance(14 * 60_000);
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(403);
+    await activate();
+    for (let minutes = 0; minutes < 120; minutes += 10) {
+      advance(10 * 60_000);
+      const response = await service.handle(await localRequest(), "chat/completions");
+      expect(response.status).toBe(minutes + 10 >= 120 ? 403 : 200);
+      if (response.ok) await response.text();
+    }
+  });
+});
+
+test("ending a session closes its activation only when no other Auto task is live; identity changes and stop close it outright", async () => {
+  await fixture(async ({ service, localRequest, activate, endSession, connectMember }) => {
+    await service.initialize(9876);
+    await activate("one");
+    await activate("two");
+    await endSession("one", "abort");
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(200);
+    await endSession("two", "delete");
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(403);
+    await activate("three");
+    await connectMember();
+    // Signing in closed the guest activation.
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(403);
+    await activate("four");
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(200);
+    service.stop();
+    expect((await service.handle(await localRequest(), "chat/completions")).status).not.toBe(200);
+  });
+});
+
+test("an engine call that names its session must name one the user started", async () => {
+  await fixture(async ({ service, localRequest, activate }) => {
+    await service.initialize(9876);
+    await activate("mine");
+    expect((await service.handle(await localRequest("chat/completions", rawChat, "mine"), "chat/completions")).status).toBe(200);
+    const foreign = await service.handle(await localRequest("chat/completions", rawChat, "someone-elses"), "chat/completions");
+    expect(foreign.status).toBe(403);
+    expect(await foreign.json()).toMatchObject({ error: { code: "auto_not_activated" } });
+    // An engine that sends no session header still works inside the window.
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(200);
   });
 });
