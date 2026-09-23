@@ -143,6 +143,7 @@ type ReloadCoordinatorContextValue = {
   markReloadRequired: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   clearReloadRequired: () => void;
   reloadWorkspaceEngine: () => Promise<void>;
+  withEngineReady: <T>(workspaceId: string, send: () => Promise<T>) => Promise<T>;
   canReloadWorkspaceEngine: boolean;
   reloadPending: boolean;
   reloadBusy: boolean;
@@ -156,6 +157,9 @@ const ReloadCoordinatorContext = createContext<ReloadCoordinatorContextValue | n
 
 export function ReloadCoordinatorProvider({ children }: { children: ReactNode }) {
   const controlsRef = useRef<WorkspaceReloadControls | null>(null);
+  const inFlightReloadRef = useRef<{ workspaceId: string; promise: Promise<boolean> } | null>(null);
+  const pendingAdmissionsRef = useRef(0);
+  const [pendingAdmissions, setPendingAdmissions] = useState(0);
   const [activeSessions, setActiveSessions] = useState<ReloadSession[]>([]);
   const [allowsBusyReload, setAllowsBusyReload] = useState(false);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
@@ -185,7 +189,26 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const reloadWorkspaceEngine = useCallback(async () => {
     const controls = controlsRef.current;
     if (!controls?.reloadWorkspaceEngine) return false;
-    return controls.reloadWorkspaceEngine();
+    const pending = { workspaceId: controls.workspaceId, promise: controls.reloadWorkspaceEngine() };
+    inFlightReloadRef.current = pending;
+    try {
+      return await pending.promise;
+    } finally {
+      if (inFlightReloadRef.current === pending) inFlightReloadRef.current = null;
+    }
+  }, []);
+  const withEngineReady = useCallback(async function<T>(workspaceId: string, send: () => Promise<T>): Promise<T> {
+    pendingAdmissionsRef.current++;
+    setPendingAdmissions(pendingAdmissionsRef.current);
+    try {
+      while (inFlightReloadRef.current?.workspaceId === workspaceId) {
+        await inFlightReloadRef.current.promise;
+      }
+      return await send();
+    } finally {
+      pendingAdmissionsRef.current--;
+      setPendingAdmissions(pendingAdmissionsRef.current);
+    }
   }, []);
   const ignoreError = useCallback(() => {}, []);
 
@@ -268,7 +291,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const reloadIdle =
     systemState.reload.reloadPending &&
-    activeSessions.length === 0 && !activityBlocked &&
+    activeSessions.length === 0 && !activityBlocked && pendingAdmissions === 0 &&
     !orgOnboardingVisible;
 
   // Auto-reload when idle. Reloading is a cheap in-process engine rebuild
@@ -309,7 +332,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       // status endpoint reports it. Even a rollover-capable server can see
       // that gap as idle and dispose the instance. Automatic reloads wait;
       // explicit reloads can still use the server's busy-session rollover.
-      if (hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
+      if (pendingAdmissionsRef.current > 0 || hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
         return;
       }
       lastAutoReloadAtRef.current = Date.now();
@@ -368,6 +391,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       markReloadRequired,
       clearReloadRequired: systemState.clearReloadRequired,
       reloadWorkspaceEngine: systemState.reloadWorkspaceEngine,
+      withEngineReady,
       canReloadWorkspaceEngine: systemState.canReloadWorkspaceEngine,
       reloadPending: systemState.reload.reloadPending,
       reloadBusy: systemState.reload.reloadBusy,
@@ -376,6 +400,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     }),
     [
       registerWorkspaceReloadControls,
+      withEngineReady,
       systemState.canReloadWorkspaceEngine,
       systemState.clearReloadRequired,
       markReloadRequired,
