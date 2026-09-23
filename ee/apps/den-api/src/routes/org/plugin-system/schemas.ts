@@ -103,6 +103,7 @@ export const configObjectVersionListQuerySchema = pluginArchPaginationQuerySchem
 export const pluginListQuerySchema = pluginArchPaginationQuerySchema.extend({
   status: pluginStatusSchema.optional(),
   q: z.string().trim().min(1).max(255).optional(),
+  includeAccess: queryBooleanSchema.optional().describe("When true, each plugin the caller manages includes its active access grants."),
 })
 
 export const marketplaceListQuerySchema = pluginArchPaginationQuerySchema.extend({
@@ -979,7 +980,10 @@ export const configObjectDetailResponseSchema = pluginArchDetailResponseSchema("
 export const configObjectMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchConfigObjectMutationResponse", configObjectSchema)
 export const configObjectVersionListResponseSchema = pluginArchListResponseSchema("PluginArchConfigObjectVersionListResponse", configObjectVersionSchema)
 export const configObjectVersionDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchConfigObjectVersionDetailResponse", configObjectVersionSchema)
-export const pluginListResponseSchema = pluginArchListResponseSchema("PluginArchPluginListResponse", pluginSchema)
+export const pluginListItemSchema = pluginSchema.extend({
+  access: z.array(accessGrantSchema).optional().describe("Active access grants. Present only when includeAccess is true and the caller manages the plugin."),
+}).meta({ ref: "PluginArchPluginListItem" })
+export const pluginListResponseSchema = pluginArchListResponseSchema("PluginArchPluginListResponse", pluginListItemSchema)
 export const pluginDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchPluginDetailResponse", pluginSchema)
 export const pluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchPluginMutationResponse", pluginSchema)
 export const pluginMembershipListResponseSchema = pluginArchListResponseSchema("PluginArchPluginMembershipListResponse", pluginMembershipSchema)

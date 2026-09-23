@@ -3050,6 +3050,56 @@ export type PluginArchExtensionProjection = {
   manifest: OpenWorkExtensionManifest | null;
 };
 
+export type PluginArchPluginListItem = {
+  /**
+   * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
+   */
+  id: string;
+  /**
+   * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+   */
+  organizationId: string;
+  name: string;
+  description: string | null;
+  sourceRepositoryUrl: string | null;
+  sourceFormat:
+    | "agent-plugin"
+    | "openwork-builtin"
+    | "openwork-extension-manifest"
+    | "claude-plugin"
+    | "opencode-plugin"
+    | "mcp-directory"
+    | "manual"
+    | null;
+  sourceSchemaVersion: string | null;
+  status: "active" | "inactive" | "deleted" | "archived";
+  /**
+   * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+   */
+  createdByOrgMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  memberCount?: number;
+  marketplaces?: Array<{
+    /**
+     * Den TypeID with 'mkt_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    name: string;
+  }>;
+  extension?: PluginArchExtensionProjection | null;
+  /**
+   * Active access grants. Present only when includeAccess is true and the caller manages the plugin.
+   */
+  access?: Array<PluginArchAccessGrant>;
+};
+
+export type PluginArchPluginListResponse = {
+  items: Array<PluginArchPluginListItem>;
+  nextCursor: string | null;
+};
+
 export type PluginArchPlugin = {
   /**
    * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
@@ -3089,11 +3139,6 @@ export type PluginArchPlugin = {
     name: string;
   }>;
   extension?: PluginArchExtensionProjection | null;
-};
-
-export type PluginArchPluginListResponse = {
-  items: Array<PluginArchPlugin>;
-  nextCursor: string | null;
 };
 
 export type PluginArchPluginMutationResponse = {
@@ -21448,6 +21493,10 @@ export type GetV1PluginsData = {
     limit?: number;
     status?: "active" | "inactive" | "deleted" | "archived";
     q?: string;
+    /**
+     * When true, each plugin the caller manages includes its active access grants.
+     */
+    includeAccess?: "true" | "false";
   };
   url: "/v1/plugins";
 };
