@@ -9,7 +9,7 @@ on:
         type: string
   workflow_run:
     workflows: [PR change proof, Product journeys]
-    types: [completed]
+    types: [requested, in_progress, completed]
 
 permissions:
   contents: read
@@ -18,25 +18,24 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: evidence-review-${{ github.event_name }}-${{ github.event.workflow_run.id || github.run_id }}
+  group: evidence-review-${{ github.event.workflow_run.id || inputs.run_id || github.run_id }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    needs: required-verification
-    concurrency:
-      group: evidence-review-publish-${{ github.repository }}
-      cancel-in-progress: false
+  progress:
     if: >-
-      always() &&
-      ((github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR change proof' && github.event.workflow_run.event == 'pull_request'))
+      github.event_name == 'workflow_run' &&
+      github.event.action != 'completed' &&
+      github.event.workflow_run.name == 'PR change proof' &&
+      github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     permissions:
       contents: read
       actions: read
-      pull-requests: write
+      pull-requests: read
+      checks: write
+      deployments: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -45,6 +44,46 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+      - name: Update the commit-bound evidence check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
+          REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: node .github/scripts/evidence-presentation.mjs progress
+
+  publish:
+    needs: required-verification
+    concurrency:
+      group: evidence-review-publish-${{ github.repository }}-${{ github.event.workflow_run.pull_requests[0].number || inputs.run_id || github.run_id }}
+      cancel-in-progress: false
+    if: >-
+      always() &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'PR change proof' && github.event.workflow_run.event == 'pull_request'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      checks: write
+      deployments: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+      REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
+      EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Mark evidence as publishing
+        run: node .github/scripts/evidence-presentation.mjs progress
       - uses: pnpm/action-setup@v4
       - name: Install trusted publisher dependencies
         run: |
@@ -58,9 +97,12 @@ jobs:
           REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
           REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: node evals/scripts/publish-review.mjs
+      - name: Publish native check and deployment result
+        if: always()
+        run: node .github/scripts/evidence-presentation.mjs complete
 
   required-verification:
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Product journeys' && github.event.workflow_run.event == 'workflow_run'
+    if: github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'Product journeys' && github.event.workflow_run.event == 'workflow_run'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

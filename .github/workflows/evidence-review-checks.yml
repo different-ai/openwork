@@ -12,6 +12,7 @@ on:
       - evals/specs/*review*.test.ts
       - evals/worlds/*review*.ts
       - .github/scripts/pr-proof*.mjs
+      - .github/scripts/evidence-presentation*.mjs
       - .github/actions/setup-browser/**
       - .github/workflows/evidence-review*.yml
       - .github/workflows/pr-proof.yml
@@ -62,7 +63,7 @@ jobs:
           pnpm --filter @openwork/review... install --frozen-lockfile --ignore-scripts
           pnpm --dir evals install --frozen-lockfile --ignore-scripts
       - name: Verify selection, workflow trust and publication contracts
-        run: node --test .github/scripts/pr-proof.test.mjs evals/packages/test-artifacts/test/*.test.ts evals/scripts/publish-review.test.mjs
+        run: node --test .github/scripts/evidence-presentation.test.mjs .github/scripts/pr-proof.test.mjs evals/packages/test-artifacts/test/*.test.ts evals/scripts/publish-review.test.mjs
   check-app:
     runs-on: ubuntu-latest
     timeout-minutes: 8
