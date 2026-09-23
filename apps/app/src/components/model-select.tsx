@@ -31,8 +31,10 @@ import { filterEntitledModelOptions } from "@/react-app/domains/connections/prov
 import {
   filterCloudManagedModelOptions,
   mergeModelOptions,
+  markDisabledModelOptions,
 } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import {
   Command,
   CommandCollection,
@@ -71,6 +73,8 @@ function useModelOptions(
   open: boolean,
   fallbackOptions: readonly ModelOption[],
   cloudProvidersEnabled: boolean,
+  pendingOptions: readonly ModelOption[],
+  disabledProviders: readonly string[],
 ) {
   const { client, opencodeBaseUrl, selectedWorkspaceRoot } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
@@ -125,13 +129,13 @@ function useModelOptions(
       );
 
     return filterEntitledModelOptions(filterCloudManagedModelOptions(
-      mergeModelOptions(options, fallbackOptions),
+      markDisabledModelOptions(mergeModelOptions(pendingOptions, mergeModelOptions(options, fallbackOptions)), disabledProviders),
       cloudProvidersEnabled,
     ), {
       restrictToCloud,
       checkRestriction: checkDesktopRestriction,
     });
-  }, [checkDesktopRestriction, cloudProvidersEnabled, data, fallbackOptions]);
+  }, [checkDesktopRestriction, cloudProvidersEnabled, data, disabledProviders, fallbackOptions, pendingOptions]);
 }
 
 type ModelSelectItem = {
@@ -176,6 +180,7 @@ function isSameModel(a: ModelRef, b: ModelRef) {
 }
 
 function thinkingOptionsFor(option: ModelOption): ModelBehaviorOption[] {
+  if (option.gatewayAuthorization) return [];
   if (option.behaviorValue == null && !option.behaviorOptions?.some((item) => item.value !== null)) return [];
   return getModelBehaviorSelection(option.behaviorOptions ?? [], option.behaviorValue ?? null).options;
 }
@@ -246,7 +251,8 @@ export function ModelSelect({
   const denAuth = useDenAuth();
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
-  const catalogOptions = useModelOptions(open, fallbackOptions, denAuth.isSignedIn);
+  const gatewaySelection = useGatewayModelSelection(JSON.stringify([sessionId, value, behaviorValue, disabled]));
+  const catalogOptions = useModelOptions(open, fallbackOptions, denAuth.isSignedIn, gatewaySelection.options, gatewaySelection.disabledProviders);
   const modelOptions = React.useMemo(
     () => overlaySelectedBehavior(catalogOptions, value, {
       value: behaviorValue,
@@ -332,22 +338,24 @@ export function ModelSelect({
   const effortLabel = selectedControls.options.find((option) => option.value === behaviorValue)?.label ?? effectiveBehaviorLabel;
   const triggerBehaviorLabel = selectedOption?.behaviorValue === FAST_DEFAULT_VARIANT ? "Fast" : effectiveBehaviorLabel;
   const currentFavorite = favoriteOptions.find((option) => isSameModel(value, option)) ?? favoriteOptions[0] ?? null;
-  const nextFavorite = nextFavoriteModel(favorites, value);
+  const nextFavorite = nextFavoriteModel(favoriteOptions, value);
   const showBehavior = !hideValue
     && selectedThinkingOptions.length > 0
     && (selectedOption ? selectedOption.behaviorValue != null : behaviorValue != null)
     && Boolean(effectiveBehaviorLabel);
 
   const applyModel = (option: ModelOption, behavior?: string | null) => {
-    useModelCollectionsStore.getState().recordRecent(option);
-    onChange({ providerID: option.providerID, modelID: option.modelID }, behavior);
-    if (behavior !== undefined) {
-      onBehaviorChange?.(behavior);
-    }
-    setSearch("");
-    setThinkingFor(null);
-    setPane("root");
-    onOpenChange(false);
+    const currentOption = optionsByKey.get(modelRefKey(option));
+    if (!currentOption) return;
+    gatewaySelection.select(currentOption, () => {
+      useModelCollectionsStore.getState().recordRecent(option);
+      onChange({ providerID: option.providerID, modelID: option.modelID }, behavior);
+      if (behavior !== undefined) onBehaviorChange?.(behavior);
+      setSearch("");
+      setThinkingFor(null);
+      setPane("root");
+      onOpenChange(false);
+    });
   };
 
   const handleSelect = (option: ModelOption) => {
@@ -370,7 +378,7 @@ export function ModelSelect({
 
   const applyThinking = (option: ModelBehaviorOption) => {
     if (!thinkingFor) return;
-    if (isSameModel(value, thinkingFor)) {
+    if (isSameModel(value, thinkingFor) && !optionsByKey.get(modelRefKey(thinkingFor))?.gatewayAuthorization) {
       onBehaviorChange?.(option.value);
       setThinkingFor(null);
       setPane("root");
@@ -537,14 +545,15 @@ export function ModelSelect({
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
               {favoriteOptions.map((option) => (
                 <button
-                  key={modelRefKey(option)}
-                  type="button"
+                   key={modelRefKey(option)}
+                   data-model-key={modelRefKey(option)}
+                   type="button"
                   className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
                   onClick={() => handleSelect(option)}
                 >
                   <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                   <span className="min-w-0 flex-1 truncate text-foreground">{option.title}</span>
-                  {isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+                   {option.gatewayAuthorization ? <span className="text-xs text-muted-foreground">Sign-in required</span> : isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
                 </button>
               ))}
             </div>
@@ -630,6 +639,7 @@ export function ModelSelect({
                             <CommandItem
                               className="min-h-0 gap-2 rounded-lg px-2 py-1.5"
                               key={item.id}
+                              data-model-key={modelRefKey(option)}
                               value={`${option.providerID}:${option.modelID} ${option.title} ${option.description ?? ""}`}
                               onClick={() => handleSelect(option)}
                               data-checked={isSameModel(value, option)}
@@ -637,7 +647,7 @@ export function ModelSelect({
                               <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-foreground">{option.title}</span>
-                                <span className="block truncate text-xs text-muted-foreground">{option.description ?? getProviderDisplayName(option.providerID)}</span>
+                                <span className="block truncate text-xs text-muted-foreground">{option.gatewayAuthorization ? "Sign-in required" : option.description ?? getProviderDisplayName(option.providerID)}</span>
                               </span>
                               <button
                                 type="button"

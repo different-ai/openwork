@@ -1,7 +1,7 @@
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
-import type { GatewayDesktopOauthStartRequest, GatewayDesktopOauthStartResponse } from "@openwork/types/den/gateway";
+import type { GatewayDesktopOauthStartRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 import {
   agentContextDiagnosticsReportSchema,
   agentContextDiagnosticsRequestSchema,
@@ -54,6 +54,7 @@ export type OpenworkCloudProviderSyncRun = {
 export type OpenworkCloudProviderSyncSkippedProvider = {
   cloudProviderId: string;
   credentialSetId?: string;
+  models?: GatewayUsableModel[];
   providerId: string;
   name: string;
   /** Machine-readable skip reason, e.g. "missing_credentials". */
@@ -145,6 +146,27 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
   };
 }
 
+function parsePendingGatewayModel(value: unknown, credentialSetId: unknown): GatewayUsableModel | null {
+  if (!value || typeof value !== "object"
+    || !("id" in value) || typeof value.id !== "string"
+    || !/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(value.id)
+    || !("name" in value) || typeof value.name !== "string"
+    || !("config" in value) || !value.config || typeof value.config !== "object" || Array.isArray(value.config)
+    || !("id" in value.config) || value.config.id !== value.id
+    || !("upstreamModelId" in value) || typeof value.upstreamModelId !== "string"
+    || !("modelGroupId" in value) || typeof value.modelGroupId !== "string"
+    || !("modelGroupName" in value) || typeof value.modelGroupName !== "string"
+    || !("credentialSetId" in value) || typeof value.credentialSetId !== "string" || value.credentialSetId !== credentialSetId
+    || value.id.split("_")[2] !== value.credentialSetId.slice(4)
+    || value.id.split("_")[1] !== value.modelGroupId.slice(4)
+    || !("credentialSetName" in value) || typeof value.credentialSetName !== "string") return null;
+  return {
+    id: value.id, name: value.name, config: { ...value.config, id: value.id },
+    upstreamModelId: value.upstreamModelId, modelGroupId: value.modelGroupId, modelGroupName: value.modelGroupName,
+    credentialSetId: value.credentialSetId, credentialSetName: value.credentialSetName,
+  };
+}
+
 function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSyncStatus {
   if (!value || typeof value !== "object" || !("hasSession" in value) || typeof value.hasSession !== "boolean" || !("providers" in value) || !Array.isArray(value.providers)) {
     throw new Error("Invalid cloud provider sync status response.");
@@ -183,6 +205,11 @@ function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSync
         reason: raw.reason,
         ...("credentialSetId" in raw && typeof raw.credentialSetId === "string" ? { credentialSetId: raw.credentialSetId } : {}),
         ...("authUrl" in raw && typeof raw.authUrl === "string" ? { authUrl: raw.authUrl } : {}),
+        ...(raw.reason === "member_auth_required" && "credentialSetId" in raw && "models" in raw && Array.isArray(raw.models)
+          ? { models: raw.models.flatMap((value: unknown) => {
+            const model = parsePendingGatewayModel(value, raw.credentialSetId);
+            return model ? [model] : [];
+          }) } : {}),
       });
     }
   }

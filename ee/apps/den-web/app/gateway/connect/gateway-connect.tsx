@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronRight, LockKeyhole } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LockKeyhole } from "lucide-react";
 import { DenPageHeader } from "../../(den)/_components/ui/page-header";
 import { DenButton, buttonVariants } from "../../(den)/_components/ui/button";
 import { DenNotice } from "../../(den)/_components/ui/notice";
-import { denApiCredentials } from "../../(den)/_lib/den-api-origin";
 import { gatewayBrowserEndpoint } from "./gateway-browser-endpoint";
+
+type BrowserStep = "loading" | "sign_in_required" | "account_mismatch" | "ready" | "error" | "blocked" | "restart";
 
 function readString(value: unknown, key: string) {
   if (typeof value !== "object" || value === null || !(key in value)) return null;
@@ -14,34 +15,145 @@ function readString(value: unknown, key: string) {
   return typeof entry === "string" ? entry : null;
 }
 
+function browserAttempt() {
+  const attempt = new URLSearchParams(window.location.search).get("attempt");
+  return attempt && /^entry\.[A-Za-z0-9_-]{43}$/.test(attempt) ? attempt : null;
+}
+
 export function GatewayConnect() {
+  const [step, setStep] = useState<BrowserStep>("loading");
+  const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [code, setCode] = useState<string | null>(null);
+  const mounted = useRef(false);
+  const statusRequest = useRef<AbortController | null>(null);
+  const actionRequest = useRef<AbortController | null>(null);
+  const startAttempted = useRef(false);
+  const ready = useRef(false);
 
-  async function continueToGoogle() {
-    if (busy) return;
-    const attempt = new URLSearchParams(window.location.search).get("attempt");
-    if (!attempt || !/^entry\.[A-Za-z0-9_-]{43}$/.test(attempt)) {
-      setError("This connection link is invalid. Start Connect again in OpenWork.");
-      return;
-    }
-    setBusy(true);
+  const checkStatus = useCallback(async () => {
+    if (!mounted.current || actionRequest.current || startAttempted.current) return;
+    statusRequest.current?.abort();
+    const controller = new AbortController();
+    statusRequest.current = controller;
+    const current = () => mounted.current && !controller.signal.aborted && statusRequest.current === controller;
+    ready.current = false;
+    setChecking(true);
     setError(null);
-    setCode(null);
     try {
-      const endpoint = await gatewayBrowserEndpoint(`/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`);
+      const attempt = browserAttempt();
+      if (!attempt) {
+        setStep("restart");
+        setError("This connection link is invalid. Start Connect again in OpenWork.");
+        return;
+      }
+      const endpoint = await gatewayBrowserEndpoint(`/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(attempt)}`);
+      if (!current()) return;
       const response = await fetch(endpoint, {
-        credentials: denApiCredentials(endpoint),
+        credentials: "include",
         headers: { accept: "application/json" },
         cache: "no-store",
         referrerPolicy: "no-referrer",
         redirect: "error",
+        signal: controller.signal,
       });
       const payload: unknown = await response.json();
+      if (!current()) return;
       if (!response.ok) {
-        setCode(readString(payload, "error"));
-        setError(readString(payload, "message") ?? "Unable to continue. Start Connect again in OpenWork.");
+        setStep(response.status === 400 ? "restart" : response.status === 403 ? "blocked" : "error");
+        setError(readString(payload, "message") ?? (response.status === 400
+          ? "This connection link expired. Start Connect again in OpenWork."
+          : response.status === 403
+            ? "Connection access is unavailable. Contact your OpenWork administrator."
+            : "Could not verify your sign-in. Check your connection and retry."));
+        return;
+      }
+      const status = readString(payload, "status");
+      if (status !== "sign_in_required" && status !== "account_mismatch" && status !== "ready") {
+        throw new Error("invalid_browser_status");
+      }
+      ready.current = status === "ready";
+      setStep(status);
+    } catch {
+      if (!current()) return;
+      setStep("error");
+      setError("Could not verify your sign-in. Check your connection and retry.");
+    } finally {
+      if (current()) {
+        statusRequest.current = null;
+        setChecking(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    void checkStatus();
+    const onFocus = () => void checkStatus();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void checkStatus();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      mounted.current = false;
+      ready.current = false;
+      statusRequest.current?.abort();
+      actionRequest.current?.abort();
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [checkStatus]);
+
+  useEffect(() => {
+    if (step !== "sign_in_required" && step !== "account_mismatch") return;
+    let remaining = 40;
+    const timer = window.setInterval(() => {
+      remaining -= 1;
+      if (remaining === 0) window.clearInterval(timer);
+      if (!statusRequest.current) void checkStatus();
+    }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [checkStatus, step]);
+
+  async function continueToGoogle() {
+    if (!mounted.current || !ready.current || actionRequest.current || startAttempted.current) return;
+    const controller = new AbortController();
+    actionRequest.current = controller;
+    const current = () => mounted.current && !controller.signal.aborted && actionRequest.current === controller;
+    ready.current = false;
+    statusRequest.current?.abort();
+    setBusy(true);
+    setError(null);
+    try {
+      const attempt = browserAttempt();
+      if (!attempt) {
+        setStep("restart");
+        setError("This connection link is invalid. Start Connect again in OpenWork.");
+        return;
+      }
+      const endpoint = await gatewayBrowserEndpoint(`/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`);
+      if (!current()) return;
+      startAttempted.current = true;
+      const response = await fetch(endpoint, {
+        credentials: "include",
+        headers: { accept: "application/json" },
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+        redirect: "error",
+        signal: controller.signal,
+      });
+      const payload: unknown = await response.json();
+      if (!current()) return;
+      if (!response.ok) {
+        const code = readString(payload, "error");
+        if ((response.status === 401 || response.status === 403) && (code === "browser_signin_required" || code === "browser_account_mismatch")) {
+          startAttempted.current = false;
+          setStep(code === "browser_signin_required" ? "sign_in_required" : "account_mismatch");
+        } else {
+          setStep("restart");
+          setError("Could not continue this connection. Start Connect again in OpenWork.");
+        }
         return;
       }
       const authUrl = readString(payload, "authUrl");
@@ -51,56 +163,84 @@ export function GatewayConnect() {
       }
       window.location.assign(url.toString());
     } catch {
-      setError("The connection could not be continued. If the request already completed, start a new Connect attempt in OpenWork.");
+      if (!current()) return;
+      setStep(startAttempted.current ? "restart" : "error");
+      setError(startAttempted.current
+        ? "Could not confirm whether Google sign-in started. Start Connect again in OpenWork."
+        : "Could not verify your sign-in. Check your connection and retry.");
     } finally {
-      setBusy(false);
+      if (current()) {
+        actionRequest.current = null;
+        setBusy(false);
+      }
     }
   }
 
   async function signOut() {
+    if (!mounted.current || actionRequest.current || startAttempted.current) return;
+    const controller = new AbortController();
+    actionRequest.current = controller;
+    const current = () => mounted.current && !controller.signal.aborted && actionRequest.current === controller;
+    statusRequest.current?.abort();
+    statusRequest.current = null;
+    ready.current = false;
+    setChecking(false);
     setBusy(true);
+    setError(null);
     try {
       const endpoint = await gatewayBrowserEndpoint("/api/auth/sign-out");
+      if (!current()) return;
       const response = await fetch(endpoint, {
         method: "POST",
-        credentials: denApiCredentials(endpoint),
+        credentials: "include",
         headers: { "content-type": "application/json" },
         body: "{}",
         referrerPolicy: "no-referrer",
+        redirect: "error",
+        signal: controller.signal,
       });
+      if (!current()) return;
       if (!response.ok) throw new Error("signout_failed");
-      setCode("browser_signin_required");
-      setError("Signed out. Sign in with the OpenWork account that started Connect, then return here.");
-    } catch {
-      setError("Could not sign out. Open OpenWork in another tab to change accounts, then return here.");
-    } finally {
+      actionRequest.current = null;
       setBusy(false);
+      await checkStatus();
+    } catch {
+      if (!current()) return;
+      setStep("error");
+      setError("Could not confirm sign-out. Retry the sign-in check before changing accounts.");
+    } finally {
+      if (current()) {
+        actionRequest.current = null;
+        setBusy(false);
+      }
     }
   }
 
-  const blocked = code === "browser_account_mismatch" || code === "browser_signin_required";
+  const title = step === "sign_in_required" ? "Sign in to OpenWork"
+    : step === "account_mismatch" ? "Switch OpenWork account"
+      : step === "ready" ? "Sign in to Google"
+        : step === "blocked" ? "Connection unavailable"
+          : step === "restart" ? "Start Connect again"
+            : "Could not verify sign-in";
 
   return (
-    <main aria-busy={busy} className="flex min-h-dvh items-center justify-center bg-[var(--dls-surface)] p-4 text-sm text-[var(--dls-text-primary)]">
+    <main aria-busy={busy || checking} className="flex min-h-dvh items-center justify-center bg-[var(--dls-surface)] p-4 text-sm text-[var(--dls-text-primary)]">
       <div className="flex w-full max-w-xl flex-col gap-4">
-        <DenPageHeader title="Connect Google" className="[&_h1]:text-xl [&_h1]:leading-tight [&_h1]:text-[var(--dls-text-primary)]" />
-        <p>Use the OpenWork account that started Connect.</p>
-        {error ? <DenNotice tone={blocked ? "neutral" : "error"} message={<span className="flex items-start gap-2">{blocked ? <LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4 shrink-0" /> : null}{error}</span>} /> : null}
-        <p>Authorize Google Cloud access for OpenWork; failed sign-in cleanup may revoke previous or other connections using the same OAuth client.</p>
-        <div className="flex flex-wrap gap-3">
-          <DenButton loading={busy} onClick={() => void continueToGoogle()}>Continue to Google</DenButton>
-          <a href="/" target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary" })}>Sign in to OpenWork</a>
-          {code === "browser_account_mismatch" ? <DenButton variant="secondary" disabled={busy} onClick={() => void signOut()}>Sign out of this browser account</DenButton> : null}
-        </div>
-        <details className="group border-t border-[var(--dls-border)] py-3">
-          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm font-medium focus-visible:outline-2 focus-visible:outline-[var(--dls-accent)] [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" strokeWidth={1.5} className="size-4 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />Technical details</summary>
-          <div className="flex flex-col gap-3 pt-3 text-[var(--dls-text-secondary)]">
-            <p>Sign in to OpenWork in the other tab, then return here. Your Google and OpenWork email addresses need not match. Google consent does not grant Vertex project permissions or model access.</p>
-            <p>Google tokens stay on the server. Google session policy can require interactive sign-in again; unattended access is not guaranteed.</p>
-            <p>If sign-in fails after Google issues tokens, cleanup revocation may affect existing connections sharing the OAuth client. Reconnect affected accounts to restore access.</p>
-            <p>To cancel, close this tab; connection attempts expire automatically. If this link expires, start Connect again in OpenWork. Disconnect revokes the saved credential and cancels pending sign-ins.</p>
+        {step === "loading" ? (
+          <div role="status" aria-label="Checking OpenWork sign-in" className="flex flex-col items-start gap-4 motion-safe:animate-pulse">
+            <div aria-hidden="true" className="h-6 w-56 rounded bg-[var(--dls-hover)]" />
+            <div aria-hidden="true" className="h-10 w-44 rounded-lg bg-[var(--dls-hover)]" />
           </div>
-        </details>
+        ) : <DenPageHeader title={title} className="[&_h1]:text-xl [&_h1]:leading-tight [&_h1]:text-[var(--dls-text-primary)]" />}
+        {step === "account_mismatch" ? <DenNotice tone="neutral" message={<span className="flex items-start gap-2"><LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4 shrink-0" />Use the OpenWork account that started Connect.</span>} /> : null}
+        {error ? <DenNotice tone={step === "blocked" ? "neutral" : "error"} message={error} /> : null}
+        <div className="flex flex-wrap gap-3">
+          {step === "sign_in_required" ? <a href="/" target="_blank" rel="noopener noreferrer" className={buttonVariants()}>Sign in to OpenWork</a> : null}
+          {step === "ready" ? <DenButton loading={busy} disabled={checking || startAttempted.current} onClick={() => void continueToGoogle()}>Continue to Google</DenButton> : null}
+          {step === "account_mismatch" ? <DenButton loading={busy} disabled={checking} onClick={() => void signOut()}>Sign out of this browser account</DenButton> : null}
+          {step === "error" || step === "blocked" ? <DenButton loading={checking} onClick={() => void checkStatus()}>Retry sign-in check</DenButton> : null}
+        </div>
+        {checking && step !== "loading" ? <span role="status" className="sr-only">Checking OpenWork sign-in</span> : null}
       </div>
     </main>
   );

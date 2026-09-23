@@ -1,5 +1,7 @@
 import { applyEdits, modify } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
+import type { GatewayUsableModel } from "@openwork/types/den/gateway";
+import type { ModelOption, ModelRef } from "@/app/types";
 import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import type {
@@ -129,6 +131,7 @@ export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
 export type GatewayConnectProvider = {
   cloudProviderId: string;
   credentialSetId?: string;
+  models?: GatewayUsableModel[];
   providerId: string;
   name: string;
   /** Legacy metadata only; never opened or sent to an authenticated endpoint. */
@@ -154,7 +157,7 @@ export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use i
 /** Skipped sync entries that need the member's own sign-in, in server order. */
 export const resolveGatewayConnectProviders = (
   skippedProviders:
-    | Record<string, { cloudProviderId: string; credentialSetId?: string; providerId: string; name: string; reason: string; authUrl?: string | null }>
+    | Record<string, { cloudProviderId: string; credentialSetId?: string; models?: GatewayUsableModel[]; providerId: string; name: string; reason: string; authUrl?: string | null }>
     | undefined
     | null,
 ): GatewayConnectProvider[] =>
@@ -163,10 +166,36 @@ export const resolveGatewayConnectProviders = (
     .map((provider) => ({
       cloudProviderId: provider.cloudProviderId,
       credentialSetId: provider.credentialSetId,
+      ...(provider.models === undefined ? {} : { models: provider.models }),
       providerId: provider.providerId,
       name: provider.name,
       authUrl: provider.authUrl ?? null,
     }));
+
+export function pendingGatewayModelOptions(providers: readonly GatewayConnectProvider[]): ModelOption[] {
+  return providers.flatMap((provider) => (provider.models ?? []).flatMap((model) => {
+    if (!provider.credentialSetId || model.credentialSetId !== provider.credentialSetId) return [];
+    return [{
+      providerID: provider.providerId, modelID: model.id, title: model.name,
+      description: provider.name, footer: "Sign-in required", source: "cloud",
+      behaviorTitle: "Reasoning", behaviorLabel: "Default", behaviorDescription: "",
+      behaviorValue: null, isFree: false,
+      gatewayAuthorization: { cloudProviderId: provider.cloudProviderId, credentialSetId: provider.credentialSetId },
+    } satisfies ModelOption];
+  }));
+}
+
+export function isGatewayModelReady(
+  provider: GatewayConnectProvider,
+  model: ModelRef,
+  snapshot: { importedCloudProviders: Record<string, CloudImportedProvider>; cloudProviderServerSync: { reloadPending: boolean; skippedProviders: Record<string, { cloudProviderId: string; credentialSetId?: string }> } | null; gatewayUsageProviderScope?: number | null },
+) {
+  return Boolean(provider.credentialSetId) && model.modelID.split("_")[2] === provider.credentialSetId?.slice(4)
+    && snapshot.gatewayUsageProviderScope != null && snapshot.cloudProviderServerSync?.reloadPending === false
+    && !snapshot.cloudProviderServerSync.skippedProviders[gatewayConnectProviderKey(provider)]
+    && snapshot.importedCloudProviders[provider.cloudProviderId]?.providerId === model.providerID
+    && snapshot.importedCloudProviders[provider.cloudProviderId]?.modelIds.includes(model.modelID) === true;
+}
 
 export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
 export const GATEWAY_CONNECT_POLL_ATTEMPTS = 60;
@@ -208,12 +237,12 @@ export async function connectGatewayProvider(input: {
     try {
       await input.resync();
     } catch {
-      // A failed poll is not fatal: the next scheduled sync will pick it up.
+      continue;
     }
     if (input.signal.aborted) return false;
     if (input.isConnected()) return true;
   }
-  return !input.signal.aborted && input.isConnected();
+  return false;
 }
 
 export const resolveGatewayProviderIds = (

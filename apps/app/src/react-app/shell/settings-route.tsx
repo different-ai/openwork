@@ -44,6 +44,7 @@ import type {
 import { getWorkspaceTaskLoadErrorDisplay } from "@/app/utils";
 import { currentLocale, t, setLocale, type Language } from "@/i18n";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
+import { GatewayModelAccessProvider } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import {
   type RouteWorkspace,
   type RouteSession,
@@ -852,13 +853,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
+  const cloudSession = useCloudSession();
   const gatewayProviderIds = useMemo(
     () => resolveGatewayProviderIds(providerAuthSnapshot.importedCloudProviders),
     [providerAuthSnapshot.importedCloudProviders],
   );
   const gatewayConnectProviders = useMemo(
-    () => resolveGatewayConnectProviders(providerAuthSnapshot.cloudProviderServerSync?.skippedProviders),
-    [providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+    () => cloudSession.isSignedIn ? resolveGatewayConnectProviders(providerAuthSnapshot.cloudProviderServerSync?.skippedProviders) : [],
+    [cloudSession.isSignedIn, providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
   const [connectingGatewayProviderId, setConnectingGatewayProviderId] = useState<string | null>(null);
   const gatewayConnectAbort = useRef<AbortController | null>(null);
@@ -875,31 +877,39 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
+    const signal = request ? AbortSignal.any([controller.signal, request.signal]) : controller.signal;
+    let synced = false;
     setConnectingGatewayProviderId(gatewayConnectProviderKey(provider));
     try {
       const connected = await connectGatewayProvider({
         provider,
-        signal: controller.signal,
+        signal,
         startOAuth: providerAuthStore.startGatewayProviderOAuth,
         openUrl: (url) => platform.openLink(url),
-        resync: () => providerAuthStore.runCloudProviderSync("manual"),
-        isConnected: () => {
-          return isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders);
+        resync: async () => {
+          synced = false;
+          const result = await providerAuthStore.runCloudProviderSync("manual");
+          synced = result?.outcome === "handled_server_side";
         },
+        isConnected: () => synced && (request
+          ? providerAuthStore.isGatewayModelAvailable(provider, request.model)
+          : isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders)),
       });
-      if (!connected && !controller.signal.aborted) {
+      if (!connected && !signal.aborted && !request) {
         toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
-          if (!controller.signal.aborted) void connect(provider);
+          if (!signal.aborted) void connect(provider);
         } } });
       }
+      return connected && !signal.aborted;
     } catch (error) {
-      if (!controller.signal.aborted) toast.error(describeRouteError(error));
+      if (!signal.aborted && !request) toast.error(describeRouteError(error));
+      return false;
     } finally {
-      if (!controller.signal.aborted) setConnectingGatewayProviderId(null);
+      if (gatewayConnectAbort.current === controller) setConnectingGatewayProviderId(null);
     }
   }, [platform, providerAuthStore]);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
@@ -954,7 +964,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     onBeforeSignedOut: cleanupCloudMcpForSignOut,
     openLink: (url) => platform.openLink(url),
   });
-  const cloudSession = useCloudSession();
   const connectScope = useMemo(
     () => ({
       baseUrl: cloudSession.baseUrl,
@@ -1189,6 +1198,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
     onLoadError: handleModelPickerLoadError,
+    pendingProviders: gatewayConnectProviders,
+    disabledProviders,
     cloudProvidersEnabled: cloudSession.isSignedIn,
   });
   const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
@@ -2446,7 +2457,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               setConnectingGatewayProviderId(null);
               toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
             }}
-            onConnectGatewayProvider={handleConnectGatewayProvider}
+            onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
@@ -2776,7 +2787,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   })();
 
   return (
-    <>
+    <GatewayModelAccessProvider
+      providers={gatewayConnectProviders}
+      disabledProviders={disabledProviders}
+      scopeKey={JSON.stringify([selectedWorkspaceRoot, opencodeBaseUrl, cloudSession.activeOrganization?.id, cloudSession.isSignedIn])}
+      login={(provider, signal, model) => handleConnectGatewayProvider(provider, { signal, model })}
+    >
       {props.standaloneExtensions ? (
         <div data-extensions-main-surface className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-8">{settingsView}</div>
@@ -2950,10 +2966,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       />
       <ModelPickerModal
         open={modelPicker.open}
-        options={modelPicker.options}
+        options={modelPicker.displayOptions}
+        disabledProviders={disabledProviders}
         gatewayProviderIds={gatewayProviderIds}
         gatewayConnectProviders={gatewayConnectProviders}
-        onConnectGatewayProvider={handleConnectGatewayProvider}
+        onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
         query={modelPicker.query}
         setQuery={modelPicker.setQuery}
         target="default"
@@ -2975,7 +2992,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onOpenSettings={() => {}}
         onClose={() => modelPicker.setOpen(false)}
       />
-    </>
+    </GatewayModelAccessProvider>
   );
 }
 

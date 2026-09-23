@@ -88,6 +88,7 @@ export type CloudProviderSyncSkippedProvider = {
    */
   reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing" | "no_accessible_models";
   credentialSetId?: string;
+  models?: GatewayUsableModel[];
   /**
    * Legacy Den OAuth URL, kept for older readers. Current clients must start
    * OAuth using the host-authenticated provider-ID action, not this URL.
@@ -416,7 +417,24 @@ function parseInferenceProvider(value: unknown): DenInferenceProviderSummary | n
       const name = readRequiredString(request.name);
       const authUrl = readRequiredString(request.authUrl);
       if (!credentialSetId || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(credentialSetId) || !name || !authUrl) return null;
-      authorizationRequests.push({ credentialSetId, name, authUrl });
+      const models: GatewayUsableModel[] = [];
+      if (request.models !== undefined) {
+        if (!Array.isArray(request.models)) return null;
+        for (const value of request.models) {
+          const model = parseModel(value);
+          if (!model || !/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(model.id)
+            || model.config.id !== model.id || !model.upstreamModelId || !model.modelGroupId || !model.modelGroupName
+            || model.credentialSetId !== credentialSetId || !model.credentialSetName
+            || model.id.split("_")[2] !== credentialSetId.slice(4)
+            || model.id.split("_")[1] !== model.modelGroupId.slice(4)) return null;
+          models.push({
+            id: model.id, name: model.name, config: { ...model.config, id: model.id },
+            upstreamModelId: model.upstreamModelId, modelGroupId: model.modelGroupId, modelGroupName: model.modelGroupName,
+            credentialSetId, credentialSetName: model.credentialSetName,
+          });
+        }
+      }
+      authorizationRequests.push({ credentialSetId, name, authUrl, ...(request.models === undefined ? {} : { models }) });
     }
   }
   // Tolerant: older Den servers omit authUrl; a non-string is treated as absent.
@@ -696,6 +714,7 @@ function prepareMaterialization(
         cloudProviderId: provider.id, providerId: runtimeProviderId(provider),
         credentialSetId: request.credentialSetId, name: `${provider.name} / ${request.name}`,
         reason: "member_auth_required",
+        ...(request.models === undefined ? {} : { models: request.models }),
       });
     }
     if (provider.memberCredentialState && provider.memberCredentialState !== "active") {

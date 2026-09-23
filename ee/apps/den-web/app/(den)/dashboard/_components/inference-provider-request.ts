@@ -104,6 +104,10 @@ export function isGoogleVertexNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic";
 }
 
+export function getNewInferenceProviderSettings(npm: string | null): Record<string, string> {
+  return isGoogleVertexNpm(npm) ? { location: "global" } : {};
+}
+
 export function isAzureNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/azure";
 }

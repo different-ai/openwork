@@ -132,6 +132,22 @@ describe("Gateway provider form", () => {
     expect(editor).toContain("Replace key");
   });
 
+  test("initializes region once for a new route selection without overwriting saved or typed settings", () => {
+    const newPage = read("dashboard", "(admin)", "ai-gateway", "providers", "new", "page.tsx");
+    expect(newPage).toContain("key={provider} catalogProviderId={provider}");
+    const initialization = editor.slice(editor.indexOf("if (!provider || initializedProviderId.current"), editor.indexOf("}, [provider]);"));
+    expect(initialization).toContain("setSettings(provider.settings)");
+    expect(initialization).not.toContain("getNewInferenceProviderSettings");
+    const catalogLoad = editor.slice(editor.indexOf("void requestLlmProviderCatalogDetail"), editor.indexOf("const npm ="));
+    expect(catalogLoad).toContain("if (cancelled) return");
+    expect(catalogLoad).toContain("if (!inferenceProviderId)");
+    expect(catalogLoad).toContain("if (initializedNewProviderId.current !== providerId)");
+    expect(catalogLoad).toContain("initializedNewProviderId.current = providerId");
+    expect(catalogLoad).toContain("setSettings((current) => ({ ...getNewInferenceProviderSettings(getProviderNpmPackage(result.config)), ...current }))");
+    expect(editor).toContain('value={settings[key] ?? ""}');
+    expect(editor).toContain('key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value');
+  });
+
   test("create posts one body; edit rewrites group, set, and grants through the matrix routes", () => {
     expect(editor).toContain("buildInferenceProviderRequestBody(formInput)");
     expect(editor).toContain('resource: "model-groups"');
@@ -158,18 +174,20 @@ describe("Gateway provider form", () => {
 });
 
 describe("Google Web OAuth onboarding", () => {
-  test("keeps setup instructions collapsed while fields, callback copy and rotation consent remain visible", () => {
-    const start = editor.indexOf('<details className="group');
-    const end = editor.indexOf("</details>", start);
+  test("links to published setup docs instead of embedding a disclosure or instructions", () => {
+    const start = editor.indexOf('<Link href="https://openworklabs.com/docs/ai-gateway/google-agent-platform"');
+    const end = editor.indexOf("</Link>", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const setup = editor.slice(start, end);
-    expect(setup).toContain("Setup instructions");
-    expect(setup).toContain("group-open:rotate-90");
-    expect(setup).toContain("motion-reduce:transition-none");
-    expect(setup).not.toMatch(/<details[^>]*\sopen(?:[\s=>])/);
-    for (const text of ["Web application, not Desktop app", "Secrets are write-only", "roles/aiplatform.user", "invalid_rapt", "Saving configuration is not an inference test"]) {
-      expect(setup).toContain(text);
+    expect(setup).toContain("Read setup instructions");
+    expect(setup).toContain('target="_blank"');
+    expect(setup).toContain('rel="noopener noreferrer"');
+    expect(setup).toContain('buttonVariants({ variant: "secondary", size: "sm"');
+    expect(editor).not.toContain("<details");
+    expect(editor).not.toContain("<summary");
+    for (const text of ["Create a Google OAuth client", "Secrets are write-only", "roles/aiplatform.user", "invalid_rapt", "Saving configuration is not an inference test"]) {
+      expect(editor).not.toContain(text);
     }
     const fields = editor.slice(editor.indexOf('{credentialMode === "member" ? ('), start);
     expect(fields).toContain("OAuth client ID");
@@ -182,10 +200,9 @@ describe("Google Web OAuth onboarding", () => {
     expect(editor).not.toContain("Give this a friendly name");
   });
 
-  test("ports callback, scopes, IAM, session limits and secret lifecycle into the provider form", () => {
-    for (const text of ["Web application, not Desktop app", "Copy callback URL", "navigator.clipboard.writeText(callback)", "cloud-platform", "openid and email", "roles/aiplatform.user", "aiplatform.endpoints.predict", "seven days", "invalid_rapt", "Blank does not clear it", "Disabling a set", "Saving configuration is not an inference test"]) {
-      expect(editor).toContain(text);
-    }
+  test("keeps callback copy and the deployment-provided URL in the provider form", () => {
+    expect(editor).toContain("Copy callback URL");
+    expect(editor).toContain("navigator.clipboard.writeText(callback)");
     expect(editor).toContain("{provider.oauthCallbackUrl}");
     expect(editor).toContain("Callback unavailable. Ask your deployment administrator to configure the public Den API origin.");
     expect(editor).toContain("Save this provider to obtain its exact OAuth callback URL");

@@ -7,6 +7,7 @@ import {
   getCredentialStatusLabel,
   getCredentialKindLabel,
   getOauthCallbackPath,
+  getNewInferenceProviderSettings,
   getRequiredSettingKeys,
   isSupportedGatewayNpm,
   readInferenceProvidersFromPayload,
@@ -153,6 +154,46 @@ describe("buildInferenceProviderRequestBody", () => {
 describe("buildMigrateFromLlmProviderBody", () => {
   test("posts the llmProviderId", () => {
     expect(buildMigrateFromLlmProviderBody("llmp_123")).toEqual({ llmProviderId: "llmp_123" });
+  });
+});
+
+describe("new gateway provider settings", () => {
+  test.each([
+    ["google-vertex", "@ai-sdk/google-vertex"],
+    ["google-vertex-anthropic", "@ai-sdk/google-vertex/anthropic"],
+  ])("%s starts with an actual global region in the create request", (providerId, npm) => {
+    const settings = getNewInferenceProviderSettings(npm);
+    expect(settings).toEqual({ location: "global" });
+    const body = buildInferenceProviderRequestBody({ ...baseInput, providerId, settings: { ...settings, project: "fixture" } });
+    expect(body.settings).toEqual({ project: "fixture", location: "global" });
+  });
+
+  test.each([
+    ["google-vertex", "@ai-sdk/google-vertex"],
+    ["google-vertex-anthropic", "@ai-sdk/google-vertex/anthropic"],
+  ])("%s keeps a user-entered region instead of reapplying the default", (providerId, npm) => {
+    const settings = getNewInferenceProviderSettings(npm);
+    settings.location = "europe-west1";
+    expect(buildInferenceProviderRequestBody({ ...baseInput, providerId, settings }).settings).toEqual({ location: "europe-west1" });
+    settings.location = "";
+    expect(buildInferenceProviderRequestBody({ ...baseInput, providerId, settings }).settings).toEqual({});
+    expect(getNewInferenceProviderSettings(npm)).toEqual({ location: "global" });
+  });
+
+  test.each(["google-vertex", "google-vertex-anthropic"])("%s preserves saved settings on edit without inserting defaults", (providerId) => {
+    const savedSettings: Record<string, string>[] = [{ project: "fixture", location: "us-central1" }, { project: "fixture", location: "global" }, { project: "fixture", location: "" }, { project: "fixture" }];
+    for (const settings of savedSettings) {
+      const provider = asInferenceProvider({ id: "ipr_fixture", providerId, name: "Vertex", credentialMode: "org", status: "active", settings });
+      if (!provider) throw new Error("Expected a saved provider");
+      expect(provider.settings).toEqual(settings);
+      const body = buildInferenceProviderRequestBody({ ...baseInput, providerId, settings: provider.settings, previousSettings: settings });
+      expect(body).not.toHaveProperty("settings");
+      expect(settings).toEqual(provider.settings);
+    }
+  });
+
+  test.each([null, "@ai-sdk/google", "@ai-sdk/azure", "@ai-sdk/anthropic"])("%s does not receive a Vertex region default", (npm) => {
+    expect(getNewInferenceProviderSettings(npm)).toEqual({});
   });
 });
 

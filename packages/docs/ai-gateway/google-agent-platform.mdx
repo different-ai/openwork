@@ -66,6 +66,8 @@ A security administrator can use a narrower reviewed custom role instead. It mus
 
 Start with one model so it is easy to verify the configuration. You can add more later.
 
+When adding either `google-vertex` or `google-vertex-anthropic`, OpenWork pre-fills **Region** with `global`. Keep it only if your selected models support the global endpoint and it meets your organization's data-location requirements; otherwise enter a supported region before saving. This default does not change existing providers or replace a region you enter.
+
 ### Gemini
 
 Open **Agent Platform → Model Garden**, choose a managed Gemini text/chat model, and check its model ID and supported locations. Record the location you will use in OpenWork.
@@ -128,7 +130,7 @@ Open **Google Auth Platform → Clients → Create client**:
 
 ### Register the correct callback
 
-In OpenWork, open **Models → Gateway** and create the appropriate provider as described in the next step. Its credential-set editor displays the OAuth callback URL. Copy that **exact** value into Google's **Authorized redirect URIs** before starting member sign-in.
+In OpenWork, open **AI Gateway → AI Providers** and create the appropriate provider as described in the next step. Open the saved provider's row; its **Key** section displays the OAuth callback URL. Copy that **exact** value into Google's **Authorized redirect URIs** before starting member sign-in.
 
 For a typical HTTPS deployment, the callback has this shape:
 
@@ -146,43 +148,41 @@ Create the client and save its **Client ID** and **Client secret** securely. Cap
 
 ## 7. Add the provider and credential set in OpenWork
 
-As an organization owner/admin, open **Models → Gateway** and add a provider:
+As an organization owner/admin, open **AI Gateway → AI Providers → Add provider**:
 
 1. Choose `google-vertex` for Gemini or `google-vertex-anthropic` for Claude.
-2. Give the provider a recognizable name.
-3. Enter the **Project ID** and supported **location** recorded earlier.
-4. Select your initial test model and save the provider.
+2. In **Key**, choose **Each member signs in**.
+3. Enter the **Google Cloud project** ID. **Region** starts as `global`; confirm model support and your data-location requirements, or replace it with the supported region recorded earlier.
+4. In **Models**, choose **Only the ones I pick** and select your initial test model. Complete the OAuth client and access fields below before saving.
 
 The project/location destination is fixed on that provider. Create a separate provider if you need to change its destination.
 
-### Create the credential set
+### Configure the credential set in Key
 
-1. Open the provider's credential sets and create one, such as **Google member sign-in**.
-2. Choose **Each Member Signs In**.
-3. Enter the Google **Web OAuth client ID** and **client secret**.
-4. Confirm that the displayed callback matches Google's registration exactly.
-5. Save.
+1. In the same provider form's **Key** section, enter the Google **Web OAuth client ID** and **client secret**. The form creates the upstream credential set when you save; there is no separate **Add upstream key** action.
+2. **Read setup instructions** opens this guide in a new tab.
+3. Review **Who can use it** as described below, then select **Add** for the chosen provider.
+4. Open the saved provider's row in **AI Providers**, copy its callback URL from **Key**, and confirm it matches Google's registration exactly before members connect.
+5. For later OAuth client changes, edit **Key** on that same provider and select **Save changes**.
 
-The client secret is write-only. Leave it unchanged for routine edits; replacing the OAuth client configuration requires affected members to reconnect.
+The client secret is write-only and encrypted on the server. Leave the secret blank to keep it unchanged; entering a value replaces it. Blank does not clear it. Changing the OAuth client ID or secret requires confirming the rotation warning before saving and affected members must reconnect. The provider form's **Remove** action removes the provider and its configuration. When managing individual credential sets through the API, remove a member set's access rules before deleting the set. Disabling a set through the API revokes its credentials but retains its OAuth app configuration.
 
 ### Assign model access
 
-Create or select a **model group** containing the models members should use. Then create an **access rule** linking:
+In the provider form, use **Models** to select the models members should use and **Who can use it** to choose the intended OpenWork audience. **Everyone in the organization** is selected by default; turn it off and use **Add person** or **Add team** to restrict access before saving.
 
-- That model group.
-- Your member-sign-in credential set.
-- The intended OpenWork members, teams, or organization audience.
-
-Creating a provider or credential set does **not** automatically grant inference access, even to its administrator. Assign yourself access if you will test it.
+Saving the form creates or updates the underlying **model group**, member-sign-in **credential set**, and **access rules** linking that group and set to the selected audience. When using the API directly, creating a provider or credential set alone does **not** grant inference access. Being an administrator is not an access grant; include yourself in the selected audience if you will test it.
 
 ## 8. Sign in as a member
 
-In Den, open **Model connections** at `/dashboard/model-connections`. In Desktop, you can also use the assigned provider's **Connect** action in AI provider settings.
+In Den, open **My Model Connections** at `/dashboard/model-connections`. In Desktop, use the assigned OAuth provider's **Login** action in AI provider settings. API-key providers continue to use **Connect**.
+
+You can also start from Desktop's model picker: assigned OAuth providers and models remain visible before sign-in. Selecting a model that needs authorization opens **Log in to this provider to use the models**. Choose **Login** to start the same browser flow, or **Cancel** to keep your current model. After sign-in is confirmed and the model is available, OpenWork selects the model you chose. Models you have not been granted access to are not added by this flow.
 
 1. Find the intended provider and credential set and select **Connect with Google**.
 2. Open the browser sign-in link.
-3. On the OpenWork connection page, sign in to Den in that browser with the **same OpenWork account that started Connect**. If sign-in opens another tab, finish there and return to the connection tab.
-4. Select **Continue to Google**.
+3. The connection page checks your browser sign-in. If it shows **Sign in to OpenWork**, use that link to sign in with the **same OpenWork account that started Connect** in a new tab, then return to the connection tab. If that account is already signed in, this step is skipped. **Switch OpenWork account** means you must sign out of the current browser account first.
+4. When the page shows **Sign in to Google**, select **Continue to Google**. Checking or refreshing your browser sign-in does not start Google consent; only this button continues to Google.
 5. Choose the Google account you granted project IAM access to and approve the requested permissions.
 6. Return to Model connections and refresh status if necessary. Confirm the displayed connected Google email.
 7. Refresh/sync models in open Desktop or Web sessions as needed.
@@ -223,7 +223,7 @@ OpenWork stores the OAuth client secret and each member's Google token material 
 | `redirect_uri_mismatch` | Compare the entire displayed callback with Google's registration, including scheme, hostname, port, path prefix, and trailing slash. |
 | `invalid_client` / Administrator action required | Repair the Web OAuth client ID/secret in the credential set. Repeated member consent does not fix an invalid client. |
 | Google blocks a tester | Check Internal audience restrictions, External test-user membership, and your organization's app-access policies. Do not bypass an administrator's restriction. |
-| Browser account mismatch | Sign in to Den in that browser with the OpenWork account that initiated Connect, then retry. Desktop sign-in does not automatically sign the browser in. |
+| Browser account mismatch | On **Switch OpenWork account**, select **Sign out of this browser account**. The page rechecks your sign-in, then offers **Sign in to OpenWork**. Sign in with the account that initiated Connect and return to the connection tab. Desktop sign-in does not automatically sign the browser in. |
 | Consent succeeded, inference is denied | Check the Google user's IAM, the configured project/location, model access/terms, and quota. Not every upstream `401` or `403` is an expired token. |
 | Sign-in is required again after a few hours or days | Check Google Cloud session policy, grant revocation, and External Testing token expiry. |
 | Google did not grant offline access | Start Connect again and approve consent. If removing the app's Google authorization is necessary, first consider other connections sharing that grant. |

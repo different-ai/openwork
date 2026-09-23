@@ -82,9 +82,12 @@ import {
   getProviderModelIds,
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
+  isGatewayModelReady,
+  type GatewayConnectProvider,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
+import { hasPendingGatewayModelSelection } from "./pending-gateway-model-selection";
 import { updateManagedDisabledProviders } from "../managed-engine-config";
 import {
   DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
@@ -511,6 +514,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const key = getDenSessionDeliveryKey();
     if (key !== (denSessionDelivery?.key ?? "")) {
       invalidateDenSessionDelivery();
+      verifiedGatewayUsageContext = "";
+      mutateState((current) => ({ ...current, cloudProviderServerSync: null, gatewayUsageProviderScope: null }));
       if (key && !disposed) {
         denSessionDelivery = { key, controller: new AbortController() };
       }
@@ -743,7 +748,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             ? refreshOptions?.verifiedScope ?? current.gatewayUsageProviderScope : null,
           cloudProviderServerSync: {
             reloadPending: status.reloadPending,
-            skippedProviders: Object.fromEntries(status.skippedProviders.map((provider) => [provider.credentialSetId ? `${provider.cloudProviderId}:${provider.credentialSetId}` : provider.cloudProviderId, provider])),
+            skippedProviders: Object.fromEntries((status.hasSession ? status.skippedProviders.filter((provider) => provider.reason !== "member_auth_required" || verifiedGatewayUsageContext === contextKey) : []).map((provider) => [provider.credentialSetId ? `${provider.cloudProviderId}:${provider.credentialSetId}` : provider.cloudProviderId, provider])),
           },
         }));
         return next;
@@ -2138,7 +2143,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         checkRestriction: options.checkDesktopAppRestriction,
       },
     );
-    if (replacement) writeStoredDefaultModel(replacement);
+    if (replacement && !hasPendingGatewayModelSelection()) writeStoredDefaultModel(replacement);
   };
 
   const refreshProvidersAfterCloudSync = async (optionsArg: {
@@ -2305,6 +2310,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (failures.length > 0) {
       throw new Error(failures.join("\n"));
     }
+  }
+
+  function isGatewayModelAvailable(provider: GatewayConnectProvider, model: { providerID: string; modelID: string }) {
+    return isGatewayModelReady(provider, model, state)
+      && isProviderAllowedByDesktopPolicy({ providerId: model.providerID,
+        restrictToCloud: options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" }),
+        checkRestriction: options.checkDesktopAppRestriction })
+      && options.providerConnectedIds().includes(model.providerID)
+      && !options.disabledProviders().includes(model.providerID)
+      && options.providers().some((entry) => entry.id === model.providerID && Boolean(entry.models[model.modelID]));
   }
 
   async function startGatewayProviderOAuth(providerId: string, credentialSetId?: string, signal?: AbortSignal) {
@@ -2879,6 +2894,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshImportedCloudProviders: (input?: { strict?: boolean }) => refreshImportedCloudProviders({ strict: input?.strict }),
     runCloudProviderSync,
     startGatewayProviderOAuth,
+    isGatewayModelAvailable,
     startProviderAuth,
     refreshProviders,
     completeProviderAuthOAuth,

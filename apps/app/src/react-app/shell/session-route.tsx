@@ -142,6 +142,9 @@ import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorV
 import { computeModelAvailability, createUnavailableConfirmationGate, type ModelAvailability } from "@/react-app/domains/session/surface/model-availability";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
+import { GatewayModelAccessProvider, type GatewayModelSelectionHandle } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
+import { hasPendingGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/pending-gateway-model-selection";
+import { captureFavoriteModelTarget, isFavoriteModelTargetCurrent } from "./favorite-model-shortcut";
 import { getSessionModelSelection, useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
 import { getSessionAgentSelection, useSessionAgentSelection, useSessionAgentStore } from "@/react-app/domains/session/surface/session-mode-memory";
 import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
@@ -1039,10 +1042,11 @@ export function SessionRoute() {
     [sessionProviderAuthSnapshot.importedCloudProviders],
   );
   const gatewayConnectProviders = useMemo(
-    () => resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders),
-    [sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+    () => denAuth.isSignedIn ? resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders) : [],
+    [denAuth.isSignedIn, sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
   const gatewayConnectAbort = useRef<AbortController | null>(null);
+  const gatewayModelSelectionRef = useRef<GatewayModelSelectionHandle | null>(null);
   useEffect(() => {
     const cancel = () => gatewayConnectAbort.current?.abort();
     window.addEventListener(denSessionUpdatedEvent, cancel);
@@ -1053,26 +1057,36 @@ export function SessionRoute() {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
+    const signal = request ? AbortSignal.any([controller.signal, request.signal]) : controller.signal;
+    let synced = false;
     try {
       const connected = await connectGatewayProvider({
         provider,
-        signal: controller.signal,
+        signal,
         startOAuth: sessionProviderAuthStore.startGatewayProviderOAuth,
         openUrl: (url) => platform.openLink(url),
-        resync: () => refreshCloudProviderSync("manual"),
-        isConnected: () => isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders),
+        resync: async () => {
+          synced = false;
+          await refreshCloudProviderSync("manual");
+          synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
+        },
+        isConnected: () => synced && (request
+          ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
+          : isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders)),
       });
-      if (!connected && !controller.signal.aborted) {
+      if (!connected && !signal.aborted && !request) {
         toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
-          if (!controller.signal.aborted) void connect(provider);
+          if (!signal.aborted) void connect(provider);
         } } });
       }
+      return connected && !signal.aborted;
     } catch (error) {
-      if (!controller.signal.aborted) toast.error(describeRouteError(error));
+      if (!signal.aborted && !request) toast.error(describeRouteError(error));
+      return false;
     }
   }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
   const refreshOrganizationModelAccess = useCallback(async () => {
@@ -1130,6 +1144,8 @@ export function SessionRoute() {
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
     fallbackOptions: organizationAssignedModelOptions,
+    pendingProviders: gatewayConnectProviders,
+    disabledProviders: disabledProviderIds,
     cloudProvidersEnabled: denAuth.isSignedIn,
   });
   // Which session the open model picker targets. Selecting a model while a
@@ -1172,7 +1188,7 @@ export function SessionRoute() {
     selectedWorkspaceId,
   ]);
   useEffect(() => {
-    if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel);
+    if (entitledOrgDefaultModel && !hasPendingGatewayModelSelection()) writeStoredDefaultModel(entitledOrgDefaultModel);
   }, [entitledOrgDefaultModel]);
   // Availability is resolved per effective model identity: the New Task
   // composer validates the global default while each conversation validates
@@ -1241,6 +1257,7 @@ export function SessionRoute() {
   const autoOpenedUnavailableModelRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (hasPendingGatewayModelSelection()) return;
     if (!selectedModelUnavailableKey) {
       // The active composer's model is fine (or pending). If the picker was
       // auto-opened for a previously broken composer — e.g. the New Task
@@ -2623,27 +2640,33 @@ export function SessionRoute() {
   }), [cycleThinkingMode]);
   useControlAction(cycleThinkingModeControlAction);
 
+  const gatewayWorkbenchScope = useWorkbenchStore((state) => JSON.stringify([state.focusedPane, state.secondary?.workspaceId, state.secondary?.sessionId]));
+  const gatewayProviderScopeKey = JSON.stringify([selectedWorkspaceId, selectedWorkspaceRoot, opencodeBaseUrl, selectedWorkspaceEndpoint?.baseUrl, selectedWorkspaceEndpoint?.workspaceId, openworkServerHostInfoState?.generation, denSessionVersion]);
+  const favoriteModelScope = useRef({ workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, providerScopeKey: gatewayProviderScopeKey });
+  favoriteModelScope.current = { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, providerScopeKey: gatewayProviderScopeKey };
   const cycleFavoriteModel = useCallback(() => {
-    const workbench = useWorkbenchStore.getState();
-    const activeSessionId = workbench.focusedPane === "secondary" && workbench.secondary
-      ? workbench.secondary.sessionId
-      : selectedSessionId;
+    const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
+    if (!target) return null;
+    const activeSessionId = target.sessionId;
     const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
     const currentModel = selection?.model ?? local.prefs.defaultModel ?? null;
-    const next = nextFavoriteModel(useModelCollectionsStore.getState().favorites, currentModel);
-    if (!next) return null;
+    const availableFavorites = useModelCollectionsStore.getState().favorites.filter((favorite) => modelPicker.options.some((option) => option.providerID === favorite.providerID && option.modelID === favorite.modelID));
+    const next = nextFavoriteModel(availableFavorites, currentModel);
+    const option = next && modelPicker.options.find((option) => option.providerID === next.providerID && option.modelID === next.modelID);
+    if (!next || !option) return null;
 
     const providerModel = providerCatalog?.[next.providerID]?.[next.modelID];
     const variant = providerModel
       ? sanitizeModelBehaviorValue(next.providerID, providerModel, selection ? selection.variant : modelVariantValue)
       : null;
-    if (activeSessionId) {
-      useSessionModelStore.getState().setModel(activeSessionId, next, variant);
-    }
-    useModelCollectionsStore.getState().recordRecent(next);
-    local.setPrefs((previous) => ({ ...previous, defaultModel: next, modelVariant: variant }));
-    return providerModel?.name ?? next.modelID;
-  }, [local, modelVariantValue, providerCatalog, selectedSessionId]);
+    gatewayModelSelectionRef.current?.select(option, () => {
+      if (activeSessionId) useSessionModelStore.getState().setModel(activeSessionId, next, variant);
+      useModelCollectionsStore.getState().recordRecent(next);
+      local.setPrefs((previous) => ({ ...previous, defaultModel: next, modelVariant: variant }));
+    }, () => isFavoriteModelTargetCurrent(target, useWorkbenchStore.getState(), favoriteModelScope.current)
+      && (!activeSessionId || getSessionModelSelection(activeSessionId) === selection));
+    return option.gatewayAuthorization ? null : providerModel?.name ?? next.modelID;
+  }, [local, modelPicker.options, modelVariantValue, providerCatalog, selectedSessionId]);
 
   const cycleFavoriteModelControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.favorite_model.cycle",
@@ -2652,7 +2675,7 @@ export function SessionRoute() {
     sideEffect: "mutation",
     execute: () => {
       const label = cycleFavoriteModel();
-      return label ? { ok: true, label } : { ok: false, error: "Add a favorite model before cycling favorites." };
+      return label ? { ok: true, label } : { ok: false, error: "No ready favorite selected. If a sign-in dialog is open, choose Login or Cancel." };
     },
   }), [cycleFavoriteModel]);
   useControlAction(cycleFavoriteModelControlAction);
@@ -3555,6 +3578,13 @@ export function SessionRoute() {
       workspaceId={selectedWorkspaceEndpoint?.workspaceId ?? ""}
       selectedWorkspaceRoot={selectedWorkspaceRoot}
     >
+    <GatewayModelAccessProvider
+      providers={gatewayConnectProviders}
+      disabledProviders={disabledProviderIds}
+      selectionRef={gatewayModelSelectionRef}
+      scopeKey={JSON.stringify([gatewayProviderScopeKey, gatewayWorkbenchScope, selectedSessionId, modelPickerSessionId, local.prefs.defaultModel, local.prefs.modelVariant, selectedSessionModelSelection, modelPickerSelection])}
+      login={(provider, signal, model) => handleConnectGatewayProvider(provider, { signal, model })}
+    >
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
         // Use the server-side workspace id (the one without the `rem_`
@@ -4020,7 +4050,7 @@ export function SessionRoute() {
     />
     <ModelPickerModal
       open={modelPicker.open}
-      options={modelPicker.options}
+      options={modelPicker.displayOptions}
       organizationModelsEmpty={organizationModelsEmpty}
       organizationModelsSettingsUrl={organizationModelsSettingsUrl}
 
@@ -4052,7 +4082,7 @@ export function SessionRoute() {
       disabledProviders={disabledProviderIds}
       gatewayProviderIds={gatewayProviderIds}
       gatewayConnectProviders={gatewayConnectProviders}
-      onConnectGatewayProvider={handleConnectGatewayProvider}
+      onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
       onBehaviorChange={(model, value) => {
         if (modelPickerSessionId) {
           const store = useSessionModelStore.getState();
@@ -4098,6 +4128,7 @@ export function SessionRoute() {
       onRefreshOrganizationModels={refreshOrganizationModelAccess}
       restrictToCloud={restrictToCloudProviders}
     />
+    </GatewayModelAccessProvider>
     </WorkspaceProvider>
   );
 }

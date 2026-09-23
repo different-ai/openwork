@@ -44,6 +44,12 @@ function readString(record: Record<string, unknown>, key: string) {
   return value
 }
 
+function readRows(record: Record<string, unknown>, key: string) {
+  const value = record[key]
+  if (!Array.isArray(value) || !value.every(isRecord)) throw new Error(`${key} was not an object array`)
+  return value
+}
+
 function defaultSet(provider: Record<string, unknown>) {
   if (!Array.isArray(provider.credentialSets) || !isRecord(provider.credentialSets[0])) throw new Error("credentialSets missing")
   return provider.credentialSets[0]
@@ -427,7 +433,13 @@ test("browser-start continues the entry with Google PKCE, OIDC and offline conse
 
 test("callback exchanges the code, stores the encrypted member token, marks the state used, and flips connect to ready", async () => {
   const before = readProvider(await (await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/connect`)).json())
-  expect(before).toMatchObject({ credentialStatus: "member_auth_required" })
+  expect(before).toMatchObject({ credentialStatus: "member_auth_required", models: [] })
+  const pending = readRows(before, "authorizationRequests")
+  expect(pending).toHaveLength(1)
+  const pendingModels = readRows(pending[0], "models")
+  expect(pendingModels).toHaveLength(1)
+  expect(pendingModels[0]).toMatchObject({ upstreamModelId: "gemini-2.5-pro", credentialSetId, config: { id: pendingModels[0].id } })
+  expect(readString(pendingModels[0], "id")).toMatch(/^gwm_/)
   expect(new URL(readString(before, "authUrl")).searchParams.get("credentialSetId")).toBe(credentialSetId)
 
   const startResponse = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
@@ -480,10 +492,13 @@ test("callback exchanges the code, stores the encrypted member token, marks the 
   expect(JSON.stringify(rawCredential)).not.toContain("ya29.access")
 
   const after = readProvider(await (await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/connect`)).json())
-  expect(after).toMatchObject({ credentialStatus: "ready", authUrl: null })
+  expect(after).toMatchObject({ credentialStatus: "ready", authUrl: null, authorizationRequests: [], models: pendingModels })
+  expect(after.apiKey).toBe(before.apiKey)
+  expect(after.apiKeys).toEqual(before.apiKeys)
+  for (const secret of ["ya29.access", "1//refresh", OAUTH_CLIENT_SECRET]) expect(JSON.stringify(after)).not.toContain(secret)
   // Only the member who consented is ready; the owner still needs to sign in.
   const ownerConnect = readProvider(await (await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}/connect`)).json())
-  expect(ownerConnect).toMatchObject({ credentialStatus: "member_auth_required" })
+  expect(ownerConnect).toMatchObject({ credentialStatus: "member_auth_required", models: [], authorizationRequests: [{ credentialSetId, models: pendingModels }] })
 
   // Replaying the same state never reaches Google.
   await withFakeGoogle(
@@ -677,6 +692,18 @@ test("named member sets coexist with ready models and fence in-flight consent in
   const grantBody: unknown = await grant.json()
   if (!isRecord(grantBody) || !isRecord(grantBody.accessGrant)) throw new Error("accessGrant missing")
   const secondGrantId = readString(grantBody.accessGrant, "id")
+  const beforeConsent = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+  expect(beforeConsent.models).toEqual([])
+  const pendingSets = readRows(beforeConsent, "authorizationRequests")
+  expect(pendingSets).toHaveLength(2)
+  const firstPendingSet = pendingSets.find((row) => row.credentialSetId === firstSetId)
+  const secondPendingSet = pendingSets.find((row) => row.credentialSetId === secondSetId)
+  if (!firstPendingSet || !secondPendingSet) throw new Error("Pending sets missing")
+  const firstModels = readRows(firstPendingSet, "models")
+  const secondModels = readRows(secondPendingSet, "models")
+  expect(firstModels).toHaveLength(1)
+  expect(secondModels).toHaveLength(1)
+  expect(firstModels[0].id).not.toBe(secondModels[0].id)
   expect((await request(memberCookie, `${base}/oauth/start`)).status).toBe(409)
   expect((await request(memberCookie, `${base}/oauth/start?credentialSetId=${credentialSetId}`)).status).toBe(403)
   await withFakeGoogle(
@@ -694,7 +721,8 @@ test("named member sets coexist with ready models and fence in-flight consent in
     },
   )
   const mixed = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
-  expect(mixed).toMatchObject({ credentialStatus: "ready", models: [{ credentialSetId: firstSetId }], authorizationRequests: [{ credentialSetId: secondSetId }] })
+  expect(mixed).toMatchObject({ credentialStatus: "ready", models: firstModels, authorizationRequests: [{ credentialSetId: secondSetId, models: secondModels }] })
+  expect(readRows(mixed, "authorizationRequests")).toEqual([secondPendingSet])
   expect(readString(mixed, "apiKey")).toMatch(/^ow_gw_/)
   const firstCredential = await db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.and(drizzle.eq(schema.GatewayProviderCredentialTable.credential_set_id, firstSetId), drizzle.eq(schema.GatewayProviderCredentialTable.subject, memberId)))
   const pending = await request(memberCookie, `${base}/oauth/start?credentialSetId=${secondSetId}`)
@@ -1058,6 +1086,194 @@ test("default start returns a non-authenticating browser entry and browser-start
   expect((await loadState(state))?.id).toBe(before?.id)
   expect((await publicRequest(browserPath, { cookie: memberCookie })).status).toBe(400)
   await db.delete(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, state))
+})
+
+async function startBrowserEntry() {
+  const response = await publicRequest(`/v1/inference-providers/${inferenceProviderId}/oauth/start?credentialSetId=${credentialSetId}`, { authorization: `Bearer ${memberSessionToken}`, accept: "application/json" })
+  expect(response.status).toBe(200)
+  const payload: unknown = await response.json()
+  if (!isRecord(payload)) throw new Error("Entry missing")
+  const attempt = new URL(readString(payload, "authUrl")).searchParams.get("attempt")
+  if (!attempt) throw new Error("Entry attempt missing")
+  return attempt
+}
+
+async function browserStatus(attempt: string, headers?: HeadersInit) {
+  const response = await publicRequest(`/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(attempt)}`, headers)
+  expect(response.headers.get("cache-control")).toBe("no-store")
+  expect(response.headers.get("referrer-policy")).toBe("no-referrer")
+  expect(response.headers.get("location")).toBeNull()
+  expect(response.headers.get("set-cookie")).toBeNull()
+  return response
+}
+
+async function expectReadOnlyBrowserStatus(run: () => Promise<void>) {
+  const snapshot = () => Promise.all([
+    db.select().from(schema.GatewayProviderOauthStateTable).where(drizzle.eq(schema.GatewayProviderOauthStateTable.gateway_provider_id, inferenceProviderId)).orderBy(schema.GatewayProviderOauthStateTable.id),
+    db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, inferenceProviderId)).orderBy(schema.GatewayProviderCredentialTable.id),
+    db.select().from(schema.AuthSessionTable).where(drizzle.inArray(schema.AuthSessionTable.userId, [memberUserId, ownerUserId])).orderBy(schema.AuthSessionTable.id),
+    db.execute(drizzle.sql`select * from gateway_provider_oauth_states where gateway_provider_id = ${inferenceProviderId} order by id`).then(([rows]) => rows),
+  ])
+  const before = await snapshot()
+  const realFetch = globalThis.fetch
+  const unexpectedFetch = mock(async () => { throw new Error("Browser status must not contact Google or any upstream") })
+  globalThis.fetch = Object.assign(unexpectedFetch, { preconnect: realFetch.preconnect })
+  try {
+    await run()
+    expect(unexpectedFetch).not.toHaveBeenCalled()
+    expect(await snapshot()).toEqual(before)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+}
+
+test("browser-status distinguishes signed-out, mismatched and matching signed cookies without side effects", async () => {
+  const attempt = await startBrowserEntry()
+  await expectReadOnlyBrowserStatus(async () => {
+    for (let poll = 0; poll < 3; poll++) {
+      for (const headers of [{}, { authorization: `Bearer ${memberSessionToken}` }, { cookie: `better-auth.session_token=${memberSessionToken}` }, { cookie: "better-auth.session_token=invalid.signature", authorization: `Bearer ${memberSessionToken}` }]) {
+        const response = await browserStatus(attempt, headers)
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ status: "sign_in_required" })
+      }
+      const mismatch = await browserStatus(attempt, { cookie: ownerCookie, authorization: `Bearer ${memberSessionToken}` })
+      expect(mismatch.status).toBe(200)
+      expect(await mismatch.json()).toEqual({ status: "account_mismatch" })
+      const matching = await browserStatus(attempt, { cookie: memberCookie, authorization: `Bearer ${ownerSessionToken}` })
+      expect(matching.status).toBe(200)
+      expect(await matching.json()).toEqual({ status: "ready" })
+    }
+  })
+  const continued = await publicRequest(`/v1/inference-providers/oauth/browser-start?attempt=${attempt}`, { cookie: memberCookie, accept: "application/json" })
+  expect(continued.status).toBe(200)
+  await expectReadOnlyBrowserStatus(async () => {
+    const consumed = await browserStatus(attempt, { cookie: memberCookie })
+    expect(consumed.status).toBe(400)
+    expect(await consumed.json()).toEqual({ error: "oauth_entry_expired", message: "This connection attempt expired or was already used. Start Connect again." })
+  })
+})
+
+test.each(["expired", "revoked"])("browser-status requires sign-in for a %s signed session even after a ready poll", async (invalidity) => {
+  const attempt = await startBrowserEntry()
+  const sessionId = createDenTypeId("session")
+  const token = `ipo-status-browser-${sessionId}`
+  const secret = process.env.BETTER_AUTH_SECRET
+  if (!secret) throw new Error("BETTER_AUTH_SECRET is required")
+  await db.insert(schema.AuthSessionTable).values({ id: sessionId, userId: memberUserId, token, expiresAt: new Date(Date.now() + 300_000) })
+  const cookie = await serializeSignedCookie("openwork-den.session_token", token, secret)
+  try {
+    await expectReadOnlyBrowserStatus(async () => {
+      const ready = await browserStatus(attempt, { cookie })
+      expect(ready.status).toBe(200)
+      expect(await ready.json()).toEqual({ status: "ready" })
+    })
+    if (invalidity === "expired") await db.update(schema.AuthSessionTable).set({ expiresAt: new Date(Date.now() - 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, sessionId))
+    else await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, sessionId))
+    await expectReadOnlyBrowserStatus(async () => {
+      for (let poll = 0; poll < 2; poll++) {
+        const response = await browserStatus(attempt, { cookie, authorization: `Bearer ${memberSessionToken}` })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ status: "sign_in_required" })
+      }
+    })
+  } finally {
+    await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, sessionId))
+  }
+})
+
+test.each(["expired", "used", "invalid_payload", "unknown"])("browser-status rejects an %s entry without changing state", async (invalidity) => {
+  const attempt = await startBrowserEntry()
+  const where = drizzle.eq(schema.GatewayProviderOauthStateTable.state, attempt)
+  if (invalidity === "expired") await db.update(schema.GatewayProviderOauthStateTable).set({ expires_at: new Date(Date.now() - 1000) }).where(where)
+  if (invalidity === "used") await db.update(schema.GatewayProviderOauthStateTable).set({ used_at: new Date() }).where(where)
+  if (invalidity === "invalid_payload") await db.update(schema.GatewayProviderOauthStateTable).set({ code_verifier: "{}" }).where(where)
+  if (invalidity === "unknown") await db.delete(schema.GatewayProviderOauthStateTable).where(where)
+  await expectReadOnlyBrowserStatus(async () => {
+    for (const headers of [{}, { cookie: memberCookie }, { cookie: ownerCookie }]) {
+      const response = await browserStatus(attempt, headers)
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: "oauth_entry_expired", message: "This connection attempt expired or was already used. Start Connect again." })
+    }
+  })
+})
+
+test("browser-status rejects malformed entry queries with the existing validation contract and no-store headers", async () => {
+  await expectReadOnlyBrowserStatus(async () => {
+    for (const attempt of ["", "entry.invalid", `google.${"a".repeat(43)}`, `entry.${"a".repeat(44)}`]) {
+      const response = await browserStatus(attempt, { cookie: memberCookie })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ error: "invalid_request" })
+    }
+    const missing = await publicRequest("/v1/inference-providers/oauth/browser-status")
+    expect(missing.status).toBe(400)
+    expect(missing.headers.get("cache-control")).toBe("no-store")
+    expect(missing.headers.get("referrer-policy")).toBe("no-referrer")
+    expect(await missing.json()).toMatchObject({ error: "invalid_request" })
+  })
+})
+
+test.each(["client", "client_removed", "grant", "member", "member_binding", "provider", "set", "group"])("browser-status rechecks current %s authorization before reporting ready", async (change) => {
+  const attempt = await startBrowserEntry()
+  await expectReadOnlyBrowserStatus(async () => {
+    const response = await browserStatus(attempt, { cookie: memberCookie })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ status: "ready" })
+  })
+  const providerWhere = drizzle.eq(schema.GatewayProviderTable.id, inferenceProviderId)
+  const setWhere = drizzle.eq(schema.GatewayCredentialSetTable.id, credentialSetId)
+  const memberWhere = drizzle.eq(schema.MemberTable.id, memberId)
+  const grantsWhere = drizzle.eq(schema.GatewayProviderAccessTable.gateway_provider_id, inferenceProviderId)
+  const groupsWhere = drizzle.eq(schema.GatewayModelGroupTable.gateway_provider_id, inferenceProviderId)
+  const grants = await db.select().from(schema.GatewayProviderAccessTable).where(grantsWhere)
+  const groups = await db.select().from(schema.GatewayModelGroupTable).where(groupsWhere)
+  try {
+    if (change === "client" || change === "client_removed") await db.update(schema.GatewayCredentialSetTable).set({ oauth_client_secret: change === "client" ? "fixture-status-changed-client" : null }).where(setWhere)
+    if (change === "grant") await db.delete(schema.GatewayProviderAccessTable).where(grantsWhere)
+    if (change === "member") await db.update(schema.MemberTable).set({ removedAt: new Date() }).where(memberWhere)
+    if (change === "member_binding") await db.update(schema.GatewayProviderOauthStateTable).set({ org_membership_id: ownerMemberId }).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, attempt))
+    if (change === "provider") await db.update(schema.GatewayProviderTable).set({ status: "disabled" }).where(providerWhere)
+    if (change === "set") await db.update(schema.GatewayCredentialSetTable).set({ status: "disabled" }).where(setWhere)
+    if (change === "group") await db.update(schema.GatewayModelGroupTable).set({ status: "disabled" }).where(groupsWhere)
+    await expectReadOnlyBrowserStatus(async () => {
+      for (let poll = 0; poll < 2; poll++) {
+        const response = await browserStatus(attempt, { cookie: memberCookie })
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual(change === "client" || change === "client_removed"
+          ? { error: "oauth_configuration_changed", message: "Provider configuration changed. Start Connect again." }
+          : { error: "forbidden", message: "forbidden" })
+      }
+    })
+    const continued = await publicRequest(`/v1/inference-providers/oauth/browser-start?attempt=${attempt}`, { cookie: memberCookie })
+    expect(continued.status).toBe(403)
+    expect((await loadState(attempt))?.used_at).toBeNull()
+  } finally {
+    if (change === "client" || change === "client_removed") await db.update(schema.GatewayCredentialSetTable).set({ oauth_client_secret: OAUTH_CLIENT_SECRET }).where(setWhere)
+    if (change === "grant" && grants.length) await db.insert(schema.GatewayProviderAccessTable).values(grants)
+    if (change === "member") await db.update(schema.MemberTable).set({ removedAt: null }).where(memberWhere)
+    if (change === "member_binding") await db.update(schema.GatewayProviderOauthStateTable).set({ org_membership_id: memberId }).where(drizzle.eq(schema.GatewayProviderOauthStateTable.state, attempt))
+    if (change === "provider") await db.update(schema.GatewayProviderTable).set({ status: "active" }).where(providerWhere)
+    if (change === "set") await db.update(schema.GatewayCredentialSetTable).set({ status: "active" }).where(setWhere)
+    if (change === "group") for (const group of groups) await db.update(schema.GatewayModelGroupTable).set({ status: group.status }).where(drizzle.eq(schema.GatewayModelGroupTable.id, group.id))
+  }
+})
+
+test("browser-status is documented as public with the three readiness states", async () => {
+  const response = await publicRequest("/openapi.json")
+  expect(response.status).toBe(200)
+  const document: unknown = await response.json()
+  if (!isRecord(document) || !isRecord(document.paths)) throw new Error("OpenAPI paths missing")
+  expect(document.paths["/v1/inference-providers/oauth/browser-status"]).toMatchObject({
+    get: {
+      security: [],
+      "x-mcp": false,
+      parameters: [{ name: "attempt", in: "query", required: true }],
+      responses: {
+        "200": { content: { "application/json": { schema: { properties: { status: { enum: ["sign_in_required", "account_mismatch", "ready"] } }, required: ["status"] } } } },
+        "400": { description: "Invalid request or provider configuration." },
+        "403": { description: "Provider access or OAuth configuration changed." },
+      },
+    },
+  })
 })
 
 test("browser entry expires and client configuration cannot change before browser consent", async () => {

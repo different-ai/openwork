@@ -20,6 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
 import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
@@ -163,7 +164,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     () => new Set(props.disabledProviders ?? []),
     [props.disabledProviders],
   );
-  const currentOption = props.options.find((option) => modelEquals(option, props.current));
+  const gatewaySelection = useGatewayModelSelection(JSON.stringify([props.open, props.current, props.currentBehaviorValue]));
+  const currentOption = props.options.find((option) => !option.gatewayAuthorization && modelEquals(option, props.current));
   const currentBehavior = getModelBehaviorSelection(currentOption?.behaviorOptions ?? [],
     props.currentBehaviorValue !== undefined ? props.currentBehaviorValue : currentOption?.behaviorValue ?? null);
   const behaviorControls = getModelBehaviorControls(currentBehavior.options, currentBehavior.value);
@@ -199,8 +201,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           name: opt.description ?? resolveProviderDisplayName(opt.providerID),
           isNew: !!opt.isRecommended,
           isCloud: opt.source === "cloud",
-          isGateway: props.gatewayProviderIds?.has(opt.providerID) === true,
-          isDisabled: disabledSet.has(opt.providerID),
+          isGateway: props.gatewayProviderIds?.has(opt.providerID) === true || Boolean(opt.gatewayAuthorization),
+          isDisabled: opt.disabled === true || disabledSet.has(opt.providerID),
           hasCurrent: false,
           recommended: [],
           other: [],
@@ -273,8 +275,11 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   }, []);
 
   const handleSelect = useCallback(
-    (opt: ModelOption) => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }),
-    [props.onSelect],
+    (opt: ModelOption) => {
+      if (opt.disabled || disabledSet.has(opt.providerID)) return;
+      gatewaySelection.select(opt, () => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }));
+    },
+    [disabledSet, gatewaySelection.select, props.onSelect],
   );
 
   const handleRefreshOrganizationModels = useCallback(async () => {
@@ -297,19 +302,19 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
   // Escape
   useEffect(() => {
-    if (!props.open) return;
+    if (!props.open || gatewaySelection.loginOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); props.onClose(); }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [props.open]);
+  }, [props.open, gatewaySelection.loginOpen]);
 
   return (
     <Dialog
       open={props.open}
       onOpenChange={(open) => {
-        if (!open) props.onClose();
+        if (!open && !gatewaySelection.loginOpen) props.onClose();
       }}
     >
       <DialogContent initialFocus={() => isMobile ? titleRef.current : searchInputRef.current} className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden lg:max-w-3xl">
@@ -351,7 +356,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           ) : null}
 
           <div className="max-h-40 shrink-0 overflow-x-hidden overflow-y-auto">
-          {props.gatewayConnectProviders?.map((provider) => (
+          {props.gatewayConnectProviders?.filter((provider) => !provider.models?.length).map((provider) => (
             <div
               key={gatewayConnectProviderKey(provider)}
               className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
@@ -369,10 +374,10 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!props.onConnectGatewayProvider}
+                disabled={!props.onConnectGatewayProvider || disabledSet.has(provider.providerId)}
                 onClick={() => void props.onConnectGatewayProvider?.(provider)}
               >
-                Connect
+                Login
               </Button>
             </div>
           ))}
@@ -592,7 +597,7 @@ function DefaultModelRow({
         <span className={["block truncate text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")} title={opt.title}>{opt.title}</span>
         <span className="block truncate font-mono text-[10px] text-dls-secondary/60" title={opt.modelID}>{opt.modelID}</span>
       </div>
-      {active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
+      {opt.gatewayAuthorization ? <span className="shrink-0 text-xs text-muted-foreground">Sign-in required</span> : active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
     </button>
   );
 }

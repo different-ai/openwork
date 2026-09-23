@@ -127,7 +127,7 @@ export function GatewayConnectRow(props: {
         disabled={props.busy || !props.onConnect}
       >
         <LogIn className="mr-1.5 size-3.5" />
-        {props.busy ? "Waiting for sign-in…" : "Connect"}
+        {props.busy ? "Waiting for sign-in…" : "Login"}
       </Button>
       {props.busy && props.onCancel ? <Button variant="outline" onClick={props.onCancel}>Stop waiting</Button> : null}
     </LayoutSectionItem>

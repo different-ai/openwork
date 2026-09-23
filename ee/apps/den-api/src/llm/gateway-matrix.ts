@@ -333,18 +333,24 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
       oauthClientId: set.oauth_client_id, hasOauthClientSecret: Boolean(set.oauth_client_secret) }
   })
   const authorizationRequests = setSummaries.filter((set) => set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
-    .map((set) => ({ credentialSetId: set.id, name: set.name, authUrl: `${baseUrl}/v1/inference-providers/${provider.id}/oauth/start?credentialSetId=${encodeURIComponent(set.id)}` }))
+    .map((set) => {
+      const models: GatewayUsableModel[] = []
+      return { credentialSetId: set.id, name: set.name, authUrl: `${baseUrl}/v1/inference-providers/${provider.id}/oauth/start?credentialSetId=${encodeURIComponent(set.id)}`, models }
+    })
   const usableModels: GatewayUsableModel[] = []
   for (const grant of grants) {
     const group = groups.find((group) => group.id === grant.model_group_id)
     const set = setSummaries.find((set) => set.id === grant.credential_set_id)
-    if (!group || !set || set.credentialStatus !== "ready") continue
+    if (!group || !set) continue
+    const targetModels = set.credentialStatus === "ready" ? usableModels : authorizationRequests.find((request) => request.credentialSetId === set.id)?.models
+    if (!targetModels) continue
     for (const model of models.filter((model) => links.some((link) => link.model_group_id === group.id && link.gateway_provider_model_id === model.id))) {
       const id = createGatewayModelAlias({ modelGroupId: group.id, credentialSetId: grant.credential_set_id, gatewayProviderModelId: model.id })
       const name = model.name
-      usableModels.push({ id, name, config: buildGatewayModelConfig({ id, name, config: model.model_config }), upstreamModelId: model.model_id, modelGroupId: group.id, modelGroupName: group.name, credentialSetId: set.id, credentialSetName: set.name })
+      targetModels.push({ id, name, config: buildGatewayModelConfig({ id, name, config: model.model_config }), upstreamModelId: model.model_id, modelGroupId: group.id, modelGroupName: group.name, credentialSetId: set.id, credentialSetName: set.name })
     }
   }
+  for (const request of authorizationRequests) request.models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   const migration = provider.settings.migration
   const summary: GatewayProviderSummary = {
     modelIds: provider.model_ids, ...(refreshed.catalogWarning ? { catalogWarning: refreshed.catalogWarning } : {}),

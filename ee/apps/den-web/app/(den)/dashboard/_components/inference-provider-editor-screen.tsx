@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { Check, ChevronRight, Globe, LockKeyhole, Plus, Search, User, Users } from "lucide-react";
+import { Check, Globe, LockKeyhole, Plus, Search, User, Users } from "lucide-react";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite } from "@openwork/types/den/gateway";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -19,7 +19,7 @@ import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
 import {
-  accessFromGrants, buildInferenceProviderRequestBody, getRequiredSettingKeys, getSettingLabel,
+  accessFromGrants, buildInferenceProviderRequestBody, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
   isGoogleVertexNpm, isSupportedGatewayNpm, supportsMemberCredentialMode,
 } from "./inference-provider-request";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
@@ -69,6 +69,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [confirmDelete, setConfirmDelete] = useState(false);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
   const initializedProviderId = useRef<string | null>(null);
+  const initializedNewProviderId = useRef<string | null>(null);
 
   useEffect(() => { if (catalogProviderId) setProviderId(catalogProviderId); }, [catalogProviderId]);
 
@@ -101,7 +102,13 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
       .then((result) => {
         if (cancelled) return;
         setDetail(result);
-        if (!inferenceProviderId) setName((current) => current || result.name);
+        if (!inferenceProviderId) {
+          setName((current) => current || result.name);
+          if (initializedNewProviderId.current !== providerId) {
+            initializedNewProviderId.current = providerId;
+            setSettings((current) => ({ ...getNewInferenceProviderSettings(getProviderNpmPackage(result.config)), ...current }));
+          }
+        }
       })
       .catch(() => { if (!cancelled) setCatalogError("Could not load this provider's models. Existing configuration has not changed."); });
     return () => { cancelled = true; };
@@ -274,17 +281,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
             </div> : <DenNotice className="mt-3" tone="neutral" message={provider ? "Callback unavailable. Ask your deployment administrator to configure the public Den API origin." : "Save this provider to obtain its exact OAuth callback URL, then register it in your Google Web OAuth client before members connect."} />}
             <label className={LABEL}>OAuth client ID<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-id" value={oauthClientId} autoComplete="off" onChange={(event) => { setOauthClientId(event.target.value); setRotationAcknowledged(false); }} /></label>
             <label className={LABEL}>OAuth client secret {configuredSet?.hasOauthClientSecret ? "(configured)" : ""}<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" data-testid="gateway-oauth-client-secret" value={oauthClientSecret} autoComplete="new-password" onChange={(event) => { setOauthClientSecret(event.target.value); setRotationAcknowledged(false); }} placeholder={configuredSet?.hasOauthClientSecret ? "Saved — enter a replacement to change it" : undefined} /></label>
-            <details className="group mt-3 border-t border-[var(--dls-border)] py-3 text-sm">
-              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm font-medium focus-visible:outline-2 focus-visible:outline-[var(--dls-accent)] [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" strokeWidth={1.5} className="size-4 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />Setup instructions</summary>
-              <div className="flex flex-col gap-3 pt-3 text-[var(--dls-text-secondary)]">
-                <p>Create a Google OAuth client with application type Web application, not Desktop app. Register the exact callback above as an Authorized redirect URI. Add this URL to the allowed redirect URIs in your OAuth client configuration. No gcloud, local ADC or service-account key is needed; the OAuth client’s project may differ from the inference project.</p>
-                <p>Secrets are write-only and encrypted on the server. Leave the secret blank to keep it unchanged; entering a value replaces it. Blank does not clear it. Member sets require a client ID and secret: to remove the configuration, remove this provider. Disabling a set revokes its credentials but retains its OAuth app configuration.</p>
-                <span>Consent: allow cloud-platform access (https://www.googleapis.com/auth/cloud-platform). Identity scopes openid and email identify the Google account; no Google Workspace scopes are needed. Prefer an Internal audience where eligible. External production apps may need Google verification; External apps in Testing generally expire refresh grants after seven days for cloud-platform access. Verify that your organization is allowed to use this callback domain.</span>
-                <span>IAM: enable the Vertex AI API in the inference project, grant each Google account roles/aiplatform.user or a reviewed role with aiplatform.endpoints.predict, and enable partner-model access where needed. Validate project, location and model availability. If a quota project is configured, check serviceusage.services.use on that project. Project and location are fixed after provider creation.</span>
-                <span>Saving configuration is not an inference test. Choose models and who can use them, then have each member connect from My Model Connections. Google session-control policy, revocation or invalid_grant / invalid_rapt can require interactive sign-in again; member OAuth does not promise indefinite unattended operation.</span>
-                <span>Diagnostics: redirect_uri_mismatch means check the exact callback and Web client type; invalid_client means check the client ID/secret. Permission denied after consent usually needs IAM or model-access review, not repeated consent. Replacing either OAuth client field cancels pending sign-ins and invalidates existing Google credentials for this set.</span>
-              </div>
-            </details>
+            <Link href="https://openworklabs.com/docs/ai-gateway/google-agent-platform" target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-3 w-fit" })}>Read setup instructions</Link>
           </>
         ) : vertex ? (
           <label className={LABEL}>Service account JSON<DenTextarea className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-service-account" value={serviceAccountJson} onChange={(event) => setServiceAccountJson(event.target.value)} placeholder={configuredSet?.configured ? "Saved — paste a replacement to change it" : "Paste the key file"} /></label>

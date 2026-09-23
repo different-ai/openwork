@@ -837,6 +837,38 @@ describe("cloud provider sync in server-capability mode", () => {
     });
   });
 
+  test("keeps pending assigned aliases in status only and removes them on an authoritative context refresh", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    const credentialSetId = "gcs_00000000000000000000000002";
+    const id = "gwm_00000000000000000000000001_00000000000000000000000002_00000000000000000000000003";
+    const model = { id, name: "Assigned model", config: { id }, upstreamModelId: "upstream",
+      modelGroupId: "gmg_00000000000000000000000001", modelGroupName: "Assigned group",
+      credentialSetId, credentialSetName: "Personal" };
+    let release: () => void = () => undefined;
+    let hold = Promise.resolve();
+    const options = { onRun: async () => { await hold; }, statusSkipped: [{ cloudProviderId: "ipr_pending", providerId: "ipr_pending", credentialSetId,
+      name: "Member provider", reason: "member_auth_required", models: [model, { ...model, credentialSetId: "gcs_wrong" }] }] };
+    installProviderSyncFetch(requests, options);
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    try {
+      await store.runCloudProviderSync("manual");
+      expect(store.getSnapshot().cloudProviderServerSync?.skippedProviders[`ipr_pending:${credentialSetId}`]?.models).toEqual([model]);
+      expect(store.getSnapshot().importedCloudProviders).toEqual({});
+      expect(store.isGatewayModelAvailable({ cloudProviderId: "ipr_pending", providerId: "ipr_pending", credentialSetId, name: "Member", authUrl: null }, { providerID: "ipr_pending", modelID: id })).toBe(false);
+      expect(requests.filter((request) => request.method !== "GET").every((request) => ["/den-session", "/cloud-provider-sync/run"].includes(new URL(request.url).pathname))).toBe(true);
+      storage.setItem("openwork.den.activeOrgId", "org_replacement");
+      options.statusSkipped = [];
+      hold = new Promise<void>((resolve) => { release = resolve; });
+      const refresh = store.runCloudProviderSync("manual");
+      expect(store.getSnapshot().cloudProviderServerSync).toBeNull();
+      release();
+      await refresh;
+      expect(store.getSnapshot().cloudProviderServerSync?.skippedProviders).toEqual({});
+    } finally { store.dispose(); }
+  });
+
   test("maps imported provider status by cloud provider id", async () => {
     const storage = installWindow({ origin: "https://self-hosted.example" });
     installCloudSession(storage);
