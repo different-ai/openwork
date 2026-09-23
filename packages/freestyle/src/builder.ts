@@ -78,14 +78,14 @@ ${dependencies}`, options);
     },
   }, api);
   const compile = compiledRecipe(world);
-  const compiledSlug = `ow-build-v1-${world}-${digest(depsSlug + compile + compiledFingerprint(entries))}`;
+  const compiledSlug = `ow-build-v1-${world}-${digest(depsSlug + compile + compiledFingerprint(entries, world))}`;
   const compiled = await ensureLayer({ slug: compiledSlug, stage: "compiled", observe,
     parent: async () => deps.id,
     prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
   }, api);
   const controllerFiles = ["builder.ts", "cache.ts", "build-recipes.ts", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs"];
   const controller = (await Promise.all(controllerFiles.map((name) => readFile(new URL(`./${name}`, import.meta.url), "utf8")))).join("\n");
-  const runningSlug = `ow-warm-v1-${world}-${digest(compiledSlug + controller + runningFingerprint(entries))}`;
+  const runningSlug = `ow-warm-v1-${world}-${digest(compiledSlug + controller + runningFingerprint(entries, world))}`;
   const running = await ensureLayer({ slug: runningSlug, stage: "running-template", observe, ttlSeconds: 86400,
     parent: async () => compiled.id,
     prepare: async (vm) => {

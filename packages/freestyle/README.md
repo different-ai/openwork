@@ -9,7 +9,9 @@ Preparation reuses four private, immutable layers:
 1. **Tools**: OS packages, package manager and OpenCode, keyed by the install recipe.
 2. **Dependencies**: all workspace manifests, both lockfiles, package manager
    configuration and patches. Application source and lifecycle hooks are excluded
-   during installation; only explicit registry dependency rebuilds run.
+   during installation; only explicit registry dependency rebuilds run. Manifest
+   scripts and descriptive metadata do not invalidate this layer; lockfiles,
+   dependency declarations, configuration and unknown fields still do.
 3. **Compiled packages**: the dependency key, build recipe and compiled source/config
    inputs. Generated workspace `dist` directories and desktop sidecars are restored
    after checking out the requested commit. Changes to shared packages, the server,
@@ -34,8 +36,15 @@ caches are released before saving each snapshot. Application memory remains runn
 Prepared workspace packages are not built a second time by the desktop launcher.
 
 Concurrent misses share a provider-enforced builder slug. Failed builders publish
-nothing and are deleted; provider TTL also bounds cleanup failures. Cache snapshots
+nothing and are deleted. Builder deletion runs in the background so provider
+cleanup latency does not block the next layer; the 30-minute provider TTL also
+bounds cleanup failures and host termination. Cache snapshots
 expire after seven unused days and at most thirty days; commit snapshots after seven.
+App-web compiled/running keys exclude the local Den/Gateway services and eval
+runtime it never starts. Shared package and lockfile changes remain conservative.
+Test/lint/typecheck commands in manifests do not invalidate runtime keys; build
+and startup commands still do.
+
 Changing dependencies or build inputs can still take several minutes. The fastest path
 is a frontend change whose backend and build inputs are already cached.
 
