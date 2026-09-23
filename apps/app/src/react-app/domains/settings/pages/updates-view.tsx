@@ -102,7 +102,6 @@ export function UpdatesView(props: UpdatesViewProps) {
     : props.updateStatus?.failedAction === "download"
       ? t("settings.update_download_failed")
       : t("settings.update_check_failed");
-  const updateNotes = props.updateStatus?.notes ?? null;
   const checkingForNewer = updateState === "ready" && props.updateStatus?.checkingForNewer;
   const checkError = props.updateStatus?.checkError;
   const checkCooldown = updateState === "ready" && Boolean(props.updateStatus?.checkCooldownUntil);
@@ -165,43 +164,46 @@ export function UpdatesView(props: UpdatesViewProps) {
           </dd>
         </dl>
 
-        <div data-testid="updates-actions" className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => void props.checkForUpdates()}
-            disabled={!updatesSupported || props.busy || checking || updateState === "downloading" || checkCooldown}
-            aria-busy={checking}
-            title={checkCooldown ? t("updates.check_cooldown") : undefined}
-          >
-            {t("settings.update_check_button")}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => void props.downloadUpdate()}
-            disabled={!updatesSupported || props.busy || checking || !canDownload}
-          >
-            {t("settings.update_download_button")}
-          </Button>
-          <Button
-            onClick={() => {
-              if (props.anyActiveRuns) {
-                setConfirmRestartOpen(true);
-                return;
-              }
-              void props.installUpdateAndRestart();
-            }}
-            disabled={!updatesSupported || props.busy || updateState !== "ready"}
-          >
-            {installLabel}
-          </Button>
-        </div>
-
-        <div role="status" className="min-h-5 text-sm text-muted-foreground">
-          {statusLabel}
-          {checkingForNewer ? (
-            <p>{t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })}</p>
-          ) : null}
-        </div>
+        <LayoutSectionItemHeader>
+          <div data-testid="updates-status" role="status" className="min-h-9 min-w-0 pt-2 text-sm text-muted-foreground">
+            {checkingForNewer
+              ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
+              : statusLabel}
+            {checkingForNewer ? <p>{t("settings.update_checking")}</p> : null}
+          </div>
+          <LayoutSectionItemHeaderActions className="row-span-1">
+            <div data-testid="updates-actions" className="flex flex-wrap items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => void props.checkForUpdates()}
+                disabled={!updatesSupported || props.busy || checking || updateState === "downloading" || checkCooldown}
+                aria-busy={checking}
+                title={checkCooldown ? t("updates.check_cooldown") : undefined}
+              >
+                {t("settings.update_check_button")}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void props.downloadUpdate()}
+                disabled={!updatesSupported || props.busy || checking || !canDownload}
+              >
+                {t("settings.update_download_button")}
+              </Button>
+              <Button
+                onClick={() => {
+                  if (props.anyActiveRuns) {
+                    setConfirmRestartOpen(true);
+                    return;
+                  }
+                  void props.installUpdateAndRestart();
+                }}
+                disabled={!updatesSupported || props.busy || updateState !== "ready"}
+              >
+                {installLabel}
+              </Button>
+            </div>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
 
         {(updateState === "idle" || updateState === "blocked") && updateLastCheckedAt ? (
           <LayoutSectionItemDescription>
@@ -261,12 +263,6 @@ export function UpdatesView(props: UpdatesViewProps) {
           onCancel={() => setConfirmRestartOpen(false)}
         />
       </LayoutSectionItem>
-
-      {(updateState === "available" && updateNotes) || candidate?.notes ? (
-        <LayoutSectionItem className="max-h-40 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
-          {candidate ? candidate.notes : updateNotes}
-        </LayoutSectionItem>
-      ) : null}
 
       {props.webDeployment ? (
         <Alert>

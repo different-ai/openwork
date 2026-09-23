@@ -126,7 +126,8 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
     layout: () => evalIn(app, () => {
       const versions = document.querySelector<HTMLElement>('[data-testid="updates-versions"]');
       const actions = document.querySelector<HTMLElement>('[data-testid="updates-actions"]');
-      if (!versions || !actions) throw new Error("Update controls are not visible");
+      const status = document.querySelector<HTMLElement>('[data-testid="updates-status"]');
+      if (!versions || !actions || !status) throw new Error("Update controls are not visible");
       const bounds = (element: Element) => {
         const { x, y, width, height } = element.getBoundingClientRect();
         return { x, y, width, height };
@@ -134,6 +135,7 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
       return {
         versions: bounds(versions),
         actions: bounds(actions),
+        status: bounds(status),
         values: Array.from(versions.querySelectorAll("dd"), (element) => ({
           ...bounds(element), text: element.textContent?.trim(),
           fits: element.scrollWidth <= element.clientWidth,
@@ -141,7 +143,8 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
         buttons: Array.from(actions.querySelectorAll("button"), (button) => ({
           ...bounds(button), text: button.textContent?.trim(), disabled: button.disabled,
         })),
-        fits: versions.scrollWidth <= versions.clientWidth && actions.scrollWidth <= actions.clientWidth,
+        fits: versions.scrollWidth <= versions.clientWidth && actions.scrollWidth <= actions.clientWidth
+          && status.scrollWidth <= status.clientWidth,
         viewportWidth: window.innerWidth,
       };
     }),

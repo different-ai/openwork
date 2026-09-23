@@ -246,6 +246,7 @@ describe("Settings staged-update discovery", () => {
     await act(async () => { root.render(createElement(Harness)); });
     await click("Check now");
     expect(updater.updateStatus).toMatchObject({ state: "available", version: stagedVersion });
+    expect(host.textContent).not.toContain(`Notes for ${stagedVersion}`);
     expect(downloads).toEqual([]);
     await click("Download");
     expect(downloads).toEqual([stagedVersion]);
@@ -283,7 +284,7 @@ describe("Settings staged-update discovery", () => {
     expect(host.querySelector('[data-testid="updates-latest-version"]')?.textContent).toBe(`v${newerVersion}`);
     expect(host.textContent).toContain(`Ready to install: v${stagedVersion}`);
     expect(host.textContent).toContain(formatBytes(artifactBytes));
-    expect(host.textContent).toContain(`Notes for ${newerVersion}`);
+    expect(host.textContent).not.toContain(`Notes for ${newerVersion}`);
     expect(host.textContent).toContain("Released 2026-09-12");
     expect(host.textContent).not.toContain("— newest");
   });

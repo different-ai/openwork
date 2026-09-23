@@ -24,6 +24,9 @@ function expectReadableControls(layout: UpdateLayout) {
   expect(layout.values.every((value) => value.fits)).toBe(true);
   expect(layout.buttons.map((button) => button.text)).toEqual(["Check now", "Download", "Install & restart"]);
   expect(layout.buttons.every((button) => button.x >= 0 && button.x + button.width <= layout.viewportWidth)).toBe(true);
+  expect(layout.actions.x + layout.actions.width).toBeCloseTo(layout.versions.x + layout.versions.width, 1);
+  expect(layout.status.x + layout.status.width).toBeLessThanOrEqual(layout.actions.x);
+  expect(layout.status.y).toBeCloseTo(layout.actions.y, 1);
 }
 
 for (const replaceStaged of [false, true]) {
@@ -97,6 +100,7 @@ for (const replaceStaged of [false, true]) {
       await user.see({ text: "Latest version" });
       await user.see({ role: "button", text: "Download" });
       await user.see({ text: `Ready to install: v${staged}` });
+      await user.notSee({ text: `Release ${newer}` });
       const layout = await world.layout();
       expectReadableControls(layout);
       expect(geometry(layout)).toEqual(geometry(readyLayout));
