@@ -148,7 +148,12 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
         viewportWidth: window.innerWidth,
       };
     }),
-    resize: (width: number) => setViewport(app, { width, height: 820, deviceScaleFactor: 1 }),
+    resize: async (width: number) => {
+      await setViewport(app, { width, height: 820, deviceScaleFactor: 1 });
+      await evalIn(app, () => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }), { awaitPromise: true });
+    },
     holdNextCheck: () => evalIn(app, () => { window.__checkNowUpdateWitness.holdCheck = true; }),
     finishCheck: () => evalIn(app, () => {
       const state = window.__checkNowUpdateWitness;

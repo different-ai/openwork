@@ -127,9 +127,9 @@ for (const replaceStaged of [false, true]) {
       await user.see({ text: "Latest version" });
       await user.see({ role: "button", text: "Install & restart" });
       const layout = await world.layout();
+      await user.screenshot();
       expectReadableControls(layout);
       expect(layout.values.map((value) => value.height)).toEqual(readyLayout.values.map((value) => value.height));
-      await user.screenshot();
       evidence.recordAssertionEvidence("Version values remain single-line and the action row stays inside an 860px viewport", JSON.stringify(layout), true);
       await world.resize(1200);
     });

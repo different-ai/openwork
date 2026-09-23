@@ -165,7 +165,7 @@ export function UpdatesView(props: UpdatesViewProps) {
         </dl>
 
         <LayoutSectionItemHeader>
-          <div data-testid="updates-status" role="status" className="min-h-9 min-w-0 pt-2 text-sm text-muted-foreground">
+          <div data-testid="updates-status" role="status" className="min-h-9 min-w-0 wrap-anywhere pt-2 text-sm text-muted-foreground">
             {checkingForNewer
               ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
               : statusLabel}
