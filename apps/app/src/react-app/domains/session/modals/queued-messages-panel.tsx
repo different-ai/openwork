@@ -5,8 +5,14 @@ import { Fragment, useRef, useState, type DragEvent, type ReactNode } from "reac
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { t } from "@/i18n";
 import type { ComposerAttachment, ComposerDraft, ComposerPart } from "@/app/types";
-import { parseConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
-import { parseConnectorToken } from "@/react-app/domains/session/surface/composer/connector-token";
+import { ComposerPillChip } from "@/components/chat/composer-pill";
+import {
+  COMPOSER_DRAFT_TOKEN_RE,
+  composerPillFromPart,
+  parseComposerPillToken,
+  type ComposerPill,
+} from "@/react-app/domains/session/surface/composer/composer-pills";
+import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import type { QueuedComposerItem } from "@/react-app/domains/session/surface/composer-state-store";
 
 export type QueuedMessagesPanelProps = {
@@ -19,8 +25,6 @@ export type QueuedMessagesPanelProps = {
   sendingId?: string;
 };
 
-const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\])/;
-
 function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
 }
@@ -30,6 +34,17 @@ function pastedLines(parts: ComposerPart[], label: string) {
     if (part.type === "paste" && part.label === label) return part.lines;
   }
   return 1;
+}
+
+function mentionPill(parts: ComposerPart[], segment: string): ComposerPill | null {
+  if (!segment.startsWith("@")) return null;
+  const value = decodeComposerMentionValue(segment.slice(1));
+  for (const part of parts) {
+    if ((part.type === "app" && part.name === value) || (part.type === "computer" && part.target === value)) {
+      return composerPillFromPart(part);
+    }
+  }
+  return null;
 }
 
 function QueuedDraftContent(props: { draft: ComposerDraft }) {
@@ -47,7 +62,7 @@ function QueuedDraftContent(props: { draft: ComposerDraft }) {
 
   const nodes: ReactNode[] = [];
   let offset = 0;
-  for (const segment of text.split(TOKEN_RE)) {
+  for (const segment of text.split(COMPOSER_DRAFT_TOKEN_RE)) {
     if (!segment) continue;
     const key = `${offset}:${segment}`;
     offset += segment.length;
@@ -76,33 +91,9 @@ function QueuedDraftContent(props: { draft: ComposerDraft }) {
       continue;
     }
 
-    const connectSkill = parseConnectSkillToken(segment);
-    const skillMatch = segment.match(/^\[skill (.+)\]$/);
-    const skillName = connectSkill?.slug ?? skillMatch?.[1];
-    if (skillName) {
-      nodes.push(
-        <span
-          key={key}
-          className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle"
-          title={`Skill: ${connectSkill?.name ?? skillName}`}
-        >
-          {`/${skillName}`}
-        </span>,
-      );
-      continue;
-    }
-
-    const connectorName = parseConnectorToken(segment);
-    if (connectorName) {
-      nodes.push(
-        <span
-          key={key}
-          className="mx-0.5 inline-flex items-center rounded-full border border-blue-6/35 bg-blue-3/20 px-2.5 py-1 text-xs font-medium text-blue-11 align-middle"
-          title={`Connector: ${connectorName}`}
-        >
-          {connectorName}
-        </span>,
-      );
+    const pill = parseComposerPillToken(segment) ?? mentionPill(props.draft.parts, segment);
+    if (pill) {
+      nodes.push(<ComposerPillChip key={key} pill={pill} />);
       continue;
     }
 

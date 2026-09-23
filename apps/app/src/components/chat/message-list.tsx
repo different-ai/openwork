@@ -76,6 +76,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge"
+import { ComposerPillChip } from "@/components/chat/composer-pill"
+import { readComposerPill, splitComposerPillText } from "@/react-app/domains/session/surface/composer/composer-pills"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -600,14 +602,13 @@ type UserMessageProps = {
   isStreaming: boolean
 }
 
-const USER_SKILL_TOKEN_RE = /(Load \[skill [^\]]+\] and follow its instructions\.|\[skill [^\]]+\])/
-
-function UserSkillChip(props: { name: string }) {
-  return (
-    <span className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle" title={`Skill: ${props.name}`}>
-      {props.name}
-    </span>
-  )
+/** The pill a sent text part was tagged with in the composer, if any. */
+function textPartComposerPill(part: UIMessage["parts"][number]) {
+  if (part.type !== "text") return null
+  const metadata = part.providerMetadata?.opencode
+  return metadata && typeof metadata === "object" && "composerPill" in metadata
+    ? readComposerPill(metadata.composerPill)
+    : null
 }
 
 function renderPlainTextWithSearchHighlights(text: string, highlightQuery: string | undefined, keyPrefix: string) {
@@ -729,15 +730,18 @@ function renderPlainTextWithLinks(text: string, highlightQuery: string | undefin
   return nodes
 }
 
-function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithLinks(text, highlightQuery, "text", references)
+function renderUserTextWithPills(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
+  const segments = splitComposerPillText(text)
+  if (segments.length === 1 && typeof segments[0] === "string") return renderPlainTextWithLinks(text, highlightQuery, "text", references)
   let offset = 0
-  return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
-    const key = `${offset}:${segment}`
+  return segments.map((segment) => {
+    const key = `${offset}`
+    if (typeof segment !== "string") {
+      offset += 1
+      return <ComposerPillChip key={`pill:${key}`} pill={segment} surface="muted" />
+    }
     offset += segment.length
-    const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
-    if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
-    return <React.Fragment key={key}>{renderPlainTextWithLinks(segment, highlightQuery, key, references)}</React.Fragment>
+    return <React.Fragment key={`text:${key}`}>{renderPlainTextWithLinks(segment, highlightQuery, key, references)}</React.Fragment>
   })
 }
 
@@ -759,21 +763,21 @@ function renderUserProse(text: string, highlightQuery: string | undefined, refer
     const exactId = Boolean(closing) && /^ses_[A-Za-z0-9][A-Za-z0-9_-]*$/.test(body)
     nodes.push(
       <React.Fragment key={`prose:${cursor}`}>
-        {renderUserTextWithSkillChips(text.slice(cursor, start), highlightQuery, references)}
+        {renderUserTextWithPills(text.slice(cursor, start), highlightQuery, references)}
       </React.Fragment>,
       <React.Fragment key={`inline-code:${start}`}>
-        {renderUserTextWithSkillChips(text.slice(start, end), highlightQuery, exactId ? references : undefined)}
+        {renderUserTextWithPills(text.slice(start, end), highlightQuery, exactId ? references : undefined)}
       </React.Fragment>
     )
     cursor = end
     if (!closing) break
   }
-  nodes.push(<React.Fragment key={`prose:${cursor}`}>{renderUserTextWithSkillChips(text.slice(cursor), highlightQuery, references)}</React.Fragment>)
+  nodes.push(<React.Fragment key={`prose:${cursor}`}>{renderUserTextWithPills(text.slice(cursor), highlightQuery, references)}</React.Fragment>)
   return nodes
 }
 
 function renderUserText(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
-  if (!references) return renderUserTextWithSkillChips(text, highlightQuery, undefined)
+  if (!references) return renderUserTextWithPills(text, highlightQuery, undefined)
   const nodes: React.ReactNode[] = []
   const blocks = /^(?:[ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,}|~{3,})[^\n]*(?:\n|$)|(?: {4}|\t)[^\n]*(?:\n|$))/gm
   let cursor = 0
@@ -793,7 +797,7 @@ function renderUserText(text: string, highlightQuery: string | undefined, refere
         {renderUserProse(text.slice(cursor, start), highlightQuery, references)}
       </React.Fragment>,
       <React.Fragment key={`code-block:${start}`}>
-        {renderUserTextWithSkillChips(text.slice(start, end), highlightQuery, undefined)}
+        {renderUserTextWithPills(text.slice(start, end), highlightQuery, undefined)}
       </React.Fragment>
     )
     cursor = end
@@ -856,6 +860,8 @@ const UserMessage = React.memo(
                     onClick={openLink}
                   >
                     {inlineParts.map((part, index) => {
+                      const pill = textPartComposerPill(part)
+                      if (pill) return <ComposerPillChip key={`pill-${index}`} pill={pill} surface="muted" />
                       if (part.type === "text") {
                         return (
                           <span key={`text-${index}`} className="whitespace-pre-wrap">

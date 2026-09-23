@@ -99,6 +99,8 @@ export type ComposerPart =
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
   | { type: "connect-skill"; slug: string; name: string; marketplace: string; capability: string }
+  /** A connection picked from the composer `+` menu (`[connector …]` pill). */
+  | { type: "connector"; name: string }
   | { type: "file"; path: string; label?: string }
   /** A macOS app targeted via Computer Use (composer "@App" mention). */
   | { type: "app"; name: string }
