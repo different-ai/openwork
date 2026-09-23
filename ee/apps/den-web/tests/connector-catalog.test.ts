@@ -127,7 +127,8 @@ describe("connector pages", () => {
     expect(page).toContain('<McpConnectionsScreen view="configured" />');
     expect(screen).toContain('title={configuredView ? "Configured connectors" : "Connectors"}');
     expect(screen).toContain('data-testid="configured-add-connector"');
-    expect(screen).toContain("chat-mcp-connection-");
+    expect(screen).not.toContain("chat-mcp-connection-");
+    expect(screen).toContain('data-testid="connector-detail-chat"');
   });
 
   test("one-click OAuth presets are added for everyone and open the authorization tab in the same gesture", () => {

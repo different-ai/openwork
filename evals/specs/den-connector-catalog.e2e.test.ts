@@ -175,6 +175,23 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
     await admin.screenshot();
   });
 
+  await step("the configured list keeps each row to its name, state and one menu", async () => {
+    await admin.navigate(`${catalogUrl}/configured`);
+    await admin.see({ testId: `mcp-connection-row-${world.connection.id}` }, { text: /Catalog Notes/, timeoutMs: 60_000 });
+    await admin.notSee({ text: /^Issuer: / });
+    await admin.notSee({ role: "button", label: "Disconnect Catalog Notes" });
+    await admin.click({ testId: `mcp-connection-more-${world.connection.id}` });
+    await admin.see({ testId: `edit-mcp-connection-${world.connection.id}` });
+    await admin.see({ testId: `test-mcp-tools-${world.connection.id}` });
+    await admin.see({ role: "menuitem", label: "Disconnect Catalog Notes" });
+    await admin.notSee({ role: "menuitem", text: "Chat" });
+    const row = await catalog.dom(`[data-testid="mcp-connection-row-${world.connection.id}"]`);
+    expect(JSON.stringify(row)).not.toContain("Chat with");
+    await admin.screenshot();
+    await admin.click({ testId: `mcp-connection-more-${world.connection.id}` });
+    await admin.notSee({ role: "menuitem", label: "Disconnect Catalog Notes" });
+  });
+
   await step("OAuth startup rejection offers recovery without a success notice", async () => {
     await admin.navigate(`${catalogUrl}/${world.rejectedConnection.id}`);
     await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });

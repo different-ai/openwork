@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Check, ChevronRight, Link2, Loader2, MessageCircle, Minus, MoreHorizontal, Pencil, Plus, Puzzle, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronRight, Link2, Loader2, MessageCircle, Minus, MoreHorizontal, Pencil, Plus, Puzzle, Search, Server, Trash2, Unplug, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -846,7 +846,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
 
   function renderConnectionRow(
     connection: ExternalMcpConnection,
-    options: { highlighted?: boolean; rowRef?: Ref<HTMLDivElement> } = {},
+    options: { highlighted?: boolean; showOAuthDetails?: boolean; rowRef?: Ref<HTMLDivElement> } = {},
   ) {
     const setup = connectionSetupState(connection);
     const setupPluginId = connection.identityManagedBy[0]?.pluginId;
@@ -855,6 +855,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
       orgSlug={orgSlug}
       connection={connection}
       highlighted={options.highlighted ?? false}
+      showOAuthDetails={options.showOAuthDetails ?? false}
       rowRef={options.rowRef}
       needsPluginSetup={setup.needsPluginSetup}
       needsOAuthClientConfiguration={setup.needsOAuthClientConfiguration}
@@ -1184,7 +1185,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
             <DetailSectionTitle>Connection</DetailSectionTitle>
             {detailConnection ? (
               <div className="rounded-2xl border border-gray-100 bg-white">
-                {renderConnectionRow(detailConnection)}
+                {renderConnectionRow(detailConnection, { showOAuthDetails: true })}
               </div>
             ) : (
               <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-gray-200 bg-gray-50/60 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -2061,6 +2062,7 @@ function ConnectionRow({
   orgSlug,
   connection,
   highlighted = false,
+  showOAuthDetails = false,
   rowRef,
   needsPluginSetup,
   needsOAuthClientConfiguration,
@@ -2080,6 +2082,7 @@ function ConnectionRow({
   orgSlug: string | null;
   connection: ExternalMcpConnection;
   highlighted?: boolean;
+  showOAuthDetails?: boolean;
   rowRef?: Ref<HTMLDivElement>;
   needsPluginSetup: boolean;
   needsOAuthClientConfiguration: boolean;
@@ -2144,8 +2147,8 @@ function ConnectionRow({
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 [&>span]:max-w-full [&>span]:shrink-0">
+              <p className="min-w-0 max-w-full truncate text-[14px] font-semibold text-gray-900" title={connection.name}>{connection.name}</p>
               {setupRequired ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Setup required
@@ -2176,15 +2179,15 @@ function ConnectionRow({
                 </span>
               )}
               {connection.access ? (
-                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                <span className="truncate rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
                   {accessSummaryLabel(connection)}
                 </span>
               ) : null}
             </div>
-            <p className="mt-0.5 truncate text-[12px] text-gray-500">
+            <p className="mt-0.5 truncate text-[12px] text-gray-500" title={connection.url}>
               {connection.url}{setupRequired ? "" : ` · ${formatMcpConnectedTimestamp(connection.connectedAt)}`}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
             </p>
-            {connection.authType === "oauth" && !isNativeProvider ? (
+            {showOAuthDetails && connection.authType === "oauth" && !isNativeProvider ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
                 {connection.authorizationServerIssuer ? <span className="max-w-full truncate">Issuer: {connection.authorizationServerIssuer}</span> : null}
                 {(connection.requestedScopes?.length ?? 0) > 0 ? <span>Scopes: {connection.requestedScopes?.join(", ")}</span> : null}
@@ -2228,18 +2231,6 @@ function ConnectionRow({
               {connection.needsReconnect || connection.credentialHealth === "reconnect_required" ? "Reconnect" : "Connect"}
             </DenButton>
           ) : null}
-          {connection.connected && !isNativeProvider ? (
-            <DenButton
-              variant="secondary"
-              size="sm"
-              loading={disconnecting}
-              onClick={onDisconnect}
-              aria-label={`Disconnect ${connection.name}`}
-              data-testid={`disconnect-mcp-connection-${connection.id}`}
-            >
-              Disconnect
-            </DenButton>
-          ) : null}
           <div ref={actionsMenuRef} className="relative">
             <button
               ref={actionsTriggerRef}
@@ -2259,17 +2250,6 @@ function ConnectionRow({
                 aria-label={`Actions for ${connection.name}`}
                 className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10"
               >
-                <a
-                  role="menuitem"
-                  href={connectorChatHref(connection.name)}
-                  onClick={() => setActionsOpen(false)}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
-                  aria-label={`Chat with ${connection.name} in OpenWork`}
-                  data-testid={`chat-mcp-connection-${connection.id}`}
-                >
-                  <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                  Chat
-                </a>
                 <button
                   type="button"
                   role="menuitem"
@@ -2304,6 +2284,23 @@ function ConnectionRow({
                   <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
                   Test tools
                 </Link>
+                {connection.connected && !isNativeProvider ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setActionsOpen(false);
+                      onDisconnect();
+                    }}
+                    disabled={disconnecting}
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label={`Disconnect ${connection.name}`}
+                    data-testid={`disconnect-mcp-connection-${connection.id}`}
+                  >
+                    {disconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Unplug className="h-3.5 w-3.5" aria-hidden="true" />}
+                    Disconnect
+                  </button>
+                ) : null}
                 {!isLegacyNativeConnection ? (
                   <>
                     <div className="my-1 border-t border-gray-100" />
