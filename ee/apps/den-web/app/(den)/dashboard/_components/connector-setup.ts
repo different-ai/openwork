@@ -264,6 +264,9 @@ export function useMemberSignIn() {
   const startOAuth = useStartMcpConnectionOAuth();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearInterval(timer.current);
+  }, []);
 
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),

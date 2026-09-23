@@ -126,7 +126,11 @@ export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "
   if (!plugin.data) {
     return (
       <ItemPage>
-        <ItemHeader back={back} title={plugin.isLoading ? "Loading..." : "Not found"} description={plugin.isLoading ? undefined : "It may have been removed."} />
+        <ItemHeader
+          back={back}
+          title={plugin.isLoading ? "Loading..." : plugin.error ? "It did not load" : "Not found"}
+          description={plugin.isLoading ? undefined : plugin.error ? "Reload the page to try again." : "It may have been removed."}
+        />
       </ItemPage>
     );
   }

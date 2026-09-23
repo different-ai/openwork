@@ -95,6 +95,9 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   if (!connection && (usable.isLoading || library.isLoading)) {
     return <ItemPage><ItemHeader back={back} title="Loading..." /></ItemPage>;
   }
+  if (!connection && (usable.error || library.error)) {
+    return <ItemPage><ItemHeader back={back} title="It did not load" description="Reload the page to try again." /></ItemPage>;
+  }
   if (!connection) {
     return <ItemPage><ItemHeader back={back} title="Not in your Library" description="It may have been removed, or it is no longer shared with you." /></ItemPage>;
   }

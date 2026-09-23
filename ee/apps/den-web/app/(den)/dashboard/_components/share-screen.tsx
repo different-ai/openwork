@@ -104,8 +104,8 @@ export function ShareConnectorScreen({ connectionId }: { connectionId: string })
       <ItemPage>
         <ItemHeader
           back={back}
-          title={usable.isLoading ? "Loading..." : "You can't share this"}
-          description={usable.isLoading ? undefined : "Only the person who added it can share it."}
+          title={usable.isLoading ? "Loading..." : usable.error ? "It did not load" : "You can't share this"}
+          description={usable.isLoading ? undefined : usable.error ? "Reload the page to try again." : "Only the person who added it can share it."}
         />
       </ItemPage>
     );
@@ -171,8 +171,8 @@ export function SharePluginScreen({ pluginId }: { pluginId: string }) {
       <ItemPage>
         <ItemHeader
           back={back}
-          title={plugin.isLoading || access.isLoading ? "Loading..." : "You can't share this"}
-          description={plugin.isLoading || access.isLoading ? undefined : "Only the person who made it can share it."}
+          title={plugin.isLoading || access.isLoading ? "Loading..." : plugin.error || access.error ? "It did not load" : "You can't share this"}
+          description={plugin.isLoading || access.isLoading ? undefined : plugin.error || access.error ? "Reload the page to try again." : "Only the person who made it can share it."}
         />
       </ItemPage>
     );

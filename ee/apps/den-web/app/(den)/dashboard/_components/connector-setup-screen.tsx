@@ -18,24 +18,26 @@ import { ConnectorLogo } from "./item-logo";
 import { useMcpConnectionPresets } from "./mcp-connections-data";
 import { SetupChecks } from "./setup-checks";
 
-export function useConnectorTarget(catalogId: string): { target: ConnectorTarget | null; loading: boolean; missing: boolean } {
+export function useConnectorTarget(catalogId: string): { target: ConnectorTarget | null; loading: boolean; missing: boolean; failed: boolean } {
   const searchParams = useSearchParams();
   const presets = useMcpConnectionPresets();
   const customUrl = searchParams.get("url");
   const customName = searchParams.get("name");
   return useMemo(() => {
     if (catalogId === "custom") {
-      if (!customUrl) return { target: null, loading: false, missing: true };
-      return { target: { name: customName?.trim() || "MCP server", url: customUrl, description: "" }, loading: false, missing: false };
+      if (!customUrl) return { target: null, loading: false, missing: true, failed: false };
+      return { target: { name: customName?.trim() || "MCP server", url: customUrl, description: "" }, loading: false, missing: false, failed: false };
     }
     const preset = presets.data?.find((entry) => entry.presetId === catalogId);
-    if (!preset) return { target: null, loading: presets.isLoading, missing: !presets.isLoading };
+    if (!preset && presets.error) return { target: null, loading: false, missing: false, failed: true };
+    if (!preset) return { target: null, loading: presets.isLoading, missing: !presets.isLoading, failed: false };
     return {
       target: { name: preset.displayName, url: preset.url, description: shortDescription(preset.description) },
       loading: false,
       missing: false,
+      failed: false,
     };
-  }, [catalogId, customName, customUrl, presets.data, presets.isLoading]);
+  }, [catalogId, customName, customUrl, presets.data, presets.error, presets.isLoading]);
 }
 
 /** A4 and A5: the checks fill in, the member signs in, and the connector is theirs. */
@@ -43,7 +45,7 @@ export function MemberConnectorSetupScreen({ catalogId }: { catalogId: string })
   const router = useRouter();
   const searchParams = useSearchParams();
   const { orgSlug } = useOrgDashboard();
-  const { target, loading, missing } = useConnectorTarget(catalogId);
+  const { target, loading, missing, failed } = useConnectorTarget(catalogId);
   const [leaving, setLeaving] = useState(false);
   const setup = useConnectorSetup({
     target,
@@ -58,10 +60,14 @@ export function MemberConnectorSetupScreen({ catalogId }: { catalogId: string })
   const name = target?.name ?? "";
   const back = { href: getLibraryAddConnectorRoute(orgSlug), label: "Add a connector" };
 
-  if (missing) {
+  if (missing || failed) {
     return (
       <ItemPage>
-        <ItemHeader back={back} title="Connector not found" description="Pick it again from the list." />
+        <ItemHeader
+          back={back}
+          title={failed ? "The list did not load" : "Connector not found"}
+          description={failed ? "Reload the page to try again." : "Pick it again from the list."}
+        />
       </ItemPage>
     );
   }
