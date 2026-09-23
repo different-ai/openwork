@@ -477,6 +477,27 @@ describe("engine pool", () => {
     expect(fixture.hookCalls.reloadInPlace).toBe(1);
   });
 
+  test("a request whose workspace copy predates a flip reloads the serving engine, not the previous one", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const probed: Array<string | undefined> = [];
+    const reloaded: Array<string | undefined> = [];
+    fixture.hooks.engineBusy = async (_config, workspace) => {
+      probed.push(workspace.baseUrl);
+      return false;
+    };
+    fixture.hooks.reloadInPlace = async (_config, workspace) => { reloaded.push(workspace.baseUrl); };
+    // Routes resolve a copy of the configured workspace; a request queued
+    // behind an in-flight rollover still carries the drained engine's URL.
+    const stale: WorkspaceInfo = { ...fixture.workspace, baseUrl: "http://127.0.0.1:9" };
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    expect(await pool.requestRollover({ reason: "config_changed", workspace: stale }))
+      .toEqual({ action: "reloaded_in_place" });
+    expect(probed).toEqual([primary.url]);
+    expect(reloaded).toEqual([primary.url]);
+  });
+
   test("an in-place reload of one workspace does not skip the other workspaces' stale instances", async () => {
     // In-place reload disposes ONE directory instance. The other workspaces'
     // instances were built against the previous config and stay stale until

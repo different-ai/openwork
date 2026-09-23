@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
+import { browserScript, eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker, streamedMarkdownReasoning, streamedToolHistory } from "../worlds/chat.ts";
 import {
   chatStreamContinuityWeb,
@@ -39,11 +39,22 @@ function expectSettledDocument(visibleText: string) {
 
 test("sending clears the composer and shows one pending turn in existing and new conversations", async ({ world, user, probe, step }) => {
   for (const scenario of ["existing", "new"]) {
-    if (scenario === "new") await user.click({ role: "button", label: "New session" });
+    if (scenario === "new") {
+      await user.click({ role: "button", label: "New session" });
+      await user.see({ text: "What do you need done?" });
+    } else {
+      await probe.eventually(() => probe.composer(), {
+        within: 30_000, label: "the arranged conversation is open",
+        until: (composer) => composer.composerEditable && composer.route.endsWith(`/session/${world.session.sessionId}`),
+      });
+    }
     const text = `Keep this ${scenario} conversation message while submission is delayed.`;
     await user.type("composer", text);
     await world.holdNextSubmission();
     await step(`${scenario}: Send clears the input before server acceptance`, async () => {
+      await probe.eventually(() => probe.composer(), {
+        within: 30_000, label: "Run task enabled", until: (composer) => composer.runTaskEnabled,
+      });
       await user.click("Run task");
       await user.see("composer", { text: "", timeoutMs: 500 });
       await user.see({ text }, { timeoutMs: 500 });
@@ -51,7 +62,8 @@ test("sending clears the composer and shows one pending turn in existing and new
         within: 20_000, label: "held submission", until: (count) => count === 1,
       })).toBe(1);
       expect((await probe.composer()).draftText).toBe("");
-      expect(occurrences(await probe.text(), text)).toBe(1);
+      // A new conversation's sidebar title also shows its first message.
+      expect(occurrences((await readTranscriptMessages(probe, "user")).join("\n"), text)).toBe(1);
     });
     await step(`${scenario}: failure retains the message without replacing newer typing`, async () => {
       await user.type("composer", "A newer draft");
@@ -92,6 +104,10 @@ test("a streaming answer renders as markdown block by block and settles to the s
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     await user.notSee({ text: closingText });
     await user.click(reasoningControl);
+    // The panel animates closed; absence is required once the collapse finishes.
+    await probe.eventually(() => probe.has(streamedMarkdownReasoning), {
+      within: 5_000, label: "live reasoning collapsed", until: (shown) => !shown,
+    });
     await user.notSee({ text: streamedMarkdownReasoning });
   });
 
@@ -106,6 +122,7 @@ test("a streaming answer renders as markdown block by block and settles to the s
   await using reloadedTranscript = await observeTranscript(probe, entries);
 
   await step("the settled answer shows every block exactly once and no markdown syntax", async () => {
+    await world.releaseAnswer();
     await user.see({ text: closingText }, { timeoutMs: 120_000 });
     await user.see("Run task", { timeoutMs: 60_000 });
     expectSettledDocument(await probe.text());
@@ -169,11 +186,69 @@ test("a streaming answer renders as markdown block by block and settles to the s
 const historyTest = spec.world(streamedToolHistory, { timeout: 420_000 });
 
 historyTest("v1 keeps long tool-rich history ordered and its detected links available as the answer advances", { timeout: 15 * 60_000 }, async ({ world, user, agent, probe, step, place }) => {
-  const orderedHistory = async () => (await readTranscriptMessages(probe, "user"))
-    .flatMap(text => text.match(/Settled history \d{3}\./g) ?? []);
+  const historyIn = (texts: string[]) => texts.flatMap(text => text.match(/Settled history \d{3}\./g) ?? []);
+  // The transcript is windowed: only rows near the viewport are mounted. Mounted
+  // history must always be one consecutive, ordered run of the arranged turns.
+  const expectMountedHistory = async () => {
+    const mounted = historyIn(await readTranscriptMessages(probe, "user"));
+    const first = world.history.indexOf(mounted[0] ?? "");
+    expect(mounted).toEqual(mounted.length ? world.history.slice(first, first + mounted.length) : []);
+  };
+  const renderedTranscript = async () => {
+    const transcript: unknown = await agent.run("session.read_transcript", { count: 1 });
+    if (!transcript || typeof transcript !== "object" || !("messageCount" in transcript) || typeof transcript.messageCount !== "number"
+      || !("historyComplete" in transcript) || typeof transcript.historyComplete !== "boolean") {
+      throw new Error(`session.read_transcript did not report a rendered count: ${JSON.stringify(transcript)}`);
+    }
+    return { messageCount: transcript.messageCount, historyComplete: transcript.historyComplete };
+  };
+  const renderedCount = async () => (await renderedTranscript()).messageCount;
+  // Reads the whole rendered history by scrolling the transcript from top to
+  // bottom one half-page at a time, then returns to where the reader was.
+  const scrollTranscript = (to: "top" | "next" | number) => probe.eval(browserScript(async (viewportSelector, to) => {
+    const viewport = document.querySelector<HTMLElement>(viewportSelector);
+    if (!viewport) return null;
+    const start = viewport.scrollTop;
+    viewport.scrollTop = to === "top" ? 0 : to === "next" ? start + Math.max(1, Math.floor(viewport.clientHeight / 2)) : to;
+    await new Promise<void>(resolve => setTimeout(resolve, 150));
+    const bounds = viewport.getBoundingClientRect();
+    return {
+      start,
+      atBottom: viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1,
+      // Rows kept mounted off-screen (such as a focused one) are not part of
+      // what the reader sees at this position.
+      rows: [...viewport.querySelectorAll<HTMLElement>('[data-message-role="user"]')]
+        .map(row => ({ row, rect: row.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.bottom > bounds.top && rect.top < bounds.bottom)
+        .sort((a, b) => a.rect.top - b.rect.top)
+        .map(({ row }) => ({ id: row.dataset.messageId ?? "", text: row.innerText })),
+    };
+  }, [viewportSelector, to]), { awaitPromise: true });
+  const orderedHistory = async () => {
+    const first = await probe.eventually(() => scrollTranscript("top"), {
+      within: 30_000, label: "the transcript viewport", until: (value) => value !== null,
+    });
+    if (!first) throw new Error("The transcript viewport is missing");
+    const seen = new Set<string>();
+    const texts: string[] = [];
+    let page = first;
+    for (let pages = 0; pages < 2_000; pages++) {
+      for (const row of page.rows) {
+        if (!row.id || seen.has(row.id)) continue;
+        seen.add(row.id);
+        texts.push(row.text);
+      }
+      if (page.atBottom) break;
+      const next = await scrollTranscript("next");
+      if (!next) throw new Error("The transcript viewport disappeared while reading history");
+      page = next;
+    }
+    await scrollTranscript(first.start);
+    return historyIn(texts);
+  };
   const expectTargets = async (names: string[], present = true) => {
     await user.press(place.kind === "local" && process.platform === "darwin" ? "Meta+K" : "Control+K");
-    const rootSearch = { placeholder: "Search actions, settings, and sessions…" };
+    const rootSearch = { placeholder: "Search actions and settings…" };
     await user.type(rootSearch, "Accessible items", { replace: true });
     await user.click({ role: "option", label: /^Accessible items/ });
     const search = { placeholder: "Search servers and artifacts..." };
@@ -208,17 +283,30 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
       rows: rows.elements.map((row, index) => ({ rect: row.rect, text: texts.elements[index]!.text })),
     };
   };
+  const findShortcut = place.kind === "local" && process.platform === "darwin" ? "Meta+f" : "Control+f";
+  const revealHistory = async (text: string) => {
+    await user.press(findShortcut);
+    await user.type({ placeholder: "Find in conversation" }, text, { replace: true });
+    await user.see({ text });
+    await user.click({ role: "button", label: "Close find" });
+  };
+  const firstVisibleHistory = (geometry: Awaited<ReturnType<typeof transcriptGeometry>>) => {
+    const row = geometry.rows.find(({ rect, text }) => rect.bottom > geometry.viewport.top && world.history.includes(text));
+    return row ? { index: world.history.indexOf(row.text), top: row.rect.top } : null;
+  };
   const browseHistory = async () => {
+    await revealHistory(world.history[74]!);
     await user.click({ text: world.history[74]! });
-    const initialTop = (await probe.dom(userRowsSelector)).elements[74]!.rect.top;
+    const initial = firstVisibleHistory(await transcriptGeometry());
+    if (!initial) throw new Error("No arranged history row is visible before keyboard browsing");
     await user.press("PageUp");
-    let previousTop = Number.NaN;
+    let previous: { index: number; top: number } | null = null;
     return probe.eventually(async () => {
       const geometry = await transcriptGeometry();
-      const top = geometry.rows[74]!.rect.top;
-      const stable = Math.abs(top - previousTop) <= 1;
-      previousTop = top;
-      expect(top).toBeGreaterThan(initialTop + 16);
+      const current = firstVisibleHistory(geometry);
+      const stable = Boolean(current && previous && current.index === previous.index && Math.abs(current.top - previous.top) <= 1);
+      previous = current;
+      expect(current?.index).toBeLessThan(initial.index);
       expect(geometry.rows.at(-1)!.rect.top).toBeGreaterThanOrEqual(geometry.viewport.bottom);
       expect(geometry.rows.some(({ rect }) => rect.top >= geometry.viewport.top && rect.bottom <= geometry.viewport.bottom)).toBe(true);
       return { ...geometry, stable };
@@ -260,8 +348,9 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await expectTargets([world.latestTool], false);
   });
 
+  const settledCount = await renderedCount();
+  // Older rows unmount as the reader scrolls; only the live turn stays mounted.
   await using transcript = await observeTranscript(probe, [
-    ...[world.history[0]!, world.history[74]!, world.history[149]!].map((text): { role: "user"; text: string } => ({ role: "user", text })),
     { role: "user", text: world.prompt },
     { role: "assistant", text: world.opening },
   ]);
@@ -285,15 +374,19 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     }, { within: 5_000, label: "submitted user row inside the transcript viewport" });
   });
 
-  await step("new tool output becomes accessible without losing old targets while text grows", async () => {
+  const liveCount = await step("new tool output becomes accessible without losing old targets while text grows", async () => {
     await user.see({ text: world.opening }, { timeoutMs: 90_000 });
     await user.notSee({ text: world.closing });
-    expect(await orderedHistory()).toEqual(world.history);
+    const count = await renderedCount();
+    expect(count).toBeGreaterThanOrEqual(settledCount + 2);
+    await expectMountedHistory();
     // These options come from detected tool output, not markdown links in the answer.
     await expectTargets([...oldTargets, world.latestTool]);
     await user.see({ text: world.middle }, { timeoutMs: 90_000 });
     await user.notSee({ text: world.closing });
-    expect(await orderedHistory()).toEqual(world.history);
+    expect(await renderedCount()).toBe(count);
+    await expectMountedHistory();
+    return count;
   });
 
   await step("passive streamed output does not jump away from the history being read", async () => {
@@ -317,10 +410,12 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(after.rows.at(-1)!.rect.top).toBeGreaterThanOrEqual(after.viewport.bottom);
   });
 
-  await step("settled history and the advancing answer never disappear or duplicate", async () => {
+  const completeCount = await step("settled history and the advancing answer never disappear or duplicate", async () => {
     await user.see({ text: world.closing }, { timeoutMs: 120_000 });
     await user.see("Run task", { timeoutMs: 60_000 });
     expect(await orderedHistory()).toEqual(world.history);
+    const count = await renderedCount();
+    expect(count).toBeGreaterThanOrEqual(liveCount);
     const answers = await readTranscriptMessages(probe, "assistant");
     const answer = answers.filter(text => text.includes(world.opening));
     expect(answer).toHaveLength(1);
@@ -329,7 +424,8 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     }
     expect(answer[0]!.indexOf(world.opening)).toBeLessThan(answer[0]!.indexOf(world.middle));
     expect(answer[0]!.indexOf(world.middle)).toBeLessThan(answer[0]!.indexOf(world.closing));
-    expect(await transcript.finish()).toMatchObject({ seen: [true, true, true, true, true], violations: [], stopped: false });
+    expect(await transcript.finish()).toMatchObject({ seen: [true, true], violations: [], stopped: false });
+    return count;
   });
 
   const readingPosition = await step("choose a reading message inside the retained history tail", async () => {
@@ -337,17 +433,18 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await user.type({ placeholder: "Find in conversation" }, world.history[129]!, { replace: true });
     await user.see({ text: world.history[129]! });
     await user.click({ role: "button", label: "Close find" });
-    return probe.eventually(async () => {
+    const found = await probe.eventually(async () => {
       const saved: unknown = await savedScroll(world.session.sessionId);
       if (!saved || typeof saved !== "object" || !("mode" in saved) || saved.mode !== "manual"
         || !("anchor" in saved) || !saved.anchor || typeof saved.anchor !== "object"
         || !("messageId" in saved.anchor) || typeof saved.anchor.messageId !== "string"
-        || !("offset" in saved.anchor) || typeof saved.anchor.offset !== "number") return null;
+        || !("offset" in saved.anchor) || typeof saved.anchor.offset !== "number") return { saved, position: null };
       const geometry = await readingGeometry(saved.anchor.messageId);
       if (!geometry?.visible || !world.history.slice(100).some(text => geometry.text.includes(text))
-        || Math.abs(geometry.offset - saved.anchor.offset) > 2) return null;
-      return { messageId: saved.anchor.messageId, text: geometry.text, offset: geometry.offset };
-    }, { within: 10_000, label: "persisted visible reading anchor", until: value => value !== null });
+        || Math.abs(geometry.offset - saved.anchor.offset) > 2) return { saved, geometry, position: null };
+      return { saved, position: { messageId: saved.anchor.messageId, text: geometry.text, offset: geometry.offset } };
+    }, { within: 10_000, label: "persisted visible reading anchor", until: value => value.position !== null });
+    return found.position;
   });
   if (!readingPosition) throw new Error("No retained reading position was captured");
   const neighborScroll = await savedScroll(world.neighbor.sessionId);
@@ -362,7 +459,7 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(await savedScroll(world.neighbor.sessionId)).toEqual(neighborScroll);
   };
 
-  await step("switching conversations preserves the reading position, full cached history and scoped targets", async () => {
+  await step("switching conversations preserves the reading position, its surrounding history and scoped targets", async () => {
     await agent.run("session.open", { sessionId: world.neighbor.sessionId });
     await user.see("composer", { editable: true });
     await user.notSee({ text: world.opening });
@@ -370,7 +467,9 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     // palette isolation checks below deliberately belong to the cold path.
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await expectReadingPosition();
-    expect(await orderedHistory()).toEqual(world.history);
+    // A saved reading position reopens its own history window; older and newer
+    // pages load on demand, so the whole transcript is proven from the top below.
+    await expectMountedHistory();
     await expectTargets([...oldTargets, world.latestTool]);
     await agent.run("session.open", { sessionId: world.neighbor.sessionId });
     await user.see("composer", { editable: true });
@@ -378,7 +477,7 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(await savedScroll(world.neighbor.sessionId)).toEqual(neighborScroll);
   });
 
-  await step("cold reload restores the whole ordered transcript, the reading position and old and new tool links", async () => {
+  await step("cold reload restores the reading position, old and new tool links, and the whole ordered transcript from the top", async () => {
     // A cold open fetches the transcript without a `limit` (#4695): OpenCode
     // pages `limit` as the NEWEST n messages, so the engine's bounded page still
     // lacks the oldest turn while the reopened surface must show every message.
@@ -389,10 +488,14 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await user.reload();
     await expectReadingPosition();
+    await expectMountedHistory();
+    await expectTargets([...oldTargets, world.latestTool]);
+    expect(await agent.run("session.scroll_top")).toMatchObject({ ok: true, position: "top" });
+    expect(await renderedTranscript()).toEqual({ messageCount: completeCount, historyComplete: true });
     expect(await orderedHistory()).toEqual(world.history);
+    // The complete transcript always keeps its latest turn mounted.
     expect(occurrences((await readTranscriptMessages(probe, "user")).join("\n"), world.prompt)).toBe(1);
     expect(occurrences((await readTranscriptMessages(probe, "assistant")).join("\n"), world.closing)).toBe(1);
-    await expectTargets([...oldTargets, world.latestTool]);
     await user.notSee({ text: /Something went wrong/ });
   });
 });
@@ -425,6 +528,13 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
       label: `visible conversation ${target.title}`,
       until: (state) => state.sessionId === target.sessionId,
     });
+  };
+  // The previous conversation stays on screen until the empty new-session
+  // view replaces it, and its composer is editable too.
+  const openNewSession = async () => {
+    await user.click({ role: "button", label: "New session" });
+    await user.see({ text: "What do you need done?" });
+    await user.see("composer", { editable: true });
   };
   const selectMode = async (current: string, next: string) => {
     if (current === "Default agent") {
@@ -538,8 +648,7 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
     await select(world.neighbor);
     await selectMode("Default agent", "Build");
     expect(await probe.storage("openwork.preferences")).toMatchObject({ selectedAgent: null });
-    await user.click({ role: "button", label: "New task" });
-    await user.see("composer", { editable: true });
+    await openNewSession();
     await selectMode("Default agent", "Build");
     expect(await probe.storage("openwork.preferences")).toMatchObject({ selectedAgent: "build" });
     await select(world.session);
@@ -769,8 +878,7 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
   });
 
   const newTaskSessionId = world.engine === "v1" ? await step("a new task hands its selected Plan mode to its first send without changing existing conversations", async () => {
-    await user.click({ role: "button", label: "New task" });
-    await user.see("composer", { editable: true });
+    await openNewSession();
     await user.see({ role: "button", label: "Build" });
     await selectMode("Build", "Plan");
     await user.type("composer", world.planPrompt);
@@ -825,8 +933,7 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
     expect(await probe.storage("openwork.sessionAgents.v1")).toMatchObject({ [world.session.sessionId]: null });
     await select(world.neighbor);
     await selectMode("Build", "Plan");
-    await user.click({ role: "button", label: "New task" });
-    await user.see("composer", { editable: true });
+    await openNewSession();
     await selectMode("Plan", "Build");
     expect(await probe.storage("openwork.preferences")).toMatchObject({ selectedAgent: "build" });
     await selectMode("Build", "Plan");
@@ -867,8 +974,10 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
         info: expect.objectContaining({ role: "user", agent: "plan" }),
         parts: expect.arrayContaining([expect.objectContaining({ type: "text", text: world.planPrompt })]),
       }),
+      // Default sends no agent, so the engine applies OpenWork's built-in
+      // default agent; workspace config cannot override it.
       expect.objectContaining({
-        info: expect.objectContaining({ role: "user", agent: "build" }),
+        info: expect.objectContaining({ role: "user", agent: "openwork" }),
         parts: expect.arrayContaining([expect.objectContaining({ type: "text", text: world.defaultPrompt })]),
       }),
     ]));

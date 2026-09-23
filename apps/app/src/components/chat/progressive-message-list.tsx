@@ -33,6 +33,12 @@ const GROUP_GAP = 8
 const ESTIMATED_HEIGHT = 240
 const MAX_CACHED_VIEWPORTS = 12
 const MAX_CACHED_GROUPS = 2048
+// Each commit may restore the reading anchor, which moves scrollTop, which
+// re-renders a new range that is measured and restored again. Long histories
+// with poor estimates can chain past React's nested-update limit, so later
+// syncs in one chain wait for the next task instead. Not a frame: hidden or
+// occluded windows may never paint one, which would stall syncing for good.
+const MAX_NESTED_OFFSET_SYNCS = 8
 const heightCache = new Map<string, Map<string, number>>()
 // Existing reading-anchor and session controllers own scroll writes. TanStack
 // observes their actual offset; its initial connection must not restore it again.
@@ -200,7 +206,19 @@ function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
     virtualizer.measure()
     bridge.current?.measureMounted()
   }, [virtualizer, estimates])
-  React.useLayoutEffect(() => { syncOffset.current?.() })
+  const nestedSyncs = React.useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
+  React.useLayoutEffect(() => {
+    const chain = nestedSyncs.current
+    chain.timer ??= setTimeout(() => {
+      chain.timer = null
+      chain.count = 0
+      syncOffset.current?.()
+    }, 0)
+    if (chain.count++ < MAX_NESTED_OFFSET_SYNCS) syncOffset.current?.()
+  })
+  React.useEffect(() => () => {
+    if (nestedSyncs.current.timer !== null) clearTimeout(nestedSyncs.current.timer)
+  }, [])
   const items = virtualizer.getVirtualItems()
   const segments: Segment[] = []
   if (leading > 0) segments.push({ key: "history-prefix", index: -1, height: leading, placeholder: true })

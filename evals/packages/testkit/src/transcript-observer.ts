@@ -56,3 +56,21 @@ export async function readTranscriptMessages(probe: Probe, role: "user" | "assis
   }
   return result;
 }
+
+/**
+ * Read visible messages with their message ids. Long transcripts are windowed,
+ * so older rows unmount; compare ids across reads instead of mounted counts.
+ */
+export async function readTranscriptRows(probe: Probe, role: "user" | "assistant" | "system"): Promise<{ id: string; text: string }[]> {
+  const result: unknown = await probe.eval(browserScript((role) => [...document.querySelectorAll<HTMLElement>('[data-message-role="' + role + '"]')]
+    .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
+    .map(node => ({ id: node.getAttribute("data-message-id") ?? "", text: node.innerText ?? "" })), [role]));
+  if (!Array.isArray(result)) throw new Error("Rendered transcript was unavailable");
+  return result.map((row: unknown) => {
+    if (typeof row !== "object" || row === null || !("id" in row) || !("text" in row)
+      || typeof row.id !== "string" || typeof row.text !== "string") {
+      throw new Error("Rendered transcript was unavailable");
+    }
+    return { id: row.id, text: row.text };
+  });
+}

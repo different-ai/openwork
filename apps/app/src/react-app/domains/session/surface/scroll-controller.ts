@@ -493,9 +493,8 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
           // inside the reading message. Remember that adjustment for the next
           // visit, but never persist the initial restore's clamp or missing anchor.
           if (saved.mode === "manual") {
-            if (saved.anchor && messageElementById(container, saved.anchor.messageId)) {
-              store.setManualScroll(scrollKey, container.scrollTop, latestMessageTopClippedId(container), currentReadingAnchor());
-            }
+            const anchor = saved.anchor && messageElementById(container, saved.anchor.messageId) ? currentReadingAnchor() : undefined;
+            if (anchor) store.setManualScroll(scrollKey, container.scrollTop, latestMessageTopClippedId(container), anchor);
           } else if (!smoothJump && !isExactlyAtBottom(container)) {
             // Keyboard focus and other reveals scroll an older message into view
             // without wheel or key input. The person is reading it now: follow

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { liveOpenAiEnabled } from "@openwork/behaviors";
-import { observeTranscript, readTranscriptMessages, spec, type Probe, type User } from "@openwork/testkit";
+import { observeTranscript, readTranscriptMessages, readTranscriptRows, spec, type Probe, type User } from "@openwork/testkit";
 import { skillLifecycle } from "../worlds/chat.ts";
-import { selectedSkillsWeb } from "../worlds/selected-skills.ts";
+import { selectedSkillsV2Web, selectedSkillsWeb } from "../worlds/selected-skills.ts";
 import {
   cloudNativeSkillIdPrefix,
   skillJitAccounts,
@@ -27,8 +27,8 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
   let turnNumber = 0;
   const submitted: string[] = [];
   const answer = async () => {
-    const messages = await readTranscriptMessages(probe, "assistant");
-    return { count: messages.length, text: messages.at(-1) ?? "" };
+    const rows = await readTranscriptRows(probe, "assistant");
+    return { ids: rows.map((row) => row.id), text: rows.at(-1)?.text ?? "" };
   };
   const ask = async (expected: string | null) => {
     const before = await answer();
@@ -45,14 +45,11 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     await user.see({ text: prompt }, { timeoutMs: 15_000 });
     const response = await probe.eventually(answer, {
       within: 150_000, label: "the conversation answers using the currently installed instructions",
-      until: (value) => record(value) && record(before) && Number(value.count) > Number(before.count)
-        && typeof value.text === "string" && value.text.includes(expected ?? "UNAVAILABLE"),
+      until: (value) => isNewAnswer(value, before) && value.text.includes(expected ?? "UNAVAILABLE"),
     });
     await user.see("Run task", { timeoutMs: 60_000 });
     submitted.push(prompt);
-    const visibleUserMessages = await readTranscriptMessages(probe, "user");
-    expect(visibleUserMessages).toHaveLength(submitted.length);
-    visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
+    expectNewestSubmitted(await readTranscriptMessages(probe, "user"), submitted);
     expect(await readTranscriptMessages(probe, "system")).toEqual([]);
     // A silent swap to an organization model must fail here, not as a text mismatch.
     expect(await world.usedConfiguredModel()).toBe(true);
@@ -106,6 +103,23 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A reply the transcript did not show before this turn; the latest group always stays mounted. */
+function isNewAnswer(value: { ids: string[]; text: string }, before: { ids: string[] }): boolean {
+  const latest = value.ids.at(-1);
+  return latest !== undefined && latest !== "" && !before.ids.includes(latest);
+}
+
+/**
+ * The transcript is windowed, so older turns unmount. Every mounted user row
+ * must still be one of the newest submitted prompts, in order, each exactly once.
+ */
+function expectNewestSubmitted(visible: string[], submitted: string[]) {
+  expect(visible.length).toBeGreaterThan(0);
+  const first = submitted.length - visible.length;
+  expect(visible.map((text) => submitted.findIndex((prompt) => text.includes(prompt))))
+    .toEqual(visible.map((_, offset) => first + offset));
 }
 
 const selectedTest = spec.world(selectedSkillsWeb, {
@@ -184,7 +198,13 @@ selectedTest("SKILL-ATTACH explicitly selected skills reach the first native mod
   });
 });
 
-selectedTest("SKILL-MISSING a selected skill removed from the native registry fails visibly without a model request", async ({ world, user, probe, evidence }) => {
+// The unavailable-skill refusal is a native v2 contract, so this world opts in
+// to v2 even when the run inherits the v1 engine selector.
+const selectedV2Test = spec.world(selectedSkillsV2Web, {
+  timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
+
+selectedV2Test("SKILL-MISSING a selected skill removed from the native registry fails visibly without a model request", async ({ world, user, probe, evidence }) => {
   expect(world.engine).toBe("v2");
   await openSkillMenu(user, world.skillName);
   await user.type("composer", ` ${world.prompt}`);
@@ -233,8 +253,8 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
   let runtime: number | null = null;
   let sessionRoute: string | null = null;
   const answer = async () => {
-    const messages = await readTranscriptMessages(probe, "assistant");
-    return { count: messages.length, text: messages.at(-1) ?? "", messages };
+    const rows = await readTranscriptRows(probe, "assistant");
+    return { ids: rows.map((row) => row.id), text: rows.at(-1)?.text ?? "", rows };
   };
   const mintCode = () => {
     const code = randomUUID();
@@ -263,22 +283,20 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
     if (expected !== null) {
       await probe.eventually(answer, {
         within: 150_000, label: `the conversation answers with ${expected === "UNAVAILABLE" ? "UNAVAILABLE" : "the current code"}`,
-        until: (value) => value.count > before.count && value.text.includes(expected),
+        until: (value) => isNewAnswer(value, before) && value.text.includes(expected),
       });
     }
     await user.see("Run task", { timeoutMs: 150_000 });
     const response = await answer();
     submitted.push(prompt);
-    const visibleUserMessages = await readTranscriptMessages(probe, "user");
-    expect(visibleUserMessages).toHaveLength(submitted.length);
-    visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
+    expectNewestSubmitted(await readTranscriptMessages(probe, "user"), submitted);
     expect(await readTranscriptMessages(probe, "system")).toEqual([]);
     expect(await transcript.finish()).toMatchObject({ seen: [true], violations: [], stopped: false });
     expect(await probe.hash()).toBe(sessionRoute);
     expect(await world.runtimeIdentity()).toBe(runtime);
     await user.screenshot();
     // Only what this turn added: earlier answers legitimately still show earlier codes.
-    const fresh = response.messages.slice(before.count).join("\n");
+    const fresh = response.rows.filter((row) => !before.ids.includes(row.id)).map((row) => row.text).join("\n");
     return { prompt, startedAt, text: response.text, fresh };
   };
   /** Which native skill ids the model asked the `skill` tool for in one turn, in order. */
@@ -306,7 +324,7 @@ function expectCloudNativeEntry(entry: NativeSkillEntry | undefined, world: JitW
   expect(entry.name).toBe(world.cloudSkillName);
   expect(entry.content.trim()).toContain(cloudSkillBody(code));
   expect(entry.location).not.toBe("");
-  expect(world.locationLeaks(entry.location)).toEqual({ workspace: false, home: false });
+  expect(world.locationLeaks(entry.location)).toEqual({ workspace: false, home: false, runtimeState: true });
   return entry;
 }
 
@@ -500,7 +518,7 @@ jitTest("SKILL-CLOUD-02 two accounts on one endpoint never see each other's skil
     // The engine-private bodies are gone from disk, not merely unregistered.
     for (const location of locations) expect(await world.materializedFileExists(location)).toBe(false);
     expect(await world.workspaceFilesContaining([codeA, codeB, cloudNativeSkillIdPrefix])).toEqual([]);
-    for (const location of locations) expect(world.locationLeaks(location)).toEqual({ workspace: false, home: false });
+    for (const location of locations) expect(world.locationLeaks(location)).toEqual({ workspace: false, home: false, runtimeState: true });
     expect(world.cloud.toolCallNames()).toEqual([]);
     evidence.recordAssertionEvidence(
       "Removing the Cloud config with an active materialization deletes the private SKILL.md files, empties the registry, and stops endpoint contact; no body reached the workspace or home",
