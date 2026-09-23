@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
-import { Box, ChevronRight, FileText, Link2, Server, SquareTerminal, UserRound } from "lucide-react";
+import { ChevronRight, FileText, LayoutGrid, Plug, Server, SquareTerminal, UserRound } from "lucide-react";
 
 import {
   Dialog,
@@ -9,15 +8,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { t } from "../../../../i18n";
-import {
-  libraryConnectorIconUrls,
-  type LibraryConnectorCue,
-} from "../library-connector-cues";
 import type { LibraryAddKind } from "../library";
 
 const PICKER_KIND_ORDER: LibraryAddKind[] = [
-  "mcp",
   "skill",
+  "connection",
+  "mcp",
   "plugin",
 ];
 
@@ -36,19 +32,18 @@ function kindMeta(kind: LibraryAddKind): KindMeta {
     case "agent":
       return { title: t("extensions.kind_agent"), description: t("extensions.kind_agent_hint"), icon: UserRound };
     case "plugin":
-      return { title: t("extensions.kind_plugin"), description: t("extensions.kind_plugin_hint"), icon: Box };
+      return { title: t("extensions.kind_plugin"), description: t("extensions.kind_plugin_hint"), icon: LayoutGrid };
     case "mcp":
       return { title: t("extensions.kind_mcp"), description: t("extensions.empty_mcp_hint"), icon: Server };
     case "workspace-mcp":
       return { title: t("extensions.kind_workspace_mcp"), description: t("extensions.kind_workspace_mcp_hint"), icon: Server };
     case "connection":
-      return { title: t("extensions.kind_connection"), description: t("extensions.kind_connection_hint"), icon: Link2 };
+      return { title: t("extensions.kind_connector"), description: t("extensions.kind_connector_hint"), icon: Plug };
   }
 }
 
 function KindRow(props: {
   kind: LibraryAddKind;
-  connectorCues: LibraryConnectorCue[];
   onSelect: () => void;
 }) {
   const meta = kindMeta(props.kind);
@@ -70,47 +65,9 @@ function KindRow(props: {
         <span className="mt-0.5 block text-[13px] leading-[18px] text-dls-secondary">
           {meta.description}
         </span>
-        {props.kind === "mcp" && props.connectorCues.length > 0 ? (
-          <span className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5" data-testid="connection-logo-cues">
-            {props.connectorCues.map((cue) => (
-              <ConnectorLogoCue key={cue.id} cue={cue} />
-            ))}
-          </span>
-        ) : null}
       </span>
       <ChevronRight size={16} className="shrink-0 text-dls-secondary" />
     </button>
-  );
-}
-
-function ConnectorLogoCue({ cue }: { cue: LibraryConnectorCue }) {
-  const [imageIndex, setImageIndex] = useState(0);
-  const iconUrls = libraryConnectorIconUrls(cue);
-  const iconUrl = iconUrls[imageIndex];
-
-  useEffect(() => {
-    setImageIndex(0);
-  }, [cue.faviconDomain, cue.iconSlug, cue.iconSrc, cue.id, cue.serviceUrl]);
-
-  return (
-    <span
-      className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white p-1"
-      data-connector-cue={cue.id}
-      title={cue.name}
-    >
-      {iconUrl ? (
-        <img
-          src={iconUrl}
-          alt={`${cue.name} logo`}
-          className="size-full object-contain"
-          onError={() => setImageIndex((current) => current + 1)}
-        />
-      ) : (
-        <span aria-label={`${cue.name} logo`} className="text-[10px] font-semibold uppercase text-slate-700">
-          {cue.name.slice(0, 1)}
-        </span>
-      )}
-    </span>
   );
 }
 
@@ -118,7 +75,6 @@ function ConnectorLogoCue({ cue }: { cue: LibraryConnectorCue }) {
 export function LibraryAddKindPicker(props: {
   open: boolean;
   kinds: LibraryAddKind[];
-  connectorCues?: LibraryConnectorCue[];
   onClose: () => void;
   onSelect: (kind: LibraryAddKind) => void;
 }) {
@@ -141,7 +97,6 @@ export function LibraryAddKindPicker(props: {
             <KindRow
               key={kind}
               kind={kind}
-              connectorCues={props.connectorCues ?? []}
               onSelect={() => {
                 props.onClose();
                 props.onSelect(kind);

@@ -480,28 +480,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectVersion,
-    paramValidator(configObjectVersionParamsSchema),
-    describeRoute({
-      tags: ["Config Objects"],
-      summary: "Get config object version",
-      description: "Returns one immutable config object version.",
-      responses: {
-        200: jsonResponse("Config object version returned successfully.", configObjectVersionDetailResponseSchema),
-        400: jsonResponse("The version path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to view config object versions.", unauthorizedSchema),
-        404: jsonResponse("The config object version could not be found.", notFoundSchema),
-      },
-    }),
-    async (c: OrgContext) => {
-      try {
-        const params = validParam<any>(c)
-        return c.json({ item: await getConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c), versionId: params.versionId }) })
-      } catch (error) {
-        return routeErrorResponse(c, error)
-      }
-    })
-
+  // Registered before :versionId so "latest" is not validated as a version id.
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectLatestVersion,
     paramValidator(configObjectParamsSchema),
     describeRoute({
@@ -519,6 +498,28 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         return c.json({ item: await getLatestConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c) }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectVersion,
+    paramValidator(configObjectVersionParamsSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Get config object version",
+      description: "Returns one immutable config object version.",
+      responses: {
+        200: jsonResponse("Config object version returned successfully.", configObjectVersionDetailResponseSchema),
+        400: jsonResponse("The version path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view config object versions.", unauthorizedSchema),
+        404: jsonResponse("The config object version could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json({ item: await getConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c), versionId: params.versionId }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }

@@ -38,8 +38,8 @@ async function dialogLayerCanOpen() {
 const dialogLayerInert = !(await dialogLayerCanOpen());
 
 describe("Add to your Library picker", () => {
-  test("only offers Cloud MCPs, Skills, and Plugins", () => {
-    expect(libraryAddKindsForFilter("all")).toEqual(["mcp", "skill", "plugin"]);
+  test("offers Skill, Connector, and Plugin", () => {
+    expect(libraryAddKindsForFilter("all")).toEqual(["skill", "connection", "plugin"]);
     expect(libraryAddKindsForFilter("mcp")).toEqual(["mcp"]);
     expect(libraryAddKindsForFilter("skill")).toEqual(["skill"]);
     expect(libraryAddKindsForFilter("plugin")).toEqual(["plugin"]);
@@ -55,7 +55,7 @@ describe("Add to your Library picker", () => {
       await act(async () => root.render(<LibraryAddKindPicker open kinds={libraryAddKindsForFilter("all")} onClose={onClose} onSelect={onSelect} />));
       expect(document.querySelector('[role="dialog"]')).not.toBeNull();
       const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="library-add-choices"] button[data-kind]')];
-      expect(choices.map((choice) => choice.dataset.kind)).toEqual(["mcp", "skill", "plugin"]);
+      expect(choices.map((choice) => choice.dataset.kind)).toEqual(["skill", "connection", "plugin"]);
       expect(document.body.textContent).not.toContain("workspace MCP");
       const continueButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Continue");
       expect(continueButton).toBeUndefined();

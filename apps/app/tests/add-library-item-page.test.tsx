@@ -54,21 +54,20 @@ describe("Library create pages", () => {
     expect(onClose).toHaveBeenCalledTimes(3);
   });
 
-  test("an MCP server asks how it signs in, and whose account only once it is shared with everyone", async () => {
+  test("an MCP server asks how it signs in and starts just for you", async () => {
     const host = await mount(
       <AddLibraryItemPage kind="mcp" cloud canConfigureMcpConnections onClose={() => {}} onCreate={async () => "plugin-1"} />,
     );
     expect(host.querySelector("h1")?.textContent).toBe("Add an MCP server");
     const signIn = host.querySelector<HTMLElement>('[role="radiogroup"][aria-label="How does it sign in?"]');
     const options = [...(signIn?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? [])];
-    expect(options.map((option) => option.querySelector("span > span")?.textContent)).toEqual(["With an account", "With a key", "No sign-in"]);
+    expect(options.map((option) => option.querySelector("span > span")?.textContent)).toEqual(["With my account", "With a key", "No sign-in"]);
     expect(options[0]?.getAttribute("aria-checked")).toBe("true");
-    expect(host.textContent).not.toContain("Whose account does the AI use?");
     expect(host.textContent).toContain("Only you can use it until you share it.");
-
-    await act(async () => buttonNamed(host, "Everyone in the organization")?.click());
-    expect(host.textContent).toContain("Whose account does the AI use?");
-    expect(host.textContent).not.toContain("Only you can use it until you share it.");
+    expect(host.textContent).not.toContain("Everyone in the organization");
+    expect(buttonNamed(host, "Add and sign in")).not.toBeUndefined();
+    await act(async () => buttonNamed(host, "No sign-in")?.click());
+    expect(buttonNamed(host, "Add MCP")).not.toBeUndefined();
   });
 
   test("choosing a key shows the key field", async () => {

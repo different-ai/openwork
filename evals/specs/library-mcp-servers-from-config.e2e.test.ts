@@ -28,7 +28,7 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
   await step("the enabled mock completes a real MCP handshake and reaches connected", async () => {
     await agent.run("route.extensions.skills");
     await user.see({ text: "Library" });
-    await user.click({ role: "button", label: "MCPs" });
+    await user.click({ role: "button", label: "All" });
     await probe.eventually(async () => {
       const status = await probe.desktopApi(`/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode/mcp`);
       expect(status).toMatchObject({ status: 200, body: { "ready-helper": { status: "connected" } } });
@@ -43,32 +43,25 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     }, { within: 15_000, label: "the mock witnessed a successful MCP initialize" });
   });
 
-  await step("Ready contains the connected mock but excludes disabled workspace servers", async () => {
-    await user.click({ role: "tab", label: /^Ready\b/ });
+  await step("On this Mac lists every hand-written server, and only the connected mock reads as ready", async () => {
     await user.see({ text: "ready-helper" }, { timeoutMs: 60_000 });
-    await user.notSee({ text: "docs-helper" });
-    await user.notSee({ text: "files-helper" });
-    await user.notSee({ text: "remote-helper" });
-    evidence.recordAssertionEvidence(
-      "Library readiness follows a real MCP connection",
-      "The fixture wrote ready-helper into opencode.json before opening the workspace, without an MCP registration API call. It completed MCP initialize, the workspace engine reported connected, and Ready displayed it without any of the three disabled entries.",
-      true,
+    for (const name of ["docs-helper", "files-helper", "remote-helper"]) await user.see({ text: name });
+    const ready = await probe.eventually(
+      async () => (await probe.dom('[data-library-section="mac"] [data-library-row]:has([data-library-ready])')).elements.map((element) => element.text.split("\n")[0]?.trim() ?? ""),
+      { within: 60_000, label: "the connected mock reads as ready", until: (names) => names.includes("ready-helper") },
     );
-  });
-
-  await step("Disabled retains the hand-written entries and Advanced still owns creation only", async () => {
-    await user.click({ role: "tab", label: /^Disabled\b/ });
-    await user.see({ text: "docs-helper" });
-    await user.see({ text: "files-helper" });
-    await user.see({ text: "remote-helper" });
-    await user.notSee({ text: "ready-helper" });
-    await user.see({ text: "Local · this workspace" });
+    for (const name of ["docs-helper", "files-helper", "remote-helper"]) expect(ready).not.toContain(name);
     // Advanced still owns creation only; the inventory does not live there.
     await user.click({ role: "button", label: /^Advanced\b/ });
     await user.see({ role: "button", label: "Add workspace MCP" });
     expect((await probe.dom('button[aria-expanded="true"]')).elements.filter((element) => /^Advanced\b/.test(element.text))).toHaveLength(1);
     await user.click({ role: "button", label: /^Advanced\b/ });
     await user.screenshot();
+    evidence.recordAssertionEvidence(
+      "Library readiness follows a real MCP connection",
+      `The fixture wrote ready-helper into opencode.json before opening the workspace, without an MCP registration API call. It completed MCP initialize and the workspace engine reported connected. On this Mac lists all four servers; ready: ${ready.join(", ")}; the three disabled entries carry no ready mark.`,
+      ready.includes("ready-helper"),
+    );
   });
 
   await step("Settings stayed a working page rather than a blank document", async () => {
@@ -78,7 +71,7 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     expect(body.length).toBeGreaterThan(200);
     evidence.recordAssertionEvidence(
       "A Claude-style string command no longer blanks Settings",
-      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and the MCPs category listed all three as local items under Disabled while Advanced kept only workspace MCP creation.",
+      "With docs-helper written as command: \"python3\", args: [...] beside an array-command server and a remote server, Settings rendered and the Library listed all three as local items under On this Mac while Advanced kept only workspace MCP creation.",
       true,
     );
   });

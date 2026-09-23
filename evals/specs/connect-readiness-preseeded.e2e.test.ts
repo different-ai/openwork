@@ -182,10 +182,12 @@ test("bundled engine recovers from a startup outage and uses preseeded organizat
     JSON.stringify(connectionStatus), true);
 
   await user.click("Library");
-  await user.click({ role: "button", label: "MCPs" });
-  await user.notSee({ text: world.connectionName });
-  await user.click({ role: "tab", label: /^Needs your sign-in\b/ });
   await user.see({ text: world.connectionName }, { timeoutMs: 60_000 });
+  const signInChip = await probe.eventually(
+    async () => (await probe.dom(`[data-library-row="${world.connectionName}"] [data-library-status]`)).elements.map((element) => element.text),
+    { within: 60_000, label: "the connection row asks the member to sign in", until: (chips) => chips.length > 0 },
+  );
+  expect(signInChip).toEqual(["Sign in"]);
   await user.screenshot();
 
   await step("the signed-in desktop agent discovers and reads the skill", async () => {
