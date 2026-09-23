@@ -10,12 +10,14 @@ export type AppViewProps<Payload> = {
   payload: Payload
   app: App
   hostContext: McpUiHostContext | undefined
+  hostError?: string | null
 }
 
 type AppConfig<Schema extends z.ZodType> = {
   name: string
   schema: Schema
   acceptError?: (payload: z.infer<Schema>) => boolean
+  preserveState?: boolean
   render: (props: AppViewProps<z.infer<Schema>>) => ReactNode
 }
 
@@ -31,7 +33,7 @@ export function McpApp<Schema extends z.ZodType>(config: AppConfig<Schema>) {
         setReceived(previous => ({ payload, revision: (previous?.revision ?? 0) + 1 }))
         setFailure(null)
       }, message => {
-        setReceived(null)
+        if (!config.preserveState) setReceived(null)
         setFailure(message)
       }, config.acceptError)
       created.ontoolresult = handlers.ontoolresult
@@ -42,9 +44,10 @@ export function McpApp<Schema extends z.ZodType>(config: AppConfig<Schema>) {
   })
   const context = hostContext ?? app?.getHostContext()
   useHostStyles(app, context)
-  if (error || failure) return <p role="status">{error ? "The host connection failed. Reopen the App to continue." : failure}</p>
+  const hostError = error ? "The host connection failed. Reopen the App to continue." : failure
+  if (hostError && !(config.preserveState && received && app)) return <p role="status">{hostError}</p>
   if (!received || !app) return <div className="placeholder" role="status" aria-label="Waiting for result" />
-  return <div key={received.revision}>{config.render({ payload: received.payload, app, hostContext: context })}</div>
+  return <div key={config.preserveState ? "app" : received.revision}>{config.render({ payload: received.payload, app, hostContext: context, hostError })}</div>
 }
 
 export function mountMcpApp<Schema extends z.ZodType>(config: AppConfig<Schema>) {

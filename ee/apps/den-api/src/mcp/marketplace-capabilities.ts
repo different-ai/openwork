@@ -777,6 +777,7 @@ async function exactVersion(configObjectId: ConfigObjectId, organizationId: Orga
     eq(ConfigObjectVersionTable.id, normalizedVersionId),
     eq(ConfigObjectVersionTable.configObjectId, configObjectId),
     eq(ConfigObjectVersionTable.organizationId, organizationId),
+    eq(ConfigObjectVersionTable.isDeletedVersion, false),
   )).limit(1)
   return rows[0] ?? null
 }

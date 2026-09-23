@@ -1,0 +1,49 @@
+.workflows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  --workflow-border: var(--color-border-primary, ButtonBorder);
+}
+.workflows * { box-sizing: border-box; }
+.workflow-header, .workflow-actions, .workflow-result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.workflow-header { min-height: 40px; }
+.workflow-header h1, .workflows h2 { font-size: inherit; font-weight: 600; }
+.workflows h2 { margin: 0; overflow-wrap: anywhere; }
+.workflow-muted { color: var(--app-muted); }
+.workflow-search { display: flex; gap: 8px; }
+.workflow-search input { flex: 1; min-width: 0; }
+.workflow-picker { display: flex; flex-direction: column; gap: 4px; }
+.workflows input, .workflows select {
+  font: inherit;
+  color: inherit;
+  background: var(--color-background-primary, Canvas);
+  border: 1px solid var(--workflow-border);
+  border-radius: var(--app-radius);
+  padding: 8px 12px;
+  width: 100%;
+  min-height: 40px;
+}
+.workflows input:disabled, .workflows select:disabled { opacity: 0.5; }
+.workflows input:focus-visible, .workflows select:focus-visible, .workflows summary:focus-visible {
+  outline: 2px solid var(--color-ring-primary, Highlight);
+  outline-offset: 2px;
+}
+.workflow-block { display: flex; align-items: flex-start; gap: 8px; }
+.workflow-block svg { flex-shrink: 0; margin-top: 2px; }
+.workflows summary { cursor: pointer; color: var(--app-muted); padding: 4px 0; }
+.workflows dl { display: flex; flex-wrap: wrap; gap: 8px; }
+.workflows dd { margin: 0; overflow-wrap: anywhere; }
+.workflow-result { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--workflow-border); }
+.workflow-error { color: var(--color-text-danger, var(--color-text-primary, CanvasText)); }
+.workflows table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.workflows th, .workflows td { text-align: left; vertical-align: top; overflow-wrap: anywhere; padding: 8px; border-bottom: 1px solid var(--workflow-border); }
+.workflows th { font-weight: 500; color: var(--app-muted); }
+.workflows pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-family: var(--font-mono, ui-monospace, monospace); }
+.workflows .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

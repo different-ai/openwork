@@ -51,6 +51,13 @@
       "development": "./src/skill-created-app.ts",
       "default": "./src/skill-created-app.ts"
     },
+    "./workflow-runner-app": {
+      "types": "./src/workflow-runner-app.ts",
+      "development": "./src/workflow-runner-app.ts",
+      "bun": "./src/workflow-runner-app.ts",
+      "browser": "./src/workflow-runner-app.ts",
+      "default": "./dist/workflow-runner-app.js"
+    },
     "./connection-action-app": {
       "types": "./src/connection-action-app.ts",
       "development": "./src/connection-action-app.ts",

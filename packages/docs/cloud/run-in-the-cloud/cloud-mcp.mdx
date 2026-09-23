@@ -228,6 +228,36 @@ The gateway preserves provider `structuredContent` rather than adding fields to 
 
 MCP Apps from third-party providers render in OpenWork through its private App host. For an external MCP Apps-capable client, enable direct exposure and add the connection's own MCP URL from **Your Connections → Use in another app**. That endpoint exposes resources bound to permitted model-visible tools; it does not expose arbitrary resources or app-only helper tools. Initial App loading and interactive callback support are distinct. See [Use a connection in another MCP client](/cloud/share-with-your-team/shared-mcp-connections#use-a-connection-in-another-mcp-client).
 
+### Portable Workflow runner
+
+`open_workflows` opens a first-party App with a fixed standard binding to
+`ui://openwork/workflow-runner/v1/view.html`. It lists accessible saved Workflows;
+opening or searching never runs them. The App has its own identity and does not
+require a Program, generated Artifact view, or a parent Workflow.
+
+Choose a Workflow and **Run workflow** to call `run_workflow_readonly` through
+the standard MCP Apps server-tool bridge. The same tool is available to text-only
+clients. Connect rechecks the member's access and exact selected version, supplies
+`input.runtime` (current dates and optional IANA timezone), and validates declared
+output schemas. Workflows needing additional caller input remain visibly blocked.
+Execution requires `mcp:read` and the organization's existing Workflow capability
+exposure; this path does not add or upgrade credentials.
+
+Only current Den-authorized read-only dependencies may execute. External provider
+`readOnlyHint` annotations do not establish that authority. Runs can retain receipts
+and incur usage; they are explicit actions and are never automatically retried.
+This restriction applies to the runner tool, **not** to all tools on the Connect
+connection. Existing `search_capabilities`, `execute_capability`, and passthrough
+tools keep their own authorization rules.
+
+The runner uses ordinary tool definitions, `resources/read`, `structuredContent`,
+and the official MCP Apps bridge. It needs no `openwork/*` metadata, private
+App-host credential, or Desktop RPC. Hosts must support MCP Apps and server-tool
+calls for interaction; other clients receive the catalog and results as text.
+Generated Apps and third-party forwarding keep their existing behavior—this is
+an independent first-party example, not a migration of every App or a claim of
+compatibility with every host.
+
 ## Troubleshooting
 
 - **401 missing or invalid token**: run the client's auth/login command again. Confirm the client points to `https://api.openworklabs.com/mcp/agent`.

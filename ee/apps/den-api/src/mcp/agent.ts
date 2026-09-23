@@ -97,6 +97,8 @@ import {
   connectionActionPayloadSchema,
 } from "./connection-action.js"
 import { needsGeneratedArtifactCatalog } from "./generated-artifact-catalog-request.js"
+import { registerAgentWorkflowRunnerApp } from "./workflow-runner-app.js"
+import { createWorkflowRunnerService } from "./workflow-runner-service.js"
 import {
   createConfigObjectVersion,
   createPluginBundle,
@@ -902,6 +904,17 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
       }
     }
+
+    registerAgentWorkflowRunnerApp({
+      server,
+      service: createWorkflowRunnerService({
+        organizationId,
+        member: memberIdentity,
+        scopes: principal.scopes,
+        enabled: externalMcpConnectionsEnabled,
+        buildTools: () => buildCapabilityToolTree(capabilityContext),
+      }),
+    })
 
     // Keep the generic MCP App tool as the interoperable baseline.
     registerAgentWorkflowArtifactApp({

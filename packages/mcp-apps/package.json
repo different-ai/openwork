@@ -7,6 +7,10 @@
     "./connection-action": {
       "types": "./dist/connection-action.d.ts",
       "default": "./dist/connection-action.js"
+    },
+    "./workflow-runner": {
+      "types": "./dist/workflow-runner.d.ts",
+      "default": "./dist/workflow-runner.js"
     }
   },
   "files": [
@@ -14,6 +18,7 @@
   ],
   "scripts": {
     "build": "node scripts/build-apps.mjs",
+    "test": "bun test test/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
