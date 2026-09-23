@@ -113,9 +113,9 @@ const selectedTest = spec.world(selectedSkillsWeb, {
 });
 
 const openSkillMenu = async (user: User, name: string) => {
-  await user.click({ role: "button", label: "Agents, commands, skills, plugins, and connections" });
-  await user.click({ role: "button", label: "Skills" });
-  await user.click({ role: "button", label: new RegExp(name) });
+  await user.click({ role: "button", label: "Add files, skills, connectors, and more" });
+  await user.type({ placeholder: "Search files, skills, connectors" }, name);
+  await user.click({ role: "option", label: new RegExp(name.replace(/-/g, " "), "i") });
 };
 
 selectedTest("SKILL-ATTACH explicitly selected skills reach the first native model request and survive reload", async ({ world, user, probe, evidence, step }) => {

@@ -429,12 +429,13 @@ continuityTest("CONT-01 restores the exact cumulative prefix while one answer st
   const selectMode = async (current: string, next: string) => {
     if (current === "Default agent") {
       await user.notSee({ role: "button", label: /^(Build|Plan)$/ });
-      await user.click({ role: "button", label: "Agents, commands, skills, plugins, and connections" });
-      await user.click({ role: "button", label: "Agents" });
+      await user.click({ role: "button", label: "Add files, skills, connectors, and more" });
+      await user.click({ role: "option", label: /^Agents and commands/ });
+      await user.click({ role: "option", label: new RegExp(`^${next}`) });
     } else {
       await user.click({ role: "button", label: current });
+      await user.click({ role: "button", label: next });
     }
-    await user.click({ role: "button", label: next });
     if (next === "Default agent") {
       await user.notSee({ role: "button", label: /^(Build|Plan)$/ });
       return;

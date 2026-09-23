@@ -38,6 +38,7 @@ import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { parseConnectSkillToken } from "./connect-skill-token";
 import { encodeConnectorToken, parseConnectorToken } from "./connector-token";
+import { humanizeCapabilityName } from "./composer-plus-menu-model";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
@@ -74,6 +75,8 @@ type EditorProps = {
 export type LexicalPromptEditorHandle = {
   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
   insertMentionAtSelection: (kind: ComposerMentionKind, value: string) => string | null;
+  insertConnectorAtSelection: (connectorName: string) => void;
+  insertFileMentionAtSelection: (path: string) => string;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -111,6 +114,8 @@ const MENTION_PILL_CLASS: Record<ComposerMentionKind, string> = {
   agent: "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11",
   app: "inline-flex items-center rounded-full border border-cyan-6/35 bg-cyan-3/20 px-2.5 py-1 text-xs font-medium text-cyan-11",
 };
+
+const COMPOSER_TOKEN_CLASS = "inline-flex items-center rounded-md bg-gray-3 px-1.5 py-0.5 text-xs font-medium text-gray-12";
 
 function mentionPillText(value: string, kind: ComposerMentionKind) {
   return `@${kind === "file" ? value.split(/[\\/]/).pop() || value : value}`;
@@ -219,7 +224,7 @@ class ComposerSlashCommandNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    dom.className = "inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11";
+    dom.className = COMPOSER_TOKEN_CLASS;
     dom.textContent = `/${this.__commandName}`;
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
@@ -290,8 +295,8 @@ class ComposerSkillNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    dom.className = "inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11";
-    dom.textContent = `/${this.__skillName}`;
+    dom.className = COMPOSER_TOKEN_CLASS;
+    dom.textContent = humanizeCapabilityName(this.__skillName);
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     dom.title = `Skill: ${this.__skillName}`;
@@ -300,7 +305,7 @@ class ComposerSkillNode extends TextNode {
 
   override updateDOM(prevNode: ComposerSkillNode, dom: HTMLElement) {
     if (prevNode.__skillName !== this.__skillName) {
-      dom.textContent = `/${this.__skillName}`;
+      dom.textContent = humanizeCapabilityName(this.__skillName);
       dom.title = `Skill: ${this.__skillName}`;
     }
     return false;
@@ -368,7 +373,7 @@ class ComposerConnectorNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    dom.className = "inline-flex items-center rounded-full border border-blue-6/35 bg-blue-3/20 px-2.5 py-1 text-xs font-medium text-blue-11";
+    dom.className = COMPOSER_TOKEN_CLASS;
     dom.textContent = this.__connectorName;
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
@@ -928,6 +933,21 @@ function appendSkillAtEnd(skillName: string, skillToken?: string) {
   setSelectionAfterNode(spaceNode);
 }
 
+function insertTokenAtSelection(tokenNode: TextNode) {
+  const spaceNode = $createTextNode(" ");
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) {
+    const root = $getRoot();
+    const lastChild = root.getLastChild();
+    const paragraph = $isElementNode(lastChild) ? lastChild : $createParagraphNode();
+    if (!$isElementNode(lastChild)) root.append(paragraph);
+    paragraph.append(tokenNode, spaceNode);
+  } else {
+    selection.insertNodes([tokenNode, spaceNode]);
+  }
+  setSelectionAfterNode(spaceNode);
+}
+
 function insertSkillAtSelection(skillName: string, skillToken?: string) {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) {
@@ -1335,6 +1355,19 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       editor.update(() => {
         if (insertMentionAtSelection(kind, value)) draft = serializePromptFromRoot();
       }, { discrete: true });
+      return draft;
+    },
+    insertConnectorAtSelection(connectorName: string) {
+      editor.update(() => insertTokenAtSelection($createComposerConnectorNode(connectorName)));
+      editor.focus();
+    },
+    insertFileMentionAtSelection(path: string) {
+      let draft = "";
+      editor.update(() => {
+        insertTokenAtSelection($createComposerMentionNode(path, "file"));
+        draft = serializePromptFromRoot();
+      }, { discrete: true });
+      editor.focus();
       return draft;
     },
   }), [editor]);
