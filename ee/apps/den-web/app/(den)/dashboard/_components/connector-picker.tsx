@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
-import { FilterInput, ItemPanel, ItemRow, LinkButton } from "./item-list";
+import { FilterInput, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import type { ExternalMcpPreset } from "./mcp-connections-data";
 
@@ -129,7 +129,7 @@ export function ConnectorPicker({ entries, loading, addHref, customHref }: {
         />
       ) : null}
       {noMatch && customName !== null ? null : <ItemPanel>
-        {loading ? <p className="px-5 py-6 text-[13px] text-gray-500">Loading...</p> : null}
+        {loading ? <ItemRowsSkeleton label="Loading connectors" rows={5} /> : null}
         {visible.map((entry) => (
           <ItemRow
             key={entry.id}

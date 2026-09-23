@@ -10668,6 +10668,7 @@ export class DenClient extends HeyApiClient {
       limit?: number;
       status?: "active" | "inactive" | "deleted" | "archived";
       q?: string;
+      includeAccess?: "true" | "false";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10680,6 +10681,7 @@ export class DenClient extends HeyApiClient {
             { in: "query", key: "limit" },
             { in: "query", key: "status" },
             { in: "query", key: "q" },
+            { in: "query", key: "includeAccess" },
           ],
         },
       ],

@@ -21,10 +21,11 @@ import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { DetailRows, ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
 import { ConnectorLogo, KindTile, LetterTile } from "./item-logo";
 import { draftFromPluginGrants, useSavePluginAccess } from "./item-sharing";
-import { libraryQueryKeys, useLibrary } from "./library-data";
+import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import { receivedStatus } from "./library-view";
 import { usePluginAccess } from "./plugin-access-data";
 import { type DenPlugin, pluginQueryKeys, usePlugin } from "./plugin-data";
+import { PluginPageSkeleton } from "./plugin-skeletons";
 import { WhoCanUseIt } from "./who-can-use-it";
 
 export function pluginChatDeepLink(plugin: Pick<DenPlugin, "name">): string {
@@ -94,25 +95,38 @@ function useArchivePlugin() {
 
 /** B2 (a member's plugin) and D3 (Manage, with Who can use it inline). */
 export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "member" | "admin" }) {
+  return mode === "member" ? <MemberPluginPage pluginId={pluginId} /> : <PluginPage pluginId={pluginId} mode="admin" libraryItems={undefined} />;
+}
+
+/** My Library loads alongside the plugin; Manage pages never need it. */
+function MemberPluginPage({ pluginId }: { pluginId: string }) {
+  const library = useLibrary();
+  return <PluginPage pluginId={pluginId} mode="member" libraryItems={library.data} />;
+}
+
+function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: "member" | "admin"; libraryItems: LibraryItem[] | undefined }) {
   const router = useRouter();
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
   const plugin = usePlugin(pluginId);
   const access = usePluginAccess(pluginId);
-  const library = useLibrary();
   const saveAccess = useSavePluginAccess();
   const archive = useArchivePlugin();
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
 
+  if (plugin.isLoading) {
+    return <PluginPageSkeleton back={back} mode={mode} />;
+  }
+
   if (!plugin.data) {
     return (
       <ItemPage>
         <ItemHeader
           back={back}
-          title={plugin.isLoading ? "Loading..." : plugin.error ? "It did not load" : "Not found"}
-          description={plugin.isLoading ? undefined : plugin.error ? "Reload the page to try again." : "It may have been removed."}
+          title={plugin.error ? "It did not load" : "Not found"}
+          description={plugin.error ? "Reload the page to try again." : "It may have been removed."}
         />
       </ItemPage>
     );
@@ -123,7 +137,7 @@ export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "
   const mine = data.createdByOrgMembershipId !== null && data.createdByOrgMembershipId === viewerId;
   const canManage = mine || Boolean(orgContext && getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner).isAdmin);
   const draft = access.data ? draftFromPluginGrants(access.data) : null;
-  const item = library.data?.find((entry) => entry.type === "plugin" && entry.id === pluginId);
+  const item = libraryItems?.find((entry) => entry.type === "plugin" && entry.id === pluginId);
   const creator = orgContext?.members.find((member) => member.id === data.createdByOrgMembershipId);
   const who = mine && orgContext && draft
     ? ownedAccessStatus(draft, orgContext, viewerId)

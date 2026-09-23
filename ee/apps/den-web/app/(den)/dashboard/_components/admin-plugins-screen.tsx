@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, UserPlus } from "lucide-react";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
@@ -7,12 +8,12 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
-import { ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
+import { ItemMenu, removeEntry, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { LetterTile } from "./item-logo";
 import { draftFromPluginGrants } from "./item-sharing";
 import { ConnectorLogoStrip } from "./library-add-dialog";
 import { usePluginAccess } from "./plugin-access-data";
-import { type DenPlugin, useArchivePlugin, usePlugins } from "./plugin-data";
+import { type DenPluginSummary, pluginDetailQueryOptions, useArchivePlugin, usePluginSummaries } from "./plugin-data";
 
 function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
   return (
@@ -33,10 +34,11 @@ function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
   );
 }
 
-function PluginRow({ plugin }: { plugin: DenPlugin }) {
+function PluginRow({ plugin }: { plugin: DenPluginSummary }) {
   const toast = useDenToast();
+  const queryClient = useQueryClient();
   const { orgSlug, orgContext } = useOrgDashboard();
-  const access = usePluginAccess(plugin.id);
+  const access = usePluginAccess(plugin.id, { enabled: !plugin.accessIncluded });
   const archive = useArchivePlugin();
   const href = getPluginRoute(orgSlug, plugin.id);
   const status = orgContext && access.data
@@ -48,8 +50,12 @@ function PluginRow({ plugin }: { plugin: DenPlugin }) {
     toast({ title: `${plugin.name} is removed`, description: "Nobody can use it anymore." });
   }
 
+  function prefetch() {
+    void queryClient.prefetchQuery(pluginDetailQueryOptions(plugin.id));
+  }
+
   return (
-    <div data-plugin-row={plugin.name}>
+    <div data-plugin-row={plugin.name} onPointerEnter={prefetch} onFocus={prefetch}>
       <ItemRow
         href={href}
         logo={<LetterTile name={plugin.name} />}
@@ -78,7 +84,7 @@ function PluginRow({ plugin }: { plugin: DenPlugin }) {
 /** D1 and D6: every plugin the organization manages, and who has each one. */
 export function AdminPluginsScreen() {
   const { orgSlug } = useOrgDashboard();
-  const plugins = usePlugins();
+  const plugins = usePluginSummaries();
   const visible = (plugins.data ?? []).filter((plugin) => plugin.status !== "archived");
   const empty = !plugins.isLoading && !plugins.error && visible.length === 0;
 
@@ -105,7 +111,7 @@ export function AdminPluginsScreen() {
 
       {!empty && !plugins.error ? (
         <>
-          {plugins.isLoading ? <p className="text-[13px] text-gray-500">Loading plugins...</p> : null}
+          {plugins.isLoading ? <ItemPanel><ItemRowsSkeleton label="Loading plugins" /></ItemPanel> : null}
           {visible.length > 0 ? (
             <ItemPanel>
               {visible.map((plugin) => <PluginRow key={plugin.id} plugin={plugin} />)}

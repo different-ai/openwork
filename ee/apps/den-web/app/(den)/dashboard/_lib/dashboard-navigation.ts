@@ -20,7 +20,6 @@ import {
   getApiKeysRoute,
   getAutomationsRoute,
   getBillingRoute,
-  getModelConnectionsRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getLibraryRoute,
@@ -91,9 +90,6 @@ export function buildDashboardNavSections({
       label: "My Library",
       icon: LibraryBig,
     },
-    ...(orgSlug
-      ? [{ href: getModelConnectionsRoute(orgSlug), label: "My Model Connections", icon: Sparkles }]
-      : []),
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
       : []),

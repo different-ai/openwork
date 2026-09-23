@@ -29,7 +29,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
+import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
 import { CONTENT_EDIT_SESSION_MAX_AGE_MS } from "../shared.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
@@ -1794,12 +1794,19 @@ export async function getLatestConfigObjectVersion(input: { context: PluginArchA
   return serializeVersion(rows[0])
 }
 
-export async function createConfigObjectVersion(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; reason?: string; value: ConfigObjectInput }) {
+export async function createConfigObjectVersion(input: {
+  context: PluginArchActorContext
+  configObjectId: ConfigObjectId
+  reason?: string
+  requireFreshSession?: boolean
+  value: ConfigObjectInput
+}) {
   const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
+  const requireFreshSession = input.requireFreshSession
+    ?? await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
   await requirePluginArchResourceRole({
     context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
     sessionMaxAgeMs: row.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined,
@@ -2594,41 +2601,73 @@ async function collectPluginMarketplaces(organizationId: PluginRow["organization
   return byPlugin
 }
 
-export async function listPlugins(input: { context: PluginArchActorContext; cursor?: string; limit?: number; q?: string; status?: PluginRow["status"] }) {
+async function countPluginMemberships(pluginIds: PluginId[]) {
+  const counts = new Map<PluginId, number>()
+  if (pluginIds.length === 0) {
+    return counts
+  }
+
+  const rows = await db
+    .select({ pluginId: PluginConfigObjectTable.pluginId, count: count() })
+    .from(PluginConfigObjectTable)
+    .where(and(inArray(PluginConfigObjectTable.pluginId, pluginIds), isNull(PluginConfigObjectTable.removedAt)))
+    .groupBy(PluginConfigObjectTable.pluginId)
+  for (const row of rows) counts.set(row.pluginId, row.count)
+  return counts
+}
+
+async function listActivePluginAccessGrants(organizationId: PluginRow["organizationId"], pluginIds: PluginId[]) {
+  const byPlugin = new Map<PluginId, ReturnType<typeof serializeAccessGrant>[]>()
+  if (pluginIds.length === 0) {
+    return byPlugin
+  }
+
+  const rows = await db
+    .select()
+    .from(PluginAccessGrantTable)
+    .where(and(
+      eq(PluginAccessGrantTable.organizationId, organizationId),
+      inArray(PluginAccessGrantTable.pluginId, pluginIds),
+      isNull(PluginAccessGrantTable.removedAt),
+    ))
+    .orderBy(desc(PluginAccessGrantTable.createdAt))
+  for (const row of rows) {
+    const existing = byPlugin.get(row.pluginId) ?? []
+    existing.push(serializeAccessGrant(row))
+    byPlugin.set(row.pluginId, existing)
+  }
+  return byPlugin
+}
+
+export async function listPlugins(input: { context: PluginArchActorContext; cursor?: string; includeAccess?: boolean; limit?: number; q?: string; status?: PluginRow["status"] }) {
+  const organizationId = input.context.organizationContext.organization.id
   const rows = await db
     .select()
     .from(PluginTable)
-    .where(eq(PluginTable.organizationId, input.context.organizationContext.organization.id))
+    .where(and(eq(PluginTable.organizationId, organizationId), input.status ? eq(PluginTable.status, input.status) : undefined))
     .orderBy(desc(PluginTable.updatedAt), desc(PluginTable.id))
 
-  const memberships = await db
-    .select({ pluginId: PluginConfigObjectTable.pluginId, count: PluginConfigObjectTable.id })
-    .from(PluginConfigObjectTable)
-    .where(isNull(PluginConfigObjectTable.removedAt))
+  const roles = await resolvePluginArchPluginRoles(input.context, rows.map((row) => row.id))
+  const query = input.q?.toLowerCase()
+  const visible = rows.filter((row) => roles.has(row.id)
+    && (!query || `${row.name}\n${row.description ?? ""}`.toLowerCase().includes(query)))
+  const page = pageItems(visible, input.cursor, input.limit)
+  const pageIds = page.items.map((row) => row.id)
+  const managedIds = pageIds.filter((pluginId) => roles.get(pluginId) === "manager")
 
-  const counts = memberships.reduce((accumulator, row) => {
-    accumulator.set(row.pluginId, (accumulator.get(row.pluginId) ?? 0) + 1)
-    return accumulator
-  }, new Map<string, number>())
+  const [counts, marketplaceMembers, access] = await Promise.all([
+    countPluginMemberships(pageIds),
+    collectPluginMarketplaces(organizationId, pageIds),
+    input.includeAccess ? listActivePluginAccessGrants(organizationId, managedIds) : null,
+  ])
 
-  const marketplaceMembers = await collectPluginMarketplaces(
-    input.context.organizationContext.organization.id,
-    rows.map((row) => row.id),
-  )
-
-  const visible: ReturnType<typeof serializePlugin>[] = []
-  for (const row of rows) {
-    const role = await resolvePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "plugin" })
-    if (!role) continue
-    if (input.status && row.status !== input.status) continue
-    if (input.q) {
-      const haystack = `${row.name}\n${row.description ?? ""}`.toLowerCase()
-      if (!haystack.includes(input.q.toLowerCase())) continue
-    }
-    visible.push(serializePlugin(row, counts.get(row.id) ?? 0, marketplaceMembers.get(row.id) ?? []))
+  return {
+    items: page.items.map((row) => {
+      const plugin = serializePlugin(row, counts.get(row.id) ?? 0, marketplaceMembers.get(row.id) ?? [])
+      return access && roles.get(row.id) === "manager" ? { ...plugin, access: access.get(row.id) ?? [] } : plugin
+    }),
+    nextCursor: page.nextCursor,
   }
-
-  return pageItems(visible, input.cursor, input.limit)
 }
 
 export async function getPluginDetail(context: PluginArchActorContext, pluginId: PluginId) {

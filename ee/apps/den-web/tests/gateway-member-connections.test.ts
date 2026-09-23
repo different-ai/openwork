@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import * as requests from "../app/(den)/_lib/den-flow";
-import { getModelConnectionsRoute, getOrgAccessFlags } from "../app/(den)/_lib/den-org";
+import { getLibraryModelRoute, getLibraryModelsRoute, getOrgAccessFlags } from "../app/(den)/_lib/den-org";
 import { buildDashboardNavSections } from "../app/(den)/dashboard/_lib/dashboard-navigation";
 import {
   disconnectGatewayMemberConnection, gatewayMemberConnectionKey, gatewayMemberAuthorizationCompleted,
@@ -48,7 +48,7 @@ describe("member model connections", () => {
     const request = spyOn(requests, "requestJson").mockResolvedValue(reply(null, 204));
     const blocked = { ...row, hasCredential: true, configurationRequired: true };
     const signal = new AbortController().signal;
-    await expect(startGatewayMemberConnection("org_fixture", blocked, signal)).rejects.toThrow("Administrator action required");
+    await expect(startGatewayMemberConnection("org_fixture", blocked, signal)).rejects.toThrow("Your admin needs to finish setting this up");
     expect(request).not.toHaveBeenCalled();
     await disconnectGatewayMemberConnection("org_fixture", blocked, signal);
     expect(request.mock.calls[0]?.[1]?.method).toBe("DELETE");
@@ -65,7 +65,7 @@ describe("member model connections", () => {
       { connections: [{ ...row, accountEmail: undefined }] },
     ]) {
       request.mockResolvedValue(reply(payload));
-      await expect(loadGatewayMemberConnections("org_fixture")).rejects.toThrow("invalid connection inventory");
+      await expect(loadGatewayMemberConnections("org_fixture")).rejects.toThrow("Your models did not load");
     }
   });
 
@@ -99,33 +99,25 @@ describe("member model connections", () => {
     const request = spyOn(requests, "requestJson").mockResolvedValue(reply(null, 204));
     const retained = { ...row, hasAccess: false, hasCredential: true, authorizationRevision: "revision-old" };
     const signal = new AbortController().signal;
-    await expect(startGatewayMemberConnection("org_fixture", retained, signal)).rejects.toThrow("Access to this credential set was removed");
+    await expect(startGatewayMemberConnection("org_fixture", retained, signal)).rejects.toThrow("You no longer have access to these models");
     expect(request).not.toHaveBeenCalled();
     await disconnectGatewayMemberConnection("org_fixture", retained, signal);
     expect(request.mock.calls[0]?.[1]?.method).toBe("DELETE");
   });
 
-  test("is a member route independent of admin management and ready model inventory", () => {
-    expect(getModelConnectionsRoute("example")).toBe("/dashboard/model-connections");
+  test("models live in My Library; the old page only forwards installed desktop builds there", () => {
+    expect(getLibraryModelsRoute("example")).toBe("/dashboard/library?show=models");
+    expect(getLibraryModelRoute("example", "ipr_1")).toBe("/dashboard/library/models/ipr_1");
     const nav = buildDashboardNavSections({ orgSlug: "example", access: getOrgAccessFlags("member", false),
       capabilities: { cloud: false, installLinks: false, mcpConnections: false, openworkWeb: false, orgManagedDashboards: false, workflows: false },
       orgMode: "single_org", runtimeConfigLoaded: true,
     });
-    expect(nav.flatMap((section) => section.items).some((item) => item.href === getModelConnectionsRoute())).toBe(true);
-    expect(nav.flatMap((section) => section.items).some((item) => item.label === "AI Gateway")).toBe(false);
+    const labels = nav.flatMap((section) => section.items).map((item) => item.label);
+    expect(labels).not.toContain("My Model Connections");
+    expect(labels).not.toContain("AI Gateway");
     const shell = readFileSync(new URL("../app/(den)/dashboard/_components/org-dashboard-shell.tsx", import.meta.url), "utf8");
-    expect(shell).toContain("pathname.startsWith(getModelConnectionsRoute(orgSlug))");
-    expect(shell).toContain('return "My Model Connections"');
+    expect(shell).not.toContain("My Model Connections");
     const page = readFileSync(new URL("../app/(den)/dashboard/model-connections/page.tsx", import.meta.url), "utf8");
-    expect(page).toContain("GatewayMemberConnectionsScreen");
-    expect(page).not.toContain("CapabilityGuard");
-    const screen = readFileSync(new URL("../app/(den)/dashboard/_components/gateway-member-connections-screen.tsx", import.meta.url), "utf8");
-    expect(screen).toContain('key={`${orgId}:${user?.id}`}');
-    expect(screen).toContain("action.current?.abort()");
-    expect(screen).toContain("gatewayMemberAuthorizationCompleted(current, pending.authorizationRevision)");
-    expect(screen).toContain("Refresh status");
-    expect(screen).toContain("Stop waiting");
-    expect(screen).not.toContain("useSearchParams");
-    expect(screen).not.toContain("credentialMode");
+    expect(page).toContain('redirect("/dashboard/library?show=models")');
   });
 });

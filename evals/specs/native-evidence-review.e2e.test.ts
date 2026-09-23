@@ -9,11 +9,12 @@ const exec = promisify(execFile);
 
 test("Native evidence links open a readable report and preserve commit-bound publication rules", async ({ evidence }) => {
   const contract = fileURLToPath(new URL("../../.github/scripts/evidence-presentation.test.mjs", import.meta.url));
-  const result = await exec(process.execPath, ["--test", contract], { timeout: 30_000 });
+  const cardContract = fileURLToPath(new URL("../../.github/scripts/evidence-preview-card.test.mjs", import.meta.url));
+  const result = await exec(process.execPath, ["--test", contract, cardContract], { timeout: 30_000 });
   expect(result.stdout).toMatch(/(?:fail 0|# fail 0)/);
   evidence.recordAssertionEvidence(
     "Native presentation rejects stale evidence and preserves recorded failures",
-    "The controller's eight contract tests passed against a simulated GitHub API: commit binding, failed reports, missing reports, stale heads and attempts, delayed progress, publication races, URL validation, and retirement of older deployments. Actual GitHub check/deployment creation runs separately after this proof completes.",
+    "The controller and preview card contract tests passed against a simulated GitHub API: commit binding, failed reports, missing reports, stale heads and attempts, delayed progress, publication races, URL validation, retirement of older deployments, readable preview links, outdated reports, and bot comment ownership. Actual GitHub check/deployment creation runs separately after this proof completes.",
     true,
   );
 

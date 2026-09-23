@@ -44,7 +44,7 @@ export function GatewayConnect() {
       const attempt = browserAttempt();
       if (!attempt) {
         setStep("restart");
-        setError("This connection link is invalid. Start Connect again in OpenWork.");
+        setError("This sign-in link is invalid. Start signing in again in OpenWork.");
         return;
       }
       const endpoint = await gatewayBrowserEndpoint(`/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(attempt)}`);
@@ -62,9 +62,9 @@ export function GatewayConnect() {
       if (!response.ok) {
         setStep(response.status === 400 ? "restart" : response.status === 403 ? "blocked" : "error");
         setError(readString(payload, "message") ?? (response.status === 400
-          ? "This connection link expired. Start Connect again in OpenWork."
+          ? "This sign-in link expired. Start signing in again in OpenWork."
           : response.status === 403
-            ? "Connection access is unavailable. Contact your OpenWork administrator."
+            ? "You can't sign in to these models right now. Ask your admin."
             : "Could not verify your sign-in. Check your connection and retry."));
         return;
       }
@@ -129,7 +129,7 @@ export function GatewayConnect() {
       const attempt = browserAttempt();
       if (!attempt) {
         setStep("restart");
-        setError("This connection link is invalid. Start Connect again in OpenWork.");
+        setError("This sign-in link is invalid. Start signing in again in OpenWork.");
         return;
       }
       const endpoint = await gatewayBrowserEndpoint(`/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`);
@@ -152,7 +152,7 @@ export function GatewayConnect() {
           setStep(code === "browser_signin_required" ? "sign_in_required" : "account_mismatch");
         } else {
           setStep("restart");
-          setError("Could not continue this connection. Start Connect again in OpenWork.");
+          setError("Sign-in could not continue. Start signing in again in OpenWork.");
         }
         return;
       }
@@ -166,7 +166,7 @@ export function GatewayConnect() {
       if (!current()) return;
       setStep(startAttempted.current ? "restart" : "error");
       setError(startAttempted.current
-        ? "Could not confirm whether Google sign-in started. Start Connect again in OpenWork."
+        ? "Could not confirm whether Google sign-in started. Start signing in again in OpenWork."
         : "Could not verify your sign-in. Check your connection and retry.");
     } finally {
       if (current()) {
@@ -219,8 +219,8 @@ export function GatewayConnect() {
   const title = step === "sign_in_required" ? "Sign in to OpenWork"
     : step === "account_mismatch" ? "Switch OpenWork account"
       : step === "ready" ? "Sign in to Google"
-        : step === "blocked" ? "Connection unavailable"
-          : step === "restart" ? "Start Connect again"
+        : step === "blocked" ? "Sign-in unavailable"
+          : step === "restart" ? "Start signing in again"
             : "Could not verify sign-in";
 
   return (
@@ -232,7 +232,7 @@ export function GatewayConnect() {
             <div aria-hidden="true" className="h-10 w-44 rounded-lg bg-[var(--dls-hover)]" />
           </div>
         ) : <DenPageHeader title={title} className="[&_h1]:text-xl [&_h1]:leading-tight [&_h1]:text-[var(--dls-text-primary)]" />}
-        {step === "account_mismatch" ? <DenNotice tone="neutral" message={<span className="flex items-start gap-2"><LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4 shrink-0" />Use the OpenWork account that started Connect.</span>} /> : null}
+        {step === "account_mismatch" ? <DenNotice tone="neutral" message={<span className="flex items-start gap-2"><LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4 shrink-0" />Use the OpenWork account that started signing in.</span>} /> : null}
         {error ? <DenNotice tone={step === "blocked" ? "neutral" : "error"} message={error} /> : null}
         <div className="flex flex-wrap gap-3">
           {step === "sign_in_required" ? <a href="/" target="_blank" rel="noopener noreferrer" className={buttonVariants()}>Sign in to OpenWork</a> : null}

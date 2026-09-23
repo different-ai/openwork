@@ -707,7 +707,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     }),
     async (c: OrgContext) => {
       const query = validQuery<any>(c)
-      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, limit: query.limit, q: query.q, status: query.status }))
+      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, includeAccess: query.includeAccess, limit: query.limit, q: query.q, status: query.status }))
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.plugins,

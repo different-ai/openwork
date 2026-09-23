@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import * as navigation from "next/navigation";
@@ -120,7 +121,9 @@ async function withShell(
   });
   const commandPalette = spyOn(palette, "DenCommandPalette").mockImplementation(() => <></>);
   try {
-    await act(async () => root.render(<OrgDashboardShell><p>Page content</p></OrgDashboardShell>));
+    await act(async () => root.render(
+      <QueryClientProvider client={new QueryClient()}><OrgDashboardShell><p>Page content</p></OrgDashboardShell></QueryClientProvider>,
+    ));
     await check(container);
     expect(request).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
