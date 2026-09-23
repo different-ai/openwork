@@ -8,7 +8,7 @@ const test = spec.world(engineLiveParity, { timeout: 600_000,
   needs: { placement: "local", env: ["OPENWORK_EVAL_ENGINE"] },
 });
 
-test(`LIVE-FRESH ${resolveEvalEngine()}: create the first workspace and send to the real free model`, async ({ world, user, probe, step, evidence }) => {
+test(`LIVE-FRESH ${resolveEvalEngine()}: ${resolveEvalEngine() === "v2" ? "create the first workspace and open the composer" : "create the first workspace and send to the real free model"}`, async ({ world, user, probe, step, evidence }) => {
   await step("A completely fresh profile has no workspace", async () => {
     const listing = await world.request("/workspaces");
     expect(listing.status).toBe(200);
@@ -27,6 +27,10 @@ test(`LIVE-FRESH ${resolveEvalEngine()}: create the first workspace and send to 
     await probe.eventually(() => probe.composer(), { within: 90_000, label: "first available model enables sending", until: state => !state.modelUnavailable && Boolean(state.selectedModelLabel) });
     await user.screenshot();
   });
+  if (world.engine === "v2") {
+    evidence.recordAssertionEvidence("Fresh browser v2 workspace and composer", "The server started with no workspace; real workspace creation opened the composer. Existing free-starter inference is outside the v2 migration gate. OpenWork's own free models require first-send coverage before GA; real paid first sends remain covered separately.", true);
+    return;
+  }
   await step("Send a nonce challenge to the real model and observe its generated answer", async () => {
     const nonce = randomUUID();
     const model = (await probe.composer()).selectedModelLabel;

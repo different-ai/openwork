@@ -57,7 +57,7 @@ for (let iteration = 0; iteration < iterations; iteration++) {
   }
 }
 const lines = ["# Real-model native app parity", "", "", "",
-  "Pinned v1 and v2 engines; fresh native Electron app profiles. Real inference through the free starter service or an existing Gateway credential entered in the app's masked provider form. Den capability discovery and execution are real. Only the external report service is a controlled witness. No model responses are scripted.", "",
+  "Pinned v1 and v2 engines; fresh native Electron app profiles. Real inference through an existing Gateway credential entered in the app's masked provider form. V1 also tests the existing free starter service. V2's blank-installation check covers workspace creation and the composer, with paid first-send inference covered by LIVE-ORG. OpenWork's own free models must be tested before v2 GA. Den capability discovery and execution are real. Only the external report service is a controlled witness. No model responses are scripted.", "",
   "| User journey | Result | Evidence |", "| --- | --- | --- |"];
 for (const result of results.filter(result => result.iteration === 1)) for (const item of result.evidence) lines.push(`| ${item.name} | ${item.outcome} | [Steps and screenshots](${item.path}) |`);
 lines.push("", "## Native development app launch", "", "Milliseconds from starting the desktop fixture to native bridge ready / editable composer with a selectable model. Includes development build and harness overhead, uses shared caches and a blank app profile. This is not a packaged cold-start benchmark and does not imply inference succeeds.", "", "| Metric | v1 median (min–max), n | v2 median (min–max), n |", "| --- | --- | --- |");
