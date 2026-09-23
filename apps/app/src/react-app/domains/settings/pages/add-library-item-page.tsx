@@ -2,15 +2,6 @@
 import { useEffect, useState } from "react";
 import { FileText, Loader2, Plus, Server, Terminal, Trash2 } from "lucide-react";
 
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { t } from "../../../../i18n";
@@ -29,6 +20,7 @@ import {
   type LibraryPluginComponentDraft,
   type LibraryPluginComponentKind,
 } from "../library";
+import { LibraryPage } from "./library-page";
 
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -42,9 +34,8 @@ const libraryFieldClass = [
 
 type MarketplaceOption = { id: string; name: string };
 
-export type AddLibraryItemModalProps = {
-  open: boolean;
-  kind: LibraryAuthorableKind | null;
+export type AddLibraryItemPageProps = {
+  kind: LibraryAuthorableKind;
   busy?: boolean;
   cloud?: boolean;
   /** Owners and admins can configure a plugin's MCP connection inline; Den refuses it from members. */
@@ -65,21 +56,6 @@ function titleForKind(kind: LibraryAuthorableKind) {
       return t("extensions.create_mcp_title");
     case "plugin":
       return t("extensions.create_plugin_title");
-  }
-}
-
-function hintForKind(kind: LibraryAuthorableKind) {
-  switch (kind) {
-    case "skill":
-      return t("extensions.create_skill_hint");
-    case "command":
-      return t("extensions.create_command_hint");
-    case "agent":
-      return t("extensions.create_agent_hint");
-    case "mcp":
-      return t("extensions.create_mcp_hint");
-    case "plugin":
-      return t("extensions.create_plugin_hint");
   }
 }
 
@@ -147,32 +123,70 @@ function ChoicePills<TValue extends string>(props: {
   );
 }
 
-/** The authentication half of Den's Connectors form; access follows the plugin's own sharing. */
+function RadioOption(props: {
+  selected: boolean;
+  label: string;
+  hint: string;
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={props.selected}
+      disabled={props.disabled}
+      className="flex w-full items-start gap-2.5 py-2 text-left disabled:cursor-not-allowed disabled:opacity-60"
+      onClick={props.onSelect}
+    >
+      <span
+        className={`mt-0.5 size-4 shrink-0 rounded-full ${
+          props.selected ? "border-[5px] border-foreground" : "border-[1.5px] border-muted-foreground/50"
+        }`}
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-dls-text">{props.label}</span>
+        <span className="block text-xs text-dls-secondary">{props.hint}</span>
+      </span>
+    </button>
+  );
+}
+
+/**
+ * How the server signs in. Whose account the AI uses only matters once other
+ * people can use it, so that question waits until the item is shared.
+ */
 function McpConnectionFields(props: {
   connection: LibraryMcpConnectionForm;
+  shared: boolean;
   disabled: boolean;
   onChange: (update: (connection: LibraryMcpConnectionForm) => LibraryMcpConnectionForm) => void;
 }) {
   const { connection, disabled, onChange } = props;
-  const authOptions: Array<{ value: LibraryMcpAuthType; label: string }> = [
-    { value: "oauth", label: t("extensions.add_mcp_auth_oauth") },
-    { value: "apikey", label: t("extensions.add_mcp_auth_apikey") },
-    { value: "none", label: t("extensions.add_mcp_auth_none") },
+  const authOptions: Array<{ value: LibraryMcpAuthType; label: string; hint: string }> = [
+    { value: "oauth", label: t("extensions.add_mcp_auth_oauth"), hint: t("extensions.add_mcp_auth_oauth_hint") },
+    { value: "apikey", label: t("extensions.add_mcp_auth_apikey"), hint: t("extensions.add_mcp_auth_apikey_hint") },
+    { value: "none", label: t("extensions.add_mcp_auth_none"), hint: t("extensions.add_mcp_auth_none_hint") },
   ];
   const accountOptions: Array<{ value: LibraryMcpCredentialMode; label: string }> = [
     { value: "per_member", label: t("extensions.add_mcp_account_per_member") },
     { value: "shared", label: t("extensions.add_mcp_account_shared") },
   ];
   return (
-    <div className="flex flex-col gap-3 rounded-xl bg-dls-hover/60 p-4">
-      <p className="text-xs text-dls-secondary">{t("extensions.add_mcp_connection_hint")}</p>
-      <ChoicePills
-        label={t("extensions.add_mcp_auth_label")}
-        options={authOptions}
-        value={connection.authType}
-        disabled={disabled}
-        onChange={(authType) => onChange((current) => withLibraryMcpAuthType(current, authType))}
-      />
+    <div className="flex flex-col gap-3">
+      <div role="radiogroup" aria-label={t("extensions.add_mcp_auth_label")}>
+        <div className="mb-1 text-xs font-medium text-dls-secondary">{t("extensions.add_mcp_auth_label")}</div>
+        {authOptions.map((option) => (
+          <RadioOption
+            key={option.value}
+            selected={connection.authType === option.value}
+            label={option.label}
+            hint={option.hint}
+            disabled={disabled}
+            onSelect={() => onChange((current) => withLibraryMcpAuthType(current, option.value))}
+          />
+        ))}
+      </div>
       {connection.authType === "apikey" ? (
         <TextInput
           label={t("extensions.add_mcp_api_key_label")}
@@ -203,7 +217,7 @@ function McpConnectionFields(props: {
         </button>
       ) : null}
       {connection.authType === "oauth" && connection.useOAuthClient ? (
-        <div className="flex flex-col gap-3 rounded-xl bg-dls-bg p-4">
+        <div className="flex flex-col gap-3 rounded-xl bg-dls-hover/60 p-4">
           <p className="text-xs text-dls-secondary">{t("extensions.add_mcp_oauth_app_hint")}</p>
           <TextInput
             label={t("extensions.add_mcp_oauth_client_id_label")}
@@ -236,7 +250,7 @@ function McpConnectionFields(props: {
           />
         </div>
       ) : null}
-      {connection.authType === "oauth" ? (
+      {connection.authType === "oauth" && props.shared ? (
         <div>
           <ChoicePills
             label={t("extensions.add_mcp_account_label")}
@@ -275,7 +289,7 @@ const COMPONENT_META: Record<LibraryPluginComponentKind, { label: string; hint: 
   },
 };
 
-export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
+export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
   const kind = props.kind;
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -290,7 +304,6 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
   const configureConnections = props.cloud === true && props.canConfigureMcpConnections === true;
 
   useEffect(() => {
-    if (!props.open) return;
     setName("");
     setDescription("");
     setInstructions("");
@@ -300,10 +313,10 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
     setMarketplaceId("");
     setError(null);
     setSubmitting(false);
-  }, [props.open, kind]);
+  }, [kind]);
 
   useEffect(() => {
-    if (!props.open || !props.cloud || kind !== "plugin") return;
+    if (!props.cloud || kind !== "plugin") return;
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
@@ -322,7 +335,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [props.open, props.cloud, kind]);
+  }, [props.cloud, kind]);
 
   const handleClose = () => {
     if (submitting) return;
@@ -347,7 +360,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
   };
 
   const handleSubmit = async () => {
-    if (!kind || submitting) return;
+    if (submitting) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError(t("extensions.add_name_required"));
@@ -412,8 +425,6 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
     }
   };
 
-  if (!kind) return null;
-
   const slug = slugifyLibraryItemName(name, kind);
   const busy = submitting || props.busy === true;
   const submitLabel = kind === "plugin"
@@ -425,22 +436,24 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
         : t("extensions.add_create");
 
   return (
-    <Dialog
-      open={props.open}
-      onOpenChange={(open) => {
-        if (!open) handleClose();
-      }}
+    <LibraryPage
+      title={titleForKind(kind)}
+      testId="library-create-page"
+      backDisabled={busy}
+      onBack={handleClose}
+      footerNote={shareOrgWide ? undefined : t("extensions.add_page_just_me_note")}
+      actions={(
+        <>
+          <Button variant="outline" disabled={busy} onClick={handleClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button disabled={busy} onClick={() => void handleSubmit()}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : null}
+            {submitLabel}
+          </Button>
+        </>
+      )}
     >
-      <DialogContent className="max-h-[min(92dvh,880px)] overflow-y-auto lg:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle className="text-[22px] font-semibold tracking-[-0.03em]">
-            {titleForKind(kind)}
-          </DialogTitle>
-          <DialogDescription>
-            {hintForKind(kind)}
-          </DialogDescription>
-        </DialogHeader>
-
         {kind === "plugin" ? (
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-4">
@@ -543,6 +556,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                               {component.connection ? (
                                 <McpConnectionFields
                                   connection={component.connection}
+                                  shared={shareOrgWide}
                                   disabled={busy}
                                   onChange={(update) => updateComponentConnection(index, update)}
                                 />
@@ -644,6 +658,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                 {configureConnections ? (
                   <McpConnectionFields
                     connection={connection}
+                    shared={shareOrgWide}
                     disabled={busy}
                     onChange={(update) => setConnection(update)}
                   />
@@ -681,12 +696,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
             )}
             {props.cloud ? (
               <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-3">
-                  <p className="shrink-0 font-mono text-[11px] font-medium tracking-[0.12em] text-dls-secondary">
-                    {t("extensions.add_access_label")}
-                  </p>
-                  <span className="h-px flex-1 bg-dls-border" />
-                </div>
+                <h2 className="text-[15px] font-semibold">{t("extensions.add_access_label")}</h2>
                 <div role="radiogroup" aria-label={t("extensions.add_access_label")} className="flex flex-col gap-1">
                   <button
                     type="button"
@@ -696,7 +706,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                     className={`flex w-full items-start gap-3 rounded-xl px-3.5 py-3 text-left ${shareOrgWide ? "" : "bg-dls-hover"}`}
                     onClick={() => setShareOrgWide(false)}
                   >
-                    <span className={`mt-0.5 flex size-[17px] shrink-0 items-center justify-center rounded-full ${shareOrgWide ? "border-[1.5px] border-dls-border" : "bg-foreground"}`} />
+                    <span className={`mt-0.5 flex size-[17px] shrink-0 items-center justify-center rounded-full ${shareOrgWide ? "border-[1.5px] border-muted-foreground/50" : "bg-foreground"}`} />
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold">{t("extensions.add_access_just_me")}</span>
                       <span className="block text-[13px] text-dls-secondary">{t("extensions.add_access_just_me_hint")}</span>
@@ -710,7 +720,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                     className={`flex w-full items-start gap-3 rounded-xl px-3.5 py-3 text-left ${shareOrgWide ? "bg-dls-hover" : ""}`}
                     onClick={() => setShareOrgWide(true)}
                   >
-                    <span className={`mt-0.5 flex size-[17px] shrink-0 items-center justify-center rounded-full ${shareOrgWide ? "bg-foreground" : "border-[1.5px] border-dls-border"}`} />
+                    <span className={`mt-0.5 flex size-[17px] shrink-0 items-center justify-center rounded-full ${shareOrgWide ? "bg-foreground" : "border-[1.5px] border-muted-foreground/50"}`} />
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold">{t("extensions.add_access_everyone")}</span>
                       <span className="block text-[13px] text-dls-secondary">{t("extensions.add_access_everyone_hint")}</span>
@@ -727,20 +737,6 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
             {error}
           </div>
         ) : null}
-
-        <DialogFooter>
-          <DialogClose
-            render={<Button variant="outline" disabled={busy} />}
-            disabled={busy}
-          >
-            {t("common.cancel")}
-          </DialogClose>
-          <Button disabled={busy} onClick={() => void handleSubmit()}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : null}
-            {submitLabel}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </LibraryPage>
   );
 }

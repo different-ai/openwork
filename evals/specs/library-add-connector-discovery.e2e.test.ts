@@ -11,7 +11,7 @@ const requirements: TestNeeds = {
 const missingRequirements = unmetNeeds(requirements, process.env);
 const title = missingRequirements.length > 0
   ? `Library connector discovery skipped — needs: ${missingRequirements.join(", ")}`
-  : "Library starts with Cloud MCPs and keeps local MCP creation in Advanced";
+  : "an admin picks what to add in one click and fills it in on a full page, while local MCP creation stays in Advanced";
 
 test(title, async ({ evidence, world, seed, user, probe, step }) => {
   needs(requirements);
@@ -95,7 +95,7 @@ test(title, async ({ evidence, world, seed, user, probe, step }) => {
     await user.screenshot();
   });
 
-  await step("admin MCP Add requests this Den's MCP connections without local creation UI", async () => {
+  await step("after: Add to library asks what to add, and one click on the MCP row sends an admin to this Den's MCP connections", async () => {
     const libraryHash = await probe.hash();
     const expectedUrl = new URL("/dashboard/mcp-connections", denWebUrl).toString();
     const openedBefore = await probe.eventually(() => world.browserUrls.opened(), {
@@ -103,16 +103,18 @@ test(title, async ({ evidence, world, seed, user, probe, step }) => {
     });
     await user.click({ role: "button", label: "Add to library" });
     await user.see({ testId: "library-add-choices" });
-    expect((await probe.dom('[data-testid="library-add-choices"] [role="radio"]')).elements).toHaveLength(3);
-    for (const kind of ["mcp", "skill", "plugin"]) {
-      expect((await probe.dom(`[data-kind="${kind}"]`)).elements).toHaveLength(1);
-    }
+    const rowTitles = (await probe.dom('[data-testid="library-add-choices"] [data-kind-title]')).elements.map((element) => element.text);
+    expect(rowTitles).toEqual(["Organization MCP", "Skill", "Plugin"]);
+    const pickerDialogs = (await probe.dom('[role="dialog"]')).elements.length;
+    expect(pickerDialogs).toBe(1);
+    await user.notSee({ role: "button", label: "Continue" });
+    await user.screenshot();
     expect(await world.browserUrls.opened()).toEqual(openedBefore);
     await user.press("Escape");
     await user.notSee({ testId: "library-add-choices" });
     expect(await world.browserUrls.opened()).toEqual(openedBefore);
     await user.click({ role: "button", label: "Add to library" });
-    await user.click({ role: "button", label: "Continue" });
+    await user.click({ text: "Organization MCP" });
     const openedAfter = await probe.eventually(() => world.browserUrls.opened(), {
       within: 10_000,
       label: "admin Add MCP issues a fresh external-open request",
@@ -130,7 +132,7 @@ test(title, async ({ evidence, world, seed, user, probe, step }) => {
     expect((await probe.dom('header button[aria-label="Add to library"]:not(:disabled):not([aria-disabled="true"])')).elements).toHaveLength(1);
     evidence.recordAssertionEvidence(
       "Admin Cloud MCP Add requests the exact fixture Den MCP connections URL without local creation UI",
-      `Bootstrap context=${JSON.stringify(bootstrap)}; external-open count=${openedBefore.length}->${openedAfter.length}; captured URL=${openedAfter.at(-1)}; expected=${expectedUrl}; Library route and organization retained with zero dialogs. The fixture captures the final desktop boundary without launching an OS browser.`,
+      `picker rows=${rowTitles.join(" / ")} in ${pickerDialogs} dialog with no Continue button; one click on Organization MCP: external-open count=${openedBefore.length}->${openedAfter.length}; captured URL=${openedAfter.at(-1)}; expected=${expectedUrl}; Library route and organization retained with zero dialogs. Bootstrap context=${JSON.stringify(bootstrap)}. The fixture captures the final desktop boundary without launching an OS browser.`,
       openedAfter.length === openedBefore.length + 1 && openedAfter.at(-1) === expectedUrl,
     );
   });
@@ -139,7 +141,7 @@ test(title, async ({ evidence, world, seed, user, probe, step }) => {
     { filter: "Skills", addLabel: "Create skill", emptyTitle: "No skills yet", hint: "Add reusable instructions for work your agents do often.", formTitle: "Create a skill" },
     { filter: "Plugins", addLabel: "Add plugin", emptyTitle: "No plugins yet", hint: "Add a plugin to bring related skills and MCPs into your Library.", formTitle: "Create a plugin" },
   ]) {
-    await step(`${filter} has its own empty state, search recovery, and separate header and empty-state actions`, async () => {
+    await step(`${filter} has its own empty state, and both Add actions open ${formTitle} as a full page`, async () => {
       await user.click({ role: "button", label: filter });
       await user.see({ text: emptyTitle });
       await user.see({ text: hint });
@@ -155,25 +157,57 @@ test(title, async ({ evidence, world, seed, user, probe, step }) => {
       await user.click({ role: "button", label: "Clear filters" });
       await user.see({ placeholder: "Search your library" }, { value: "" });
       await user.see({ text: emptyTitle });
+      const pageOpens: string[] = [];
       for (const entryPoint of ["header", "empty-state"]) {
         if (entryPoint === "header") {
           await user.click({ role: "button", label: "Add to library" });
           await user.see({ testId: "library-add-choices" });
           await user.click({ text: filter === "Skills" ? /^Skill$/ : /^Plugin$/ });
-          await user.click({ role: "button", label: "Continue" });
         } else {
           await user.click({ role: "button", label: addLabel });
         }
-        await user.see({ text: formTitle });
+        await user.see({ testId: "library-create-page" });
         await user.notSee({ role: "textbox", label: "App name" });
         await user.notSee({ testId: "library-add-choices" });
-        expect((await probe.dom('[role="dialog"]')).elements).toHaveLength(1);
+        await user.notSee({ placeholder: "Search your library" });
+        await user.see({ role: "heading", label: formTitle });
+        const formDialogs = (await probe.dom('[role="dialog"]')).elements.length;
+        expect(formDialogs).toBe(0);
+        pageOpens.push(`${entryPoint}: "${formTitle}" page, dialogs=${formDialogs}`);
+        if (entryPoint === "header") await user.screenshot();
         await user.press("Escape");
-        await user.notSee({ text: formTitle });
+        await user.notSee({ testId: "library-create-page" });
         await user.see({ text: emptyTitle });
       }
+      evidence.recordAssertionEvidence(
+        `${formTitle} is a full page from both Add actions, and Escape returns to the Library`,
+        `${pageOpens.join("; ")}; the Library list and search are replaced while the page is open; Escape → "${emptyTitle}" again`,
+        pageOpens.length === 2,
+      );
     });
   }
+
+  await step("after: a plugin's MCP server asks how it signs in, and whose account only once it is shared with everyone", async () => {
+    await user.click({ role: "button", label: "Add plugin" });
+    await user.see({ testId: "library-create-page" });
+    await user.click({ role: "button", label: "MCP server" });
+    await user.see({ text: "How does it sign in?" });
+    const labels = (await probe.dom('[role="radiogroup"][aria-label="How does it sign in?"] [role="radio"] span > span:first-child')).elements.map((element) => element.text);
+    expect(labels).toEqual(["With an account", "With a key", "No sign-in"]);
+    await user.notSee({ text: "Whose account does the AI use?" });
+    await user.see({ text: "Only you can use it until you share it." });
+    await user.screenshot();
+    await user.click({ text: "Share with everyone in the organization" });
+    await user.see({ text: "Whose account does the AI use?" });
+    await user.notSee({ text: "Only you can use it until you share it." });
+    evidence.recordAssertionEvidence(
+      "Whose account the AI uses is only asked once other people can use it",
+      `sign-in options=${labels.join(" / ")}; just me → no "Whose account does the AI use?" and the footer says "Only you can use it until you share it."; after "Share with everyone in the organization" → the question appears and the footer note is gone`,
+      labels.length === 3,
+    );
+    await user.press("Escape");
+    await user.notSee({ testId: "library-create-page" });
+  });
 
   await step("only Advanced exposes the workspace MCP form and closing it restores Cloud-only inventory", async () => {
     await user.click({ role: "button", label: "MCPs" });

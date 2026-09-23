@@ -257,18 +257,16 @@ describe("Library state tabs", () => {
     expect(select).not.toHaveBeenCalled();
   });
 
-  test("labeled Library Add opens the existing picker without dispatching until Continue", async () => {
+  test("labeled Library Add opens the picker and one click on a kind goes straight on", async () => {
     const select = mock(() => {});
     const host = await mount(<LibraryAddControl kinds={["mcp", "skill", "plugin"]} label="Add to library" onSelect={select} />);
     const button = host.querySelector<HTMLButtonElement>('button[aria-label="Add to library"]');
     expect(button?.textContent).toBe("Add to library");
     await act(async () => button?.click());
-    const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="library-add-choices"] [role="radio"]')];
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="library-add-choices"] button[data-kind]')];
     expect(choices.map((choice) => choice.dataset.kind)).toEqual(["mcp", "skill", "plugin"]);
     expect(select).not.toHaveBeenCalled();
     await act(async () => choices[1].click());
-    const next = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((item) => item.textContent === "Continue");
-    await act(async () => next?.click());
     expect(select).toHaveBeenCalledWith("skill");
     expect(document.querySelector('[data-testid="library-add-choices"]')).toBeNull();
   });

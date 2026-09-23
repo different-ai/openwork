@@ -114,7 +114,7 @@ import {
   type LibraryAuthorableKind,
   type LibraryCommandItem,
 } from "../library";
-import { AddLibraryItemModal } from "./add-library-item-modal";
+import { AddLibraryItemPage } from "./add-library-item-page";
 import { LibraryAddControl } from "./library-add-control";
 import { libraryConnectorCues } from "../library-connector-cues";
 import {
@@ -1406,6 +1406,19 @@ export function McpView(props: McpViewProps) {
     );
   }
 
+  if (addAuthorableKind) {
+    return (
+      <AddLibraryItemPage
+        kind={addAuthorableKind}
+        busy={props.busy}
+        cloud={cloudSession.isSignedIn}
+        canConfigureMcpConnections={canManageCloudConnections}
+        onClose={() => setAddAuthorableKind(null)}
+        onCreate={handleCreateLibraryItem}
+      />
+    );
+  }
+
   return (
     <section className="w-full animate-in fade-in duration-300">
       {props.headerActionsTarget ? createPortal(addControl, props.headerActionsTarget) : props.headerActionsTarget === undefined ? (
@@ -1558,16 +1571,6 @@ export function McpView(props: McpViewProps) {
         onAdd={props.connectMcp}
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
-      />
-
-      <AddLibraryItemModal
-        open={addAuthorableKind !== null}
-        kind={addAuthorableKind}
-        busy={props.busy}
-        cloud={cloudSession.isSignedIn}
-        canConfigureMcpConnections={canManageCloudConnections}
-        onClose={() => setAddAuthorableKind(null)}
-        onCreate={handleCreateLibraryItem}
       />
 
       {props.allowManageExtensions && props.previewClaudePlugin && props.installClaudePlugin ? (

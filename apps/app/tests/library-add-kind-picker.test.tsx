@@ -45,22 +45,24 @@ describe("Add to your Library picker", () => {
     expect(libraryAddKindsForFilter("plugin")).toEqual(["plugin"]);
   });
 
-  test.skipIf(dialogLayerInert)("lists those three choices without workspace MCP and dispatches the selected kind", async () => {
+  test.skipIf(dialogLayerInert)("lists those three choices without workspace MCP and one click dispatches the kind", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     const onSelect = mock(() => {});
+    const onClose = mock(() => {});
     try {
-      await act(async () => root.render(<LibraryAddKindPicker open kinds={libraryAddKindsForFilter("all")} onClose={() => {}} onSelect={onSelect} />));
-      const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+      await act(async () => root.render(<LibraryAddKindPicker open kinds={libraryAddKindsForFilter("all")} onClose={onClose} onSelect={onSelect} />));
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+      const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="library-add-choices"] button[data-kind]')];
       expect(choices.map((choice) => choice.dataset.kind)).toEqual(["mcp", "skill", "plugin"]);
       expect(document.body.textContent).not.toContain("workspace MCP");
-      await act(async () => choices[2].click());
-      expect(choices[2].getAttribute("aria-checked")).toBe("true");
       const continueButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Continue");
-      expect(continueButton).toBeDefined();
-      await act(async () => continueButton?.click());
+      expect(continueButton).toBeUndefined();
+      await act(async () => choices[2]?.click());
+      expect(onSelect).toHaveBeenCalledTimes(1);
       expect(onSelect).toHaveBeenCalledWith("plugin");
+      expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
       await act(async () => root.unmount());
       host.remove();
