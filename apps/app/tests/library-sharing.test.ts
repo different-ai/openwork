@@ -6,6 +6,7 @@ import {
   parseDenLibraryItems,
   parseDenLibraryOrgDirectory,
   parseDenLibraryPluginFiles,
+  parseDenPluginListAccess,
 } from "../src/app/lib/den-library";
 import { parseSkillMarkdown, skillMarkdown } from "../src/react-app/domains/settings/library";
 import {
@@ -80,6 +81,26 @@ describe("Den Library payloads", () => {
       .toEqual([{ configObjectId: "co-1", objectType: "skill", title: "customer-briefing", description: null, rawSourceText: null }]);
     expect(parseDenLibraryConfigObjectVersion({ item: { id: "v1", rawSourceText: "---" } })).toEqual({ id: "v1", rawSourceText: "---" });
     expect(directory.members.map((member) => member.name)).toEqual(["Sam K.", "Alex", "b@example.test"]);
+  });
+
+  test("the plugin list carries active grants only for plugins the member manages", () => {
+    const access = parseDenPluginListAccess({
+      items: [
+        {
+          id: "plugin-managed",
+          access: [
+            { id: "g1", teamId: "team-support", role: "viewer" },
+            { id: "g2", orgWide: true, role: "viewer", removedAt: "2026-09-02" },
+          ],
+        },
+        { id: "plugin-shared-with-me" },
+        { id: "plugin-not-shared", access: [] },
+      ],
+    });
+    expect([...access.keys()]).toEqual(["plugin-managed", "plugin-not-shared"]);
+    expect(access.get("plugin-managed")?.map((grant) => grant.id)).toEqual(["g1"]);
+    expect(access.get("plugin-not-shared")).toEqual([]);
+    expect(parseDenPluginListAccess({ ok: false }).size).toBe(0);
   });
 });
 

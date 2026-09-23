@@ -157,6 +157,7 @@ import {
   parseDenLibraryItems,
   parseDenLibraryOrgDirectory,
   parseDenLibraryPluginFiles,
+  parseDenPluginListAccess,
   type DenLibraryAccessGrant,
   type DenLibraryConfigObjectVersion,
   type DenLibraryItem,
@@ -3717,6 +3718,16 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         { method: "GET", token, organizationId: orgId },
       );
       return parseDenLibraryAccessGrants(payload);
+    },
+
+    /** Access for every active plugin the caller manages, in one request. */
+    async listManagedPluginAccess(orgId: string): Promise<Map<string, DenLibraryAccessGrant[]>> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/plugins?status=active&limit=100&includeAccess=true",
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenPluginListAccess(payload);
     },
 
     async grantPluginAccess(
