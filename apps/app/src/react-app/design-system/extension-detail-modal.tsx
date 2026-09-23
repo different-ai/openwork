@@ -127,6 +127,7 @@ const taxonomyDesc: Record<ExtensionTaxonomy, string> = {
   command: "A slash command the composer can run in this workspace.",
   agent: "A named agent the composer can run a session as.",
   plugin: "Extends OpenWork with additional capabilities managed by your organization.",
+  model: "A model provider and the models it gives you.",
 };
 
 const uiControlClientConfig = `{

@@ -75,6 +75,7 @@ import {
   connectGatewayProvider,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
   gatewayConnectProviderKey,
+  isCloudManagedProviderKey,
   isGatewaySetConnected,
   type GatewayConnectProvider,
   resolveGatewayConnectProviders,
@@ -208,7 +209,9 @@ import {
   workspaceSettingsRoute,
 } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
-import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
+import { getConnectedProviderItems, refreshProviderListQueries, useProviderListQuery } from "@/react-app/infra/provider-list-query";
+import { isProviderAllowedByDesktopPolicy } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { buildLibraryModelProviders } from "@/react-app/domains/settings/library-models";
 import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
@@ -351,6 +354,7 @@ export function parseSettingsPath(pathname: string): {
         || tail === "commands"
         || tail === "agents"
         || tail === "plugins"
+        || tail === "models"
         || tail === "needs-sign-in"
         || tail === "needs-admin-setup"
         || tail === "ready"
@@ -1204,6 +1208,25 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     disabledProviders,
     cloudProvidersEnabled: cloudSession.isSignedIn,
   });
+  // The Library's Models filter lists the same providers as the model picker,
+  // so it keeps the provider list fresh while the Library is open.
+  const libraryProviderList = useProviderListQuery({
+    client: opencodeClient,
+    baseUrl: opencodeBaseUrl,
+    directory: selectedWorkspaceRoot || undefined,
+    enabled: route.tab === "extensions",
+  });
+  const libraryModelProviders = useMemo(() => {
+    const restrictToCloud = checkDesktopRestriction({ restriction: "allowCustomProviders" });
+    return buildLibraryModelProviders({
+      connected: getConnectedProviderItems(libraryProviderList.data),
+      pending: gatewayConnectProviders,
+      importedCloudProviders: providerAuthSnapshot.importedCloudProviders ?? {},
+      isAllowed: (providerId) => (cloudSession.isSignedIn || !isCloudManagedProviderKey(providerId))
+        && !disabledProviders.includes(providerId)
+        && isProviderAllowedByDesktopPolicy({ providerId, restrictToCloud, checkRestriction: checkDesktopRestriction }),
+    });
+  }, [checkDesktopRestriction, cloudSession.isSignedIn, disabledProviders, gatewayConnectProviders, libraryProviderList.data, providerAuthSnapshot.importedCloudProviders]);
   const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
     const provider = local.prefs.defaultModel?.providerID.trim() ?? "";
     const model = local.prefs.defaultModel?.modelID.trim() ?? "";
@@ -2556,6 +2579,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             mcpView={({ initialFilter, onFilterChange, initialState, pluginsContent, detailId, onDetailIdChange, onRefresh }) => (
               <McpView
                 headerActionsTarget={props.libraryHeaderActionsTarget}
+                modelProviders={libraryModelProviders}
+                modelSignInKey={connectingGatewayProviderId}
+                onModelSignIn={(provider) => { void handleConnectGatewayProvider(provider); }}
+                onCancelModelSignIn={() => {
+                  gatewayConnectAbort.current?.abort();
+                  setConnectingGatewayProviderId(null);
+                }}
+                onRemoveModelProvider={(providerId) => { void providerAuthStore.disconnectProvider(providerId); }}
+                onAddModelProvider={handleOpenProviderAuth}
                 pluginsContent={pluginsContent}
                 onOpenCloudAccount={() => navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account") : "/settings/cloud-account")}
                 busy={busy}

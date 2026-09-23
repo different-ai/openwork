@@ -67,6 +67,7 @@ const taxonomyStyle: Record<ExtensionTaxonomy, string> = {
   command: "bg-orange-3 text-orange-11",
   agent: "bg-pink-3 text-pink-11",
   plugin: "bg-violet-3 text-violet-11",
+  model: "bg-dls-hover text-dls-secondary",
 };
 
 type ReadinessState = "ready" | "partial" | "none";
