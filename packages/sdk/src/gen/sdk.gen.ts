@@ -306,8 +306,14 @@ import type {
   GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses,
   GetV1InferenceProvidersByInferenceProviderIdResponses,
   GetV1InferenceProvidersErrors,
+  GetV1InferenceProvidersMemberConnectionsErrors,
+  GetV1InferenceProvidersMemberConnectionsResponses,
   GetV1InferenceProvidersModelManagementErrors,
   GetV1InferenceProvidersModelManagementResponses,
+  GetV1InferenceProvidersOauthBrowserStartErrors,
+  GetV1InferenceProvidersOauthBrowserStartResponses,
+  GetV1InferenceProvidersOauthBrowserStatusErrors,
+  GetV1InferenceProvidersOauthBrowserStatusResponses,
   GetV1InferenceProvidersOauthCallbackErrors,
   GetV1InferenceProvidersOauthCallbackResponses,
   GetV1InferenceProvidersResponses,
@@ -6205,6 +6211,21 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * List the caller's member Google connections
+   *
+   * Requires a signed-in user session and current organization membership, without an administrator gate. Returns independently selectable Google member credential sets with current effective access, credential readiness, verified account email and an opaque completed-authorization revision. Includes retained nonrevoked caller-owned credentials after grant loss or provider disablement for disconnection. Never returns another member's credentials, Google subject, OAuth client details or tokens. Readiness is not a Vertex IAM probe.
+   */
+  public getV1InferenceProvidersMemberConnections<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersMemberConnectionsResponses,
+      GetV1InferenceProvidersMemberConnectionsErrors,
+      ThrowOnError
+    >({ url: "/v1/inference-providers/member-connections", ...options });
+  }
+
+  /**
    * List organization inference gateway providers
    *
    * Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires owner/admin permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned.
@@ -7007,7 +7028,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Begin Google sign-in for a member inference credential
    *
-   * Requires a signed-in user session, not an API key, and an active provider with an effective grant to a member credential set. Specify credentialSetId when multiple sets are available. Creates a ten-minute, single-use PKCE state and returns { authUrl } for Accept: application/json, otherwise redirects to Google. An optional redirectTo must use an allowed web origin or the openwork scheme. The callback browser must independently be signed in to Den as the same user.
+   * Requires a user session and granted member credential set. Returns { authUrl } for Accept: application/json, otherwise redirects to the Den web /gateway/connect bridge. The ten-minute entry handle binds the initiating user, organization, provider, set, client configuration and allowlisted redirectTo. It is not authentication and cannot be used at the Google callback. The bridge must establish a matching signed-in browser session before browser-start creates Google state and PKCE.
    */
   public getV1InferenceProvidersByInferenceProviderIdOauthStart<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7035,6 +7056,52 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/inference-providers/{inferenceProviderId}/oauth/start",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Check browser readiness for member Google sign-in
+   *
+   * Read-only check of a ten-minute entry handle and the live signed OpenWork browser cookie, never a bearer substitute. Returns sign_in_required without a live cookie, account_mismatch for another signed-in user without revealing identities, or ready only after validating the original member, provider, credential set, OAuth client configuration and current grants. Does not consume or rotate the entry, create Google state, exchange tokens or revoke credentials. Browser-start and callback independently repeat authorization checks.
+   */
+  public getV1InferenceProvidersOauthBrowserStatus<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "attempt" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersOauthBrowserStatusResponses,
+      GetV1InferenceProvidersOauthBrowserStatusErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-status",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Continue member Google sign-in in a signed-in browser
+   *
+   * Consumes a ten-minute entry handle only with a live signed Den cookie for the initiating user. Rechecks the original member, provider, credential set and OAuth client configuration, independent of the browser's active organization. Returns { authUrl } for JSON clients or redirects to Google. Bearer authentication alone is not accepted.
+   */
+  public getV1InferenceProvidersOauthBrowserStart<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "attempt" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersOauthBrowserStartResponses,
+      GetV1InferenceProvidersOauthBrowserStartErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-start",
       ...options,
       ...params,
     });
@@ -7079,7 +7146,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Disconnect the caller's Google credential for an inference provider
    *
-   * Revokes only the caller's Google credential and cancels their pending sign-ins for a granted member credential set, returning an empty 204. Other members and grants are unchanged. Requires an active provider and current access; specify credentialSetId when multiple member sets are available.
+   * Immediately revokes and erases the caller's local credential and cancels pending sign-ins, even after inference grant loss or provider disablement. Requires current organization membership, not inference access. Specify credentialSetId when multiple sets exist. Google revocation is best effort with sanitized outcome telemetry and no retained retry tokens; revoking a Google grant can affect other connections using that grant. Returns an empty 204.
    */
   public deleteV1InferenceProvidersByInferenceProviderIdOauth<ThrowOnError extends boolean = false>(
     parameters: {
@@ -13643,7 +13710,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Delete worker
    *
-   * Deletes a worker and cascades cleanup for its tokens, runtime records, and provider-specific resources.
+   * Deletes a worker and cascades cleanup for its tokens, runtime records, and provider-specific resources. Only the creator can delete a cloud worker.
    */
   public deleteV1WorkersById<ThrowOnError extends boolean = false>(
     parameters: {
@@ -13720,7 +13787,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get worker connection tokens
    *
-   * Returns connection tokens and the resolved OpenWork connect URL for an existing worker.
+   * Returns connection tokens and the resolved OpenWork connect URL for an existing worker. Cloud workers require the caller to be their creator, including API-key callers.
    */
   public postV1WorkersByIdTokens<ThrowOnError extends boolean = false>(
     parameters: {
@@ -13743,7 +13810,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get worker runtime status
    *
-   * Fetches runtime version and status information from a specific worker's runtime endpoint.
+   * Fetches runtime version and status information from a specific worker's runtime endpoint. Only the creator can access a cloud worker's runtime.
    */
   public getV1WorkersByIdRuntime<ThrowOnError extends boolean = false>(
     parameters: {
@@ -13766,7 +13833,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Upgrade worker runtime
    *
-   * Forwards a runtime upgrade request to a specific worker and returns the worker runtime's response.
+   * Forwards a runtime upgrade request to a specific worker and returns the worker runtime's response. Only the creator can upgrade a cloud worker's runtime.
    */
   public postV1WorkersByIdRuntimeUpgrade<ThrowOnError extends boolean = false>(
     parameters: {

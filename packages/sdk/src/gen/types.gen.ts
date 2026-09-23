@@ -1453,6 +1453,25 @@ export type GatewayProviderDetails = {
     credentialSetId: string;
     name: string;
     authUrl: string;
+    models?: Array<{
+      id: string;
+      name: string;
+      config: {
+        id: string;
+        [key: string]: unknown;
+      };
+      upstreamModelId: string;
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      modelGroupName: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      credentialSetName: string;
+    }>;
   }>;
   migration?: {
     /**
@@ -1595,6 +1614,25 @@ export type GatewayProviderSummary = {
     credentialSetId: string;
     name: string;
     authUrl: string;
+    models?: Array<{
+      id: string;
+      name: string;
+      config: {
+        id: string;
+        [key: string]: unknown;
+      };
+      upstreamModelId: string;
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      modelGroupName: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      credentialSetName: string;
+    }>;
   }>;
   migration?: {
     /**
@@ -14069,6 +14107,75 @@ export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses =
 export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponse =
   PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses];
 
+export type GetV1InferenceProvidersMemberConnectionsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/member-connections";
+};
+
+export type GetV1InferenceProvidersMemberConnectionsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersMemberConnectionsError =
+  GetV1InferenceProvidersMemberConnectionsErrors[keyof GetV1InferenceProvidersMemberConnectionsErrors];
+
+export type GetV1InferenceProvidersMemberConnectionsResponses = {
+  /**
+   * List the caller's member Google connections
+   */
+  200: {
+    connections: Array<{
+      providerId: string;
+      credentialSetId: string;
+      providerName: string;
+      name: string;
+      ready: boolean;
+      hasAccess: boolean;
+      hasCredential: boolean;
+      configurationRequired?: boolean;
+      authorizationRevision: string | null;
+      accountEmail: string | null;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersMemberConnectionsResponse =
+  GetV1InferenceProvidersMemberConnectionsResponses[keyof GetV1InferenceProvidersMemberConnectionsResponses];
+
 export type GetV1InferenceProvidersData = {
   body?: never;
   path?: never;
@@ -14532,6 +14639,25 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
         credentialSetId: string;
         name: string;
         authUrl: string;
+        models?: Array<{
+          id: string;
+          name: string;
+          config: {
+            id: string;
+            [key: string]: unknown;
+          };
+          upstreamModelId: string;
+          /**
+           * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+           */
+          modelGroupId: string;
+          modelGroupName: string;
+          /**
+           * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+           */
+          credentialSetId: string;
+          credentialSetName: string;
+        }>;
       }>;
       migration?: {
         /**
@@ -15805,6 +15931,124 @@ export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponse =
   GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses[keyof GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses];
+
+export type GetV1InferenceProvidersOauthBrowserStatusData = {
+  body?: never;
+  path?: never;
+  query: {
+    attempt: string;
+  };
+  url: "/v1/inference-providers/oauth/browser-status";
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Provider access or OAuth configuration changed.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusError =
+  GetV1InferenceProvidersOauthBrowserStatusErrors[keyof GetV1InferenceProvidersOauthBrowserStatusErrors];
+
+export type GetV1InferenceProvidersOauthBrowserStatusResponses = {
+  /**
+   * Check browser readiness for member Google sign-in
+   */
+  200: {
+    status: "sign_in_required" | "account_mismatch" | "ready";
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusResponse =
+  GetV1InferenceProvidersOauthBrowserStatusResponses[keyof GetV1InferenceProvidersOauthBrowserStatusResponses];
+
+export type GetV1InferenceProvidersOauthBrowserStartData = {
+  body?: never;
+  path?: never;
+  query: {
+    attempt: string;
+  };
+  url: "/v1/inference-providers/oauth/browser-start";
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartError =
+  GetV1InferenceProvidersOauthBrowserStartErrors[keyof GetV1InferenceProvidersOauthBrowserStartErrors];
+
+export type GetV1InferenceProvidersOauthBrowserStartResponses = {
+  /**
+   * Continue member Google sign-in in a signed-in browser
+   */
+  200: {
+    authUrl: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartResponse =
+  GetV1InferenceProvidersOauthBrowserStartResponses[keyof GetV1InferenceProvidersOauthBrowserStartResponses];
 
 export type GetV1InferenceProvidersOauthCallbackData = {
   body?: never;
@@ -25264,6 +25508,10 @@ export type DeleteV1WorkersByIdErrors = {
    */
   401: UnauthorizedError;
   /**
+   * Only the worker owner can delete this cloud worker.
+   */
+  403: ForbiddenError;
+  /**
    * The worker could not be found.
    */
   404: NotFoundError;
@@ -25384,9 +25632,9 @@ export type PostV1WorkersByIdTokensErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to use cloud worker tokens.
+   * Cloud worker tokens require the worker owner and OpenWork Web access.
    */
-  403: WorkerOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */
@@ -25430,9 +25678,9 @@ export type GetV1WorkersByIdRuntimeErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to use a cloud worker runtime.
+   * Cloud runtime access requires the worker owner and OpenWork Web access.
    */
-  403: WorkerRuntimeOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerRuntimeOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */
@@ -25474,9 +25722,9 @@ export type PostV1WorkersByIdRuntimeUpgradeErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to upgrade a cloud worker runtime.
+   * Cloud runtime upgrades require the worker owner and OpenWork Web access.
    */
-  403: WorkerRuntimeOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerRuntimeOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */
