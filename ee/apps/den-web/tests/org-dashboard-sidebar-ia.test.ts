@@ -39,23 +39,25 @@ describe("Den org sidebar information architecture", () => {
     expect(navigation).not.toMatch(/label: "OpenWork Web"[\s\S]{0,120}badge:/);
   });
 
-  test("admins see Manage before Team, with Advanced moved into Settings", () => {
+  test("admins see Manage, then Observability, then Team, with Advanced moved into Settings", () => {
     const plugins = indexOfNeedle('label: "Plugins"');
     const connectors = indexOfNeedle('label: "Connectors"');
     const managedDashboards = indexOfNeedle('label: "Dashboards"');
-    const models = indexOfNeedle('label: "Models"');
+    const aiGateway = indexOfNeedle('label: "AI Gateway"');
     const desktopPolicies = indexOfNeedle('label: "Desktop policies"');
     const workSection = indexOfNeedle('{ label: "Work", items: workItems }');
     const manageSection = indexOfNeedle('{ label: "Manage", items: manageItems }');
+    const observabilitySection = indexOfNeedle('{ label: "Observability", items: observabilityItems }');
     const teamSection = indexOfNeedle('{ label: "Team", items: teamItems }');
 
     expect(plugins).toBeLessThan(connectors);
     expect(connectors).toBeLessThan(managedDashboards);
-    expect(managedDashboards).toBeLessThan(models);
-    expect(models).toBeLessThan(desktopPolicies);
+    expect(managedDashboards).toBeLessThan(aiGateway);
+    expect(aiGateway).toBeLessThan(desktopPolicies);
     expect(workSection).toBeLessThan(manageSection);
-    expect(manageSection).toBeLessThan(teamSection);
-    expect(navigation).not.toContain('label: "Observability"');
+    expect(manageSection).toBeLessThan(observabilitySection);
+    expect(observabilitySection).toBeLessThan(teamSection);
+    expect(navigation).not.toContain('label: "Models"');
     expect(navigation).not.toContain('label: "Plugin Directory"');
     expect(navigation).not.toContain('label: "Workflow Runs"');
     expect(navigation).not.toContain('label: "Old Gateway"');

@@ -69,10 +69,11 @@ describe("AI Gateway nested provider routes", () => {
 });
 
 describe("Gateway providers sidebar", () => {
-  test("keeps AI Gateway admin-gated under Models and preserves the legacy page", () => {
+  test("keeps AI Gateway as one admin-gated Manage link and preserves the legacy page", () => {
     expect(navigation).not.toContain('label: "Bring Your Own Keys (Legacy)"');
     expect(existsSync(join(appRoot, "dashboard", "(admin)", "custom-llm-providers", "page.tsx"))).toBe(true);
-    expect(navigation).toMatch(/const manageItems[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "Models"[\s\S]*label: "AI Gateway"/);
+    expect(navigation).toMatch(/const manageItems[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "AI Gateway", icon: Sparkles \}/);
+    expect(navigation).not.toContain('label: "Models"');
     expect(shell).toContain('return "AI Gateway";');
   });
 });

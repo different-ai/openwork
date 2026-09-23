@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Box,
   CalendarClock,
   Globe,
@@ -108,16 +109,13 @@ export function buildDashboardNavSections({
         ...(capabilities.orgManagedDashboards
           ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
           : []),
-        {
-          href: getAiGatewayRoute(orgSlug),
-          label: "Models",
-          icon: Sparkles,
-          children: [
-            { href: getAiGatewayRoute(orgSlug), label: "AI Gateway" },
-            { href: getAnalyticsRoute(orgSlug), label: "Analytics" },
-          ],
-        },
+        { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
+      ]
+    : [];
+  const observabilityItems: DashboardNavItem[] = access.isAdmin && orgSlug
+    ? [
+        { href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 },
       ]
     : [];
   const settingsChildren: DashboardNavChild[] = orgSlug
@@ -158,6 +156,7 @@ export function buildDashboardNavSections({
   return [
     { label: "Work", items: workItems },
     ...(manageItems.length > 0 ? [{ label: "Manage", items: manageItems }] : []),
+    ...(observabilityItems.length > 0 ? [{ label: "Observability", items: observabilityItems }] : []),
     ...(teamItems.length > 0 ? [{ label: "Team", items: teamItems }] : []),
   ];
 }

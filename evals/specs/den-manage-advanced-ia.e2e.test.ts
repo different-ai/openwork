@@ -10,7 +10,7 @@ const test = spec.world(adminDashboardWeb, { timeout: 420_000 });
 
 test("the Den admin sidebar groups Manage and moves Advanced into Settings", async ({ world, user, probe, evidence }) => {
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
-  const manage = ["Plugins", "Connectors", "Models", "Desktop policies", "Members", "Settings"];
+  const manage = ["Plugins", "Connectors", "AI Gateway", "Desktop policies", "Analytics", "Members", "Settings"];
   const initialLabels = await probe.eventually(() => world.sidebarLinks(), {
     within: 30_000,
     label: "Manage and Team navigation",

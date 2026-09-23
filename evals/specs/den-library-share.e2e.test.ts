@@ -19,7 +19,7 @@ test("a member: I want Maya and the Support team to use Slack so they can search
       within: 30_000, label: "member sidebar", until: (labels) => labels.includes("My Library"),
     });
     expect(links).toContain("My Library");
-    for (const label of ["Plugins", "Connectors", "Models", "Desktop policies", "Members", "Settings"]) expect(links).not.toContain(label);
+    for (const label of ["Plugins", "Connectors", "AI Gateway", "Desktop policies", "Analytics", "Members", "Settings"]) expect(links).not.toContain(label);
     await user.notSee({ text: "Manage" });
     await user.screenshot();
   });

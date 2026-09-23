@@ -80,10 +80,10 @@ describe("cloud super-admin role hierarchy", () => {
     expect(canRefreshInvitationRole("qa-reviewer", superAdmin)).toBe(true);
   });
 
-  test("exposes exact admin sidebar destinations for Manage and Team", () => {
+  test("exposes exact admin sidebar destinations for Manage, Observability, and Team", () => {
     const navigation = read("../app/(den)/dashboard/_lib/dashboard-navigation.ts");
 
-    for (const label of ["Plugins", "Connectors", "Dashboards", "Tool Tester", "Models", "AI Gateway", "Desktop policies", "Advanced", "Analytics", "Members", "Settings"]) {
+    for (const label of ["Plugins", "Connectors", "Dashboards", "Tool Tester", "AI Gateway", "Desktop policies", "Advanced", "Analytics", "Members", "Settings"]) {
       expect(navigation).toContain(`label: "${label}"`);
     }
 
@@ -93,7 +93,7 @@ describe("cloud super-admin role hierarchy", () => {
 
     expect(navigation).toContain('label: "Work"');
     expect(navigation).toContain('label: "Manage"');
-    expect(navigation).not.toContain('label: "Observability"');
+    expect(navigation).toContain('label: "Observability"');
     expect(navigation).toContain('label: "Team"');
     expect(navigation).not.toContain('label: "Extensions"');
     expect(navigation).not.toContain('label: "Your Connections"');
