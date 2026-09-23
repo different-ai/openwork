@@ -13761,6 +13761,227 @@ export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponses = {
 export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponse =
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses[keyof PostV1GatewayUsageLimitResetRequestsByIdDenyResponses];
 
+export type GetV1InferenceProvidersModelManagementData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/model-management";
+};
+
+export type GetV1InferenceProvidersModelManagementErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersModelManagementError =
+  GetV1InferenceProvidersModelManagementErrors[keyof GetV1InferenceProvidersModelManagementErrors];
+
+export type GetV1InferenceProvidersModelManagementResponses = {
+  /**
+   * List inference gateway providers and model groups for model enablement
+   */
+  200: {
+    inferenceProviders: Array<{
+      /**
+       * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+      providerId: string;
+      status: "active" | "disabled";
+      modelIds: Array<string>;
+      modelGroups: Array<{
+        /**
+         * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+         */
+        id: string;
+        name: string;
+        status: "active" | "disabled";
+        modelIds: Array<string>;
+      }>;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersModelManagementResponse =
+  GetV1InferenceProvidersModelManagementResponses[keyof GetV1InferenceProvidersModelManagementResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/available-models";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsError =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses = {
+  /**
+   * List available upstream models for inference gateway provider
+   */
+  200: {
+    models: Array<{
+      id: string;
+      name: string;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsData = {
+  body: {
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/enable-models";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsError =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses = {
+  /**
+   * Add models to inference gateway provider group
+   */
+  200: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+    groupModelIds: Array<string>;
+    addedModelIds: Array<string>;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponse =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses];
+
 export type GetV1InferenceProvidersData = {
   body?: never;
   path?: never;

@@ -291,6 +291,8 @@ import type {
   GetV1InferenceErrors,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors,
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses,
   GetV1InferenceProvidersByInferenceProviderIdConnectErrors,
   GetV1InferenceProvidersByInferenceProviderIdConnectResponses,
   GetV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
@@ -304,6 +306,8 @@ import type {
   GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses,
   GetV1InferenceProvidersByInferenceProviderIdResponses,
   GetV1InferenceProvidersErrors,
+  GetV1InferenceProvidersModelManagementErrors,
+  GetV1InferenceProvidersModelManagementResponses,
   GetV1InferenceProvidersOauthCallbackErrors,
   GetV1InferenceProvidersOauthCallbackResponses,
   GetV1InferenceProvidersResponses,
@@ -672,6 +676,8 @@ import type {
   PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
   PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
   PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors,
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses,
   PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
   PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
   PostV1InferenceProvidersErrors,
@@ -6066,6 +6072,85 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/gateway/usage-limit-reset-requests/{id}/deny",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List inference gateway providers and model groups for model enablement
+   *
+   * Read-only organization Gateway provider and group selection. Returns saved upstream model IDs, not picker aliases or credentials. An empty provider modelIds policy means all supported catalog models. Requires owner/admin and Gateway management.
+   */
+  public getV1InferenceProvidersModelManagement<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersModelManagementResponses,
+      GetV1InferenceProvidersModelManagementErrors,
+      ThrowOnError
+    >({ url: "/v1/inference-providers/model-management", ...options });
+  }
+
+  /**
+   * List available upstream models for inference gateway provider
+   *
+   * Read-only trusted models.dev catalog for this provider, including models outside its current policy. Does not enable models or modify saved configuration; unsupported Gateway SDK models are excluded. Requires owner/admin and Gateway management.
+   */
+  public getV1InferenceProvidersByInferenceProviderIdAvailableModels<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses,
+      GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/available-models",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Add models to inference gateway provider group
+   *
+   * Add upstream catalog model IDs to one explicitly selected existing model group without removing other models or changing access grants. Empty provider modelIds policy stays unrestricted; nonempty policy widens. Repeated calls are idempotent. Requires owner/admin and Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProvidersByInferenceProviderIdEnableModels<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      modelGroupId: string;
+      modelIds: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "modelGroupId" },
+            { in: "body", key: "modelIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses,
+      PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/enable-models",
       ...options,
       ...params,
       headers: {
