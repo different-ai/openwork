@@ -67,6 +67,7 @@ describe("composer model controls", () => {
     expect(sessionSurfaceSource).toContain("setSteering(true);\n    await handleSend();");
     expect(sessionSurfaceSource).toContain("if (!chatStreaming) setSteering(false);");
     expect(sessionSurfaceSource).toContain("steering={steering}");
+    expect(sessionSurfaceSource).toContain("sessionModel.setModel(nextModel, variant)");
     expect(sessionSurfaceSource).toContain("props.onModelChange(nextModel, variant)");
   });
 

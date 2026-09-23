@@ -17,13 +17,13 @@ function hasAffordanceId(input: unknown): input is OpenworkAffordanceRequest {
     && input.id.trim().length > 0;
 }
 
-async function handleRequest(item: OpenworkUiControlRequest, api: OpenworkControlAPI): Promise<unknown> {
+export async function handleUiControlRequest(item: OpenworkUiControlRequest, api: OpenworkControlAPI): Promise<unknown> {
   if (item.kind === "context") return { ok: true, context: api.context() };
   if (!hasAffordanceId(item.input)) {
     return { ok: false, error: "Missing OpenWork affordance id." };
   }
   if (item.kind === "query") return api.query(item.input);
-  return api.command(item.input);
+  return api.command(item.input, { createdAt: item.createdAt });
 }
 
 export function useUiControlMailbox(apiRef: RefObject<OpenworkControlAPI | null>): void {
@@ -56,7 +56,7 @@ export function useUiControlMailbox(apiRef: RefObject<OpenworkControlAPI | null>
             try {
               const api = apiRef.current;
               if (!api) throw new Error("OpenWork control surface is not available yet.");
-              result = await handleRequest(item, api);
+              result = await handleUiControlRequest(item, api);
             } catch (error) {
               result = { ok: false, error: error instanceof Error ? error.message : String(error) };
             }

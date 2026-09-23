@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { openworkCatalogModels, openworkEngineProviderCatalogSchema, openworkSessionActivityInventorySchema } from "@openwork/types/openwork-affordance";
+import { openworkCatalogModels, openworkEngineProviderCatalogSchema, openworkSessionActivityInventorySchema, openworkSessionModelPreflightArgsSchema, resolveOpenworkModel } from "@openwork/types/openwork-affordance";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
@@ -195,6 +195,18 @@ function startFakeOpenWorkServer(options: {
           return Response.json({ ok: true, id: "models.list", effects: { data: "read", ui: "none", external: false },
             result: { ok: true, workspaceId: workspace.id, models: models.map((model) => ({ ...model, available: true })) } });
         }
+        const preflight = z.object({ kind: z.literal("query"), input: z.object({ id: z.literal("session.model_preflight"), args: openworkSessionModelPreflightArgsSchema }) }).safeParse(record.body);
+        if (preflight.success) {
+          const args = preflight.data.input.args;
+          if (options.failProviderCatalog) return Response.json({ ok: false, id: "session.model_preflight", code: "unavailable", error: "Model unavailable" });
+          const models = openworkCatalogModels(openworkEngineProviderCatalogSchema.parse(providerCatalog(args.workspaceId)));
+          return Response.json({ ok: true, id: "session.model_preflight", effects: { data: "read", ui: "none", external: false }, result: {
+            ok: true,
+            sessionId: args.sessionId,
+            workspaceId: args.workspaceId,
+            model: args.model ? resolveOpenworkModel(args.model, models) : null,
+          } });
+        }
         return Response.json({ ok: true });
       }
 
@@ -343,6 +355,8 @@ function startFakeOpenWorkServer(options: {
       if (/^\/workspace\/ws_[12]\/opencode\/session\/ses_(alpha|beta|archive|foreign)\/prompt_async$/.test(url.pathname)) {
         z.object({
           messageID: z.string().regex(/^msg_[0-9a-f]{12}[0-9a-f]{14}$/),
+          model: z.object({ providerID: z.string(), modelID: z.string() }).strict().optional(),
+          variant: z.string().optional(),
           parts: z.array(z.object({ type: z.literal("text"), text: z.string() }).strict()).length(1),
         }).strict().parse(record.body);
         return new Response(null, { status: 204 });
@@ -1460,8 +1474,10 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       messageID: parsed.result.messageId,
       parts: [{ type: "text", text: "Status update: the importer shipped." }],
     });
-    // Headless by default: no session.open, no composer, no reload.
-    expect(fake.uiControlRequests).toEqual([]);
+    // Headless by default: model preflight only; no session.open, composer, or reload.
+    expect(fake.uiControlRequests).toEqual([{ authorization: "Bearer test-token", body: { kind: "query", input: {
+      id: "session.model_preflight", args: { sessionId: "ses_archive", workspaceId: "ws_2", model: null },
+    } } }]);
     // No new session is created; the existing one receives the message.
     expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST")).toEqual([]);
   });
@@ -1479,10 +1495,13 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(parsed.effects).toEqual({ data: "write", ui: "navigate", external: false });
     expect(parsed.result.revealed).toBe(true);
     const promptIndex = fake.requests.findIndex((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/prompt_async");
-    const openIndex = fake.requests.findIndex((request) => request.pathname === "/experimental/ui-control/request");
+    const openIndex = fake.requests.findIndex((request) => request.pathname === "/experimental/ui-control/request" && z.object({ kind: z.literal("command") }).safeParse(request.body).success);
     expect(promptIndex).toBeGreaterThanOrEqual(0);
     expect(openIndex).toBeGreaterThan(promptIndex);
     expect(fake.uiControlRequests).toEqual([
+      { authorization: "Bearer test-token", body: { kind: "query", input: { id: "session.model_preflight", args: {
+        workspaceId: "ws_1", sessionId: "ses_alpha", model: { providerId: "lpr_test", modelId: "claude-fable-5-1", variant: "high" },
+      } } } },
       {
         authorization: "Bearer test-token",
         body: {
