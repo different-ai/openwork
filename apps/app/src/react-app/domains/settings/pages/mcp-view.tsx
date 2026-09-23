@@ -2329,10 +2329,10 @@ function LibrarySectionHeader(props: { section: LibrarySection; label: string; m
 }
 
 /** Rows a signed-out member could use after signing in, shown locked. */
-const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc?: string; serviceUrl?: string }> = [
+const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc: string }> = [
   { name: "Google Workspace", description: "Gmail, Calendar and Drive", iconSrc: "/ext-google-workspace.svg" },
-  // Simple Icons no longer ships Slack's mark; the favicon lookup does.
-  { name: "Slack", description: "Read and post in your channels", serviceUrl: "https://slack.com" },
+  // Simple Icons no longer ships Slack's mark, so it is bundled like the others.
+  { name: "Slack", description: "Read and post in your channels", iconSrc: "/ext-slack.svg" },
   { name: "Linear", description: "Issues and projects", iconSrc: "/ext-linear.svg" },
 ];
 
@@ -2346,7 +2346,7 @@ function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
     <div data-testid="library-sign-up-banner" className="flex items-center gap-4 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
       <div className="flex shrink-0 -space-x-1.5" aria-hidden>
         {lockedLibraryPreviews.map((preview) => {
-          const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc, serviceUrl: preview.serviceUrl });
+          const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc });
           return (
             <span key={preview.name} className="flex size-7 items-center justify-center rounded-lg border border-dls-border bg-dls-surface">
               {src ? <img src={src} alt="" width={16} height={16} loading="lazy" className="block" /> : null}
@@ -2420,7 +2420,6 @@ export function LibraryInventory(props: {
                   name={preview.name}
                   description={preview.description}
                   iconSrc={preview.iconSrc}
-                  url={preview.serviceUrl}
                   taxonomy="connection"
                   disabled
                   trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
