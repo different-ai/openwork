@@ -229,19 +229,19 @@ test("minting a guest session costs a proof of work bound to the proof's own non
   assert.equal((await response.json()).error.code, "anonymous_new_identity_capped")
 })
 
-test("the guest allowance ramps with the machine's age and never exceeds the device budget", () => {
+test("the guest allowance is small for a machine's first 30 minutes and never exceeds the device budget", () => {
   const defaults = readAutoConfig({})
-  assert.deepEqual(defaults.installRamp, [{ days: 0, amount: 10000000 }, { days: 1, amount: 25000000 }, { days: 3, amount: 50000000 }, { days: 7, amount: 100000000 }])
+  assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 30, amount: 100000000 }])
   assert.equal(defaults.ipNewIdentitiesPerDay, 5)
-  assert.equal(defaults.sessionPowBits, 20)
-  const day = 86400000
+  assert.equal(defaults.sessionPowBits, 23)
+  const minute = 60000
   assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
-  assert.equal(rampedDeviceAmount(defaults, day - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
-  assert.equal(rampedDeviceAmount(defaults, day) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.25)
-  assert.equal(rampedDeviceAmount(defaults, 5 * day) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.5)
-  assert.equal(rampedDeviceAmount(defaults, 30 * day) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
-  const custom = readAutoConfig({ ANONYMOUS_INSTALL_RAMP: "0:50000,2:5000000", ANONYMOUS_INSTALL_WEEKLY_MICRO_USD: "2000000" })
-  assert.equal(rampedDeviceAmount(custom, 3 * day) / INFERENCE_USAGE_CONVERSION_FACTOR, 2, "a ramp step above the device budget is clamped to it")
+  assert.equal(rampedDeviceAmount(defaults, 30 * minute - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
+  assert.equal(rampedDeviceAmount(defaults, 30 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
+  assert.equal(rampedDeviceAmount(defaults, 7 * 24 * 60 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
+  const custom = readAutoConfig({ ANONYMOUS_INSTALL_RAMP: "0:50000,10:250000,120:5000000", ANONYMOUS_INSTALL_WEEKLY_MICRO_USD: "2000000" })
+  assert.equal(rampedDeviceAmount(custom, 15 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.25)
+  assert.equal(rampedDeviceAmount(custom, 180 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 2, "a ramp step above the device budget is clamped to it")
   for (const ramp of ["1:100000", "0:100000,0:200000", "0:200000,1:100000", "0:x", ""]) {
     if (ramp === "") continue
     assert.throws(() => readAutoConfig({ ANONYMOUS_INSTALL_RAMP: ramp }), ramp)

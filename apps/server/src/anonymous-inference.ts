@@ -1,3 +1,4 @@
+import { Worker } from "node:worker_threads";
 import { createHash, randomBytes, timingSafeEqual, randomUUID } from "node:crypto";
 import {
   DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, type DesktopFreeAccessStatus, type DesktopFreeSession, DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, desktopFreeSessionPowMessage, leadingZeroBits,
@@ -23,12 +24,45 @@ const ERROR_BODY_LIMIT = 64 * 1024;
 const SESSION_TIMEOUT_MS = 10_000;
 const REQUEST_LIFETIME_MS = 5 * 60_000;
 const MEMBER_CREDENTIAL_CACHE_MS = 5 * 60_000;
-/** Minting a guest session costs a proof of work bound to the request's nonce; ~20 bits is well under a second. */
+/** Minting a guest session costs a proof of work bound to the request's nonce; 23 bits is a few seconds. */
 export function solveSessionPow(machineId: string, nonce: string, bits: number): string {
   for (let counter = 0; ; counter++) {
     const pow = counter.toString(36);
     if (leadingZeroBits(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, pow })).digest()) >= bits) return pow;
   }
+}
+// The same search on a worker thread, so the app stays responsive while it runs at startup.
+const POW_WORKER_SOURCE = `
+import { parentPort, workerData } from "node:worker_threads";
+import { createHash } from "node:crypto";
+const { message, bits } = workerData;
+for (let counter = 0; ; counter++) {
+  const pow = counter.toString(36);
+  const digest = createHash("sha256").update(message + pow).digest();
+  let zeros = 0;
+  for (const byte of digest) { if (byte === 0) { zeros += 8; continue; } zeros += Math.clz32(byte) - 24; break; }
+  if (zeros >= bits) { parentPort.postMessage(pow); break; }
+}`;
+export type PowJob = { nonce: string; bits: number; promise: Promise<string>; cancel: () => void };
+// Bun (the test runner) cannot terminate inline workers reliably; the app itself runs on Node inside Electron.
+const POW_IN_WORKER = typeof process.versions.bun !== "string";
+export function startSessionPow(machineId: string, nonce: string, bits: number, inWorker = POW_IN_WORKER): PowJob {
+  const message = desktopFreeSessionPowMessage({ machineId, nonce, pow: "" });
+  let worker: Worker | null = null;
+  let cancelled = false;
+  const solved = new Promise<string>((resolve, reject) => {
+    if (!inWorker) { setImmediate(() => { try { resolve(solveSessionPow(machineId, nonce, bits)); } catch (error) { reject(error); } }); return; }
+    try {
+      worker = new Worker(POW_WORKER_SOURCE, { eval: true, workerData: { message, bits } });
+      worker.once("message", (pow: unknown) => { if (typeof pow === "string") resolve(pow); else reject(new Error("Invalid proof of work.")); });
+      worker.once("error", reject);
+      worker.once("exit", (code: number) => { if (code !== 0) reject(new Error("Proof of work worker exited.")); });
+    } catch (error) { reject(error); }
+  });
+  // A worker failure falls back to solving in process, unless the job was cancelled: then nobody is waiting.
+  const promise = solved.catch((error: unknown) => { if (cancelled) throw error; return solveSessionPow(machineId, nonce, bits); });
+  const cancel = () => { cancelled = true; promise.catch(() => undefined); void worker?.terminate(); };
+  return { nonce, bits, promise, cancel };
 }
 // Engine calls are relayed only while a task the user started from the app is live.
 const ACTIVATION_IDLE_MS = 15 * 60_000;
@@ -166,6 +200,7 @@ export class AnonymousInferenceService {
   private preferenceQueue: Promise<void> = Promise.resolve();
   private activation: { openedAt: number; lastActivityAt: number; sessions: Set<string> } | null = null;
   private sessionPowBits: number;
+  private powJob: PowJob | null = null;
 
   constructor(private readonly config: ServerConfig, private readonly logger: {
     log: (level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) => void;
@@ -289,8 +324,11 @@ export class AnonymousInferenceService {
     let permitted = this.enabled && runtime.managedPolicy?.allowCustomProviders !== false;
     let reason = !this.enabled ? "disabled by environment" : !permitted ? "custom providers blocked by policy" : null;
     if (permitted) {
-      try { await this.config.anonymousInference!.desktop.identity(); }
-      catch (error) { permitted = false; reason = error instanceof Error ? error.message : "identity unavailable"; }
+      try {
+        const { machineId } = await this.config.anonymousInference!.desktop.identity();
+        // Start paying for the first guest session while the app is still loading.
+        this.warmSessionPow(machineId);
+      } catch (error) { permitted = false; reason = error instanceof Error ? error.message : "identity unavailable"; }
     }
     let changed = false;
     await writeGlobalRuntimeOpencodeConfig(this.config, (snapshot) => {
@@ -488,6 +526,21 @@ export class AnonymousInferenceService {
     throw failure;
   }
 
+  /** Has (or starts) a solved proof of work ready for the next guest session; returns the nonce it is bound to. */
+  warmSessionPow(machineId: string, bits = this.sessionPowBits): { nonce: string; ready: Promise<void> } {
+    if (!this.powJob || this.powJob.bits < bits) {
+      this.powJob?.cancel();
+      this.powJob = startSessionPow(machineId, randomUUID(), bits);
+    }
+    const job = this.powJob;
+    return { nonce: job.nonce, ready: job.promise.then(() => undefined) };
+  }
+  private takeSessionPow(machineId: string, bits: number): PowJob {
+    const job = this.powJob && this.powJob.bits >= bits ? this.powJob : startSessionPow(machineId, randomUUID(), bits);
+    if (this.powJob === job) this.powJob = null;
+    return job;
+  }
+
   private async guestSession(): Promise<DesktopFreeSession> {
     if (this.session && this.session.expiresAt - 30_000 > Date.now()) return this.session;
     if (this.sessionPromise) return this.sessionPromise;
@@ -495,8 +548,12 @@ export class AnonymousInferenceService {
     const mint = async (bits = this.sessionPowBits, retry = true): Promise<DesktopFreeSession> => {
       // The signed proof carries the machine identity; the body carries the proof of work for the proof's own nonce.
       const { machineId } = await this.config.anonymousInference!.desktop.identity();
-      const nonce = randomUUID();
-      const body = new TextEncoder().encode(JSON.stringify({ pow: solveSessionPow(machineId, nonce, bits) }));
+      const job = this.takeSessionPow(machineId, bits);
+      const nonce = job.nonce;
+      const pow = await job.promise;
+      // The next session's work starts now, so it is ready long before this session expires.
+      this.warmSessionPow(machineId, bits);
+      const body = new TextEncoder().encode(JSON.stringify({ pow }));
       let response: Response;
       try {
         response = await this.remote(DESKTOP_FREE_SESSION_PATH, "POST", body, false, AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]), true, undefined, nonce);
@@ -646,5 +703,5 @@ export class AnonymousInferenceService {
     this.activeControllers.clear();
   }
 
-  stop(): void { this.stopped = true; this.disable(); this.failures.clear(); }
+  stop(): void { this.stopped = true; this.disable(); this.failures.clear(); this.powJob?.cancel(); this.powJob = null; }
 }

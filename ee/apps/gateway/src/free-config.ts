@@ -1,4 +1,5 @@
 import { INFERENCE_USAGE_CONVERSION_FACTOR, readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS } from "@openwork/types/desktop-free-access"
 import { DESKTOP_FREE_RELEASES_URL } from "./desktop-free-version.js"
 
 export const FREE_OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
@@ -19,14 +20,14 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
   const deviceWeeklyAmount = integer("ANONYMOUS_INSTALL_WEEKLY_MICRO_USD", 1000000, 1, 100000000) * 100
   if (member.enabled && member.weeklyLimitAmount <= deviceWeeklyAmount) throw new Error("Member free budget must exceed the device budget")
-  // A new machine is worth little; the full device allowance arrives with age. "days:microUsd,…" ascending by day.
-  const rampSource = environment.ANONYMOUS_INSTALL_RAMP?.trim() || "0:100000,1:250000,3:500000,7:1000000"
+  // A machine seen minutes ago is worth little; the full device allowance arrives with age. "minutes:microUsd,…" ascending.
+  const rampSource = environment.ANONYMOUS_INSTALL_RAMP?.trim() || "0:100000,30:1000000"
   const installRamp = rampSource.split(",").map((entry) => {
-    const [days, micro] = entry.split(":").map((value) => Number(value.trim()))
-    if (!Number.isSafeInteger(days) || days < 0 || days > 365 || !Number.isSafeInteger(micro) || micro < 1) throw new Error("Invalid ANONYMOUS_INSTALL_RAMP")
-    return { days, amount: Math.min(micro * 100, deviceWeeklyAmount) }
+    const [minutes, micro] = entry.split(":").map((value) => Number(value.trim()))
+    if (!Number.isSafeInteger(minutes) || minutes < 0 || minutes > 525600 || !Number.isSafeInteger(micro) || micro < 1) throw new Error("Invalid ANONYMOUS_INSTALL_RAMP")
+    return { minutes, amount: Math.min(micro * 100, deviceWeeklyAmount) }
   })
-  if (installRamp[0].days !== 0 || installRamp.some((step, index) => index > 0 && (step.days <= installRamp[index - 1].days || step.amount < installRamp[index - 1].amount))) throw new Error("Invalid ANONYMOUS_INSTALL_RAMP")
+  if (installRamp[0].minutes !== 0 || installRamp.some((step, index) => index > 0 && (step.minutes <= installRamp[index - 1].minutes || step.amount < installRamp[index - 1].amount))) throw new Error("Invalid ANONYMOUS_INSTALL_RAMP")
   // One dedicated OpenAI key serves every free request. Revoking it at OpenAI is
   // the kill switch, and its OpenAI usage page is the true cost over time.
   const apiKey = environment.INFERENCE_FREE_OPENAI_API_KEY?.trim() || ""
@@ -62,7 +63,7 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     blockedReleases: (environment.DESKTOP_FREE_BLOCKED_RELEASES ?? "").split(",").map((value) => value.trim().replace(/^v/, "")).filter(Boolean),
     deviceWeeklyAmount, installRamp,
     ipNewIdentitiesPerDay: integer("ANONYMOUS_IP_NEW_IDENTITIES_PER_DAY", 5, 1, 1000),
-    sessionPowBits: integer("ANONYMOUS_SESSION_POW_BITS", 20, 0, 24),
+    sessionPowBits: integer("ANONYMOUS_SESSION_POW_BITS", DESKTOP_FREE_SESSION_POW_BITS, 0, DESKTOP_FREE_SESSION_POW_MAX_BITS),
     ipDailyAmount: integer("ANONYMOUS_IP_DAILY_MICRO_USD", 5000000, 1, 100000000) * 100,
     globalDailyAmount: integer("ANONYMOUS_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
     globalMonthlyAmount: integer("ANONYMOUS_GLOBAL_MONTHLY_MICRO_USD", 3000000000, 1, 10000000000) * 100,
@@ -85,9 +86,9 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
 export type AutoConfig = ReturnType<typeof readAutoConfig>
 /** The device allowance for a guest identity of the given age. */
 export function rampedDeviceAmount(config: Pick<AutoConfig, "installRamp" | "deviceWeeklyAmount">, ageMs: number) {
-  const days = Math.max(0, ageMs) / 86400000
+  const minutes = Math.max(0, ageMs) / 60000
   let amount = config.installRamp[0].amount
-  for (const step of config.installRamp) if (days >= step.days) amount = step.amount
+  for (const step of config.installRamp) if (minutes >= step.minutes) amount = step.amount
   return Math.min(amount, config.deviceWeeklyAmount)
 }
 type Prices = Pick<AutoConfig, "inputPrice" | "outputPrice">

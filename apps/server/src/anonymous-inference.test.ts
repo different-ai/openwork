@@ -652,6 +652,22 @@ test("only members may report ready without a desktop version floor; guests stil
   });
 });
 
+test("the first guest session uses work started while the app loaded, and the next session's work starts right after", async () => {
+  await fixture(async ({ service, requests, signed, sessionPowBits, activate, localRequest }) => {
+    await service.initialize(9876);
+    const warmed = service.warmSessionPow("c".repeat(64));
+    await warmed.ready;
+    await activate();
+    expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
+    const mint = requests.findIndex((request) => request.path === DESKTOP_FREE_SESSION_PATH);
+    expect(signed[mint]?.nonce).toBe(warmed.nonce);
+    expect(sessionPowBits(requests[mint].body, signed[mint])).toBeGreaterThanOrEqual(8);
+    const next = service.warmSessionPow("c".repeat(64));
+    expect(next.nonce).not.toBe(warmed.nonce);
+    await next.ready;
+  });
+});
+
 test("minting a guest session does the proof of work for its own nonce and redoes it once if the gateway wants more", async () => {
   await fixture(async ({ service, requests, signed, rejectOnce, sessionPowBits, activate, localRequest }) => {
     await service.initialize(9876);
