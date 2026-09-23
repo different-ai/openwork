@@ -183,7 +183,11 @@ test(`PARITY-BOOT ${resolveEvalEngine()}: open the app and send with its first a
     const requests = await world.mock.agentRequests({ promptMarker: world.prompt });
     expect(requests.filter((request) => request.kind === "final")).toHaveLength(1);
     expect(requests.every((request) => request.model === "big-pickle")).toBe(true);
-    expect((await probe.composer()).userMessageCount).toBe(1);
+    expect(await readTranscriptMessages(probe, "user")).toEqual([world.prompt]);
+    await probe.eventually(() => probe.composer(), {
+      within: 15_000, label: "optimistic first message reconciles to one visible user message",
+      until: state => state.userMessageCount === 1,
+    });
     expect(await world.documentIdentity()).toBe(document);
     if (world.engine === "v2") expect((await world.runtime()).pid).toBe(runtime.pid);
     const timings = { engine: world.engine, engineVersion: world.engineVersion, sourceSha: world.app.actualSourceSha, build: "development app-web working tree, fresh profile, shared package cache", interactiveMs: world.interactiveMs, composerReadyMs, userRenderedMs, completedMs };

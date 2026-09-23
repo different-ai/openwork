@@ -268,7 +268,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const reloadIdle =
     systemState.reload.reloadPending &&
-    (allowsBusyReload || (activeSessions.length === 0 && !activityBlocked)) &&
+    activeSessions.length === 0 && !activityBlocked &&
     !orgOnboardingVisible;
 
   // Auto-reload when idle. Reloading is a cheap in-process engine rebuild
@@ -305,14 +305,18 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     const timer = window.setTimeout(() => {
       // Re-check at fire time: a task may have started during the debounce
       // window. The effect re-runs when activity ends and reschedules.
-      if (!allowsBusyReload && hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
+      // A newly submitted task is already busy in the app before OpenCode's
+      // status endpoint reports it. Even a rollover-capable server can see
+      // that gap as idle and dispose the instance. Automatic reloads wait;
+      // explicit reloads can still use the server's busy-session rollover.
+      if (hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
         return;
       }
       lastAutoReloadAtRef.current = Date.now();
       void systemState.reloadWorkspaceEngine();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [allowsBusyReload, reloadIdle, systemState]);
+  }, [reloadIdle, systemState]);
 
   // Changes pending while tasks are running: quiet center entry instead of
   // a toast. The same dedupe key means the eventual "applied" receipt
