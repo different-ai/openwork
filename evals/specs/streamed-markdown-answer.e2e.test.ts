@@ -433,17 +433,18 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await user.type({ placeholder: "Find in conversation" }, world.history[129]!, { replace: true });
     await user.see({ text: world.history[129]! });
     await user.click({ role: "button", label: "Close find" });
-    return probe.eventually(async () => {
+    const found = await probe.eventually(async () => {
       const saved: unknown = await savedScroll(world.session.sessionId);
       if (!saved || typeof saved !== "object" || !("mode" in saved) || saved.mode !== "manual"
         || !("anchor" in saved) || !saved.anchor || typeof saved.anchor !== "object"
         || !("messageId" in saved.anchor) || typeof saved.anchor.messageId !== "string"
-        || !("offset" in saved.anchor) || typeof saved.anchor.offset !== "number") return null;
+        || !("offset" in saved.anchor) || typeof saved.anchor.offset !== "number") return { saved, position: null };
       const geometry = await readingGeometry(saved.anchor.messageId);
       if (!geometry?.visible || !world.history.slice(100).some(text => geometry.text.includes(text))
-        || Math.abs(geometry.offset - saved.anchor.offset) > 2) return null;
-      return { messageId: saved.anchor.messageId, text: geometry.text, offset: geometry.offset };
-    }, { within: 10_000, label: "persisted visible reading anchor", until: value => value !== null });
+        || Math.abs(geometry.offset - saved.anchor.offset) > 2) return { saved, geometry, position: null };
+      return { saved, position: { messageId: saved.anchor.messageId, text: geometry.text, offset: geometry.offset } };
+    }, { within: 10_000, label: "persisted visible reading anchor", until: value => value.position !== null });
+    return found.position;
   });
   if (!readingPosition) throw new Error("No retained reading position was captured");
   const neighborScroll = await savedScroll(world.neighbor.sessionId);
@@ -458,7 +459,7 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(await savedScroll(world.neighbor.sessionId)).toEqual(neighborScroll);
   };
 
-  await step("switching conversations preserves the reading position, full cached history and scoped targets", async () => {
+  await step("switching conversations preserves the reading position, its surrounding history and scoped targets", async () => {
     await agent.run("session.open", { sessionId: world.neighbor.sessionId });
     await user.see("composer", { editable: true });
     await user.notSee({ text: world.opening });
@@ -466,7 +467,8 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     // palette isolation checks below deliberately belong to the cold path.
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await expectReadingPosition();
-    expect(await renderedTranscript()).toEqual({ messageCount: completeCount, historyComplete: true });
+    // A saved reading position reopens its own history window; older and newer
+    // pages load on demand, so the whole transcript is proven from the top below.
     await expectMountedHistory();
     await expectTargets([...oldTargets, world.latestTool]);
     await agent.run("session.open", { sessionId: world.neighbor.sessionId });
@@ -475,7 +477,7 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     expect(await savedScroll(world.neighbor.sessionId)).toEqual(neighborScroll);
   });
 
-  await step("cold reload restores the whole ordered transcript, the reading position and old and new tool links", async () => {
+  await step("cold reload restores the reading position, old and new tool links, and the whole ordered transcript from the top", async () => {
     // A cold open fetches the transcript without a `limit` (#4695): OpenCode
     // pages `limit` as the NEWEST n messages, so the engine's bounded page still
     // lacks the oldest turn while the reopened surface must show every message.
@@ -486,11 +488,14 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await user.reload();
     await expectReadingPosition();
-    expect(await renderedTranscript()).toEqual({ messageCount: completeCount, historyComplete: true });
     await expectMountedHistory();
+    await expectTargets([...oldTargets, world.latestTool]);
+    expect(await agent.run("session.scroll_top")).toMatchObject({ ok: true, position: "top" });
+    expect(await renderedTranscript()).toEqual({ messageCount: completeCount, historyComplete: true });
+    expect(await orderedHistory()).toEqual(world.history);
+    // The complete transcript always keeps its latest turn mounted.
     expect(occurrences((await readTranscriptMessages(probe, "user")).join("\n"), world.prompt)).toBe(1);
     expect(occurrences((await readTranscriptMessages(probe, "assistant")).join("\n"), world.closing)).toBe(1);
-    await expectTargets([...oldTargets, world.latestTool]);
     await user.notSee({ text: /Something went wrong/ });
   });
 });
