@@ -108,6 +108,7 @@ export type UserCreationSignupGuardInput = {
   /** Better Auth endpoint path that is creating the user; null for programmatic creation. */
   path: string | null | undefined
   email: string | null
+  /** True only after validating the bootstrap grant's signature, email, expiry, and availability. */
   hasBootstrapGrant: boolean
   hasPendingInvitation: (email: string) => Promise<boolean>
   getViolation: (email: string | null) => Promise<SingleOrgEmailSignupPolicyViolation | null>
@@ -132,7 +133,7 @@ export async function resolveUserCreationSignupPolicyViolation(
     return null
   }
 
-  if (input.hasBootstrapGrant) {
+  if (input.path === "/sign-up/email" && input.hasBootstrapGrant) {
     return null
   }
 

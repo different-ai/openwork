@@ -93,7 +93,7 @@ import {
 } from "./enterprise-auth-requirement.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation, resolveUserCreationSignupPolicyViolation } from "./single-org-signup-policy.js";
-import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
+import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -679,7 +679,10 @@ export const auth = betterAuth({
           const signupViolation = await resolveUserCreationSignupPolicyViolation({
             path: context?.path ?? null,
             email,
-            hasBootstrapGrant: Boolean(readInitialAdminBootstrapGrantFromBody(context?.body)),
+            hasBootstrapGrant: context?.path === "/sign-up/email" && Boolean(await authorizeInitialAdminBootstrapSignup({
+              body: context.body,
+              email,
+            })),
             hasPendingInvitation: hasAnyPendingInvitationForEmail,
             getViolation: getSingleOrgEmailSignupPolicyViolation,
           });

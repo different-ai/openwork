@@ -139,6 +139,18 @@ test("user-creation signup guard allows the initial-admin bootstrap grant", asyn
   expect(violation).toBeNull()
 })
 
+test("bootstrap exceptions never authorize OTP or social user creation", async () => {
+  for (const path of ["/sign-in/email-otp", "/callback/google"]) {
+    expect(await signupPolicy.resolveUserCreationSignupPolicyViolation({
+      path,
+      email: "uninvited@example.test",
+      hasBootstrapGrant: true,
+      hasPendingInvitation: async () => false,
+      getViolation: async () => privateSignupViolation,
+    })).toEqual(privateSignupViolation)
+  }
+})
+
 test("user-creation signup guard leaves SSO and programmatic creation to their own authorization", async () => {
   const getViolation = async () => {
     throw new Error("SSO and programmatic creation must not consult the self-service policy")
