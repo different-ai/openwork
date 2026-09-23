@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { parsePreviewOutputs, type PreviewOutputs } from "@openwork/freestyle/outputs";
 
-interface Session { url: string; expiresAt: string; outputs: PreviewOutputs }
+interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean }
 
 export function LaunchPreview({ id, connected }: { id: string; connected: boolean }) {
   const [world, setWorld] = useState("app-web");
@@ -18,14 +18,20 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/r/${id}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ world: world === "desktop" ? "acme-web" : world }) });
+      const requestedWorld = world === "acme-desktop" ? "acme-web" : world;
+      const desktop = world === "desktop" || world === "acme-desktop";
+      const response = await fetch(`/r/${id}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ world: requestedWorld }) });
       if (!response.ok) throw new Error("The sandbox could not launch. Try again.");
       const data: unknown = await response.json();
       if (typeof data !== "object" || data === null || !("url" in data) || typeof data.url !== "string"
-        || !("expiresAt" in data) || typeof data.expiresAt !== "string") throw new Error("The launch could not be verified. Try again.");
+        || !("expiresAt" in data) || typeof data.expiresAt !== "string"
+        || !("world" in data) || data.world !== requestedWorld) throw new Error("The launch could not be verified. Try again.");
       const url = new URL(data.url);
-      if (url.protocol !== "https:" || !/^ow-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/.test(url.hostname)) throw new Error("The launch could not be verified. Try again.");
-      setSession({ url: data.url, expiresAt: data.expiresAt, outputs: parsePreviewOutputs("outputs" in data ? data.outputs : {}) });
+      const host = world === "desktop" ? /^desktop-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/ : /^ow-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/;
+      if (url.protocol !== "https:" || !host.test(url.hostname)) throw new Error("The launch could not be verified. Try again.");
+      const outputs = parsePreviewOutputs("outputs" in data ? data.outputs : {});
+      if (desktop && !outputs.desktopUrl) throw new Error("The desktop could not launch. Try again.");
+      setSession({ url: desktop ? outputs.desktopUrl.value : data.url, expiresAt: data.expiresAt, outputs, desktop });
       setReveal(true); setCopied(false);
     } catch (failure) {
       setError(failure instanceof TypeError
@@ -52,13 +58,14 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
     <div className="preview-launch">
       <h2>Your sandbox</h2>
       <p className="preview-state">Your own URLs, workspace, and data. Teammates get separate sandboxes.</p>
-      <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => setWorld(event.target.value)}>
+      <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => { setWorld(event.target.value); setSession(null); setError(null); setCopied(false); }}>
         <option value="app-web">OpenWork web</option>
-        <option value="acme-web">ACME web · Full stack</option>
-        <option value="desktop">OpenWork desktop</option>
+        <option value="desktop">Desktop only (signed out)</option>
+        <option value="acme-web">ACME web (full stack)</option>
+        <option value="acme-desktop">ACME desktop (full stack)</option>
       </select></label>
       <div className="preview-launch-actions">
-        {session && <a className="preview-open" href={world === "desktop" && session.outputs.desktopUrl ? session.outputs.desktopUrl.value : session.url} target="_blank" rel="noreferrer">{world === "desktop" && session.outputs.desktopUrl ? "Open desktop" : "Open sandbox"}</a>}
+        {session && <a className="preview-open" href={session.url} target="_blank" rel="noreferrer">{session.desktop ? "Open desktop" : "Open sandbox"}</a>}
         <button type="button" onClick={launch} disabled={!connected || busy} aria-busy={busy} aria-describedby="preview-state">Launch in Freestyle</button>
       </div>
       <p id="preview-state" className={error ? "preview-error" : "preview-state"} role={error ? "alert" : "status"}>
@@ -95,7 +102,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         </details>
       </section>}
       <details className="preview-details"><summary>Sandbox details</summary>
-        <p>OpenWork web runs the OpenWork web app and its local engine. ACME web adds isolated Den, MySQL, Redis, and AI Gateway services with demo accounts and a simulated model upstream. OpenWork desktop opens the real desktop app from this commit in your browser, running inside the same full-stack world. Each launch restores this commit’s snapshot into a separate sandbox. Sandboxes expire after two hours; work is not saved.</p>
+        <p>OpenWork web runs the OpenWork web app and its local engine. Desktop only opens the real desktop app from this commit with a fresh, signed-out profile: no Den, databases, AI Gateway, demo accounts, or separate web preview. Its local engine and internal renderer belong to the desktop app. ACME web and ACME desktop keep the full stack with demo accounts and a simulated model upstream. Each launch restores this commit’s snapshot into a separate sandbox. Sandboxes expire after two hours; work is not saved.</p>
       </details>
     </div>
   );

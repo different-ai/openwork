@@ -131,12 +131,23 @@ async function signIn(world, den) {
   return false;
 }
 
-/**
- * Starts the display and viewer (seconds), then boots the real desktop app and
- * signs it in as the demo owner when possible (otherwise it stays signed out).
- * `ready` resolves once its window is up, so the caller can snapshot a running desktop.
- */
-export async function startDesktop(stack, world) {
+export async function prepareDesktopProfile() {
+  const { prepareBlankSlateProfile } = await import("/workspace/apps/desktop/electron/blank-slate-profile.mjs");
+  return prepareBlankSlateProfile({ argv: ["--blank-slate"], env: {}, temporaryDirectory: LOGS });
+}
+
+export function desktopProfileEnvironment(profile, environment = process.env) {
+  return {
+    PATH: environment.PATH, LANG: "en_US.UTF-8",
+    pnpm_config_verify_deps_before_run: "false", GOMEMLIMIT: "512MiB",
+    COREPACK_HOME: "/opt/openwork-preview/corepack", COREPACK_ENABLE_NETWORK: "0",
+    ...profile.environment,
+    DAYTONA_SECRETS_ENV: "/dev/null",
+    OPENWORK_ELECTRON_SKIP_NATIVE_REBUILD: "1",
+  };
+}
+
+export async function startDesktop(stack, world, { prepareProfile = prepareDesktopProfile } = {}) {
   mkdirSync(LOGS, { recursive: true, mode: 0o700 });
   mkdirSync("/tmp/.X11-unix", { recursive: true, mode: 0o1777 });
   service(stack, "Xvfb", [DESKTOP_DISPLAY, "-screen", "0", "1440x900x24", "-nolisten", "tcp"], "xvfb");
@@ -147,15 +158,15 @@ export async function startDesktop(stack, world) {
   await waitFor(async () => (await fetch(`http://127.0.0.1:${NOVNC_PORT}/vnc.html`, { signal: AbortSignal.timeout(2_000) })).ok, "viewer");
   const status = (value) => writeFileSync(`${LOGS}/status`, value, { mode: 0o600 });
   status("starting");
-  // Upstream's Linux desktop launcher (used by Daytona previews) runs the real
-  // app from the reviewed commit. A relaunch loop and a deadline-free readiness
-  // poll keep it working across the snapshot's pause and resume.
-  const den = { ...world.den.ref, webUrl: await startDesktopDenFront(stack, world.den.ref) };
-  writeFileSync(`${LOGS}/bootstrap.json`, JSON.stringify({ baseUrl: den.webUrl, apiBaseUrl: den.apiUrl, requireSignin: false }), { mode: 0o600 });
+  const den = world ? { ...world.den.ref, webUrl: await startDesktopDenFront(stack, world.den.ref) } : undefined;
+  const profile = world ? undefined : await prepareProfile();
+  if (den) writeFileSync(`${LOGS}/bootstrap.json`, JSON.stringify({ baseUrl: den.webUrl, apiBaseUrl: den.apiUrl, requireSignin: false }), { mode: 0o600 });
+  if (profile) writeFileSync(`${LOGS}/profile.json`, JSON.stringify(profile), { mode: 0o600 });
   const env = {
-    ...process.env, DISPLAY: DESKTOP_DISPLAY, OPENWORK_WORKSPACE_DIR: "/workspace", PORT: "5186",
-    OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: String(CDP_PORT), OPENWORK_DESKTOP_BOOTSTRAP_PATH: `${LOGS}/bootstrap.json`,
-    OPENWORK_ELECTRON_USERDATA: "/root/.openwork-desktop", OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
+    ...(profile ? desktopProfileEnvironment(profile) : {
+      ...process.env, OPENWORK_DESKTOP_BOOTSTRAP_PATH: `${LOGS}/bootstrap.json`, OPENWORK_ELECTRON_USERDATA: "/root/.openwork-desktop",
+    }), DISPLAY: DESKTOP_DISPLAY, OPENWORK_WORKSPACE_DIR: "/workspace", PORT: "5186",
+    OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: String(CDP_PORT), OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
     OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
     // The snapshot builder already fetched the sidecars and helpers.
     OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
@@ -169,15 +180,17 @@ export async function startDesktop(stack, world) {
   app.unref();
   stack.defer(() => { try { process.kill(-app.pid, "SIGTERM"); } catch { /* already exited */ } });
   const ready = (async () => {
+    const deadline = Date.now() + 180_000;
     while (true) {
+      if (!world && Date.now() >= deadline) throw new Error("Desktop window did not become ready");
       try {
         const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`, { signal: AbortSignal.timeout(2_000) })).json();
         if (Array.isArray(targets) && targets.some((target) => target.type === "page")) break;
       } catch { /* still booting */ }
       await delay(3_000);
     }
-    status(await signIn(world, den) ? "ready" : "ready-signed-out");
+    status(world && await signIn(world, den) ? "ready" : "ready-signed-out");
     return true;
   })();
-  return { url: `http://127.0.0.1:${NOVNC_PORT}`, denUrl: den.webUrl, ready };
+  return { url: `http://127.0.0.1:${NOVNC_PORT}`, ...(den ? { denUrl: den.webUrl } : {}), ready };
 }

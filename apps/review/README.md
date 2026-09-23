@@ -132,8 +132,8 @@ Anonymous report, JSON, and image requests must redirect to Vercel Authenticatio
 
 ## Interactive Freestyle previews
 
-The **Freestyle preview prewarm** workflow prepares both `app-web` and `acme-web`
-snapshots for each same-repository PR head targeting `dev`. Configure the repository
+The **Freestyle preview prewarm** workflow prepares `app-web`, `acme-web`, and
+`desktop` snapshots for each same-repository PR head targeting `dev`. Configure the repository
 secret `FREESTYLE_API_KEY` as well as the Vercel secret below. Fork and Dependabot
 PRs do not receive this credential. A manual workflow run prepares its selected ref.
 The CI runner checks out the reviewed controller pinned to an immutable commit, never
@@ -192,8 +192,23 @@ pnpm world down app-web
 ```
 
 World teardown deletes its owned VM, with a resource ledger for interrupted
-teardown. The access URL is a secret world output. Freestyle placement currently
-supports `app-web` and the co-located `acme-web` demo. ACME also starts the real desktop app, signed in as the demo owner when available, behind the same private access; **Open Desktop app** streams it through noVNC. If the display cannot start, the rest of the world still launches without that link. The reviewer offers a world selector and a visible personal sandbox panel with service URLs and sign-in details. Developer credentials expand below; copying always returns usable values. Desktop recipes retain their existing placements.
+teardown. The access URL is a secret world output. The existing world CLI supports
+`app-web` and the co-located `acme-web` demo; other desktop recipes retain their
+existing placements.
+
+In the review page, **Desktop only (signed out)** selects the distinct `desktop`
+Freestyle snapshot: Electron, its local engine and internal renderer, XFCE, and
+noVNC. It starts on a fresh profile without Den, MySQL, Redis, AI Gateway, demo
+accounts, a selected workspace/model, or a separate web preview. Only the private
+desktop viewer is published; no demo sign-in details are returned. Its dedicated
+CI job verifies two signed-out clones, viewer access and cross-clone isolation,
+then deletes the test clones (`freestyle-desktop-launch-proof`).
+
+**ACME desktop (full stack)** retains the signed-in demo alongside ACME web.
+**Open desktop** streams the actual Electron app, never silently falls back to the
+web preview, and remains bound to the world that was launched. Switching choices
+clears the previous world's displayed links, not its VM. All choices keep the
+same two-hour expiry and access checks.
 
 Validate with `pnpm --filter @openwork/freestyle test`, the world package tests,
 and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,

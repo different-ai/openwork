@@ -8,6 +8,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { assembleReview } from "@openwork/test-artifacts/review";
 import { uploadReview } from "@openwork/review/storage";
 import type { TestRunRecord } from "@openwork/test-artifacts";
+import { setViewport } from "@openwork/cdp";
+import type { Place, Seed } from "@openwork/env";
+import { chrome, localHost } from "@openwork/hosts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -253,4 +256,32 @@ export async function reviewWorld(
     directory,
     [Symbol.asyncDispose]: dispose,
   };
+}
+
+export async function reviewBrowserWorld(_seed: Seed, { place }: { place: Place }) {
+  if (place.kind !== "local") {
+    throw new Error("The production review HTTP fixture requires --local; it never provisions a VM.");
+  }
+  const resources = new AsyncDisposableStack();
+  try {
+    const review = resources.use(await reviewWorld());
+    const host = resources.use(localHost());
+    const app = resources.use(await chrome({
+      name: "freestyle-review",
+      host,
+      startUrl: "about:blank",
+      headless: true,
+    }));
+    await setViewport(app, { width: 1440, height: 1000, deviceScaleFactor: 1 });
+    return {
+      ...review,
+      app,
+      async [Symbol.asyncDispose]() {
+        await resources.disposeAsync();
+      },
+    };
+  } catch (error) {
+    await resources.disposeAsync();
+    throw error;
+  }
 }

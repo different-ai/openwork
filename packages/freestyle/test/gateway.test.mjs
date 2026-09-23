@@ -71,6 +71,24 @@ test("preview gateway requires its own token, strips it upstream, rejects cross-
       req.on("error", reject); req.end();
     });
     assert.equal(status, 401);
+    await writeFile(join(directory, "services.json"), JSON.stringify({ desktop: `http://127.0.0.1:${address.port}` }));
+    await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() + 60000).toISOString(), origins: { desktop: actualDen } }));
+    assert.equal((await fetch(`${origin}/vnc.html`)).status, 401);
+    assert.equal((await fetch(`${origin}/vnc.html`, { headers: { cookie: "__Host-openwork-preview=another-clone" } })).status, 401);
+    const viewer = await fetch(`${origin}/vnc.html`, { headers: { cookie } });
+    assert.equal(viewer.status, 200);
+    assert.deepEqual(await viewer.json(), { path: "/vnc.html", cookie: "" });
+    upstream.on("upgrade", (_req, socket) => {
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    });
+    const viewerSocket = await new Promise((resolve, reject) => {
+      const req = request(`${origin}/websockify`, { headers: { cookie, origin: actualDen, connection: "Upgrade", upgrade: "websocket" } });
+      req.on("upgrade", (res, socket) => { socket.destroy(); resolve(res.statusCode); });
+      req.on("response", (res) => { res.resume(); resolve(res.statusCode); });
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(viewerSocket, 101);
     await writeFile(path, JSON.stringify({ token: "first-sandbox-token", expiresAt: new Date(Date.now() - 1).toISOString() }));
     assert.equal((await fetch(origin, { headers: { cookie } })).status, 401);
   } finally {

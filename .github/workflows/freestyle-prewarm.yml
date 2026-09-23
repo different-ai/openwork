@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        world: [app-web, acme-web]
+        world: [app-web, acme-web, desktop]
     concurrency:
       group: freestyle-prewarm-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.world }}
       cancel-in-progress: false
@@ -70,6 +70,20 @@ jobs:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
           PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node scripts/verify-freestyle-fast-app.ts "$PREVIEW_SHA"
+      - name: Verify two independent signed-out desktop-only clones
+        if: matrix.world == 'desktop'
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/verify-freestyle-desktop.ts "$PREVIEW_SHA"
+      - name: Save sanitized desktop-only measurements
+        if: matrix.world == 'desktop'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freestyle-desktop-launch-proof
+          path: freestyle-desktop-launch-proof.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Save sanitized OpenWork web measurements
         if: matrix.world == 'app-web'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -1,8 +1,16 @@
 # Freestyle preview preparation
 
 CI prepares one running snapshot per commit and world. Each reviewer launch still
-clones that snapshot into a separate VM with its own URLs, access token, filesystem,
-MySQL and Redis. Build caches never contain a reviewer's running VM.
+clones that snapshot into a separate VM with its own URLs, access token, and filesystem.
+ACME additionally isolates MySQL and Redis. Build caches never contain a reviewer's running VM.
+
+The `desktop` world is a standalone, signed-out Electron/XFCE desktop, not an ACME
+clone with its web links hidden. It installs no MySQL or Redis and starts no Den,
+AI Gateway, seeded accounts, or separate web preview. Its private viewer is the
+primary URL. The app's blank-slate profile isolates its home, config, engine and
+user-data paths. Desktop health and source refresh verify empty onboarding rather
+than invoking ACME session renewal. A separate CI job verifies two clones, exact
+source, signed-out state and access isolation before deleting them.
 
 Preparation reuses four private, immutable layers:
 
