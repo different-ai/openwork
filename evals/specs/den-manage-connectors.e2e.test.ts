@@ -8,7 +8,7 @@ const test = spec.world(denManageAsAdmin, { timeout: 600_000 });
 
 const names = (items: { name: string }[]) => items.map((item) => item.name);
 
-test("an admin: I want Sales and Support to have Slack so nobody sets it up alone", async ({ world, user, probe, step }) => {
+test("an admin: I want Sales and Support to have Slack so nobody sets it up alone", async ({ world, user, probe, step, evidence }) => {
   const reach = world.teamSize("Sales") + world.teamSize("Support");
 
   await step("1. I open Connectors in Manage: nothing is set up yet", async () => {
@@ -38,10 +38,20 @@ test("an admin: I want Sales and Support to have Slack so nobody sets it up alon
     const tab = await world.signInTab({ timeoutMs: 1_000 });
     if (tab?.client.targetId) await world.web.client.send("Target.closeTarget", { targetId: tab.client.targetId });
     const done = await probe.dom('[data-testid^="setup-check-"][data-status="done"]');
-    expect(done.elements, "every check is ticked").toHaveLength(4);
     await user.see({ testId: "step-footer-note" }, { text: "Next, choose who can use it." });
     await user.see({ role: "button", label: "Continue" });
     await user.notSee({ role: "radio", label: /Each person signs in/ });
+    const accessChoices = await probe.dom('input[name="sign-in-mode"]');
+    const ticked: string[] = [];
+    for (const row of ["find", "sign-in-method", "sign-in", "tools"]) {
+      if ((await probe.dom(`[data-testid="setup-check-${row}"][data-status="done"]`)).elements.length === 1) ticked.push(row);
+    }
+    evidence.recordAssertionEvidence(
+      "after signing in, the admin sees all four checks ticked and continues when ready",
+      `${ticked.length} of 4 ticked (${ticked.join(", ")}); ${accessChoices.elements.length} sign-in choices on screen before Continue`,
+      ticked.length === 4 && accessChoices.elements.length === 0,
+    );
+    expect(done.elements, "every check is ticked").toHaveLength(4);
     await user.screenshot();
   });
 
@@ -79,13 +89,24 @@ test("an admin: I want Sales and Support to have Slack so nobody sets it up alon
   });
 
   await step("after: everyone in Sales and Support finds Slack in My Library and signs in as themselves, and Kai, who is in neither team, does not", async () => {
+    const seen: { person: string; hasSlack: boolean; credentialMode: unknown }[] = [];
     for (const person of ["omar", "tess", "ana", "lee", "noor"] as const) {
-      expect(names(await world.library(world.den.members[person])), `${person} has Slack`).toContain("Slack");
+      const hasSlack = names(await world.library(world.den.members[person])).includes("Slack");
       const usable = await probe.api(world.den.members[person], "/v1/mcp-connections?scope=usable");
       const slack = isRecord(usable.body) ? records(usable.body.connections).find((entry) => entry.name === "Slack") : undefined;
-      expect(slack?.credentialMode, `${person} signs in with their own account`).toBe("per_member");
+      seen.push({ person, hasSlack, credentialMode: slack?.credentialMode });
     }
-    expect(names(await world.library(world.den.members.kai)), "Kai is in neither team").not.toContain("Slack");
+    const kaiHasSlack = names(await world.library(world.den.members.kai)).includes("Slack");
+    evidence.recordAssertionEvidence(
+      "everyone in Sales and Support has Slack and signs in as themselves; Kai does not have it",
+      [...seen.map((entry) => `${entry.person}: ${entry.hasSlack ? `Slack, ${String(entry.credentialMode)}` : "no Slack"}`), `kai: ${kaiHasSlack ? "Slack" : "no Slack"}`].join("; "),
+      seen.every((entry) => entry.hasSlack && entry.credentialMode === "per_member") && !kaiHasSlack,
+    );
+    for (const entry of seen) {
+      expect(entry.hasSlack, `${entry.person} has Slack`).toBe(true);
+      expect(entry.credentialMode, `${entry.person} signs in with their own account`).toBe("per_member");
+    }
+    expect(kaiHasSlack, "Kai is in neither team").toBe(false);
     await user.screenshot();
   });
 });
