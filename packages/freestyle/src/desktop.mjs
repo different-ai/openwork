@@ -81,21 +81,34 @@ async function startDesktopDenFront(stack, den) {
   return `http://127.0.0.1:${DEN_FRONT_PORT}`;
 }
 
+// A just-signed-in app can accept workspace creation before its engine is ready
+// and drop it, so retry. Optional: a failure leaves a signed-in, empty app.
+async function prepareWorkspace(surface, world, { createAndSelectWorkspace, selectModel }) {
+  mkdirSync(DESKTOP_WORKSPACE, { recursive: true });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await createAndSelectWorkspace(surface, { path: DESKTOP_WORKSPACE });
+      await selectModel(surface, world.model.modelName, { provider: "Acme AI Gateway" });
+      return;
+    } catch (error) {
+      console.error(`Desktop workspace setup attempt ${attempt} failed:`, error);
+      await delay(5_000);
+    }
+  }
+}
+
 // Signs the running window in as the demo owner with the harness's own handoff,
 // over the launcher's debug port, then opens a workspace so the app is ready to
 // chat. Any sign-in failure leaves the real app signed out.
 async function signIn(world, den) {
   try {
     const { attachSurface } = await import("/workspace/evals/packages/cdp/src/index.ts");
-    const { signInDesktopAs, createAndSelectWorkspace } = await import("/workspace/evals/packages/behaviors/src/index.ts");
+    const { signInDesktopAs, createAndSelectWorkspace, selectModel } = await import("/workspace/evals/packages/behaviors/src/index.ts");
     for (let attempt = 1; attempt <= 2; attempt++) {
       const surface = await attachSurface({ name: "preview-desktop", kind: "electron", hostKind: "local", cdpUrl: `http://127.0.0.1:${CDP_PORT}` }, { timeoutMs: 60_000 });
       try {
         await signInDesktopAs(surface, den, world.den.admin);
-        try {
-          mkdirSync(DESKTOP_WORKSPACE, { recursive: true });
-          await createAndSelectWorkspace(surface, { path: DESKTOP_WORKSPACE });
-        } catch (error) { console.error("Desktop workspace setup failed:", error); }
+        await prepareWorkspace(surface, world, { createAndSelectWorkspace, selectModel });
         return true;
       }
       catch (error) { console.error(`Desktop sign-in attempt ${attempt} failed:`, error); }
