@@ -342,6 +342,20 @@ test("overlapping refreshes keep the latest busy state and authorization result"
   });
 });
 
+test("a refresh clears busy when the org context loads, without waiting for workers", async () => {
+  await withDashboard(async ({ state, hold, holdWorkers }) => {
+    const workers = holdWorkers();
+    const next = hold("/v1/org", "org-a");
+    await act(async () => { void state().refreshOrgData(); });
+    expect(state().orgBusy).toBe(true);
+    await act(async () => next.resolve(context("org-a")));
+    expect(state()).toMatchObject({ orgBusy: false, orgError: null });
+    expect(state().orgContext?.organization.id).toBe("org-a");
+    await act(async () => workers.resolve());
+    expect(state().orgBusy).toBe(false);
+  });
+});
+
 test("a retained refresh callback uses the latest selected organization, not its render's old context", async () => {
   await withDashboard(async ({ state }) => {
     const refresh = state().refreshOrgData;

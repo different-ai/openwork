@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -144,6 +144,9 @@ export type DenPlugin = {
    */
   requiresProvider: "any" | "github" | "bitbucket";
 };
+
+/** What a plugin list row shows, straight from the list response. */
+export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "description" | "status" | "createdByOrgMembershipId">;
 
 // ── Display helpers ────────────────────────────────────────────────────────
 
@@ -504,6 +507,7 @@ function filterByConnectedProviders(
 export const pluginQueryKeys = {
   all: ["plugins"] as const,
   list: () => [...pluginQueryKeys.all, "list"] as const,
+  summaries: () => [...pluginQueryKeys.list(), "summaries"] as const,
   detail: (id: string) => [...pluginQueryKeys.all, "detail", id] as const,
 };
 
@@ -718,19 +722,21 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   } satisfies DenPlugin;
 }
 
+async function fetchActivePluginItems(): Promise<Record<string, unknown>[]> {
+  const { response, payload } = await requestJson("/v1/plugins?status=active&limit=100", { method: "GET" }, 20000);
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+  }
+  return isRecord(payload) && Array.isArray(payload.items) ? payload.items.filter(isRecord) : [];
+}
+
 export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     enabled,
     queryKey: pluginQueryKeys.list(),
     queryFn: async () => {
-      const { response, payload } = await requestJson("/v1/plugins?status=active&limit=100", { method: "GET" }, 20000);
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
-      }
-
-      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
-      const pluginIds = items.flatMap((entry) => {
-        const id = isRecord(entry) ? asString(entry.id) : null;
+      const pluginIds = (await fetchActivePluginItems()).flatMap((entry) => {
+        const id = asString(entry.id);
         return id ? [id] : [];
       });
 
@@ -738,6 +744,29 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
       return plugins.filter((plugin): plugin is DenPlugin => Boolean(plugin));
     },
   });
+}
+
+export function pluginSummariesQueryOptions() {
+  return queryOptions({
+    queryKey: pluginQueryKeys.summaries(),
+    queryFn: async () => (await fetchActivePluginItems()).flatMap((entry): DenPluginSummary[] => {
+      const id = asString(entry.id);
+      const name = asString(entry.name);
+      if (!id || !name) return [];
+      return [{
+        id,
+        name,
+        description: asString(entry.description) ?? "",
+        status: asString(entry.status) === "archived" ? "archived" : "active",
+        createdByOrgMembershipId: asString(entry.createdByOrgMembershipId),
+      }];
+    }),
+  });
+}
+
+/** The plugin list without each plugin's contents, for list screens. */
+export function usePluginSummaries() {
+  return useQuery(pluginSummariesQueryOptions());
 }
 
 export function usePlugin(id: string) {

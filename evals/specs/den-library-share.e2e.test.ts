@@ -12,8 +12,13 @@ const names = (items: { name: string }[]) => items.map((item) => item.name);
 test("a member: I want Maya and the Support team to use Slack so they can search messages without asking me", async ({ world, user, probe, step }) => {
   const library = `${world.den.ref.webUrl}/dashboard/library`;
 
-  await step("1. I open My Library: it is empty and the sidebar only shows my own work", async () => {
+  await step("1. I open My Library: it keeps its shape while it loads, then it is empty and the sidebar only shows my own work", async () => {
     await user.see({ testId: "library-empty" }, { timeoutMs: 120_000 });
+    await world.proxy.faults.latency("/v1/me/library", 5_000);
+    await user.reload();
+    await user.see({ testId: "item-rows-skeleton", label: "Loading your Library" }, { timeoutMs: 60_000 });
+    await user.screenshot();
+    await user.see({ testId: "library-empty" }, { timeoutMs: 60_000 });
     await user.see({ text: "Nothing in your Library yet" });
     const links = await probe.eventually(() => world.sidebarLinks(), {
       within: 30_000, label: "member sidebar", until: (labels) => labels.includes("My Library"),
