@@ -33,6 +33,7 @@ import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../app/cloud/import-state";
 import { ExtensionCard, type ExtensionLayout } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
+import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
 import {
   isOrgMcpConnectionReady,
   isOrgMcpConnectionItem,
@@ -570,7 +571,9 @@ export function McpView(props: McpViewProps) {
           ? t("extensions.cloud_choose_org")
           : undefined;
   const addDisabledReason = cloudIssue ?? (!props.createLibraryItem ? t("extensions.cloud_unavailable") : undefined);
-  const addControl = (
+  const signedOut = !libraryCloudSignedIn && denAuth.status !== "checking";
+  // Signed out, every add kind needs Cloud: the sign-in banner carries the action instead.
+  const addControl = signedOut ? null : (
     <LibraryAddControl
       kinds={libraryAddKindsForFilter("all")}
       connectorCues={connectorCues}
@@ -1847,7 +1850,6 @@ export function McpView(props: McpViewProps) {
       : t("extensions.section_mine_just_me", { count: String(ownedPlugins.length) }),
     openwork: openworkRowCount > 0 ? t("extensions.section_openwork_meta", { count: String(openworkRowCount) }) : null,
   };
-  const signedOut = !libraryCloudSignedIn && denAuth.status !== "checking";
 
   const inventory = (
     <LibraryInventory
@@ -2327,18 +2329,34 @@ function LibrarySectionHeader(props: { section: LibrarySection; label: string; m
 }
 
 /** Rows a signed-out member could use after signing in, shown locked. */
-const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc?: string; iconSlug?: string }> = [
+const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc?: string; serviceUrl?: string }> = [
   { name: "Google Workspace", description: "Gmail, Calendar and Drive", iconSrc: "/ext-google-workspace.svg" },
-  { name: "Slack", description: "Read and post in your channels", iconSlug: "slack" },
+  // Simple Icons no longer ships Slack's mark; the favicon lookup does.
+  { name: "Slack", description: "Read and post in your channels", serviceUrl: "https://slack.com" },
   { name: "Linear", description: "Issues and projects", iconSrc: "/ext-linear.svg" },
 ];
 
+/**
+ * Signed out, adding to the Library needs OpenWork Cloud, so the page's one
+ * primary action is signing in. It lives here, above what it unlocks, instead
+ * of a header "Add to library" that could not do anything.
+ */
 function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
   return (
-    <div data-testid="library-sign-up-banner" className="flex items-center justify-between gap-3 rounded-xl border border-dls-border bg-dls-hover/60 px-4 py-3">
-      <p className="text-[13px] text-dls-text">{t("extensions.sign_up_banner")}</p>
+    <div data-testid="library-sign-up-banner" className="flex items-center gap-4 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
+      <div className="flex shrink-0 -space-x-1.5" aria-hidden>
+        {lockedLibraryPreviews.map((preview) => {
+          const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc, serviceUrl: preview.serviceUrl });
+          return (
+            <span key={preview.name} className="flex size-7 items-center justify-center rounded-lg border border-dls-border bg-dls-surface">
+              {src ? <img src={src} alt="" width={16} height={16} loading="lazy" className="block" /> : null}
+            </span>
+          );
+        })}
+      </div>
+      <p className="min-w-0 flex-1 text-[13px] text-dls-text">{t("extensions.sign_up_banner")}</p>
       {props.onSignUp ? (
-        <Button variant="ghost" size="sm" className="shrink-0 font-semibold" onClick={props.onSignUp}>
+        <Button size="sm" className="shrink-0" onClick={props.onSignUp}>
           {t("extensions.sign_up_action")}
         </Button>
       ) : null}
@@ -2402,7 +2420,7 @@ export function LibraryInventory(props: {
                   name={preview.name}
                   description={preview.description}
                   iconSrc={preview.iconSrc}
-                  iconSlug={preview.iconSlug}
+                  url={preview.serviceUrl}
                   taxonomy="connection"
                   disabled
                   trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}

@@ -48,10 +48,13 @@ test(title, async ({ evidence, world, user, probe, step }) => {
   // Lane 1 · Browse
   await step("before: signed out, the Library shows what is on this computer and what signing in unlocks", async () => {
     await signedOutUser.see({ testId: "library-sign-up-banner" }, { timeoutMs: 90_000 });
-    await signedOutUser.see({ text: "Sign up to share your skills and connectors with your team." });
+    await signedOutUser.see({ text: "Sign in to add skills and connectors, and to use the ones your team shares." });
     const locked = (await signedOutProbe.dom("[data-library-locked]")).elements.length;
     const lockedSection = await texts('[data-library-section="locked"]', signedOutProbe);
     await signedOutUser.notSee({ role: "tab", label: /Ready to use/ });
+    // Adding needs Cloud, so signing in is the one action; no header button that ignores clicks.
+    await signedOutUser.see({ role: "button", label: "Sign in to OpenWork Cloud" });
+    await signedOutUser.notSee({ role: "button", label: "Add to library" });
     await signedOutUser.screenshot();
     evidence.recordAssertionEvidence(
       "Signed out, the Library says what signing in unlocks instead of an empty page",

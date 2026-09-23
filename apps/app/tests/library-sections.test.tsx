@@ -152,7 +152,7 @@ describe("Library sections", () => {
     const host = await mount(
       <LibraryInventory rows={rowsFor(libraryRows.filter((row) => row.section === "mac"))} loading={false} layout="list" filter="all" signedOut onSignUp={signUp} />,
     );
-    expect(host.querySelector('[data-testid="library-sign-up-banner"]')?.textContent).toContain("Sign up to share your skills and connectors with your team.");
+    expect(host.querySelector('[data-testid="library-sign-up-banner"]')?.textContent).toContain("Sign in to add skills and connectors, and to use the ones your team shares.");
     const locked = host.querySelector<HTMLElement>('[data-library-section="locked"]');
     expect(locked?.textContent).toContain("From OpenWork · Sign in to use");
     expect(locked?.querySelectorAll("[data-library-locked]").length).toBeGreaterThan(0);
@@ -272,6 +272,9 @@ describe("Library sections", () => {
     await act(async () => button?.click());
     expect(document.querySelector('[data-testid="library-add-choices"]')).toBeNull();
     expect(select).not.toHaveBeenCalled();
+    // Focusable-when-disabled renders aria-disabled, not `disabled`; it must still look unavailable.
+    expect(button?.hasAttribute("data-disabled")).toBe(true);
+    expect(button?.className).toContain("data-disabled:opacity-50");
   });
 
   test("Advanced keeps only workspace MCP creation and config, hidden when closed or policy denies it", () => {
