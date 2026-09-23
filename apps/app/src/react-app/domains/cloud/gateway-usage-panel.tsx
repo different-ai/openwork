@@ -20,8 +20,9 @@ import { gatewayApprovalKey, useGatewayApprovalDismissals } from "./gateway-usag
 
 export const GATEWAY_USAGE_SETTINGS_PATH = "/settings/usage";
 
-export function GatewayResetTime({ value }: { value: string }) {
-  return <time dateTime={value} title={new Date(value).toLocaleString()}>{formatGatewayReset(value, Date.now())}</time>;
+export function GatewayResetTime({ value, midSentence = false }: { value: string; midSentence?: boolean }) {
+  const text = formatGatewayReset(value, Date.now());
+  return <time dateTime={value} title={new Date(value).toLocaleString()}>{midSentence ? `r${text.slice(1)}` : text}</time>;
 }
 
 function exhausted(bucket: GatewayUsageBucket) {
@@ -155,7 +156,7 @@ export function GatewayUsageApprovalNotice() {
     <div role="status">
       <UsageCard testId="gateway-usage-approved-notice" icon={<CheckCircle2 className="text-green-11" />}
         title={`You got ${formatGatewayMoney(first.extensionMicroUsd)} more ${gatewayPeriodLabels[first.timeframe].toLowerCase()}`}
-        detail={<>{formatGatewayMoney(first.allowanceMicroUsd)} for {gatewayPeriodLabels[first.timeframe].toLowerCase()}, <GatewayResetTime value={first.resetAt} /></>}
+        detail={<>{formatGatewayMoney(first.allowanceMicroUsd)} for {gatewayPeriodLabels[first.timeframe].toLowerCase()}, <GatewayResetTime value={first.resetAt} midSentence /></>}
         actions={<Button size="sm" variant="ghost" className="text-muted-foreground" aria-label="Dismiss usage increase approval" onClick={() => dismiss(approved.map((bucket) => gatewayApprovalKey(scopeKey, bucket)))}>Dismiss</Button>} />
     </div>
   );

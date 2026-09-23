@@ -315,7 +315,7 @@ test("Cloud sync refresh discovers approval across closed non-Gateway session pa
     expect(notice.parentElement?.getAttribute("role")).toBe("status");
     expect(notice.classList.contains("bg-green-3")).toBe(false);
     expect(notice.querySelector("h2")?.textContent).toBe("You got $0.25 more today");
-    expect(notice.textContent).toContain("$1.25 for today");
+    expect(notice.textContent).toMatch(/^.*\$1\.25 for today, resets /);
     expect(notice.querySelector("svg")?.classList.contains("text-green-11")).toBe(true);
     expect(notice.querySelectorAll("button")).toHaveLength(1);
   }
