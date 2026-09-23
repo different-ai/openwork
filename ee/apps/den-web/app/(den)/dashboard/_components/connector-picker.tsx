@@ -41,13 +41,15 @@ function ServerTile() {
   );
 }
 
-function AddMcpForm({ initialName, onCancel, onContinue }: {
-  initialName: string;
+export type CustomConnectorInput = { name: string; url: string };
+
+function AddMcpForm({ initial, onCancel, onContinue }: {
+  initial: CustomConnectorInput;
   onCancel: () => void;
-  onContinue: (input: { name: string; url: string }) => void;
+  onContinue: (input: CustomConnectorInput) => void;
 }) {
-  const [name, setName] = useState(initialName);
-  const [url, setUrl] = useState("");
+  const [name, setName] = useState(initial.name);
+  const [url, setUrl] = useState(initial.url);
   const [error, setError] = useState<string | null>(null);
 
   function submit() {
@@ -99,15 +101,17 @@ function AddMcpForm({ initialName, onCancel, onContinue }: {
 }
 
 /** The one connector catalog, used from My Library and from Manage. */
-export function ConnectorPicker({ entries, loading, addHref, customHref }: {
+export function ConnectorPicker({ entries, loading, addHref, customHref, initialCustom = null }: {
   entries: CatalogEntry[];
   loading: boolean;
   addHref: (entry: CatalogEntry) => string;
-  customHref: (input: { name: string; url: string }) => string;
+  customHref: (input: CustomConnectorInput) => string;
+  /** Opens the address form already filled in, e.g. after Change address. */
+  initialCustom?: CustomConnectorInput | null;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [customName, setCustomName] = useState<string | null>(null);
+  const [custom, setCustom] = useState<CustomConnectorInput | null>(initialCustom);
   const needle = query.trim().toLowerCase();
   const visible = entries.filter((entry) => !needle || `${entry.name} ${entry.description}`.toLowerCase().includes(needle));
   const noMatch = !loading && visible.length === 0 && needle.length > 0;
@@ -116,19 +120,19 @@ export function ConnectorPicker({ entries, loading, addHref, customHref }: {
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <FilterInput value={query} onChange={setQuery} size="md" className="flex-1" />
-        <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustomName("")}>
+        <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustom({ name: "", url: "" })}>
           Add another MCP
         </DenButton>
       </div>
-      {customName !== null ? (
+      {custom !== null ? (
         <AddMcpForm
-          key={customName}
-          initialName={customName}
-          onCancel={() => setCustomName(null)}
+          key={`${custom.name}\n${custom.url}`}
+          initial={custom}
+          onCancel={() => setCustom(null)}
           onContinue={(input) => router.push(customHref(input))}
         />
       ) : null}
-      {noMatch && customName !== null ? null : <ItemPanel>
+      {noMatch && custom !== null ? null : <ItemPanel>
         {loading ? <p className="px-5 py-6 text-[13px] text-gray-500">Loading...</p> : null}
         {visible.map((entry) => (
           <ItemRow
@@ -149,7 +153,7 @@ export function ConnectorPicker({ entries, loading, addHref, customHref }: {
             <ServerTile />
             <p className="mt-2.5 text-[15px] font-semibold leading-[22px] text-gray-900">No app called &ldquo;{query.trim()}&rdquo;</p>
             <p className="text-[13px] leading-5 text-gray-500">Add it with the address your vendor or IT team gave you.</p>
-            <DenButton size="md" icon={Plus} className="mt-3.5" data-testid="connector-picker-no-match-add" onClick={() => setCustomName(query.trim())}>
+            <DenButton size="md" icon={Plus} className="mt-3.5" data-testid="connector-picker-no-match-add" onClick={() => setCustom({ name: query.trim(), url: "" })}>
               Add another MCP
             </DenButton>
           </div>
