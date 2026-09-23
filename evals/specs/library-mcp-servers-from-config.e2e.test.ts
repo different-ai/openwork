@@ -46,8 +46,12 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
   await step("On this Mac lists every hand-written server, and only the connected mock reads as ready", async () => {
     await user.see({ text: "ready-helper" }, { timeoutMs: 60_000 });
     for (const name of ["docs-helper", "files-helper", "remote-helper"]) await user.see({ text: name });
+    const servers = ["ready-helper", "docs-helper", "files-helper", "remote-helper"];
     const ready = await probe.eventually(
-      async () => (await probe.dom('[data-library-section="mac"] [data-library-row]:has([data-library-ready])')).elements.map((element) => element.text.split("\n")[0]?.trim() ?? ""),
+      async () => {
+        const rows = (await probe.dom('[data-library-section="mac"] [data-library-row]:has([data-library-ready])')).elements;
+        return servers.filter((name) => rows.some((row) => row.text.startsWith(name)));
+      },
       { within: 60_000, label: "the connected mock reads as ready", until: (names) => names.includes("ready-helper") },
     );
     for (const name of ["docs-helper", "files-helper", "remote-helper"]) expect(ready).not.toContain(name);
