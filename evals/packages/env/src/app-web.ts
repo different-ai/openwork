@@ -298,7 +298,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
           .map(entry => ({ path: new URL(entry.name).pathname,
             status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
       })).catch(() => null);
-      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)}`, { cause: error });
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)}`, { cause: error });
     } finally {
       network.close();
     }
