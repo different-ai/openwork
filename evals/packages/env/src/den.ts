@@ -57,6 +57,12 @@ export interface ServerOptions {
   reuse?: { apiUrl: string; webUrl?: string };
   reuseMembers?: Record<string, PersonShape>;
   ports?: { api: number; web: number };
+  /**
+   * Where den-web's server-side /api/den proxy sends API calls; defaults to
+   * den-api itself. A fault proxy fixed in front of den-api before boot puts
+   * its origin here so browser traffic can be shaped.
+   */
+  webApiBase?: string;
   seedProfile?: "demo-org";
   /** Daytona idle shutdown in minutes. Preview worlds pass 0 so their lifetime owns teardown. */
   daytonaAutoStopMinutes?: number;
@@ -877,7 +883,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       : spawnService("den-web", "dev:den:web", webPort, {
           DEN_WEB_HOST: "127.0.0.1",
           ...commonEnv,
-          DEN_API_BASE: `http://127.0.0.1:${apiPort}`,
+          DEN_API_BASE: options.webApiBase ?? `http://127.0.0.1:${apiPort}`,
           DEN_BASE_URL: options.publicOrigins?.web ?? ref.webUrl,
           DEN_AUTH_ORIGIN: options.publicOrigins?.web ?? ref.webUrl,
           DEN_AUTH_FALLBACK_BASE: `http://127.0.0.1:${apiPort}`,
