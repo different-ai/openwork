@@ -9,7 +9,7 @@ import { managedAccessStatus } from "./access-summary";
 import { connectorAccountReady } from "./connector-detail";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
-import { FilterInput, ItemMenu, ItemPanel, ItemRow, LinkButton } from "./item-list";
+import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { ConnectorLogoStrip } from "./library-add-dialog";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
@@ -105,7 +105,7 @@ export function AdminConnectorsScreen() {
                           label={`More for ${connection.name}`}
                           entries={[
                             { label: "Open", href },
-                            { label: "Remove", destructive: true, onSelect: () => void remove(connection) },
+                            removeEntry(connection.name, () => remove(connection)),
                           ]}
                         />
                       )}

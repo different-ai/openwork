@@ -7,7 +7,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
-import { ItemMenu, ItemPanel, ItemRow, LinkButton } from "./item-list";
+import { ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
 import { LetterTile } from "./item-logo";
 import { draftFromPluginGrants } from "./item-sharing";
 import { ConnectorLogoStrip } from "./library-add-dialog";
@@ -66,7 +66,7 @@ function PluginRow({ plugin }: { plugin: DenPlugin }) {
             label={`More for ${plugin.name}`}
             entries={[
               { label: "Open", href },
-              { label: "Remove", destructive: true, onSelect: () => void remove() },
+              removeEntry(plugin.name, remove),
             ]}
           />
         )}

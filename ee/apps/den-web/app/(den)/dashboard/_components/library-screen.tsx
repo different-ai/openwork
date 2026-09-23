@@ -18,7 +18,7 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
 import { draftFromPluginGrants } from "./item-sharing";
-import { FilterInput, ItemMenu, ItemPanel, ItemRow, ItemSection } from "./item-list";
+import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemSection } from "./item-list";
 import { ItemPage } from "./item-header";
 import { ConnectorLogo, LetterTile } from "./item-logo";
 import { LibraryAddDialog, type LibraryAddChoice, ConnectorLogoStrip } from "./library-add-dialog";
@@ -107,7 +107,7 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
         { label: "Open", onSelect: () => router.push(href) },
         ...(mine && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type === "plugin" ? [{ label: "Share", onSelect: () => router.push(getLibraryPluginShareRoute(orgSlug, item.id)) }] : []),
-        ...(mine && item.type !== "workflow" ? [{ label: "Remove", destructive: true, onSelect: () => void remove() }] : []),
+        ...(mine && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
       ]}
     />
   );

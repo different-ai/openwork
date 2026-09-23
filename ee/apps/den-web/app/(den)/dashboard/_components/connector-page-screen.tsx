@@ -14,7 +14,7 @@ import { toolSummary, toolTitle, useMemberSignIn } from "./connector-setup";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
-import { DetailRows, ItemMenu, ItemPanel, LinkButton } from "./item-list";
+import { DetailRows, ItemMenu, removeEntry, ItemPanel, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { libraryQueryKeys, useLibrary } from "./library-data";
 import { isOwnedByViewer, libraryItemDescription, receivedStatus } from "./library-view";
@@ -136,7 +136,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
               label={`More for ${name}`}
               entries={[
                 ...(connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: "Sign out", onSelect: () => void signOut() }] : []),
-                ...(mine ? [{ label: "Remove", destructive: true, onSelect: () => void remove() }] : []),
+                ...(mine ? [removeEntry(name, remove)] : []),
               ]}
             />
             {mine ? (

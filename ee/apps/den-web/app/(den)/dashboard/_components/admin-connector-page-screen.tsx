@@ -14,7 +14,7 @@ import { ChatButton, WhatYourAiCanDo } from "./connector-page-screen";
 import { useMemberSignIn } from "./connector-setup";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
-import { DetailRows, ItemMenu, ItemPanel } from "./item-list";
+import { DetailRows, ItemMenu, removeEntry, ItemPanel } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { useSaveConnectionAccess } from "./item-sharing";
 import { connectionMcpSetupUrl } from "./mcp-connection-app-setup";
@@ -164,7 +164,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
               label={`More for ${name}`}
               entries={[
                 { label: "Edit settings", href: getConfiguredMcpConnectionsRoute(orgSlug, connectionId) },
-                { label: "Remove", destructive: true, onSelect: () => void remove() },
+                removeEntry(name, remove),
               ]}
             />
             <ChatButton name={name} />

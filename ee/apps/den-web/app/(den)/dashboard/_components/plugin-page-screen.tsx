@@ -18,7 +18,7 @@ import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
-import { DetailRows, ItemMenu, ItemPanel, ItemRow, LinkButton } from "./item-list";
+import { DetailRows, ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
 import { ConnectorLogo, KindTile, LetterTile } from "./item-logo";
 import { draftFromPluginGrants, useSavePluginAccess } from "./item-sharing";
 import { libraryQueryKeys, useLibrary } from "./library-data";
@@ -176,7 +176,7 @@ export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "
               label={`More for ${data.name}`}
               entries={canManage ? [
                 ...(mode === "admin" ? [{ label: "Edit contents", href: getPluginDetailsRoute(orgSlug, pluginId) }] : []),
-                { label: "Remove", destructive: true, onSelect: () => void remove() },
+                removeEntry(data.name, remove),
               ] : []}
             />
             {mode === "member" && mine ? (

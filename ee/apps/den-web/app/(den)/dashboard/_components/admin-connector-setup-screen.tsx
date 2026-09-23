@@ -10,6 +10,7 @@ import { useConnectorSetup } from "./connector-setup";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
+import { ConfirmDialog } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { useSaveConnectionAccess } from "./item-sharing";
 import { type ExternalMcpCredentialMode, useUpdateMcpConnection } from "./mcp-connections-data";
@@ -69,6 +70,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [draft, setDraft] = useState<AccessDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmSwitch, setConfirmSwitch] = useState(false);
   const setup = useConnectorSetup({
     target,
     initialConnectionId: searchParams.get("connection"),
@@ -119,24 +121,25 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     router.push(getMcpConnectionsRoute(orgSlug));
   }
 
+  async function switchToShared() {
+    if (!connection) return;
+    await updateConnection.mutateAsync({
+      connectionId: connection.id,
+      expectedUpdatedAt: connection.updatedAt ?? new Date().toISOString(),
+      name: connection.name,
+      url: connection.url,
+      authType: connection.authType,
+      credentialMode: "shared",
+      exposeDirectly: connection.exposeDirectly,
+      access,
+    });
+  }
+
   async function add() {
     if (!connection) return;
     setBusy(true);
     setError(null);
     try {
-      if (switchingToShared) {
-        await updateConnection.mutateAsync({
-          connectionId: connection.id,
-          expectedUpdatedAt: connection.updatedAt ?? new Date().toISOString(),
-          name: connection.name,
-          url: connection.url,
-          authType: connection.authType,
-          credentialMode: "shared",
-          exposeDirectly: connection.exposeDirectly,
-          access,
-        });
-        return;
-      }
       await saveAccess(connection.id, access);
       const connectionId = connection.id;
       toast({
@@ -204,8 +207,17 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         : reached > 0 ? `${peopleLabel(reached)} will find ${name} in My Library.` : `Only you will have ${name}.`}
       >
         <DenButton variant="secondary" disabled={busy} onClick={() => void cancel()}>Cancel</DenButton>
-        <DenButton loading={busy} onClick={() => void add()}>{switchingToShared ? "Continue" : `Add ${name}`}</DenButton>
+        <DenButton loading={busy} onClick={() => (switchingToShared ? setConfirmSwitch(true) : void add())}>{switchingToShared ? "Continue" : `Add ${name}`}</DenButton>
       </StepFooter>
+      <ConfirmDialog
+        confirm={confirmSwitch ? {
+          title: "Switch to one account for everyone?",
+          description: `This signs you out of ${name}. Next, you sign in with the ${name} account everyone will use.`,
+          action: "Sign out and continue",
+        } : null}
+        onConfirm={switchToShared}
+        onClose={() => setConfirmSwitch(false)}
+      />
     </ItemPage>
   );
 }

@@ -1,10 +1,12 @@
 "use client";
 
+import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Menu } from "@base-ui/react/menu";
 import { MoreHorizontal, Search } from "lucide-react";
 import Link from "next/link";
-import type { ComponentProps, ReactNode } from "react";
-import { type ButtonSize, type ButtonVariant, buttonVariants } from "../../_components/ui/button";
+import { type ComponentProps, type ReactNode, useRef, useState } from "react";
+import { type ButtonSize, type ButtonVariant, buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 
 /** A button-styled client-side link, so moving between steps keeps the page state. */
 export function LinkButton({ variant = "secondary", size = "md", className = "", ...rest }: ComponentProps<typeof Link> & {
@@ -90,18 +92,86 @@ export function ItemRow({
 
 export type ItemMenuEntry = {
   label: string;
-  onSelect?: () => void;
+  onSelect?: () => void | Promise<void>;
   href?: string;
   destructive?: boolean;
   disabled?: boolean;
+  /** Ask before running onSelect. */
+  confirm?: { title: string; description: string; action: string };
 };
 
+/** Remove menu entry that asks first; the same copy everywhere an item can be removed. */
+export function removeEntry(name: string, onRemove: () => Promise<void>): ItemMenuEntry {
+  return {
+    label: "Remove",
+    destructive: true,
+    onSelect: onRemove,
+    confirm: { title: `Remove ${name}?`, description: "Nobody can use it anymore. This cannot be undone.", action: "Remove" },
+  };
+}
+
+/** Asks before a step that cannot be taken back; stays open with the error if the step fails. */
+export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose }: {
+  confirm: { title: string; description: string; action: string } | null;
+  destructive?: boolean;
+  onConfirm: () => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  // Keep the last copy while the dialog closes, so it doesn't blank out mid-exit.
+  const [shown, setShown] = useState({ confirm, destructive });
+  const changed = confirm && (confirm.title !== shown.confirm?.title
+    || confirm.description !== shown.confirm?.description
+    || confirm.action !== shown.confirm?.action
+    || destructive !== shown.destructive);
+  if (changed) setShown({ confirm, destructive });
+
+  function close() {
+    setError(null);
+    onClose();
+  }
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm();
+      close();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Something went wrong. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <AlertDialog.Root open={Boolean(confirm)} onOpenChange={(open) => { if (!open && !busy) close(); }}>
+      <AlertDialog.Portal>
+        <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
+        <AlertDialog.Popup initialFocus={cancelRef} aria-busy={busy} data-testid="confirm-dialog" className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-gray-200 bg-white p-5 outline-none">
+          <AlertDialog.Title className="text-[15px] font-medium text-gray-950">{shown.confirm?.title}</AlertDialog.Title>
+          <AlertDialog.Description className="mt-2 text-[13px] leading-5 text-gray-600">{shown.confirm?.description}</AlertDialog.Description>
+          {error ? <DenNotice className="mt-4" tone="error" message={error} /> : null}
+          <div className="mt-5 flex justify-end gap-2">
+            <AlertDialog.Close ref={cancelRef} disabled={busy} data-testid="confirm-dialog-cancel" className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close>
+            <DenButton variant={shown.destructive ? "destructive" : "primary"} loading={busy} onClick={() => void run()}>{shown.confirm?.action}</DenButton>
+          </div>
+        </AlertDialog.Popup>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  );
+}
+
 export function ItemMenu({ label, entries, size = "sm" }: { label: string; entries: ItemMenuEntry[]; size?: "sm" | "md" }) {
+  const [confirming, setConfirming] = useState<ItemMenuEntry | null>(null);
   if (entries.length === 0) return null;
   const trigger = size === "md"
     ? "flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
     : "flex h-7 w-7 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900";
   return (
+    <>
     <Menu.Root>
       <Menu.Trigger aria-label={label} className={trigger}>
         <MoreHorizontal className="h-4 w-4" aria-hidden />
@@ -122,7 +192,7 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
               <Menu.Item
                 key={entry.label}
                 disabled={entry.disabled}
-                onClick={entry.onSelect}
+                onClick={() => (entry.confirm ? setConfirming(entry) : void entry.onSelect?.())}
                 className={`flex cursor-pointer items-center rounded-lg px-3 py-2 outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50 data-[highlighted]:bg-gray-50 ${entry.destructive ? "text-red-600" : "text-gray-700 data-[highlighted]:text-gray-900"}`}
               >
                 {entry.label}
@@ -132,6 +202,13 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
         </Menu.Positioner>
       </Menu.Portal>
     </Menu.Root>
+    <ConfirmDialog
+      confirm={confirming?.confirm ?? null}
+      destructive={confirming?.destructive}
+      onConfirm={() => confirming?.onSelect?.()}
+      onClose={() => setConfirming(null)}
+    />
+    </>
   );
 }
 
