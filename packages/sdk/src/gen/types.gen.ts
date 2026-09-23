@@ -4131,6 +4131,52 @@ export type TeamResponse = {
   };
 };
 
+export type OrganizationWebOrigin = {
+  id: string;
+  origin: string;
+  createdAt: string;
+  createdByName: string | null;
+};
+
+export type OrganizationWebOriginList = {
+  origins: Array<OrganizationWebOrigin>;
+  limit: number;
+};
+
+export type WebOriginOrganizationNotFoundError = {
+  error: "organization_not_found";
+};
+
+export type InvalidWebOriginError = {
+  error: "invalid_web_origin";
+  message: string;
+};
+
+export type ApproveWebOriginBadRequest = InvalidRequestError | InvalidWebOriginError;
+
+export type WebOriginAlreadyApprovedError = {
+  error: "web_origin_already_approved";
+  message: string;
+};
+
+export type WebOriginLimitReachedError = {
+  error: "web_origin_limit_reached";
+  message: string;
+};
+
+export type ApproveWebOriginConflict = WebOriginAlreadyApprovedError | WebOriginLimitReachedError;
+
+export type OrganizationWebOriginApproveBody = {
+  origin: string;
+};
+
+export type WebOriginNotFoundError = {
+  error: "web_origin_not_found";
+  message: string;
+};
+
+export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -24525,6 +24571,124 @@ export type PostV1TeamsResponses = {
 };
 
 export type PostV1TeamsResponse = PostV1TeamsResponses[keyof PostV1TeamsResponses];
+
+export type GetV1OrgWebOriginsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type GetV1OrgWebOriginsErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can view approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+};
+
+export type GetV1OrgWebOriginsError = GetV1OrgWebOriginsErrors[keyof GetV1OrgWebOriginsErrors];
+
+export type GetV1OrgWebOriginsResponses = {
+  /**
+   * Approved web origins returned successfully.
+   */
+  200: OrganizationWebOriginList;
+};
+
+export type GetV1OrgWebOriginsResponse = GetV1OrgWebOriginsResponses[keyof GetV1OrgWebOriginsResponses];
+
+export type PostV1OrgWebOriginsData = {
+  body: OrganizationWebOriginApproveBody;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type PostV1OrgWebOriginsErrors = {
+  /**
+   * The origin was not an exact HTTPS origin.
+   */
+  400: ApproveWebOriginBadRequest;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can approve web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+  /**
+   * The origin is already approved or the organization reached its approved origin limit.
+   */
+  409: ApproveWebOriginConflict;
+};
+
+export type PostV1OrgWebOriginsError = PostV1OrgWebOriginsErrors[keyof PostV1OrgWebOriginsErrors];
+
+export type PostV1OrgWebOriginsResponses = {
+  /**
+   * The web origin was approved.
+   */
+  201: OrganizationWebOrigin;
+};
+
+export type PostV1OrgWebOriginsResponse = PostV1OrgWebOriginsResponses[keyof PostV1OrgWebOriginsResponses];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'owo_' prefix and a 26-character base32 suffix.
+     */
+    webOriginId: string;
+  };
+  query?: never;
+  url: "/v1/org/web-origins/{webOriginId}";
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdErrors = {
+  /**
+   * The web origin id was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can remove approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The approved web origin or organization was not found.
+   */
+  404: RemoveWebOriginNotFound;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdError =
+  DeleteV1OrgWebOriginsByWebOriginIdErrors[keyof DeleteV1OrgWebOriginsByWebOriginIdErrors];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
+  /**
+   * The approved web origin was removed.
+   */
+  204: void;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
+  DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

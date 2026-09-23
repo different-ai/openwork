@@ -98,6 +98,8 @@ import type {
   DeleteV1MemoryByIdErrors,
   DeleteV1OrgErrors,
   DeleteV1OrgResponses,
+  DeleteV1OrgWebOriginsByWebOriginIdErrors,
+  DeleteV1OrgWebOriginsByWebOriginIdResponses,
   DeleteV1PluginsByPluginIdAccessByGrantIdErrors,
   DeleteV1PluginsByPluginIdAccessByGrantIdResponses,
   DeleteV1PluginsByPluginIdConfigObjectsByConfigObjectIdErrors,
@@ -392,6 +394,8 @@ import type {
   GetV1OrgResponses,
   GetV1OrgsInvitationsPreviewErrors,
   GetV1OrgsInvitationsPreviewResponses,
+  GetV1OrgWebOriginsErrors,
+  GetV1OrgWebOriginsResponses,
   GetV1PluginsByPluginIdAccessErrors,
   GetV1PluginsByPluginIdAccessResponses,
   GetV1PluginsByPluginIdConfigObjectsErrors,
@@ -481,6 +485,7 @@ import type {
   MintAutomationRunnerTokenResponses,
   MoveMicrosoft365MailMessageErrors,
   MoveMicrosoft365MailMessageResponses,
+  OrganizationWebOriginApproveBody,
   PatchApiAuthScimV2GroupsByGroupIdErrors,
   PatchApiAuthScimV2GroupsByGroupIdResponses,
   PatchApiAuthScimV2UsersByUserIdErrors,
@@ -734,6 +739,8 @@ import type {
   PostV1OrgsByOrganizationIdInstallLinksResponses,
   PostV1OrgsInvitationsAcceptErrors,
   PostV1OrgsInvitationsAcceptResponses,
+  PostV1OrgWebOriginsErrors,
+  PostV1OrgWebOriginsResponses,
   PostV1PluginsByPluginIdAccessErrors,
   PostV1PluginsByPluginIdAccessResponses,
   PostV1PluginsByPluginIdArchiveErrors,
@@ -13292,6 +13299,70 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * List approved web origins
+   *
+   * Lists the exact HTTPS origins this organization approved for web sign-in handoff and browser access to the Den API.
+   */
+  public getV1OrgWebOrigins<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1OrgWebOriginsResponses, GetV1OrgWebOriginsErrors, ThrowOnError>({
+      url: "/v1/org/web-origins",
+      ...options,
+    });
+  }
+
+  /**
+   * Approve a web origin
+   *
+   * Approves one exact HTTPS origin (scheme, host, and optional port) for this organization. Approved origins can receive web sign-in handoffs for this organization and make credentialed browser requests to the Den API.
+   */
+  public postV1OrgWebOrigins<ThrowOnError extends boolean = false>(
+    parameters: {
+      organizationWebOriginApproveBody: OrganizationWebOriginApproveBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [{ args: [{ key: "organizationWebOriginApproveBody", map: "body" }] }],
+    );
+    return (options?.client ?? this.client).post<PostV1OrgWebOriginsResponses, PostV1OrgWebOriginsErrors, ThrowOnError>(
+      {
+        url: "/v1/org/web-origins",
+        ...options,
+        ...params,
+        headers: {
+          "Content-Type": "application/json",
+          ...options?.headers,
+          ...params.headers,
+        },
+      },
+    );
+  }
+
+  /**
+   * Remove an approved web origin
+   *
+   * Removes one approved web origin from this organization. New web sign-in handoffs stop immediately; browser access stops within about 30 seconds on every Den API replica.
+   */
+  public deleteV1OrgWebOriginsByWebOriginId<ThrowOnError extends boolean = false>(
+    parameters: {
+      webOriginId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "webOriginId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1OrgWebOriginsByWebOriginIdResponses,
+      DeleteV1OrgWebOriginsByWebOriginIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/web-origins/{webOriginId}",
+      ...options,
+      ...params,
     });
   }
 

@@ -750,6 +750,13 @@
       "when": 1789686477369,
       "tag": "0107_gateway_usage_durable_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "5",
+      "when": 1790123826481,
+      "tag": "0108_organization_web_origins",
+      "breakpoints": true
     }
   ]
 }

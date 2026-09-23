@@ -1,12 +1,12 @@
-import { describe, expect, test } from "bun:test"
-import { spawnSync } from "node:child_process"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
+import { afterEach, describe, expect, test } from "bun:test"
 import { typeId } from "@openwork-ee/utils/typeid"
 
 const organizationId = typeId.generator("organization")
 const otherOrganizationId = typeId.generator("organization")
 const webOrigin = "https://web.selfhost.example.test"
+
+// No database in unit tests: the organization has no Cloud instance previews.
+const noSignedPreviews = () => Promise.resolve([])
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -22,12 +22,29 @@ async function loadDesktopHandoffRoutes() {
 
 async function configureDesktopHandoffEnv(input: {
   gatewayOrigin?: string
+  orgMode?: "multi_org" | "single_org"
 }) {
   const { env } = await import("../src/env.js")
-  env.orgMode = "multi_org"
+  env.orgMode = input.orgMode ?? "multi_org"
   env.gatewayOrigin = input.gatewayOrigin
-  env.webHandoffReturnOriginsByOrg = new Map()
 }
+
+const approvalLookups: Array<{ origin: string; organizationId?: string }> = []
+
+async function approveWebOriginForOrganization(approvedOrganizationId: string, approvedOrigin: string) {
+  const { setWebOriginApprovalLookupForTest } = await import("../src/organization-web-origins.js")
+  approvalLookups.length = 0
+  setWebOriginApprovalLookupForTest(async (input) => {
+    approvalLookups.push(input)
+    return input.organizationId === approvedOrganizationId && input.origin === approvedOrigin
+  })
+}
+
+afterEach(async () => {
+  const { setWebOriginApprovalLookupForTest } = await import("../src/organization-web-origins.js")
+  setWebOriginApprovalLookupForTest(null)
+  approvalLookups.length = 0
+})
 
 describe("desktop handoff public URL", () => {
   test("does not send 0.0.0.0 to desktop clients", async () => {
@@ -225,103 +242,75 @@ describe("desktop handoff public URL", () => {
     })).toBeNull()
   })
 
-  test("approves the exact operator-configured origin for the active organization", async () => {
+  test("approves an origin the active organization approved in Org settings", async () => {
     const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
-    const { env, parseWebHandoffReturnOriginsByOrg } = await import("../src/env.js")
     await configureDesktopHandoffEnv({})
-    env.webHandoffReturnOriginsByOrg = parseWebHandoffReturnOriginsByOrg(JSON.stringify({ [organizationId]: [webOrigin] }))
+    await approveWebOriginForOrganization(organizationId, webOrigin)
 
-    expect(await resolveApprovedWebHandoffReturnUrl({
-      activeOrganizationId: organizationId,
-      returnUrl: `${webOrigin}/`,
-    })).toBe(`${webOrigin}/signin`)
+    for (const returnUrl of [`${webOrigin}/`, `${webOrigin}/signin`, webOrigin]) {
+      expect(await resolveApprovedWebHandoffReturnUrl({
+        activeOrganizationId: organizationId,
+        returnUrl,
+        loadSignedPreviewUrls: noSignedPreviews,
+      })).toBe(`${webOrigin}/signin`)
+    }
+    expect(approvalLookups).toEqual([
+      { origin: webOrigin, organizationId },
+      { origin: webOrigin, organizationId },
+      { origin: webOrigin, organizationId },
+    ])
   })
 
-  test("org-scoped origins reject the wrong organization, no organization, and single-org mode", async () => {
-    const { approveWebHandoffReturnUrlForSignedPreviews, resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
-    const { env } = await import("../src/env.js")
+  test("org-approved origins reject the wrong organization, no organization, and single-org mode", async () => {
+    const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
     await configureDesktopHandoffEnv({})
-    env.webHandoffReturnOriginsByOrg = new Map([[organizationId, [webOrigin]]])
+    await approveWebOriginForOrganization(organizationId, webOrigin)
 
+    expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: otherOrganizationId, returnUrl: `${webOrigin}/signin`, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
+    expect(approvalLookups).toEqual([{ origin: webOrigin, organizationId: otherOrganizationId }])
+
+    approvalLookups.length = 0
     expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: null, returnUrl: `${webOrigin}/signin` })).toBeNull()
-    expect(approveWebHandoffReturnUrlForSignedPreviews({
-      orgMode: "multi_org",
-      activeOrganizationId: otherOrganizationId,
-      webHandoffReturnOriginsByOrg: env.webHandoffReturnOriginsByOrg,
-      signedPreviewUrls: [],
-      returnUrl: `${webOrigin}/signin`,
-    })).toBeNull()
-    expect(approveWebHandoffReturnUrlForSignedPreviews({
-      orgMode: "multi_org",
-      activeOrganizationId: null,
-      webHandoffReturnOriginsByOrg: env.webHandoffReturnOriginsByOrg,
-      signedPreviewUrls: [],
-      returnUrl: `${webOrigin}/signin`,
-    })).toBeNull()
-    expect(approveWebHandoffReturnUrlForSignedPreviews({
-      orgMode: "single_org",
-      activeOrganizationId: organizationId,
-      webHandoffReturnOriginsByOrg: env.webHandoffReturnOriginsByOrg,
-      signedPreviewUrls: [],
-      returnUrl: `${webOrigin}/signin`,
-    })).toBeNull()
+    expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: "not-an-org-id", returnUrl: `${webOrigin}/signin` })).toBeNull()
+
+    await configureDesktopHandoffEnv({ orgMode: "single_org" })
+    expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: organizationId, returnUrl: `${webOrigin}/signin`, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
+    expect(approvalLookups).toEqual([])
+    await configureDesktopHandoffEnv({})
   })
 
-  test("org-scoped origins reject unlisted, lookalike, and unsafe return URLs", async () => {
-    const { approveWebHandoffReturnUrlForSignedPreviews } = await loadDesktopHandoffRoutes()
-    const origins = new Map([[organizationId, [webOrigin]]])
+  test("org-approved origins reject unlisted, lookalike, and unsafe return URLs", async () => {
+    const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
+    await configureDesktopHandoffEnv({})
+    await approveWebOriginForOrganization(organizationId, webOrigin)
+
     for (const returnUrl of [
       "https://other.example.test/signin",
       "https://web.selfhost.example.test.evil.test/signin",
       "https://sub.web.selfhost.example.test/signin",
       "https://web.selfhost.example.test:444/signin",
+    ]) {
+      expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: organizationId, returnUrl, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
+    }
+    expect(approvalLookups.map((lookup) => lookup.origin)).toEqual([
+      "https://other.example.test",
+      "https://web.selfhost.example.test.evil.test",
+      "https://sub.web.selfhost.example.test",
+      "https://web.selfhost.example.test:444",
+    ])
+
+    approvalLookups.length = 0
+    for (const returnUrl of [
       "http://web.selfhost.example.test/signin",
       "https://user@web.selfhost.example.test/signin",
       `${webOrigin}/dashboard/../signin`,
       `${webOrigin}/%2e%2e/signin`,
       `${webOrigin}/other`,
       `${webOrigin}/signin#fragment`,
+      "not a url",
     ]) {
-      expect(approveWebHandoffReturnUrlForSignedPreviews({
-        orgMode: "multi_org",
-        activeOrganizationId: organizationId,
-        webHandoffReturnOriginsByOrg: origins,
-        signedPreviewUrls: [],
-        returnUrl,
-      })).toBeNull()
+      expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: organizationId, returnUrl, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
     }
-  })
-
-  test("rejects malformed operator origins and fails startup", async () => {
-    seedRequiredEnv()
-    const { parseWebHandoffReturnOriginsByOrg } = await import("../src/env.js")
-    expect(parseWebHandoffReturnOriginsByOrg("").size).toBe(0)
-    const invalid = [
-      "[]", "null", "{", JSON.stringify({ not_an_org: [webOrigin] }),
-      JSON.stringify({ [organizationId]: webOrigin }),
-      ...[
-        "*", "https://*.example.test", "http://web.example.test", "https://user@web.example.test",
-        "https://web.example.test/", "https://web.example.test/path", "https://web.example.test?query=1",
-        "https://web.example.test#fragment", "https://web.example.test.evil.test/path",
-      ].map((origin) => JSON.stringify({ [organizationId]: [origin] })),
-    ]
-    for (const value of invalid) {
-      expect(() => parseWebHandoffReturnOriginsByOrg(value)).toThrow("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG")
-    }
-    const result = spawnSync(process.execPath, ["--conditions", "development", "--eval", 'await import("./src/env.ts")'], {
-      cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
-      encoding: "utf8",
-      env: {
-        PATH: process.env.PATH ?? "",
-        HOME: process.env.HOME ?? "",
-        DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_test",
-        DEN_DB_ENCRYPTION_KEY: "x".repeat(32),
-        BETTER_AUTH_SECRET: "y".repeat(32),
-        BETTER_AUTH_URL: "https://public.example.test",
-        DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG: JSON.stringify({ [organizationId]: ["https://web.example.test/path"] }),
-      },
-    })
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG")
+    expect(approvalLookups).toEqual([])
   })
 })

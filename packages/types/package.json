@@ -114,6 +114,11 @@
       "development": "./src/den/microsoft-365.ts",
       "default": "./src/den/microsoft-365.ts"
     },
+    "./den/organization-web-origins": {
+      "types": "./src/den/organization-web-origins.ts",
+      "development": "./src/den/organization-web-origins.ts",
+      "default": "./src/den/organization-web-origins.ts"
+    },
     "./den/mcp-connection-action": {
       "types": "./src/den/mcp-connection-action.ts",
       "development": "./src/den/mcp-connection-action.ts",

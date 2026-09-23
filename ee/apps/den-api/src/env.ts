@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
-import { typeId } from "@openwork-ee/utils/typeid"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
@@ -72,7 +71,6 @@ const EnvSchema = z.object({
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_GATEWAY_KEY: z.string().optional(),
   DEN_GATEWAY_ORIGIN: z.string().optional(),
-  DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_USERINFO_URL: z.string().optional(),
@@ -450,46 +448,6 @@ function normalizeOptionalHttpsOrigin(envName: string, value: string | undefined
   return url.origin
 }
 
-export function parseWebHandoffReturnOriginsByOrg(value: string | undefined): ReadonlyMap<string, readonly string[]> {
-  if (value === undefined || value.trim() === "") return new Map()
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(value)
-  } catch {
-    throw new Error("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG must be a JSON object mapping organization IDs to HTTPS origin arrays.")
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG must be a JSON object mapping organization IDs to HTTPS origin arrays.")
-  }
-
-  const originsByOrg = new Map<string, readonly string[]>()
-  for (const [organizationId, origins] of Object.entries(parsed)) {
-    if (!typeId.schema("organization").safeParse(organizationId).success || !Array.isArray(origins)) {
-      throw new Error("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG must map valid organization IDs to HTTPS origin arrays.")
-    }
-    const approvedOrigins: string[] = []
-    for (const origin of origins) {
-      if (typeof origin !== "string") {
-        throw new Error("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG must contain only exact HTTPS origins.")
-      }
-      let url: URL
-      try {
-        url = new URL(origin)
-      } catch {
-        throw new Error("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG must contain only exact HTTPS origins.")
-      }
-      if (url.protocol !== "https:" || url.hostname.includes("*") || origin !== url.origin || url.username || url.password || url.search || url.hash || url.pathname !== "/") {
-        throw new Error("DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG must contain only exact HTTPS origins.")
-      }
-      approvedOrigins.push(origin)
-    }
-    originsByOrg.set(organizationId, approvedOrigins)
-  }
-  return originsByOrg
-}
-
 function normalizeAbsoluteUrlCsv(envName: string, value: string | undefined) {
   const entries = splitCsv(value)
   const invalidEntries: string[] = []
@@ -734,7 +692,6 @@ export const env = {
   },
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
-  webHandoffReturnOriginsByOrg: parseWebHandoffReturnOriginsByOrg(parsed.DEN_WEB_HANDOFF_RETURN_ORIGINS_BY_ORG),
   planGatingEnabled,
   installLinksGatingEnabled,
   connectLink,

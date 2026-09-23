@@ -10,6 +10,7 @@ import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/i
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
 import { ensurePersonalOrganizationForUser, resolveUserOrganizations } from "../../orgs.js"
+import { isWebOriginApprovedForOrganization } from "../../organization-web-origins.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { enforceRateLimit } from "../../utils/rate-limit.js"
@@ -322,8 +323,6 @@ export function approveWebHandoffReturnUrlForSignedPreviews(input: {
   signedPreviewUrls: string[]
   orgMode: DenOrgMode
   gatewayOrigin?: string | null
-  activeOrganizationId?: string | null
-  webHandoffReturnOriginsByOrg?: ReadonlyMap<string, readonly string[]>
 }) {
   const candidate = resolveWebHandoffReturnUrlCandidate(input)
   if (!candidate) {
@@ -331,10 +330,6 @@ export function approveWebHandoffReturnUrlForSignedPreviews(input: {
   }
 
   if (isConfiguredGatewayOrigin(candidate.origin, input.gatewayOrigin)) {
-    return candidate.returnUrl
-  }
-
-  if (input.activeOrganizationId && input.webHandoffReturnOriginsByOrg?.get(input.activeOrganizationId)?.includes(candidate.origin)) {
     return candidate.returnUrl
   }
 
@@ -365,6 +360,7 @@ async function getCloudSignedPreviewUrls(organizationId: WorkerOrgId) {
 export async function resolveApprovedWebHandoffReturnUrl(input: {
   returnUrl: string
   activeOrganizationId?: string | null
+  loadSignedPreviewUrls?: (organizationId: WorkerOrgId) => Promise<string[]>
 }) {
   const gatewayReturnUrl = approveWebHandoffReturnUrlForSignedPreviews({
     returnUrl: input.returnUrl,
@@ -387,16 +383,17 @@ export async function resolveApprovedWebHandoffReturnUrl(input: {
     return null
   }
 
-  const configuredReturnUrl = approveWebHandoffReturnUrlForSignedPreviews({
-    returnUrl: input.returnUrl,
-    signedPreviewUrls: [],
-    orgMode: env.orgMode,
-    activeOrganizationId: organizationId,
-    webHandoffReturnOriginsByOrg: env.webHandoffReturnOriginsByOrg,
-  })
-  if (configuredReturnUrl) return configuredReturnUrl
+  const candidate = resolveWebHandoffReturnUrlCandidate({ returnUrl: input.returnUrl, orgMode: env.orgMode })
+  if (!candidate) {
+    return null
+  }
 
-  const signedPreviewUrls = await getCloudSignedPreviewUrls(organizationId)
+  // Exact origins the active organization's owners approved in Org settings.
+  if (await isWebOriginApprovedForOrganization(organizationId, candidate.origin)) {
+    return candidate.returnUrl
+  }
+
+  const signedPreviewUrls = await (input.loadSignedPreviewUrls ?? getCloudSignedPreviewUrls)(organizationId)
   return approveWebHandoffReturnUrlForSignedPreviews({
     returnUrl: input.returnUrl,
     signedPreviewUrls,
