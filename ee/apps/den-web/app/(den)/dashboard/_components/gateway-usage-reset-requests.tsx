@@ -10,7 +10,7 @@ import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import type { DenOrgMember } from "../../_lib/den-org";
 import { formatLimitMoney, useGatewayLimitsMutation, useGatewayPolicies, useGatewayResetHistoryAvailable, useGatewayResetRequests } from "./gateway-usage-limits-data";
 import { GatewayLimitsQueryFeedback, GatewayLimitTimestamp } from "./gateway-usage-limits-section";
-import { timeframeLabels } from "./gateway-usage-policy-editor";
+import { timeframeLabels } from "./gateway-usage-limits-data";
 
 function extensionPreview(request: GatewayUsageResetRequest) {
   const extension = Number((BigInt(request.baseAllowanceMicroUsd) + 3n) / 4n);

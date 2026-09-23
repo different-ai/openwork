@@ -631,6 +631,27 @@ export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined
   return `${getAiGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
 }
 
+export function getAiGatewayLimitsRoute(orgSlug?: string | null, deletedPolicyId?: string): string {
+  const base = `${getAiGatewayRoute(orgSlug)}?tab=limits`;
+  return deletedPolicyId ? `${base}&deleted=${encodeURIComponent(deletedPolicyId)}` : base;
+}
+
+export function getNewAiGatewayLimitRoute(orgSlug?: string | null, target?: { memberId: string } | { teamId: string }): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/limits/new`;
+  if (!target) return base;
+  return "memberId" in target
+    ? `${base}?memberId=${encodeURIComponent(target.memberId)}`
+    : `${base}?teamId=${encodeURIComponent(target.teamId)}`;
+}
+
+export function getAiGatewayLimitRoute(orgSlug: string | null | undefined, policyId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/limits/${encodeURIComponent(policyId)}`;
+}
+
+export function getAiGatewayPersonRoute(orgSlug: string | null | undefined, memberId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/people/${encodeURIComponent(memberId)}`;
+}
+
 export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }

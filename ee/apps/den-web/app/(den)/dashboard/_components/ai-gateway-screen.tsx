@@ -4,14 +4,17 @@ import { LayoutDashboard, Plug, SlidersHorizontal, Sparkles, Users } from "lucid
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
-import { DenButton } from "../../_components/ui/button";
+import { DenBrandMark } from "../../_components/ui/brand-mark";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getAiGatewayProvidersRoute, getAiGatewayRoute } from "../../_lib/den-org";
+import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
+import { GatewaySpendBreakdown } from "./gateway-spend-breakdown";
+import { getProviderIconSlug } from "./llm-provider-data";
 import { GatewayUsageSection } from "./gateway-usage-section";
 import { GatewayUsageLimitsSection } from "./gateway-usage-limits-section";
 import { GatewayUsageResetRequests } from "./gateway-usage-reset-requests";
@@ -21,7 +24,7 @@ import { GatewayProvidersSection } from "./inference-providers-screen";
 import { LegacyProvidersSection } from "./llm-providers-screen";
 import { InferenceScreen } from "./inference-screen";
 
-type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "openwork-models";
+export type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "openwork-models";
 
 const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "overview", label: "Overview", icon: LayoutDashboard },
@@ -32,6 +35,7 @@ const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
 ];
 
 function AiGatewayOverview({ orgId }: { orgId: string }) {
+  const { orgSlug } = useOrgDashboard();
   const { inferenceProviders, busy, error, reloadProviders } = useOrgInferenceProviders(orgId);
 
   if (busy) {
@@ -50,32 +54,49 @@ function AiGatewayOverview({ orgId }: { orgId: string }) {
   if (inferenceProviders.length === 0) {
     return (
       <section aria-label="Gateway usage" data-testid="gateway-usage-no-providers">
-        <DenCard className="flex min-h-64 flex-col items-center justify-center gap-4 text-center">
-          <p className="max-w-md text-sm text-gray-500">
-            Add an AI Provider to track usage through the OpenWork AI Gateway
-          </p>
-          <Link
-            href={getAiGatewayProvidersRoute()}
-            scroll={false}
-            className="text-sm font-medium text-gray-900 underline underline-offset-4"
-          >
-            Go to AI Providers
+        <DenCard className="flex flex-col items-center gap-4 px-8 py-16 text-center">
+          <span className="flex items-center gap-2" aria-hidden="true">
+            {EMPTY_STATE_PROVIDERS.map((provider) => (
+              <DenBrandMark key={provider.id} name={provider.name} simpleIconSlug={getProviderIconSlug(provider.id)} className="h-7 w-7 rounded-[8px]" imageClassName="h-4 w-4" />
+            ))}
+          </span>
+          <span className="flex flex-col gap-1">
+            <span className="text-[15px] font-medium text-gray-950">No usage yet</span>
+            <span className="text-[13px] text-gray-500">Spend and the models people use show up here after the first request.</span>
+          </span>
+          <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-usage-add-provider">Add provider</Link>
+          <Link href={getInferenceRoute(orgSlug)} scroll={false} className="text-[12px] text-gray-600 underline underline-offset-4 hover:text-gray-900">
+            Or subscribe to OpenWork Models
           </Link>
         </DenCard>
       </section>
     );
   }
 
-  return <GatewayUsageSection orgId={orgId} />;
+  return (
+    <>
+      <GatewayUsageSection orgId={orgId} />
+      <GatewaySpendBreakdown orgId={orgId} orgSlug={orgSlug} />
+    </>
+  );
 }
 
-export function AiGatewayScreen({ providerContent }: { providerContent?: ReactNode }) {
+const EMPTY_STATE_PROVIDERS = [
+  { id: "openrouter", name: "OpenRouter" },
+  { id: "anthropic", name: "Anthropic" },
+  { id: "openai", name: "OpenAI" },
+  { id: "google", name: "Google" },
+];
+
+export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { providerContent?: ReactNode; pageContent?: ReactNode; pageTab?: AiGatewayTab }) {
   const { orgId, orgSlug, orgContext, orgError } = useOrgDashboard();
   const access = useGatewayDashboardAccess();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const tab = providerContent !== undefined
-    ? "ai-providers"
+  const nestedContent = providerContent ?? pageContent;
+  const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
+  const tab = nestedContent !== undefined && nestedTab
+    ? nestedTab
     : AI_GATEWAY_TABS.find((item) => item.value === searchParams.get("tab"))?.value ?? "overview";
 
   function setTab(next: AiGatewayTab) {
@@ -102,7 +123,7 @@ export function AiGatewayScreen({ providerContent }: { providerContent?: ReactNo
         aria-label={AI_GATEWAY_TABS.find((item) => item.value === tab)?.label}
         data-testid={`ai-gateway-panel-${tab}`}
       >
-        {providerContent !== undefined ? providerContent : (
+        {nestedContent !== undefined ? nestedContent : (
           <>
             {tab === "overview" || tab === "ai-providers" || tab === "limits" || tab === "users-and-teams" ? (
               orgError ? <DenNotice tone="error" message={orgError} />
@@ -117,6 +138,7 @@ export function AiGatewayScreen({ providerContent }: { providerContent?: ReactNo
                         <GatewayUsageLimitsSection
                           key={`policies-${orgId}`}
                           orgId={orgId}
+                          orgSlug={orgSlug}
                           teams={orgContext.teams}
                           members={orgContext.members}
                         />

@@ -15,7 +15,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import type { DenOrgContext } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { GatewayLimitsRequestError, GatewayLimitsWriteUncertainError, formatLimitMoney, useGatewayLimitsMutation, useGatewayPolicies } from "./gateway-usage-limits-data";
-import { timeframeLabels } from "./gateway-usage-policy-editor";
+import { timeframeLabels } from "./gateway-usage-limits-data";
 import { GatewayAccessWriteUncertainError, useGatewayAccessProviders, writeSubjectAccess, type GatewayAccessProvider } from "./gateway-subject-access-data";
 import { getProviderIconSlug } from "./llm-provider-data";
 import { ProviderAccessPicker, type ProviderAccessValue } from "./llm-provider-pickers";

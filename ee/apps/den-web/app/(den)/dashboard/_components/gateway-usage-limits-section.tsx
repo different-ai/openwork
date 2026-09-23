@@ -1,21 +1,22 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useDeferredValue, useState } from "react";
-import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { ChevronRight, LockKeyhole } from "lucide-react";
+import { ChevronRight, Gauge, Globe, LockKeyhole, User, Users } from "lucide-react";
 import type { GatewayUsageLimitPolicy, GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenCombobox } from "../../_components/ui/combobox";
-import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenTable } from "../../_components/ui/table";
-import type { DenOrgMember, DenOrgTeam } from "../../_lib/den-org";
-import { formatLimitMoney, useGatewayLimitsMutation, useGatewayMembers, useGatewayMemberUsage, useGatewayPolicies, type GatewayUsageMember } from "./gateway-usage-limits-data";
-import { GatewayUsagePolicyEditor, timeframeLabels } from "./gateway-usage-policy-editor";
+import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, getAiGatewayPersonRoute, getNewAiGatewayLimitRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
+import { describeWho } from "./gateway-limit-editor-screen";
+import { formatLimitMoney, timeframeLabels, timeframePeriods, useGatewayLimitsMutation, useGatewayMembers, useGatewayPolicies, type GatewayUsageMember } from "./gateway-usage-limits-data";
 
 type Directory = { teams: DenOrgTeam[]; members: DenOrgMember[] };
+type OrgSlug = string | null | undefined;
 
 export function GatewayLimitsQueryFeedback({ query, label }: { query: { isPending: boolean; isError: boolean; error: Error | null; refetch: () => unknown }; label: string }) {
   if (query.isError) return <div className="flex flex-col gap-3" role="alert"><DenNotice tone="error" message={query.error?.message ?? `Could not load ${label}.`} /><DenButton variant="secondary" onClick={() => void query.refetch()}>Retry {label}</DenButton></div>;
@@ -33,7 +34,7 @@ function MemberInitials({ member }: { member: GatewayUsageMember }) {
   </span>;
 }
 
-function MemberSearch({ orgId, label, onSelect }: { orgId: string; label: string; onSelect: (member: GatewayUsageMember) => void }) {
+export function MemberSearch({ orgId, label, onSelect }: { orgId: string; label: string; onSelect: (member: GatewayUsageMember) => void }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const results = useGatewayMembers(orgId, deferredQuery);
@@ -179,107 +180,102 @@ export function GatewayMemberUsageDetails({ status, policies, teams }: { status:
   </div>;
 }
 
-function SelectedMemberUsage({ orgId, member, policies, teams, onChangePerson }: { orgId: string; member: GatewayUsageMember; policies: GatewayUsageLimitPolicy[]; teams: DenOrgTeam[]; onChangePerson: () => void }) {
-  const usage = useGatewayMemberUsage(orgId, member.id);
-  return <section aria-label={`Usage for ${member.name || member.email}`} className="flex flex-col gap-4">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <MemberInitials member={member} />
-        <div className="min-w-0">
-          <h4 className="truncate text-sm font-medium">{member.name || member.email}</h4>
-          <p className="truncate text-xs text-[var(--ow-muted)]">{member.email}</p>
-        </div>
-      </div>
-      <div className="flex shrink-0 gap-2">
-        <DenButton size="sm" variant="ghost" onClick={onChangePerson}>Change person</DenButton>
-        <DenButton size="sm" variant="secondary" disabled={usage.isFetching} onClick={() => void usage.refetch()}>Refresh usage</DenButton>
-      </div>
-    </div>
-    <GatewayLimitsQueryFeedback query={usage} label="member usage" />
-    {!usage.isError && usage.data ? <GatewayMemberUsageDetails status={usage.data} policies={policies} teams={teams} /> : null}
-  </section>;
+const periodOrder = { day: 0, week: 1, month: 2 };
+
+export function describeLimitAmounts(policy: GatewayUsageLimitPolicy): string {
+  return [...policy.limits].sort((a, b) => periodOrder[a.timeframe] - periodOrder[b.timeframe])
+    .map((limit) => `${formatLimitMoney(limit.costLimitMicroUsd)} ${timeframePeriods[limit.timeframe]}`).join(", ");
 }
 
-function MemberInspector({ orgId, policies, teams }: { orgId: string; policies: GatewayUsageLimitPolicy[]; teams: DenOrgTeam[] }) {
-  const [selected, setSelected] = useState<GatewayUsageMember | null>(null);
-  return <section aria-label="Check User's Usage" className="flex flex-col gap-4">
-    <h2 className="text-lg font-semibold">Check User&apos;s Usage</h2>
-    {selected
-      ? <SelectedMemberUsage key={selected.id} orgId={orgId} member={selected} policies={policies} teams={teams} onChangePerson={() => setSelected(null)} />
-      : <MemberSearch orgId={orgId} label="Find person to inspect" onSelect={setSelected} />}
-  </section>;
+function policyWho(policy: GatewayUsageLimitPolicy, teams: DenOrgTeam[], members: DenOrgMember[]) {
+  return describeWho({
+    organization: policy.assignments.some((assignment) => assignment.organization),
+    teamIds: policy.assignments.flatMap((assignment) => assignment.teamId ? [assignment.teamId] : []),
+    memberIds: policy.assignments.flatMap((assignment) => assignment.memberId ? [assignment.memberId] : []),
+  }, teams, members);
 }
 
-export function GatewayUsageLimitsSection({ orgId, teams }: { orgId: string } & Directory) {
-  const policies = useGatewayPolicies(orgId);
+function LimitIcon({ policy }: { policy: GatewayUsageLimitPolicy }) {
+  const Icon = policy.assignments.some((assignment) => assignment.organization) ? Globe
+    : policy.assignments.every((assignment) => assignment.memberId) && policy.assignments.length > 0 ? User : Users;
+  return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><Icon className="h-4 w-4" aria-hidden="true" /></span>;
+}
+
+function DeletedLimitNote({ orgId, orgSlug, policy }: { orgId: string; orgSlug: OrgSlug; policy: GatewayUsageLimitPolicy }) {
+  const router = useRouter();
   const mutation = useGatewayLimitsMutation(orgId);
-  const [query, setQuery] = useState("");
-  const [editor, setEditor] = useState<{ policy?: GatewayUsageLimitPolicy } | null>(null);
-  const [archiving, setArchiving] = useState<GatewayUsageLimitPolicy | null>(null);
-  const active = policies.data?.policies.filter((policy) => !policy.archivedAt) ?? [];
-  const filtered = active.filter((policy) => policy.name.toLowerCase().includes(query.trim().toLowerCase()));
-  const latestArchive = active.find((policy) => policy.id === archiving?.id);
-  const staleArchive = Boolean(archiving && latestArchive?.revision !== archiving.revision);
-  return <>
-    {!policies.isError && active.length > 0 ? (
-      <div className="mb-10">
-        <MemberInspector key={orgId} orgId={orgId} policies={active} teams={teams} />
-      </div>
-    ) : null}
-    <section aria-labelledby="gateway-usage-limits-heading" className="flex flex-col gap-5">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 id="gateway-usage-limits-heading" className="text-lg font-semibold">Policies</h2>
-      <div className="flex shrink-0 items-center gap-3">
-        <DenButton variant="secondary" disabled={policies.isFetching} onClick={() => void policies.refetch()}>Refresh policies</DenButton>
-        <DenButton onClick={() => setEditor({})}>Create policy</DenButton>
-      </div>
+  if (!policy.archivedAt) return null;
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-2 text-[13px] text-gray-700" data-testid="gateway-limit-deleted">
+      <span className="h-1.5 w-1.5 rounded-full bg-gray-400" aria-hidden="true" />
+      <span>Deleted {policy.name}. It no longer applies to anyone.</span>
+      <DenButton variant="ghost" size="sm" className="h-auto px-1 py-0 text-[13px] underline underline-offset-4" loading={mutation.isPending}
+        data-testid="gateway-limit-undo"
+        onClick={() => mutation.mutate({ type: "restore", policy: { id: policy.id, revision: policy.revision } }, { onSuccess: () => router.replace(getAiGatewayLimitsRoute(orgSlug)) })}>
+        Undo
+      </DenButton>
+      {mutation.error ? <DenNotice tone="error" message={mutation.error.message} /> : null}
     </div>
-    <DenInput type="search" aria-label="Search usage limit policies" placeholder="Search policies" value={query} onChange={(event) => setQuery(event.target.value)} />
-    {active.length > 0 ? <details className="text-sm text-[var(--ow-muted)]">
-      <summary className="cursor-pointer">How limits apply</summary>
-      <div className="flex flex-col gap-2 pt-3">
-        <p>Estimated USD for organization-provider Gateway traffic. Team and organization policies apply to each person individually, never as a shared pool. Each timeframe applies simultaneously; allowances are not added together.</p>
-        <p>Calendar resets: daily at 05:00 UTC, Monday at 05:00 UTC weekly, and day 1 at 05:00 UTC monthly.</p>
-      </div>
-    </details> : null}
-    <GatewayLimitsQueryFeedback query={policies} label="policies" />
-    {!policies.isError && policies.data && active.length === 0 ? <DenCard className="py-10 text-center"><p className="text-sm text-[var(--ow-muted)]">No usage limits configured</p></DenCard> : null}
-    {!policies.isError && policies.data && active.length > 0 ? <DenCard className="overflow-hidden p-0"><DenTable rows={filtered} getRowKey={(row) => row.id} headerTone="plain" rowClassName="align-top" emptyLabel="No policies match this search." columns={[
-      { key: "policy", header: "Policy", width: "100%", render: (policy) => (
-        <div className="flex min-w-64 flex-col gap-3">
-          <div className="flex flex-col items-start gap-2">
-            <span className="break-words font-medium">{policy.name}</span>
-            <div className="flex flex-wrap gap-2">
-              <DenBadge>{policy.hardLimit ? "Hard" : "Soft"}</DenBadge>
-              <DenBadge>{policy.allowRequestReset ? "Increase requests on" : "Increase requests off"}</DenBadge>
-            </div>
-          </div>
-          <dl aria-label={`Allowances for ${policy.name}`} className="flex flex-wrap gap-x-5 gap-y-2 text-sm tabular-nums">
-            {policy.limits.map((limit) => (
-              <div key={limit.timeframe} className="flex items-baseline gap-2">
-                <dt className="text-[var(--ow-muted)]">{timeframeLabels[limit.timeframe]}</dt>
-                <dd className="font-medium">{formatLimitMoney(limit.costLimitMicroUsd)}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      ) },
-      { key: "actions", header: "Actions", align: "right", render: (policy) => (
-        <div className="flex justify-end gap-2">
-          <DenButton size="sm" variant="secondary" disabled={policies.isFetching} aria-label={`Edit ${policy.name}`} onClick={() => setEditor({ policy })}>Edit</DenButton>
-          <DenButton size="sm" variant="ghost" disabled={policies.isFetching} aria-label={`Archive ${policy.name}`} onClick={() => { mutation.reset(); setArchiving(policy); }}>Archive</DenButton>
-        </div>
-      ) },
-    ]} /></DenCard> : null}
-    {editor ? <GatewayUsagePolicyEditor orgId={orgId} policy={editor.policy} onClose={() => setEditor(null)} /> : null}
-    <AlertDialog.Root open={Boolean(archiving)} onOpenChange={(open) => { if (!open && !mutation.isPending) setArchiving(null); }}>
-      <AlertDialog.Portal><AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/30" /><AlertDialog.Popup className="fixed left-1/2 top-1/2 z-50 flex w-[min(480px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-2xl border border-[var(--ow-line)]/60 bg-[var(--dls-surface)] p-6">
-        <AlertDialog.Title className="text-lg font-semibold">Archive {archiving?.name}?</AlertDialog.Title><AlertDialog.Description className="text-sm text-[var(--ow-muted)]">This stops the policy from applying to assigned people and teams. Consumption and history are retained; people without other policies become unlimited.</AlertDialog.Description>
-        {mutation.error ? <DenNotice tone="error" message={mutation.error.message} /> : null}
-        {staleArchive ? <DenNotice tone="error" message="This policy changed. Cancel and review the latest revision before archiving." /> : null}
-        <div className="flex justify-end gap-3"><AlertDialog.Close disabled={mutation.isPending} className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close><DenButton variant="destructive" loading={mutation.isPending} disabled={staleArchive || policies.isError || policies.isFetching} onClick={() => { if (archiving) mutation.mutate({ type: "archive", policy: archiving }, { onSuccess: () => setArchiving(null) }); }}>Archive policy</DenButton></div>
-      </AlertDialog.Popup></AlertDialog.Portal>
-    </AlertDialog.Root>
+  );
+}
+
+function PersonLookup({ orgId, orgSlug }: { orgId: string; orgSlug: OrgSlug }) {
+  const router = useRouter();
+  return (
+    <section aria-label="Check someone's usage" className="flex max-w-md flex-col gap-2">
+      <h3 className="text-[13px] font-medium text-gray-900">Check someone&apos;s usage</h3>
+      <MemberSearch orgId={orgId} label="Find a person" onSelect={(member) => router.push(getAiGatewayPersonRoute(orgSlug, member.id))} />
     </section>
-  </>;
+  );
+}
+
+export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { orgId: string; orgSlug: OrgSlug } & Directory) {
+  const policies = useGatewayPolicies(orgId);
+  const searchParams = useSearchParams();
+  const deletedId = searchParams?.get("deleted") ?? null;
+  const active = policies.data?.policies.filter((policy) => !policy.archivedAt) ?? [];
+  const deleted = deletedId ? policies.data?.policies.find((policy) => policy.id === deletedId) : undefined;
+  return (
+    <section aria-labelledby="gateway-usage-limits-heading" className="flex flex-col gap-5" data-testid="gateway-limits">
+      {deleted ? <DeletedLimitNote orgId={orgId} orgSlug={orgSlug} policy={deleted} /> : null}
+      <GatewayLimitsQueryFeedback query={policies} label="limits" />
+      {!policies.isError && policies.data && active.length === 0 ? (
+        <DenCard className="flex flex-col items-center gap-4 px-8 py-16 text-center" data-testid="gateway-limits-empty">
+          <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-gray-50 text-gray-600"><Gauge className="h-[18px] w-[18px]" aria-hidden="true" /></span>
+          <span className="flex flex-col gap-1">
+            <h2 id="gateway-usage-limits-heading" className="text-[15px] font-medium text-gray-950">No spend limits yet</h2>
+            <span className="text-[13px] text-gray-500">Set a daily, weekly or monthly amount for everyone, a team or one person.</span>
+          </span>
+          <Link href={getNewAiGatewayLimitRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-limit-new">New limit</Link>
+          <span className="text-[12px] text-gray-500">OpenWork Models has its own included usage.</span>
+        </DenCard>
+      ) : null}
+      {!policies.isError && active.length > 0 ? (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 id="gateway-usage-limits-heading" className="text-[16px] font-medium tracking-[-0.01em] text-gray-950">Limits</h2>
+            <Link href={getNewAiGatewayLimitRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-limit-new">New limit</Link>
+          </div>
+          <ul className="divide-y divide-gray-100 overflow-hidden rounded-[12px] border border-gray-100 bg-white" aria-label="Spend limits">
+            {active.map((policy) => {
+              const who = policyWho(policy, teams, members);
+              return (
+                <li key={policy.id} className="flex items-center gap-3 px-4 py-3" data-testid="gateway-limit-row" data-policy-id={policy.id}>
+                  <LimitIcon policy={policy} />
+                  <span className="flex min-w-0 flex-[1.2] flex-col">
+                    <span className="truncate text-[13px] font-medium text-gray-900">{policy.name}</span>
+                    <span className="truncate text-[12px] text-gray-500">{who || "Not applied to anyone yet"}</span>
+                  </span>
+                  <span className="min-w-0 flex-1 text-[13px] tabular-nums text-gray-700">{describeLimitAmounts(policy)} each</span>
+                  <span className="w-28 shrink-0 text-[12px] text-gray-600">{policy.hardLimit ? "Pauses them" : "Only warns"}</span>
+                  <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link>
+                </li>
+              );
+            })}
+          </ul>
+          <PersonLookup orgId={orgId} orgSlug={orgSlug} />
+        </>
+      ) : null}
+    </section>
+  );
 }
