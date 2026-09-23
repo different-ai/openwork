@@ -321,6 +321,7 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
           return (
             <Button
               size="xs"
+              variant="outline"
               className="shrink-0"
               disabled={connector.connecting}
               aria-label={t("composer.plus_connect_named", { name: connector.name })}
