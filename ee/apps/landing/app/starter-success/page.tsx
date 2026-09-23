@@ -1,8 +1,9 @@
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
+import { withSocialMetadata } from "../../lib/seo";
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "OpenWork — Starter Success",
   description: "Thanks for pre-ordering OpenWork Team Starter.",
   alternates: {
@@ -12,7 +13,7 @@ export const metadata = {
     index: false,
     follow: true
   }
-};
+});
 
 export default async function StarterSuccessPage() {
   const github = await getGithubData();

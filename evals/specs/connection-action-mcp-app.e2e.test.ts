@@ -17,7 +17,7 @@ const test = spec.world(connectionActionMcpApp, {
   resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "Authenticate uses the desktop OAuth callback and native connection host." },
 });
 const connectionUri = "ui://openwork/connection-action/v2/view.html";
-const mcpApp = { resourceUri: connectionUri };
+const cardSelector = '[data-message-role="assistant"] [data-testid="desktop-connection-card"]';
 
 function record(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) throw new Error("Expected an object");
@@ -56,7 +56,7 @@ const journeys = [
   { prompt: connectionStatusSkipPrompt, choice: "Skip", tools: ["search_capabilities", "execute_capability"] },
 ];
 
-test("a member can Authenticate or Skip in the v2 App and continue the original task", async ({ world, agent, user, probe, evidence, step }) => {
+test("a member can Authenticate or Skip in the native connection card and continue the original task", async ({ world, agent, user, probe, evidence, step }) => {
   const connector = world.den.mocks.connector;
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode`;
   let sessionId = world.session.sessionId;
@@ -72,6 +72,13 @@ test("a member can Authenticate or Skip in the v2 App and continue the original 
       return rows(response.body).filter(request => request.sessionID === sessionId);
     };
     const modelCalls = (prompt: string) => connector.agentRequests({ promptMarker: prompt });
+    /** The native card in the transcript: its state line and its verb buttons, read from the outer document (no iframe). */
+    const nativeCard = async () => {
+      const cards = (await probe.dom(cardSelector)).elements;
+      const line = (await probe.dom(`${cardSelector} [role="status"], ${cardSelector} [role="alert"]`)).elements.map(element => element.text);
+      const buttons = (await probe.dom(`${cardSelector} button`)).elements.map(element => element.text).filter(Boolean);
+      return { count: cards.length, line, buttons };
+    };
     const oauthRequests = async () => (await connector.requests()).filter(request => request.path === "/authorize" || request.path === "/token");
     let requestId = 0;
     async function gateway(method: string, params: Record<string, unknown> = {}) {
@@ -131,7 +138,7 @@ test("a member can Authenticate or Skip in the v2 App and continue the original 
     if (index > 0) sessionId = await agent.createSession(`Connection decision ${index + 1}`);
     let statusName = "";
     const oauthBefore = await oauthRequests();
-    await step(`after ${entry.tools.join(" then ")}, ${entry.choice} waits behind the iframe without native question UI`, async () => {
+    await step(`after ${entry.tools.join(" then ")}, ${entry.choice} waits in the native card without the composer question or an iframe`, async () => {
       for (const id of [world.connection.id, world.organizationId, world.workspace.workspaceId, sessionId]) expect(entry.prompt).not.toContain(id);
       await user.type("composer", entry.prompt, { replace: true, verify: true });
       await user.click({ role: "button", label: "Run task" });
@@ -158,24 +165,32 @@ test("a member can Authenticate or Skip in the v2 App and continue the original 
       expect(custom).toBe(false);
       expect(requests[0]?.questions).toEqual([expect.objectContaining(engineQuestion)]);
       try {
-        await user.see({ mcpApp, role: "button", label: "Authenticate" }, { timeoutMs: 30_000 });
+        await user.see({ role: "button", label: "Authenticate" }, { timeoutMs: 30_000 });
       } catch (error) {
-        const [screen, appDom, questions, transcript] = await Promise.all([
+        const [screen, card, appDom, questions, transcript] = await Promise.all([
           probe.text(),
-          probe.dom(`[data-mcp-app-resource="${mcpApp.resourceUri}"]`),
+          nativeCard(),
+          probe.dom(`[data-mcp-app-resource="${connectionUri}"]`),
           pending(),
           messages(),
         ]);
         await user.screenshot();
         evidence.recordAssertionEvidence(
-          "The connection App renders for the pending decision",
-          JSON.stringify({ screen, appDom, questions, transcript }),
+          "The native connection card renders for the pending decision",
+          JSON.stringify({ screen, card, appDom, questions, transcript }),
           false,
         );
         throw error;
       }
-      await user.see({ mcpApp, role: "button", label: "Skip" });
-      for (const testId of ["desktop-connection-card", "connection-decision-panel", "question-panel"]) await user.notSee({ testId });
+      await user.see({ role: "button", label: "Skip" });
+      const card = await nativeCard();
+      expect(card.count, "Exactly one native connection card sits in the assistant turn").toBe(1);
+      expect(card.line).toEqual(["Connect Notion to continue"]);
+      expect(card.buttons).toEqual(["Skip", "Authenticate"]);
+      expect((await probe.dom(`[data-mcp-app-resource="${connectionUri}"]`)).elements, "The connection App is not embedded as an iframe").toEqual([]);
+      for (const testId of ["connection-decision-panel", "question-panel"]) await user.notSee({ testId });
+      for (const text of ["Connect this account to continue.", "Continue without this connection.", "Checking connection request"]) await user.notSee({ text });
+      expect((await probe.dom("button")).elements.filter(element => element.text === "Authenticate"), "Only the native card offers Authenticate").toHaveLength(1);
       expect(await pending()).toEqual(requests);
       const tools = turnTools(await messages(), entry.prompt);
       const calls = (await modelCalls(entry.prompt)).filter(call => call.kind === "tool");
@@ -212,9 +227,10 @@ test("a member can Authenticate or Skip in the v2 App and continue the original 
     const beforeDecision = await messages();
     const usersBefore = beforeDecision.filter(message => record(message.info).role === "user");
     const callsBefore = (await modelCalls(entry.prompt)).filter(call => call.kind === "tool");
-    await step(`${entry.choice} completes in the actual iframe and agrees with observed connection status`, async () => {
+    const settledLine = entry.choice === "Skip" ? "Skipped Notion" : "Notion connected";
+    await step(`${entry.choice} completes in the native card and agrees with observed connection status`, async () => {
       const clickedAt = new Date().toISOString();
-      await user.click({ mcpApp, role: "button", label: entry.choice });
+      await user.click({ role: "button", label: entry.choice });
       if (entry.choice === "Authenticate") {
         try {
           const authorization = await connector.authorizeRequestSince(clickedAt, { timeoutMs: 60_000 });
@@ -222,19 +238,21 @@ test("a member can Authenticate or Skip in the v2 App and continue the original 
           expect(authorization.params.get("state")).toBeTruthy();
         } catch (error) {
           const screen = await probe.text();
-          const iframeHeading = await world.connectionAppHeading().catch(String);
+          const card = await nativeCard();
           await user.screenshot();
           evidence.recordAssertionEvidence(
             "Authenticate reaches the OAuth provider",
-            `No authorization request arrived. Iframe heading: ${iframeHeading}\nVisible outer app text after the click:\n${screen}`,
+            `No authorization request arrived. Native card: ${JSON.stringify(card)}\nVisible app text after the click:\n${screen}`,
             false,
           );
           throw error;
         }
       }
-      await user.see({ mcpApp, role: "heading", text: entry.choice === "Skip" ? "Skipped Notion" : "Notion connected" }, { timeoutMs: 120_000 });
-      await user.notSee({ mcpApp, role: "button", label: "Authenticate" });
-      await user.notSee({ mcpApp, role: "button", label: "Skip" });
+      await user.see({ text: settledLine }, { timeoutMs: 120_000 });
+      await user.notSee({ role: "button", label: "Authenticate" });
+      await user.notSee({ role: "button", label: "Skip" });
+      expect((await nativeCard()).line).toEqual([settledLine]);
+      expect((await probe.dom(`[data-mcp-app-resource="${connectionUri}"]`)).elements).toEqual([]);
       const status = record((await gateway("tools/call", { name: "execute_capability", arguments: { name: statusName } })).result);
       expect(status.isError).not.toBe(true);
       expect(status.structuredContent).toMatchObject({ connectionId: world.connection.id, state: entry.choice === "Skip" ? "needs_connection" : "connected" });
@@ -252,12 +270,11 @@ test("a member can Authenticate or Skip in the v2 App and continue the original 
       expect((await messages()).filter(message => record(message.info).role === "user")).toEqual(usersBefore);
       for (const text of ["Task interrupted", "MessageAbortedError", "Turn stopped. Nothing retried."]) await user.notSee({ text });
       await user.screenshot();
-      evidence.recordAssertionEvidence("Iframe decision agrees with Den", JSON.stringify({ choice: entry.choice, status: status.structuredContent, authorizationRequests: oauth.filter(request => request.path === "/authorize").length }), true);
+      evidence.recordAssertionEvidence("Native card decision agrees with Den", JSON.stringify({ choice: entry.choice, status: status.structuredContent, authorizationRequests: oauth.filter(request => request.path === "/authorize").length }), true);
     });
 
     await step("the original task stays on this turn and shows the real decision without another user message", async () => {
-      const heading = entry.choice === "Skip" ? "Skipped Notion" : "Notion connected";
-      await user.see({ mcpApp, role: "heading", text: heading });
+      await user.see({ text: settledLine });
       const continued = await probe.eventually(async () => {
         const transcript = await messages();
         const question = turnTools(transcript, entry.prompt).find(part => part.tool === "question");
@@ -282,9 +299,11 @@ test("a member can Authenticate or Skip in the v2 App and continue the original 
       expect(await pending()).toEqual([]);
       await user.notSee({ text: "No connection outcome was observed." });
       await user.screenshot();
-      const iframeText = await world.connectionAppHeading();
-      expect(iframeText).toBe(heading);
-      evidence.recordAssertionEvidence("The original task continues from the real decision", JSON.stringify({ choice: entry.choice, iframeText, questionOutput: continued.output, finalMessage: continued.final, finalCalls: continued.calls.filter(call => call.kind === "final"), userMessages: usersBefore.length }), true);
+      const card = await nativeCard();
+      expect(card.count).toBe(1);
+      expect(card.line).toEqual([settledLine]);
+      expect(card.buttons).toEqual([]);
+      evidence.recordAssertionEvidence("The original task continues from the real decision", JSON.stringify({ choice: entry.choice, card, questionOutput: continued.output, finalMessage: continued.final, finalCalls: continued.calls.filter(call => call.kind === "final"), userMessages: usersBefore.length }), true);
     });
 
     if (entry.choice === "Authenticate") await step("revoked credentials never inherit the earlier connected result", async () => {

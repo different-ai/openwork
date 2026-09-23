@@ -64,28 +64,50 @@ Tests can import `bootAcmeWeb` and `probeAcmeGateway` and own teardown with an
 pnpm world down acme-web --stage gateway-demo
 ```
 
+This world runs co-located (`--place local`) or inside a private Freestyle VM.
+Host-driven `--place daytona` provisioning is not implemented. It exercises organization AI Gateway providers, not the separate
+OpenWork Models subscription/credit-billing flow.
+
+## Private Freestyle review
+
+The reviewer can launch **ACME web · Full stack** from the report's exact commit.
+CI starts and seeds the whole world, enables AI Gateway in the owner sidebar,
+verifies an OpenCode request through the gateway, and warms browser entry points
+before capturing the running memory snapshot. Each clone resumes those processes
+with independent database and file state; it does not reseed or restart them.
+The private edge maps the snapshot’s virtual origins to each clone’s unique URLs.
+Launch checks restored services and renews expired demo sessions when necessary.
+The model upstream alone is deterministic. This is an isolated demo, not production
+accounts or billing. Initial preparation can take several minutes.
+
+```sh
+pnpm world up acme-web --place freestyle --detach --timeout 800000 -- --ref <full-pushed-sha>
+pnpm world outputs acme-web --reveal
+pnpm world down acme-web
+```
+
+The private review shows personal service URLs and demo sign-in credentials by
+default. Developer tokens and connections expand below. Copying always returns
+usable values; Hide credentials is available for screen sharing. Each HTTP service
+has its own access link; API clients can use the preview cookie plus the service's
+bearer token. MySQL and Redis addresses are VM-local, not publicly reachable.
+Freestyle account credentials never appear in world outputs. All connections expire
+with the VM.
+
 ## Daytona
 
 ```sh
-OPENWORK_EVAL_REF=$(git rev-parse HEAD) pnpm world up acme-web --place daytona --stage gateway-demo --detach --timeout 900000
+OPENWORK_EVAL_REF=$(git rev-parse HEAD) pnpm world up acme-web --place daytona --stage gateway-demo --detach --timeout 1500000
 pnpm world outputs acme-web --stage gateway-demo --reveal
 ```
 
-Push the commit first; the sandbox builds that ref. The provisioner boots Den
-with `GATEWAY_ENABLED=true`, starts the real `ee/apps/gateway` next to it in
-the same sandbox, and uploads the deterministic upstream
-(`evals/packages/labs/src/acme-upstream.mjs`) so gateway → upstream stays on
-the sandbox loopback. Startup completes only after one real message through
-the public gateway URL returns the fixed reply. Outputs include `denWeb`,
-`aiGateway` (the Den admin screen), `gatewayUrl`, and the owner account.
+Push the commit first; the sandboxes build that ref. Den provisioning starts
+the real `ee/apps/gateway` beside Den when Den env sets `GATEWAY_ENABLED=true`,
+and the deterministic upstream (`evals/packages/labs/src/acme-upstream.mjs`)
+is uploaded into the same sandbox so gateway → upstream stays on loopback.
+Startup completes only after one message through the public gateway URL
+returns the fixed reply. The OpenWork web runtime runs on its own private
+sandbox proxying this Den, and the launcher signs it into Den as alex so every
+AI Gateway provider, including ones added later in Den, reaches the model
+picker after a reload. `aiGateway` links to the AI Providers tab.
 
-The OpenWork web runtime runs on its own private sandbox (same primitives as
-`app-web`) and proxies this world's Den, so `webUrl` is a signed private URL:
-open it, sign in as `alex@acme.test`, and chat through the gateway. The launcher
-signs the runtime itself into Den as alex (host-token `den-session` + provider
-sync), so every AI Gateway provider — including ones you add later in Den's AI
-Gateway screen — shows up in the model picker after a reload. The
-OpenCode chat probe is local-only; on Daytona startup is verified with one
-message through the public gateway URL instead.
-Either placement exercises organization AI Gateway providers, not the separate
-OpenWork Models subscription/credit-billing flow.

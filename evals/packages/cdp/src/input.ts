@@ -2,7 +2,7 @@ import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
 import type { CdpClient } from "./cdp.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {
@@ -381,7 +381,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         ? 'h1, h2, h3, h4, h5, h6, [role="heading"]'
         : target.text && !target.role && !target.label && !target.placeholder && !target.testId
           ? 'body *'
-          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [data-testid]';
+          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [data-testid]';
     const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;

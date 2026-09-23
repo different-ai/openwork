@@ -17,6 +17,21 @@ import type { TokenService } from "../tokens.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
 
+/**
+ * Version reported by the engine binary actually in use. `opencodeVersion` on
+ * /health is the version this server release was pinned to; the two differ
+ * when an operator brings their own engine. Null until the launcher probes it.
+ */
+let installedOpencodeVersion: string | null = null;
+
+export function setInstalledOpencodeVersion(version: string | null): void {
+  installedOpencodeVersion = version;
+}
+
+export function readInstalledOpencodeVersion(): string | null {
+  return installedOpencodeVersion;
+}
+
 type JsonResponse = (data: unknown, status?: number) => Response;
 type ReadJsonBody = (request: Request) => Promise<Record<string, unknown>>;
 type ParseOptionalBoolean = (value: string | null, name: string) => boolean | undefined;
@@ -123,6 +138,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       ok,
       version: serverVersion,
       opencodeVersion,
+      opencodeInstalledVersion: installedOpencodeVersion,
       uptimeMs: Date.now() - config.startedAt,
     }, ok ? 200 : 503);
   };

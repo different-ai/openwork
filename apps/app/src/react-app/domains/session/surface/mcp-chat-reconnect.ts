@@ -1,7 +1,8 @@
 import type { DenExternalMcpConnection, DenMcpConnectionConnectStart } from "@/app/lib/den"
 import type { UIMessage } from "ai"
 import { z } from "zod"
-import { connectionCardPayloadFromChatToolResult, connectionResultFromChatToolPart, reconnectActionFromChatToolResult } from "@/components/tools/error-attribution"
+import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
+import type { ConnectionActionPayload } from "@openwork/types/connection-action-app"
 
 export type ChatConnectionDecisionRequest = {
   requestId: string
@@ -49,6 +50,20 @@ export function isReservedConnectionQuestion(question: unknown): boolean {
   return parsed.success && parsed.data.questions.some(item => reservedConnectionQuestionItemSchema.safeParse(item).success)
 }
 
+/**
+ * The question the standard composer panel answers. A reserved connection
+ * question leaves the panel only while a native card is bound to it; an
+ * unbound one falls back to the ordinary Authenticate/Skip panel so the turn
+ * never dead-ends.
+ */
+export function composerQuestionForConnectionDecision<T>(
+  question: T | null | undefined,
+  decision: ChatConnectionDecisionRequest | null,
+): T | null {
+  if (!question) return null
+  return decision && isReservedConnectionQuestion(question) ? null : question
+}
+
 const nativeConnectionQuestionSchema = z.object({
   questions: z.tuple([reservedConnectionQuestionItemSchema.extend({ question: z.string() })]),
   id: z.string().min(1),
@@ -81,23 +96,26 @@ export function nativeChatConnectionDecision(input: {
     return matches ? [part.toolCallId] : []
   }))
   if (questionTool && questionParts.length !== 1) return null
-  const connections = new Map<string, { connection: NonNullable<ReturnType<typeof connectionCardPayloadFromChatToolResult>>; toolCallId: string; oauth: boolean }>()
+  // The question pauses the turn, so a blocker reported by ordinary discovery
+  // (no `intent: "connect"`) counts here. The latest report for a connection
+  // wins and hosts the card; earlier reports stay quiet sentence lines.
+  const connections = new Map<string, { connection: ConnectionActionPayload; toolCallId: string; oauth: boolean }>()
   for (const message of currentMessages) {
     for (const part of message.parts) {
       if (part.type !== "dynamic-tool" || (part.state !== "output-available" && part.state !== "output-error")) continue
-      const result = connectionResultFromChatToolPart(part)
-      const connection = connectionCardPayloadFromChatToolResult(part.toolName, result, part.input)
-      if (!connection) continue
-      const action = reconnectActionFromChatToolResult(part.toolName, result, part.input)
+      const found = connectionFromChatToolPart(part, { allowDiscovery: true })
+      if (!found) continue
+      const { connection, action } = found
       connections.set(connection.connectionId, { connection, toolCallId: part.toolCallId, oauth: action?.connectionId === connection.connectionId })
     }
   }
   const blockers = [...connections.values()].filter(entry => entry.connection.state !== "connected")
-  if (blockers.length !== 1) return null
-  const blocker = blockers[0]
+  const questionText = question.questions[0].question
+  const named = blockers.filter(entry => questionText === `Connect ${entry.connection.connectionName} to continue?`)
+  if (named.length !== 1) return null
+  const blocker = named[0]
   if (!blocker.oauth || blocker.connection.actor !== "member"
-    || (blocker.connection.action?.type !== "connect" && blocker.connection.action?.type !== "reconnect")
-    || question.questions[0].question !== `Connect ${blocker.connection.connectionName} to continue?`) return null
+    || (blocker.connection.action?.type !== "connect" && blocker.connection.action?.type !== "reconnect")) return null
   return {
     requestId: question.id, owner: input.owner, sessionId: input.sessionId,
     turnId: input.messages[turnIndex].id, toolCallId: blocker.toolCallId, connectionId: blocker.connection.connectionId,

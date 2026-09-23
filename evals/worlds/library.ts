@@ -253,9 +253,11 @@ export async function preseededConnect(seed: Seed) {
       promptMarker: prompt,
       finalReply: "The skill was read.",
       finalReplyFrom: "last-tool-text",
+      // The direct skill path the desktop prompt now recommends: list the
+      // catalog without keyword search, then read the one skill by capability.
       steps: [
-        { tool: "search_capabilities", arguments: { query: skillName, limit: 1, type: "skills" } },
-        { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+        { tool: "list_skills", arguments: { query: skillName, limit: 1 } },
+        { tool: "get_skill", arguments: {}, argumentsFrom: "skill-list" },
       ],
     }] }) },
   });

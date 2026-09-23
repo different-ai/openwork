@@ -2,17 +2,17 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ArrowRight, BarChart3, Box, ChevronRight, Gauge, Plus, Search } from "lucide-react";
+import { ArrowRight, Box, Plus, Search } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { getCustomLlmProvidersRoute, getGatewayProviderRoute, getGatewayUsageRoute, getNewGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { GatewayWhoCanUseModels } from "./gateway-who-can-use-models";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import { describeGatewayAccess, type DenInferenceProvider } from "./inference-provider-request";
-import { getProviderDocUrl, getProviderIconSlug, useOrgLlmProviders } from "./llm-provider-data";
+import { getProviderDocUrl, getProviderIconSlug } from "./llm-provider-data";
 
 const ROW = "flex items-center gap-4 px-4 py-3";
 
@@ -60,7 +60,7 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
         {status.label}
       </p>
       <Link
-        href={getGatewayProviderRoute(orgSlug, provider.id)}
+        href={getAiGatewayProviderRoute(orgSlug, provider.id)}
         data-testid="gateway-provider-open"
         aria-label={`Manage ${provider.name}`}
         className={buttonVariants({ variant: "secondary", size: "sm" })}
@@ -83,7 +83,7 @@ function EmptyState({ orgSlug }: { orgSlug: string | null }) {
         <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-gray-100 text-gray-500"><Box className="h-4 w-4" aria-hidden="true" /></span>
         <h2 className="mt-5 text-[15px] font-medium text-gray-900">No providers yet</h2>
         <p className="mt-2 text-[13px] leading-5 text-gray-500">Add a provider once. Its models show up in the picker for whoever you choose. Nobody but you sees the key.</p>
-        <Link href={getNewGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", className: "mt-6" })} data-testid="gateway-provider-create">
+        <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", className: "mt-6" })} data-testid="gateway-provider-create">
           <Plus className="h-4 w-4" aria-hidden="true" />
           Add a provider
         </Link>
@@ -104,12 +104,11 @@ function EmptyState({ orgSlug }: { orgSlug: string | null }) {
   );
 }
 
-export function InferenceProvidersScreen() {
+/** The AI Providers tab of AI Gateway: who can use models, then one row per provider. */
+export function GatewayProvidersSection() {
   const { orgId, orgSlug } = useOrgDashboard();
   const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);
-  const { llmProviders } = useOrgLlmProviders(orgId);
   const [query, setQuery] = useState("");
-  const legacyCount = llmProviders.filter((provider) => provider.source !== "openwork").length;
   const modelCount = inferenceProviders.reduce((total, provider) => total + provider.models.length, 0);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -118,7 +117,7 @@ export function InferenceProvidersScreen() {
   const empty = !busy && inferenceProviders.length === 0;
 
   return (
-    <div className="mx-auto max-w-[860px] px-6 py-6">
+    <div>
       {error ? <DenNotice message={error} tone="error" className="mb-6" /> : null}
 
       {empty ? <EmptyState orgSlug={orgSlug} /> : (
@@ -135,7 +134,7 @@ export function InferenceProvidersScreen() {
                 <div className="w-[200px]">
                   <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name" className="h-8 text-[12px]" />
                 </div>
-                <Link href={getNewGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "primary", size: "sm" })}>
+                <Link href={getNewAiGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "primary", size: "sm" })}>
                   <Plus className="h-4 w-4" aria-hidden="true" />
                   Add provider
                 </Link>
@@ -147,30 +146,8 @@ export function InferenceProvidersScreen() {
                 : filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} />)}
             </div>
           </section>
-
-          <div className="mt-6 divide-y divide-gray-100 rounded-[12px] border border-gray-100 bg-white">
-            <Link href={getGatewayUsageRoute(orgSlug)} className={`${ROW} hover:bg-gray-50`} data-testid="gateway-usage-link">
-              <BarChart3 className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
-              <span className="w-[200px] shrink-0 text-[13px] font-medium text-gray-900">Usage</span>
-              <span className="flex-1 text-[13px] text-gray-500">Last 31 days · by model, team or person</span>
-              <ChevronRight className="h-4 w-4 text-gray-300" aria-hidden="true" />
-            </Link>
-            <Link href={getGatewayUsageRoute(orgSlug, "spending")} className={`${ROW} hover:bg-gray-50`} data-testid="gateway-spending-link">
-              <Gauge className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
-              <span className="w-[200px] shrink-0 text-[13px] font-medium text-gray-900">Spending limits</span>
-              <span className="flex-1 text-[13px] text-gray-500">Per person, team, or the whole org</span>
-              <ChevronRight className="h-4 w-4 text-gray-300" aria-hidden="true" />
-            </Link>
-          </div>
         </>
       )}
-
-      {legacyCount > 0 ? (
-        <p className="mt-6 text-center text-[12px] text-gray-400">
-          {legacyCount} {legacyCount === 1 ? "provider" : "providers"} still {legacyCount === 1 ? "uses" : "use"} Bring Your Own Keys.{" "}
-          <Link href={getCustomLlmProvidersRoute(orgSlug)} className="font-medium text-gray-700 underline underline-offset-2">Move them to AI Gateway</Link>
-        </p>
-      ) : null}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/i
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
 import { ensurePersonalOrganizationForUser, resolveUserOrganizations } from "../../orgs.js"
+import { isWebOriginApprovedForOrganization } from "../../organization-web-origins.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { enforceRateLimit } from "../../utils/rate-limit.js"
@@ -18,7 +19,7 @@ import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
 const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional().describe("Optional continuation hint for handoff clients."),
   desktopScheme: z.literal("openwork").optional().describe("The registered OpenWork desktop URL scheme."),
-  returnUrl: z.string().trim().max(2048).optional().describe("Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation."),
+  returnUrl: z.string().trim().max(2048).optional().describe("Optional HTTPS web return URL. Accepted only in multi-organization mode after server-side origin validation."),
 }).meta({ ref: "DesktopHandoffGrantCreateBody" })
 
 const exchangeGrantSchema = z.object({
@@ -359,6 +360,7 @@ async function getCloudSignedPreviewUrls(organizationId: WorkerOrgId) {
 export async function resolveApprovedWebHandoffReturnUrl(input: {
   returnUrl: string
   activeOrganizationId?: string | null
+  loadSignedPreviewUrls?: (organizationId: WorkerOrgId) => Promise<string[]>
 }) {
   const gatewayReturnUrl = approveWebHandoffReturnUrlForSignedPreviews({
     returnUrl: input.returnUrl,
@@ -381,7 +383,17 @@ export async function resolveApprovedWebHandoffReturnUrl(input: {
     return null
   }
 
-  const signedPreviewUrls = await getCloudSignedPreviewUrls(organizationId)
+  const candidate = resolveWebHandoffReturnUrlCandidate({ returnUrl: input.returnUrl, orgMode: env.orgMode })
+  if (!candidate) {
+    return null
+  }
+
+  // Exact origins the active organization's owners approved in Org settings.
+  if (await isWebOriginApprovedForOrganization(organizationId, candidate.origin)) {
+    return candidate.returnUrl
+  }
+
+  const signedPreviewUrls = await (input.loadSignedPreviewUrls ?? getCloudSignedPreviewUrls)(organizationId)
   return approveWebHandoffReturnUrlForSignedPreviews({
     returnUrl: input.returnUrl,
     signedPreviewUrls,

@@ -7,7 +7,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /**
- * An owner and a teammate in one org with the AI Gateway dashboard turned on.
+ * An owner and a teammate in one org on a Den with the AI Gateway deployed.
  * The journey is the Den admin form, so no request ever reaches the gateway:
  * locally the proxy URLs only satisfy den-api's GATEWAY_ENABLED boot check and
  * point at a closed port; on Daytona the provisioner starts the real gateway
@@ -33,16 +33,8 @@ export async function aiGatewayAdmin(seed: Seed, { place }: { place: Place }) {
   if (!teammate) throw new Error("Expected a teammate session");
   const org = record((await seed.api(den.admin, "/v1/org")).body);
   const orgId = String(record(org.organization).id);
-  // The seeded org admin is also a platform admin, locally and on Daytona.
-  const rollout = await seed.api(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, {
-    method: "PUT", body: JSON.stringify({ capabilities: { gatewayDashboard: true } }),
-  });
-  if (!rollout.response.ok) throw new Error(`AI Gateway capability rollout: HTTP ${rollout.response.status} ${rollout.text.slice(0, 200)}`);
-  if (record(record((await seed.api(den.admin, "/v1/org")).body).capabilities).gatewayDashboard !== true) {
-    throw new Error("The org did not receive the AI Gateway dashboard capability");
-  }
   const viewport = { width: 1440, height: 1100 };
-  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/gateway-providers", headless: true, viewport });
+  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: teammate, startPath: "/dashboard", headless: true, viewport });
   return { den, web, memberWeb, teammate, orgId };
 }

@@ -130,26 +130,13 @@ export interface AcmeGatewayStack {
 }
 
 /**
- * Den + real AI Gateway + deterministic Anthropic upstream, wherever Den runs.
- * Locally the three are sibling processes on this host; on Daytona the
+ * Den + real AI Gateway + deterministic Anthropic upstream on Daytona. The
  * provisioner starts the gateway next to Den (GATEWAY_ENABLED in Den env) and
  * the upstream witness is uploaded into that sandbox so both talk over its
  * loopback. The seeded owner (alex@acme.test) administers the provider.
  */
-export async function bootAcmeGateway(stack: AsyncDisposableStack, place: Place, options: { trustedOrigins?: readonly string[]; denEnv?: Record<string, string> } = {}): Promise<AcmeGatewayStack> {
-  if (place.kind === "local") {
-    const upstream = await startAcmeUpstream(stack);
-    const gateway = await gatewayEnvironment(upstream.baseUrl);
-    const den = stack.use(await server({
-      place, seedProfile: "demo-org", web: true,
-      env: { ...gateway.env, ...options.denEnv, RESEND_API_KEY: "", SMTP_HOST: "" },
-      ...(options.trustedOrigins ? { trustedOrigins: options.trustedOrigins } : {}),
-    }));
-    if (!den.database) throw new Error("Acme Gateway requires the world's isolated Den database.");
-    await startAcmeGateway(stack, den.database.url, gateway);
-    const model = await seedAcmeGateway(den.admin, upstream);
-    return { den, gatewayUrl: gateway.baseUrl, model, upstream: { key: upstream.key, baseUrl: upstream.baseUrl, requests: async () => upstream.requests } };
-  }
+export async function bootAcmeGatewayOnDaytona(stack: AsyncDisposableStack, place: Place, options: { denEnv?: Record<string, string> } = {}): Promise<AcmeGatewayStack> {
+  if (place.kind !== "daytona") throw new Error("bootAcmeGatewayOnDaytona requires --place daytona; bootAcmeWeb covers local placement.");
   const key = randomUUID();
   const upstreamBaseUrl = `http://127.0.0.1:${DAYTONA_UPSTREAM_PORT}`;
   const den = stack.use(await server({
@@ -213,11 +200,6 @@ export async function seedAcmeGateway(admin: DenSession, upstream: { key: string
   if (!orgs.response.ok || !org || typeof org.id !== "string") throw new Error("Acme organization missing.");
   const orgId = org.id;
   const orgHeaders = { ...headers, "x-openwork-org-id": orgId };
-  // Den's AI Gateway screen is gated per org; the seeded owner is the platform admin.
-  const dashboard = await denFetch(admin, `/v1/admin/organizations/${orgId}/capabilities`, {
-    method: "PUT", headers, body: JSON.stringify({ capabilities: { gatewayDashboard: true } }),
-  });
-  if (!dashboard.response.ok) throw new Error(`Acme AI Gateway dashboard capability failed: HTTP ${dashboard.response.status}`);
   const created = await denFetch(admin, "/v1/inference-providers", {
     method: "POST", headers: orgHeaders,
     body: JSON.stringify({ name: "Acme AI Gateway", providerId: "anthropic", modelIds: [ACME_MODEL],

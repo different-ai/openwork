@@ -25,9 +25,20 @@ The pain a person felt or the risk we carried. Not the mechanism.
 What the person saw or could not do. Concrete enough to recognise in the
 "before" screenshot.
 
+## Release note
+One sentence for people who use OpenWork, or `none`.
+
 ## Evidence
 The spec that proves it, and in one line what its before → after shows.
 ```
+
+The release note feeds the changelog agent directly
+(`scripts/release/collect-release-prs.mjs`). Write what a user can now do or
+no longer hits, in words they see in the product: "Connecting an account in
+chat no longer gets stuck on 'Checking connection request…'." Write `none`
+for CI, tests, review tooling, or refactors nobody will notice; the PR is
+then left out of the changelog. A change that removes or alters something
+users rely on always needs a note.
 
 Title: conventional commit, imperative, under 70 characters.
 

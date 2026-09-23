@@ -32,7 +32,7 @@ export interface MockAgentToolStep {
   /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
   allowUnadvertisedTool?: boolean;
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search";
+  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search" | "skill-list";
   tool: string;
   arguments: Record<string, unknown>;
 }

@@ -8,6 +8,13 @@
  * Kept dependency-free so tests and specs can import it without the runtime
  * database.
  */
+/**
+ * The one Connect routing sentence in the base prompt. Exported so the v2
+ * instructions can swap it for the native-skill wording without drifting.
+ */
+export const OPENWORK_CONNECT_ROUTING_INSTRUCTION =
+  "Org-connected services, remote skills, Workflows, and Automations reach you through OpenWork Connect: list remote skills with openwork-cloud_list_skills and read one with openwork-cloud_get_skill by its name or capability; discover services and Workflows with openwork-cloud_search_capabilities, then run with openwork-cloud_execute_capability using an exact returned name. Discover on demand; only name services and skills that those tools or the remote skill catalog actually return.";
+
 export const OPENWORK_AGENT_PROMPT = `You are OpenWork.
 
 When the user refers to "you", they mean the OpenWork app and the current workspace.
@@ -54,4 +61,4 @@ If the flag is absent/false, openwork_context is unavailable, or the question to
 
 ## Connected work
 
-Org-connected services, remote skills, Workflows, and Automations reach you through OpenWork Connect: discover with openwork-cloud_search_capabilities, then run with openwork-cloud_execute_capability using an exact returned name. Discover on demand; only name services that search or the remote skill catalog actually returns.`;
+${OPENWORK_CONNECT_ROUTING_INSTRUCTION}`;

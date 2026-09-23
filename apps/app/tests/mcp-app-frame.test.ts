@@ -16,7 +16,6 @@ import {
 } from "../src/app/lib/openwork-server"
 import { formatMcpAppDiagnostic, safeMcpAppDiagnosticMessage } from "../src/components/chat/mcp-app-diagnostics"
 import type { McpAppSandboxViewProps } from "../src/components/chat/mcp-app-frame"
-import type { ChatConnectionDecisionBinding } from "../src/react-app/domains/session/surface/mcp-chat-reconnect"
 import * as mcpAppOrigin from "../src/components/chat/mcp-app-origin"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
@@ -34,6 +33,7 @@ const {
   hasPreservedMcpAppResult,
   gatewayMcpAppLaunch,
   isActionableMcpAppResolutionError,
+  isNativeConnectionAppLaunch,
   McpAppFrame,
   McpAppSandboxView,
   secureMcpAppHtml,
@@ -1444,100 +1444,64 @@ describe("MCP App resolution", () => {
       expect(host.errorSpy).not.toHaveBeenCalled()
     } finally { await host.dispose() }
   })
-})
 
-test.each(["execute_capability", "run_artifact_fixture", "preview_artifact_fixture", "save_artifact_view"])("%s connection v2 uses the real AppBridge with late host binding and no native card or remount", async toolName => {
-  const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
-  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
-  const container = document.body.appendChild(document.createElement("div"))
-  const root = createRoot(container)
-  const [viewTransport, hostTransport] = InMemoryTransport.createLinkedPair()
-  const connect = AppBridge.prototype.connect
-  const connectSpy = spyOn(AppBridge.prototype, "connect").mockImplementation(function () { return connect.call(this, hostTransport) })
-  const confirmSpy = spyOn(window, "confirm")
-  const events: string[] = []
-  const app = { ...fixture({ toolName: "connection_action", resourceUri: "ui://openwork/connection-action/v2/view.html" }), hostConnectionActions: true }
-  const connection = { schemaVersion: "1", connectionId: "connection", connectionName: "Fixture", state: "needs_connection",
-    actor: "member", message: "Connect Fixture", action: { type: "connect", label: "Authenticate", surface: "openwork_your_connections" } }
-  const launch = { toolName: "connection_action", resourceUri: app.resourceUri, arguments: { connectionId: "connection" } }
-  const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: `openwork-cloud_${toolName}`, toolCallId: `connection-bridge-${toolName}`,
-    state: "output-available", input: {}, output: connection,
-    callProviderMetadata: { openwork: { mcpResult: { content: [], isError: true, structuredContent: connection, _meta: { "openwork/mcpApp": launch } } } } }
-  let binding: ChatConnectionDecisionBinding | null = null
-  let pending = true
-  const getConnectionDecision = () => binding
-  const onMcpReconnect = async (): Promise<"connected"> => { events.push("oauth"); return "connected" }
-  const client: OpenworkServerClient = {
-    ...createOpenworkServerClient({ baseUrl: "https://sandbox.example" }),
-    mcpAppSandbox: () => ({ url: "about:blank", expectedOrigin: "https://sandbox.example", sandbox: "allow-scripts allow-same-origin" }),
-    resolveMcpApp: async () => ({ app }),
-    releaseMcpApp: async () => ({ released: true }),
-    callMcpAppTool: async (_workspace, payload) => {
-      events.push("server")
-      if (!payload.approved) throw new OpenworkServerError(422, "tool_requires_approval", "Approval required")
-      return { content: [], hostAction: { schemaVersion: "1", kind: "connection_action_intent", action: "authenticate", connection } }
-    },
-  }
-  const render = () => act(async () => root.render(createElement(MessageListProvider, {
-    client, workspaceId: "fixture", sessionId: "session", uiStateOwner: "bridge-scope", readOnly: false,
-    showThinking: false, developerMode: false, displaySuggestions: false, providerConnectedCount: 0,
-    dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {}, onForkAtMessage: () => {}, onEditUserMessage: () => {},
-    onMcpReconnect, onMcpReopenAuthorization: async () => {}, getConnectionDecision,
-    children: createElement(McpAppFrame, { part }),
-  })))
-  let reply: ((message: JSONRPCMessage) => void) | undefined
-  viewTransport.onmessage = message => {
-    if ("id" in message && ("result" in message || "error" in message)) reply?.(message)
-    if ("id" in message && "method" in message && message.method === "ui/resource-teardown") {
-      void viewTransport.send({ jsonrpc: "2.0", id: message.id, result: {} })
-    }
-  }
-  let id = 0
-  const request = async (method: string, params: Record<string, unknown>) => {
-    const requestId = ++id
-    let timer: ReturnType<typeof setTimeout> | undefined
+  test.each(["execute_capability", "run_artifact_fixture", "preview_artifact_fixture", "save_artifact_view"])("%s connection-action v2 launch is presented natively, never as an iframe", async toolName => {
+    const connection = { schemaVersion: "1", connectionId: "connection", connectionName: "Fixture", state: "needs_connection",
+      actor: "member", message: "Connect Fixture", action: { type: "connect", label: "Authenticate", surface: "openwork_your_connections" } }
+    const launch = { toolName: "connection_action", resourceUri: "ui://openwork/connection-action/v2/view.html", arguments: { connectionId: "connection" } }
+    const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: `openwork-cloud_${toolName}`, toolCallId: `connection-native-${toolName}`,
+      state: "output-available", input: {}, output: connection,
+      callProviderMetadata: { openwork: { mcpResult: { content: [], isError: true, structuredContent: connection, _meta: { "openwork/mcpApp": launch } } } } }
+    expect(hasPreservedMcpAppResult(part)).toBe(true)
+    expect(isNativeConnectionAppLaunch(part)).toBe(true)
+    expect(isNativeConnectionAppLaunch({ ...part, toolName: `openwork_${toolName}` })).toBe(true)
+    expect(McpAppFrame({ part })).toBeNull()
+    const host = resolutionFixture(false)
+    host.resolveSpy.mockResolvedValue({ app: { ...fixture({ toolName: "connection_action", resourceUri: launch.resourceUri }), hostConnectionActions: true } })
     try {
-      const response = new Promise<JSONRPCMessage>((resolve, reject) => {
-        reply = message => { if ("id" in message && message.id === requestId) resolve(message) }
-        timer = setTimeout(() => reject(new Error("No protocol response")), 1000)
-      })
-      await viewTransport.send({ jsonrpc: "2.0", id: requestId, method, params })
-      return await response
-    } finally { clearTimeout(timer); reply = undefined }
-  }
-  try {
-    await viewTransport.start()
-    await render()
-    const iframe = container.querySelector("iframe")
-    if (!iframe?.contentWindow) throw new Error("Missing standard iframe")
-    expect(container.querySelector("button")).toBeNull()
-    expect(container.textContent).toBe("")
-    expect(events).toEqual([])
-    await act(async () => window.dispatchEvent(new MessageEvent("message", { source: iframe.contentWindow, origin: "https://sandbox.example",
-      data: { method: "ui/notifications/sandbox-proxy-ready" } })))
-    expect(await request("ui/initialize", { appInfo: { name: "fixture", version: "1" }, appCapabilities: {}, protocolVersion: "2026-01-26" }))
-      .toMatchObject({ result: { hostContext: { experimental: { "openwork/connection-actions": true } } } })
-    await viewTransport.send({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} })
-    binding = { request: { owner: "bridge-scope", sessionId: "session", turnId: "turn", requestId: "question", toolCallId: part.toolCallId, connectionId: "connection" },
-      isPending: () => pending, respond: async response => { events.push(response.outcome); pending = false } }
-    await render()
-    expect(container.querySelector("iframe")).toBe(iframe)
-    expect(connectSpy).toHaveBeenCalledTimes(1)
-    const args = { connectionId: "connection", action: "authenticate" }
-    expect(await request("tools/call", { name: "connection_action_intent", arguments: args })).toHaveProperty("error")
-    expect(events).toEqual(["server"])
-    expect(await request("tools/call", { name: "connection_action_intent", arguments: args, _meta: { "openwork/userInteraction": true } }))
-      .toMatchObject({ result: { structuredContent: { outcome: "connected", questionAnswered: true } } })
-    expect(events).toEqual(["server", "server", "oauth", "connected"])
-    expect(confirmSpy).not.toHaveBeenCalled()
-  } finally {
-    await act(async () => root.unmount())
-    await viewTransport.close()
-    connectSpy.mockRestore()
-    confirmSpy.mockRestore()
-    container.remove()
-    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
-  }
+      await host.render(part)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      expect(host.container.querySelector(`[data-mcp-app-resource="${launch.resourceUri}"]`)).toBeNull()
+      expect(host.container.textContent).toBe("")
+      expect(host.resolveSpy).not.toHaveBeenCalled()
+      expect(host.callSpy).not.toHaveBeenCalled()
+      expect(host.errorSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose() }
+  })
+
+  test("bare connection_action results are native even without launch metadata", () => {
+    for (const toolName of ["openwork_connection_action", "openwork-cloud_connection_action"]) {
+      const part: DynamicToolUIPart = { type: "dynamic-tool", toolName, toolCallId: "bare", state: "output-available", input: {}, output: {} }
+      expect(isNativeConnectionAppLaunch(part)).toBe(true)
+      expect(McpAppFrame({ part })).toBeNull()
+    }
+    const other: DynamicToolUIPart = { type: "dynamic-tool", toolName: "openwork_execute_capability", toolCallId: "bare-other", state: "output-available", input: {}, output: {} }
+    expect(isNativeConnectionAppLaunch(other)).toBe(false)
+  })
+
+  test.each([
+    { label: "an external connection's v2 launch", toolName: "openwork-cloud_execute_capability", connectionId: "emc_external", resourceUri: "ui://openwork/connection-action/v2/view.html" },
+    { label: "a foreign server's v2 launch", toolName: "provider_execute_capability", connectionId: undefined, resourceUri: "ui://openwork/connection-action/v2/view.html" },
+    { label: "an artifact view", toolName: "openwork-cloud_execute_capability", connectionId: undefined, resourceUri: "ui://openwork/artifacts/arv_fixture/views/avr_fixture/index.html" },
+    { label: "a provider App", toolName: "openwork-cloud_execute_capability", connectionId: "emc_fixture", resourceUri: "ui://fixture/view.html" },
+  ])("$label still embeds through the standard sandbox", async ({ toolName, connectionId, resourceUri }) => {
+    const host = resolutionFixture(true)
+    host.resolveSpy.mockResolvedValue({ app: fixture({ resourceUri }) })
+    const part: DynamicToolUIPart = {
+      ...host.part, toolName,
+      callProviderMetadata: { openwork: { mcpResult: {
+        content: [], _meta: { "openwork/mcpApp": { toolName: "render", resourceUri, arguments: {}, ...(connectionId ? { connectionId } : {}) } },
+      } } },
+    }
+    expect(isNativeConnectionAppLaunch(part)).toBe(false)
+    try {
+      await host.render(part)
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      expect(host.container.querySelector("iframe")).not.toBeNull()
+      expect(host.container.querySelector(`[data-mcp-app-resource="${resourceUri}"]`)).not.toBeNull()
+      expect(host.errorSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose() }
+  })
 })
 
 describe("MCP App iframe policy", () => {
@@ -1839,7 +1803,9 @@ describe("MCP App iframe policy", () => {
         toolName: "connection_action", resourceUri: "ui://openwork/connection-action/v1/view.html", arguments: { connectionId: "emc_notes" },
       } } } } },
     }
+    expect(isNativeConnectionAppLaunch(part)).toBe(true)
     expect(McpAppFrame({ part })).toBeNull()
+    expect(isNativeConnectionAppLaunch({ ...part, toolName: "other_execute_capability" })).toBe(false)
     expect(McpAppFrame({ part: { ...part, toolName: "other_execute_capability" } })).not.toBeNull()
   })
 

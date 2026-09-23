@@ -19,17 +19,92 @@ import {
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useOrgDesktopPolicies } from "./desktop-policy-data";
+import { readModelAccessState, saveModelAccess, type ModelAccessMode } from "./model-access-policy";
 import {
   formatProviderTimestamp,
   getProviderDocUrl,
   getProviderIconSlug,
   useOrgLlmProviders,
+  type DenLlmProvider,
 } from "./llm-provider-data";
-
-import { readModelAccessState, saveModelAccess, type ModelAccessMode } from "./model-access-policy";
 
 function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function LlmProviderList({ providers, orgSlug }: { providers: DenLlmProvider[]; orgSlug: string | null }) {
+  return (
+    <DenList>
+      {providers.map((provider) => {
+        const members = provider.access.members.length;
+        const teams = provider.access.teams.length;
+        const accessText = provider.access.allMembers
+          ? "Everyone in the org"
+          : `${members} ${members === 1 ? "person" : "people"} · ${plural(teams, "team")}`;
+        return (
+          <DenListRow
+            key={provider.id}
+            href={getLlmProviderRoute(orgSlug, provider.id)}
+            dataAttributes={{ "data-testid": "llm-provider-card" }}
+            leading={
+              <DenBrandMark
+                name={provider.name}
+                simpleIconSlug={getProviderIconSlug(provider.providerId)}
+                serviceUrl={getProviderDocUrl(provider.providerConfig)}
+              />
+            }
+            title={provider.name}
+            chips={
+              <>
+                <DenChip>{plural(provider.models.length, "model")}</DenChip>
+                {!provider.hasApiKey ? (
+                  <DenChip tone="warning" icon={KeyRound}>
+                    Credential missing
+                  </DenChip>
+                ) : null}
+              </>
+            }
+            meta={`${provider.providerId} · ${accessText} · Updated ${formatProviderTimestamp(provider.updatedAt)}`}
+            action={<ChevronRight aria-hidden className="h-4 w-4 text-gray-400" />}
+          />
+        );
+      })}
+    </DenList>
+  );
+}
+
+export function LegacyProvidersSection({ orgId, orgSlug }: { orgId: string; orgSlug: string | null }) {
+  const { llmProviders, busy, error, reloadProviders } = useOrgLlmProviders(orgId);
+  const legacyProviders = llmProviders.filter((provider) => provider.source !== "openwork" && provider.organizationId === orgId);
+
+  return (
+    <section aria-label="Legacy Providers" data-testid="gateway-legacy-providers" className="mt-10 grid gap-4">
+      <DenSectionHeader
+        title="Legacy Providers"
+        description="Bring Your Own Key (Legacy System) providers send the API key directly to users’ desktop applications. Usage tracking and usage limit policies are not available with this feature. If you want usage tracking and usage limits, use the provider section above."
+      />
+      <div>
+        <Link
+          href={getNewLlmProviderRoute(orgSlug)}
+          data-testid="legacy-provider-create"
+          className={buttonVariants({ variant: "secondary" })}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          Add legacy provider
+        </Link>
+      </div>
+      {busy ? (
+        <p role="status" className="text-sm text-gray-500">Loading legacy providers...</p>
+      ) : error ? (
+        <div className="flex flex-col items-start gap-4">
+          <DenNotice tone="error" message={`Could not load legacy providers: ${error}`} />
+          <DenButton variant="secondary" onClick={() => void reloadProviders()}>Retry legacy providers</DenButton>
+        </div>
+      ) : legacyProviders.length > 0 ? (
+        <LlmProviderList providers={legacyProviders} orgSlug={orgSlug} />
+      ) : null}
+    </section>
+  );
 }
 
 export function LlmProvidersScreen() {
@@ -248,42 +323,7 @@ export function LlmProvidersScreen() {
             </p>
           </div>
         ) : (
-          <DenList>
-            {filteredProviders.map((provider) => {
-              const members = provider.access.members.length;
-              const teams = provider.access.teams.length;
-              const accessText = provider.access.allMembers
-                ? "Everyone in the org"
-                : `${members} ${members === 1 ? "person" : "people"} · ${plural(teams, "team")}`;
-              return (
-                <DenListRow
-                  key={provider.id}
-                  href={getLlmProviderRoute(orgSlug, provider.id)}
-                  dataAttributes={{ "data-testid": "llm-provider-card" }}
-                  leading={
-                    <DenBrandMark
-                      name={provider.name}
-                      simpleIconSlug={getProviderIconSlug(provider.providerId)}
-                      serviceUrl={getProviderDocUrl(provider.providerConfig)}
-                    />
-                  }
-                  title={provider.name}
-                  chips={
-                    <>
-                      <DenChip>{plural(provider.models.length, "model")}</DenChip>
-                      {!provider.hasApiKey ? (
-                        <DenChip tone="warning" icon={KeyRound}>
-                          Credential missing
-                        </DenChip>
-                      ) : null}
-                    </>
-                  }
-                  meta={`${provider.providerId} · ${accessText} · Updated ${formatProviderTimestamp(provider.updatedAt)}`}
-                  action={<ChevronRight aria-hidden className="h-4 w-4 text-gray-400" />}
-                />
-              );
-            })}
-          </DenList>
+          <LlmProviderList providers={filteredProviders} orgSlug={orgSlug} />
         )}
       </section>
       )}

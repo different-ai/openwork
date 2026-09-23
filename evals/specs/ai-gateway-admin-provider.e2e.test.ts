@@ -68,7 +68,7 @@ test("an owner adds an Anthropic key for everyone, limits the org to models they
   await step("a teammate has no AI Gateway page and cannot list providers as an admin", async () => {
     await teammate.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
     await teammate.notSee({ role: "link", label: /AI Gateway/ });
-    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/gateway-providers`);
+    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/ai-gateway?tab=ai-providers`);
     await teammate.notSee({ testId: "gateway-provider-create" }, { timeoutMs: 30_000 });
     const denied = await probe.api(world.teammate, manageable);
     evidence.recordAssertionEvidence("teammate is refused the admin list", `GET ${manageable} as teammate → ${denied.response.status}`, denied.response.status === 403);

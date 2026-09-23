@@ -65,7 +65,11 @@ test("verified connection offers Continue only for an unresolved native question
   try {
     await act(async () => root.render(decisionCard(decisionPayload)))
     expect(container.textContent).toContain("Research Vault connected")
-    expect(container.querySelector("button")?.textContent).toBe("Continue")
+    const buttons = [...container.querySelectorAll("button")]
+    expect(buttons.map(button => button.textContent)).toEqual(["", "Continue"])
+    expect(buttons[0]?.getAttribute("aria-label")).toBe("Technical details for Research Vault")
+    expect(buttons[0]?.getAttribute("aria-expanded")).toBe("false")
+    expect(container.textContent).not.toContain("Reply failed")
     await act(async () => root.render(decisionCard(decisionPayload, null)))
     expect(container.querySelector("button")).toBeNull()
   } finally {

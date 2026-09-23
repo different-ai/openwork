@@ -1049,6 +1049,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const openworkSnapshot = options.openworkServer.getSnapshot();
     const workspaceId = options.runtimeWorkspaceId();
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
+    // Before the first workspace exists the client reaches the engine root,
+    // whose config belongs to no workspace a person will open. Leave project
+    // provider rules alone until there is a workspace to hold them.
+    if (!workspaceId?.trim() && !options.selectedWorkspaceRoot().trim()) {
+      return false;
+    }
     const canUseManagedRuntime = Boolean(
       openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local",
     );
@@ -2097,11 +2103,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const settings = readDenSettings();
     const workspaceTarget =
       options.selectedWorkspaceRoot().trim() || options.runtimeWorkspaceId() || "";
+    // A server that materializes providers itself writes them into its
+    // managed engine, which runs before the first workspace exists. Only the
+    // legacy renderer import needs a workspace to patch.
     return Boolean(
       options.client() &&
         settings.authToken?.trim() &&
         settings.activeOrgId?.trim() &&
-        workspaceTarget,
+        (workspaceTarget || serverHandlesProviderSync()),
     );
   };
 

@@ -319,7 +319,6 @@ describe("embedded server lifecycle", () => {
       for (const options of [
         { ...managedOptions(fixture, "unmanaged"), manageOpencode: false },
         { ...managedOptions(fixture, "external"), opencodeBaseUrl: "http://127.0.0.1:1" },
-        { ...managedOptions(fixture, "empty"), workspaces: [] },
       ]) {
         const handle = await startEmbeddedServer(options);
         fixture.handles.push(handle);
@@ -327,6 +326,59 @@ describe("embedded server lifecycle", () => {
         expect(handle.managedOpencode).toBeNull();
       }
       expect(managedSpy).not.toHaveBeenCalled();
+    } finally {
+      managedSpy.mockRestore();
+      await fixture.restore();
+    }
+  });
+
+  test.serial("boots the managed engine with no workspace, and the first workspace joins it without a second spawn", async () => {
+    const fixture = await createFixture();
+    const managedSpy = spyOn(managedOpencodeModule, "createManagedOpencodeServer");
+    try {
+      const engineRoot = join(fixture.root, "engine-root");
+      const handle = await startEmbeddedServer({
+        ...managedOptions(fixture, "no-workspace"),
+        workspaces: [],
+        opencodeCwd: engineRoot,
+      });
+      fixture.handles.push(handle);
+
+      // A member who signed in before creating a workspace has a live engine.
+      expect(handle.config.workspaces).toEqual([]);
+      expect(handle.managedOpencode).not.toBeNull();
+      expect(managedSpy).toHaveBeenCalledTimes(1);
+      expect(managedSpy.mock.calls[0]?.[0]?.cwd).toBe(engineRoot);
+      const health = await fetch(`${handle.url}/health`);
+      expect(health.status).toBe(200);
+      expect(handle.managedOpencode?.isAlive()).toBe(true);
+      expect(handle.config.opencodeBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      const [registered] = await readEngineRegistry(handle.config);
+      expect(registered?.role).toBe("primary");
+      expect(registered?.pid).toBe(handle.managedOpencode?.pid ?? -1);
+
+      // The engine answers through the server's workspace-less proxy.
+      const proxied = await fetch(`${handle.url}/opencode/provider`, {
+        headers: { authorization: `Bearer ${SERVER_TOKEN}` },
+      });
+      expect(proxied.status).toBe(200);
+
+      // Creating the first workspace is the ordinary add-a-workspace path:
+      // it inherits the running engine instead of spawning another.
+      const enginePid = handle.managedOpencode?.pid;
+      const folderPath = join(fixture.root, "first-workspace");
+      const created = await fetch(`${handle.url}/workspaces/local`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-openwork-host-token": HOST_TOKEN },
+        body: JSON.stringify({ folderPath, name: "First", preset: "starter" }),
+      });
+      expect(created.status).toBe(201);
+      expect(managedSpy).toHaveBeenCalledTimes(1);
+      expect(handle.managedOpencode?.pid).toBe(enginePid);
+      expect(handle.config.workspaces).toHaveLength(1);
+      expect(handle.config.workspaces[0]?.path).toBe(folderPath);
+      expect(handle.config.workspaces[0]?.baseUrl).toBe(handle.config.opencodeBaseUrl);
+      await expectHealth(handle.url, workspaceId(handle.config), 200);
     } finally {
       managedSpy.mockRestore();
       await fixture.restore();

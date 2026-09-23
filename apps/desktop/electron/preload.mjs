@@ -71,6 +71,16 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
+function openLinksExternally() {
+  // Read at activation so Settings changes and reloads use the same saved
+  // preference as the renderer, without a second main-process preference store.
+  try {
+    return JSON.parse(window.localStorage.getItem("openwork.preferences"))?.linkOpenDestination === "external";
+  } catch {
+    return false;
+  }
+}
+
 if (process.isMainFrame) {
   installBrowserShortcutFocusTracking(window, (tabId) => {
     ipcRenderer.send("openwork:browser:shortcut-focus", tabId);
@@ -89,6 +99,7 @@ if (process.isMainFrame) {
     ipcRenderer.send("openwork:browser:linkClick", {
       url: url.href,
       sessionId: anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null,
+      external: openLinksExternally(),
     });
   }, { capture: true });
 }

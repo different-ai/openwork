@@ -1,6 +1,6 @@
 ---
 title: "Enable OpenWork Gateway"
-description: "Opt in to Gateway with matching images, explicit destinations, shared secrets, and a platform-admin dashboard grant."
+description: "Configure Gateway with matching images, explicit destinations, and shared secrets for admins in every organization."
 ---
 
 OpenWork Gateway routes model requests to configured providers with server-held credentials, model groups, credential sets, and access grants. It runs from `ee/apps/gateway`, normally on port `8791`.
@@ -11,16 +11,17 @@ It is **not** `den-gateway`, the separate OpenWork Web proxy, and it is not the 
   This guide requires the Gateway-capable chart implementation introduced in chart `0.2.0` and matching Den API, Den Web, and Gateway images from this release. Chart version alone is not evidence that an image supports deployment capability version `1`. The checkout's `Chart.appVersion: "0.1.0"` is a packaging placeholder, not a compatible image recommendation. Older stable images do not gain support by using new values. For an existing database, complete [Upgrade Gateway safely](/self-host/gateway-upgrade) before starting the new images.
 </Warning>
 
-## Two independent controls
+## Deployment configuration and admin access
+
+Gateway is generally available to admins and above in every organization when the deployment is configured. New organizations require no opt-in or platform-admin grant; there is no organization flag or API toggle.
 
 | Control | Who changes it | Meaning |
 | --- | --- | --- |
 | `GATEWAY_ENABLED=true` | Deployment operator | Validated deployment intent; advertises `deploymentCapabilities: { version: 1, aiGateway: true }` and admits Gateway management requests. Helm sets it through `gateway.enabled: true`. |
-| `capabilities.gatewayDashboard: true` | Allowlisted platform administrator | Exposes the Gateway dashboard to organization admins and above. This existing organization flag defaults to false. |
 
-Neither organization mode, a running legacy inference service, nor the presence of billing/provider credentials opts a deployment in. With `GATEWAY_ENABLED` absent, the new capability is false and existing OpenWork Models behavior is preserved. Hosted operators explicitly set `GATEWAY_ENABLED=true` through their existing hosting environment mechanism on Den API and Gateway; hosted deployments are not assumed to use Helm.
+Neither organization mode, a running legacy inference service, nor the presence of billing/provider credentials opts a deployment in. With `GATEWAY_ENABLED` absent, the deployment capability is false and existing OpenWork Models behavior is preserved. Hosted operators explicitly set `GATEWAY_ENABLED=true` through their existing hosting environment mechanism on Den API and Gateway; hosted deployments are not assumed to use Helm. These remain installation configuration checks, not organization rollout controls.
 
-The organization flag is dashboard exposure, not runtime authorization. Do not create another flag, put deployment capabilities in organization metadata, or use ordinary organization metadata updates to grant dashboard access. Management APIs still enforce organization-admin permissions and fresh authentication for privileged writes independently of dashboard exposure.
+Do not create a replacement flag, put deployment capabilities in organization metadata, or use ordinary organization metadata updates to grant dashboard access. Management APIs still enforce organization-admin permissions and fresh authentication for privileged writes. Regular members do not gain shared credential administration.
 
 ## Prepare the deployment
 
@@ -28,7 +29,7 @@ The organization flag is dashboard exposure, not runtime authorization. Do not c
 2. Initialize or migrate the database with a reviewed procedure, and verify the release schema before starting application traffic. A new empty database can use this release's current-schema bootstrap; an existing database requires the [upgrade procedure](/self-host/gateway-upgrade).
 3. Precreate the database/authentication Secret in the release namespace using your secret manager. Den API and Gateway must use the same database and the same existing `DEN_DB_ENCRYPTION_KEY`; do not generate a new encryption key during an upgrade.
 4. Configure the internal Gateway origin and a separate desktop-reachable Gateway origin, DNS, trusted certificates, and network access.
-5. Render and inspect the values, deploy the matching images, verify the authenticated contract, then request the organization dashboard grant.
+5. Render and inspect the values, deploy the matching images, verify the authenticated deployment contract, then verify Gateway access as an organization admin without an organization opt-in.
 
 ### Helm values
 
@@ -79,7 +80,7 @@ Use `secret.create: false` for these examples. Chart-created Secrets use `secret
 
 - `GATEWAY_PROXY_BASE_URL` is the internal/service-to-service destination. Set it on Den API and Gateway. Internal HTTP is permitted across a trusted private boundary.
 - `GATEWAY_PUBLIC_BASE_URL` is the desktop-reachable destination, not the internal Service address. Den API uses it in member Gateway provider configurations. Configure it on both services for shared startup validation.
-- Models clients retain an explicit, valid desktop origin from `INFERENCE_PROXY_BASE_URL`; otherwise they use a valid `GATEWAY_PUBLIC_BASE_URL`. This selection is independent of `GATEWAY_ENABLED`: changing only management enablement does not replace a known public destination with the internal proxy. Preserve your existing Models HTTPS hostname, including for organizations without Gateway dashboard opt-in. No subscription, key, or upstream-routing changes are required.
+- Models clients retain an explicit, valid desktop origin from `INFERENCE_PROXY_BASE_URL`; otherwise they use a valid `GATEWAY_PUBLIC_BASE_URL`. This selection is independent of `GATEWAY_ENABLED`: changing only management enablement does not replace a known public destination with the internal proxy. Preserve your existing Models HTTPS hostname even when Gateway management is disabled on the deployment. No subscription, key, or upstream-routing changes are required.
 - Both must be explicit origins without credentials, non-root paths, queries, or fragments. A trailing `/` is allowed. Do not append `/api/v1` to either value.
 - Production public origins require HTTPS and a non-local qualified hostname or valid non-loopback IP address. Private DNS is possible, but member devices must resolve it, route to it, and trust its certificate. Internal `.svc` or `.internal` names are not valid production public origins.
 - Helm validates production-style origins statically; startup validation does not check DNS, TLS, network reachability, or schema readiness. Local development exceptions require `OPENWORK_DEV_MODE=1` and a non-production `NODE_ENV`, not a production workaround.
@@ -167,19 +168,13 @@ An empty component image tag clears an inherited tag and falls back to shared `i
 
 Clearing **saved canonical maps** is different. Helm can refill an empty map before templates run: after saving `gateway.env.SAVED`, `--reuse-values --set-json 'gateway.env={}'` retains that entry. Earlier values files can refill nested maps too. To clear previously canonical entries, use `--reset-values` with a complete, reviewed values file that omits the old entries and explicitly includes the desired empty maps. Preserve all other deployment settings and Secret references. A final empty override file or `--reset-then-reuse-values` does not reliably discard saved maps. Inspect the resulting render; `null` is Helm's deletion operator, not a supported chart clear value.
 
-## Grant dashboard access
+## Open Gateway and retire old opt-in procedures
 
-After deployment verification, an **allowlisted platform administrator** opens Den `/admin`, selects the organization, and enables **Gateway dashboard**. The existing platform API is `PUT /v1/admin/organizations/:organizationId/capabilities` with this partial body:
+After deployment verification, sign in as an organization admin or above and open **Gateway**. This applies to every organization, including a newly created one with no capability metadata. No backoffice grant is needed; platform-admin routes keep their existing allowlist authorization but no longer offer a Gateway dashboard toggle.
 
-```json
-{
-  "capabilities": {
-    "gatewayDashboard": true
-  }
-}
-```
+For older clients, `capabilities.gatewayDashboard` in organization and admin capability responses is constant `true`. It is deprecated wire compatibility, **not a real feature flag**, not a deployment-readiness signal, and not an authorization decision. The admin capabilities API retains `gatewayDashboard` boolean/null input as a deprecated no-op; sending `true`, `false`, or `null` cannot change Gateway access. Other capabilities retain their existing controls.
 
-An ordinary organization owner/admin cannot grant this reserved capability. Ask the instance/platform administrator to enable the existing flag for the intended organization; do not request a competing feature flag or try a metadata-write workaround. Once granted, reload the dashboard and use **Models > Gateway** as an organization admin or above. Regular members do not gain shared credential administration.
+Stored `organization.metadata.capabilities.gatewayDashboard` values, including explicit `false`, are ignored. No database migration or backfill is required for this retirement. The release's required schema migrations still apply. Do not add a replacement organization flag or use metadata-write workarounds.
 
 ## Verify and troubleshoot
 
@@ -192,13 +187,15 @@ Sign in to Den as an organization admin, select the intended organization, and i
 }
 ```
 
-Do not export cookies, authorization headers, or the full organization response into tickets. Record only the capability fields and release image identifiers. A missing/malformed capability object, unsupported version, or value other than literal boolean `true` is unsupported and fails closed in the UI. Verify all API replicas serve the matching release; one response is not proof of a consistent rollout.
+The `capabilities.gatewayDashboard` value above is only the deprecated constant-true compatibility response; do not use it to verify enablement. Check `deploymentCapabilities.version` and `deploymentCapabilities.aiGateway` instead.
+
+Do not export cookies, authorization headers, or the full organization response into tickets. Record only the capability fields and release image identifiers. A missing/malformed `deploymentCapabilities` object, unsupported version, or `aiGateway` value other than literal boolean `true` is unsupported and fails closed in the UI. Verify all API replicas serve the matching release; one response is not proof of a consistent rollout.
 
 | State | Expected result / action |
 | --- | --- |
 | Organization access is loading or switching | `Checking workspace access...`; management UI and requests wait. This is not a deployment-unavailable verdict. |
-| Organization admin with dashboard grant, but unsupported/disabled deployment | Exact notice below, with no provider editor or management fetch. Check images, the top-level contract, and operator configuration. |
-| No dashboard grant or insufficient organization role | Redirect to the dashboard; ask the platform admin for the grant or review membership. |
+| Organization admin, but unsupported/disabled deployment | Exact notice below, with no provider editor or management fetch. Check images, the top-level contract, and operator configuration. |
+| Insufficient organization role | Redirect to the dashboard; review membership. There is no Gateway-specific organization grant. |
 | Organization-context request fails | An error notice, not a fabricated disabled capability. Resolve session/API failure. |
 | Enabled deployment with an upstream/provider outage | Diagnose credentials, DNS, TLS, egress, catalog warnings, and upstream errors. Availability is configuration intent, not an upstream health probe; do not relabel the deployment as unsupported. |
 
@@ -210,8 +207,8 @@ An authenticated, authorized management API request on a disabled deployment ret
 
 > Gateway management is not enabled on this deployment. Ask your administrator to configure GATEWAY_ENABLED=true.
 
-Authentication, role, and fresh-session failures remain distinct. Member usable/connect/sign-in/revoke paths and OAuth callbacks are not governed by the dashboard flag or management gate.
+Authentication, role, and fresh-session failures remain distinct. Member usable/connect/sign-in/revoke paths and OAuth callbacks are not governed by the deployment management gate; retiring the organization flag does not change their authorization.
 
 `/health` proves process liveness. Gateway `/ready` executes `select 1` to check database connectivity; it does **not** prove the Gateway schema or migrations exist. The capability response also does not prove schema health. Verify migration receipts and actual schema separately, then test an authorized provider path with approved non-sensitive data before reopening traffic.
 
-For eligible hosted organization admins, **OpenWork Models and Gateway coexist** in navigation and the command palette when both deployment support and the organization dashboard grant are effective. The OpenWork Models page remains available directly without redirecting to Gateway. Gateway retains its deployment, organization-grant, and admin guards; loading temporarily defers access decisions. Existing single-org behavior still routes Models to custom providers. This coexistence does not change subscriptions, billing, Models keys, or provider data. See [disable and recovery choices](/self-host/gateway-upgrade#disable-without-a-schema-downgrade) before turning anything off.
+For eligible hosted organization admins, **OpenWork Models and Gateway coexist** in navigation and the command palette when Gateway deployment support is configured. The OpenWork Models page remains available directly without redirecting to Gateway. Gateway retains its deployment and admin guards; loading temporarily defers access decisions. No organization-grant guard remains. Existing single-org behavior still routes Models to custom providers. This coexistence does not change subscriptions, billing, Models keys, or provider data. See [disable and recovery choices](/self-host/gateway-upgrade#disable-without-a-schema-downgrade) before turning anything off.

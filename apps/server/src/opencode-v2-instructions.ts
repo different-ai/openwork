@@ -1,7 +1,7 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
-import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
+import { OPENWORK_AGENT_PROMPT, OPENWORK_CONNECT_ROUTING_INSTRUCTION } from "./openwork-agent-prompt.js";
 import type { CloudNativeSkillState } from "./cloud-native-skills.js";
 
 export const OPENWORK_V2_INSTRUCTION_KEY = "openwork.context";
@@ -114,7 +114,7 @@ export function buildOpenWorkV2Instructions(connectReady: boolean) {
   return {
     // v2 only: organization skills are native skills here, never Connect hops.
     operatingInstructions: OPENWORK_AGENT_PROMPT.replace(
-      "Org-connected services, remote skills, Workflows, and Automations reach you through OpenWork Connect: discover with openwork-cloud_search_capabilities, then run with openwork-cloud_execute_capability using an exact returned name. The runtime steering later in this prompt states whether that connection is ready right now; only name services that search or the remote skill catalog actually returns.",
+      OPENWORK_CONNECT_ROUTING_INSTRUCTION,
       "Org-connected services, Workflows, and Automations reach you through OpenWork Connect: discover and execute capabilities through the native OpenWork MCP interface exposed by the current tool catalog, using an exact returned name. Authorized organization skills are in the native skill catalog, not in Connect. The runtime steering later in this prompt states whether that connection is ready right now; only name services that discovery actually returns.",
     ),
     connect: connectReady ? "OpenWork Connect tools are connected. Use only capabilities actually returned by discovery."

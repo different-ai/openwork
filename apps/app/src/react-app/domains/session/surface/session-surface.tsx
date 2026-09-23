@@ -149,7 +149,7 @@ import {
   isChatMcpReconnectScopeCurrent,
   isCurrentChatConnectionDecision,
   nativeChatConnectionDecision,
-  isReservedConnectionQuestion,
+  composerQuestionForConnectionDecision,
   type ChatConnectionDecisionBinding,
   authenticateChatConnection,
   type ChatMcpReconnectScope,
@@ -3149,9 +3149,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       },
     };
   }, [props.sessionId, sessionOwner, props.activeQuestion, props.respondQuestion, baseRenderedMessages, props.isControlTarget, props.draftScope, archived, archiveStateKnown, archiveHeld]);
-  const reservedConnectionQuestion = isReservedConnectionQuestion(props.activeQuestion);
-  const connectionQuestionPending = reservedConnectionQuestion && !nativeConnectionRequest;
-  const composerQuestion = reservedConnectionQuestion ? null : props.activeQuestion;
+  const composerQuestion = composerQuestionForConnectionDecision(props.activeQuestion, nativeConnectionRequest);
 
   const handleRevertToUserMessage = useCallback((messageId: string) => {
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
@@ -3583,9 +3581,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
-          compactTopSpacing={Boolean(connectionQuestionPending || composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0)}
+          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0)}
           topAccessory={
-            connectionQuestionPending || composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0 ? (
+            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0 ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -3598,7 +3596,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     sendingId={sendingQueuedId}
                   />
                 ) : null}
-                {connectionQuestionPending ? <p role="status" className="px-3 py-3 text-sm text-muted-foreground">Checking connection request…</p> : null}
                 {composerQuestion ? (
                   <QuestionPanel
                     questions={composerQuestion.questions}

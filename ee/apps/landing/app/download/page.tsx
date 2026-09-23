@@ -3,7 +3,7 @@ import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
 const downloadSchema = {
   "@context": "https://schema.org",
@@ -26,7 +26,7 @@ const downloadSchema = {
   }
 };
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "Download OpenWork — macOS, Windows, Linux",
   description:
     "Download the OpenWork desktop app for macOS, Windows, or Linux. Free, open source, no account required.",
@@ -37,7 +37,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/download"
   }
-};
+});
 
 export default async function Download() {
   const github = await getGithubData();

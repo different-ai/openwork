@@ -6,7 +6,7 @@ import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/
 import type { McpUiStyles, McpUiStyleVariableKey } from "@modelcontextprotocol/ext-apps"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
-import { legacyConnectionActionAppResourceUri } from "@openwork/types/connection-action-app"
+import { connectionActionAppResourceUri, legacyConnectionActionAppResourceUri } from "@openwork/types/connection-action-app"
 import { isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { createConnectionActionController, hasHostConnectionActions, standardMcpToolResult } from "./mcp-connection-action"
@@ -753,13 +753,23 @@ export function McpAppSandboxView({ origin, app, toolName, inputArguments, resul
   )
 }
 
+/**
+ * OpenWork's own connection App is presented natively by this host (the
+ * connection card in the transcript); the Den App remains for external hosts.
+ * The retired v1 resource is never embedded either.
+ */
+export function isNativeConnectionAppLaunch(part: DynamicToolUIPart): boolean {
+  const result = preservedResult(part)
+  const launch = gatewayMcpAppLaunch(result?._meta)
+  if (!launch) return /^(?:openwork_|openwork-cloud_)connection_action$/.test(part.toolName)
+  return /^(?:openwork_|openwork-cloud_)/.test(part.toolName) && !launch.connectionId
+    && (launch.resourceUri === connectionActionAppResourceUri || launch.resourceUri === legacyConnectionActionAppResourceUri)
+}
+
 export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
   const result = preservedResult(part)
   if (isRetiredFirstPartyConfirmation(part.toolName, result)) return null
-  const launch = gatewayMcpAppLaunch(result?._meta)
-  if ((!launch && /^(?:openwork_|openwork-cloud_)connection_action$/.test(part.toolName))
-    || (/^(?:openwork_|openwork-cloud_)/.test(part.toolName) && !launch?.connectionId
-      && launch?.resourceUri === legacyConnectionActionAppResourceUri)) return null
+  if (isNativeConnectionAppLaunch(part)) return null
   return <EmbeddedMcpAppFrame part={part} />
 }
 

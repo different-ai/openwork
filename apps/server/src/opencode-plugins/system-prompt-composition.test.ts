@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { OPENWORK_AGENT_PROMPT } from "../openwork-agent-prompt.js";
+import { OPENWORK_AGENT_PROMPT, OPENWORK_CONNECT_ROUTING_INSTRUCTION } from "../openwork-agent-prompt.js";
 import { buildOpenWorkV2Instructions } from "../opencode-v2-instructions.js";
 import { OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
@@ -81,7 +81,7 @@ test("the composed OpenWork prompt is single, deduplicated, ordered, and current
   expect(prompt).toContain("read cloud/run-in-the-cloud/cloud-mcp.mdx with openwork_docs_read");
   expect(prompt).toContain("read cloud/share-with-your-team/desktop-policies.mdx");
 
-  expect(occurrences(prompt, "only name services that search or the remote skill catalog actually returns")).toBe(1);
+  expect(occurrences(prompt, OPENWORK_CONNECT_ROUTING_INSTRUCTION)).toBe(1);
   expect(occurrences(OPENWORK_AGENT_PROMPT, "openwork-cloud_search_capabilities")).toBe(1);
   expect(prompt).not.toContain("2-4 keyword variants");
   expect(prompt).not.toContain("A successful search proves");

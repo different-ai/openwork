@@ -26,14 +26,12 @@ import { paletteFilter } from "../../_lib/palette-filter";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useAutomations } from "../automation-data";
 import { usePlugins } from "../plugin-data";
-import { useGatewayDashboardAccess } from "../gateway-dashboard-capability-guard";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 const RECENTS_STORAGE_KEY = "den.command-palette.recents";
 const RECENTS_LIMIT = 8;
 
 const EMPTY_CAPABILITIES: DenOrgCapabilities = {
-  gatewayDashboard: false,
   cloud: false,
   installLinks: false,
   mcpConnections: false,
@@ -112,7 +110,6 @@ function PaletteGroup({
 }
 
 export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps) {
-  const gatewayAccess = useGatewayDashboardAccess();
   const pathname = usePathname();
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
@@ -153,7 +150,6 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       orgSlug: activeOrg?.slug ?? null,
       access,
       capabilities,
-      gatewayAccess,
       orgMode: runtimeConfig.orgMode,
       runtimeConfigLoaded,
     });
@@ -165,7 +161,6 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
     access.isAdmin,
     activeOrg?.slug,
     capabilities,
-    gatewayAccess,
     runtimeConfig.orgMode,
     runtimeConfigLoaded,
   ]);

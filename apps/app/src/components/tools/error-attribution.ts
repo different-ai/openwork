@@ -22,9 +22,13 @@ export type ChatToolReconnectResult = "connected"
 const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
   "openwork-cloud_search_capabilities",
   "openwork-cloud_execute_capability",
+  "openwork-cloud_list_skills",
+  "openwork-cloud_get_skill",
   "openwork-cloud_connection_action",
   "openwork_search_capabilities",
   "openwork_execute_capability",
+  "openwork_list_skills",
+  "openwork_get_skill",
   "openwork_connection_action",
 ])
 
@@ -97,9 +101,16 @@ function isConnectionTool(toolName: string): boolean {
   return OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName) || /^openwork(?:-cloud)?_run_artifact_[A-Za-z0-9_-]+$/.test(toolName)
 }
 
-function chatConnectionTarget(toolName: string, result: unknown, input?: unknown) {
+/**
+ * Ordinary discovery (`search_capabilities` without `intent: "connect"`) stays
+ * quiet in the transcript. `allowDiscovery` lets a caller that already holds a
+ * pending native connection question read the same blocker from such a result.
+ */
+export type ChatConnectionTargetOptions = { allowDiscovery?: boolean }
+
+function chatConnectionTarget(toolName: string, result: unknown, input?: unknown, options?: ChatConnectionTargetOptions) {
   if (!isConnectionTool(toolName)) return null
-  if (isConnectionDiscoveryTool(toolName) && (!isRecord(input) || input.intent !== "connect")) return null
+  if (isConnectionDiscoveryTool(toolName) && !options?.allowDiscovery && (!isRecord(input) || input.intent !== "connect")) return null
   const parsed = parseResultRecord(result)
   if (!parsed) return null
   const candidates = [
@@ -155,16 +166,18 @@ export function connectionCardPayloadFromChatToolResult(
   toolName: string,
   result: unknown,
   input?: unknown,
+  options?: ChatConnectionTargetOptions,
 ): ConnectionActionPayload | null {
-  return chatConnectionTarget(toolName, result, input)?.connection ?? null
+  return chatConnectionTarget(toolName, result, input, options)?.connection ?? null
 }
 
 export function reconnectActionFromChatToolResult(
   toolName: string,
   result: unknown,
   input?: unknown,
+  options?: ChatConnectionTargetOptions,
 ): ChatToolReconnectAction | null {
-  const target = chatConnectionTarget(toolName, result, input)
+  const target = chatConnectionTarget(toolName, result, input, options)
   if (!target?.memberOAuth) return null
   const { connection } = target
   if (connection.actor !== "member" || connection.action?.surface !== "openwork_your_connections"
@@ -177,7 +190,7 @@ export function reconnectActionFromChatToolResult(
   }
 }
 
-export function connectionResultFromChatToolPart(part: DynamicToolUIPart): unknown {
+export function connectionResultFromChatToolPart(part: DynamicToolUIPart, options?: ChatConnectionTargetOptions): unknown {
   if (!isConnectionTool(part.toolName) || (part.state !== "output-error" && part.state !== "output-available")) return undefined
   const raw = part.state === "output-error" ? part.errorText : part.output
   const metadata = part.callProviderMetadata?.openwork
@@ -192,7 +205,21 @@ export function connectionResultFromChatToolPart(part: DynamicToolUIPart): unkno
     if (Array.isArray(record.matches)) matches.push(...record.matches)
   }
   const combined = { matches }
-  return chatConnectionTarget(part.toolName, combined, part.input) ? combined : undefined
+  return chatConnectionTarget(part.toolName, combined, part.input, options) ? combined : undefined
+}
+
+/**
+ * The connection a chat tool part reports, if any. Ordinary discovery is
+ * excluded unless `allowDiscovery` is set.
+ */
+export function connectionFromChatToolPart(part: DynamicToolUIPart, options?: ChatConnectionTargetOptions): {
+  connection: ConnectionActionPayload
+  action: ChatToolReconnectAction | null
+} | null {
+  const result = connectionResultFromChatToolPart(part, options)
+  const connection = connectionCardPayloadFromChatToolResult(part.toolName, result, part.input, options)
+  if (!connection) return null
+  return { connection, action: reconnectActionFromChatToolResult(part.toolName, result, part.input, options) }
 }
 
 export function attributeChatToolError(errorText: string): ToolErrorAttribution | null {

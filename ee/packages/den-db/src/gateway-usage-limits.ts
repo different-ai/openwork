@@ -10,6 +10,8 @@ import {
 import {
   withGatewayUsageEntitlementMutation,
   usagePolicyMembers,
+  usageOrganizationMembers,
+  lockUsageOrganization,
   lockUsageMembers,
 } from "./gateway-usage-entitlements"
 import { isGatewayUsageDeadlock } from "./gateway-usage-errors"
@@ -232,19 +234,31 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       scope: GatewayUsageScope,
       policyId: string,
       target:
+        | { organization: true }
         | { memberId: GatewayUsageScope["memberId"] }
         | { teamId: typeof TeamTable.$inferSelect.id },
     ) {
       return transaction(async (tx, now) => {
+        await lockUsageOrganization(tx, scope.organizationId)
         const members =
-          "memberId" in target
-            ? [target.memberId]
-            : (
-                await tx
-                  .select({ id: TeamMemberTable.orgMembershipId })
-                  .from(TeamMemberTable)
-                  .where(eq(TeamMemberTable.teamId, target.teamId))
-              ).flatMap((row) => (row.id ? [row.id] : []))
+          "organization" in target
+            ? await usageOrganizationMembers(tx, scope.organizationId)
+            : "memberId" in target
+              ? [target.memberId]
+              : (
+                  await tx
+                    .select({ id: TeamMemberTable.orgMembershipId })
+                    .from(TeamMemberTable)
+                    .innerJoin(
+                      TeamTable,
+                      and(
+                        eq(TeamTable.id, TeamMemberTable.teamId),
+                        eq(TeamTable.organizationId, scope.organizationId),
+                      ),
+                    )
+                    .where(eq(TeamMemberTable.teamId, target.teamId))
+                    .for("share")
+                ).flatMap((row) => (row.id ? [row.id] : []))
         return withGatewayUsageEntitlementMutation(
           tx,
           scope.organizationId,
@@ -274,6 +288,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
                 organizationId: scope.organizationId,
                 memberId,
                 teamId,
+                organization: "organization" in target ? true : null,
                 createdAt: now,
               })
               .onDuplicateKeyUpdate({ set: { policyId } })

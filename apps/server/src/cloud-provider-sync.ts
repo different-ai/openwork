@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
-import { rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
+import { enginePoolForConfig, rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
 import { ApiError } from "./errors.js";
 import { selectPrimaryCredentialEnvName, syncManagedProviderAuth } from "./managed-provider-auth.js";
@@ -1036,6 +1036,16 @@ export class CloudProviderSync {
     return run;
   }
 
+  /**
+   * Whether there is an engine to write provider state into and reload: a
+   * managed engine (which runs before the first workspace exists) or a
+   * workspace attached to one.
+   */
+  private engineAvailable(): boolean {
+    return enginePoolForConfig(this.config) !== null
+      || Boolean(findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0]);
+  }
+
   private sessionContextKey(session: CloudProviderDenSession): string {
     return `${session.baseUrl}\u0000${session.orgId}\u0000${session.token}`;
   }
@@ -1289,8 +1299,8 @@ export class CloudProviderSync {
     }
 
     const workspaceCleanup = await this.cleanupWorkspaceTakeovers();
-    const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
-    const runtimeFileChanged = engineWorkspace
+    const engineAvailable = this.engineAvailable();
+    const runtimeFileChanged = engineAvailable
       ? (await writeOpenworkRuntimeConfigFile(this.config)).changed
       : false;
     // Deliver credentials before disposing the current provider instances.
@@ -1326,7 +1336,7 @@ export class CloudProviderSync {
       || authChanged;
     let reloadError: unknown;
     let reloadDeferred = false;
-    if (engineWorkspace && this.reloadPending) {
+    if (engineAvailable && this.reloadPending) {
       if (await this.reloadDeferredByActivity()) {
         reloadDeferred = true;
         this.scheduleReloadRetry();
@@ -1453,8 +1463,7 @@ export class CloudProviderSync {
     }
     await this.cleanupWorkspaceTakeovers();
 
-    const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
-    if (engineWorkspace) {
+    if (this.engineAvailable()) {
       const fileResult = await writeOpenworkRuntimeConfigFile(this.config);
       this.reloadPending = this.reloadPending || providerChanged || fileResult.changed;
     }

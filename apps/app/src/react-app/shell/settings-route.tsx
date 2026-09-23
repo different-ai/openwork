@@ -210,6 +210,7 @@ import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
 } from "@/react-app/infra/workspace-server-client";
+import { resolveEngineRootEndpoint } from "@/app/lib/workspace-endpoint";
 import {
   buildLocalProviderConfig,
   OPENAI_IMAGE_EXTENSION_ID,
@@ -670,7 +671,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     });
   };
   const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
-  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  // A member who signed in before creating a workspace still has the local
+  // server's managed engine; reach it directly so AI providers work.
+  const engineRootEndpoint = useMemo(
+    () => (isDesktopRuntime() && !loading && workspaces.length === 0
+      ? resolveEngineRootEndpoint({ baseUrl, token })
+      : null),
+    [baseUrl, loading, token, workspaces.length],
+  );
+  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? engineRootEndpoint?.opencodeBaseUrl ?? "";
 
   routeStateRef.current = {
     checkDesktopRestriction,
@@ -1115,7 +1124,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [runtimeWorkspaceId]);
 
   const opencodeClient = useMemo(() => {
-    if (!selectedWorkspaceEndpoint || !selectedWorkspaceEndpoint.token) return null;
+    if (!selectedWorkspaceEndpoint) {
+      return engineRootEndpoint
+        ? createClient(engineRootEndpoint.opencodeBaseUrl, undefined, { token: engineRootEndpoint.token, mode: "openwork" })
+        : null;
+    }
+    if (!selectedWorkspaceEndpoint.token) return null;
     return createClient(
       selectedWorkspaceEndpoint.opencodeBaseUrl,
       selectedWorkspaceRoot || undefined,
@@ -1124,7 +1138,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         mode: "openwork",
       },
     );
-  }, [selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
+  }, [engineRootEndpoint, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
 
   useEffect(() => {
     setActiveClient(opencodeClient);
@@ -2460,6 +2474,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <PreferencesView
             busy={busy}
+            linkOpenDestination={local.prefs.linkOpenDestination}
+            onLinkOpenDestinationChange={(linkOpenDestination) => {
+              local.setPrefs((previous) => ({ ...previous, linkOpenDestination }));
+            }}
             showThinking={local.prefs.showThinking}
             onToggleShowThinking={() => {
               local.setPrefs((previous) => ({ ...previous, showThinking: !previous.showThinking }));

@@ -16,16 +16,14 @@ import {
 import {
   type DenOrgAccessFlags,
   type DenOrgCapabilities,
+  getAiGatewayRoute,
   getAnalyticsRoute,
   getApiKeysRoute,
   getAutomationsRoute,
   getBillingRoute,
   getBrandAppearanceRoute,
-  getCustomLlmProvidersRoute,
-  getGatewayProvidersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
-  getInferenceRoute,
   getLibraryRoute,
   getManagedDashboardsRoute,
   getMarketplacesRoute,
@@ -40,7 +38,6 @@ import {
   getWebRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
-import type { getGatewayDashboardAccess } from "./gateway-dashboard-access";
 
 export type DashboardNavChild = {
   href: string;
@@ -56,7 +53,7 @@ export type DashboardNavItem = {
   testId?: string;
   /** Extra pathname prefixes that select this entry. */
   matchHrefs?: string[];
-  /** Grouped entries link to the first child and expand on child pages. */
+  /** Grouped entries link to their own href and expand on parent or child pages. */
   children?: DashboardNavChild[];
 };
 
@@ -78,7 +75,6 @@ export type BuildDashboardNavSectionsInput = {
   orgSlug: string | null;
   access: DenOrgAccessFlags;
   capabilities: DenOrgCapabilities;
-  gatewayAccess: ReturnType<typeof getGatewayDashboardAccess>;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
 };
@@ -87,8 +83,6 @@ export function buildDashboardNavSections({
   orgSlug,
   access,
   capabilities,
-  gatewayAccess,
-  orgMode,
   runtimeConfigLoaded,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
@@ -112,27 +106,12 @@ export function buildDashboardNavSections({
       : []),
   ];
 
-  // Hosted deployments expose OpenWork Models; self-hosted deployments only
-  // expose their own providers. Keep hidden until runtime config is known.
-  const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org"
-    && gatewayAccess !== "checking";
-  const modelsGroup: DashboardNavItem | null = access.isAdmin && orgSlug
+  const aiGatewayItem: DashboardNavItem | null = access.isAdmin && orgSlug
     ? {
-        href: showOpenWorkModels
-          ? getInferenceRoute(orgSlug)
-          : getCustomLlmProvidersRoute(orgSlug),
-        label: "Models",
+        href: getAiGatewayRoute(orgSlug),
+        label: "AI Gateway",
         icon: Sparkles,
-        badge: "Providers",
-        children: [
-          ...((gatewayAccess === "enabled" || gatewayAccess === "unavailable") && capabilities.gatewayDashboard === true
-            ? [{ href: getGatewayProvidersRoute(orgSlug), label: "AI Gateway", badge: "New" }]
-            : []),
-          ...(showOpenWorkModels
-            ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
-            : []),
-          { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring Your Own Keys (Legacy)" },
-        ],
+        badge: "Models",
       }
     : null;
   const manageItems: DashboardNavItem[] = access.isAdmin && orgSlug
@@ -147,7 +126,7 @@ export function buildDashboardNavSections({
         ...(capabilities.orgManagedDashboards
           ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
           : []),
-        ...(modelsGroup ? [modelsGroup] : []),
+        ...(aiGatewayItem ? [aiGatewayItem] : []),
         {
           href: getMarketplacesRoute(orgSlug),
           label: "Advanced",

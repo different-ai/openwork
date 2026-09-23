@@ -14,7 +14,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getGatewayProvidersRoute, getNewGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
 import {
@@ -39,7 +39,8 @@ function Radio({ testId, checked, label, onSelect }: { testId: string; checked: 
   );
 }
 
-export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProviderId }: { inferenceProviderId?: string; catalogProviderId?: string }) {
+export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProviderId, embedded = false }: { inferenceProviderId?: string; catalogProviderId?: string; embedded?: boolean }) {
+  const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
   const { orgId, orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const { provider, busy, error, reload } = useInferenceProvider(orgId, inferenceProviderId ?? null);
@@ -173,7 +174,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
           await syncAccessAndCredential();
           await reload();
         }
-        router.push(getGatewayProvidersRoute(orgSlug));
+        router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();
       });
     } catch (cause) {
@@ -189,7 +190,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
       await runReauthableAction("delete-inference-provider", async () => {
         await deleteInferenceProvider(provider.id);
         setConfirmDelete(false);
-        router.push(getGatewayProvidersRoute(orgSlug));
+        router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();
       });
     } catch (cause) {
@@ -207,15 +208,15 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const memberOptions = members.filter((member) => !access.memberIds.includes(member.id)).map((member) => ({ value: member.id, label: member.user.name, description: member.user.email }));
 
   return (
-    <div className="mx-auto max-w-[860px] px-6 py-6 pb-28">
+    <div className={embedded ? "pb-28" : "mx-auto max-w-[860px] px-6 py-6 pb-28"}>
       <nav className="text-[12px] text-gray-500" aria-label="Breadcrumb">
-        <Link href={getGatewayProvidersRoute(orgSlug)} className="hover:text-gray-900">AI Gateway</Link>
-        {!provider ? <><span className="mx-1.5 text-gray-300">/</span><Link href={getNewGatewayProviderRoute(orgSlug)} className="hover:text-gray-900">Add a provider</Link></> : null}
+        <Link href={getAiGatewayProvidersRoute(orgSlug)} className="hover:text-gray-900">AI Providers</Link>
+        {!provider ? <><span className="mx-1.5 text-gray-300">/</span><Link href={getNewAiGatewayProviderRoute(orgSlug)} className="hover:text-gray-900">Add a provider</Link></> : null}
         <span className="mx-1.5 text-gray-300">/</span><span className="text-gray-900">{displayName}</span>
       </nav>
       <div className="mt-3 flex items-center gap-3">
         <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? (provider ? getProviderDocUrl(provider.providerConfig) : null)} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />
-        <h1 className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider ? provider.name : `Add ${displayName}`}</h1>
+        <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider ? provider.name : `Add ${displayName}`}</Heading>
       </div>
       {saveError ? <DenNotice tone="error" message={saveError} className="mt-4" /> : null}
       {catalogError ? <DenNotice tone="error" message={catalogError} className="mt-4" /> : null}
@@ -380,7 +381,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
             </AlertDialog.Portal>
           </AlertDialog.Root>
         ) : (
-          <Link href={getGatewayProvidersRoute(orgSlug)} className={buttonVariants({ variant: "secondary" })}>Cancel</Link>
+          <Link href={getAiGatewayProvidersRoute(orgSlug)} className={buttonVariants({ variant: "secondary" })}>Cancel</Link>
         )}
         <DenButton data-testid="gateway-provider-save" loading={saving} onClick={() => void save()}>{provider ? "Save changes" : `Add ${displayName}`}</DenButton>
       </DenStickyActionBar>

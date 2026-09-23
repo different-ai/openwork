@@ -34,13 +34,13 @@ test("Acme web routes a managed model through the real AI Gateway", { timeout: 6
   assert.equal(Number(usage.input_tokens), 25);
   assert.equal(Number(usage.output_tokens), 12);
   assert.ok(Number(usage.cost_micro_usd) > 0);
-  const before = (await world.upstream.requests()).length;
+  const before = world.upstream.requests.length;
   const denied = await fetch(`${world.gatewayUrl}/api/v1/providers/${world.model.providerId}/messages`, {
     method: "POST", headers: { "content-type": "application/json", "x-api-key": "invalid-fixture-key" },
     body: JSON.stringify({ model: world.model.modelId, max_tokens: 32, messages: [{ role: "user", content: "deny" }] }),
   });
   assert.equal(denied.status, 401);
-  assert.equal((await world.upstream.requests()).length, before);
+  assert.equal(world.upstream.requests.length, before);
   const headers = { authorization: `Bearer ${world.den.admin.token}`, "x-openwork-org-id": world.model.orgId };
   const grants = await denFetch(world.den.admin, `/v1/inference-providers/${world.model.providerId}/access-grants`, { headers });
   assert.equal(grants.response.status, 200);
@@ -56,6 +56,6 @@ test("Acme web routes a managed model through the real AI Gateway", { timeout: 6
     body: JSON.stringify({ model: world.model.modelId, max_tokens: 32, messages: [{ role: "user", content: "deny" }] }),
   });
   assert.equal(deniedAfterRevoke.status, 403);
-  assert.equal((await world.upstream.requests()).length, before);
+  assert.equal(world.upstream.requests.length, before);
   evidence.recordAssertionEvidence("Acme web uses the real AI Gateway", "A cold seeded Acme Den materialized an ipr provider and friendly gwm model title into real OpenCode. Chat returned the upstream reply through the actual gateway and finalized model/token/cost attribution. Invalid keys and revoked grants were denied before upstream. Upstream secrets were absent from runtime config.", true);
 });

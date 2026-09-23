@@ -8,6 +8,7 @@ import {
   isCurrentChatConnectionDecision,
   nativeChatConnectionDecision,
   isReservedConnectionQuestion,
+  composerQuestionForConnectionDecision,
   authenticateChatConnection,
   type ChatConnectionDecisionRequest,
   isChatMcpReconnectScopeCurrent,
@@ -200,6 +201,87 @@ test("v2 question source part ID resolves to the UI call ID only in the owning m
   expect(bindQuestion(question, transcript)?.questionToolCallId).toBe("ui-question")
   expect(bindQuestion({ ...question, tool: { ...question.tool, messageID: "wrong-message" } }, transcript)).toBeNull()
   expect(bindQuestion({ ...question, tool: { callID: "source-question" } }, transcript)).toBeNull()
+})
+
+/**
+ * Real transcript: ordinary discovery (no `intent: "connect"`) reported the
+ * Stripe blocker twice, a third search matched only an unrelated tool, then
+ * the model paused on the reserved question. The question must bind to the
+ * latest discovery part carrying Stripe instead of dead-ending the turn.
+ */
+const stripeStatus = {
+  name: "mcp:emc_01kxh1ns3cesjax0x2zz6ekvxm:*", kind: "connection_status", status: "needs_connection",
+  connectionStatus: {
+    version: 1, kind: "connection_action", source: "openwork-cloud", layer: "downstream_provider",
+    connectionId: "emc_01kxh1ns3cesjax0x2zz6ekvxm", connectionName: "Stripe", authType: "oauth", credentialMode: "per_member",
+    state: "needs_connection", errorCode: "not_connected", message: "You haven't connected your Stripe account yet.", actor: "member",
+    action: { type: "connect", label: "Connect Stripe", surface: "openwork_your_connections", retry: "search_capabilities", url: "https://app.openworklabs.com/x" },
+  },
+}
+const stripeQuestionItem = {
+  header: "Connection", question: "Connect Stripe to continue?", multiple: false,
+  options: [{ label: "Authenticate", description: "Connect this account to continue." }, { label: "Skip", description: "Continue without this connection." }],
+}
+const stripeQuestionCallId = "call_yB5y4amCg1D9QsZFUKrYtkHi"
+const stripeQuestion = {
+  id: "que_0c6b41285001W3e3iAhUamcorJ", sessionID: "session-1", questions: [stripeQuestionItem],
+  tool: { messageID: "assistant-stripe", callID: stripeQuestionCallId },
+}
+function discovery(toolCallId: string, query: string, matches: unknown[]): UIMessage["parts"][number] {
+  return {
+    type: "dynamic-tool", toolName: "openwork-cloud_search_capabilities", toolCallId, state: "output-available",
+    input: { query, type: "mcp", limit: 10 }, output: { matches },
+  }
+}
+function stripeTranscript(extraDiscovery: UIMessage["parts"] = []): UIMessage[] {
+  return [
+    { id: "user-stripe", role: "user", parts: [{ type: "text", text: "How fast is Stripe revenue growing week over week?" }] },
+    { id: "assistant-stripe", role: "assistant", parts: [
+      discovery("call_stripe_1", "Stripe weekly revenue growth", [stripeStatus]),
+      discovery("call_stripe_2", "Stripe revenue by week", [stripeStatus]),
+      discovery("call_granola", "meeting notes", [{ name: "mcp:emc_granola:list_notes", kind: "mcp", description: "Granola notes" }]),
+      ...extraDiscovery,
+      { type: "dynamic-tool", toolName: "openwork_context", toolCallId: "call_context", state: "output-available", input: {}, output: { screen: "session" } },
+      { type: "dynamic-tool", toolName: "question", toolCallId: stripeQuestionCallId, state: "input-available", input: { questions: [stripeQuestionItem] } },
+    ] },
+  ]
+}
+
+test("a reserved question binds to the blocker that ordinary discovery reported, not a dead end", () => {
+  expect(nativeChatConnectionDecision({ question: stripeQuestion, owner: request.owner, sessionId: "session-1", messages: stripeTranscript() })).toEqual({
+    requestId: "que_0c6b41285001W3e3iAhUamcorJ", owner: request.owner, sessionId: "session-1", turnId: "user-stripe",
+    toolCallId: "call_stripe_2", connectionId: "emc_01kxh1ns3cesjax0x2zz6ekvxm", questionToolCallId: stripeQuestionCallId,
+  })
+})
+
+test("a question naming a connection no discovery reported stays unbound", () => {
+  const question = { ...stripeQuestion, questions: [{ ...stripeQuestionItem, question: "Connect Notion to continue?" }] }
+  expect(nativeChatConnectionDecision({ question, owner: request.owner, sessionId: "session-1", messages: stripeTranscript() })).toBeNull()
+})
+
+test("with two blockers only the one named in the question binds", () => {
+  const notionStatus = {
+    ...stripeStatus, name: "mcp:emc_notion:*",
+    connectionStatus: { ...stripeStatus.connectionStatus, connectionId: "emc_notion", connectionName: "Notion", action: { ...stripeStatus.connectionStatus.action, label: "Connect Notion" } },
+  }
+  const transcript = stripeTranscript([discovery("call_notion", "Notion pages", [notionStatus])])
+  expect(nativeChatConnectionDecision({ question: stripeQuestion, owner: request.owner, sessionId: "session-1", messages: transcript }))
+    .toMatchObject({ toolCallId: "call_stripe_2", connectionId: "emc_01kxh1ns3cesjax0x2zz6ekvxm", questionToolCallId: stripeQuestionCallId })
+  const notionQuestion = { ...stripeQuestion, questions: [{ ...stripeQuestionItem, question: "Connect Notion to continue?" }] }
+  expect(nativeChatConnectionDecision({ question: notionQuestion, owner: request.owner, sessionId: "session-1", messages: transcript }))
+    .toMatchObject({ toolCallId: "call_notion", connectionId: "emc_notion", questionToolCallId: stripeQuestionCallId })
+})
+
+test("the composer keeps a reserved question unless a native card is bound to it", () => {
+  const decision = nativeChatConnectionDecision({ question: stripeQuestion, owner: request.owner, sessionId: "session-1", messages: stripeTranscript() })
+  expect(decision).not.toBeNull()
+  expect(composerQuestionForConnectionDecision(stripeQuestion, null)).toBe(stripeQuestion)
+  expect(composerQuestionForConnectionDecision(stripeQuestion, decision)).toBeNull()
+  const ordinary = { ...stripeQuestion, questions: [{ header: "Scope", question: "Which report?", multiple: false, options: [{ label: "Weekly", description: "" }, { label: "Monthly", description: "" }] }] }
+  expect(composerQuestionForConnectionDecision(ordinary, null)).toBe(ordinary)
+  expect(composerQuestionForConnectionDecision(ordinary, decision)).toBe(ordinary)
+  expect(composerQuestionForConnectionDecision(null, decision)).toBeNull()
+  expect(composerQuestionForConnectionDecision(undefined, null)).toBeNull()
 })
 
 test("cancelled inventory lookup cannot start OAuth or open a browser", async () => {

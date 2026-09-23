@@ -7,7 +7,7 @@ import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { getGatewayProvidersRoute, getNewGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { isSupportedGatewayNpm } from "./inference-provider-request";
 import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProviderSummary } from "./llm-provider-data";
@@ -39,7 +39,8 @@ export function orderCatalog<T extends { id: string; name: string }>(providers: 
   return [...providers].sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
 }
 
-export function InferenceProviderPickerScreen() {
+export function InferenceProviderPickerScreen({ embedded = false }: { embedded?: boolean }) {
+  const Heading = embedded ? "h2" : "h1";
   const { orgId, orgSlug } = useOrgDashboard();
   const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
   const [query, setQuery] = useState("");
@@ -65,12 +66,12 @@ export function InferenceProviderPickerScreen() {
   const compatible = catalog.find((item) => item.npm === "@ai-sdk/openai-compatible");
 
   return (
-    <div className="mx-auto max-w-[860px] px-6 py-6">
-      <Link href={getGatewayProvidersRoute(orgSlug)} className="inline-flex items-center gap-1.5 text-[12px] text-gray-500 hover:text-gray-900">
+    <div className={embedded ? undefined : "mx-auto max-w-[860px] px-6 py-6"}>
+      <Link href={getAiGatewayProvidersRoute(orgSlug)} className="inline-flex items-center gap-1.5 text-[12px] text-gray-500 hover:text-gray-900">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-        Back to AI Gateway
+        Back to AI Providers
       </Link>
-      <h1 className="mt-2 text-[20px] font-medium tracking-[-0.02em] text-gray-900">Add a provider</h1>
+      <Heading className="mt-2 text-[20px] font-medium tracking-[-0.02em] text-gray-900">Add a provider</Heading>
       {error ? <DenNotice tone="error" message={error} className="mt-4" /> : null}
 
       <div className="mt-5 rounded-[12px] border border-gray-100 bg-white">
@@ -82,7 +83,7 @@ export function InferenceProviderPickerScreen() {
         <ul className="divide-y divide-gray-100 border-t border-gray-100">
           {visible.map((item) => (
             <li key={item.id}>
-              <Link href={getNewGatewayProviderRoute(orgSlug, item.id)} data-testid={`gateway-provider-pick-${item.id}`} aria-label={`Add ${item.name}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+              <Link href={getNewAiGatewayProviderRoute(orgSlug, item.id)} data-testid={`gateway-provider-pick-${item.id}`} aria-label={`Add ${item.name}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                 <DenBrandMark name={item.name} simpleIconSlug={getProviderIconSlug(item.id)} serviceUrl={item.doc} className="h-7 w-7 shrink-0 rounded-[7px]" imageClassName="h-3.5 w-3.5" />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
@@ -105,7 +106,7 @@ export function InferenceProviderPickerScreen() {
           ) : null}
           {compatible && !visible.some((item) => item.id === compatible.id) ? (
             <li className="border-t border-gray-100">
-              <Link href={getNewGatewayProviderRoute(orgSlug, compatible.id)} data-testid="gateway-provider-pick-compatible" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+              <Link href={getNewAiGatewayProviderRoute(orgSlug, compatible.id)} data-testid="gateway-provider-pick-compatible" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-dashed border-gray-300 text-gray-400"><Plus className="h-3.5 w-3.5" aria-hidden="true" /></span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13px] font-medium text-gray-900">Another provider</span>

@@ -22,7 +22,7 @@ export function getGatewayDashboardAccess({
     orgContext.currentMember.isOwner,
     orgContext.roles,
   );
-  if (!access.isAdmin || orgContext.capabilities.gatewayDashboard !== true) return "denied";
+  if (!access.isAdmin) return "denied";
   return orgContext.deploymentCapabilities.version === 1 && orgContext.deploymentCapabilities.aiGateway === true
     ? "enabled" : "unavailable";
 }
