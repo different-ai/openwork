@@ -59,6 +59,22 @@ test("an owner gives the Design team $20 a day and $300 a month each, deletes it
     await owner.screenshot();
   });
 
+  await step("Users & Teams: Teams, then Design, lists its people under Design's limit", async () => {
+    await owner.navigate(`${world.den.ref.webUrl}/dashboard/ai-gateway?tab=users-and-teams`);
+    await owner.see({ testId: "gateway-directory-everyone" }, { timeoutMs: 60_000 });
+    await owner.click({ role: "radio", label: /Teams/ });
+    await owner.see({ testId: "gateway-directory-team-row" }, { text: /Design[\s\S]*\$20\.00 a day, \$300\.00 a month each[\s\S]*Team limit/, timeoutMs: 30_000 });
+    await owner.screenshot();
+    await owner.click({ testId: "gateway-directory-team-row" });
+    await owner.see({ testId: "gateway-directory-team-strip" }, { text: /Design[\s\S]*\$20\.00 a day, \$300\.00 a month each/, timeoutMs: 30_000 });
+    await owner.see({ testId: "gateway-directory-team-limit" }, { text: "Edit team limit" });
+    const rows = await probe.on(world.web).dom('[data-testid="gateway-directory-person-row"]');
+    evidence.recordAssertionEvidence("Design filter shows only its people with the team limit", `rows ${rows.elements.length}: ${rows.elements.map((row) => row.text).join(" | ")}`, rows.elements.length === 1 && rows.elements[0]?.text.includes("From Design") === true);
+    expect(rows.elements).toHaveLength(1);
+    expect(rows.elements[0]?.text).toContain("From Design");
+    await owner.screenshot();
+  });
+
   await step("the teammate's page shows both periods of Design's limit", async () => {
     await owner.navigate(`${world.den.ref.webUrl}/dashboard/ai-gateway/people/${encodeURIComponent(world.teammateId)}`);
     await owner.see({ testId: "gateway-person-limit" }, { timeoutMs: 60_000 });

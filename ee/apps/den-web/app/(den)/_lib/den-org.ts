@@ -648,6 +648,12 @@ export function getAiGatewayLimitRoute(orgSlug: string | null | undefined, polic
   return `${getAiGatewayRoute(orgSlug)}/limits/${encodeURIComponent(policyId)}`;
 }
 
+export function getAiGatewayUsersTeamsRoute(orgSlug?: string | null, filter?: { view: "teams" } | { teamId: string }): string {
+  const base = `${getAiGatewayRoute(orgSlug)}?tab=users-and-teams`;
+  if (!filter) return base;
+  return "teamId" in filter ? `${base}&team=${encodeURIComponent(filter.teamId)}` : `${base}&view=teams`;
+}
+
 export function getAiGatewayPersonRoute(orgSlug: string | null | undefined, memberId: string): string {
   return `${getAiGatewayRoute(orgSlug)}/people/${encodeURIComponent(memberId)}`;
 }

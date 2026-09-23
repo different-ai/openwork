@@ -153,9 +153,11 @@ describe("Gateway provider form", () => {
 });
 
 describe("Users & Teams", () => {
-  test("grants one audience per rule through the shared access picker", () => {
-    expect(subjects).toContain("<ProviderAccessPicker");
-    expect(subjects).toContain("Number(access.allMembers) + access.memberIds.length + access.teamIds.length !== 1");
+  test("reads access and limits without editing them in place", () => {
+    expect(subjects).toContain("directoryAccess(providerList, subject)");
+    expect(subjects).toContain("directoryLimit(policyList, subject)");
+    expect(subjects).not.toContain("Dialog");
+    expect(subjects).not.toContain("writeSubjectAccess");
   });
 });
 

@@ -23,14 +23,13 @@ const { ORG_SCOPE_HEADER } = await import("../app/(den)/_lib/org-scope");
 const { AiGatewayScreen } = await import("../app/(den)/dashboard/_components/ai-gateway-screen");
 const { GatewayUsersTeamsSection } = await import("../app/(den)/dashboard/_components/gateway-users-teams-section");
 const { LegacyProvidersSection } = await import("../app/(den)/dashboard/_components/llm-providers-screen");
-const { GatewayAccessWriteUncertainError, writeSubjectAccess } = await import("../app/(den)/dashboard/_components/gateway-subject-access-data");
+const { directoryLimit, limitSourceLabel, limitSummary } = await import("../app/(den)/dashboard/_components/gateway-directory-data");
 
 const orgId = "org-fixture";
 const memberId = "membership-fixture";
 const teamId = "team-fixture";
 const providersPath = "/v1/inference-providers?scope=manageable";
 const policiesPath = "/v1/gateway/usage-limit-policies";
-const grantsPath = "/v1/inference-providers/provider%2Ffixture/access-grants";
 const noop = async () => {};
 const directory = parseOrgContextPayload({
   organization: { id: orgId, name: "Fixture Workspace", slug: "fixture" },
@@ -55,8 +54,31 @@ function provider(accessGrants: GatewayAccessGrant[] = []) {
     accessGrants,
   };
 }
-function policy(assignments: GatewayUsageLimitPolicy["assignments"] = []): GatewayUsageLimitPolicy {
-  return { id: "policy-fixture", name: "Standard", revision: 7, hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costLimitMicroUsd: 100_000_001 }], assignments };
+function policy(assignments: GatewayUsageLimitPolicy["assignments"] = [], overrides: Partial<GatewayUsageLimitPolicy> = {}): GatewayUsageLimitPolicy {
+  return { id: "policy-fixture", name: "Standard", revision: 7, hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costLimitMicroUsd: 100_000_001 }], assignments, ...overrides };
+}
+function assigned(target: { organization: true } | { teamId: string } | { memberId: string }, id = "assignment"): GatewayUsageLimitPolicy["assignments"][number] {
+  return { id, organization: "organization" in target, teamId: "teamId" in target ? target.teamId : null, memberId: "memberId" in target ? target.memberId : null };
+}
+function usage(groupBy: "person" | "team", series: { id: string; label: string; costMicroUsd: number }[]) {
+  const today = new Date();
+  const to = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const daily = Array.from({ length: 31 }, (_, index) => {
+    const date = new Date(to - (30 - index) * 86_400_000).toISOString().slice(0, 10);
+    const last = index === 30;
+    return {
+      date,
+      totalTokens: last ? series.length * 10 : 0,
+      values: last ? Object.fromEntries(series.map((row) => [row.id, 10])) : {},
+      totalCostMicroUsd: last ? series.reduce((sum, row) => sum + row.costMicroUsd, 0) : 0,
+      costValues: last ? Object.fromEntries(series.map((row) => [row.id, row.costMicroUsd])) : {},
+    };
+  });
+  return { usage: {
+    groupBy, days: 31, from: daily[0].date, to: daily[30].date, timezone: "UTC",
+    totalTokens: series.length * 10, totalCostMicroUsd: series.reduce((sum, row) => sum + row.costMicroUsd, 0),
+    unreportedRequests: 0, unpricedRequests: 0, series: series.map(({ id, label }) => ({ id, label })), daily, filterOptions: [],
+  } };
 }
 
 type Call = { path: string; init: RequestInit };
@@ -66,6 +88,7 @@ function reply({ path }: Call): Reply {
   if (path === providersPath) return { payload: { inferenceProviders: [provider()] } };
   if (path === policiesPath) return { payload: { policies: [policy()] } };
   if (path.startsWith("/v1/gateway/usage-limits/members?")) return { payload: { members: [] } };
+  if (path.startsWith("/v1/inference-providers/usage?")) return { status: 503, payload: { error: "unavailable", message: "Usage unavailable" } };
   if (path.startsWith("/v1/gateway/usage-limit-reset-requests?")) {
     const params = new URLSearchParams(path.split("?")[1]);
     return { payload: { requests: [], view: params.get("view"), limit: Number(params.get("limit")), pendingCount: 0, hasMore: false, nextCursor: null } };
@@ -73,7 +96,7 @@ function reply({ path }: Call): Reply {
   throw new Error(`Unexpected request: ${path}`);
 }
 const tick = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); }); };
-async function mount(node: ReactNode, handler: Handler = reply, tab = "users-and-teams") {
+async function mount(node: ReactNode, handler: Handler = reply, tab = "users-and-teams", extra = "") {
   const calls: Call[] = [];
   const pushes: { href: string; scroll?: boolean }[] = [];
   const reauth: string[] = [];
@@ -92,7 +115,7 @@ async function mount(node: ReactNode, handler: Handler = reply, tab = "users-and
     },
   });
   const access = spyOn(capability, "useGatewayDashboardAccess").mockImplementation(() => getGatewayDashboardAccess(organization.useOrgDashboard()));
-  const search = spyOn(navigation, "useSearchParams").mockReturnValue(new navigation.ReadonlyURLSearchParams(`tab=${tab}&keep=value`));
+  const search = spyOn(navigation, "useSearchParams").mockReturnValue(new navigation.ReadonlyURLSearchParams(`tab=${tab}&keep=value${extra}`));
   const router = spyOn(navigation, "useRouter").mockReturnValue({
     push(href, options) { pushes.push({ href, scroll: options?.scroll }); }, replace() {}, refresh() {}, back() {}, forward() {}, prefetch: noop, bfcacheId: "fixture",
   });
@@ -113,6 +136,9 @@ async function mount(node: ReactNode, handler: Handler = reply, tab = "users-and
     async close() { await act(async () => root.unmount()); client.clear(); request.mockRestore(); legacy.mockRestore(); router.mockRestore(); search.mockRestore(); access.mockRestore(); org.mockRestore(); container.remove(); },
   };
 }
+function link(testId: string, scope: ParentNode = document.body) {
+  return [...scope.querySelectorAll(`[data-testid="${testId}"]`)].map((element) => ({ href: element.getAttribute("href"), text: element.textContent ?? "" }));
+}
 function button(label: string, scope: ParentNode = document.body) {
   const result = [...scope.querySelectorAll("button")].find((element) => element.getAttribute("aria-label") === label || element.textContent === label);
   if (!result) throw new Error(`Missing button: ${label}`);
@@ -122,33 +148,8 @@ async function click(label: string, scope?: ParentNode) {
   await act(async () => button(label, scope).click());
   await tick();
 }
-async function choose(label: string, text: string) {
-  const input = document.querySelector<HTMLInputElement>(`[role="combobox"][aria-label="${label}"]`);
-  if (!input) throw new Error(`Missing combobox: ${label}`);
-  await act(async () => { input.focus(); input.click(); });
-  await tick();
-  const option = [...document.querySelectorAll('[role="option"]')].find((element) => element.querySelector("p")?.textContent === text);
-  if (!option) throw new Error(`Missing option: ${text}`);
-  await act(async () => option.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
-  await tick();
-}
-async function selectSubject(kind: "organization" | "member" | "team") {
-  if (kind === "organization") await click("Everyone in Fixture Workspace");
-  else {
-    if (kind === "member") await click("People (0)");
-    const name = kind === "member" ? "Example Person" : "Alpha Team";
-    const row = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button[aria-pressed]')].find((element) => element.querySelector("p")?.textContent === name);
-    if (!row) throw new Error(`Missing subject: ${name}`);
-    await act(async () => row.click());
-    await tick();
-  }
-  await click("Continue");
-}
-function subjects() {
-  return [...document.querySelectorAll('[data-testid="gateway-subject-card"]')].map((element) => element.getAttribute("data-subject"));
-}
 function writes(calls: Call[]) { return calls.filter((call) => call.init.method !== "GET"); }
-const subjectSection = () => <GatewayUsersTeamsSection orgId={orgId} orgContext={directory} />;
+const subjectSection = (context = directory) => <GatewayUsersTeamsSection orgId={orgId} orgSlug="fixture" orgContext={context} />;
 
 test("root tabs navigate without losing query context and nested content keeps AI Providers active", async () => {
   const view = await mount(<AiGatewayScreen providerContent={<div>Nested provider editor</div>} />, reply, "limits");
@@ -256,271 +257,137 @@ test("unknown root tab falls back to Overview and invites provider setup without
   } finally { await view.close(); }
 });
 
-test("subject cards group Everyone then users then teams with semantic colors and inherited team filtering", async () => {
-  const grants = [grant({ type: "team", teamId }), grant({ type: "organization" }, "org-grant"), grant({ type: "member", memberId }, "person-grant"), grant({ type: "team", teamId: "other-team" }, "other-grant")];
-  const assignments = [{ id: "org-limit", organization: true, memberId: null, teamId: null }];
-  const view = await mount(subjectSection(), (call) => call.path === providersPath ? { payload: { inferenceProviders: [provider(grants)] } } : call.path === policiesPath ? { payload: { policies: [policy(assignments)] } } : reply(call));
-  try {
-    expect(subjects()).toEqual(["organization", `member:${memberId}`, `team:${teamId}`, "team:other-team"]);
-    for (const [subject, label, color] of [["organization", "Everyone", "text-emerald-700"], [`member:${memberId}`, "User", "text-blue-700"], [`team:${teamId}`, "Team", "text-amber-700"]]) {
-      const card = view.container.querySelector(`[data-subject="${subject}"]`);
-      expect([...card?.querySelectorAll("header span") ?? []].some((element) => element.textContent === label && element.classList.contains(color))).toBe(true);
-      expect(card?.textContent).toContain("Selected models / Shared upstream");
-      expect(card?.querySelector('[aria-label="Group models"]')?.textContent).toContain("model-one");
-    }
-    expect(view.container.querySelector('[data-subject="organization"]')?.textContent).toContain("$100.000001");
-    await choose("Filter users and teams", "Example Person");
-    expect(subjects()).toEqual([`member:${memberId}`, `team:${teamId}`]);
-    expect(view.container.querySelector(`[data-subject="team:${teamId}"] header`)?.textContent).toContain("Inherited");
-    expect(view.container.querySelector(`[data-subject="member:${memberId}"] header`)?.textContent).not.toContain("Inherited");
-    await choose("Filter users and teams", "Alpha Team");
-    expect(subjects()).toEqual([`team:${teamId}`]);
-    await choose("Filter users and teams", "Everyone");
-    expect(subjects()).toEqual(["organization"]);
-    await choose("Filter users and teams", "All users and teams");
-    expect(subjects()).toHaveLength(4);
-    expect(writes(view.calls)).toEqual([]);
-  } finally { await view.close(); }
-});
-
-test.each(["organization", "member", "team"] satisfies GatewayAudience["type"][])("access picker grants only the selected %s using its group and upstream key", async (kind) => {
-  const grants: GatewayAccessGrant[] = [];
+test("People lists everyone with what they can use, the limit that applies and 31-day spend, read-only", async () => {
   const view = await mount(subjectSection(), (call) => {
-    if (call.path === providersPath) return { payload: { inferenceProviders: [provider(grants)] } };
-    if (call.path === grantsPath && call.init.method === "POST") {
-      const created = { id: "created-grant", ...JSON.parse(String(call.init.body)) };
-      grants.push(created);
-      return { payload: { accessGrant: created } };
-    }
+    if (call.path === providersPath) return { payload: { inferenceProviders: [provider([grant({ type: "organization" })])] } };
+    if (call.path === policiesPath) return { payload: { policies: [policy([assigned({ organization: true })])] } };
+    if (call.path.startsWith("/v1/inference-providers/usage?groupBy=person")) return { payload: usage("person", [{ id: memberId, label: "Example Person", costMicroUsd: 12_340_000 }]) };
     return reply(call);
   });
   try {
-    await click("Add new access policy");
-    expect(button("Continue").disabled).toBe(true);
-    expect(button("Everyone in Fixture Workspace").getAttribute("aria-checked")).toBe("false");
-    await selectSubject(kind);
-    expect(button("Save access policy").disabled).toBe(true);
-    await choose("Provider", "Fixture Provider");
-    expect(document.querySelector<HTMLInputElement>('[aria-label="Upstream key"]')?.value).toBe("Shared upstream");
-    expect(button("Save access policy").disabled).toBe(true);
-    await choose("Model group", "Selected models");
-    await click("Save access policy");
-    const audience = kind === "organization" ? { type: kind } : kind === "member" ? { type: kind, memberId } : { type: kind, teamId };
-    expect(writes(view.calls)).toHaveLength(1);
-    expect(JSON.parse(String(writes(view.calls)[0].init.body))).toEqual({ audience, modelGroupId: "group-fixture", credentialSetId: "key-fixture" });
-    expect(writes(view.calls)[0].path).toBe(grantsPath);
-    expect(view.reauth).toEqual(["assign-gateway-subject-access"]);
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(subjects()).toEqual([kind === "organization" ? "organization" : kind === "member" ? `member:${memberId}` : `team:${teamId}`]);
-    expect(view.calls.filter((call) => call.path === providersPath)).toHaveLength(2);
+    const everyone = view.container.querySelector('[data-testid="gateway-directory-everyone"]');
+    expect(everyone?.textContent).toContain("Everyone in Fixture Workspace");
+    expect(everyone?.textContent).toContain("$100.000001 a month each");
+    expect(everyone?.textContent).toContain("$12.34");
+    expect(everyone?.querySelector('[aria-label="Can use Fixture Provider"]')).not.toBeNull();
+    const rows = link("gateway-directory-person-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].href).toBe("/dashboard/ai-gateway/people/membership-fixture");
+    expect(rows[0].text).toContain("Example Person");
+    expect(rows[0].text).toContain("Alpha Team");
+    expect(rows[0].text).toContain("$100.000001 a month");
+    expect(rows[0].text).toContain("From Everyone");
+    expect(rows[0].text).toContain("$12.34");
+    expect(view.container.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toBe("People · 1");
+    expect(view.container.querySelectorAll('[role="dialog"], button[aria-label^="Remove"], button[aria-label^="Unassign"]')).toHaveLength(0);
+    expect(writes(view.calls)).toEqual([]);
     for (const call of view.calls) expect(new Headers(call.init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
+    await click("Teams · 2");
+    expect(view.pushes).toEqual([{ href: "/dashboard/ai-gateway?tab=users-and-teams&view=teams", scroll: false }]);
   } finally { await view.close(); }
 });
 
-test("multiple upstream keys require an explicit choice and provider changes clear dependent selections", async () => {
-  const first = provider();
-  first.credentialSets.push({ ...first.credentialSets[0], id: "second-key", name: "Private upstream" });
-  const second = { ...provider(), id: "second-provider", name: "Second provider", modelGroups: [], credentialSets: [] };
-  const view = await mount(subjectSection(), (call) => {
-    if (call.path === providersPath) return { payload: { inferenceProviders: [first, second] } };
-    if (call.path === grantsPath && call.init.method === "POST") return { payload: { accessGrant: { id: "new-grant", ...JSON.parse(String(call.init.body)) } } };
-    return reply(call);
-  });
+test("a person's limit is the highest allowance that applies, named by where it comes from", async () => {
+  let policies = [
+    policy([assigned({ memberId }, "own")], { id: "own", name: "Own", limits: [{ timeframe: "month", costLimitMicroUsd: 50_000_000 }] }),
+    policy([assigned({ teamId }, "team")], { id: "team", name: "Team", limits: [{ timeframe: "day", costLimitMicroUsd: 20_000_000 }, { timeframe: "month", costLimitMicroUsd: 200_000_000 }] }),
+  ];
+  const view = await mount(subjectSection(), (call) => call.path === policiesPath ? { payload: { policies } } : reply(call));
   try {
-    await click("Add new access policy");
-    await selectSubject("member");
-    await choose("Provider", "Fixture Provider");
-    await choose("Model group", "Selected models");
-    expect(button("Save access policy").disabled).toBe(true);
-    await choose("Upstream key", "Private upstream");
-    expect(button("Save access policy").disabled).toBe(false);
-    await choose("Provider", "Second provider");
-    expect(document.querySelector<HTMLInputElement>('[aria-label="Model group"]')?.value).toBe("");
-    expect(document.querySelector<HTMLInputElement>('[aria-label="Upstream key"]')?.value).toBe("");
-    expect(button("Save access policy").disabled).toBe(true);
-    await choose("Provider", "Fixture Provider");
-    await choose("Model group", "Selected models");
-    await choose("Upstream key", "Private upstream");
-    await click("Save access policy");
-    expect(writes(view.calls)).toHaveLength(1);
-    expect(JSON.parse(String(writes(view.calls)[0].init.body))).toEqual({ audience: { type: "member", memberId }, modelGroupId: "group-fixture", credentialSetId: "second-key" });
+    let row = link("gateway-directory-person-row")[0];
+    expect(row.text).toContain("$20.00 a day, $200.00 a month");
+    expect(row.text).toContain("From Alpha Team");
+    policies = [{ ...policies[0], limits: [{ timeframe: "month", costLimitMicroUsd: 300_000_000 }] }, { ...policies[1], limits: [{ timeframe: "month", costLimitMicroUsd: 200_000_000 }] }];
+    await act(async () => { await view.client.invalidateQueries({ queryKey: ["gateway-usage-limits", orgId, "policies"] }); });
+    await tick();
+    row = link("gateway-directory-person-row")[0];
+    expect(row.text).toContain("$300.00 a month");
+    expect(row.text).toContain("Their own limit");
+    expect(view.container.querySelector('[data-testid="gateway-directory-everyone"]')?.textContent).toContain("No limit");
   } finally { await view.close(); }
 });
 
-test.each(["organization", "member", "team"] satisfies GatewayAudience["type"][])("usage limit %s assignment and removal move to subject cards without changing target IDs", async (kind) => {
-  let current = policy();
-  const path = `${policiesPath}/policy-fixture/assignments`;
-  const view = await mount(subjectSection(), (call) => {
-    if (call.path === policiesPath) return { payload: { policies: [current] } };
-    if (call.path === path && call.init.method === "POST") {
-      current = { ...current, assignments: [{ id: "assigned", memberId: null, teamId: null, ...JSON.parse(String(call.init.body)) }] };
-      return { payload: current };
-    }
-    if (call.path === `${path}/assigned` && call.init.method === "DELETE") { current = policy(); return { payload: current }; }
-    return reply(call);
-  });
-  try {
-    await click("Apply new usage limit");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("each current member and anyone who joins later");
-    expect(button("Continue").disabled).toBe(true);
-    await selectSubject(kind);
-    await choose("Usage limit policy", "Standard");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("$100.000001");
-    await click("Apply usage limit");
-    const target = kind === "organization" ? { organization: true } : kind === "member" ? { memberId } : { teamId };
-    expect(JSON.parse(String(writes(view.calls)[0].init.body))).toEqual(target);
-    expect(writes(view.calls)[0].path).toBe(path);
-    const name = kind === "organization" ? "Everyone" : kind === "member" ? "Example Person" : "Alpha Team";
-    await click(`Unassign Standard from ${name}`);
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Only this assignment will be removed");
-    expect(writes(view.calls)).toHaveLength(1);
-    await click("Unassign limit");
-    expect(writes(view.calls)[1]).toMatchObject({ path: `${path}/assigned`, init: { method: "DELETE" } });
-    expect(subjects()).toEqual([]);
-    expect(view.calls.filter((call) => call.path === policiesPath)).toHaveLength(3);
-    for (const call of writes(view.calls)) expect(new Headers(call.init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
-  } finally { await view.close(); }
-});
-
-test("failed assignment reads block both editors until a successful explicit refresh", async () => {
-  let failed = true;
-  const view = await mount(subjectSection(), (call) => call.path === providersPath && failed ? { status: 403, payload: { error: "forbidden", message: "Only admins may manage provider access" } } : reply(call));
-  try {
-    expect(view.container.textContent).toContain("Only admins may manage provider access");
-    expect(view.container.textContent).not.toContain("No access or usage limit assignments yet");
-    expect(button("Add new access policy").disabled).toBe(true);
-    expect(button("Apply new usage limit").disabled).toBe(true);
-    expect(writes(view.calls)).toEqual([]);
-    failed = false;
-    await click("Refresh assignments");
-    expect(button("Apply new usage limit").disabled).toBe(false);
-    expect(view.container.textContent).toContain("No access or usage limit assignments yet");
-  } finally { await view.close(); }
-});
-
-test("duplicate grants cannot be saved and removal deletes only the confirmed grant through reauthentication", async () => {
-  let grants = [grant({ type: "member", memberId }, "grant/id"), grant({ type: "team", teamId }, "team-grant")];
-  const view = await mount(subjectSection(), (call) => {
+test("Teams lists each team and opening one filters People with the team's limit on top", async () => {
+  const grants = [grant({ type: "team", teamId })];
+  const view = await mount(<AiGatewayScreen />, (call) => {
     if (call.path === providersPath) return { payload: { inferenceProviders: [provider(grants)] } };
-    if (call.path === `${grantsPath}/grant%2Fid` && call.init.method === "DELETE") { grants = grants.slice(1); return { status: 204, payload: null }; }
+    if (call.path.startsWith("/v1/inference-providers/usage?groupBy=team")) return { payload: usage("team", [{ id: teamId, label: "Alpha Team", costMicroUsd: 4_000_000 }]) };
     return reply(call);
+  }, "users-and-teams", "&view=teams");
+  try {
+    const teams = link("gateway-directory-team-row");
+    expect(teams.map((row) => row.href)).toEqual(["/dashboard/ai-gateway?tab=users-and-teams&team=team-fixture", "/dashboard/ai-gateway?tab=users-and-teams&team=other-team"]);
+    expect(teams[0].text).toContain("1 person");
+    expect(teams[0].text).toContain("$4.00");
+    expect(teams[0].text).toContain("No limit");
+    expect(teams[1].text).toContain("Nothing yet");
+    expect(view.container.querySelector('[data-testid="gateway-directory-people"]')).toBeNull();
+  } finally { await view.close(); }
+
+  const filtered = await mount(<AiGatewayScreen />, reply, "users-and-teams", "&team=other-team");
+  try {
+    expect(link("gateway-directory-team-filter")[0]).toEqual({ href: "/dashboard/ai-gateway?tab=users-and-teams", text: "TeamOther Team" });
+    expect(filtered.container.querySelector('[data-testid="gateway-directory-everyone"]')).toBeNull();
+    expect(link("gateway-directory-team-limit")[0]).toEqual({ href: "/dashboard/ai-gateway/limits/new?teamId=other-team", text: "Set a team limit" });
+    expect(link("gateway-directory-person-row")).toHaveLength(0);
+    expect(filtered.container.textContent).toContain("No one is in this team yet.");
+  } finally { await filtered.close(); }
+
+  const limited = await mount(<AiGatewayScreen />, (call) => call.path === policiesPath ? { payload: { policies: [policy([assigned({ teamId })])] } } : reply(call), "users-and-teams", `&team=${teamId}`);
+  try {
+    expect(link("gateway-directory-team-strip")[0].text).toContain("$100.000001 a month each");
+    expect(link("gateway-directory-team-limit")[0]).toEqual({ href: "/dashboard/ai-gateway/limits/policy-fixture", text: "Edit team limit" });
+    expect(link("gateway-directory-person-row").map((row) => row.href)).toEqual(["/dashboard/ai-gateway/people/membership-fixture"]);
+  } finally { await limited.close(); }
+});
+
+test("Teams without any teams points to Members, and a removed team filter says so", async () => {
+  const noTeams = parseOrgContextPayload({
+    organization: { id: orgId, name: "Fixture Workspace", slug: "fixture" },
+    deploymentCapabilities: { version: 1, aiGateway: true },
+    currentMember: { id: "admin-member", userId: "admin-user", role: "owner", isOwner: true },
+    members: [], teams: [],
   });
+  if (!noTeams) throw new Error("Invalid organization fixture");
+  const view = await mount(subjectSection(noTeams), reply, "users-and-teams", "&view=teams");
   try {
-    await click("Add new access policy");
-    await selectSubject("member");
-    await choose("Provider", "Fixture Provider");
-    await choose("Model group", "Selected models");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("This assignment already exists");
-    expect(button("Save access policy").disabled).toBe(true);
-    await click("Cancel");
-    await click("Remove Fixture Provider / Selected models / Shared upstream from Example Person");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Other direct, team and Everyone grants remain");
-    expect(writes(view.calls)).toEqual([]);
-    await click("Remove access");
-    expect(writes(view.calls)).toHaveLength(1);
-    expect(writes(view.calls)[0]).toMatchObject({ path: `${grantsPath}/grant%2Fid`, init: { method: "DELETE" } });
-    expect(new Headers(writes(view.calls)[0].init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
-    expect(view.reauth).toEqual(["remove-gateway-subject-access"]);
-    expect(subjects()).toEqual([`team:${teamId}`]);
+    const empty = view.container.querySelector('[data-testid="gateway-teams-empty"]');
+    expect(empty?.textContent).toContain("No teams yet");
+    expect(empty?.querySelector("a")?.getAttribute("href")).toBe("/dashboard/members");
+    expect(view.container.querySelector('[aria-label="Filter teams by name"]')).toBeNull();
   } finally { await view.close(); }
+  const removed = await mount(subjectSection(), reply, "users-and-teams", "&team=gone");
+  try {
+    expect(removed.container.textContent).toContain("This team no longer exists");
+    expect(link("gateway-directory-team-filter")[0].text).toContain("Removed team");
+    expect(removed.container.querySelector('[data-testid="gateway-directory-people"]')).toBeNull();
+  } finally { await removed.close(); }
 });
 
-test("policy revision changes require reselection and duplicate organization limits stay blocked", async () => {
-  let current = policy();
-  const view = await mount(subjectSection(), (call) => call.path === policiesPath ? { payload: { policies: [current] } } : reply(call));
-  try {
-    await click("Apply new usage limit");
-    await selectSubject("organization");
-    await choose("Usage limit policy", "Standard");
-    current = { ...current, revision: 8, limits: [{ timeframe: "month", costLimitMicroUsd: 200_000_000 }] };
-    await act(async () => { await view.client.invalidateQueries({ queryKey: ["gateway-usage-limits", orgId, "policies"] }); });
-    await tick();
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("This policy changed");
-    expect(button("Apply usage limit").disabled).toBe(true);
-    await choose("Usage limit policy", "Standard");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("$200.00");
-    expect(button("Apply usage limit").disabled).toBe(false);
-    current = { ...current, assignments: [{ id: "existing", organization: true, memberId: null, teamId: null }] };
-    await act(async () => { await view.client.invalidateQueries({ queryKey: ["gateway-usage-limits", orgId, "policies"] }); });
-    await tick();
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("This assignment already exists");
-    expect(button("Apply usage limit").disabled).toBe(true);
-    expect(writes(view.calls)).toEqual([]);
-  } finally { await view.close(); }
-});
-
-test("unverifiable provider definitions cannot masquerade as an empty assignment directory", async () => {
-  const view = await mount(subjectSection(), (call) => call.path === providersPath ? { payload: { inferenceProviders: [{ ...provider(), credentialSets: null }] } } : reply(call));
+test("unverifiable provider definitions show an error with retry instead of an empty directory", async () => {
+  let broken = true;
+  const view = await mount(subjectSection(), (call) => call.path === providersPath && broken ? { payload: { inferenceProviders: [{ ...provider(), credentialSets: null }] } } : reply(call));
   try {
     expect(view.container.textContent).toContain("Provider access definitions are unavailable");
-    expect(view.container.textContent).not.toContain("No access or usage limit assignments yet");
-    expect(button("Add new access policy").disabled).toBe(true);
-    expect(button("Apply new usage limit").disabled).toBe(true);
-    expect(writes(view.calls)).toEqual([]);
+    expect(view.container.querySelector('[data-testid="gateway-directory-people"]')).toBeNull();
+    broken = false;
+    await click("Retry");
+    expect(link("gateway-directory-person-row")).toHaveLength(1);
+    expect(view.container.textContent).toContain("Spend could not be loaded.");
   } finally { await view.close(); }
 });
 
-test.each(["POST", "DELETE"])("thrown %s reauthentication reaches runReauthableAction as the same error instance", async (method) => {
-  const error = new requests.ReauthRequiredError("Verify your identity", "session_expired");
-  const view = await mount(subjectSection(), (call) => {
-    if (call.init.method === method) throw error;
-    if (call.path === providersPath) return { payload: { inferenceProviders: [provider(method === "DELETE" ? [grant({ type: "member", memberId })] : [])] } };
-    return reply(call);
-  });
-  try {
-    if (method === "POST") {
-      await click("Add new access policy");
-      await selectSubject("member");
-      await choose("Provider", "Fixture Provider");
-      await choose("Model group", "Selected models");
-      await click("Save access policy");
-    } else {
-      await click("Remove Fixture Provider / Selected models / Shared upstream from Example Person");
-      await click("Remove access");
-    }
-    expect(writes(view.calls)).toHaveLength(1);
-    expect(writes(view.calls)[0]).toMatchObject({ path: method === "POST" ? grantsPath : `${grantsPath}/grant-fixture`, init: { method } });
-    expect(view.reauth).toEqual([method === "POST" ? "assign-gateway-subject-access" : "remove-gateway-subject-access"]);
-    expect(view.reauthErrors).toHaveLength(1);
-    expect(view.reauthErrors[0]).toBe(error);
-    expect(requests.isReauthRequiredError(view.reauthErrors[0])).toBe(true);
-    expect(view.reauthErrors[0]).not.toBeInstanceOf(GatewayAccessWriteUncertainError);
-    expect(document.body.textContent).not.toContain("may already have succeeded");
-  } finally { await view.close(); }
-});
-
-test.each(["POST", "DELETE"])("thrown %s transport errors remain uncertain access writes", async (method) => {
-  const error = new TypeError("Connection lost");
-  const request = spyOn(requests, "requestJson").mockRejectedValue(error);
-  try {
-    expect(requests.isReauthRequiredError(error)).toBe(false);
-    await expect(writeSubjectAccess(orgId, "provider/fixture", method === "POST"
-      ? { body: { audience: { type: "member", memberId }, modelGroupId: "group-fixture", credentialSetId: "key-fixture" } }
-      : { grantId: "grant-fixture" })).rejects.toBeInstanceOf(GatewayAccessWriteUncertainError);
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(request).toHaveBeenCalledWith(method === "POST" ? grantsPath : `${grantsPath}/grant-fixture`, expect.objectContaining({ method }), 20000);
-  } finally { request.mockRestore(); }
-});
-
-test("unknown access write outcome cannot be retried until assignments are explicitly reviewed", async () => {
-  const view = await mount(subjectSection(), (call) => {
-    if (call.init.method === "POST") throw new Error("Connection lost");
-    return reply(call);
-  });
-  try {
-    await click("Add new access policy");
-    await selectSubject("member");
-    await choose("Provider", "Fixture Provider");
-    await choose("Model group", "Selected models");
-    await click("Save access policy");
-    expect(document.body.textContent).toContain("may already have succeeded");
-    expect(button("Save access policy").disabled).toBe(true);
-    await click("Save access policy");
-    expect(writes(view.calls)).toHaveLength(1);
-    await click("Close and review");
-    expect(button("Add new access policy").disabled).toBe(true);
-    await click("Refresh assignments");
-    expect(button("Add new access policy").disabled).toBe(false);
-    expect(writes(view.calls)).toHaveLength(1);
-  } finally { await view.close(); }
+test("limit labels stay honest for soft limits, mixed sources and archived policies", () => {
+  const subject = { type: "member" as const, memberId, teamIds: [teamId] };
+  const soft = policy([assigned({ organization: true })], { hardLimit: false });
+  expect(limitSourceLabel(directoryLimit([soft], subject), subject, directory.teams)).toBe("From Everyone · warns only");
+  const mixed = [
+    policy([assigned({ teamId })], { id: "a", limits: [{ timeframe: "day", costLimitMicroUsd: 5_000_000 }] }),
+    policy([assigned({ organization: true })], { id: "b", limits: [{ timeframe: "month", costLimitMicroUsd: 90_000_000 }] }),
+  ];
+  const limit = directoryLimit(mixed, subject);
+  expect(limitSummary(limit, false)).toBe("$5.00 a day, $90.00 a month");
+  expect(limitSourceLabel(limit, subject, directory.teams)).toBe("From Alpha Team and Everyone");
+  expect(limitSummary(directoryLimit([policy([assigned({ memberId })], { archivedAt: "2026-01-01T00:00:00.000Z" })], subject), false)).toBe("No limit");
+  expect(limitSummary(directoryLimit([policy([assigned({ memberId })])], { type: "team", teamId }), true)).toBe("No limit");
 });

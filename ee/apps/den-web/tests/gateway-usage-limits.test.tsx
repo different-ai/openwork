@@ -78,7 +78,16 @@ function defaultReply({ path }: Call): Reply {
   if (path === `${membersPath}/${person.id}`) return { payload: status() };
   if (path.endsWith("/assignments")) return { payload: { assignments: [] } };
   if (path.startsWith("/v1/inference-providers/usage")) return { status: 503, payload: { error: "unavailable", message: "Usage unavailable" } };
+  if (path === "/v1/inference-providers?scope=manageable") return { payload: { inferenceProviders: [accessProvider("provider-everyone", "Everyone Provider", { type: "organization" }), accessProvider("provider-other", "Other Provider", { type: "team", teamId: "team-other" })] } };
   throw new Error(`Unexpected request ${path}`);
+}
+function accessProvider(id: string, name: string, audience: { type: "organization" } | { type: "team"; teamId: string }) {
+  return {
+    id, providerId: "openai", name, credentialMode: "org", status: "active", modelIds: [],
+    modelGroups: [{ id: "group", name: "Models", description: null, status: "active", modelIds: ["model-one"] }],
+    credentialSets: [{ id: "key", name: "Shared", credentialMode: "org", status: "active", configured: true, credentialStatus: "ready" }],
+    accessGrants: [{ id: `${id}-grant`, audience, modelGroupId: "group", credentialSetId: "key" }],
+  };
 }
 const tick = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); }); };
 async function mount(node: ReactNode, handler: Handler = defaultReply) {
@@ -140,7 +149,7 @@ function expectField(scope: ParentNode, label: string, value: string) {
 const orgSlug = "fixture";
 const section = () => <GatewayUsageLimitsSection orgId={orgId} orgSlug={orgSlug} teams={[team]} members={[member]} />;
 const editor = (props: { policyId?: string; target?: { memberId: string } | { teamId: string } } = {}) => <GatewayLimitEditor orgId={orgId} orgSlug={orgSlug} teams={[team]} members={[member]} {...props} />;
-const personPage = () => <GatewayPerson orgId={orgId} orgSlug={orgSlug} member={member} teams={[team]} />;
+const personPage = () => <GatewayPerson orgId={orgId} orgSlug={orgSlug} member={member} teams={[team]} members={[member]} />;
 async function press(selector: string) {
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLElement)) throw new Error(`Missing ${selector}`);
@@ -366,6 +375,11 @@ test("a person's page shows each limit period with its policy, usage and technic
     expect(view.container.textContent).toContain("Paused");
     expect(view.container.querySelector("details")?.open).toBe(false);
     expect(view.container.textContent).toContain("Technical details");
+    const access = view.container.querySelectorAll('[data-testid="gateway-person-access-row"]');
+    expect(access).toHaveLength(1);
+    expect(access[0]?.textContent).toContain("Everyone Provider");
+    expect(access[0]?.textContent).toContain("Everyone has it");
+    expect(view.container.querySelector('[data-testid="gateway-person-access-withheld"]')?.textContent).toContain("Only a removed team");
   } finally { await view.close(); }
 });
 

@@ -131,7 +131,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                   <>
                     {tab === "overview" ? <AiGatewayOverview key={orgId} orgId={orgId} /> : null}
                     {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} /> : null}
-                    {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgContext={orgContext} /> : null}
+                    {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgSlug={orgSlug} orgContext={orgContext} /> : null}
                     {tab === "limits" ? (
                       <>
                         <GatewayUsageResetRequests key={`requests-${orgId}`} orgId={orgId} members={orgContext.members} />
