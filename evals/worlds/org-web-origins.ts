@@ -9,6 +9,7 @@ export const LOOKALIKE_ORIGINS = ["https://workspace.example.test.evil.test", "h
 
 const ORG_NAME = "Example Workspace Org";
 const OUTSIDE_ORG_NAME = "Outside Example Org";
+const SECOND_ORG_NAME = "Second Example Org";
 const PASSWORD = "OpenWork-origins-4821!proof";
 
 function field(value: unknown, key: string): string {
@@ -65,6 +66,13 @@ export async function orgWebOrigins(seed: Seed) {
   if (!outsideOrg.response.ok || !isRecord(outsideOrg.body)) throw new Error(`Outside organization setup failed: HTTP ${outsideOrg.response.status}`);
   const outsideOrgId = field(outsideOrg.body.organization, "id");
 
+  // The owner also belongs to a second organization, so a brand-new sign-in
+  // session starts with no active organization (Den only preselects one when
+  // a person belongs to exactly one). Nothing selects an org for this session.
+  const secondOrg = await seed.api(owner, "/v1/org", { method: "POST", body: JSON.stringify({ name: SECOND_ORG_NAME }) });
+  if (!secondOrg.response.ok) throw new Error(`Second organization setup failed: HTTP ${secondOrg.response.status}`);
+  const ownerFreshSignIn = await signIn(den.ref, { email: den.admin.email, password: den.admin.password });
+
   await activate(seed, owner, orgId);
   await activate(seed, teammate, orgId);
   await activate(seed, orgAdmin, orgId);
@@ -76,7 +84,22 @@ export async function orgWebOrigins(seed: Seed) {
   const ownerPhone = await seed.web({ den, signedInAs: owner, startPath, headless: true, viewport: { width: 390, height: 844 } });
 
   return {
-    den, orgId, outsideOrgId, owner, teammate, orgAdmin, outsider, ownerWeb, adminWeb, ownerPhone,
+    den, orgId, outsideOrgId, owner, ownerFreshSignIn, teammate, orgAdmin, outsider, ownerWeb, adminWeb, ownerPhone,
+    /** The active organization a session reports and how many it belongs to. */
+    async sessionOrgs(session: DenSession) {
+      const result = await seed.api(session, "/v1/me/orgs");
+      const body = isRecord(result.body) ? result.body : {};
+      return {
+        activeOrgId: typeof body.activeOrgId === "string" ? body.activeOrgId : null,
+        count: Array.isArray(body.orgs) ? body.orgs.length : 0,
+      };
+    },
+    /** The organization a web instance lands in after exchanging the one-time grant from a handoff. */
+    async exchange(grant: string) {
+      const result = await denFetch(den.ref, "/v1/auth/desktop-handoff/exchange", { method: "POST", body: JSON.stringify({ grant }) });
+      const body = isRecord(result.body) ? result.body : {};
+      return { status: result.response.status, organizationId: isRecord(body.organization) && typeof body.organization.id === "string" ? body.organization.id : null };
+    },
     /**
      * What a person's browser receives when Den is asked to send them back to
      * returnUrl after sign-in. This mints a one-time grant, so it lives here
@@ -92,6 +115,7 @@ export async function orgWebOrigins(seed: Seed) {
       return {
         status: result.response.status,
         returnUrl: typeof body.returnUrl === "string" ? body.returnUrl : null,
+        grant: typeof body.grant === "string" ? body.grant : null,
         error: typeof body.error === "string" ? body.error : null,
       };
     },

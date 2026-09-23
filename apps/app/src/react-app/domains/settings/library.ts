@@ -190,7 +190,7 @@ const LIBRARY_ITEM_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
   switch (filter) {
     case "all":
-      return ["mcp", "skill", "plugin"];
+      return ["skill", "connection", "plugin"];
     case "skill":
       return ["skill"];
     case "command":
@@ -213,7 +213,7 @@ export function isLibraryAuthorableKind(kind: LibraryAddKind): kind is LibraryAu
 }
 
 export type LibraryAddAction =
-  | { type: "den-url"; kind: "connection" | "mcp" }
+  | { type: "connector-catalog" }
   | { type: "den-modal"; kind: LibraryAuthorableKind }
   | { type: "workspace-mcp" };
 
@@ -223,17 +223,13 @@ export function libraryAddAction(
   options: {
     cloudSignedIn: boolean;
     allowManageExtensions: boolean;
-    canManageCloudConnections?: boolean;
   },
 ): LibraryAddAction | null {
   if (addKind === "workspace-mcp") {
     return options.allowManageExtensions ? { type: "workspace-mcp" } : null;
   }
   if (!options.cloudSignedIn) return null;
-  if (addKind === "connection" || addKind === "mcp") {
-    // Members browse their granted connections; only admins enter connector setup.
-    return { type: "den-url", kind: options.canManageCloudConnections === true ? "connection" : "mcp" };
-  }
+  if (addKind === "connection") return { type: "connector-catalog" };
   if (isLibraryAuthorableKind(addKind)) return { type: "den-modal", kind: addKind };
   return null;
 }
@@ -338,7 +334,23 @@ export function libraryMcpConnectionRequest(form: LibraryMcpConnectionForm): Lib
   };
 }
 
-function skillMarkdown(name: string, description: string, instructions: string) {
+/** Reads the SKILL.md written by `skillMarkdown` back into its fields. */
+export function parseSkillMarkdown(raw: string): { name: string; description: string; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  if (!match) return { name: "", description: "", body: raw.trim() };
+  const fields = new Map<string, string>();
+  for (const line of (match[1] ?? "").split(/\r?\n/)) {
+    const separator = line.indexOf(":");
+    if (separator > 0) fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+  }
+  return {
+    name: fields.get("name") ?? "",
+    description: fields.get("description") ?? "",
+    body: (match[2] ?? "").trim(),
+  };
+}
+
+export function skillMarkdown(name: string, description: string, instructions: string) {
   return [
     "---",
     `name: ${name}`,

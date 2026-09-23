@@ -110,9 +110,14 @@ function parseBrowserState(value: unknown): BrowserState {
     }),
     tabs: value.tabs.map((tab) => {
       if (!isRecord(tab)) throw new Error("Browser state listed a malformed tab.");
+      // A native tab can exist before its first navigation commits. Keep it in
+      // the snapshot; readiness belongs to the assertion about that page.
+      if (typeof tab.url !== "string") throw new Error("Browser state listed a malformed tab URL.");
       return {
         id: stringField(tab.id),
         label: stringField(tab.label),
+        // A native tab can exist before its first navigation commits. Keep it in
+        // the snapshot; readiness belongs to the assertion about that page.
         // Electron can report an empty URL while a newly created page starts loading.
         url: stringValue(tab.url),
         ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null,
@@ -141,7 +146,13 @@ async function seedBrowserTab(seed: Seed, app: Surface, url: string, ownerSessio
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === url);
-    if (targets.length === 1) return { tabId, targetId: targets[0].id };
+    if (targets.length === 1) {
+      const state = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.browser.getState(), { awaitPromise: true });
+      const nativeTab = parseBrowserState(state).tabs.find((tab) => tab.id === tabId);
+      // Target discovery can announce the destination before the native view
+      // commits it. Baselines must describe the loaded page, not that transition.
+      if (nativeTab?.url === url && nativeTab.label !== "New tab") return { tabId, targetId: targets[0].id };
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("The seeded browser page did not finish opening.");
@@ -692,7 +703,8 @@ export async function attachBuiltinTab(app: Surface, targetId: string): Promise<
 }
 
 export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?: string } = {}) {
-  const app = await seed.desktop({ name: "builtin-browser" });
+  // Pixel witnesses use CSS sRGB colors, not the host display's ICC profile.
+  const app = await seed.desktop({ name: "builtin-browser", env: { ELECTRON_EXTRA_LAUNCH_ARGS: "--force-color-profile=srgb" } });
   const workspace = await seed.workspace(app, options.workspacePath ?? seed.tmpPath("builtin-browser"), { create: true });
   const session = await seed.session(app, { title: "Browser project" });
   const info = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo"), { awaitPromise: true });

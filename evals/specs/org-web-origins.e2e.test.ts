@@ -112,6 +112,22 @@ test("an owner approves their self-hosted web origin so members can sign in ther
     expect(ok).toBe(true);
   });
 
+  await step("then the owner, who belongs to two organizations, signs in fresh with no organization selected and still lands in the approving one", async () => {
+    await owner.see(approvedRow);
+    const before = await world.sessionOrgs(world.ownerFreshSignIn);
+    const handoff = await world.handoff(world.ownerFreshSignIn, RETURN_URL);
+    const exchanged = handoff.grant ? await world.exchange(handoff.grant) : { status: 0, organizationId: null };
+    const ok = before.count >= 2 && before.activeOrgId === null
+      && handoff.status === 200 && handoff.returnUrl === SIGNIN_URL
+      && exchanged.status === 200 && exchanged.organizationId === world.orgId;
+    evidence.recordAssertionEvidence(
+      "A fresh sign-in with no active organization is handed back into the organization that approved the origin",
+      `fresh session: ${before.count} organizations, active ${before.activeOrgId ?? "(none)"}; POST /v1/auth/desktop-handoff → ${handoff.status}, returnUrl ${handoff.returnUrl ?? handoff.error}; exchange → ${exchanged.status}, organization ${exchanged.organizationId ?? "(none)"} (approving org ${world.orgId})`,
+      ok,
+    );
+    expect(ok).toBe(true);
+  });
+
   await step("after: on a phone-width screen the approved origin and its controls fit without sideways scrolling", async () => {
     await phone.see(section, { timeoutMs: 90_000 });
     await phone.reload();

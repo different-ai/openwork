@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { t } from "../../../../i18n";
 import type { LibraryAddKind } from "../library";
-import type { LibraryConnectorCue } from "../library-connector-cues";
 import { LibraryAddKindPicker } from "./library-add-kind-picker";
 
 export function libraryAddKindLabel(kind: LibraryAddKind) {
@@ -24,13 +23,12 @@ export function libraryAddKindLabel(kind: LibraryAddKind) {
     case "plugin":
       return t("extensions.add_plugin");
     case "connection":
-      return t("extensions.add_connection");
+      return t("extensions.add_connector");
   }
 }
 
 export function LibraryAddControl(props: {
   kinds: LibraryAddKind[];
-  connectorCues?: LibraryConnectorCue[];
   onSelect: (kind: LibraryAddKind) => void;
   pending?: boolean;
   size?: "xs" | "sm" | "default";
@@ -94,7 +92,6 @@ export function LibraryAddControl(props: {
       <LibraryAddKindPicker
         open={pickerOpen}
         kinds={kinds}
-        connectorCues={props.connectorCues}
         onClose={() => setPickerOpen(false)}
         onSelect={props.onSelect}
       />

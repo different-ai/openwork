@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useState, type ReactNode } from "react";
 import { AlertCircle, ChevronRight, Loader2 } from "lucide-react";
 import type { EnablementResult } from "../../app/extensions";
 import { t } from "../../i18n";
@@ -52,6 +53,10 @@ export type ExtensionCardProps = {
   onNextAction?: () => void;
   /** Click handler. */
   onClick?: () => void;
+  /** List rows: a short state beside the kind, e.g. Sign in or Set up. */
+  statusChip?: { label: string; tone: "attention" | "setup" };
+  /** List rows: a control after the row, outside its button, e.g. a ⋯ menu. */
+  trailing?: ReactNode;
 };
 
 const taxonomyStyle: Record<ExtensionTaxonomy, string> = {
@@ -83,6 +88,7 @@ function ExtensionIcon(props: {
 }) {
   const boxSize = props.compact ? "size-8" : "size-10";
   const avatarSize = props.compact ? "size-6" : "size-7";
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   return (
     <div className="relative shrink-0">
       <div
@@ -90,9 +96,9 @@ function ExtensionIcon(props: {
       >
         {props.connecting ? (
           <Loader2 size={props.compact ? 15 : 18} className="animate-spin text-dls-secondary" />
-        ) : props.iconSrc ? (
+        ) : props.iconSrc && failedSrc !== props.iconSrc ? (
           <div className={`flex ${props.compact ? "size-5" : "size-6"} items-center justify-center rounded-md bg-white`}>
-            <img src={props.iconSrc} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} />
+            <img src={props.iconSrc} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} onError={() => setFailedSrc(props.iconSrc)} />
           </div>
         ) : (
           <ExtensionMeshAvatar
@@ -124,7 +130,7 @@ function ExtensionBadges(props: {
   return (
     <>
       {props.readiness === "ready" ? (
-        <span className="shrink-0 rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
+        <span data-library-ready className="shrink-0 rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
           {props.connectedLabel}
         </span>
       ) : props.readiness === "partial" ? (
@@ -241,25 +247,35 @@ export function ExtensionCard(props: ExtensionCardProps) {
     // Dense single-line row. Readiness is carried by the group header and a
     // small dot; the per-row badge only says what kind of extension this is.
     return (
+      <div className={`group flex w-full items-center transition-colors hover:bg-dls-hover ${hidden ? "opacity-60" : ""}`}>
       <button
         type="button"
         disabled={disabled || connecting}
         onClick={onClick}
-        className={`group flex w-full items-center gap-3 px-3.5 py-2 text-left transition-colors hover:bg-dls-hover ${hidden ? "opacity-60" : ""}`}
+        data-library-row={name}
+        className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3.5 pr-3 text-left"
       >
         {icon}
         <div className="flex w-44 shrink-0 items-center gap-1.5">
           <h4 className="min-w-0 truncate text-[13px] font-medium text-dls-text">{name}</h4>
           {readiness === "ready" ? (
-            <span className="size-1.5 shrink-0 rounded-full bg-green-9" />
+            <span data-library-ready role="img" aria-label={connectedLabel} className="size-1.5 shrink-0 rounded-full bg-green-9" />
           ) : readiness === "partial" ? (
             <span className="size-1.5 shrink-0 rounded-full bg-amber-9" />
           ) : null}
         </div>
-        <div className="flex w-20 shrink-0 items-center">
-          <span className="rounded-md bg-dls-hover px-1.5 py-0.5 text-[10px] font-medium text-dls-secondary">
+        <div className="flex w-36 shrink-0 items-center gap-1">
+          <span className="whitespace-nowrap rounded-md bg-dls-hover px-1.5 py-0.5 text-[10px] font-medium tracking-[0.04em] text-dls-secondary uppercase">
             {extensionTaxonomyLabel(taxonomy)}
           </span>
+          {props.statusChip ? (
+            <span
+              data-library-status={props.statusChip.label}
+              className={`whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium ${props.statusChip.tone === "attention" ? "bg-amber-3 text-amber-11" : "bg-dls-hover text-dls-text"}`}
+            >
+              {props.statusChip.label}
+            </span>
+          ) : null}
         </div>
         <p className="hidden min-w-0 flex-1 truncate text-xs text-dls-secondary sm:block">
           {disabledReason ?? description}
@@ -275,7 +291,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
           </span>
         ) : null}
         {meta ? (
-          <div className="hidden shrink-0 text-[11px] text-dls-secondary md:block">{meta}</div>
+          <div data-library-caption className="hidden shrink-0 text-[11px] text-dls-secondary md:block">{meta}</div>
         ) : null}
         {!disabledReason && !connecting && nextActionLabel ? (
           <span
@@ -288,19 +304,22 @@ export function ExtensionCard(props: ExtensionCardProps) {
           >
             {nextActionLabel}
           </span>
-        ) : (
+        ) : props.trailing ? null : (
           <ChevronRight size={14} className="shrink-0 text-dls-secondary" />
         )}
       </button>
+      {props.trailing ? <div className="flex shrink-0 items-center pr-2">{props.trailing}</div> : null}
+      </div>
     );
   }
 
-  return (
+  const card = (
     <button
       type="button"
       disabled={disabled || connecting}
       onClick={onClick}
-      className={`${shellClassName} rounded-xl p-4`}
+      data-library-row={name}
+      className={`${shellClassName} rounded-xl p-4 ${props.trailing ? "pr-12" : ""}`}
     >
       <div className="flex items-start gap-3">
         {icon}
@@ -308,6 +327,14 @@ export function ExtensionCard(props: ExtensionCardProps) {
           <div className="flex flex-wrap items-center gap-1.5">
             <h4 className="min-w-0 break-words text-sm font-semibold text-dls-text">{name}</h4>
             {badges}
+            {props.statusChip ? (
+              <span
+                data-library-status={props.statusChip.label}
+                className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${props.statusChip.tone === "attention" ? "bg-amber-3 text-amber-11" : "bg-dls-hover text-dls-text"}`}
+              >
+                {props.statusChip.label}
+              </span>
+            ) : null}
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{description}</p>
           {meta ? (
@@ -322,5 +349,12 @@ export function ExtensionCard(props: ExtensionCardProps) {
         </div>
       </div>
     </button>
+  );
+  if (!props.trailing) return card;
+  return (
+    <div className="relative">
+      {card}
+      <div className="absolute top-3 right-3">{props.trailing}</div>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import { ORGANIZATION_WEB_ORIGIN_LIMIT, normalizeExactHttpsOrigin } from "@openwork/types/den/organization-web-origins"
-import { and, asc, count, eq } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, OrganizationTable, OrganizationWebOriginTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
@@ -7,6 +7,7 @@ import { db } from "./db.js"
 type OrganizationId = DenTypeId<"organization">
 type OrganizationWebOriginId = DenTypeId<"organizationWebOrigin">
 type MemberId = DenTypeId<"member">
+type UserId = DenTypeId<"user">
 
 export type OrganizationWebOriginRecord = {
   id: OrganizationWebOriginId
@@ -45,6 +46,41 @@ let activeApprovalLookup: WebOriginApprovalLookup = lookupWebOriginApprovalInDat
 export function setWebOriginApprovalLookupForTest(lookup: WebOriginApprovalLookup | null) {
   activeApprovalLookup = lookup ?? lookupWebOriginApprovalInDatabase
   invalidateWebOriginApprovalCache()
+}
+
+/** Organizations the user currently belongs to that approved `origin`, oldest membership first. */
+type MemberWebOriginLookup = (input: { userId: UserId; origin: string }) => Promise<OrganizationId[]>
+
+async function lookupMemberOrganizationsApprovingInDatabase(input: { userId: UserId; origin: string }) {
+  const rows = await db
+    .select({ organizationId: OrganizationWebOriginTable.organizationId })
+    .from(OrganizationWebOriginTable)
+    .innerJoin(MemberTable, and(
+      eq(MemberTable.organizationId, OrganizationWebOriginTable.organizationId),
+      eq(MemberTable.userId, input.userId),
+      isNull(MemberTable.removedAt),
+    ))
+    .where(eq(OrganizationWebOriginTable.origin, input.origin))
+    .orderBy(asc(MemberTable.createdAt))
+    .limit(ORGANIZATION_WEB_ORIGIN_LIMIT)
+  return rows.map((row) => row.organizationId)
+}
+
+let activeMemberLookup: MemberWebOriginLookup = lookupMemberOrganizationsApprovingInDatabase
+
+/** Test-only: replace the member-scoped database lookup. Pass null to restore it. */
+export function setMemberWebOriginLookupForTest(lookup: MemberWebOriginLookup | null) {
+  activeMemberLookup = lookup ?? lookupMemberOrganizationsApprovingInDatabase
+}
+
+/**
+ * Handoff check when the session's active organization did not approve the
+ * origin (or the session has none yet, as with a fresh sign-in by someone in
+ * several organizations): organizations the user belongs to that did. Uncached.
+ */
+export async function findMemberOrganizationsApprovingWebOrigin(userId: UserId, origin: string): Promise<OrganizationId[]> {
+  if (!isCanonicalExactHttpsOrigin(origin)) return []
+  return activeMemberLookup({ userId, origin })
 }
 
 function isCanonicalExactHttpsOrigin(origin: string) {

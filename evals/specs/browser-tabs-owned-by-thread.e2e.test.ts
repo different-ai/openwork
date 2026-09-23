@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect } from "vitest";
 import { browserImageTarget, eventually, spec } from "@openwork/testkit";
 import type { BrowserTaskInput, Target } from "@openwork/testkit";
@@ -283,14 +284,23 @@ lifecycleTest("moving the last background page on screen releases its hidden hos
   }
 });
 
+// Effect contract: previously the browser toolbar exposed a memory-management action alongside navigation.
+// Removing Suspend simplifies that surface without unlocking a new capability: a person can still open,
+// read, and use a real page while thread ownership, action approval, and explicit handle release remain intact.
+// The distinguishing assertion is Suspend's absence; no performance or memory-saving benefit is claimed.
 test("a background conversation reads its owned page silently and requests attention before acting", async ({ world, user, agent, probe, step, evidence }) => {
   const reading = { ...world.session, title: "Reading the news" };
   await agent.run("session.rename", { sessionId: reading.sessionId, title: reading.title });
   const researching = { sessionId: await agent.createSession("Background research"), title: "Background research" };
   await user.click(conversation(reading.title));
+  await probe.eventually(() => probe.browserState(), { within: 15_000,
+    until: (state) => state.visibleSessionId === reading.sessionId,
+    label: "the reading conversation is selected before requesting browser access" });
+  // Match the real agent's origin-stamped command rather than a captured renderer selection.
   const readingOpen = world.commandFrom(reading.sessionId, "browser.open_url", { url: `${world.origin}/?viewport-probe=reading`, provider: "builtin" });
   await user.click({ role: "button", label: "Allow for this thread" });
   const readingResult = await readingOpen;
+  expect(readingResult).toMatchObject({ ok: true, result: { owner_session_id: reading.sessionId } });
   if (!readingResult || typeof readingResult !== "object" || !("result" in readingResult)) {
     throw new Error(`The reading browser command returned no result: ${JSON.stringify(readingResult)}`);
   }
@@ -391,7 +401,7 @@ test("a background conversation reads its owned page silently and requests atten
     await user.see(tabButton("reading"));
   });
 
-  await step("Switching to the owner restores its native view but visible inputs still need action approval", async () => {
+  await step("The owner can use the page under the simplified toolbar while approvals stay scoped", async () => {
     await user.click(conversation(researching.title));
     const state = await probe.eventually(() => probe.browserState(), { within: 30_000, until: (value) => value.visibleSessionId === researching.sessionId && value.activeTabId === researchTab.tabId, label: "the research conversation takes the screen" });
     expect(state.tabs.map((tab) => tab.ownerSessionId).sort()).toEqual([reading.sessionId, researching.sessionId].sort());
@@ -430,7 +440,20 @@ test("a background conversation reads its owned page silently and requests atten
     }
     const completed = await probe.eventually(witness, { within: 5_000, until: (value) => value.records.length === 1 && value.inputValue === "ok", label: "the fixture receives only the approved click and text" });
     expect(completed.records).toEqual([{ method: "dom", count: 1, signedIn: false }]);
-    expect((await task("observe")).text).toContain("Saved 1");
+    const savedPage = await task("observe", { includeImage: true });
+    expect(savedPage.text).toContain("Saved 1");
+    if (!savedPage.image) throw new Error("The saved page observation did not include its screenshot.");
+    // App screenshots do not include Electron's native child view. Preserve the
+    // real page image separately so the reviewer can see the saved result too.
+    const png = Buffer.from(savedPage.image.data, "base64");
+    evidence.recordScreenshot({ png, hash: createHash("sha256").update(png).digest("hex"),
+      route: `${world.origin}/?viewport-probe=research`, visibleText: savedPage.text ?? "", at: new Date().toISOString() });
+    await user.see({ role: "button", label: "Go back" });
+    await user.see({ role: "button", label: "Go forward" });
+    await user.see({ role: "button", label: "Reload page" });
+    await user.see({ placeholder: "Enter URL..." });
+    await user.notSee({ role: "button", label: "Suspend" });
+    await user.screenshot();
     evidence.recordAssertionEvidence("Selecting the owner restores its tab while inputs require separate approval", "Native attachment, z-order and both panel dimensions recovered. Reading reused the thread grant. Hidden, pending and denied inputs caused no writes; separately approved inputs produced one DOM save and the expected field value, and a new page observation verified Saved 1.", true);
   });
 
@@ -453,30 +476,32 @@ test("a background conversation reads its owned page silently and requests atten
     expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
   });
 
-  await step("Returning to the first conversation brings back only its own tab", async () => {
+  await step("The first conversation returns to its own readable page under the simplified toolbar", async () => {
     await probe.eventually(() => probe.browserState(), { within: 30_000, until: (value) => value.visibleSessionId === reading.sessionId && value.activeTabId === readingTab.tabId, label: "the reading tab returns" });
     await user.see(tabButton("reading"));
     await user.notSee(tabButton("research"));
+    await user.notSee({ role: "button", label: "Suspend" });
     expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
+    const observed = await agent.browserTask({ sessionId: reading.sessionId, operation: "observe", args: { tabId: readingTab.tabId } });
+    expect(observed).toMatchObject({ ok: true, text: expect.stringContaining("Project status") });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The original conversation keeps its readable page", "The original tab returned at the same panel dimensions without exposing its neighbor's tab or Suspend. A fresh browser observation read Project status from the live document.", true);
   });
   await step("Task handles preserve live pages, reject the other owner, and require explicit release", async () => {
     expect(await agent.run("browser.restore_tab", { tabId: readingTab.tabId }))
       .toMatchObject({ tab_id: readingTab.tabId, target_id: readingTab.targetId, owner_session_id: reading.sessionId });
     await expect(agent.run("browser.restore_tab", { tabId: researchTab.tabId })).rejects.toThrow(/owner/i);
-    // While a task protects the page, the panel refuses suspension; disabled controls never reach the browser.
-    const suspendButton = (title: string) => probe.dom(`button[title=${JSON.stringify(title)}]`);
-    await probe.eventually(() => suspendButton("Protected until browser work is released"), { within: 15_000,
-      until: (value) => value.elements.length === 1 && value.elements[0].text === "Suspend", label: "the protected page shows a disabled Suspend control" });
-    expect((await probe.dom('button[title="Protected until browser work is released"]:disabled')).elements).toHaveLength(1);
-    expect((await suspendButton("Suspend this tab to free memory")).elements).toEqual([]);
+    await user.notSee({ role: "button", label: "Suspend" });
     expect(await agent.run("browser.release_tab", { tabId: readingTab.tabId }))
       .toMatchObject({ tabId: readingTab.tabId, released: true });
-    await probe.eventually(() => probe.dom('button[title="Suspend this tab to free memory"]:not(:disabled)'), { within: 15_000,
-      until: (value) => value.elements.length === 1 && value.elements[0].text === "Suspend", label: "releasing the task lets the user suspend the page" });
-    expect((await suspendButton("Protected until browser work is released")).elements).toEqual([]);
+    await user.notSee({ role: "button", label: "Suspend" });
     expect((await probe.browserState()).tabs.map(tab => tab.id).sort())
       .toEqual([readingTab.tabId, researchTab.tabId].sort());
     expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }], inputValue: "ok", sessionReads: 0 });
+    await user.see(tabButton("reading"));
+    await user.notSee(tabButton("research"));
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Thread ownership and release remain unchanged", "Restoring the owner's handle kept the same tab and target identities; restoring the neighbor's tab was rejected. Explicit release returned released true, kept both tabs, and added no fixture writes or session reads. Suspend remained absent after release.", true);
   });
 });
 

@@ -17,17 +17,18 @@ function builtInEntry(id: string): McpDirectoryInfo {
 }
 
 describe("extension taxonomy", () => {
-  test("only MCPs, Skills, and Plugins are primary, with MCPs as the default", () => {
-    expect(extensionInventoryFilters).toEqual(["mcp", "skill", "plugin"]);
-    expect(primaryLibraryFilter()).toBe("mcp");
-    expect(primaryLibraryFilter("all")).toBe("mcp");
-    expect(primaryLibraryFilter("connection")).toBe("mcp");
+  test("All, Skills, and Plugins are primary, with All as the default", () => {
+    expect(extensionInventoryFilters).toEqual(["all", "skill", "plugin"]);
+    expect(primaryLibraryFilter()).toBe("all");
+    expect(primaryLibraryFilter("all")).toBe("all");
+    expect(primaryLibraryFilter("connection")).toBe("all");
     expect(primaryLibraryFilter("skill")).toBe("skill");
     expect(primaryLibraryFilter("plugin")).toBe("plugin");
     // Old command and agent routes land on Skills; the items themselves stay in the composer.
     expect(primaryLibraryFilter("command")).toBe("skill");
     expect(primaryLibraryFilter("agent")).toBe("skill");
-    expect(primaryLibraryFilter("app")).toBe("mcp");
+    expect(primaryLibraryFilter("app")).toBe("all");
+    expect(primaryLibraryFilter("mcp")).toBe("all");
   });
 
   test("the MCPs category lists third-party servers, not OpenWork's own runtimes or plumbing", () => {

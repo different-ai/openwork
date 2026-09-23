@@ -446,25 +446,153 @@ export async function desktopWithExternalOpenCapture(seed: Seed, den: Den, ident
   return { app, browserUrls };
 }
 
-export async function libraryConnectorDiscovery(seed: Seed) {
-  const den = await seed.den({ org: { name: `Library connector discovery ${Date.now()}`, admin: { name: "Library Connector Admin" } } });
-  const organizationId = await activeOrganizationId(seed, den.admin);
-  const { app, browserUrls } = await desktopWithExternalOpenCapture(seed, den, "admin");
-  // Keep repository-local skills out of this empty Library fixture.
-  const workspace = await seed.workspace(app, seed.tmpPath("library-connector-discovery"), { create: true });
-  await app.client.send("Emulation.setDeviceMetricsOverride", {
-    width: 820,
-    height: 760,
-    deviceScaleFactor: 1,
-    mobile: false,
+const paperFlowSupport = ["Alex R.", "Jordan L.", "Priya N.", "Chris M.", "Dana W."];
+
+/**
+ * The ENG-73 Library boards as one organization: Sam K. (admin) adds, shares,
+ * edits, and deletes things; Support (five people, Alex among them) receives
+ * what Sam shares. Connections the org already has cover the Ready and Sign in
+ * rows. Den's connector catalog is served at the proxy so Slack is
+ * a local OAuth MCP: Den still runs the real sign-in start against it, and no
+ * real provider is called.
+ */
+export async function libraryPaperFlow(seed: Seed) {
+  const orgName = "Paper Flow Studio";
+  const prompt = "Brief me on the customer I'm meeting tomorrow at 10";
+  const providerId = "paper-flow";
+  const modelId = "paper-flow-model";
+  const den = await seed.den({
+    org: {
+      name: orgName,
+      admin: { name: "Sam K." },
+      members: Object.fromEntries(paperFlowSupport.map((name) => [name.split(" ")[0]?.toLowerCase() ?? name, { name }])),
+    },
+    mocks: {
+      model: seed.mock({
+        allowUnauthenticatedMcp: true,
+        tools: [{ name: "search_pages", description: "Search the team wiki", inputSchema: { type: "object", properties: { query: { type: "string" } } },
+          result: { content: [{ type: "text", text: "No pages yet." }] } }],
+        agentWorkloads: [{
+          promptMarker: prompt,
+          latestUserTurn: true,
+          finalReply: "Here is a one-page brief for your 10:00 customer meeting.",
+          steps: [
+            { tool: "list_skills", arguments: { query: "customer briefing", limit: 1 } },
+            { tool: "get_skill", arguments: {}, argumentsFrom: "skill-list" },
+          ],
+        }],
+      }),
+      accounts: seed.mock(),
+      tracker: seed.mock(),
+      slack: seed.mock(),
+    },
   });
-  // Arrange an upgraded profile whose retired local extension was enabled.
-  await seed.evalIn(app, browserScript((workspaceId) => {
-    localStorage.setItem("openwork.extension.enabled.google-workspace", "1");
-    location.hash = "#/workspace/" + workspaceId + "/settings/general";
-    return true;
-  }, [workspace.workspaceId]));
-  return { app, browserUrls, workspaceId: workspace.workspaceId, organizationId, denWebUrl: den.ref.webUrl };
+  const organizationId = await activeOrganizationId(seed, den.admin);
+  const headers = { "x-openwork-org-id": organizationId };
+  const org = await seed.api(den.admin, "/v1/org", { headers });
+  const members = isRecord(org.body) ? records(org.body.members) : [];
+  const supportIds = paperFlowSupport.map((name) => {
+    const member = members.find((entry) => isRecord(entry.user) && entry.user.name === name);
+    const id = member && typeof member.id === "string" ? member.id : "";
+    if (!id) throw new Error(`Could not resolve ${name}'s organization membership.`);
+    return id;
+  });
+  const createdTeam = await seed.api(den.admin, "/v1/teams", { method: "POST", headers, body: JSON.stringify({ name: "Support" }) });
+  const supportTeamId = stringField(isRecord(createdTeam.body) ? createdTeam.body.team : null, "id");
+  if (!supportTeamId) throw new Error("Could not create the Support team.");
+  const patched = await seed.api(den.admin, `/v1/teams/${encodeURIComponent(supportTeamId)}`, {
+    method: "PATCH", headers, body: JSON.stringify({ memberIds: supportIds }),
+  });
+  if (!patched.response.ok) throw new Error(`Could not add Support's members: HTTP ${patched.response.status}`);
+
+  // Den seeds its starter marketplaces the first time anyone lists them, as
+  // Sam. The boards show an org whose starters are out of the way, so seed and
+  // archive them now; Den seeds them only once per org.
+  const listedMarketplaces = await seed.api(den.admin, "/v1/marketplaces", { headers });
+  if (!listedMarketplaces.response.ok) throw new Error(`Could not list marketplaces: HTTP ${listedMarketplaces.response.status}`);
+  const starterIds: string[] = [];
+  for (let cursor = ""; ;) {
+    const page = await seed.api(den.admin, `/v1/plugins?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { headers });
+    const body = isRecord(page.body) ? page.body : {};
+    const items = Array.isArray(body.items) ? body.items.filter(isRecord) : [];
+    starterIds.push(...items.flatMap((item) => typeof item.id === "string" ? [item.id] : []));
+    const next = typeof body.nextCursor === "string" ? body.nextCursor : "";
+    if (!next || items.length === 0) break;
+    cursor = next;
+  }
+  for (const pluginId of starterIds) {
+    const archived = await seed.api(den.admin, `/v1/plugins/${encodeURIComponent(pluginId)}/archive`, { method: "POST", headers, body: "{}" });
+    if (!archived.response.ok) throw new Error(`Could not archive starter plugin ${pluginId}: HTTP ${archived.response.status}`);
+  }
+
+  const { model, accounts, tracker, slack } = den.mocks;
+  await seed.orgConnection(den.admin, { name: "Team wiki", url: model.mcpUrl, authType: "none", credentialMode: "shared", access: { orgWide: true } });
+  await seed.orgConnection(den.admin, { name: "Google Workspace", url: accounts.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } });
+  await seed.orgConnection(den.admin, { name: "Linear", url: tracker.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } });
+
+  const presets = [
+    { presetId: "slack", displayName: "Slack", description: "Messages and channels. Each person signs in with their own Slack.", url: slack.mcpUrl, authType: "oauth" },
+    { presetId: "notion", displayName: "Notion", description: "Pages and databases.", url: "https://notion.connector.test/mcp", authType: "oauth" },
+    { presetId: "github", displayName: "GitHub", description: "Issues and pull requests.", url: "https://github.connector.test/mcp", authType: "oauth" },
+    { presetId: "microsoft-365", displayName: "Microsoft 365", description: "Mail, calendar and files.", url: "https://m365.connector.test/mcp", authType: "oauth" },
+    { presetId: "linear", displayName: "Linear", description: "Issues and projects.", url: tracker.mcpUrl, authType: "oauth" },
+  ];
+  const proxy = await seed.faultProxy(den);
+  await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: { denApiUrl: proxy.ref.apiUrl } });
+  for (const path of ["/api/den/v1/mcp-connections/presets", "/v1/mcp-connections/presets"]) {
+    await proxy.faults.status(path, 200, { times: 1000, body: { presets } });
+  }
+  const shapedDen = { ...den, ref: proxy.ref };
+  const viewport = { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false };
+
+  const signedOut = await seed.desktop({ den: shapedDen, signIn: false });
+  const signedOutWorkspace = await seed.workspace(signedOut, seed.tmpPath("library-paper-flow-signed-out"), { create: true });
+  await signedOut.client.send("Emulation.setDeviceMetricsOverride", viewport);
+  // TODO(primitive): seed.route
+  await seed.evalIn(signedOut, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/extensions"; return true; }, [signedOutWorkspace.workspaceId]));
+
+  const { app, browserUrls } = await desktopWithExternalOpenCapture(seed, shapedDen, "admin", `${providerId}/${modelId}`);
+  // Keep repository-local skills out of this Library.
+  const workspace = await seed.workspace(app, seed.tmpPath("library-paper-flow"), { create: true });
+  const providerConfig = {
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Paper flow model",
+      options: { baseURL: `${model.url}/v1`, apiKey: "sk-paper-flow-fixture" },
+      models: { [modelId]: { name: "Paper flow model", tool_call: true } },
+    } },
+  };
+  // A fresh workspace's engine can still be starting when the first reload lands.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, providerConfig);
+      break;
+    } catch (error) {
+      if (attempt >= 4 || !String(error).includes("opencode_engine_unreachable")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+  await app.client.send("Emulation.setDeviceMetricsOverride", viewport);
+  // TODO(primitive): seed.route
+  await seed.evalIn(app, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/extensions"; return true; }, [workspace.workspaceId]));
+
+  const alexApp = await seed.desktop({ den: shapedDen, as: "alex" });
+  const alexWorkspace = await seed.workspace(alexApp, seed.tmpPath("library-paper-flow-alex"), { create: true });
+  await alexApp.client.send("Emulation.setDeviceMetricsOverride", viewport);
+  // TODO(primitive): seed.route
+  await seed.evalIn(alexApp, browserScript((workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/extensions"; return true; }, [alexWorkspace.workspaceId]));
+  return {
+    app,
+    signedOut,
+    alexApp,
+    browserUrls,
+    orgName,
+    prompt,
+    organizationId,
+    alex: den.members.alex,
+    slackMcpUrl: slack.mcpUrl,
+    slackOrigin: new URL(slack.url).origin,
+    supportSize: paperFlowSupport.length,
+  };
 }
 
 export async function librarySessionRestore(seed: Seed) {
