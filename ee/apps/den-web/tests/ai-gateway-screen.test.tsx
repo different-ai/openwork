@@ -170,19 +170,20 @@ test("root tabs navigate without losing query context and nested content keeps A
 test("Limits owns policies, inspection and reset review while Users & Teams owns assignments", async () => {
   const view = await mount(<AiGatewayScreen />, reply, "limits");
   try {
+    await tick();
     const panel = view.container.querySelector('[data-testid="ai-gateway-panel-limits"]');
     expect(panel?.querySelector('[aria-labelledby="gateway-usage-limits-heading"]')).not.toBeNull();
-    expect(panel?.querySelector('[aria-label="Find person to inspect"]')).not.toBeNull();
+    expect(panel?.querySelector('[aria-label="Find a person"]')).not.toBeNull();
     expect(panel?.textContent).toContain("No pending requests");
-    expect(panel?.textContent).toContain("never as a shared pool");
-    expect(panel?.textContent).toContain("allowances are not added together");
+    expect(panel?.querySelector('[data-testid="gateway-limit-new"]')?.getAttribute("href")).toBe("/dashboard/ai-gateway/limits/new");
+    expect(panel?.querySelector('[aria-label="Edit Standard"]')?.getAttribute("href")).toBe("/dashboard/ai-gateway/limits/policy-fixture");
     expect(view.container.querySelector('[data-testid="gateway-users-teams"]')).toBeNull();
     expect(view.calls.some((call) => call.path.includes("view=pending"))).toBe(true);
     expect(view.calls.some((call) => call.path === providersPath)).toBe(false);
     await view.tab("users-and-teams");
     expect(view.container.querySelector('[data-testid="gateway-users-teams"]')).not.toBeNull();
     expect(view.container.querySelector('[aria-labelledby="gateway-usage-limits-heading"]')).toBeNull();
-    expect(view.container.querySelector('[aria-label="Find person to inspect"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Find a person"]')).toBeNull();
     for (const call of view.calls) expect(new Headers(call.init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
   } finally { await view.close(); }
 });
@@ -249,7 +250,8 @@ test("unknown root tab falls back to Overview and invites provider setup without
   const view = await mount(<AiGatewayScreen />, () => ({ payload: { inferenceProviders: [] } }), "unknown");
   try {
     expect(view.container.querySelector('[role="tabpanel"]')?.getAttribute("aria-label")).toBe("Overview");
-    expect(view.container.querySelector('[data-testid="gateway-usage-no-providers"] a')?.getAttribute("href")).toBe("/dashboard/ai-gateway?tab=ai-providers");
+    expect(view.container.querySelector('[data-testid="gateway-usage-add-provider"]')?.getAttribute("href")).toBe("/dashboard/ai-gateway/providers/new");
+    expect(view.container.querySelector('[data-testid="gateway-usage-no-providers"]')?.textContent).toContain("No usage yet");
     expect(view.calls.map((call) => call.path)).toEqual([providersPath]);
   } finally { await view.close(); }
 });

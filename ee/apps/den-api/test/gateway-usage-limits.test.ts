@@ -263,16 +263,31 @@ test("HTTP contracts, roles, cross-org lookup, reset ownership and approved exte
     (await request(`usage-limit-policies/${policy.id}/assignments/${assignment.id}`, "DELETE"))
       .status,
   ).toBe(200)
-  expect(
-    (
-      await request(`usage-limit-policies/${policy.id}/archive`, "POST", {
-        revision: policy.revision,
-      })
-    ).status,
-  ).toBe(200)
+  const archivedResponse = await request(`usage-limit-policies/${policy.id}/archive`, "POST", {
+    revision: policy.revision,
+  })
+  expect(archivedResponse.status).toBe(200)
+  const archived = policySchema.parse(await archivedResponse.json())
   actor = member
   role = "member"
   expect(usageSchema.parse(await (await request("usage-limits/me")).json()).state).toBe("unlimited")
+  expect(
+    (await request(`usage-limit-policies/${policy.id}/restore`, "POST", { revision: archived.revision }))
+      .status,
+  ).toBe(403)
+  actor = owner
+  role = "owner"
+  expect(
+    (await request(`usage-limit-policies/${policy.id}/restore`, "POST", { revision: policy.revision }))
+      .status,
+  ).toBe(409)
+  const restored = policySchema.parse(
+    await (
+      await request(`usage-limit-policies/${policy.id}/restore`, "POST", { revision: archived.revision })
+    ).json(),
+  )
+  expect(restored.archivedAt ?? null).toBeNull()
+  expect(restored.revision).toBe(archived.revision + 1)
 })
 
 test("organization assignment is strict, admin-only, idempotent and includes future members", async () => {

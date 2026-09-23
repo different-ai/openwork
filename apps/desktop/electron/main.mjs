@@ -38,6 +38,7 @@ import { createNativeContextMenus } from "./context-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
+import { configureBrowserWebAuthn } from "./web-authn.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
   buildNukeManifest,
@@ -2918,6 +2919,7 @@ or use: pnpm dev:worktree`);
   });
 
   app.whenReady().then(async () => {
+    configureBrowserWebAuthn({ app, appId: DESKTOP_DISTRIBUTION.appIdentifier });
     holdSpellcheckerUntilActivation(workspaceStore.readDesktopBootstrapConfigSync());
     const systemCaCertificates = await runtimeManager.systemCaCertificates();
     session.defaultSession.setCertificateVerifyProc(createSystemCaCertificateVerifyProc(systemCaCertificates));

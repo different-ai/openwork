@@ -170,6 +170,23 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
         ),
       ),
   )
+  app.post(
+    "/v1/gateway/usage-limit-policies/:policyId/restore",
+    route("Restore archived usage limit policy", policyResponse),
+    orgMemberRoute(),
+    available,
+    admin,
+    paramValidator(policyParams),
+    jsonValidator(revisionSchema),
+    (c) =>
+      respond(c, () =>
+        service.restorePolicy(
+          scope(c),
+          c.req.valid("param").policyId,
+          c.req.valid("json").revision,
+        ),
+      ),
+  )
   app.get(
     "/v1/gateway/usage-limit-policies/:policyId/assignments",
     route(

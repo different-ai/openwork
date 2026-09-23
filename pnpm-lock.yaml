@@ -335,6 +335,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@ai-sdk/provider':
+        specifier: 3.0.12
+        version: 3.0.12
       '@modelcontextprotocol/client':
         specifier: ^2.0.0
         version: 2.0.0(patch_hash=702e2000a3f78e99cfa6971ac4c90466d482174e49340634c0f5b1f346285c12)
