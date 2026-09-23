@@ -334,7 +334,7 @@ describe("session error resilience", () => {
   })
 
   test.each([
-    { name: "APIError", data: { statusCode: 401, code: "openwork_auth_required" }, kind: "gateway-auth-required", title: "Sign in to keep using this model" },
+    { name: "APIError", data: { statusCode: 401, code: "openwork_auth_required" }, kind: "gateway-auth-required", title: "Signed out, so this model couldn't answer" },
     { name: "APIError", data: { statusCode: 403 }, kind: "provider-access-denied", title: "You don’t have access to this model" },
     { name: "APIError", data: { code: "ENOTFOUND" }, kind: "network-unavailable", title: "Can’t reach the model service" },
     { name: "TimeoutError", data: { statusCode: 401 }, kind: "provider-timeout", title: "Provider did not respond in time" },
@@ -377,8 +377,8 @@ describe("session error resilience", () => {
     })
 
     expect(presentation.kind).toBe("gateway-auth-required")
-    expect(presentation.title).toBe("Sign in to keep using this model")
-    expect(presentation.description).toBe("Sign in to Member Vertex to continue.")
+    expect(presentation.title).toBe("Signed out, so this model couldn't answer")
+    expect(presentation.description).toBe("Sign in again to keep using it, or use another model.")
     expect(presentation.connectUrl).toBeNull()
     expect(presentation.recoveryPrompt).toBeNull()
 
@@ -386,19 +386,25 @@ describe("session error resilience", () => {
       name: "APIError",
       data: { message: `Unauthorized: ${body}`, statusCode: 401, responseBody: body },
     })
-    expect(html).toContain('data-testid="session-error-gateway-connect"')
-    expect(html).toContain("Connect")
+    expect(html).toContain('data-testid="session-error-signed-out"')
+    expect(html).toContain("signed you out, so")
+    expect(html).not.toContain('data-testid="session-error-gateway-connect"')
+    expect(html).not.toContain(authUrl)
     expect(html).not.toContain('data-testid="session-error-resume"')
   })
 
-  test("still offers Connect (deep-linking to providers) when the auth body has no auth_url", () => {
+  test("reads which provider and credential set signed the member out, so sign-in can run in place", () => {
+    const body = '{"error":{"code":"openwork_auth_required","provider_id":"ipr_member","credential_set_id":"gcs_member"}}'
     const presentation = presentOpencodeSessionError({
       name: "APIError",
-      data: { message: '{"error":{"code":"openwork_auth_required","provider_id":"ipr_member"}}', statusCode: 401 },
+      data: { message: body, statusCode: 401 },
     })
     expect(presentation.kind).toBe("gateway-auth-required")
     expect(presentation.connectUrl).toBeNull()
-    expect(presentation.description).toContain("Connect it again")
+    expect(presentation.gatewayAuthorization).toEqual({ cloudProviderId: "ipr_member", credentialSetId: "gcs_member" })
+    const html = renderErrorTranscriptWithResume({ name: "APIError", data: { message: body, statusCode: 401 } })
+    expect(html).toContain('data-testid="session-error-sign-in-again"')
+    expect(html).toContain("Sign in again")
     expect(
       sessionErrorPresentationFromUIMessage(createSessionErrorUIMessage("turn", presentation)),
     ).toEqual(presentation)

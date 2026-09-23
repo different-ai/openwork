@@ -51,6 +51,7 @@ import { TodoWriteTool } from "@/components/tools/todowrite"
 import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
+import { GatewaySignedOutMessage, LatestUserMessageContext } from "@/components/chat/gateway-signed-out-message"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
 import { useSessionReferencesMaybe, type SessionReferences } from "@/components/chat/session-reference-context"
 import { SessionReferenceLink } from "@/components/chat/session-reference-link"
@@ -954,6 +955,9 @@ const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
+      if (presentation?.kind === "gateway-auth-required") {
+        return <GatewaySignedOutMessage authorization={presentation.gatewayAuthorization ?? null} canRetry={isLastMessage && !isStreaming} />
+      }
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
@@ -962,7 +966,7 @@ const MessageComponent = React.memo(
           resumePrompt={presentation?.recoveryPrompt}
           canRetry={isLastMessage && !isStreaming}
           technicalDetails={presentation?.technicalDetails}
-          gatewayConnectUrl={presentation?.kind === "gateway-auth-required" || presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
+          gatewayConnectUrl={presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
           gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
           changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
         />
@@ -1092,7 +1096,7 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
       actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined ? <>
         {gatewaySelectionRequired || selection ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-selection"
           onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>
-          Choose group and credential set
+          Change model
         </Button> : null}
         {changeModel && !gatewaySelectionRequired && !selection ? <Button variant="ghost" size="xs"
           onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>Change model</Button> : null}
@@ -1547,6 +1551,10 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     return () => window.clearInterval(interval)
   }, [activityActive, runStartedAt, syncDegraded])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
+  const latestUserMessage = React.useMemo(() => {
+    const message = messages.findLast((entry) => entry.role === "user")
+    return message ? { id: message.id, text: getMessagesText([message]) } : null
+  }, [messages])
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
@@ -1576,6 +1584,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   )
 
   return (
+    <LatestUserMessageContext.Provider value={latestUserMessage}>
     <ParentRunActiveContext.Provider value={runActive}>
     <CurrentToolLifecycleProvider
       activityStatus={activityStatus}
@@ -1624,5 +1633,6 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
     </ParentRunActiveContext.Provider>
+    </LatestUserMessageContext.Provider>
   )
 }

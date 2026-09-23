@@ -1133,6 +1133,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
   }, [props.onModelChange, sessionModel]);
+  // A model that works now, offered when the conversation's model needs a
+  // sign-in: the first OpenWork Models model, else any other model.
+  const fallbackModel = useMemo(() => {
+    const catalog = props.providerCatalog ?? {};
+    const current = sessionModel.selectedModel;
+    const candidates = Object.entries(catalog).flatMap(([providerID, models]) => Object.entries(models)
+      .map(([modelID, model]) => ({ providerID, modelID, label: model.name || modelID })))
+      .filter((entry) => entry.providerID !== current.providerID);
+    const pick = candidates.find((entry) => entry.providerID === "openwork") ?? candidates[0];
+    if (!pick) return null;
+    return { label: pick.label, use: () => handleModelChange({ providerID: pick.providerID, modelID: pick.modelID }, null) };
+  }, [handleModelChange, props.providerCatalog, sessionModel.selectedModel]);
   const handleModelVariantChange = useCallback((value: string | null) => {
     sessionModel.setVariant(value);
     props.onModelVariantChange(value);
@@ -3435,6 +3447,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       getConnectionDecision={getConnectionDecision}
                       connectionQuestionToolCallId={nativeConnectionRequest?.questionToolCallId ?? null}
+                      modelLabel={sessionModel.modelLabel}
+                      fallbackModel={fallbackModel}
                     >
                       <MessageList
                         messageIdReplacements={pendingReconciliation.messageIdReplacements}

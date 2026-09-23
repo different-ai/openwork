@@ -48,7 +48,14 @@ interface MessageListContextValue {
     isCurrent?: () => boolean,
   ) => Promise<ChatToolReconnectResult>
   onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
+  /** The conversation's model, for errors that name it. */
+  modelLabel?: string | null
+  /** A model that works now, offered when the current one needs a sign-in. */
+  fallbackModel?: FallbackModel | null
 }
+
+/** A ready model a failed message can switch to, e.g. "Use Claude Sonnet 4.5". */
+export type FallbackModel = { label: string; use: () => void }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
@@ -83,6 +90,8 @@ interface MessageListProviderProps {
   syncDegraded?: boolean
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
+  modelLabel?: string | null
+  fallbackModel?: FallbackModel | null
 }
 
 export interface DispatchAction {
@@ -118,6 +127,8 @@ export function MessageListProvider({
   onResumeInterrupted,
   onMcpReconnect,
   onMcpReopenAuthorization,
+  modelLabel = null,
+  fallbackModel = null,
 }: MessageListProviderProps) {
   const handlersRef = React.useRef({
     dispatchAction,
@@ -193,6 +204,8 @@ export function MessageListProvider({
       providerConnectedCount,
       connectorIdentities,
       syncDegraded,
+      modelLabel,
+      fallbackModel,
       ...stableHandlers,
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
@@ -217,6 +230,8 @@ export function MessageListProvider({
       providerConnectedCount,
       connectorIdentities,
       syncDegraded,
+      modelLabel,
+      fallbackModel,
       stableHandlers,
       canOpenSubagentSession,
       canResumeInterrupted,

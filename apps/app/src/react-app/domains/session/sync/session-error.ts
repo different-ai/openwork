@@ -18,13 +18,18 @@ export type OpencodeSessionErrorPresentation = {
    * it — the renderer then deep-links to Settings > AI providers. Additive.
    */
   connectUrl?: string | null;
+  /**
+   * `gateway-auth-required` only: which provider and credential set signed
+   * the member out, from the gateway's 401 body, so sign-in can run in place.
+   */
+  gatewayAuthorization?: { cloudProviderId: string; credentialSetId: string; providerHint?: string } | null;
   gatewayUsage?: GatewayUsageErrorEvidence;
   providerId?: string | null;
 };
 
 /** Error code the OpenWork inference gateway returns when the member's own sign-in is missing or revoked. */
 export const GATEWAY_AUTH_REQUIRED_ERROR_CODE = "openwork_auth_required";
-export const GATEWAY_AUTH_REQUIRED_TITLE = "Sign in to keep using this model";
+export const GATEWAY_AUTH_REQUIRED_TITLE = "Signed out, so this model couldn't answer";
 
 export const interruptedTaskRecoveryPrompt = [
   "Continue the interrupted task from the current state.",
@@ -172,12 +177,16 @@ function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAu
     return "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own model provider in Settings → AI Providers to keep working.";
   }
   if (kind === "gateway-auth-required") {
-    return gatewayAuth?.message ?? "Your sign-in for this provider is missing or was revoked. Connect it again, then retry.";
+    return "Sign in again to keep using it, or use another model.";
   }
   return null;
 }
 
-type GatewayAuthRequired = { connectUrl: string | null; message: string | null };
+type GatewayAuthRequired = {
+  connectUrl: string | null;
+  message: string | null;
+  authorization: { cloudProviderId: string; credentialSetId: string; providerHint?: string } | null;
+};
 
 /**
  * Detects the gateway's in-band `401 { error: { code: "openwork_auth_required",
@@ -197,9 +206,15 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
       const parsed: unknown = JSON.parse(candidate.slice(start));
       const body = recordValue(parsed, "error");
       if (recordValue(body, "code") !== GATEWAY_AUTH_REQUIRED_ERROR_CODE) continue;
+      const cloudProviderId = firstStringValue([body, parsed], ["provider_id"]);
+      const credentialSetId = firstStringValue([body, parsed], ["credential_set_id"]);
+      const message = firstStringValue([body], ["message"]);
+      // The gateway names the catalog provider ("Connect your google-vertex account"); keep it for the brand.
+      const providerHint = message?.match(/Connect your ([a-z0-9][a-z0-9-]{0,63}) account/i)?.[1];
       return {
         connectUrl: null,
-        message: firstStringValue([body], ["message"]),
+        message,
+        authorization: cloudProviderId && credentialSetId ? { cloudProviderId, credentialSetId, ...(providerHint ? { providerHint } : {}) } : null,
       };
     } catch {
       // Not a clean JSON body: retain only the error classification below.
@@ -208,6 +223,7 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
   return {
     connectUrl: null,
     message: fields.code === GATEWAY_AUTH_REQUIRED_ERROR_CODE ? fields.message : null,
+    authorization: null,
   };
 }
 
@@ -332,7 +348,7 @@ export function presentOpencodeSessionError(error: unknown, fallback = "Session 
     description: credentialCopy?.description ?? errorDescription(kind, gatewayAuth),
     technicalDetails: kind === "gateway-selection-required" ? "Error code: gateway_selection_required\nStatus: 409" : gatewayAuth ? "Error code: openwork_auth_required\nStatus: 401" : technicalErrorDetails(error, fallback, fields),
     recoveryPrompt: errorRecoveryPrompt(kind),
-    ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl } : {}),
+    ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl, gatewayAuthorization: gatewayAuth.authorization } : {}),
     ...(gatewayUsage ? { gatewayUsage, providerId: fields.provider } : {}),
   };
 }
@@ -366,5 +382,9 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
   }
   if (candidate.gatewayUsage !== undefined && !gatewayUsageErrorEvidenceSchema.safeParse(candidate.gatewayUsage).success) return null;
   if (candidate.providerId !== undefined && candidate.providerId !== null && typeof candidate.providerId !== "string") return null;
+  const authorization = candidate.gatewayAuthorization;
+  if (authorization !== undefined && authorization !== null
+    && (typeof authorization !== "object" || typeof authorization.cloudProviderId !== "string" || typeof authorization.credentialSetId !== "string"
+      || (authorization.providerHint !== undefined && typeof authorization.providerHint !== "string"))) return null;
   return candidate as OpencodeSessionErrorPresentation;
 }
