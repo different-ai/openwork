@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Freestyle } from "freestyle";
-import { compiledFingerprint, dependencyFingerprint, ensureLayer, sourceTree, type BuildStage } from "../src/cache.ts";
+import { compiledFingerprint, dependencyFingerprint, ensureLayer, sourceTree, startBuildUnit, type BuildStage } from "../src/cache.ts";
 
 const sha = "a".repeat(40);
 const entry = (path: string, hash = sha) => ({ path, sha: hash, type: "blob" });
@@ -85,4 +85,23 @@ test("compiled cache invalidates shared code, tools and config but not interpret
     if (["apps/app/", "ee/apps/den-web/", "ee/apps/den-api/"].some((prefix) => item.path.startsWith(prefix))) assert.equal(changed, original, item.path);
     else assert.notEqual(changed, original, item.path);
   }
+});
+
+
+test("an interrupted build launch is retried through a guarded unit, and bounded", async () => {
+  let calls = 0;
+  let alwaysInterrupted = false;
+  const api = new Freestyle({ apiKey: "synthetic", fetch: async (_input, init) => {
+    calls++;
+    const body = JSON.parse(String(init?.body));
+    assert.match(body.command, /test -f .*world.ready/);
+    assert.match(body.command, /systemctl is-active --quiet openwork-world.service/);
+    return Response.json({ statusCode: alwaysInterrupted || calls === 1 ? null : 0, stdout: "" });
+  } });
+  await startBuildUnit(api.vms.ref("builder"), "world");
+  assert.equal(calls, 2);
+  calls = 0;
+  alwaysInterrupted = true;
+  await assert.rejects(startBuildUnit(api.vms.ref("builder"), "world"), /could not start after resume/);
+  assert.equal(calls, 3);
 });

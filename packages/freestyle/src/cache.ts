@@ -113,3 +113,21 @@ export function compiledFingerprint(entries: SourceEntry[]): string {
   return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && !runtimeSource.test(entry.path))
     .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha }) => [path, sha])));
 }
+
+
+/** An interrupted response must not start a second build in the resumed guest. */
+export async function startBuildUnit(vm: Vm, stage: string, diagnostic?: (stage: string, log: string) => Promise<void>): Promise<void> {
+  if (!/^[a-z-]+$/.test(stage)) throw new Error("Invalid build stage");
+  const root = `/opt/openwork-preview/${stage}`;
+  const command = `if test -f ${root}.ready || test -f ${root}.failed || systemctl is-active --quiet openwork-${stage}.service; then exit 0; fi; systemd-run --collect --unit=openwork-${stage} /bin/bash ${root}.sh`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await vm.exec({ command, timeoutMs: 30_000, linuxUser: "root" });
+    if (result.statusCode === 0) return;
+    if (result.statusCode !== null) {
+      if (diagnostic) await diagnostic(stage, `${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+      throw new Error(`Could not start snapshot ${stage} unit (${result.statusCode})`);
+    }
+    await delay(250);
+  }
+  throw new Error(`Snapshot ${stage} unit could not start after resume`);
+}

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Vm } from "freestyle";
 import { client, execChecked, findSnapshot, snapshotSlug, type PreviewWorld } from "./index.ts";
-import { compiledFingerprint, dependencyFingerprint, dependencyInput, digest, ensureLayer, sourceTree, type ObserveBuild } from "./cache.ts";
+import { compiledFingerprint, dependencyFingerprint, dependencyInput, digest, ensureLayer, sourceTree, startBuildUnit, type ObserveBuild } from "./cache.ts";
 import { checkoutRecipe, compiledRecipe, dependencyRecipe, toolsRecipe } from "./build-recipes.ts";
 
 export interface BuildOptions {
@@ -23,10 +23,15 @@ export pnpm_config_verify_deps_before_run=false
 ${script}
 touch ${root}.ready
 `);
-  await execChecked(vm, `systemd-run --collect --unit=openwork-${stage} /bin/bash ${root}.sh`);
+  await startBuildUnit(vm, stage, options.diagnostic);
   const deadline = Date.now() + 11 * 60_000;
   while (Date.now() < deadline) {
-    const state = (await execChecked(vm, `if test -f ${root}.failed; then echo failed; elif test -f ${root}.ready; then echo ready; else echo building; fi`)).trim();
+    const probe = await vm.exec({ command: `if test -f ${root}.failed; then echo failed; elif test -f ${root}.ready; then echo ready; else echo building; fi`, timeoutMs: 10_000, linuxUser: "root" });
+    // Guest exec can be interrupted while a cloned VM finishes resuming. This
+    // read-only probe is safe to repeat; it never launches another build.
+    if (probe.statusCode === null) { await delay(500); continue; }
+    if (probe.statusCode !== 0) throw new Error(`Snapshot ${stage} status probe failed (${probe.statusCode})`);
+    const state = (probe.stdout ?? "").trim();
     if (state === "ready") return;
     if (state === "failed") {
       if (options.diagnostic) {

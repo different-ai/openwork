@@ -306,7 +306,7 @@ async function runDbPush(databaseUrl: string, schema: "push" | "migrate" = "push
     const stderr = typeof error === "object" && error !== null && typeof Reflect.get(error, "stderr") === "string"
       ? Reflect.get(error, "stderr")
       : "";
-    throw new Error(`Ephemeral Den database ${schema} failed: ${messageText(error)}${stderr ? `\n${stderr}` : ""}`);
+    throw new Error(`Ephemeral Den database ${schema} failed: ${messageText(error)}${stderr ? `\n${stderr}` : ""}\n${childOutput(error, "stdout")}`);
   }
 }
 
