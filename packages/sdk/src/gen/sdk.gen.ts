@@ -4158,9 +4158,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Get my native Auto credential
+   * Get my free Auto credential
    *
-   * Issues or reuses a member-only free Auto credential. It cannot authorize paid or customer-key inference and requires native request proof at the gateway.
+   * Issues or reuses the member's OpenWork Models key for an organization without a Models subscription. Until the organization subscribes, the Gateway serves only free Auto on it, within the member's weekly allowance. Subscribed organizations and admin opt-outs are refused.
    */
   public postV1InferenceFreeCredential<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<

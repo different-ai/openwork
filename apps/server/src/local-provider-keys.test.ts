@@ -13,7 +13,7 @@ async function fixture(run: (keys: LocalProviderKeys, env: EnvService, config: S
   process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
   const config: ServerConfig = {
     host: "127.0.0.1", port: 9876, token: "fixture-client", hostToken: "fixture-host", configPath: join(root, "server.json"), approval: { mode: "auto", timeoutMs: 0 }, corsOrigins: [], workspaces: [], authorizedRoots: [root], readOnly: false, startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated", logFormat: "pretty", logRequests: false,
-    anonymousInference: { desktop: { currentVersion: "0.20.0", identity: async () => ({ installationId: "fixture-installation", publicKey: "fixture-public-key", appVersion: "0.20.0", platform: "darwin", arch: "arm64" }), sign: async () => "fixture-proof" } },
+    anonymousInference: { desktop: { currentVersion: "0.20.0", identity: async () => ({ machineId: "c".repeat(64), publicKey: "fixture-public-key", appVersion: "0.20.0", platform: "darwin", arch: "arm64" }), sign: async () => "fixture-proof" } },
   };
   const env = new EnvService({ path: join(root, "env.json") });
   try { await run(new LocalProviderKeys(config, env), env, config); }

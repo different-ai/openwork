@@ -8,15 +8,20 @@ export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
 export const DESKTOP_FREE_STATUS_PATH = "/api/anonymous/status";
 export const DESKTOP_FREE_MODELS_PATH = "/api/anonymous/v1/models";
 export const DESKTOP_FREE_CHAT_PATH = "/api/anonymous/v1/chat/completions";
-export const MEMBER_FREE_STATUS_PATH = "/api/free/status";
-export const MEMBER_FREE_MODELS_PATH = "/api/free/v1/models";
-export const MEMBER_FREE_CHAT_PATH = "/api/free/v1/chat/completions";
+// Signed-in members use their OpenWork Models key on the regular inference routes.
+export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
+export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
+export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";
 export const DESKTOP_FREE_PROOF_MAX_BYTES = 2048;
 export const DESKTOP_FREE_PROOF_CLOCK_SKEW_MS = 60_000;
 
+/** SHA-256 hex of the OS machine identifier, salted per product; stable across reinstalls. */
+export const DESKTOP_FREE_MACHINE_ID_PATTERN = /^[a-f0-9]{64}$/;
+
 export type DesktopFreeProofClaims = {
-  version: 1;
+  version: 2;
   publicKey: string;
+  machineId: string;
   appVersion: string;
   platform: "darwin" | "win32" | "linux";
   arch: "arm64" | "x64";
@@ -29,8 +34,8 @@ export function desktopFreeProofMessage(input: DesktopFreeProofClaims & {
   method: string; path: string; bodyHash: string; authorizationHash: string;
 }): string {
   return JSON.stringify([
-    1, input.method.toUpperCase(), input.path, input.bodyHash,
-    input.authorizationHash, input.publicKey, input.appVersion, input.platform,
+    2, input.method.toUpperCase(), input.path, input.bodyHash,
+    input.authorizationHash, input.publicKey, input.machineId, input.appVersion, input.platform,
     input.arch, input.timestamp, input.nonce,
   ]);
 }

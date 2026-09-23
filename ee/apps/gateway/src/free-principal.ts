@@ -1,50 +1,55 @@
-import { freeCredentialDigest, freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
+import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceFreeKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { InferenceKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
-import { freeInferenceOrganizationAllowed, freeInferenceDefaultPinned } from "@openwork/types/den/inference"
+import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed, inferenceSubscribed } from "@openwork/types/den/inference"
 import { db } from "./db.js"
 
-type MemberPrincipal = { kind: "member"; id: NonNullable<typeof MemberTable.$inferSelect.userId>;
-  keyId: string; memberId: typeof MemberTable.$inferSelect.id; organizationId: typeof OrganizationTable.$inferSelect.id }
-export type FreePrincipal = MemberPrincipal | { kind: "installation"; id: string }
+type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
+/** Signed-out desktop: the id is the keyed hash of the machine identifier. */
+export type GuestPrincipal = { kind: "installation"; id: string }
+/** Signed-in, unsubscribed member using their OpenWork Models key. The allowance is per person. */
+export type MemberPrincipal = { kind: "member"; id: NonNullable<typeof MemberTable.$inferSelect.userId>;
+  inferenceKeyId: InferenceKeyRow["id"]; memberId: InferenceKeyRow["org_membership_id"]; organizationId: InferenceKeyRow["organization_id"] }
+export type FreePrincipal = GuestPrincipal | MemberPrincipal
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 export const freeIdentityHash = freeInferenceDigest
 export function freePrincipalHash(principal: FreePrincipal) { return freeIdentityHash(principal.kind, principal.id) }
 
-export async function findMemberFreePrincipal(bearer: string, database: Database = db): Promise<MemberPrincipal | null> {
-  if (!/^ow_auto_[A-Za-z0-9_-]{43}$/.test(bearer)) return null
-  const [key] = await database.select().from(InferenceFreeKeyTable)
-    .where(and(eq(InferenceFreeKeyTable.key_hash, await freeCredentialDigest(bearer)), isNull(InferenceFreeKeyTable.revoked_at))).limit(1)
-  if (!key) return null
-  const principal: MemberPrincipal = { kind: "member", id: key.user_id, keyId: key.id,
-    memberId: key.org_membership_id, organizationId: key.organization_id }
-  return await memberFreePrincipalAllowed(principal, database) ? principal : null
+async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenceKeyId" | "memberId" | "organizationId">, database: Database) {
+  const [row] = await database.select({ userId: MemberTable.userId, metadata: OrganizationTable.metadata }).from(InferenceKeyTable)
+    .innerJoin(MemberTable, and(eq(MemberTable.id, InferenceKeyTable.org_membership_id), eq(MemberTable.organizationId, InferenceKeyTable.organization_id)))
+    .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
+    .where(and(eq(InferenceKeyTable.id, principal.inferenceKeyId), eq(InferenceKeyTable.status, "active"),
+      eq(MemberTable.id, principal.memberId), eq(OrganizationTable.id, principal.organizationId),
+      isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt), isNotNull(MemberTable.userId))).limit(1)
+  return row
 }
 
-async function memberFreePrincipalRow(principal: MemberPrincipal, database: Database) {
-  const [row] = await database.select({ metadata: OrganizationTable.metadata }).from(InferenceFreeKeyTable)
-    .innerJoin(MemberTable, and(eq(MemberTable.id, InferenceFreeKeyTable.org_membership_id), eq(MemberTable.organizationId, InferenceFreeKeyTable.organization_id), eq(MemberTable.userId, InferenceFreeKeyTable.user_id)))
-    .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
-    .where(and(eq(InferenceFreeKeyTable.id, principal.keyId), eq(InferenceFreeKeyTable.user_id, principal.id),
-      eq(MemberTable.id, principal.memberId), eq(OrganizationTable.id, principal.organizationId),
-      isNull(InferenceFreeKeyTable.revoked_at), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt),
-      eq(InferenceFreeKeyTable.membership_joined_at, MemberTable.joinedAt))).limit(1)
-  return row
+/** Free Auto is only for joined members of unsubscribed organizations that have not opted out. */
+function freeOrganization(metadata: Record<string, unknown> | null) {
+  if (inferenceSubscribed(metadata) || !freeInferenceOrganizationAllowed(metadata)) return false
+  assertManagedModelsAllowed(metadata)
+  return true
+}
+
+export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: Database = db): Promise<MemberPrincipal | null> {
+  const identity = { inferenceKeyId: key.id, memberId: key.org_membership_id, organizationId: key.organization_id }
+  const row = await memberFreePrincipalRow(identity, database)
+  if (!row?.userId || !freeOrganization(row.metadata)) return null
+  return { kind: "member", id: row.userId, ...identity }
 }
 
 export async function memberFreePrincipalAllowed(principal: FreePrincipal, database: Database = db): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
-  if (!row || !freeInferenceOrganizationAllowed(row.metadata)) return false
-  assertManagedModelsAllowed(row.metadata)
-  return true
+  return Boolean(row && row.userId === principal.id && freeOrganization(row.metadata))
 }
 
+/** Whether the organization pins Auto for its members. Guests always see Auto pinned. */
 export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = db): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
-  if (!row || !freeInferenceOrganizationAllowed(row.metadata)) throw new Error("free_principal_rejected")
-  assertManagedModelsAllowed(row.metadata)
+  if (!row || row.userId !== principal.id || !freeOrganization(row.metadata)) throw new Error("free_principal_rejected")
   return freeInferenceDefaultPinned(row.metadata)
 }

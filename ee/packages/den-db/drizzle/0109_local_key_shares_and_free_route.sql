@@ -11,6 +11,6 @@ CREATE TABLE `gateway_local_key_shares` (
 	CONSTRAINT `gateway_local_key_share_request` UNIQUE(`organization_id`,`org_membership_id`,`request_id`)
 );
 --> statement-breakpoint
-ALTER TABLE `inference_free_reservations` ADD `organization_id` varchar(64);--> statement-breakpoint
-CREATE INDEX `gateway_local_key_share_provider` ON `gateway_local_key_shares` (`gateway_provider_id`);--> statement-breakpoint
-CREATE INDEX `inference_free_reservation_org_created` ON `inference_free_reservations` (`organization_id`,`created_at`);
+ALTER TABLE `gateway_request_logs` MODIFY COLUMN `route` enum('openwork_openrouter','org_provider','openwork_free') NOT NULL;--> statement-breakpoint
+ALTER TABLE `gateway_usage_rollups` MODIFY COLUMN `route` enum('openwork_openrouter','org_provider','openwork_free') NOT NULL;--> statement-breakpoint
+CREATE INDEX `gateway_local_key_share_provider` ON `gateway_local_key_shares` (`gateway_provider_id`);

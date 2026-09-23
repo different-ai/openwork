@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test"
-import { freeCredentialDigest, freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
+import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { InferenceFreeKeyTable } from "@openwork-ee/den-db/schema"
+import { InferenceKeyTable } from "@openwork-ee/den-db/schema"
 import { readFreeInferenceConfig, freeInferenceDefaultPinned, withFreeInferenceDefaultPinned, freeInferenceOrganizationAllowed, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
+import { inferenceBearerKey, inferenceBearerKeyStorageDigest } from "@openwork-ee/utils/inference-bearer-key"
 
 type Query = { from: () => Query; innerJoin: () => Query; leftJoin: () => Query; where: () => Query; limit: () => Query;
   for: () => Promise<unknown[]>; then: Promise<unknown[]>["then"] }
@@ -48,29 +49,36 @@ test("disabled enrollment issues no key and touches no free tables", async () =>
   expect(writes).toEqual([])
 })
 
-test("joined member gets a dedicated Auto credential without paid or BYOK provisioning", async () => {
+test("joined member of an unsubscribed organization gets an OpenWork Models key for the regular routes", async () => {
   results = [[{ metadata: {} }], [person], []]
   const credential = await ensureMemberFreeInferenceCredential(input)
-  expect(credential?.apiKey).toMatch(/^ow_auto_[A-Za-z0-9_-]{43}$/)
-  expect(credential?.baseURL).toBe("https://inference.example.test/api/free/v1")
-  expect(credential?.statusURL).toBe("https://inference.example.test/api/free/status")
+  expect(credential?.apiKey).toMatch(/^ow_inf_/)
+  expect(credential?.baseURL).toBe("https://inference.example.test/api/v1")
+  expect(credential?.statusURL).toBe("https://inference.example.test/api/v1/auto/status")
   expect(writes).toHaveLength(1)
-  expect(writes[0].table).toBe(InferenceFreeKeyTable)
-  expect(writes[0].value).toMatchObject({ user_id: input.userId, org_membership_id: input.memberId, membership_joined_at: joinedAt })
+  expect(writes[0].table).toBe(InferenceKeyTable)
+  expect(writes[0].value).toMatchObject({ organization_id: input.organizationId, org_membership_id: input.memberId, status: "active" })
 })
 
-test("credential issuance preserves a valid member key and rotates an old join epoch", async () => {
-  const apiKey = `ow_auto_${"a".repeat(43)}`
-  const existing = { id: "existing-free-key", user_id: input.userId, organization_id: input.organizationId,
-    org_membership_id: input.memberId, membership_joined_at: joinedAt, encrypted_key: apiKey,
-    key_hash: await freeCredentialDigest(apiKey), revoked_at: null }
+test("credential issuance reuses the member's active key and rotates a key that no longer matches", async () => {
+  const apiKey = `ow_inf_${"a".repeat(43)}`
+  const existing = { id: "existing-key", encryptedKey: apiKey, keyHash: await inferenceBearerKeyStorageDigest(inferenceBearerKey(apiKey)) }
   results = [[{ metadata: {} }], [person], [existing]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toBe(apiKey)
   expect(writes).toEqual([])
-  results = [[{ metadata: {} }], [{ ...person, joinedAt: now }], [existing]]
+  results = [[{ metadata: {} }], [person], [{ ...existing, keyHash: "stale" }]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).not.toBe(apiKey)
-  expect(writes).toHaveLength(1)
-  expect(writes[0].table).toBe(InferenceFreeKeyTable)
+  expect(writes.map((write) => write.table)).toEqual([InferenceKeyTable, InferenceKeyTable])
+  expect(writes[0].value).toMatchObject({ status: "revoked" })
+})
+
+test("subscribed organizations use paid Models instead of free Auto", async () => {
+  const subscribed = { inference: { enabled: true, tier: "tier1" } }
+  results = [[{ metadata: subscribed }]]
+  expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
+  results = [[{ metadata: subscribed, nowMs: now.getTime() }]]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "paid", modelID: null, remainingUsd: null })
+  expect(writes).toEqual([])
 })
 
 test("DPA policy rejects provisioning and status without touching paid credentials", async () => {

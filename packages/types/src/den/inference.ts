@@ -125,7 +125,6 @@ export const INFERENCE_FREE_ENV = {
   enabled: "INFERENCE_FREE_ENABLED",
   weeklyBudgetUsd: "INFERENCE_FREE_WEEKLY_BUDGET_USD",
   modelID: "INFERENCE_FREE_MODEL_ID",
-  upstreamApiKey: "INFERENCE_FREE_UPSTREAM_API_KEY",
 } as const;
 
 export type FreeInferenceConfig = {
@@ -228,6 +227,12 @@ export function managedModelCatalog(): ManagedModelRecommendation[] {
     summary: "Free automatic model", recommended: true, rank: 1, capabilities: ["tools"] }];
 }
 
+/** Subscribed organizations use paid OpenWork Models; free Auto is only for unsubscribed members. */
+export function inferenceSubscribed(metadata: unknown): boolean {
+  const inference = readOrganizationMetadata(metadata).inference;
+  return typeof inference === "object" && inference !== null && "enabled" in inference && inference.enabled === true;
+}
+
 export function freeInferenceOrganizationAllowed(metadata: unknown): boolean {
   const parsed = readOrganizationMetadata(metadata);
   const inference = parsed.inference;
@@ -285,7 +290,8 @@ export const INFERENCE_PROVIDER_CREDENTIAL_STATUSES = [
 export type InferenceProviderCredentialStatus =
   (typeof INFERENCE_PROVIDER_CREDENTIAL_STATUSES)[number];
 
-export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider"] as const;
+// openwork_free: signed-in members' free Auto, served from the dedicated OpenAI key.
+export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider", "openwork_free"] as const;
 export type InferenceRequestRoute = (typeof INFERENCE_REQUEST_ROUTES)[number];
 
 export const INFERENCE_REQUEST_PROTOCOLS = [

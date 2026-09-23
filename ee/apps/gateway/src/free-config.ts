@@ -1,6 +1,9 @@
 import { INFERENCE_USAGE_CONVERSION_FACTOR, readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_RELEASE_URL } from "./desktop-free-version.js"
 
+export const FREE_OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+const DEFAULT_FREE_OPENAI_MODEL = "gpt-5.6-luna"
+
 export function readAutoConfig(environment: Record<string, string | undefined>) {
   const member = readFreeInferenceConfig(environment)
   const integer = (name: string, fallback: number, min: number, max: number) => {
@@ -16,28 +19,33 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
   const deviceWeeklyAmount = integer("ANONYMOUS_INSTALL_WEEKLY_MICRO_USD", 1000000, 1, 100000000) * 100
   if (member.enabled && member.weeklyLimitAmount <= deviceWeeklyAmount) throw new Error("Member free budget must exceed the device budget")
-  const apiKey = environment.INFERENCE_FREE_UPSTREAM_API_KEY?.trim() || environment.ANONYMOUS_OPENROUTER_API_KEY?.trim() || ""
-  const provider = environment.ANONYMOUS_OPENROUTER_PROVIDER?.trim() || ""
-  const byokOnly = flag("ANONYMOUS_OPENROUTER_BYOK_ONLY_VERIFIED")
+  // One dedicated OpenAI key serves every free request. Revoking it at OpenAI is
+  // the kill switch, and its OpenAI usage page is the true cost over time.
+  const apiKey = environment.INFERENCE_FREE_OPENAI_API_KEY?.trim() || ""
+  const upstreamModel = environment.INFERENCE_FREE_OPENAI_MODEL?.trim() || DEFAULT_FREE_OPENAI_MODEL
+  if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(upstreamModel)) throw new Error("Invalid INFERENCE_FREE_OPENAI_MODEL")
   const tokenSecret = environment.ANONYMOUS_TOKEN_SECRET?.trim() || ""
   const accountingIdentityKey = environment.ANONYMOUS_ACCOUNTING_IDENTITY_KEY?.trim() || ""
-  const ready = Boolean(apiKey && provider && byokOnly && accountingIdentityKey.length >= 32)
+  const ready = Boolean(apiKey && accountingIdentityKey.length >= 32)
   return {
     member, memberEnabled: member.enabled && ready,
     anonymousEnabled: flag("ANONYMOUS_INFERENCE_ENABLED") && ready && tokenSecret.length >= 32 && tokenSecret !== accountingIdentityKey,
-    apiKey, provider, tokenSecret, accountingIdentityKey,
+    apiKey, upstreamModel, tokenSecret, accountingIdentityKey,
     versionUrl: environment.DESKTOP_FREE_APP_VERSION_URL ?? DESKTOP_FREE_RELEASE_URL,
     deviceWeeklyAmount,
     ipDailyAmount: integer("ANONYMOUS_IP_DAILY_MICRO_USD", 5000000, 1, 100000000) * 100,
     globalDailyAmount: integer("ANONYMOUS_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
     globalMonthlyAmount: integer("ANONYMOUS_GLOBAL_MONTHLY_MICRO_USD", 3000000000, 1, 10000000000) * 100,
+    memberGlobalDailyAmount: integer("INFERENCE_FREE_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
+    memberGlobalMonthlyAmount: integer("INFERENCE_FREE_GLOBAL_MONTHLY_MICRO_USD", 3000000000, 1, 10000000000) * 100,
     globalInflight: integer("ANONYMOUS_GLOBAL_INFLIGHT", 20, 1, 1000),
     tokenTtlSeconds: integer("ANONYMOUS_TOKEN_TTL_SECONDS", 3600, 60, 86400),
     requestTimeoutMs: integer("ANONYMOUS_REQUEST_TIMEOUT_MS", 60000, 1000, 300000),
     maxInputTokens: integer("ANONYMOUS_MAX_INPUT_TOKENS", 131072, 4096, 131072),
     maxCompletionTokens: integer("ANONYMOUS_MAX_COMPLETION_TOKENS", 4096, 1, 16384),
-    maxInputPrice: integer("ANONYMOUS_MAX_INPUT_PRICE_MICRO_USD_PER_MILLION", 250000, 1, 100000000) / 1000000,
-    maxCompletionPrice: integer("ANONYMOUS_MAX_COMPLETION_PRICE_MICRO_USD_PER_MILLION", 1200000, 1, 100000000) / 1000000,
+    // OpenAI list prices for the free model, in USD per million tokens.
+    inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 250000, 1, 100000000) / 1000000,
+    outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 1200000, 1, 100000000) / 1000000,
     maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 262144, 1024, 1048576),
     maxResponseBytes: integer("ANONYMOUS_MAX_RESPONSE_BYTES", 2097152, 16384, 16777216),
     trustProxyHops: integer("ANONYMOUS_TRUST_PROXY_HOPS", 0, 0, 8),
@@ -45,7 +53,11 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
 }
 export type AutoConfig = ReturnType<typeof readAutoConfig>
+type Prices = Pick<AutoConfig, "inputPrice" | "outputPrice">
+/** Cost of a completion from OpenAI's token counts, rounded up to the accounting unit. */
+export function freeUsageAmount(config: Prices, inputTokens: number, outputTokens: number) {
+  return Math.ceil((inputTokens * config.inputPrice + outputTokens * config.outputPrice) * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000)
+}
 export function freeRequestReservation(config: AutoConfig) {
-  return Math.ceil((config.maxInputTokens * config.maxInputPrice + config.maxCompletionTokens * config.maxCompletionPrice)
-    * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000 * 1.1)
+  return Math.ceil(freeUsageAmount(config, config.maxInputTokens, config.maxCompletionTokens) * 1.1)
 }

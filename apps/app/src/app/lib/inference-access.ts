@@ -11,7 +11,8 @@ export const desktopFreeAccessStatusSchema = z.object({
   modelID: z.string(),
   allowance: z.object({ resetsAt: z.string(), limitUsd: z.number().finite().nonnegative(), usedUsd: z.number().finite().nonnegative(), reservedUsd: z.number().finite().nonnegative(), remainingUsd: z.number().finite().nonnegative() }).nullable(),
   defaultPinned: z.boolean().optional(),
-}).refine((status) => status.state !== "ready" || Boolean(status.minimumVersion?.trim() && status.allowance), "Ready Auto access requires a verified status");
+  // The desktop server has already verified the version floor for guests; signed-in members have none.
+}).refine((status) => status.state !== "ready" || Boolean(status.allowance), "Ready Auto access requires a verified allowance");
 export type DesktopFreeAccessStatus = z.infer<typeof desktopFreeAccessStatusSchema>;
 export const autoAccessWallSchema = z.object({ state: z.enum(["limit", "update", "unavailable", "sync"]), resetsAt: z.string().optional(), minimumVersion: z.string().optional() });
 export type AutoAccessWall = z.infer<typeof autoAccessWallSchema>;

@@ -30,6 +30,7 @@ import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./rel
 import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
+import type { FreeMemberHandler } from "./free-member.js"
 import type { ParsedUsage } from "./usage/shared.js"
 
 type JsonObject = Record<string, unknown>
@@ -85,7 +86,13 @@ const defaultProxyDependencies: ProxyDependencies = {
   },
   loadOrganization: loadOrganizationFromDb,
   insertRequestLog: insertRequestLogIntoDb,
+  async freeMember(c, key) {
+    const { createFreeMemberHandler } = await import("./free-member.js")
+    freeMemberHandler ??= createFreeMemberHandler()
+    return freeMemberHandler(c, key)
+  },
 }
+let freeMemberHandler: FreeMemberHandler | undefined
 
 type ProxyDependencies = {
   findActiveGatewayKey?: typeof findActiveGatewayKey
@@ -100,6 +107,8 @@ type ProxyDependencies = {
   reporter?: InferenceReporter
   analytics?: typeof beginModelAnalytics
   gateway?: Partial<GatewayDependencies>
+  /** Serves free Auto to members of organizations without an OpenWork Models subscription. */
+  freeMember?: FreeMemberHandler
 }
 
 function isJsonRequest(request: Request) {
@@ -513,6 +522,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const inferenceKey = identity.key
     const inference = c.get("organization")?.metadata?.inference
     if (!isJsonObject(inference) || inference.enabled !== true) {
+      if (dependencies.freeMember) return dependencies.freeMember(c, inferenceKey)
       return openAiError(403, "inference_disabled", "OpenWork Models are not enabled for this organization.")
     }
 

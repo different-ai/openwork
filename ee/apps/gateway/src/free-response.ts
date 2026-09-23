@@ -1,28 +1,32 @@
-import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
+import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import type { FreeUsageReceipt } from "./free-allowance.js"
+import { freeUsageAmount, type AutoConfig } from "./free-config.js"
 
+export type FreeMeterConfig = Pick<AutoConfig, "upstreamModel" | "inputPrice" | "outputPrice">
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
 function nonnegative(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 }
-export function readFreeUsage(value: unknown, eventId: string): FreeUsageReceipt | null {
-  if (!record(value) || !record(value.usage) || value.model !== INFERENCE_FREE_MODEL_ID) return null
+/** OpenAI reports a dated snapshot (for example `gpt-5.6-luna-2026-08-01`) of the requested model. */
+export function isFreeUpstreamModel(value: unknown, config: FreeMeterConfig) {
+  return typeof value === "string" && (value === config.upstreamModel || value.startsWith(`${config.upstreamModel}-`))
+}
+export function readFreeUsage(value: unknown, eventId: string, config: FreeMeterConfig): FreeUsageReceipt | null {
+  if (!record(value) || !record(value.usage) || !isFreeUpstreamModel(value.model, config)) return null
   const usage = value.usage
-  if (typeof usage.cost !== "number" || !Number.isFinite(usage.cost) || usage.cost < 0 || usage.is_byok !== true
-    || !record(usage.cost_details) || typeof usage.cost_details.upstream_inference_cost !== "number"
-    || !Number.isFinite(usage.cost_details.upstream_inference_cost) || usage.cost_details.upstream_inference_cost < 0
-    || !nonnegative(usage.prompt_tokens) || !nonnegative(usage.completion_tokens)) return null
-  const amount = Math.ceil((usage.cost + usage.cost_details.upstream_inference_cost) * INFERENCE_USAGE_CONVERSION_FACTOR)
-  if (!nonnegative(amount)) return null
+  if (!nonnegative(usage.prompt_tokens) || !nonnegative(usage.completion_tokens)) return null
   if (record(usage.completion_tokens_details) && usage.completion_tokens_details.reasoning_tokens !== undefined
     && (!nonnegative(usage.completion_tokens_details.reasoning_tokens) || usage.completion_tokens_details.reasoning_tokens > usage.completion_tokens)) return null
+  const amount = freeUsageAmount(config, usage.prompt_tokens, usage.completion_tokens)
+  if (!nonnegative(amount)) return null
   return { amount, eventId, model: INFERENCE_FREE_MODEL_ID, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens }
 }
 function publicResponse(value: Record<string, unknown>) {
-  if (!record(value.usage)) return value
+  const result: Record<string, unknown> = { ...value, model: INFERENCE_FREE_MODEL_ID }
+  if (!record(value.usage)) return result
   const usage: Record<string, number> = {}
   for (const name of ["prompt_tokens", "completion_tokens", "total_tokens"]) {
     if (nonnegative(value.usage[name])) usage[name] = value.usage[name]
   }
-  return { ...value, usage }
+  return { ...result, usage }
 }
 
 export class FreeResponseReceipt {
@@ -32,6 +36,7 @@ export class FreeResponseReceipt {
   private sawModel = false
   private invalidUsage = false
   done = false
+  constructor(private readonly config: FreeMeterConfig) {}
   accept(value: unknown): Record<string, unknown> {
     if (this.done || !record(value) || value.error != null || !Array.isArray(value.choices) || value.choices.length > 1) throw new Error("Incomplete Auto response")
     if (value.id !== undefined) {
@@ -39,7 +44,7 @@ export class FreeResponseReceipt {
       this.id = value.id
     }
     if (value.model !== undefined) {
-      if (value.model !== INFERENCE_FREE_MODEL_ID) throw new Error("Mismatched Auto model")
+      if (!isFreeUpstreamModel(value.model, this.config)) throw new Error("Mismatched Auto model")
       this.sawModel = true
     }
     for (const choice of value.choices) {
@@ -51,7 +56,7 @@ export class FreeResponseReceipt {
       }
     }
     if (this.terminal && this.id && this.sawModel && record(value.usage)) {
-      const receipt = readFreeUsage({ ...value, model: INFERENCE_FREE_MODEL_ID }, this.id)
+      const receipt = readFreeUsage(value, this.id, this.config)
       if (receipt && this.receipt && JSON.stringify(receipt) !== JSON.stringify(this.receipt)) throw new Error("Conflicting Auto usage")
       if (receipt) this.receipt = receipt
       else this.invalidUsage = true
@@ -66,13 +71,13 @@ export class FreeResponseReceipt {
 }
 
 export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
-  streaming: boolean; maxBytes: number; signal: AbortSignal;
+  config: FreeMeterConfig; streaming: boolean; maxBytes: number; signal: AbortSignal;
   settle: (receipt: FreeUsageReceipt | null) => Promise<void>;
 }) {
   const reader = body.getReader()
   const decoder = new TextDecoder("utf-8", { fatal: true })
   const encoder = new TextEncoder()
-  const receipt = new FreeResponseReceipt()
+  const receipt = new FreeResponseReceipt(input.config)
   let pending = "", data: string[] = [], bytes = 0, closed = false
   let settlement: Promise<void> | null = null
   const settle = (value: FreeUsageReceipt | null) => settlement ??= input.settle(value).catch(() => undefined)

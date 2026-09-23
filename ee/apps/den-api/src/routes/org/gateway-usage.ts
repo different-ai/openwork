@@ -74,7 +74,7 @@ function checkCardinality(size: number, limit: number) {
 /** OpenWork Models (hosted models and free Auto) reports alongside the organization's own Gateway providers (Paper: Gateway grid). */
 const OPENWORK_MODELS_OPTION_ID = "openwork"
 const OPENWORK_MODELS_LABEL = "OpenWork Models"
-const USAGE_ROUTES = ["org_provider", "openwork_openrouter"] as const
+const USAGE_ROUTES = ["org_provider", "openwork_openrouter", "openwork_free"] as const
 
 const labelOrder = (left: GatewayUsageOption, right: GatewayUsageOption) => left.label.localeCompare(right.label, "en") || left.id.localeCompare(right.id, "en")
 
@@ -159,12 +159,12 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   function dimensions(table: typeof raw | typeof rollup, timestamp: typeof raw.started_at | typeof rollup.bucket_start) {
     // Epoch arithmetic gives UTC calendar dates even if a DB session is not UTC.
     const date = sql<string>`date_format(timestampadd(day, floor(unix_timestamp(${timestamp}) / 86400), '1970-01-01'), '%Y-%m-%d')`.as("usage_date")
-    const filterId = (query.groupBy === "model" ? sql<string | null>`coalesce(${table.gateway_provider_id}, case when ${table.route} = 'openwork_openrouter' then ${OPENWORK_MODELS_OPTION_ID} end)`
+    const filterId = (query.groupBy === "model" ? sql<string | null>`coalesce(${table.gateway_provider_id}, case when ${table.route} in ('openwork_openrouter', 'openwork_free') then ${OPENWORK_MODELS_OPTION_ID} end)`
       : sql<string | null>`${table.org_membership_id}`).as("filter_id")
     // Hex encodes the exact family/model tuple, independent of DB collation,
     // configured instances, request aliases, model groups and credential sets.
-    // OpenWork Models is its own family so it never merges with an organization's own OpenRouter provider.
-    const family = sql<string>`case when ${table.route} = 'openwork_openrouter' then ${OPENWORK_MODELS_OPTION_ID} else ${table.upstream_provider_id} end`
+    // OpenWork Models (paid and free Auto) is its own family so it never merges with an organization's own providers.
+    const family = sql<string>`case when ${table.route} in ('openwork_openrouter', 'openwork_free') then ${OPENWORK_MODELS_OPTION_ID} else ${table.upstream_provider_id} end`
     const seriesId = (query.groupBy === "model"
       ? sql<string>`concat('model:', hex(${family}), ':', coalesce(hex(${table.upstream_model}), '~'))`
       : sql<string>`${table.org_membership_id}`).as("series_id")

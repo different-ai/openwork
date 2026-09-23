@@ -65,7 +65,7 @@ function generatedModel(id = ANONYMOUS_INFERENCE_MODEL_ID) {
 
 export function isOwnedProvider(value: unknown): boolean {
   if (!isRecord(value) || !hasExactKeys(value, ["name", "npm", "options", "models"])
-    || value.name !== ANONYMOUS_INFERENCE_PROVIDER_NAME || value.npm !== "@openrouter/ai-sdk-provider"
+    || value.name !== ANONYMOUS_INFERENCE_PROVIDER_NAME || value.npm !== "@ai-sdk/openai-compatible"
     || !isRecord(value.options) || !hasExactKeys(value.options, ["apiKey", "baseURL"])
     || typeof value.options.apiKey !== "string" || !/^owf_local_[A-Za-z0-9_-]{43}$/.test(value.options.apiKey)
     || typeof value.options.baseURL !== "string" || !/^http:\/\/127\.0\.0\.1:\d+\/anonymous-inference\/v1$/.test(value.options.baseURL)
@@ -238,7 +238,7 @@ export class AnonymousInferenceService {
         }
         const payload: unknown = JSON.parse(new TextDecoder().decode(bytes));
         const credential = isRecord(payload) ? payload.credential : null;
-        if (!isRecord(credential) || typeof credential.apiKey !== "string" || !/^ow_auto_[A-Za-z0-9_-]{43}$/.test(credential.apiKey)
+        if (!isRecord(credential) || typeof credential.apiKey !== "string" || !/^ow_inf_[A-Za-z0-9_-]{43}$/.test(credential.apiKey)
           || credential.modelID !== DESKTOP_FREE_MODEL_ID
           || credential.baseURL !== `${this.origin}${MEMBER_FREE_MODELS_PATH.slice(0, -"/models".length)}`
           || credential.statusURL !== `${this.origin}${MEMBER_FREE_STATUS_PATH}`) throw new Error("Invalid member Auto credential.");
@@ -290,7 +290,7 @@ export class AnonymousInferenceService {
       }
       this.available = true;
       const provider = {
-        name: ANONYMOUS_INFERENCE_PROVIDER_NAME, npm: "@openrouter/ai-sdk-provider",
+        name: ANONYMOUS_INFERENCE_PROVIDER_NAME, npm: "@ai-sdk/openai-compatible",
         options: { apiKey: this.localAccessToken, baseURL: `http://127.0.0.1:${boundPort}${LOCAL_ROUTE_PREFIX}` },
         models: { [ANONYMOUS_INFERENCE_MODEL_ID]: generatedModel() },
       };
@@ -387,7 +387,8 @@ export class AnonymousInferenceService {
       }
       const state = payload.state;
       if (state !== "ready" && state !== "update_required" && state !== "unavailable" && state !== "exhausted") throw new Error("Invalid desktop free status state.");
-      if (state === "ready" && (!validatedAllowance || typeof payload.minimumVersion !== "string")) throw new Error("Incomplete desktop free status.");
+      // Guests are version-gated by the Gateway; members use their Models key on /api/v1, which is not.
+      if (state === "ready" && (!validatedAllowance || (!authorization && typeof payload.minimumVersion !== "string"))) throw new Error("Incomplete desktop free status.");
       const value: DesktopFreeAccessStatus = {
         ...this.unavailable(), state, code: typeof payload.code === "string" ? payload.code : null,
         minimumVersion: typeof payload.minimumVersion === "string" ? payload.minimumVersion : null,
@@ -468,8 +469,8 @@ export class AnonymousInferenceService {
     if (this.sessionPromise) return this.sessionPromise;
     const signal = this.identityController.signal;
     const mint = async (): Promise<DesktopFreeSession> => {
-      const identity = await this.config.anonymousInference!.desktop.identity();
-      const body = new TextEncoder().encode(JSON.stringify({ installationId: identity.installationId }));
+      // The signed proof carries the machine identity; the session body is empty.
+      const body = new TextEncoder().encode("{}");
       const response = await this.remote(DESKTOP_FREE_SESSION_PATH, "POST", body, false, AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]));
       const payload: unknown = JSON.parse(new TextDecoder().decode(await readBoundedBody(response.body, ERROR_BODY_LIMIT, AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]))));
       if (!isRecord(payload) || typeof payload.token !== "string" || !payload.token.trim()

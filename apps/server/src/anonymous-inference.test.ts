@@ -21,10 +21,11 @@ const ready: DesktopFreeAccessStatus = {
   providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
   allowance: { limitUsd: 1, usedUsd: 0.2, reservedUsd: 0, remainingUsd: 0.8, resetsAt: "2030-01-07T00:00:00Z" },
 };
-const memberReady: DesktopFreeAccessStatus = { ...ready, allowance: { ...ready.allowance!, limitUsd: 5, remainingUsd: 4.8 }, defaultPinned: false };
+// Members reach Auto on /api/v1 with their Models key: no desktop version floor is reported.
+const memberReady: DesktopFreeAccessStatus = { ...ready, currentVersion: "", minimumVersion: null, allowance: { ...ready.allowance!, limitUsd: 5, remainingUsd: 4.8 }, defaultPinned: false };
 const credentialPath = "/api/den/v1/inference/free/credential";
 const rawChat = '{ "model": "openai/gpt-5.6-luna", "messages": [] }';
-const memberKey = (session: CloudProviderDenSession) => `ow_auto_${createHash("sha256").update(`${session.token === "fixture-session-refreshed" ? "fixture-session" : session.token}:${session.orgId}`).digest("base64url")}`;
+const memberKey = (session: CloudProviderDenSession) => `ow_inf_${createHash("sha256").update(`${session.token === "fixture-session-refreshed" ? "fixture-session" : session.token}:${session.orgId}`).digest("base64url")}`;
 
 function latch() {
   let resolve = () => {};
@@ -75,6 +76,7 @@ async function fixture(run: (input: {
     if (failed) return failed;
     if (path === DESKTOP_FREE_SESSION_PATH) {
       expect(headers.has("authorization")).toBe(false);
+      expect(body).toBe("{}");
       return Response.json({ token: "guest-fixture", expiresAt: Date.now() + 300_000, model: DESKTOP_FREE_MODEL_ID });
     }
     const member = [MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH].includes(path);
@@ -101,7 +103,7 @@ async function fixture(run: (input: {
     if (failed) return failed;
     const apiKey = memberKey({ baseUrl: new URL(request.url).origin, token: headers.get("authorization")!.slice(7), orgId: headers.get("x-openwork-org-id")! });
     keys.add(`Bearer ${apiKey}`);
-    return Response.json({ credential: { apiKey, baseURL: `${origin}/api/free/v1`, statusURL: `${origin}${MEMBER_FREE_STATUS_PATH}`, modelID: DESKTOP_FREE_MODEL_ID } });
+    return Response.json({ credential: { apiKey, baseURL: `${origin}/api/v1`, statusURL: `${origin}${MEMBER_FREE_STATUS_PATH}`, modelID: DESKTOP_FREE_MODEL_ID } });
   } });
   const memberSession = { baseUrl: `${den.url.origin}/api/den`, orgId: "fixture-org", token: "fixture-session" };
   const config: ServerConfig = {
@@ -111,7 +113,7 @@ async function fixture(run: (input: {
     tokenSource: "generated", hostTokenSource: "generated", logFormat: "pretty", logRequests: false,
     ...(native ? { anonymousInference: { desktop: {
       currentVersion: "0.20.0",
-      identity: async () => ({ installationId: "798c02f8-c4f0-4c39-81b7-91e2281d122c", publicKey: "fixture-public-key", appVersion: "0.20.0", platform: "darwin", arch: "arm64" }),
+      identity: async () => ({ machineId: "c".repeat(64), publicKey: "fixture-public-key", appVersion: "0.20.0", platform: "darwin", arch: "arm64" }),
       sign: async (request) => { signed.push(request); return `proof-${signed.length}`; },
     } satisfies DesktopFreeSigner } } : {}),
   };
@@ -189,6 +191,10 @@ test("native enrollment is lazy and preserves explicit providers and defaults; B
     expect(runtime.default_agent).toBe("custom");
     expect(JSON.stringify(runtime)).not.toContain("guest-fixture");
     expect(isOwnedProvider(runtime.provider?.[DESKTOP_FREE_PROVIDER_ID])).toBe(true);
+    // The engine talks plain OpenAI Chat Completions to the relay; no OpenRouter adapter.
+    const owned = runtime.provider?.[DESKTOP_FREE_PROVIDER_ID] as Record<string, unknown>;
+    expect(owned.npm).toBe("@ai-sdk/openai-compatible");
+    expect(isOwnedProvider({ ...owned, npm: "@openrouter/ai-sdk-provider" })).toBe(false);
   });
 });
 
@@ -212,8 +218,8 @@ test("HTTP exchange switches guest to member, caches only in memory, and invalid
       expect(signed.at(-1)?.authorization).toBe(`Bearer ${memberKey(memberSession)}`);
       expect(new TextDecoder().decode(signed.at(-1)?.body)).toBe(rawChat);
       expect(requests.filter((request) => request.path === credentialPath)).toHaveLength(1);
-      expect(JSON.stringify(await service.status())).not.toContain("ow_auto_");
-      expect(JSON.stringify(await readGlobalRuntimeOpencodeConfig(config))).not.toContain("ow_auto_");
+      expect(JSON.stringify(await service.status())).not.toContain("ow_inf_");
+      expect(JSON.stringify(await readGlobalRuntimeOpencodeConfig(config))).not.toContain("ow_inf_");
       await service.setMemberSession(null);
       expect((await service.status()).allowance?.limitUsd).toBe(1);
       await connectMember();
@@ -375,12 +381,12 @@ test("Den disabled, denied, missing, malformed and redirect responses never beco
     await service.initialize(9876);
     await connectMember();
     await env.upsertMany([{ key: "OPENWORK_API_KEY", value: "ow_inf_should_not_rescue_free" }]);
-    for (const [status, payload] of [[401, { error: "unauthorized" }], [403, { error: "forbidden" }], [503, { error: "free_disabled" }], [503, { error: "managed_models_policy_unavailable" }], [404, {}], [200, { credential: null }], [200, { error: "ow_auto_must_not_escape" }]] satisfies [number, unknown][]) {
+    for (const [status, payload] of [[401, { error: "unauthorized" }], [403, { error: "forbidden" }], [503, { error: "free_disabled" }], [503, { error: "managed_models_policy_unavailable" }], [404, {}], [200, { credential: null }], [200, { error: "ow_inf_must_not_escape" }]] satisfies [number, unknown][]) {
       reject(credentialPath, status, payload);
       const result = await service.status(true);
       expect(result.state).toBe("unavailable");
       if (status === 503 && typeof payload === "object" && payload && "error" in payload) expect(result.code).toBe(payload.error);
-      expect(JSON.stringify(result)).not.toContain("ow_auto_");
+      expect(JSON.stringify(result)).not.toContain("ow_inf_must_not_escape");
       expect((await service.handle(await localRequest(), "chat/completions")).ok).toBe(false);
     }
     reject(credentialPath, 307, {}, { location: `${memberSession.baseUrl}/unexpected` });
@@ -389,17 +395,17 @@ test("Den disabled, denied, missing, malformed and redirect responses never beco
   });
 });
 
-test("member credentials reject foreign origins, wrong paths, query strings, model changes and legacy keys before gateway dispatch", async () => {
+test("member credentials reject foreign origins, wrong paths, query strings, model changes and non-Models keys before gateway dispatch", async () => {
   await fixture(async ({ service, origin, memberSession, requests, connectMember, reject }) => {
     await service.initialize(9876);
     await connectMember();
-    const credential = { apiKey: memberKey(memberSession), baseURL: `${origin}/api/free/v1`, statusURL: `${origin}${MEMBER_FREE_STATUS_PATH}`, modelID: DESKTOP_FREE_MODEL_ID };
+    const credential = { apiKey: memberKey(memberSession), baseURL: `${origin}/api/v1`, statusURL: `${origin}${MEMBER_FREE_STATUS_PATH}`, modelID: DESKTOP_FREE_MODEL_ID };
     for (const changed of [
-      { baseURL: `${memberSession.baseUrl}/api/free/v1` },
+      { baseURL: `${memberSession.baseUrl}/api/v1` },
       { statusURL: `${memberSession.baseUrl}${MEMBER_FREE_STATUS_PATH}` },
-      { baseURL: `${origin}/api/v1` }, { statusURL: `${credential.statusURL}?next=other` },
-      { baseURL: `${origin}/other/../api/free/v1` }, { modelID: "paid/model" },
-      { apiKey: "ow_inf_existing_member_key" }, { apiKey: "ow_auto_invalid" },
+      { baseURL: `${origin}/api/free/v1` }, { statusURL: `${credential.statusURL}?next=other` },
+      { baseURL: `${origin}/other/../api/v1` }, { modelID: "paid/model" },
+      { apiKey: "ow_inf_short" }, { apiKey: `ow_auto_${"a".repeat(43)}` }, { apiKey: `ow_gw_${"a".repeat(43)}` },
     ]) {
       reject(credentialPath, 200, { credential: { ...credential, ...changed } });
       expect((await service.status(true)).code).toBe("member_free_credentials_unavailable");
@@ -520,5 +526,15 @@ test("local relay refuses oversized or non-free requests before enrollment", asy
     expect((await service.handle(await localRequest("chat/completions", '{"model":"paid/model"}'), "chat/completions")).status).toBe(400);
     expect((await service.handle(await localRequest("chat/completions", "x".repeat(2 * 1024 * 1024 + 1)), "chat/completions")).status).toBe(413);
     expect(requests).toHaveLength(0);
+  });
+});
+
+test("only members may report ready without a desktop version floor; guests still need a verified one", async () => {
+  await fixture(async ({ service, reject }) => {
+    await service.initialize(9876);
+    reject(DESKTOP_FREE_STATUS_PATH, 200, { ...ready, minimumVersion: null });
+    expect((await service.status(true)).state).toBe("unavailable");
+    reject(DESKTOP_FREE_STATUS_PATH, 200, ready);
+    expect((await service.status(true)).state).toBe("ready");
   });
 });

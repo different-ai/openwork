@@ -1,14 +1,16 @@
 import { createHash, createPublicKey, verify } from "node:crypto"
 import { z } from "zod"
-import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, DESKTOP_FREE_PROOF_MAX_BYTES, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
+import { DESKTOP_FREE_MACHINE_ID_PATTERN, DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, DESKTOP_FREE_PROOF_MAX_BYTES, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
 
 const proofSchema = z.strictObject({
-  version: z.literal(1), publicKey: z.string().length(60).regex(/^[A-Za-z0-9+/]+=$/),
+  version: z.literal(2), publicKey: z.string().length(60).regex(/^[A-Za-z0-9+/]+=$/),
+  machineId: z.string().regex(DESKTOP_FREE_MACHINE_ID_PATTERN),
   appVersion: z.string().min(1).max(128), platform: z.enum(["darwin", "win32", "linux"]), arch: z.enum(["arm64", "x64"]),
   timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), nonce: z.string().uuid(),
   signature: z.string().length(86).regex(/^[A-Za-z0-9_-]+$/),
 })
-export type DesktopFreeBinding = Pick<DesktopFreeProofClaims, "appVersion" | "platform" | "arch"> & { keyThumbprint: string }
+/** What a guest token is bound to: the signing key, the machine and the app build. */
+export type DesktopFreeBinding = Pick<DesktopFreeProofClaims, "machineId" | "appVersion" | "platform" | "arch"> & { keyThumbprint: string }
 export function desktopFreeHash(value: string | Uint8Array) { return createHash("sha256").update(value).digest("hex") }
 
 export function verifyDesktopFreeProof(input: {
@@ -28,7 +30,7 @@ export function verifyDesktopFreeProof(input: {
     const key = createPublicKey({ key: der, format: "der", type: "spki" })
     if (key.asymmetricKeyType !== "ed25519" || key.export({ format: "der", type: "spki" }).toString("base64") !== proof.publicKey) return null
     const keyThumbprint = desktopFreeHash(Uint8Array.from(der))
-    if (input.binding && (input.binding.keyThumbprint !== keyThumbprint || input.binding.appVersion !== proof.appVersion
+    if (input.binding && (input.binding.keyThumbprint !== keyThumbprint || input.binding.machineId !== proof.machineId || input.binding.appVersion !== proof.appVersion
       || input.binding.platform !== proof.platform || input.binding.arch !== proof.arch)) return null
     const signatureBytes = Buffer.from(signature, "base64url")
     if (signatureBytes.toString("base64url") !== signature) return null
