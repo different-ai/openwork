@@ -21,6 +21,9 @@ function subscribeScope(listener: () => void) {
   });
 }
 
+// Outlives the chat view so an explained error stays hidden after leaving and reopening the session.
+const handledGatewayErrorKeys = new Set<string>();
+
 export function useGatewayUsageErrorHandled(input: {
   scopeKey: string;
   sessionOwner: string;
@@ -35,11 +38,13 @@ export function useGatewayUsageErrorHandled(input: {
   const key = input.evidence || bare ? JSON.stringify([input.scopeKey, input.sessionOwner, input.errorKey, input.evidence ?? "rate-limited"]) : null;
   // Without evidence only the member's own blocked status can explain the 429.
   const corroborated = input.gatewaySelected && (bare ? input.status?.state === "blocked" : corroboratesGatewayUsageError(input.evidence, input.status));
-  const [handledKey, setHandledKey] = useState<string | null>(null);
+  const [, setHandled] = useState(0);
   useEffect(() => {
-    if (corroborated && key) setHandledKey(key);
+    if (!corroborated || !key || handledGatewayErrorKeys.has(key)) return;
+    handledGatewayErrorKeys.add(key);
+    setHandled((count) => count + 1);
   }, [corroborated, key]);
-  return input.gatewaySelected && key !== null && (corroborated || handledKey === key);
+  return input.gatewaySelected && key !== null && (corroborated || handledGatewayErrorKeys.has(key));
 }
 
 export function useGatewayUsage(requested: boolean, panelOpen = false, refreshKey?: string, settled = false, providerScope?: number | null) {

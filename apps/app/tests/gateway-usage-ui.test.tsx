@@ -618,6 +618,9 @@ test("a bare 429 is explained only by the member's own blocked Gateway status an
   await flush();
   expect(container.querySelector('[data-testid="gateway-usage-notice"]')).toBeNull();
   expect(container.textContent).not.toContain("Provider error");
+  await act(async () => { root?.unmount(); root = createRoot(container); renderProbe(); });
+  await flush();
+  expect(container.textContent).not.toContain("Provider error");
   enabled = false;
   await act(async () => { refreshKey = "session-b:idle"; renderProbe(); });
   await flush();
