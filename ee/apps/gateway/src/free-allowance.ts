@@ -1,6 +1,6 @@
 import { and, count, eq, inArray, lte, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  DesktopFreeProofNonceTable as Nonce,
+  DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceControlTable, AnonymousInferenceUsageBucketTable, AnonymousInferenceReservationTable,
   AnonymousInferenceReservationChargeTable, AnonymousInferenceRateBucketTable,
   InferenceFreeControlTable, InferenceFreeUsageBucketTable, InferenceFreeReservationTable,
@@ -10,7 +10,7 @@ import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSIO
 import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, type DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access"
 import type { DesktopFreeBinding } from "./desktop-free-proof.js"
 import { freeIdentityHash, freePrincipalHash, memberFreePrincipalAllowed, type FreePrincipal } from "./free-principal.js"
-import { freeRequestReservation, type AutoConfig } from "./free-config.js"
+import { freeRequestReservation, rampedDeviceAmount, type AutoConfig } from "./free-config.js"
 import { db } from "./db.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -52,7 +52,15 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     if (!row) throw new Error("Free accounting unavailable")
     return { blocked: row.blocked, now: new Date(Number(row.nowMs)) }
   }
-  function specs(principal: FreePrincipal, ipHash: string | null, now: Date) {
+  /** Records a guest machine on first sight; returns its age and whether this was the first sight. */
+  async function identityAge(tx: Tx, principal: FreePrincipal, now: Date) {
+    if (principal.kind !== "installation") return { ageMs: 0, fresh: false }
+    const [existing] = await tx.select().from(Identity).where(eq(Identity.id, principal.id)).limit(1)
+    if (existing) return { ageMs: Math.max(0, now.getTime() - existing.first_seen_at.getTime()), fresh: false }
+    await tx.insert(Identity).values({ id: principal.id, first_seen_at: now }).onDuplicateKeyUpdate({ set: { id: sql`${Identity.id}` } })
+    return { ageMs: 0, fresh: true }
+  }
+  function specs(principal: FreePrincipal, ipHash: string | null, now: Date, ageMs = 0) {
     const weekly = freeInferenceWindow(now)
     const daily = { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)) }
     const monthly = { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)) }
@@ -62,7 +70,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       { scope: "global", identity: "global", window: "daily", ...daily, limit: config.memberGlobalDailyAmount },
       { scope: "global", identity: "global", window: "monthly", ...monthly, limit: config.memberGlobalMonthlyAmount },
     ] : [
-      { scope: "installation", identity: freePrincipalHash(principal), window: "weekly", ...weekly, limit: config.deviceWeeklyAmount },
+      { scope: "installation", identity: freePrincipalHash(principal), window: "weekly", ...weekly, limit: rampedDeviceAmount(config, ageMs) },
       { scope: "ip", identity: ipHash ?? "", window: "daily", ...daily, limit: config.ipDailyAmount },
       { scope: "global", identity: "global", window: "daily", ...daily, limit: config.globalDailyAmount },
       { scope: "global", identity: "global", window: "monthly", ...monthly, limit: config.globalMonthlyAmount },
@@ -71,15 +79,18 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     return values.map((value) => ({ ...value, id: freeUsageBucketId(value.scope, value.identity, value.window, value.start) }))
   }
   const chargeCount = family === "member" ? 3 : 4
-  async function consumeRates(tx: Tx, limits: Array<{ kind: string; identity: string; limit: number }>, now: Date) {
-    const start = new Date(now)
-    start.setUTCMinutes(0, 0, 0)
-    const rates = limits.map((value) => ({ ...value, id: stableId(["rate", value.kind, value.identity, start.toISOString()]) }))
+  async function consumeRates(tx: Tx, limits: Array<{ kind: string; identity: string; limit: number; window?: "hour" | "day" }>, now: Date) {
+    const rates = limits.map((value) => {
+      const start = new Date(now)
+      if (value.window === "day") start.setUTCHours(0, 0, 0, 0); else start.setUTCMinutes(0, 0, 0)
+      const expiresAt = new Date(start.getTime() + (value.window === "day" ? 86400000 : 3600000))
+      return { ...value, expiresAt, id: stableId(["rate", value.kind, value.identity, start.toISOString()]) }
+    })
     for (const rate of rates) {
       const [row] = await tx.select().from(Rate).where(eq(Rate.id, rate.id)).limit(1)
       if (row && row.used_amount >= rate.limit) return false
     }
-    for (const rate of rates) await tx.insert(Rate).values({ id: rate.id, used_amount: 1, expires_at: new Date(start.getTime() + 3600000) })
+    for (const rate of rates) await tx.insert(Rate).values({ id: rate.id, used_amount: 1, expires_at: rate.expiresAt })
       .onDuplicateKeyUpdate({ set: { used_amount: sql`${Rate.used_amount} + 1` } })
     return true
   }
@@ -132,13 +143,19 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         return "accepted"
       })
     },
-    async consumeSession(ipHash: string, installationHash: string) {
-      if (family !== "anonymous") return false
+    /** Mints a guest session. A machine never seen before also counts against the IP's daily new-identity cap. */
+    async consumeSession(ipHash: string, installationHash: string): Promise<"accepted" | "capacity" | "new_identity_capped"> {
+      if (family !== "anonymous") return "capacity"
       return database.transaction(async (tx) => {
         const { blocked, now } = await lock(tx)
-        return !blocked && await consumeRates(tx, [{ kind: "session-ip", identity: ipHash, limit: 60 },
+        if (blocked) return "capacity"
+        const [known] = await tx.select({ id: Identity.id }).from(Identity).where(eq(Identity.id, installationHash)).limit(1)
+        if (!known && !await consumeRates(tx, [{ kind: "new-identity-ip", identity: ipHash, limit: config.ipNewIdentitiesPerDay, window: "day" }], now)) return "new_identity_capped"
+        if (!await consumeRates(tx, [{ kind: "session-ip", identity: ipHash, limit: 60 },
           { kind: "session-installation", identity: installationHash, limit: 12 },
-          { kind: "session-global", identity: "global", limit: 10000 }], now)
+          { kind: "session-global", identity: "global", limit: 10000 }], now)) return "capacity"
+        await identityAge(tx, { kind: "installation", id: installationHash }, now)
+        return "accepted"
       })
     },
     async read(principal: FreePrincipal, ipHash: string | null): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
@@ -147,11 +164,13 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         const { blocked, now } = await lock(tx)
         if (!await memberFreePrincipalAllowed(principal, tx)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
         await reap(tx, now)
+        const { ageMs } = await identityAge(tx, principal, now)
         let allowance: DesktopFreeAccessStatus["allowance"] = null
         let limited = false, sharedLimited = false
-        for (const spec of specs(principal, ipHash, now)) {
+        for (const spec of specs(principal, ipHash, now, ageMs)) {
           const [row] = await tx.select().from(Bucket).where(eq(Bucket.id, spec.id)).limit(1)
-          const limit = row?.limit_amount ?? spec.limit
+          // A guest bucket's limit only grows as the identity ages within the week.
+          const limit = row ? (spec.scope === "installation" ? Math.max(row.limit_amount, spec.limit) : row.limit_amount) : spec.limit
           const used = row?.used_amount ?? 0, reserved = row?.reserved_amount ?? 0
           const cannotFit = used + reserved + freeRequestReservation(config) > limit
           if (spec.scope === "member" || spec.scope === "installation") {
@@ -187,9 +206,11 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         if (!await consumeRates(tx, rates, now)) return { ok: false, code: "anonymous_capacity_exceeded" }
         const amount = freeRequestReservation(config)
         const rows: Array<typeof Bucket.$inferSelect> = []
-        for (const spec of specs(principal, ipHash, now)) {
+        const { ageMs } = await identityAge(tx, principal, now)
+        for (const spec of specs(principal, ipHash, now, ageMs)) {
           await tx.insert(Bucket).values({ id: spec.id, scope: spec.scope as typeof Bucket.$inferInsert.scope, identity_hash: spec.identity, window_type: spec.window,
-            window_start_at: spec.start, window_end_at: spec.end, limit_amount: spec.limit }).onDuplicateKeyUpdate({ set: { id: sql`${Bucket.id}` } })
+            window_start_at: spec.start, window_end_at: spec.end, limit_amount: spec.limit })
+            .onDuplicateKeyUpdate({ set: spec.scope === "installation" ? { limit_amount: sql`greatest(${Bucket.limit_amount}, ${spec.limit})` } : { id: sql`${Bucket.id}` } })
           const [row] = await tx.select().from(Bucket).where(eq(Bucket.id, spec.id)).limit(1).for("update")
           if (!row || row.blocked) return { ok: false, code: "free_accounting_blocked" }
           if (!Number.isSafeInteger(row.used_amount + row.reserved_amount + amount) || row.used_amount + row.reserved_amount + amount > row.limit_amount) {
