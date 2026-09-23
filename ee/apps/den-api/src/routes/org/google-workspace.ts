@@ -8,7 +8,7 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
-import { decodeFileContent, textWindow } from "../../capability-sources/binary-content.js"
+import { decodeFileContent } from "../../capability-sources/binary-content.js"
 import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, normalizeGmailHeaderValue, readGmailDraftIds } from "../../capability-sources/gmail.js"
 import type { GmailDraftAttachment, GmailDraftQuote } from "../../capability-sources/gmail.js"
 import { gmailFileInputPreflight, gmailFileInputPreflightSchema } from "../../capability-sources/gmail-file-input.js"
@@ -27,6 +27,7 @@ import {
   extractGmailThreadQuoteInput,
   extractGmailThreadReplyContext,
   gmailBodyHasQuotedHistory,
+  truncateText,
 } from "../../capability-sources/google-workspace-api.js"
 import { getOrgOAuthClient, type ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy, resolveProviderScopes } from "../../capability-sources/provider-registry.js"
@@ -46,10 +47,6 @@ const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
 const MAX_DRIVE_FILE_CONTENT_BYTES = 64 * 1024
 const DRIVE_TEXT_CHARACTER_LIMIT = 200_000
-// The default window stays below the 20,000-character model-visible cap in
-// mcp/tool-content.ts, so a direct read is never silently cut after this route
-// reports `truncated: false`. Callers page with `offset`/`nextOffset`.
-const DRIVE_TEXT_DEFAULT_WINDOW = 18_000
 const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024
 const DIRECT_UPLOAD_BODY_MAX_BYTES = DIRECT_UPLOAD_MAX_BYTES + (256 * 1024)
 const DIRECT_UPLOAD_MAX_FILES = 10
@@ -241,11 +238,6 @@ const driveFileParamSchema = z.object({
   fileId: z.string().trim().min(1).max(512).describe("Google Drive file id."),
 })
 
-const driveFileQuerySchema = z.object({
-  offset: z.coerce.number().int().min(0).default(0).describe("Character offset to start reading text from. Pass the previous response's nextOffset to read the next part of a long file."),
-  maxCharacters: z.coerce.number().int().min(1).max(DRIVE_TEXT_CHARACTER_LIMIT).default(DRIVE_TEXT_DEFAULT_WINDOW).describe(`Maximum text characters to return. Defaults to ${DRIVE_TEXT_DEFAULT_WINDOW}; scripts may request up to ${DRIVE_TEXT_CHARACTER_LIMIT}.`),
-})
-
 const shareDriveFileBodySchema = z.object({
   type: z.enum(["user", "domain"]).describe("Use type=user to share with one person, or type=domain to share with the entire organization."),
   emailAddress: z.string().trim().email().max(320).optional().describe("Required when type=user; pass the person's email address, for example raghav@openworklabs.com."),
@@ -296,10 +288,7 @@ const driveFileResponseSchema = z.object({
     content: z.string().nullable(),
     contentBase64: z.string().nullable().describe("Standard base64-encoded file bytes for binary files; decode to a workspace file. To upload, use the host's Google Workspace upload action with the workspace file path, if that action is available in the current client. There is no dataBase64 Drive upload capability."),
     encoding: z.enum(["text", "base64", "none"]),
-    truncated: z.boolean().describe("True when more text follows this part; read it by passing nextOffset as offset."),
-    offset: z.number().int().nullable().describe("Character offset of the returned text, or null for non-text content."),
-    totalCharacters: z.number().int().nullable().describe("Total characters in the text file, or null for non-text content."),
-    nextOffset: z.number().int().nullable().describe("Offset for the next part of the text, or null when this part reaches the end."),
+    truncated: z.boolean(),
     contentUnavailableReason: z.enum(["file_too_large"]).nullable(),
   }),
 }).meta({ ref: "GoogleWorkspaceDriveFileResponse" })
@@ -1303,7 +1292,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Read a Google Drive file's text or binary content as the calling member",
-      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Text is returned in parts: when truncated is true, call again with offset set to nextOffset until nextOffset is null. Binary files use standard base64 within the model-safety limit.",
+      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit.",
       responses: {
         200: jsonResponse("Google Drive file returned.", driveFileResponseSchema),
         400: jsonResponse("The Drive item is not a readable file.", invalidRequestSchema),
@@ -1314,7 +1303,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     }),
     orgMemberRoute(),
     paramValidator(driveFileParamSchema),
-    queryValidator(driveFileQuerySchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const token = await googleWorkspaceToken({
@@ -1333,8 +1321,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const { fileId } = c.req.valid("param")
-      const { offset, maxCharacters } = c.req.valid("query")
-      const noTextWindow = { offset: null, totalCharacters: null, nextOffset: null }
       const metadataUrl = new URL(`${driveApiBase()}/drive/v3/files/${encodeURIComponent(fileId)}`)
       metadataUrl.searchParams.set("supportsAllDrives", "true")
       metadataUrl.searchParams.set("fields", "id,name,mimeType,modifiedTime,webViewLink,size")
@@ -1372,7 +1358,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
             contentBase64: null,
             encoding: "none",
             truncated: false,
-            ...noTextWindow,
             contentUnavailableReason: "file_too_large",
           },
         })
@@ -1396,35 +1381,38 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
       }
 
-      const textResponse = (text: string) => {
-        const window = textWindow(text, offset, maxCharacters)
+      if (isGoogleAppsFile) {
+        const content = truncateText(await contentResponse.text(), DRIVE_TEXT_CHARACTER_LIMIT)
         return c.json({
           ok: true,
           file: {
             ...file,
-            content: window.text,
+            content: content.text,
             contentBase64: null,
             encoding: "text",
-            truncated: window.truncated,
-            offset: window.offset,
-            totalCharacters: window.totalCharacters,
-            nextOffset: window.nextOffset,
+            truncated: content.truncated,
             contentUnavailableReason: null,
           },
         })
       }
 
-      if (isGoogleAppsFile) {
-        return textResponse(await contentResponse.text())
-      }
-
       const bytes = new Uint8Array(await contentResponse.arrayBuffer())
       const content = decodeFileContent(bytes, {
-        maxTextCharacters: Number.MAX_SAFE_INTEGER,
+        maxTextCharacters: DRIVE_TEXT_CHARACTER_LIMIT,
         maxBinaryBytes: MAX_DRIVE_FILE_CONTENT_BYTES,
       })
       if (content.kind === "text") {
-        return textResponse(content.content)
+        return c.json({
+          ok: true,
+          file: {
+            ...file,
+            content: content.content,
+            contentBase64: null,
+            encoding: "text",
+            truncated: content.truncated,
+            contentUnavailableReason: null,
+          },
+        })
       }
       if (content.kind === "binary") {
         return c.json({
@@ -1435,7 +1423,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
             contentBase64: content.contentBase64,
             encoding: "base64",
             truncated: false,
-            ...noTextWindow,
             contentUnavailableReason: null,
           },
         })
@@ -1448,7 +1435,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
           contentBase64: null,
           encoding: "none",
           truncated: false,
-          ...noTextWindow,
           contentUnavailableReason: "file_too_large",
         },
       })

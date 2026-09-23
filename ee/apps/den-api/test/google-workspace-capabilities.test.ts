@@ -1885,31 +1885,18 @@ test("generic Drive spreadsheet read exports first-tab CSV rather than plain tex
   expect(googleCallUrls.some((value) => new URL(value).pathname.startsWith("/v4/spreadsheets"))).toBe(false)
 })
 
-test("drive text reads a long doc in honest parts that fit the model-visible limit", async () => {
-  driveDocumentText = `${"a".repeat(18_000)}${"b".repeat(18_000)}${"c".repeat(9_000)}`
-  const first = expectRecord(expectRecord(await (await request("/v1/capabilities/google-workspace/drive-file/doc_1")).json(), "first part").file, "first file")
-  expect(expectString(first.content, "first content")).toBe("a".repeat(18_000))
-  expect(first).toMatchObject({ truncated: true, offset: 0, totalCharacters: 45_000, nextOffset: 18_000 })
-
-  resetFakeGoogle()
-  driveDocumentText = `${"a".repeat(18_000)}${"b".repeat(18_000)}${"c".repeat(9_000)}`
-  const last = expectRecord(expectRecord(await (await request("/v1/capabilities/google-workspace/drive-file/doc_1?offset=36000")).json(), "last part").file, "last file")
-  expect(expectString(last.content, "last content")).toBe("c".repeat(9_000))
-  expect(last).toMatchObject({ truncated: false, offset: 36_000, totalCharacters: 45_000, nextOffset: null })
-
-  resetFakeGoogle()
+test("drive text retains the existing retrieval limit before MCP serialization", async () => {
   driveDocumentText = "d".repeat(210_000)
-  const bounded = expectRecord(expectRecord(await (await request("/v1/capabilities/google-workspace/drive-file/doc_1?maxCharacters=200000")).json(), "bounded").file, "bounded file")
-  expect(expectString(bounded.content, "bounded content")).toHaveLength(200_000)
-  expect(bounded).toMatchObject({ truncated: true, nextOffset: 200_000, totalCharacters: 210_000 })
-
-  resetFakeGoogle()
-  const tooLarge = await request("/v1/capabilities/google-workspace/drive-file/doc_1?maxCharacters=200001")
-  expect(tooLarge.status).toBe(400)
+  const response = await request("/v1/capabilities/google-workspace/drive-file/doc_1")
+  expect(response.status).toBe(200)
+  const body = expectRecord(await response.json(), "bounded Drive response")
+  const file = expectRecord(body.file, "bounded Drive file")
+  expect(expectString(file.content, "bounded Drive content")).toHaveLength(200_000)
+  expect(file.truncated).toBe(true)
 })
 
 test("Code Mode scripts read a Drive doc past the model-visible limit", async () => {
-  driveDocumentText = `${"x".repeat(30_000)}END_OF_SCHEDULE_4`
+  driveDocumentText = `${"x".repeat(30_000)}END_OF_DOCUMENT`
   const search = await mcpToolCall("search_capabilities", { query: "read google drive file content", limit: 10 })
   const matches = expectRecord(search.structuredContent, "search result").matches
   if (!Array.isArray(matches)) throw new Error("Expected capability matches")
@@ -1917,10 +1904,10 @@ test("Code Mode scripts read a Drive doc past the model-visible limit", async ()
     && match.name === "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFile"), "drive read capability")
   const scriptPath = expectString(read.scriptPath, "drive read script path")
   const script = await mcpToolCall("execute_capability_script", {
-    code: `const r = await ${scriptPath}({ path: { fileId: "doc_1" }, query: { maxCharacters: 200000 } }); return { length: r.file.content.length, tail: r.file.content.slice(-17), truncated: r.file.truncated };`,
+    code: `const r = await ${scriptPath}({ path: { fileId: "doc_1" } }); return { length: r.file.content.length, tail: r.file.content.slice(-15) };`,
   })
   expect(script.isError).not.toBe(true)
-  expect(JSON.parse(mcpText(script))).toEqual({ length: 30_017, tail: "END_OF_SCHEDULE_4", truncated: false })
+  expect(JSON.parse(mcpText(script))).toEqual({ length: 30_015, tail: "END_OF_DOCUMENT" })
 })
 
 test("direct Drive upload preserves exact multipart bytes and returns the user-facing link", async () => {
@@ -2093,20 +2080,9 @@ test("existing MCP search and execute path enforces Drive scope and bounds model
     path: { fileId: "doc_1" },
   })
   const modelText = mcpText(textResult)
-  expect(modelText).not.toContain("[truncated]")
-  expect(modelText).toContain('"nextOffset":18000')
-  expect(modelText).toContain('"truncated":true')
+  expect(modelText).toContain("of 25000 characters. Call this capability from execute_capability_script")
+  expect(modelText).not.toContain("d".repeat(20_001))
   expect(Buffer.byteLength(modelText, "utf8")).toBeLessThan(22_000)
-
-  resetFakeGoogle()
-  driveDocumentText = "d".repeat(25_000)
-  const secondPart = mcpText(await mcpToolCall("execute_capability", {
-    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFile",
-    path: { fileId: "doc_1" },
-    query: { offset: 18_000 },
-  }))
-  expect(secondPart).toContain('"nextOffset":null')
-  expect(secondPart).toContain("d".repeat(7_000))
 
   resetFakeGoogle()
   gmailMessageBody = "g".repeat(25_000)
@@ -2115,7 +2091,7 @@ test("existing MCP search and execute path enforces Drive scope and bounds model
     path: { messageId: "msg_1" },
   })
   const gmailModelText = mcpText(gmailTextResult)
-  expect(gmailModelText).toContain("[truncated]")
+  expect(gmailModelText).toContain("of 25000 characters. Call this capability from execute_capability_script")
   expect(gmailModelText).not.toContain("g".repeat(20_001))
   expect(Buffer.byteLength(gmailModelText, "utf8")).toBeLessThan(22_000)
 
