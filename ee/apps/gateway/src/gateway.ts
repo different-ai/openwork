@@ -323,6 +323,8 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
         return /^messages(?:\/count_tokens)?$/.test(operation)
       case "google_vertex_anthropic":
         return operation === "messages"
+      case "mistral":
+        return /^(?:chat\/completions|embeddings)$/.test(operation)
       case "openai":
       case "openai_compatible":
       case "azure":
@@ -393,7 +395,7 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
     }
     modified = true
   }
-  if (upstream.protocol === "openai_chat" && json.stream === true) {
+  if (upstream.protocol === "openai_chat" && upstream.family !== "mistral" && json.stream === true) {
     json.stream_options = { ...(isJsonObject(json.stream_options) ? json.stream_options : {}), include_usage: true }
     modified = true
   }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SUPPORTED_GATEWAY_NPM_PACKAGES as serverSupportedPackages } from "../../den-api/src/llm/inference-provider-config";
 
 import {
   asInferenceProvider,
@@ -10,6 +11,7 @@ import {
   getNewInferenceProviderSettings,
   getRequiredSettingKeys,
   isSupportedGatewayNpm,
+  SUPPORTED_GATEWAY_NPM_PACKAGES,
   readInferenceProvidersFromPayload,
   supportsMemberCredentialMode,
   validateInferenceProviderForm,
@@ -199,7 +201,10 @@ describe("new gateway provider settings", () => {
 
 describe("gateway provider support + settings", () => {
   test("matches den-api's supported SDK list", () => {
+    expect(SUPPORTED_GATEWAY_NPM_PACKAGES).toEqual(serverSupportedPackages);
     expect(isSupportedGatewayNpm("@ai-sdk/anthropic")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/mistral")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/cohere")).toBe(false);
     expect(isSupportedGatewayNpm("@ai-sdk/google-vertex/anthropic")).toBe(true);
     expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false);
     expect(isSupportedGatewayNpm(null)).toBe(false);
@@ -225,6 +230,8 @@ describe("gateway provider support + settings", () => {
       hasOauthClientSecret: false,
     };
     expect(validateInferenceProviderForm(valid)).toBeNull();
+    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/mistral", providerId: "mistral", settings: {} })).toBeNull();
+    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/mistral", providerId: "mistral", credentialMode: "member" })).toContain("only available for Google Vertex");
     expect(validateInferenceProviderForm({ ...valid, settings: { project: "p" } })).toContain("Region is required");
     expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/amazon-bedrock" })).toContain("cannot be routed");
     expect(validateInferenceProviderForm({ ...valid, serviceAccountJson: "{" })).toContain("could not be parsed");

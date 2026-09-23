@@ -183,6 +183,26 @@ test("gateway model SDK mapping preserves non-Vertex overrides and rejects mixed
   expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex/anthropic" }, [{ provider: { npm: "@ai-sdk/google-vertex" } }])).not.toBeNull()
 })
 
+test("Mistral without a catalog API URL keeps its native SDK and scoped gateway credential", () => {
+  const config = buildProviderConfigSnapshot({
+    id: "mistral", name: "Mistral", npm: "@ai-sdk/mistral", env: ["MISTRAL_API_KEY"],
+    api: null, doc: null, config: {}, models: [],
+  })
+  expect(config).not.toHaveProperty("api")
+  expect(gatewayConfigurationError(config, {})).toBeNull()
+  expect(buildGatewayProviderConfig({ id: "ipr_01jmistral", provider_config: config }, baseUrl)).toEqual({
+    id: "mistral", name: "Mistral", npm: "@ai-sdk/mistral", env: ["IPR_01JMISTRAL_MISTRAL_API_KEY"],
+    api: `${baseUrl}api/v1/providers/ipr_01jmistral`,
+    options: { baseURL: `${baseUrl}api/v1/providers/ipr_01jmistral` },
+  })
+  expect(pickInferenceApiKeyFromMap({ MISTRAL_API_KEY: "key" }, ["MISTRAL_API_KEY"])).toBe("key")
+  expect(gatewayModelConfigurationError(config, [{ id: "mistral-small-latest" }, { provider: { npm: "@ai-sdk/mistral" } }])).toBeNull()
+  for (const npm of ["@ai-sdk/openai", "@ai-sdk/openai-compatible", "@ai-sdk/cohere"]) {
+    expect(gatewayModelConfigurationError(config, [{ npm }])).not.toBeNull()
+    expect(gatewayModelConfigurationError(config, [{ provider: { npm } }])).not.toBeNull()
+  }
+})
+
 test("buildProviderConfigSnapshot keeps only the opencode block fields", () => {
   const snapshot = buildProviderConfigSnapshot({
     id: "openrouter",
@@ -208,6 +228,7 @@ test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock
   for (const npm of [
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
+    "@ai-sdk/mistral",
     "@ai-sdk/azure",
     "@ai-sdk/openai-compatible",
     "@openrouter/ai-sdk-provider",
@@ -218,7 +239,7 @@ test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock
     expect(isSupportedGatewayNpm(npm)).toBe(true)
   }
   expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false)
-  expect(isSupportedGatewayNpm("@ai-sdk/mistral")).toBe(false)
+  expect(isSupportedGatewayNpm("@ai-sdk/cohere")).toBe(false)
   expect(isSupportedGatewayNpm(null)).toBe(false)
 })
 

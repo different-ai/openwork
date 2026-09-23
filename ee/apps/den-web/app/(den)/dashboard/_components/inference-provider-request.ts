@@ -88,6 +88,7 @@ const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.obj
 export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
   "@ai-sdk/anthropic",
   "@ai-sdk/openai",
+  "@ai-sdk/mistral",
   "@ai-sdk/azure",
   "@ai-sdk/openai-compatible",
   "@openrouter/ai-sdk-provider",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
+import { createMistral } from "@ai-sdk/mistral"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
 import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
@@ -14,7 +15,7 @@ import { createGoogleOauthRefresher } from "../src/credentials/google-oauth-refr
 import type { LoadProviderCredential } from "../src/provider-credentials.js"
 import { matrixRow, memoryStore, row as oauthRow } from "./google-oauth-refresh-fixture.js"
 import type { GatewayAccessRow } from "../src/provider-access.js"
-import { createProviderCatalog } from "../src/provider-catalog.js"
+import { createProviderCatalog, getCatalogProvider } from "../src/provider-catalog.js"
 import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
 import { bedrockStreamFrames } from "./helpers/event-stream.js"
 
@@ -38,6 +39,7 @@ const vertexProvider = { provider_id: "google-vertex", provider_config: { npm: "
 const catalog = createProviderCatalog({
   anthropic: { npm: "@ai-sdk/anthropic", env: ["ANTHROPIC_API_KEY"] },
   openai: { npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"] },
+  mistral: getCatalogProvider("mistral"),
   azure: { npm: "@ai-sdk/azure", env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] },
   "azure-cognitive-services": { npm: "@ai-sdk/openai-compatible", api: "https://fixture.example/v1", env: ["AZURE_RESOURCE_NAME", "AZURE_COGNITIVE_SERVICES_API_KEY"] },
   alibaba: { npm: "@ai-sdk/openai-compatible", api: "https://fixture.example/v1", env: ["DASHSCOPE_API_KEY"] },
@@ -169,7 +171,7 @@ function createTestServer(options: TestServerOptions = {}) {
   const credentialRow = options.credential === null ? null : credential(options.credential)
   const base = matrixRow()
   const set: GatewayAccessRow["credentialSet"] = { ...base.credentialSet, id: credentialSetId, gateway_provider_id: providerId, credential_mode: "org", ...options.credentialSet }
-  const accessRows = options.accessRows ?? ["fixture", "gpt-4o", "gpt-5", "claude-sonnet-4-5", "llama-3", "x", "gemini-2.5-pro", "gemini", "claude", "anthropic.claude-3-5-sonnet-20241022-v2:0"].map((model): GatewayAccessRow => ({
+  const accessRows = options.accessRows ?? ["mistral-small-latest", "mistral-embed", "fixture", "gpt-4o", "gpt-5", "claude-sonnet-4-5", "llama-3", "x", "gemini-2.5-pro", "gemini", "claude", "anthropic.claude-3-5-sonnet-20241022-v2:0"].map((model): GatewayAccessRow => ({
     ...base, credentialSet: set,
     grant: { ...base.grant, gateway_provider_id: providerId, org_membership_id: null, audience_key: "organization" },
     group: { ...base.group, gateway_provider_id: providerId },
@@ -362,6 +364,158 @@ test("openai chat: forwards with bearer auth, strips incoming auth, injects incl
   assert.equal(row.cache_read_tokens, 6)
   assert.equal(row.upstream_request_id, "req_up_1")
   assert.equal(row.openwork_request_id, response.headers.get("x-openwork-request-id"))
+})
+
+const mistralProvider = { provider_id: "mistral", provider_config: { npm: "@ai-sdk/mistral", env: ["MISTRAL_API_KEY"] } }
+
+function mistralClient(fixture: ReturnType<typeof createTestServer>, apiKey = gatewayKey) {
+  const requests: Request[] = []
+  const responses: Response[] = []
+  const client = createMistral({
+    baseURL: `http://openwork.test/api/v1/providers/${providerId}`,
+    apiKey,
+    fetch: async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request.clone())
+      const response = await fixture.app.fetch(request)
+      responses.push(response.clone())
+      return response
+    },
+  })
+  return { client, requests, responses }
+}
+
+for (const stream of [false, true]) {
+  test(`Mistral native SDK ${stream ? "SSE" : "JSON"}: aliases, bearer replacement, tools and usage without OpenAI stream options`, async () => {
+    const model = "mistral-small-latest"
+    const usage = { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 }
+    const content = [{ type: "thinking", thinking: [{ type: "text", text: "Reasoning" }] }, { type: "text", text: "Hello" }]
+    const toolCall = { id: "call12345", type: "function", function: { name: "lookup", arguments: '{"model":"client-data"}' } }
+    const json = { id: "mistral-response", object: "chat.completion", created: 1700000000, model, choices: [{ index: 0, message: { role: "assistant", content, tool_calls: [toolCall] }, finish_reason: "tool_calls" }], usage }
+    const events = [
+      `data: ${JSON.stringify({ id: json.id, model, choices: [{ index: 0, delta: { role: "assistant", content, tool_calls: [{ index: 0, ...toolCall }] }, finish_reason: null }] })}\n\n`,
+      `data: ${JSON.stringify({ id: json.id, model, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage })}\n\n`,
+      "data: [DONE]\n\n",
+    ]
+    const fixture = createTestServer({
+      provider: mistralProvider,
+      credential: { kind: "api_key_map", secret: JSON.stringify({ MISTRAL_API_KEY: "mistral-upstream-key" }) },
+      fetch: async (_input, init) => {
+        assert.equal(parseJsonObject(readInitBody(init?.body)).stream_options, undefined)
+        return stream ? sseResponse(events, { "x-request-id": "req_mistral" }) : Response.json(json, { headers: { "x-request-id": "req_mistral" } })
+      },
+    })
+    const row = fixture.accessRows.find((row) => row.model?.model_id === model)
+    assert.ok(row?.model)
+    const alias = createGatewayModelAlias({ modelGroupId: row.group.id, credentialSetId: row.credentialSet.id, gatewayProviderModelId: row.model.id })
+    const { client, requests, responses } = mistralClient(fixture)
+    const sdkModel = client(alias)
+    const options: Parameters<typeof sdkModel.doGenerate>[0] = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+      tools: [{ type: "function", name: "lookup", inputSchema: { type: "object", properties: { model: { type: "string" } } } }],
+      toolChoice: { type: "tool", toolName: "lookup" },
+      providerOptions: { mistral: { safePrompt: true, parallelToolCalls: false } },
+      headers: { cookie: "private-cookie", "x-api-key": gatewayKey, "openai-beta": "caller-beta", [GATEWAY_REQUEST_MODEL_HEADER]: alias },
+    }
+    if (stream) {
+      const result = await sdkModel.doStream(options)
+      const reader = result.stream.getReader()
+      const chunks: Awaited<ReturnType<typeof reader.read>>["value"][] = []
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        chunks.push(chunk.value)
+      }
+      assert.equal(chunks.some((chunk) => chunk?.type === "error"), false)
+      assert.ok(chunks.some((chunk) => chunk?.type === "text-delta" && chunk.delta === "Hello"))
+      assert.ok(chunks.some((chunk) => chunk?.type === "reasoning-delta" && chunk.delta === "Reasoning"))
+      assert.ok(chunks.some((chunk) => chunk?.type === "tool-call" && chunk.toolName === "lookup" && chunk.input === toolCall.function.arguments))
+      const finish = chunks.find((chunk) => chunk?.type === "finish")
+      assert.equal(finish?.usage.inputTokens.total, 10)
+      assert.equal(finish?.usage.outputTokens.total, 20)
+      assert.equal(finish?.finishReason.unified, "tool-calls")
+      assert.equal(await responses[0].text(), events.join(""))
+    } else {
+      const result = await sdkModel.doGenerate(options)
+      assert.deepEqual(result.content, [
+        { type: "reasoning", text: "Reasoning" }, { type: "text", text: "Hello" },
+        { type: "tool-call", toolCallId: toolCall.id, toolName: "lookup", input: toolCall.function.arguments },
+      ])
+      assert.equal(result.usage.inputTokens.total, 10)
+      assert.equal(result.usage.outputTokens.total, 20)
+      assert.deepEqual(await responses[0].json(), json)
+    }
+    const incoming = requests[0]
+    assert.equal(incoming.url, `http://openwork.test/api/v1/providers/${providerId}/chat/completions`)
+    assert.equal(incoming.headers.get("authorization"), `Bearer ${gatewayKey}`)
+    const body = parseJsonObject(await incoming.text())
+    const upstream = fixture.upstreamRequests[0]
+    assert.equal(upstream.url, "https://api.mistral.ai/v1/chat/completions")
+    assert.equal(upstream.method, "POST")
+    assert.equal(upstream.headers.get("authorization"), "Bearer mistral-upstream-key")
+    assert.match(upstream.headers.get("user-agent") ?? "", /ai-sdk\/mistral\/3\.0\.51/)
+    for (const name of ["cookie", "x-api-key", "openai-beta", GATEWAY_REQUEST_MODEL_HEADER]) assert.equal(upstream.headers.get(name), null)
+    assert.deepEqual(parseJsonObject(upstream.body), { ...body, model })
+    assert.equal(body.safe_prompt, true)
+    assert.equal(body.parallel_tool_calls, false)
+    assert.equal(fixture.accessChecks.length, 2)
+    assert.equal(fixture.credentialLookups.length, 3)
+    const logged = await waitForRows(fixture.logRows)
+    assert.equal(logged.protocol, "openai_chat")
+    assert.equal(logged.upstream_provider_id, "mistral")
+    assert.equal(logged.requested_model, alias)
+    assert.equal(logged.upstream_model, model)
+    assert.equal(logged.credential_set_id, row.credentialSet.id)
+    assert.equal(logged.usage_source, stream ? "stream" : "json")
+    assert.equal(logged.input_tokens, 10)
+    assert.equal(logged.output_tokens, 20)
+    assert.equal(logged.total_tokens, 30)
+    assert.equal(logged.outcome, "ok")
+  })
+}
+
+test("Mistral native embeddings route to an explicit validated override and retain the SDK response", async () => {
+  const fixture = createTestServer({
+    provider: { ...mistralProvider, settings: { upstreamBaseUrl: "https://regional.example/v1" } },
+    fetch: async () => Response.json({ data: [{ embedding: [0.1, 0.2] }], usage: { prompt_tokens: 2 } }),
+  })
+  const { client } = mistralClient(fixture)
+  const result = await client.embedding("mistral-embed").doEmbed({ values: ["Hello"] })
+  assert.deepEqual(result.embeddings, [[0.1, 0.2]])
+  assert.equal(result.usage?.tokens, 2)
+  assert.equal(fixture.upstreamRequests[0].url, "https://regional.example/v1/embeddings")
+  assert.deepEqual(parseJsonObject(fixture.upstreamRequests[0].body), { model: "mistral-embed", input: ["Hello"], encoding_format: "float" })
+})
+
+test("Mistral rejects invalid gateway keys, unauthorized models/providers, alternate selection and unsupported operations before credentials", async () => {
+  const fixture = createTestServer({ provider: mistralProvider })
+  const { client, responses } = mistralClient(fixture, "invalid-gateway-key")
+  await assert.rejects(async () => client("mistral-small-latest").doGenerate({ prompt: [] }))
+  assert.equal(responses[0].status, 401)
+  assert.equal((await readError(responses[0])).code, "invalid_api_key")
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  const body = { model: "mistral-small-latest", messages: [] }
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider, access: false }), gatewayRequest({ path: "/chat/completions", body }), "provider_access_denied", 403)
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions", body: { ...body, model: "ungranted-model" } }), "model_access_denied", 403)
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions?model=ungranted-model", body }), "unsupported_model_selection")
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions", body: { ...body, messages: [{ role: "user", model: "ungranted-model" }] } }), "unsupported_model_selection")
+  for (const path of ["/responses", "/fim/completions", "/agents/completions", "/conversations", "/files", "/audio/speech"]) {
+    await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path, body }), "unsupported_gateway_operation")
+  }
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions", body: { ...body, messages: [{ role: "user", content: [{ type: "file", file_id: "RESOURCE_SECRET_MARKER" }] }] } }), "unsupported_gateway_resource")
+  await assertRejectedBeforeCredentials(createTestServer({ provider: { ...mistralProvider, settings: { upstreamBaseUrl: "https://169.254.169.254/v1" } } }), gatewayRequest({ path: "/chat/completions", body }), "provider_misconfigured", 502)
+})
+
+test("Mistral preserves upstream error status and payload for the native SDK", async () => {
+  const payload = { object: "error", message: "Rate limited", type: "rate_limit_error", param: null, code: "429" }
+  const fixture = createTestServer({ provider: mistralProvider, fetch: async () => Response.json(payload, { status: 429, headers: { "retry-after": "10" } }) })
+  const { client, responses } = mistralClient(fixture)
+  await assert.rejects(async () => client("mistral-small-latest").doGenerate({ prompt: [] }), /Rate limited/)
+  assert.equal(responses[0].status, 429)
+  assert.equal(responses[0].headers.get("retry-after"), "10")
+  assert.deepEqual(await responses[0].json(), payload)
+  assert.equal((await waitForRows(fixture.logRows)).outcome, "upstream_error")
 })
 
 test("openai responses: JSON usage is captured and the path selects the responses protocol", async () => {

@@ -8,6 +8,7 @@ import type { CatalogProvider } from "./provider-catalog.js"
 export type ProtocolFamily =
   | "anthropic"
   | "openai"
+  | "mistral"
   | "azure"
   | "openai_compatible"
   | "google"
@@ -20,6 +21,7 @@ export type AuthHeader = { name: string; value: string }
 const familyByNpm: Record<string, ProtocolFamily> = {
   "@ai-sdk/anthropic": "anthropic",
   "@ai-sdk/openai": "openai",
+  "@ai-sdk/mistral": "mistral",
   "@ai-sdk/azure": "azure",
   "@ai-sdk/openai-compatible": "openai_compatible",
   "@openrouter/ai-sdk-provider": "openai_compatible",
@@ -34,6 +36,7 @@ const commonHeaderAllowlist = ["content-type", "accept", "user-agent"]
 const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
   anthropic: ["anthropic-version", "anthropic-beta"],
   openai: ["openai-beta"],
+  mistral: [],
   azure: ["openai-beta"],
   openai_compatible: ["openai-beta"],
   google: [],
@@ -46,6 +49,7 @@ const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
 const defaultBaseUrlByFamily: Partial<Record<ProtocolFamily, string>> = {
   anthropic: "https://api.anthropic.com/v1",
   openai: "https://api.openai.com/v1",
+  mistral: "https://api.mistral.ai/v1",
   google: "https://generativelanguage.googleapis.com/v1beta",
 }
 
@@ -63,6 +67,8 @@ export function classifyRequestProtocol(family: ProtocolFamily, restPath: string
     case "anthropic":
     case "google_vertex_anthropic":
       return /^\/(?:v1\/)?messages$/.test(pathname) ? "anthropic_messages" : "passthrough"
+    case "mistral":
+      return /^\/(?:v1\/)?chat\/completions$/.test(pathname) ? "openai_chat" : "passthrough"
     case "openai":
     case "azure":
     case "openai_compatible":
@@ -104,6 +110,7 @@ export function buildAuthHeader(family: ProtocolFamily, secret: string): AuthHea
     case "google":
       return { name: "x-goog-api-key", value: secret }
     case "openai":
+    case "mistral":
     case "openai_compatible":
     case "google_vertex":
     case "google_vertex_anthropic":
