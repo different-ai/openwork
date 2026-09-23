@@ -1021,6 +1021,8 @@ test.each([
     await act(async () => submission.resolve({ outcome: "cancelled", reason: "context_changed" }));
     expect(useComposerStateStore.getState().sessions[sessionId]?.draft).toBe("[attachment image-ready]");
     expect(useComposerStateStore.getState().sessions[sessionId]?.attachments).toEqual([attachment]);
+    // A cancelled send returns the prompt, but never silently.
+    expect(container.querySelector('[data-testid="session-error-card"]')?.textContent).toContain("Message not sent");
 
     // A message-created or text-only acknowledgement must not take the preview away.
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
@@ -1118,6 +1120,7 @@ test.each([
     await act(async () => submission.resolve({ outcome: "cancelled", reason: "context_changed" }));
     expect(editor.textContent).toBe(draft);
     expectSettled();
+    expect(container.querySelector('[data-testid="session-error-card"]')?.textContent).toContain("Message not sent");
 
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
     const { composerAutoSendScopeKey, markComposerAutoSend } = await import("../src/react-app/domains/session/surface/composer-auto-send");

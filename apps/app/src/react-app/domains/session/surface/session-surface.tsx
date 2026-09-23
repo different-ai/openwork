@@ -228,6 +228,8 @@ x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}
 as $5 and $10 stay plain text.`,
 ];
 
+const MESSAGE_NOT_SENT = "Message not sent. Your text was kept so you can send it again.";
+
 type SessionError = {
   message: string;
   presentation?: OpencodeSessionErrorPresentation;
@@ -2297,6 +2299,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
         restore();
+        // Blocked sends already show the connected-tools recovery card, and Stop
+        // is intentional. Any other cancellation must not return the prompt silently.
+        if (result.outcome === "cancelled" && getQueuedSendGeneration(props.sessionId) === generation) {
+          setError({ message: MESSAGE_NOT_SENT });
+        }
         return;
       }
       if (result.outcome !== "unknown" && (nextDraft.command || nextDraft.mode === "shell")) {
@@ -2313,7 +2320,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner]);
+  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner, setError]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -3369,7 +3376,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 onRestore={handleRestoreRevertedSession}
               />
             ) : null}
-            {error && !hideDirectGatewayError && snapshot && snapshot.messages.length > 0 ? (
+            {/* Without a loaded snapshot (server offline or restarting) a send
+                failure must still be visible, not only once history arrives. */}
+            {error && !hideDirectGatewayError && (!snapshot || snapshot.messages.length > 0) ? (
               <SessionErrorCard
                 developerMode={props.developerMode}
                 error={error}
