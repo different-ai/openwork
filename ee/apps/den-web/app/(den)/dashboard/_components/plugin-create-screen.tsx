@@ -1,7 +1,14 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { getLibraryAddConnectorRoute, getLibraryPluginRoute, getLibraryRoute } from "../../_lib/den-org";
+import {
+  getAddConnectorRoute,
+  getLibraryAddConnectorRoute,
+  getLibraryPluginRoute,
+  getLibraryRoute,
+  getPluginRoute,
+  getPluginsRoute,
+} from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useMcpConnections } from "./mcp-connections-data";
@@ -26,6 +33,27 @@ export function LibraryPluginCreateScreen() {
         cancelHref={getLibraryRoute(orgSlug)}
         addConnectorHref={getLibraryAddConnectorRoute(orgSlug)}
         onCreated={(pluginId) => router.push(getLibraryPluginRoute(orgSlug, pluginId))}
+      />
+    </ItemPage>
+  );
+}
+
+/** D2: an admin makes a plugin, then chooses which teams get it. */
+export function AdminPluginCreateScreen() {
+  const router = useRouter();
+  const { orgSlug } = useOrgDashboard();
+  const manageable = useMcpConnections("manageable");
+  const connections = (manageable.data ?? []).filter((connection) => !connection.nativeProviderKey);
+
+  return (
+    <ItemPage testId="plugin-create">
+      <ItemHeader back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
+      <PluginCreateForm
+        connections={connections}
+        cancelHref={getPluginsRoute(orgSlug)}
+        addConnectorHref={getAddConnectorRoute(orgSlug)}
+        footnote="Nobody else gets it until you choose who can use it."
+        onCreated={(pluginId) => router.push(getPluginRoute(orgSlug, pluginId))}
       />
     </ItemPage>
   );

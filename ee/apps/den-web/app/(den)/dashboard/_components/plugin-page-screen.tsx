@@ -10,6 +10,7 @@ import {
   getLibraryPluginShareRoute,
   getLibraryRoute,
   getOrgAccessFlags,
+  getPluginDetailsRoute,
   getPluginsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -170,7 +171,14 @@ export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "
         description={data.description || undefined}
         actions={(
           <>
-            <ItemMenu size="md" label={`More for ${data.name}`} entries={canManage ? [{ label: "Remove", destructive: true, onSelect: () => void remove() }] : []} />
+            <ItemMenu
+              size="md"
+              label={`More for ${data.name}`}
+              entries={canManage ? [
+                ...(mode === "admin" ? [{ label: "Edit contents", href: getPluginDetailsRoute(orgSlug, pluginId) }] : []),
+                { label: "Remove", destructive: true, onSelect: () => void remove() },
+              ] : []}
+            />
             {mode === "member" && mine ? (
               <LinkButton href={getLibraryPluginShareRoute(orgSlug, pluginId)}>
                 <UserPlus className="h-4 w-4" aria-hidden />

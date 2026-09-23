@@ -123,9 +123,10 @@ function ConnectorChoice({ connections, value, takenIds, onChange, addConnectorH
  * B1 and D2: one form for a member's plugin and an admin's. New plugins start
  * just for their maker; sharing happens on the plugin's page.
  */
-export function PluginCreateForm({ connections, startWith, cancelHref, addConnectorHref, onCreated }: {
+export function PluginCreateForm({ connections, startWith, cancelHref, addConnectorHref, onCreated, footnote = "Only you can use it until you share it." }: {
   connections: readonly ExternalMcpConnection[];
   startWith?: PluginComponentKind;
+  footnote?: string;
   cancelHref: string;
   addConnectorHref: string;
   onCreated: (pluginId: string) => void;
@@ -303,7 +304,7 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
 
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-gray-100 pt-5">
-        <p className="text-[12px] leading-4 text-gray-500">Only you can use it until you share it.</p>
+        <p className="text-[12px] leading-4 text-gray-500">{footnote}</p>
         <div className="flex items-center gap-2">
           <LinkButton href={cancelHref}>Cancel</LinkButton>
           <DenButton type="submit" loading={saving}>Create plugin</DenButton>
