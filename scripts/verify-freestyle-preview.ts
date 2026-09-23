@@ -94,11 +94,31 @@ try {
   const desktopReadyMs = Math.round(performance.now() - desktopStart);
   // A full desktop session, not a bare app window.
   await execChecked(firstVm, "pgrep -x xfwm4 >/dev/null && pgrep -x xfce4-panel >/dev/null");
+  // Like the web preview: a new desktop conversation, with no model picked, chats
+  // through the world's AI Gateway instead of timing out on a public default.
+  await firstVm.fs.writeTextFile("/tmp/verify-desktop-chat.mjs", `
+const { attachSurface } = await import("/workspace/evals/packages/cdp/src/index.ts");
+const { evalIn, readComposerState, sendComposerMessage, waitForAssistantReply } = await import("/workspace/evals/packages/behaviors/src/index.ts");
+const surface = await attachSurface({ name: "verify", kind: "electron", hostKind: "local", cdpUrl: "http://127.0.0.1:9825" }, { timeoutMs: 30000 });
+try {
+  await evalIn(surface, () => { location.hash = location.hash.replace(/\\?.*$/, ""); });
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  const model = (await readComposerState(surface)).selectedModelLabel;
+  await sendComposerMessage(surface, "Verify the desktop gateway.");
+  const reply = await waitForAssistantReply(surface, { timeoutMs: 90000 });
+  console.log(JSON.stringify({ model, reply: reply.text }));
+} finally { await surface.stop().catch(() => {}); }
+`);
+  const chatStart = performance.now();
+  const chat: unknown = JSON.parse((await execChecked(firstVm, "cd /workspace && node /tmp/verify-desktop-chat.mjs", 180_000)).trim().split("\n").pop() ?? "{}");
+  assert.ok(record(chat) && chat.model === outputs.model.value, "A new desktop conversation defaults to the world's AI Gateway model");
+  assert.ok(record(chat) && typeof chat.reply === "string" && chat.reply.includes("Acme AI Gateway is working."), "The desktop gets a fresh AI Gateway reply");
+  const desktopChatMs = Math.round(performance.now() - chatStart);
   const proof = {
     gitSha: sha, world: "acme-web", measuredAt: new Date().toISOString(), launches,
     scope: "Controller launch includes first authorized app HTML readiness, followed by a repeat HTML fetch. Excludes reviewer HTTP overhead and browser rendering; not a click-to-usable benchmark.",
     restoredRunningProcess: true, independentDatabases: true, independentUrlsAndCredentials: true,
-    demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true, desktopViewer: true, desktopReadyMs, desktopSignedIn,
+    demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true, desktopViewer: true, desktopReadyMs, desktopSignedIn, desktopChatMs,
   };
   await writeFile("freestyle-launch-proof.json", JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));
