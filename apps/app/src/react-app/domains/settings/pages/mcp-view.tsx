@@ -2255,10 +2255,10 @@ function LibrarySectionHeader(props: { section: LibrarySection; label: string; m
 }
 
 /** Rows a signed-out member could use after signing in, shown locked. */
-const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc?: string; url: string }> = [
-  { name: "Google Workspace", description: "Gmail, Calendar and Drive", iconSrc: "/ext-google-workspace.svg", url: "https://workspace.google.com" },
-  { name: "Slack", description: "Read and post in your channels", url: "https://slack.com" },
-  { name: "Linear", description: "Issues and projects", iconSrc: "/ext-linear.svg", url: "https://linear.app" },
+const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc?: string; iconSlug?: string }> = [
+  { name: "Google Workspace", description: "Gmail, Calendar and Drive", iconSrc: "/ext-google-workspace.svg" },
+  { name: "Slack", description: "Read and post in your channels", iconSlug: "slack" },
+  { name: "Linear", description: "Issues and projects", iconSrc: "/ext-linear.svg" },
 ];
 
 function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
@@ -2330,7 +2330,7 @@ export function LibraryInventory(props: {
                   name={preview.name}
                   description={preview.description}
                   iconSrc={preview.iconSrc}
-                  url={preview.url}
+                  iconSlug={preview.iconSlug}
                   taxonomy="connection"
                   disabled
                   trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
