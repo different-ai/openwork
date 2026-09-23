@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "e5a62b0a-7494-4d33-97cb-f2f7ae10e485",
+  "id": "d2161d6c-bd66-4277-8f69-89caf8638540",
   "prevId": "aa59af63-ceaa-49d2-aad7-90c5b6f61b55",
   "tables": {
     "account": {
@@ -2956,6 +2956,21 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "active_ms": {
+          "name": "active_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         }
       },
       "indexes": {},

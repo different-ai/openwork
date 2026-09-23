@@ -530,10 +530,12 @@ export const AnonymousInferenceRateBucketTable = mysqlTable("anonymous_inference
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
 }, (table) => [index("anonymous_inference_rate_expiry").on(table.expires_at)])
 
-/** When each guest machine was first seen; the guest allowance grows with this age. */
+/** Each guest machine's time with the app open, credited from signed heartbeats; the guest allowance grows with it. */
 export const AnonymousInferenceIdentityTable = mysqlTable("anonymous_inference_identities", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   first_seen_at: timestamp("first_seen_at", { fsp: 3 }).notNull(),
+  last_seen_at: timestamp("last_seen_at", { fsp: 3 }).notNull(),
+  active_ms: bigint("active_ms", { mode: "number" }).notNull().default(0),
 })
 
 export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces", {

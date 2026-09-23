@@ -7,6 +7,8 @@ CREATE TABLE `anonymous_inference_control` (
 CREATE TABLE `anonymous_inference_identities` (
 	`id` varchar(64) NOT NULL,
 	`first_seen_at` timestamp(3) NOT NULL,
+	`last_seen_at` timestamp(3) NOT NULL,
+	`active_ms` bigint NOT NULL DEFAULT 0,
 	CONSTRAINT `anonymous_inference_identities_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint

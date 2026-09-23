@@ -21,11 +21,12 @@ import { env } from "./env.js"
 
 // The signed proof carries the machine id; the body carries the proof-of-work for this proof's nonce.
 const sessionSchema = z.strictObject({ pow: z.string().regex(DESKTOP_FREE_SESSION_POW_PATTERN).optional() })
-function powSatisfied(proof: { machineId: string; nonce: string }, pow: string | undefined, bits: number) {
+function powSatisfied(proof: { machineId: string; nonce: string }, pow: string | undefined, bits: number, rounds: number) {
   if (bits === 0) return true
-  if (!pow) return false
-  const digest = createHash("sha256").update(desktopFreeSessionPowMessage({ ...proof, pow })).digest()
-  return leadingZeroBits(Uint8Array.from(digest)) >= bits
+  const solutions = pow?.split(".") ?? []
+  if (solutions.length !== rounds) return false
+  return solutions.every((solution, round) => leadingZeroBits(Uint8Array.from(createHash("sha256")
+    .update(desktopFreeSessionPowMessage({ ...proof, round, pow: solution })).digest())) >= bits)
 }
 export type FreeRouteDependencies = {
   config: AutoConfig;
@@ -72,8 +73,8 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     if (gate.error) return gate.error
     if (gate.versionError) return versionResponse(gate.versionError)
     // Minting costs a little CPU, bound to this proof's single-use nonce so the work cannot be replayed.
-    if (!powSatisfied(gate.proof, session.data.pow, config.sessionPowBits)) {
-      return Response.json({ error: { code: "session_pow_required", bits: config.sessionPowBits, message: "A proof of work is required to start a guest session." } }, { status: 400, headers: { "cache-control": "no-store" } })
+    if (!powSatisfied(gate.proof, session.data.pow, config.sessionPowBits, config.sessionPowRounds)) {
+      return Response.json({ error: { code: "session_pow_required", bits: config.sessionPowBits, rounds: config.sessionPowRounds, message: "A proof of work is required to start a guest session." } }, { status: 400, headers: { "cache-control": "no-store" } })
     }
     const identities = createAnonymousIdentities(gate.proof, address, config)
     const minted = await store.consumeSession(identities.ipHash, identities.installationHash)
