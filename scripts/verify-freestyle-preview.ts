@@ -89,9 +89,11 @@ try {
     if (desktop !== "starting") break;
     await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
-  assert.ok(desktop === "ready" || desktop === "ready-signed-out", "The desktop app must finish booting");
-  const desktopSignedIn = desktop === "ready";
+  assert.equal(desktop, "ready", "The desktop app must boot signed in as the demo owner");
+  const desktopSignedIn = true;
   const desktopReadyMs = Math.round(performance.now() - desktopStart);
+  // A full desktop session, not a bare app window.
+  await execChecked(firstVm, "pgrep -x xfwm4 >/dev/null && pgrep -x xfce4-panel >/dev/null");
   const proof = {
     gitSha: sha, world: "acme-web", measuredAt: new Date().toISOString(), launches,
     scope: "Controller launch includes first authorized app HTML readiness, followed by a repeat HTML fetch. Excludes reviewer HTTP overhead and browser rendering; not a click-to-usable benchmark.",

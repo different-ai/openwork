@@ -4,7 +4,9 @@ export function toolsRecipe(world: PreviewWorld): string {
   return `corepack enable
 corepack prepare pnpm@11.4.0 --activate
 ${world === "acme-web" ? `apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server xvfb x11vnc novnc websockify fluxbox dbus-x11 xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
+DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server xvfb x11vnc novnc websockify dbus-x11 xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
+# A real Linux desktop (as in Daytona previews): panel, window frames, terminal, files.
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfce4-terminal thunar
 printf '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;reconnect_delay=2000"><title>OpenWork desktop</title>' > /usr/share/novnc/index.html
 systemctl enable --now mysql redis-server
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"` : ""}
